@@ -35,6 +35,7 @@ import { profileRemote } from '../../../scripts/profile/store.js';
 import { stateDir, profileDir, wheelhouseHome, computerId } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { termsIn, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
@@ -1058,7 +1059,8 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
     const connection = planned.changes.find((c) => c.action === 'connection');
     assert.equal(connection.target, 'gitlab');
     assert.equal(connection.base, 'https://localhost:8929');
-    assert.ok(planned.card.what.includes('https://localhost:8929/users/sign_up'), planned.card.what);
+    // A company's GitLab with no OAuth application is signed in to with a typed token, not a sign-up page.
+    assert.match(planned.card.what, /sign in to GitLab with a token pasted into your computer's box/);
     const glab = w.calls.filter((c) => c.tool === 'glab');
     assert.ok(glab.length > 0);
     for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
@@ -1084,10 +1086,18 @@ test('on a company\'s GitLab the typed token is the way offered, and the card na
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
     const signing = planned.changes.find((c) => c.action === 'sign-in');
     assert.equal(signing.via, 'token');
-    assert.match(planned.card.what, /make a token on your company's GitLab page/);
+    assert.match(planned.card.what, /with a token pasted into your computer's box, never the chat/);
     assert.match(planned.card.what, /never the chat/);
-    assert.match(planned.card.what, /admin to register an application/);
-    assert.match(planned.card.what, /company's job, not setup's/);
+    // The admin's part is its own sentence: it says what actually switches setup to the browser.
+    const [main, admin] = planned.card.what.split('; for your company\'s GitLab admin');
+    assert.ok(admin, planned.card.what);
+    assert.doesNotMatch(main, /read_user|client_id|openid|permissions/);
+    assert.match(admin, /register an application and give its id to glab here for the browser/);
+    assert.match(admin, /company's job, not setup's/);
+    // It composes as a card, and says nothing the glossary would have to put into plain words.
+    const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    assert.ok(question.question.length > 0);
+    assert.deepEqual(termsIn(planned.card.what.split('; ').filter((part) => /token|admin/.test(part)).join('; '), glossaryOf({})), []);
     assert.match(planned.director, /token/);
     assert.doesNotMatch(planned.card.what, new RegExp(TYPED));
     // Where the company has registered an application, the browser way stays.

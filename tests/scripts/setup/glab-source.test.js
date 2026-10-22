@@ -12,6 +12,9 @@ import { glabSource, readGlabFrom, fetchHostTool, toolsStep, ChecksumError } fro
 import { signIn, signInRoute } from '../../../scripts/setup/host.js';
 import { toolFolder } from '../../../scripts/lib/host-tools.js';
 import { standInTools } from '../../helpers/host-stand-ins.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { planHash } from '../../../scripts/setup/steps.js';
+import { termsIn, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-22T03:00:00.000Z');
@@ -151,6 +154,49 @@ test('a company source is used when set', async () => {
     assert.equal(fs.existsSync(toolFolder('glab')), false);
   });
 
+  // On the path route a name that climbs out, carries a separator, or is a symbolic link is refused, and nothing is unpacked.
+  for (const [what, link, matcher, prepare] of [
+    ['a ../ name', '../outside.tar.gz', /not beside the company's list/, null],
+    ['a name with a separator', 'sub/glab.tar.gz', /not beside the company's list/, null],
+    ['a Windows separator', 'sub\\glab.tar.gz', /not beside the company's list/, null],
+    ['a symbolic link', NAME, /not a plain file/, (dir) => {
+      const real = path.join(dir, 'real.tar.gz');
+      fs.renameSync(path.join(dir, NAME), real);
+      fs.symlinkSync(real, path.join(dir, NAME));
+    }],
+  ]) {
+    await withHome(async () => {
+      const { dir, list } = listFolder({ checksums: 'inline' });
+      const links = JSON.parse(fs.readFileSync(list, 'utf8'));
+      if (prepare) prepare(dir);
+      else links.assets.links.find((l) => l.name === NAME).direct_asset_url = link;
+      fs.writeFileSync(list, JSON.stringify(links));
+      const m = computer();
+      await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source: glabSource({ setting: `company ${list}` }) }), matcher, what);
+      assert.deepEqual(m.unpacked, [], what);
+      assert.equal(fs.existsSync(toolFolder('glab')), false, what);
+    });
+  }
+  // On the address route a certificate this computer does not trust, and a server that is not there, are
+  // given in plain lines, naming no way to switch the check off and no setting file to edit.
+  for (const [code, matcher] of [['UNABLE_TO_VERIFY_LEAF_SIGNATURE', /isn't one this computer trusts, and setup never switches certificate checks off/], ['ECONNREFUSED', /can't be reached from here, perhaps off the company network/]]) {
+    await withHome(async () => {
+      const failing = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code }) }); };
+      const m = computer();
+      await assert.rejects(
+        fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: failing, run: m.run, source: glabSource({ setting: `company ${LIST_ADDRESS}` }) }),
+        (error) => {
+          assert.match(error.message, matcher);
+          assert.match(error.message, /tools\.example\.org/);
+          assert.doesNotMatch(error.message, /glabFrom|wheelhouse\.json|NODE_TLS|-k\b/);
+          if (code !== 'ECONNREFUSED') assert.match(error.message, /Ask whoever looks after your company's computers.*reaches you as a card/);
+          assert.deepEqual(termsIn(error.message, glossaryOf({})), []);
+          return true;
+        },
+      );
+      assert.deepEqual(m.unpacked, []);
+    });
+  }
   // A list whose version disagrees with its file is refused; a path in a name is never followed.
   await withHome(async () => {
     const { list } = listFolder({ tag: 'v1.199.0' });
@@ -200,7 +246,15 @@ test('a copy with no checksum is named on the card', async () => {
     const change = fetchChange(planned);
     assert.equal(change.checksum, 'none');
     assert.match(planned.card.what, /gives no checksum/);
+    // It says what the file becomes: the glab Wheelhouse uses afterwards, the sign-in included.
+    assert.match(planned.card.what, /after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in/);
+    assert.doesNotMatch(planned.card.what, /runs it only/);
     assert.match(planned.card.what, /Not now/);
+    // The file the card is about is pinned by its hash (a read at the plan), and the card composes within its length
+    // and needs no glossary words put into plain words.
+    assert.equal(change.pin, sha(archive(NAME)));
+    assert.ok(composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } }).question.question.length > 0);
+    assert.deepEqual(termsIn(planned.card.what, glossaryOf({})), []);
     // The card comes first: planning ran nothing and unpacked nothing.
     assert.deepEqual(m.unpacked, []);
     assert.ok(!m.calls.some((c) => c.file.endsWith('glab') || c.file.endsWith('tar')), 'nothing ran at the plan');
@@ -209,8 +263,39 @@ test('a copy with no checksum is named on the card', async () => {
     await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source }), ChecksumError);
     assert.deepEqual(m.unpacked, []);
     assert.equal(fs.existsSync(toolFolder('glab')), false);
+    // A change with no pin is refused too: only the file the card hashed is used.
+    const { pin, ...unpinned } = change;
+    await assert.rejects(step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false }, [unpinned]), ChecksumError);
+    assert.deepEqual(m.unpacked, []);
     await step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false }, [change]);
     assert.deepEqual(m.unpacked[0].bytes, archive(NAME));
+  });
+  // The file swapped after the card was shown is refused, and nothing is unpacked or run.
+  await withHome(async () => {
+    const { list, dir } = listFolder({ checksums: 'none' });
+    const folder = projectWith(`company ${list}`);
+    const m = computer();
+    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const change = fetchChange(await step.plan(ctxFor(folder)));
+    fs.writeFileSync(path.join(dir, NAME), 'a different file from the one the card was shown');
+    await assert.rejects(step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false }, [change]), /not the file the card was shown/);
+    assert.deepEqual(m.unpacked, []);
+    assert.equal(fs.existsSync(toolFolder('glab')), false);
+    assert.ok(!m.calls.some((c) => c.file.endsWith('glab')), 'nothing ran');
+  });
+  // The same at an address: the plan fetched the archive once to hash it, apply fetches it again and compares.
+  await withHome(async () => {
+    const folder = projectWith(`company ${LIST_ADDRESS}`);
+    const m = computer();
+    let swapped = false;
+    const net = companyNet({ checksums: 'none' });
+    const fetch = async (url, init) => (swapped && String(url).endsWith(NAME) ? new Response('swapped') : net.fetch(url, init));
+    const step = toolsStep({ run: m.run, fetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const change = fetchChange(await step.plan(ctxFor(folder)));
+    assert.equal(change.pin, sha(archive(NAME)));
+    swapped = true;
+    await assert.rejects(step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false }, [change]), /not the file the card was shown/);
+    assert.deepEqual(m.unpacked, []);
   });
   // A change planned with a checksum is refused when the list has lost it by apply.
   await withHome(async () => {
@@ -229,7 +314,7 @@ test('a copy with no checksum is named on the card', async () => {
   await withHome(async () => {
     const { list } = listFolder({ checksums: 'wrong' });
     const m = computer();
-    await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source: glabSource({ setting: `company ${list}` }), allowNoChecksum: true }), ChecksumError);
+    await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source: glabSource({ setting: `company ${list}` }), pin: sha(archive(NAME)) }), ChecksumError);
     assert.deepEqual(m.unpacked, []);
   });
   // Checksums written on the list's links count as the list's own.

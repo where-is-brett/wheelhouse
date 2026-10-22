@@ -28,8 +28,8 @@
 // the list; an address is fetched over https only, no redirect followed, every file on the list's own
 // host. The version in the list is checked against the file's, and the checksum where the list gives
 // one. A list that gives none is named on step 2's card (`checksum: 'none'` on the change), and only
-// that change, once the director has said Go ahead, lets the copy be used. Nothing downloaded runs
-// before then, and the one run at apply is `--version`.
+// that change, once the director has said Go ahead, lets the copy be used, and only the very file the
+// plan hashed (`pin`). Nothing downloaded runs before then, and the one run at apply is `--version`.
 //
 // The step also writes one allow rule into the project's .claude/settings.local.json, by key, for
 // setup's own command (ruling R43), so the playbook's calls before step 7 are not asked about
@@ -246,7 +246,7 @@ async function companyRelease({ from, folder, fetch }) {
       } catch (error) {
         const kind = failureKind(error);
         if (kind === 'certificate') {
-          throw new Error(`The certificate at ${listUrl.host}, where your company's list is, isn't one this computer trusts, and setup never switches certificate checks off. Save the list and its files in a folder on this computer and name the list's path in glabFrom instead`);
+          throw new Error(`The certificate at ${listUrl.host}, where your company's list is, isn't one this computer trusts, and setup never switches certificate checks off. Ask whoever looks after your company's computers to put the list and its files in a folder on this computer; the change to where Wheelhouse looks for them then reaches you as a card to approve`);
         }
         if (kind === 'unreachable') throw new Error(`Your company's list at ${listUrl.host} can't be reached from here, perhaps off the company network`);
         throw error;
@@ -309,7 +309,10 @@ async function describeCompany({ source, folder, fetch, platform, arch }) {
   const name = pickArchive('glab', release.names, platform, arch);
   const version = versionOf(name);
   checkListedVersion(release, version);
-  return { from: 'company', source: source.from, version, checksum: parseChecksums(release.checksumText).has(name) ? 'listed' : 'none' };
+  if (parseChecksums(release.checksumText).has(name)) return { from: 'company', source: source.from, version, checksum: 'listed' };
+  // No checksum to hold the file to: the file as it is now is hashed (a read, not a run) and the hash goes
+  // in the change, so apply uses only that file.
+  return { from: 'company', source: source.from, version, checksum: 'none', pin: crypto.createHash('sha256').update(await release.bytesFor(name)).digest('hex') };
 }
 
 function checkListedVersion(release, version) {
@@ -369,7 +372,7 @@ function findBinary(dir, name) {
 // it is put in place. Gives the program's path and version.
 export async function fetchHostTool({
   tool, platform = process.platform, arch = process.arch, fetch = globalThis.fetch, run = realRun, record,
-  source = { kind: 'gitlab', from: null }, folder, allowNoChecksum = false, expectVersion,
+  source = { kind: 'gitlab', from: null }, folder, pin, expectVersion,
 } = {}) {
   if (!HOST_TOOLS.includes(tool)) throw new Error(`There is no host tool named ${tool}`);
   const company = source?.kind === 'company';
@@ -381,12 +384,16 @@ export async function fetchHostTool({
   if (company) checkListedVersion(release, version);
   if (expectVersion !== undefined && expectVersion !== version) throw new Error(`The company's list now offers glab ${version}, not ${expectVersion} as the card said: ask for step 2's card again`);
   const tagged = release.tag ?? `v${version}`;
-  // A copy the list gives no checksum for is used only once the card that says so has been agreed.
-  if (company && !sums.has(name) && !allowNoChecksum) {
+  // A copy the list gives no checksum for is used only if the card that said so named this very file:
+  // `pin` is the hash the plan took of it.
+  if (company && !sums.has(name) && pin === undefined) {
     throw new ChecksumError(`${name} has no checksum on the company's list, so setup did not use it until a card says so and you agree`);
   }
   const bytes = company ? await release.bytesFor(name) : await getBytes(fetch, official(release.urlFor(name), tool));
   if (!company || sums.has(name)) verifyChecksum(name, bytes, sums);
+  else if (crypto.createHash('sha256').update(bytes).digest('hex') !== pin) {
+    throw new ChecksumError(`${name} is not the file the card was shown, so setup did not use it: ask for step 2's card again`);
+  }
   const target = toolFolder(tool);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const work = fs.mkdtempSync(path.join(path.dirname(target), `.${tool}-`));
@@ -695,9 +702,9 @@ function cardFor(changes, status, platform) {
     lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
   }
   for (const c of fetches.filter((x) => x.from === 'company')) {
-    lines.push(`${c.tool}, the host's command-line tool: taken from your company's list at ${c.source}, version ${c.version}, into Wheelhouse's tools folder, and not from the public release; ${c.checksum === 'listed'
-      ? 'checked against the checksum your company\'s list gives'
-      : 'your company\'s list gives no checksum for it, so setup cannot check it is the file your company meant. Setup runs it only to read its version. Say Not now to look at the list first'}`);
+    lines.push(`${c.tool}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
+      ? 'checked against the checksum the list gives'
+      : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
   }
   if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
@@ -799,7 +806,7 @@ export function toolsStep({
       });
       const fetches = changes.filter((c) => c.action === 'fetch').map((c) => (c.from === 'company'
         // What the card said: the list it named, the version it gave, and whether it gave a checksum.
-        ? fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record, source: glabSource({ setting: `company ${c.source}` }), folder: ctx.folder, expectVersion: c.version, allowNoChecksum: c.checksum === 'none' })
+        ? fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record, source: glabSource({ setting: `company ${c.source}` }), folder: ctx.folder, expectVersion: c.version, ...(c.checksum === 'none' ? { pin: c.pin } : {}) })
         : fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record })));
       // The rule is written once every installer's start is recorded, so a write that fails can't
       // leave an installer open that the journal doesn't know about.

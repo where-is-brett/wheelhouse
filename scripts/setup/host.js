@@ -618,6 +618,7 @@ const NO_TOKEN = 'No GitLab token was given, so setup could not sign in; a fresh
 async function signInWithToken({ run, base, say, stopped, open, askSecret, platform }) {
   const address = addressOf('gitlab', base);
   say(`Your company's GitLab, ${address}, has no sign-in through the browser set up, so make a token on the page that opens, then paste it into the box your computer shows: never into the chat`);
+  say(`For your company's GitLab admin, if the browser sign-in is wanted instead: register an application for Wheelhouse with the permissions api, read_user, write_repository, openid and profile, then give its id to glab on this computer (glab config set client_id <id> -g --host ${address}). Registering it alone changes nothing here: setup uses the browser only once glab on this computer holds that id. That is the company's job, not setup's`);
   await open(tokenUrl({ host: 'gitlab', owner: '', repos: [], name: SIGN_IN_TOKEN_NAME, base }));
   let token;
   try {
@@ -1322,7 +1323,8 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   if (changes.some((c) => c.action === 'certificate')) parts.push(`your company's own certificate for ${base}, copied from this computer's own certificate store and given to Node.js, glab and git for that address only (certificate checks stay on)`);
   const signing = changes.find((c) => c.action === 'sign-in');
   if (signing?.via === 'token') {
-    parts.push(`sign in to ${name} with a token: make a token on your company's GitLab page that opens (no account? sign up at ${signUpUrl(host, base)}), then paste it into the box your computer shows, never the chat. The sign-in through the browser needs your company's GitLab admin to register an application for it with the scopes api, read_user, write_repository, openid and profile, which is the company's job, not setup's`);
+    parts.push(`sign in to ${name} with a token pasted into your computer's box, never the chat`);
+    parts.push('for your company\'s GitLab admin: register an application and give its id to glab here for the browser; the company\'s job, not setup\'s');
   } else if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
