@@ -66,9 +66,9 @@
 import { listHash } from '../lib/setup-writes.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import {
-  SETUP_DOING, SETUP_DONE, SETUP_GOING, connectingTo, setupStepLine, setupMeanwhile, toolsInstalling,
+  SETUP_DOING, SETUP_DONE, SETUP_GOING, PHONE_TESTED_EARLIER, PHONE_TEST_MISSED, connectingTo, setupStepLine, setupMeanwhile, toolsInstalling,
 } from '../lib/calm-words.js';
-import { stepsFor } from '../lib/setup-run.js';
+import { PUSH_TEST_STEP, stepsFor } from '../lib/setup-run.js';
 import { installStep } from './install-step.js';
 import { toolsStep } from './tools.js';
 import { hostStep } from './host.js';
@@ -99,6 +99,15 @@ export const STEP_MINUTES = Object.freeze({
   1: 2, 2: 3, 3: 2, 4: 2, 5: 1, 6: 1, 7: 1, 8: 1, 9: 3, 10: 1,
 });
 
+// What has happened, said for step n once it is done. Step 9 says what its test settled on, by its
+// `answer` change: arrived now, arrived in an earlier setup, or didn't arrive.
+function doneLine(run, n) {
+  if (n !== PUSH_TEST_STEP) return SETUP_DONE[n];
+  const answer = (Array.isArray(run?.changes) ? run.changes : []).filter((c) => c?.step === n && c.kind === 'answer').at(-1)?.after;
+  if (answer?.pushArrived === false) return PHONE_TEST_MISSED;
+  return typeof answer?.from === 'string' ? PHONE_TESTED_EARLIER : SETUP_DONE[n];
+}
+
 // The lines that head a step in the chat (design section 23.8): its place and time, what it is, one
 // line of what has happened (the step done last before it), and, where something runs meanwhile,
 // what carries on. `run` is the folder's run or null; `running(m)` whether step m runs now; `host`
@@ -108,7 +117,7 @@ export function stepProgress({ n, run, running = () => false, host }) {
   const lines = [setupStepLine(Math.max(1, list.indexOf(n) + 1), list.length, STEP_MINUTES[n]), n === 3 ? connectingTo(host) : SETUP_DOING[n]];
   const done = list.filter((m) => m !== n && typeof run?.steps?.[m]?.doneAt === 'string')
     .sort((a, b) => Date.parse(run.steps[b].doneAt) - Date.parse(run.steps[a].doneAt))[0];
-  lines.push(done === undefined ? 'Setup has just started.' : SETUP_DONE[done]);
+  lines.push(done === undefined ? 'Setup has just started.' : doneLine(run, done));
   const going = list.find((m) => m !== n && SETUP_GOING[m] !== undefined && running(m));
   if (going !== undefined) {
     const tools = going === 2

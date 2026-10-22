@@ -18,6 +18,7 @@ import { runStep } from '../../../scripts/setup/run-step.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import * as setupRun from '../../../scripts/lib/setup-run.js';
+import { SETUP_DONE, PHONE_TESTED_EARLIER, PHONE_TEST_MISSED } from '../../../scripts/lib/calm-words.js';
 import * as setupClicks from '../../../scripts/lib/setup-clicks.js';
 import * as journal from '../../../scripts/setup/journal.js';
 import * as clicks from '../../../scripts/setup/clicks.js';
@@ -439,6 +440,20 @@ test('a long step that fails part-way leaves every change it made in the journal
     assert.deepEqual(readJson(path.join(folder, 'x.json')), { a: 'theirs' });
     assert.equal(fs.existsSync(path.join(folder, 'y.json')), false, 'the file the step made goes too (ruling R138)');
   });
+});
+
+test('what has happened after step 9 says what the phone test settled on, and a phone test put off for later is never said done', () => {
+  const at = (m) => `2026-10-19T03:0${m}:00.000Z`;
+  const settled = (after) => ({
+    steps: { 8: { doneAt: at(1) }, 9: { doneAt: at(2) } },
+    changes: [{ step: 9, kind: 'answer', after }],
+  });
+  assert.equal(stepProgress({ n: 10, run: settled({ pushArrived: true }) })[2], SETUP_DONE[9]);
+  assert.equal(stepProgress({ n: 10, run: settled({ pushArrived: true, from: 'run-earlier' }) })[2], PHONE_TESTED_EARLIER);
+  assert.equal(stepProgress({ n: 10, run: settled({ pushArrived: false }) })[2], PHONE_TEST_MISSED);
+  // Later settles nothing: step 9 has no done mark, so what has happened is still step 8's.
+  const later = { steps: { 8: { doneAt: at(1) }, 9: { clickedAt: at(2) } }, changes: [] };
+  assert.equal(stepProgress({ n: 10, run: later })[2], SETUP_DONE[8]);
 });
 
 test('a step is headed by its place and minutes, what it is, what has happened and what carries on meanwhile', () => {
