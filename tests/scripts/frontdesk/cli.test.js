@@ -32,6 +32,8 @@ import { CARD } from '../../../scripts/lib/front-desk.js';
 import { CLICK_MS } from '../../../scripts/lib/core-numbers.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { pendingDir } from '../../../scripts/hooks/pending.js';
+import { SUGGEST, WHY, suggestedAt } from '../../../scripts/lib/calm-words.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
@@ -956,6 +958,112 @@ test('again gives the card the board numbers n, with its id, and records it as a
   });
 });
 
+test('why n notes a Why? answer for card n and prints one line', async () => {
+  await inHome(async () => {
+    const one = cardEvent(PRODUCT(1), 1);
+    const two = cardEvent(PRODUCT(2), 2);
+    const helper = fakeHelper({ events: [one, two] });
+    const model = boardModel({ views: helper.views(), events: [one, two], now: NOW });
+    const n = model.director.waiting.findIndex((w) => w.since === two.at) + 1;
+    const out = await run(helper, ['why', String(n)]);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.out, `Noted that you asked why about card ${n}.\n`);
+    // The answer names the card's question as it was shown, as the pane's own answers do.
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY } }]);
+    // It never gives the card again, and a Why? decides nothing: the card still waits.
+    assert.deepEqual(helper.views().waiting.map((c) => [c.id, c.asked?.label]).sort(), [[one.id, undefined], [two.id, WHY]].sort());
+    for (const bad of [['why', '9'], ['why', '0'], ['why', 'x'], ['why'], ['why', '1', '2']]) {
+      assert.equal((await run(helper, bad)).code, 1, bad.join(' '));
+    }
+    assert.equal(helper.writes().length, 1);
+  });
+});
+
+test('why n keeps its answer in pending/ when the helper doesn\'t take it, and says so when it can\'t keep it', async () => {
+  await inHome(async () => {
+    const waiting = cardEvent(PRODUCT(1), 1);
+    const helper = fakeHelper({ events: [waiting] });
+    const down = { ...helper.client, state: { ...helper.client.state, write: async () => ({ ok: false, refused: 'the host helper did not answer in time' }) } };
+    // A folder that is no registered project has nowhere to keep it.
+    const lost = await run({ client: down }, ['why', '1']);
+    assert.equal(lost.code, 1);
+    assert.match(lost.err, /Why\?/);
+    assert.equal(lost.err.trim().split('\n').length, 1, 'one line');
+    const folder = path.join(tempFolder('wh-why-'), 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+    const kept = await run({ client: down }, ['why', '1'], undefined, { cwd: folder });
+    assert.equal(kept.code, 0, kept.err);
+    assert.equal(kept.out, 'Noted that you asked why about card 1.\n');
+    const files = fs.readdirSync(pendingDir('o__p')).filter((name) => name.endsWith('.json'));
+    assert.equal(files.length, 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pendingDir('o__p'), files[0]), 'utf8')),
+      { route: 'write', body: { project: 'o__p', kind: 'card-answer', data: { question: waiting.data.question, label: WHY } } });
+  });
+});
+
+test('why n under STOP notes nothing and says so', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper({ stop: true, events: [cardEvent(PRODUCT(1), 1)] });
+    const out = await run(helper, ['why', '1']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.out, 'STOP is on, so nothing was noted about card 1.\n');
+    assert.deepEqual(helper.writes(), []);
+  });
+});
+
+test('card with revises and changed composes a revised card; revises naming no waiting card of this kind is refused', async () => {
+  await inHome(async () => {
+    const target = { pr: 7, sha: FULL };
+    const old = cardEvent({ ...APPROVAL, target }, 1);
+    const other = cardEvent(PRODUCT(1), 2);
+    const decided = cardEvent(PRODUCT(2), 3);
+    const answered = makeEvent({ kind: 'card-answer', data: { card: decided.id, label: 'Plain' }, now: () => T(4) });
+    const helper = fakeHelper({ events: [old, other, decided, answered] });
+    const revision = { ...APPROVAL, because: 'the review was clean', target, revises: old.id, changed: 'It now says the review was clean.' };
+    // Refused: no such card, a card decided already, a card of another kind, and no line saying what changed.
+    for (const revises of ['no-such-card', decided.id, other.id]) {
+      const refused = await run(helper, ['card'], JSON.stringify({ ...revision, revises }));
+      assert.equal(refused.code, 1, revises);
+      assert.equal(refused.err, 'revises names no waiting card of this kind\n', revises);
+    }
+    const unsaid = await run(helper, ['card'], JSON.stringify({ ...revision, changed: undefined }));
+    assert.equal(unsaid.code, 1);
+    assert.match(unsaid.err, /changed/);
+    assert.deepEqual(helper.writes(), []);
+    // Composed: recorded as a new card carrying the same set line, though the card it revises carries it too.
+    const done = await run(helper, ['card'], JSON.stringify(revision));
+    assert.equal(done.code, 0, done.err);
+    assert.notEqual(done.json.id, old.id);
+    assert.equal(done.json.alreadyAsked, undefined);
+    const recorded = helper.held.find((e) => e.id === done.json.id);
+    assert.equal(recorded.data.revises, old.id);
+    assert.equal(recorded.data.parts.changed, 'It now says the review was clean.');
+    assert.equal(recorded.data.line, old.data.line);
+    assert.deepEqual(helper.writes().map((w) => w.kind), ['card', 'asked']);
+    // It replaces the card it revises on the board.
+    assert.deepEqual(helper.views().waiting.map((c) => c.id).sort(), [other.id, done.json.id].sort());
+  });
+});
+
+test('views waiting shows a steered card\'s time', async () => {
+  await inHome(async () => {
+    const steered = cardEvent(PRODUCT(1), 1);
+    const plain = cardEvent(PRODUCT(2), 2);
+    const answer = makeEvent({ kind: 'card-answer', data: { card: steered.id, label: SUGGEST }, now: () => T(30) });
+    const helper = fakeHelper({ events: [steered, plain, answer] });
+    const out = await run(helper, ['views', 'waiting']);
+    assert.equal(out.code, 0, out.err);
+    const two = (n) => String(n).padStart(2, '0');
+    const at = new Date(answer.at);
+    const lines = out.out.trim().split('\n');
+    assert.equal(lines.length, 2);
+    const line = (card) => lines.find((l) => l.includes(`(card ${card.id})`));
+    assert.ok(line(steered).endsWith(` ${suggestedAt(`${two(at.getHours())}:${two(at.getMinutes())}`)}`), line(steered));
+    assert.ok(line(plain).endsWith(`(card ${plain.id})`), line(plain));
+  });
+});
+
 test('views and explain answer in short lines, and similar finds work that shares words', async () => {
   await inHome(async () => {
     const ruling = makeEvent({ kind: 'ruling', data: { words: 'Money is shown in dollars' }, now: () => T(1) });
@@ -1254,7 +1362,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, record, similar, views, explain, review, preview\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1314,6 +1422,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, record, similar, views, explain, review, preview\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview\n');
   assert.equal(done.stdout, '');
 });

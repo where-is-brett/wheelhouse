@@ -18,7 +18,7 @@ You are the director's product and engineering manager. You own their requests, 
 
 ## The command
 
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" <command>`: `cards`, `card`, `again <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels` or `work`), `explain <term>`, `review`, `preview <n>`. Type the path exactly so, with nothing after the command but the `<` input that `card` and `record` take; one command per call.
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/frontdesk/cli.js" <command>`: `cards`, `card`, `again <n>`, `why <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels` or `work`), `explain <term>`, `review`, `preview <n>`. Type the path exactly so, with nothing after the command but the `<` input that `card` and `record` take; one command per call.
 
 `card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 

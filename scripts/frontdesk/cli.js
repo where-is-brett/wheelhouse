@@ -5,8 +5,12 @@
 //                   it makes an answer card for each open question from the build that no waiting
 //                   card asks yet, the card for each click the merge gate waits for, and one for
 //                   each lineage hold. Under STOP, the Lift STOP card alone
-//   card            composes one card from the composer's input and records it ({ question, id })
+//   card            composes one card from the composer's input and records it ({ question, id });
+//                   with `revises`, the id of a card of its kind waiting now, and `changed`, one
+//                   line saying what changed, it is a revised card that replaces the one it names
 //   again <n>       the card the board numbers n, with its id, to ask again
+//   why <n>         notes that the director asked why about the card the board numbers n, and
+//                   prints one line; it never gives the card again: explain, then run `again <n>`
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it
 //   similar [words] the open work, ideas and rejections that share words with a request: its
@@ -20,9 +24,10 @@
 //                   there is none
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project. Nothing here
-// writes a director's answer: `record` takes only the plain kinds the front desk decides, never a
-// card, a card's answer, a shown or asked record, or a signed kind, and an answer card's options
-// come only from the question the build recorded. Every card handed out is recorded as asked, and
+// writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
+// decides nothing): `record` takes only the plain kinds the front desk decides, never a card, a
+// card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
+// from the question the build recorded. Every card handed out is recorded as asked, and
 // its words are put in the glossary's plain words. Errors are one line on standard error.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -42,6 +47,9 @@ import { countsAtOnce } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { WHY, suggestedAt } from '../lib/calm-words.js';
+import { keep, taken } from '../hooks/pending.js';
+import { projectOf } from '../hooks/kit.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -53,7 +61,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']);
-const COMMANDS = ['cards', 'card', 'again', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
+const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -367,7 +375,9 @@ function topicOf(given) {
 // card comes back as it was recorded, so the director is asked the card the state holds, with
 // `alreadyAsked` when a visit has handed it out already. The card handed out is recorded as asked.
 // An approval whose target names only the pull request gets its head commit from the host. A
-// topic is kept in lower case, so the delegation review counts it as one.
+// topic is kept in lower case, so the delegation review counts it as one. A revised card names the
+// card it replaces by `revises`, which must wait now and be of the card's kind; it carries the same
+// set line as that card, so only that card is passed over when looking for one that already does.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
@@ -383,8 +393,11 @@ export async function card({ client, cwd, input, now }) {
     target = { ...target, sha };
   }
   const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
+  if (data.revises !== undefined && !views.waiting.some((c) => c.id === data.revises && c.data?.kind === data.kind)) {
+    throw new CliError('revises names no waiting card of this kind');
+  }
   const found = existingCard(views, data.line);
-  if (found !== null) {
+  if (found !== null && found !== data.revises) {
     const waiting = views.waiting.find((c) => c.id === found);
     if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: found, alreadyAsked: true };
     return { question: asQuestion(waiting), id: found, ...withProblems(await markAsked(client, cwd, [found], false)) };
@@ -402,6 +415,44 @@ export async function again({ client, cwd, n }) {
   const found = cardNumbered(views, n, { events });
   if (found === null) throw new CliError(`The board has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
   return { questions: [asQuestion(found)], id: found.id, ...withProblems(await markAsked(client, cwd, [found.id], stop)) };
+}
+
+// --- why ---
+
+// Keeps the answer in pending/ for the next session start to send, as a click's plain answer is
+// kept when the helper doesn't take it. False when this folder is no registered project or the
+// file can't be written (in the sandbox, ~/.wheelhouse is out of reach).
+function keepAnswer(cwd, body) {
+  try {
+    const found = projectOf(cwd);
+    if (found === null) return false;
+    keep(found.project, 'write', { project: found.project, ...body }, () => new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Notes that the director asked why about the card the board numbers n: a Why? answer on the card's
+// question as it was shown, written as a click's plain answer is, kept in pending/ when the helper
+// doesn't take it. It decides nothing, so the card still waits. Under STOP nothing is written, and
+// the line says so. The front desk explains, then runs `again`; the card isn't given here.
+export async function why({ client, cwd, n }) {
+  const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
+  const found = cardNumbered(views, n, { events });
+  if (found === null) throw new CliError(`The board has no card ${n} to note a why about`);
+  if (stop) return [`STOP is on, so nothing was noted about card ${n}.`];
+  const question = found.data?.question;
+  if (typeof question !== 'string' || question === '') throw new CliError(`Card ${n} has no question to note a why against`);
+  const body = { kind: 'card-answer', data: { question, label: WHY } };
+  let got;
+  try {
+    got = await client.state.write({ cwd, ...body });
+  } catch {
+    got = null;
+  }
+  if (!taken(got) && !keepAnswer(cwd, body)) throw new CliError(`The ${WHY} about card ${n} wasn't noted: ${said(got, 'the host helper did not answer')}`);
+  return [`Noted that you asked why about card ${n}.`];
 }
 
 // --- record ---
@@ -680,6 +731,7 @@ export async function similar({ client, cwd, text }) {
 // --- views ---
 
 const titleOf = (entry, key) => flat(entry?.data?.title) || flat(entry?.data?.text) || flat(entry?.data?.what) || key;
+const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
 // One view as short lines.
@@ -700,8 +752,14 @@ export async function view({ client, cwd, name, now }) {
       const old = 'What this is: ';
       return typeof data?.question === 'string' && data.question.startsWith(old) ? data.question.slice(old.length).split('\n')[0] : null;
     };
+    // A card the director answered Suggest a change… waits for its revision: its time follows.
+    const steered = (id) => {
+      const at = views.waiting.find((c) => c.id === id)?.steered;
+      const when = typeof at === 'string' ? new Date(at) : null;
+      return when === null || Number.isNaN(when.getTime()) ? '' : ` ${suggestedAt(`${two(when.getHours())}:${two(when.getMinutes())}`)}`;
+    };
     const items = numberedWaiting(views, events)
-      .map((item) => `${item.n}. ${(item.card && firstPart(item.card)) || item.what}${item.card ? ` (card ${item.card})` : ''}`);
+      .map((item) => `${item.n}. ${(item.card && firstPart(item.card)) || item.what}${item.card ? ` (card ${item.card})${steered(item.card)}` : ''}`);
     return listed(items, 'Nothing is waiting for the director.');
   }
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
@@ -873,6 +931,9 @@ export async function main(argv, {
     } else if (command === 'again') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number on the board: again <n>');
       json(await again({ client: helper, cwd: here, n: Number(rest[0]) }));
+    } else if (command === 'why') {
+      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number on the board: why <n>');
+      lines(await why({ client: helper, cwd: here, n: Number(rest[0]) }));
     } else if (command === 'record') {
       only(rest, 1, `Give the kind to record: record <kind>, one of ${RECORD_KINDS.join(', ')}`);
       if (!RECORD_KINDS.includes(rest[0])) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
