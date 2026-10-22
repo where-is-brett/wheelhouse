@@ -51,7 +51,7 @@ const run = (base, home, input, platform = process.platform) => decide(input, { 
 
 const FILE_TOOLS = ['Read', 'Edit', 'Write', 'MultiEdit'];
 
-test('.env, .env.local and .ENV.local are refused; .env.example is read', async () => {
+test('.env, .env.local, .ENV.local and .env.example are refused', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
     try {
@@ -62,11 +62,11 @@ test('.env, .env.local and .ENV.local are refused; .env.example is read', async 
       }
       assert.ok(denied(await run(base, home, call(main, 'Read', { file_path: '.env' }), 'darwin')), 'relative to cwd');
       assert.ok(denied(await run(base, home, call(main, 'NotebookEdit', { notebook_path: path.join(main, '.env') }), 'darwin')));
-      assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(main, '.env.example') })), undefined);
+      assert.ok(denied(await run(base, home, call(main, 'Read', { file_path: path.join(main, '.env.example') }))));
       assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(main, 'a.txt') })), undefined);
       assert.ok(denied(await run(base, home, call(main, 'Glob', { pattern: '**/.env*' }))));
       assert.ok(denied(await run(base, home, call(main, 'Grep', { pattern: 'x', glob: '.env.local' }))));
-      assert.equal(await run(base, home, call(main, 'Glob', { pattern: '**/.env.example' })), undefined);
+      assert.ok(denied(await run(base, home, call(main, 'Glob', { pattern: '**/.env.example' }))));
       assert.equal(await run(base, home, call(main, 'Grep', { pattern: 'x' })), undefined);
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
@@ -167,7 +167,7 @@ test('Bash allows git commit and node scripts', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
     try {
-      for (const cmd of ['git commit -m "Add the thing"', 'git status && git diff', 'node scripts/x.js --flag', 'cat .env.example', 'ls -la | wc -l',
+      for (const cmd of ['git commit -m "Add the thing"', 'git status && git diff', 'node scripts/x.js --flag', 'ls -la | wc -l',
         'echo "a; b" > out.txt', 'git log --oneline', 'sh -c "echo hi"']) {
         assert.equal(await run(base, home, call(main, 'Bash', { command: cmd })), undefined, cmd);
       }
@@ -426,6 +426,31 @@ for (const cmd of MORE_REFUSED) {
     });
   });
 }
+
+const REV_ENV_REFUSED = ['git show HEAD:.env.local', 'git show HEAD:.env', 'git show :.env', 'git show main:sub/.env.production', 'git cat-file -p HEAD:.env',
+  'git cat-file blob HEAD:.env.local', 'git diff HEAD:.env HEAD~1:.env', "git -C x show 'HEAD:.env.local'", 'git log -p -- .env.local',
+  'git grep x HEAD -- .env', 'git show HEAD:.e*'];
+for (const cmd of REV_ENV_REFUSED) {
+  test(`Bash refuses an .env file behind a revision: ${cmd}`, async () => {
+    await withHome(async (home) => {
+      const { base, main } = makeProject();
+      try {
+        assert.ok(denied(await run(base, home, call(main, 'Bash', { command: cmd }), 'darwin')));
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    });
+  });
+}
+
+test('Bash refuses .env.example', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const cmd of ['cat .env.example', 'cp .env.example .env.local']) {
+        assert.ok(denied(await run(base, home, call(main, 'Bash', { command: cmd }), 'darwin')), cmd);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
 
 test('Bash allows git stash push and a push that is only an option value', async () => {
   await withHome(async (home) => {

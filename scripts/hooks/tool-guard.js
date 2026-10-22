@@ -86,7 +86,7 @@ function expandHome(given, home, windows) {
 
 function envName(name, fold) {
   const n = fold(name);
-  return n.startsWith('.env') && n !== '.env.example';
+  return n.startsWith('.env');
 }
 
 // On Windows a path part may end in dots or spaces and carry an NTFS stream
@@ -154,7 +154,7 @@ function fileRefusal(input, { home, platform, pluginRoot }) {
   return null;
 }
 
-// Whether a Glob pattern or Grep glob names a .env file other than .env.example.
+// Whether a Glob pattern or Grep glob names a .env file.
 function patternNamesEnv(pattern, fold) {
   return pattern.split(/[\\/{},]/).some((part) => envName(part, fold));
 }
@@ -210,7 +210,8 @@ function bashRefused(command, windows, fold, depth = 0) {
       if (GIT_PUSHERS.has(names[i])) return true;
       if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
       for (const candidate of [word, value]) {
-        const name = fold(lastPart(candidate));
+        // A '<rev>:' prefix, as in HEAD:.env, is a path boundary too.
+        const name = fold(candidate.split(/[\\/:]/).at(-1));
         if (envName(name, fold) || (name.startsWith('.e') && /[*?[]/.test(name))) return true;
       }
       if (names[i] === 'eval' && again(seg.slice(i + 1).join(' '))) return true;
