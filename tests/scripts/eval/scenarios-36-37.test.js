@@ -70,10 +70,10 @@ test('the cards are composed by cli.js card, numbered as the scenarios need, and
   const numbers = boardNumbers(four.seed);
   assert.deepEqual(CARDS_37.map((c) => numbers[c.id]), [1, 2, 3, 4]);
   assert.equal(four.seed.filter((e) => e.kind === 'asked').length, 2, 'cards 3 and 4 are new');
-  assert.equal(await wakePrompt(numbers), 'Wheelhouse courier: 2 new cards (3 and 4). Send Claude\'s notification in one line, then ask any new cards now, once.');
+  assert.equal(await wakePrompt(numbers), 'Wheelhouse courier: 2 new cards (3 and 4). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 3 and 4. Then ask any new cards now, once.');
   assert.throws(() => scenario37.prompt, /made by its setup/);
   // The not-sent legs: the same card wake, and the courier's one reminder for the two cards.
-  assert.equal(await reminderPrompt(numbers), 'Wheelhouse courier: cards 3 and 4 are still waiting. Send Claude\'s notification in one line, then ask them now, once.');
+  assert.equal(await reminderPrompt(numbers), 'Wheelhouse courier: cards 3 and 4 are still waiting. Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 3 and 4. Then ask them now, once.');
   assert.throws(() => scenario37NotSent.prompt, /made by its setup/);
   assert.throws(() => scenario37Reminder.prompt, /made by its setup/);
   assert.deepEqual([scenario37NotSent.id, scenario37NotSent.leg, scenario37Reminder.id, scenario37Reminder.leg], [37, 'unsent', 37, 'reminder']);

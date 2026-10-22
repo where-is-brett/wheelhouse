@@ -209,3 +209,14 @@ export const PHONE_REACHES = 'Only things that need you, finished features and b
 export const healthVerdict = (passed, total) => (passed === total
   ? `All ${total} checks passed. Wheelhouse is ready.`
   : `${passed} of ${total} checks passed. Here is what to do.`);
+
+// The notification's title, and what it says when STOP is on (design section 23.8). A notification
+// carries counts and card numbers only, never a card's words.
+export const NOTIFICATION_TITLE = 'Wheelhouse';
+export const NOTIFICATION_TITLE_STOP = 'Wheelhouse · STOP is on';
+export const STOP_NOTIFICATION = 'Every builder has halted. Open Claude to see why.';
+// "2 waiting on you: cards 3 and 4." from the cards' numbers, in order.
+export function waitingOnYou(numbers) {
+  const named = numbers.length === 1 ? String(numbers[0]) : `${numbers.slice(0, -1).join(', ')} and ${numbers.at(-1)}`;
+  return `${numbers.length} waiting on you: ${numbers.length === 1 ? 'card' : 'cards'} ${named}.`;
+}

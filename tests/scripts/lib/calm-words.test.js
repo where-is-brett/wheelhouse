@@ -38,12 +38,13 @@ test('every set word is one line of British English with no exclamation mark', (
     ...Object.entries(words.EMPTY_PARTS).map(([key, value]) => [`EMPTY_PARTS.${key}`, value]),
     ['setupStepLine', words.setupStepLine(3, 9, 2)], ['setupMeanwhile', words.setupMeanwhile('Node.js is still installing')],
     ['toolsInstalling', words.toolsInstalling(['git', 'gh'])], ['connectingTo github', words.connectingTo('github')], ['connectingTo gitlab', words.connectingTo('gitlab')],
+    ['waitingOnYou', words.waitingOnYou([3, 4])],
     ['healthVerdict green', words.healthVerdict(4, 4)], ['healthVerdict red', words.healthVerdict(3, 4)],
     ...Object.entries(words.SETUP_DOING).map(([key, value]) => [`SETUP_DOING.${key}`, value]),
     ...Object.entries(words.SETUP_DONE).map(([key, value]) => [`SETUP_DONE.${key}`, value]),
     ...Object.entries(words.SETUP_GOING).map(([key, value]) => [`SETUP_GOING.${key}`, value]),
   );
-  assert.equal(lines.length, 95, 'every word is held');
+  assert.equal(lines.length, 99, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -210,4 +211,13 @@ test('setup\'s step line, meanwhile line, phone words and verdict say what the d
   assert.equal(words.PHONE_REACHES, 'Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit.');
   assert.equal(words.healthVerdict(4, 4), 'All 4 checks passed. Wheelhouse is ready.');
   assert.equal(words.healthVerdict(3, 4), '3 of 4 checks passed. Here is what to do.');
+});
+
+test('the notification\'s title and words are the design\'s, and name only counts and card numbers', () => {
+  assert.equal(words.NOTIFICATION_TITLE, 'Wheelhouse');
+  assert.equal(words.NOTIFICATION_TITLE_STOP, 'Wheelhouse · STOP is on');
+  assert.equal(words.STOP_NOTIFICATION, 'Every builder has halted. Open Claude to see why.');
+  assert.equal(words.waitingOnYou([3, 4]), '2 waiting on you: cards 3 and 4.');
+  assert.equal(words.waitingOnYou([4]), '1 waiting on you: card 4.');
+  assert.equal(words.waitingOnYou([1, 2, 3]), '3 waiting on you: cards 1, 2 and 3.');
 });

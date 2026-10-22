@@ -422,7 +422,8 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   assert.ok(wake.startsWith(`${LEADS.courier} 1 new card (1). `), wake);
   // Claude's notification is asked for before the cards, so the phone hears while the director is away.
   const ask = wake.slice(`${LEADS.courier} 1 new card (1). `.length);
-  assert.ok(ask.indexOf('notification') >= 0 && ask.indexOf('notification') < ask.indexOf('cards'), ask);
+  assert.ok(ask.indexOf('notification') >= 0 && ask.indexOf('notification') < ask.indexOf('ask any new cards'), ask);
+  assert.equal(ask, 'Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 1. Then ask any new cards now, once.');
   // Once.
   assert.equal((await tick(c)).submit, undefined);
 
@@ -445,7 +446,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
 
   // Back: the card held wakes then, and the one already sent doesn't.
   assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Here. Undo in the pane for a minute.' });
-  assert.deepEqual((await tick(c)).submit, [`${LEADS.courier} 1 new card (2). ${ask}`]);
+  assert.deepEqual((await tick(c)).submit, [`${LEADS.courier} 1 new card (2). ${ask.replace('card 1.', 'card 2.')}`]);
   assert.equal(eventsOf('confirmation', profileDir()).length, 2, 'each presence chosen is confirmed');
 }));
 
@@ -454,7 +455,7 @@ test('a STOP wake the mod couldn\'t hand on is undone, and the next tick wakes f
   // STOP from the pane, as the director pressed it after Esc left the session interrupted.
   assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
   const woke = await tick(c);
-  assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, then ask any new cards now, once.`]);
+  assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, titled "Wheelhouse · STOP is on", saying: Every builder has halted. Open Claude to see why. Then ask any new cards now, once.`]);
   assert.deepEqual(woke.woken, [`stop:${stopState().at}`]);
   const { lastWakeAt } = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
   assert.equal(lastWakeAt, woke.wokeAt);

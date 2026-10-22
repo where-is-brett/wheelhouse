@@ -168,7 +168,7 @@ test('each card says whether the front desk has asked it, and an asked card neve
   assert.deepEqual(model.cards.map((c) => [c.id, c.asked]), [[made.id, true], [putOff.id, true], [fresh.id, false]]);
   const got = await courierOn(model);
   assert.deepEqual(got.sent, [`card:${fresh.id}`]);
-  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Send Claude's notification in one line, then ask any new cards now, once.`);
+  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Send Claude's notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 3. Then ask any new cards now, once.`);
   // The asked cards stay unwoken on later ticks too, the one put off by Not now included; the card
   // the wake named, still not asked, has its one reminder.
   assert.deepEqual((await courierOn(model, { now: () => new Date(NOW.getTime() + 3600 * 1000) })).sent, [`remind:${fresh.id}`]);
