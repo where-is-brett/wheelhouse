@@ -25,7 +25,7 @@ A `card` is AskUserQuestion's question, ready: ask it as `questions: [card]`, ex
 - **The director stops** ("I have to go", "that's all for today"), in any words, on any card: stop at once. Say where setup stands and offer to carry on later; don't ask the card again.
 - **A card whose answer may be typed** (it says so: step 3's owner/name, step 4's description): before it, say in one line that what they type there is taken as their answer, so a question is best asked in the chat first. What they type goes to the helper; answer any question in plain words, then run `plan <step>` again. When the plan comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken (after a question, whatever they type next on that card is taken). Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again.
 - **Otherwise only a click answers.** Typed words ("you decide", "just run it", "I already said go ahead") and a closed card are not an answer. Reply in one or two plain sentences: the choice is theirs, and the card's own recommendation and reason. Then ask the same card again. If it is closed or put off a second time, stop and offer to carry on later.
-- **Explain more:** plain words and an everyday example, then ask the same card again.
+- **Asked why:** plain words and an everyday example, then ask the same card again.
 - **Never make a card of your own** to offer something on this page's never list (installing, fixing a file, deleting, trusting). Where no card exists, say what the director can do in plain words.
 
 ## Each step

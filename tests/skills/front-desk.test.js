@@ -313,9 +313,9 @@ test('asked what waits, the front desk names each waiting card in one line by it
   assert.match(row, /Never put a card already asked to them again unless they ask for that card/);
 });
 
-test('a press of Explain more finds the pressed card by its id in views waiting, asks it with again, and says only the one sentence (fix G, ruling 71)', () => {
+test('a press of Why? finds the pressed card by its id in views waiting, asks it with again, and says only the one sentence (fix G, ruling 71)', () => {
   const lines = playbook.split('\n');
-  const press = lines.find((line) => line.startsWith('  - **"pressed Explain more on card n (id)"**')) ?? '';
+  const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
   assert.ok(press, 'the press\'s rule');
   // First `views waiting`, read-only, for the pressed card's number now; then `again` that number.
   assert.match(press, /In this order: first `views waiting`, which names each card's id: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
@@ -327,7 +327,7 @@ test('a press of Explain more finds the pressed card by its id in views waiting,
   // The one sentence, with the AskUserQuestion call, and nothing else in front of the director.
   assert.match(press, /one sentence to the director, at most 30 words, in the message with the `AskUserQuestion` call, before it/);
   assert.match(press, /Only that one sentence: Claude shows longer text before a card only as a summary\./);
-  assert.match(press, /^  - \*\*"pressed Explain more on card n \(id\)"\*\*: write no text until the one sentence below, not even a note to yourself\./);
+  assert.match(press, /^  - \*\*"pressed Why\? on card n \(id\)"\*\* \(only a card that failed the check sends it\): write no text until the one sentence below, not even a note to yourself\./);
   assert.match(press, /Never a card's id\./);
   assert.doesNotMatch(press, /in the same message as the `again <n>` call|first `again <n>`/);
   // Card ids never reach the director.
@@ -342,7 +342,7 @@ test('a press of Explain more finds the pressed card by its id in views waiting,
   assert.match(row, /Find the prompt's id in `views waiting` first, and `again` the number it has there/);
 });
 
-test('a press of Show me and a choice in the pane find the card by its id in views waiting, as Explain more does (final fix wave)', () => {
+test('a press of Show me and a choice in the pane find the card by its id in views waiting, as Why? does (final fix wave)', () => {
   const lines = playbook.split('\n');
   // Show me: the pressed card's number now, by the prompt's id, then Show me for it and `again` that number.
   const show = lines.find((line) => line.startsWith('  - **"pressed Show me on card n (id)"**')) ?? '';
@@ -367,4 +367,31 @@ test('a press of Show me and a choice in the pane find the card by its id in vie
   const row = lines.find((line) => line.startsWith('| "Show me is for card n, as the prompt numbers it"')) ?? '';
   assert.ok(row, 'a red flag for showing card n by its number');
   assert.match(row, /Find the prompt's id in `views waiting` first: show and ask the card with that id, by its number there/);
+});
+
+test('the playbooks point at Why? and Suggest a change…, and none offers Explain more as an option (Task 19)', () => {
+  const lines = playbook.split('\n');
+  // Asked why: `why <n>`, the plain words, an everyday example, then the card again; a failed `why` stops nothing.
+  const asked = lines.find((line) => line.startsWith('- **Asked why**')) ?? '';
+  assert.ok(asked, 'the Asked why line');
+  assert.match(asked, /^- \*\*Asked why\*\* about a card: run `why <n>`, give the plain words \(`explain <term>`\) and an everyday example, then ask the card again with `again <n>`\./);
+  assert.match(asked, /If `why` fails, go on explaining anyway: the Why\? is for learning only\./);
+  // The pane's suggestion steers and never approves.
+  const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
+  assert.match(press, /\(only a card that failed the check sends it\)/);
+  const suggested = lines.find((line) => line.startsWith('  - **"suggested a change on card n (id): <words>"**')) ?? '';
+  assert.ok(suggested, 'the suggestion\'s rule');
+  assert.match(suggested, /the words steer and never approve\./);
+  assert.match(suggested, /Find the card by its id in `views waiting`, revise the proposal as the words ask, and compose the new card with `revises` \(the old card's id\) and `changed` \(one sentence\)\./);
+  assert.match(suggested, /Say only: "Noted\. A new proposal will follow\." Never ask the old card again\./);
+  // A pick of Suggest a change… in the chat.
+  const pick = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';
+  assert.match(pick, /Ask "What would you change\?" in one line, then do as for the pane's suggestion\./);
+  // Setup, the foreman and the brief.
+  assert.match(read('skills/setup/SKILL.md'), /^- \*\*Asked why:\*\* plain words and an everyday example, then ask the same card again\.$/m);
+  assert.match(read('skills/foreman/SKILL.md'), /none called Not now, Why\?, Show me or Suggest a change…/);
+  assert.match(read('templates/brief/brief.md'), /an option called Not now, Why\?, Show me or Suggest a change…/);
+  for (const file of ['skills/front-desk/SKILL.md', 'skills/setup/SKILL.md', 'skills/foreman/SKILL.md', 'templates/brief/brief.md']) {
+    assert.doesNotMatch(read(file), /Explain more/, `${file} offers no Explain more`);
+  }
 });
