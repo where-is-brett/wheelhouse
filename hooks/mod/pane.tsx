@@ -358,7 +358,7 @@ function nextLine(card: Record<string, unknown>): string {
 
 // The pane, top to bottom (design section 23.3): the line saying what is shown is old; STOP, or
 // the STOP is on group; the verdict; the card, with the next card's subject and Back and Next;
-// what is being built; launch; health and this week; and the foot, whose Settings is the only button on the board view (the settings view has its own Board). Each is a group, and an empty
+// what is being built; launch; health and this week; and the foot, whose Settings is the only button on the board view (the settings view has its own Done). Each is a group, and an empty
 // one is left out. Every line is plain Text: a card's text is drawn whole, as written, and the
 // bridge has made every other line one line of plain words. Or the settings view.
 export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
@@ -428,7 +428,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box flexDirection="column" gap="sm">
         {staleNode}
         {stopPart}
-        {await drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live)}
+        {await drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live, now)}
       </Box>
     )
   }

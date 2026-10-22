@@ -354,7 +354,7 @@ test('the pane origin is sent only from a press', async ($, on) => {
     await ui.press({ key: 'next' })
     await ui.press({ key: 'back' })
     await ui.press({ key: 'settings' })
-    await ui.press({ key: 'board' })
+    await ui.press({ key: 'done' })
     expect(seen.requests.length).toBeGreaterThan(0)
     expect(seen.ticks.length).toBeGreaterThan(0)
     expect([...seen.requests, ...seen.ticks].filter((r: any) => r.origin === 'pane')).toEqual([])

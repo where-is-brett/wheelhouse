@@ -105,6 +105,22 @@ export type WheelhouseSettingsRow = {
   why?: string;
 };
 
+// A row of a settings group (scripts/mod/settings-pane.js settingsGroups). A `select` row has its
+// `options` and the `value` in force, which is null when a temporary setting matches no option;
+// its words are then in `current`. `changed` is there while the change can still be undone.
+export type WheelhouseGroupRow = {
+  key?: string;
+  label?: string;
+  value?: string | null;
+  kind?: 'select' | 'change' | 'value';
+  options?: { value?: string; label?: string }[];
+  current?: string;
+  changed?: { at?: string | number; undo?: boolean };
+};
+
+// A group of the settings view, with its note (empty for none).
+export type WheelhouseSettingsGroup = { id?: string; title?: string; note?: string; rows?: WheelhouseGroupRow[] };
+
 // The press the bridge is recording: where it was made (a card's id, `setting:<key>`, or
 // `lift-stop`) and the label pressed.
 export type WheelhousePressing = { on: string; label: string };
@@ -148,11 +164,13 @@ declare module 'claude-code' {
       view: 'board' | 'settings';
       // The settings view's rows as the bridge last answered them, its line under them, and
       // whether the last read failed; null while they are being read.
-      settings: { rows: WheelhouseSettingsRow[]; text: string | null; failed: boolean } | null;
+      settings: { rows: WheelhouseSettingsRow[]; groups: WheelhouseSettingsGroup[]; text: string | null; failed: boolean } | null;
       // The keys of the settings rows whose Ask the front desk has been handed over since the
       // settings view was last opened. Each is drawn as plain text until the view is opened again,
       // so a double click asks once.
       asked: string[];
+      // On the phone, the key of the settings row whose choices are open on their own page, or null.
+      choosing: string | null;
     };
   }
 }

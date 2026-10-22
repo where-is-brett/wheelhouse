@@ -7,7 +7,7 @@
 // buttons stay live during a turn. One press is recorded at a time: while one is, every other
 // button but STOP is drawn as plain text, so a double press sends once. STOP is never held back.
 // The origin `pane` is written only inside the press… functions below and in settings.tsx, each
-// passed as a Button's onPress or an Input's onSubmit; scripts/mod/validate.js checks it.
+// passed as a Button's onPress, an Input's onSubmit or a Select's onSelect; scripts/mod/validate.js checks it.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
 import { body, caption, filled, footnote, heading, link, outlined, small, stop as stopButton } from './calm'

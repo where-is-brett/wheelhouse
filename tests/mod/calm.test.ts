@@ -239,19 +239,19 @@ test('Back and Next are small, and the next card\'s subject is shown', async ($,
   }
 })
 
-test('the foot has Settings alone on the board view, and Board takes the settings view back', async ($, on) => {
+test('the foot has Settings alone on the board view, and Done takes the settings view back', async ($, on) => {
   const { drawn } = setup(on)
   for (const surface of SURFACES) {
     const ui = await drawn($, surface)
-    expect(await ui.find({ key: 'board' })).toBeUndefined()
+    expect(await ui.find({ key: 'done' })).toBeUndefined()
     expect((await ui.find({ key: 'settings' }))?.type).toBe('Button')
     await ui.press({ key: 'settings' })
     await ui.redraw()
-    expect((await ui.find({ key: 'board' }))?.type).toBe('Button')
+    expect((await ui.find({ key: 'done' }))?.type).toBe('Button')
     expect(await ui.find({ key: 'settings' })).toBeUndefined()
-    await ui.press({ key: 'board' })
+    await ui.press({ key: 'done' })
     await ui.redraw()
-    expect(await ui.find({ key: 'board' })).toBeUndefined()
+    expect(await ui.find({ key: 'done' })).toBeUndefined()
     expect((await ui.find({ key: 'settings' }))?.type).toBe('Button')
     await ui.unmount()
   }

@@ -12,6 +12,8 @@ export const STALE_TICKS = 3
 // The bridge's own limit on a request, and on a Shape 2 foreman's tick.
 export const BRIDGE_MS = 5000
 export const WATCH_BRIDGE_MS = 45000
+// How long a change can be undone (UNDO_MS in scripts/lib/mod-numbers.js).
+export const UNDO_MS = 60000
 // The words every prompt the pane submits starts with.
 export const PANE_LEAD = 'Wheelhouse pane:'
 // A message from a Wheelhouse session starts with this.

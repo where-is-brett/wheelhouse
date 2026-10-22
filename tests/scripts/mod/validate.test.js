@@ -12,7 +12,7 @@ import {
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
 import * as calmWords from '../../../scripts/lib/calm-words.js';
-import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD } from '../../../scripts/lib/mod-numbers.js';
+import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD, UNDO_MS } from '../../../scripts/lib/mod-numbers.js';
 import { BRIDGE_MS } from '../../../scripts/mod/bridge.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 
@@ -248,6 +248,9 @@ test('the pane origin outside a press handler fails', () => {
     "const a = <Input onSubmit={(v) => pressStop($, after, v)} />",
     "const a = <Input onSubmit={async (words) => pressStop($, after, words)} />",
     "const a = <Input onSubmit={(v: string) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={(v) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={async (value) => pressStop($, after, value)} />",
+    "const a = <Select onSelect={(v: string) => pressStop($, after, v)} />",
   ]) {
     assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, true, use);
   }
@@ -265,6 +268,13 @@ test('the pane origin outside a press handler fails', () => {
     "const a = <Input onSubmit={(v, w) => pressStop($, after, v)} />",
     "const a = <Input onSubmit={() => pressStop($, after)} />",
     "const a = <Input onInput={(v) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={pressStop} />",
+    "const a = <Select onSelect={pressStop($, after)} />",
+    "const a = <Select onSelect={v => pressStop($, after, v)} />",
+    "const a = <Select onSelect={(v, w) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={() => pressStop($, after)} />",
+    "const a = <Select onChange={(v) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={(v = pressStop($, after)) => v} />",
     "const a = <Input onSubmit={(v = pressStop($, after)) => v} />",
     "const a = <Button onPress={(v) => pressStop($, after, v)} />",
     "const a = filled(t, 'k', 'L', (v) => pressStop($, after, v))",
@@ -387,13 +397,14 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'UNDO_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
   assert.equal(value('STALE_TICKS'), STALE_TICKS);
   assert.equal(value('BRIDGE_MS'), BRIDGE_MS);
   assert.equal(value('WATCH_BRIDGE_MS'), WATCH_BRIDGE_MS);
+  assert.equal(value('UNDO_MS'), UNDO_MS);
   assert.equal(value('PANE_LEAD'), LEADS.pane);
   assert.equal(value('FOREMAN_LEAD'), FOREMAN_PROMPT_LEAD);
   assert.equal(written.MESSAGE_LEAD, String(MESSAGE_LEAD));

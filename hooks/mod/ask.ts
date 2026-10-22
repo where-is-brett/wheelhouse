@@ -26,6 +26,7 @@ export type Answer = {
   woken?: string[],
   wokeAt?: string,
   rows?: Record<string, unknown>[],
+  groups?: Record<string, unknown>[],
   text?: string,
 }
 
@@ -45,6 +46,7 @@ function answerOf(line: unknown): Answer | null {
   if (Array.isArray(line.submit) && line.submit.every((item) => typeof item === 'string')) answer.submit = line.submit
   if (Array.isArray(line.woken) && line.woken.every((item) => typeof item === 'string')) answer.woken = line.woken
   if (Array.isArray(line.rows) && line.rows.every(isRecord)) answer.rows = line.rows
+  if (Array.isArray(line.groups) && line.groups.every(isRecord)) answer.groups = line.groups
   return answer
 }
 
