@@ -280,7 +280,7 @@ test('a failed commit leaves no empty month folder', async () => {
   try {
     await withHome(async () => {
       const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
-      // Hooks are switched off for the helper's own clones, so a held index lock is what fails the commit.
+      // Hooks are switched off for the helper's own clones, so a held index lock is what fails the add.
       const hook = path.join(dir, '.git', 'index.lock');
       fs.writeFileSync(hook, '');
       const event = makeEvent({ kind: 'note', data: { text: 'plain' }, now: () => new Date('2031-03-04T05:06:07.000Z') });

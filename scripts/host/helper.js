@@ -1199,7 +1199,8 @@ export async function startHelper({
   // stand-in host), https otherwise. The fence in state/git.js reads it from GIT_ALLOW_PROTOCOL.
   const LOCAL_PATHS = { GIT_ALLOW_PROTOCOL: 'https:file' };
   const LOOPBACK_HTTP = { GIT_ALLOW_PROTOCOL: 'https:http' };
-  const reachEnv = (remoteUrl) => ({ local: LOCAL_PATHS, loopback: LOOPBACK_HTTP })[reachFor(remoteUrl)] ?? {};
+  // Always an explicit value, laid last, so a GIT_ALLOW_PROTOCOL in a connection's env never widens an https remote.
+  const reachEnv = (remoteUrl) => ({ local: LOCAL_PATHS, loopback: LOOPBACK_HTTP })[reachFor(remoteUrl)] ?? { GIT_ALLOW_PROTOCOL: 'https' };
   const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
 
   async function ensureStateClone(project, ctx) {

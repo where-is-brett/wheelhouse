@@ -979,3 +979,44 @@ test('on the narrow connection: step 2, step 3 opens the restore, the director a
     }, { envFor });
   } finally { s.cleanup(); }
 });
+
+test('restore-state runs no hook of the director\'s global git config', async () => {
+  const s = await scenario();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-restore-cfg-'));
+  const hooks = path.join(scratch, 'hooks');
+  const marker = path.join(scratch, 'marker');
+  fs.mkdirSync(hooks);
+  for (const name of ['pre-commit', 'post-commit', 'post-checkout', 'post-merge', 'post-rewrite', 'pre-rebase']) {
+    fs.writeFileSync(path.join(hooks, name), `#!/bin/sh\necho ${name} >> '${marker}'\n`, { mode: 0o755 });
+  }
+  const home = path.join(scratch, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[core]\n\thooksPath = ${hooks.replaceAll('\\', '/')}\n`);
+  const keep = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  try {
+    await as(s.home, async () => {
+      const dir = stateDir('o__p');
+      const push = async (_d, branch) => plainPush(dir, branch);
+      const lost = makeEvent({ kind: 'note', data: { text: 'lost' }, now: () => new Date(NOW.getTime() - 2 * HOUR) });
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: lost, push });
+      await writeBackup({ project: 'o__p', now: () => NOW });
+      await g(dir, 'rm', '-q', path.join(dir, eventPath(lost)));
+      await g(dir, 'commit', '-q', '-m', 'lost');
+      await plainPush(dir, 'wheelhouse-state');
+      click(4);
+    });
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    process.env.XDG_CONFIG_HOME = path.join(home, '.config');
+    await viaHelper(s, fakeAdapter(), async (client) => {
+      const answer = await client.runbook.restoreState({ project: 'o__p' });
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+      assert.equal(answer.added, 1);
+    });
+    assert.equal(fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '', '');
+  } finally {
+    for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    s.cleanup();
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});

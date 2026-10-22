@@ -1,7 +1,6 @@
 // scripts/state/git.js
 import path from 'node:path';
-import { run, withoutGitVars } from '../lib/run.js';
-import { safeGitEnv } from '../lib/safe-git.js';
+import { safeGit } from '../lib/safe-git.js';
 
 // Every git call for the state and lock clones goes through here: no shell, a
 // fixed author so the director's own name and address never reach the branch,
@@ -15,12 +14,16 @@ import { safeGitEnv } from '../lib/safe-git.js';
 export function git(dir, args, env = {}) {
   const allowed = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':');
   const reach = allowed.includes('http') ? 'loopback' : allowed.includes('file') ? 'local' : 'https';
-  return run('git', ['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args], {
+  // look 'never': these are Wheelhouse's own clones under ~/.wheelhouse/, which no agent or project
+  // writes into; setup looks once before its sequence, and Task 4 of the security-gaps plan adds the
+  // helper's look once per request.
+  return safeGit({
     cwd: dir,
-    baseEnv: withoutGitVars(),
+    env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env },
+    reach,
+    look: 'never',
     timeoutMs: 5 * 60 * 1000, // a hung remote reads as a failure, not a wait without end
-    env: safeGitEnv({ GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env }, { reach }),
-  });
+  })(['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args]);
 }
 
 const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', git: '9418' };

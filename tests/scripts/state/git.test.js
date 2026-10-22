@@ -65,3 +65,19 @@ test('the commit identity stays Wheelhouse <wheelhouse@invalid>', async () => {
     assert.equal(log.stdout.trim(), 'Wheelhouse|wheelhouse@invalid|Wheelhouse|wheelhouse@invalid');
   });
 });
+
+test('plain http on loopback is reached only when the caller allowed it', async () => {
+  const http = await import('node:http');
+  const server = http.createServer((req, res) => { res.statusCode = 404; res.end(); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/o/p.git`;
+  try {
+    await inScratch(async ({ dir }) => {
+      const shut = await git(dir, ['ls-remote', url], {});
+      assert.notEqual(shut.code, 0);
+      assert.match(shut.stderr, /not allowed/);
+      const open = await git(dir, ['ls-remote', url], { GIT_ALLOW_PROTOCOL: 'https:http' });
+      assert.doesNotMatch(open.stderr, /not allowed/);
+    });
+  } finally { server.close(); }
+});
