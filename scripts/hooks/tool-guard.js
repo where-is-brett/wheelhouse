@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf, registeredByPath, beingSetUp } from './kit.js';
-import { segments } from './shell-words.js';
+import { segmentsWithOperators } from './shell-words.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
@@ -230,17 +230,16 @@ function shebangShell(text) {
 // found or read, is not a regular file or is over 1 MB, or its text is refused.
 // Only a regular file is opened, so a device such as /dev/stdin can't block the
 // hook. A binary passes. With byPath, a text file whose shebang names something
-// other than a shell passes too, since a shell does not run it.
-function scriptRefused(file, dir, ctx, depth, byPath = false) {
+// other than a shell passes too, since a shell does not run it, and a missing
+// file passes unless `named` (another word of the command names it).
+function scriptRefused(file, dir, ctx, depth, byPath = false, named = true) {
   if (depth > MAX_DEPTH) return true;
   if (/[$`]/.test(file) || file.startsWith('~')) return true;
   const absolute = path.isAbsolute(file) ? file : dir === null ? null : path.resolve(dir, file);
   if (absolute === null) return true;
   try {
     const stat = fs.statSync(absolute);
-    // By path, a folder or device (the /dev/null of `2>/dev/null`) is not run as a script.
-    if (!stat.isFile()) return !byPath;
-    if (stat.size > SCRIPT_LIMIT) return true;
+    if (!stat.isFile() || stat.size > SCRIPT_LIMIT) return true;
     const head = Buffer.alloc(Math.min(SNIFF, stat.size));
     const fd = fs.openSync(absolute, 'r');
     try {
@@ -252,8 +251,10 @@ function scriptRefused(file, dir, ctx, depth, byPath = false) {
     if (byPath && !shebangShell(head.toString('utf8'))) return false;
     const text = fs.readFileSync(absolute, 'utf8');
     return bashRefused(text, { ...ctx, cwd: path.dirname(absolute) }, depth + 1);
-  } catch {
-    return true;
+  } catch (error) {
+    // A path that runs and is not there fails by itself, unless the command
+    // makes it first; `named` says another word of the command names it.
+    return !(byPath && !named && ['ENOENT', 'ENOTDIR'].includes(error?.code));
   }
 }
 
@@ -267,12 +268,14 @@ function scriptRefused(file, dir, ctx, depth, byPath = false) {
 function bashRefused(command, ctx, depth = 0) {
   const { windows, fold } = ctx;
   if (depth > MAX_DEPTH) return true;
-  const segs = segments(command, windows);
-  if (segs === null) return true;
+  const split = segmentsWithOperators(command, windows);
+  if (split === null) return true;
+  const { segments: segs, operators } = split;
   const again = (text) => bashRefused(text, ctx, depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
   let dir = ctx.cwd ?? null;
-  for (const seg of segs) {
+  const lastParts = segs.flat().map((w) => fold(lastPart(w)));
+  for (const [index, seg] of segs.entries()) {
     const names = seg.map(nameOf);
     for (let i = 0; i < seg.length; i += 1) {
       const word = seg[i];
@@ -297,11 +300,16 @@ function bashRefused(command, ctx, depth = 0) {
         }
       }
     }
+    // The first word after < or > is a redirect's file, not a command.
+    if (operators[index] === '<' || operators[index] === '>') continue;
     const k = commandAt(seg, names);
     if (k >= seg.length) continue;
     const name = names[k];
     const args = seg.slice(k + 1);
-    const script = (file, byPath) => scriptRefused(file, dir, ctx, depth, byPath);
+    const script = (file, byPath) => {
+      const named = lastParts.filter((p) => p === fold(lastPart(file))).length > 1;
+      return scriptRefused(file, dir, ctx, depth, byPath, named);
+    };
     const exec = seg.findIndex((w) => w === '-exec' || w === '-execdir');
     const from = name === 'xargs' ? k : exec;
     if (from >= 0 && names.slice(from + 1).some((n) => SHELLS.has(n))) return true;

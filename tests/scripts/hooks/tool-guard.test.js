@@ -671,7 +671,9 @@ test('Bash refuses a script that runs the host tools', async () => {
 
 test('Bash refuses a script it cannot read first', async () => {
   await inProject(async (ctx) => {
-    for (const command of ['echo "gh pr merge 1" > new.sh; sh new.sh', 'sh /dev/stdin', 'sh sub']) {
+    const commands = ['echo "gh pr merge 1" > new.sh; sh new.sh', 'sh /dev/stdin', 'sh sub', 'sh < t.sh',
+      'echo "gh pr merge 1" > ./t.sh; chmod +x ./t.sh; ./t.sh'];
+    for (const command of commands) {
       assert.ok(denied(await bash(ctx, command)), command);
     }
   });
@@ -682,7 +684,10 @@ test('Bash allows clean scripts, binaries by path and shell names as arguments',
     fs.writeFileSync(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
     fs.writeFileSync(path.join(ctx.main, 'sub', 'ok.sh'), 'echo hi\n');
     fs.writeFileSync(path.join(ctx.main, 'tool.js'), '#!/usr/bin/env node\nrequire(\'gh\')\n');
-    const commands = ['sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'which sh', 'command -v bash', 'grep bash a.txt', './tool.js', 'bash -c "echo hi"'];
+    fs.writeFileSync(path.join(ctx.main, 'notes.txt'), 'gh x\n');
+    fs.writeFileSync(path.join(ctx.main, 'out.log'), Buffer.alloc(2 * 1024 * 1024, 97));
+    const commands = ['echo x > out/new.txt', 'npm test > ./out.log', 'echo hi > ./notes.txt', 'node x.js 2>/dev/null', './missing-tool',
+      'sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'which sh', 'command -v bash', 'grep bash a.txt', './tool.js', 'bash -c "echo hi"'];
     if (process.platform !== 'win32') commands.push('/usr/bin/git status');
     for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
   });
