@@ -154,8 +154,10 @@ function refuseFenceOverride(args) {
   const fenceKeys = new Set(FENCE.map(([key]) => key.toLowerCase()));
   for (let i = 0; i < args.length; i += 1) {
     const given = String(args[i]);
-    if (given.startsWith('--config-env=') && fenceKeys.has(given.slice(13).split('=')[0].toLowerCase())) {
-      throw new Error(`safeGit: an argument may not set ${given.slice(13).split('=')[0].toLowerCase()}, a setting of the fence`);
+    // `--config-env=<key>=<var>`, or `--config-env` with `<key>=<var>` as the next argument.
+    const fromEnv = given.startsWith('--config-env=') ? given.slice(13) : given === '--config-env' ? String(args[i + 1] ?? '') : null;
+    if (fromEnv !== null && fenceKeys.has(fromEnv.split('=')[0].toLowerCase())) {
+      throw new Error(`safeGit: an argument may not set ${fromEnv.split('=')[0].toLowerCase()}, a setting of the fence`);
     }
     if (given !== '-c') continue;
     const setting = String(args[i + 1] ?? '');
@@ -171,7 +173,7 @@ function refuseFenceOverride(args) {
 // thrown again on every later call) or 'never' (the fence alone; for a caller whose comment says
 // why). `workTree` makes that folder git's working tree (not for `init`). `options.env` is added
 // before the fence, so a caller cannot lift it. Nor can the arguments: one that sets a fence key
-// with `-c` (git applies it after the environment) is refused, bar a short named list. With
+// with `-c` or `--config-env` (git applies it after the environment) is refused, bar a short named list. With
 // `caller` ('helper', 'foreman', 'survey', 'feature' or 'reinstall'), a refused look throws a
 // LookRefusal worded for that caller (and `what` names the repository); without it, setup's line.
 export function safeGit({

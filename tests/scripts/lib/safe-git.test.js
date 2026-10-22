@@ -222,7 +222,7 @@ test('a caller\'s line keeps its echoed names short, few and plain, and lets no 
 test('an argument may not lift the fence with -c, bar the named exception', async () => {
   const r = await repo();
   const git = safeGit({ cwd: r.root, look: 'never' });
-  for (const args of [['-c', 'core.hooksPath=/x', 'status'], ['-c', 'core.fsmonitor=/x', 'status'], ['-c', 'CORE.HOOKSPATH=/x', 'status'], ['--config-env=core.sshCommand=VAR', 'status']]) {
+  for (const args of [['-c', 'core.hooksPath=/x', 'status'], ['-c', 'core.fsmonitor=/x', 'status'], ['-c', 'CORE.HOOKSPATH=/x', 'status'], ['--config-env=core.sshCommand=VAR', 'status'], ['--config-env', 'core.pager=VAR', 'status'], ['--config-env', 'CORE.HOOKSPATH=VAR', 'status']]) {
     await assert.rejects(git(args), /may not set/, args.join(' '));
   }
   assert.equal((await git(['-c', 'core.editor=true', 'status', '--porcelain'])).code, 0);
