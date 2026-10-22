@@ -182,10 +182,10 @@ const more = (s) => `- and ${s.items.length - s.shown} more`;
 // A section's length as sectionLines would join it, from the characters of its shown entries
 // (each with the new line before it), without joining them.
 function lengthOf(s, shownChars) {
-  const fixed = [s.heading, ...(s.note ? [s.note] : []), ...(s.head ?? [])].join('\n').length;
-  if (s.items === null) return fixed;
+  const headChars = [s.heading, ...(s.note ? [s.note] : []), ...(s.head ?? [])].join('\n').length;
+  if (s.items === null) return headChars;
   const cut = s.shown < s.items.length ? 1 + more(s).length : 0;
-  return fixed + shownChars + cut + (s.tail ? 2 + s.tail.length : 0);
+  return headChars + shownChars + cut + (s.tail ? 2 + s.tail.length : 0);
 }
 
 // Cuts the longest sections, entry by entry from their ends, until the whole fits. Each cut

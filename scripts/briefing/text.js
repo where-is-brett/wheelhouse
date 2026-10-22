@@ -106,8 +106,8 @@ function write(b, limit) {
   const waitingPart = parts[1];
   let detail = 0;
   const counted = parts.map(partWords);
-  const fixed = () => wordsIn(verdict) + wordsIn(since) + wordsIn(folded) + wordsIn(usage) + wordsIn(ask);
-  let total = fixed() + counted.reduce((sum, n) => sum + n, 0);
+  const framingWords = () => wordsIn(verdict) + wordsIn(since) + wordsIn(folded) + wordsIn(usage) + wordsIn(ask);
+  let total = framingWords() + counted.reduce((sum, n) => sum + n, 0);
   // The folded line is the first to go, then entries are cut.
   if (total > limit) {
     total -= wordsIn(folded);
