@@ -111,7 +111,6 @@ export function directorSignIn(host, { platform = process.platform } = {}) {
 // its own rows.
 const later = (n) => `moves in Task ${n} of the security-gaps plan`;
 export const RAW_GIT_EXCEPTIONS = Object.freeze([
-  ['scripts/host/helper.js', 'every call fenced in gitIn through safeGitEnv (security-gaps Task 3)'],
   ['scripts/foreman/act.js', later(5)],
   ['scripts/feature/cli.js', later(5)],
   ['scripts/install/survey.js', later(6)],
@@ -126,5 +125,4 @@ export const RAW_GIT_EXCEPTIONS = Object.freeze([
   ['scripts/eval/harness.js', later(11)],
   ['scripts/eval/run.js', later(11)],
   ['scripts/setup/project-files.js', "setup's own fenced route (rulings R109 to R113)"],
-  ['scripts/setup/tools.js', 'runs `git --version` only and reads no repository'],
 ].map(([file, reason]) => Object.freeze({ file, reason })));

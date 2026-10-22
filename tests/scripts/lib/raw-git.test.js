@@ -19,9 +19,10 @@ function jsFiles(dir) {
     return e.name.endsWith('.js') ? [full] : [];
   });
 }
-// A call that names git or the located git as its program (or after the runner): run('git', ...),
+// A process-starting call (run, spawn, execFile and the like; not a fenced wrapper closure) that names git or the located git as its program (or after the runner): run('git', ...),
 // runner(run, gitPath, ...), execSync('git ...'). Not setupGit() or safeGit(), which name no program.
-const runsGit = (text) => /\b\w+\(\s*(?:\w+,\s*)?(?:['"`]git['"`]|gitPath)\s*,/.test(text) || /\bexecSync\(\s*['"`]git\b/.test(text);
+const STARTERS = '(?:run|realRun|runner|runProgram|spawn|spawnSync|execFile|execFileSync)';
+const runsGit = (text) => new RegExp(`\\b${STARTERS}\\(\\s*(?:\\w+,\\s*)?(?:['"\`]git['"\`]|gitPath)\\s*,`).test(text) || /\b\w+\(\s*(?:run|realRun),\s*(?:['"`]git['"`]|gitPath)\s*,/.test(text) || /\bexecSync\(\s*['"`]git\b/.test(text);
 // The files under `root`/scripts that run git by neither route nor listed exception.
 function offenders(root, exceptions) {
   const listed = new Set(exceptions.map((e) => e.file));

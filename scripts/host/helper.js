@@ -463,8 +463,8 @@ const PROFILE_CHANGE = (status, mode, file) => (ALLOWED_CHANGE[STATE_BRANCH](sta
 // Checks every commit up to `sha` that the remote's copy of `branch` lacks.
 // The remote's copy is fetched first; with none, every commit is checked, the
 // root commit included.
-async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = false, push = 'state' }) {
-  const git = (args) => run('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
+async function checkCommits({ dir, branch, sha, gitRun, allowed, refused, scan = false, push = 'state' }) {
+  const git = (args) => gitRun('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
   const tracking = `refs/remotes/${REMOTE}/${branch}`;
   let range = [sha];
   const fetched = await git(['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${branch}:${tracking}`]);
@@ -534,12 +534,14 @@ export function checkRefspec(refspec, defaultBranch) {
 // a lock push may only change lock.json. Resolves with the commit checked,
 // which is the one to push.
 export async function checkPush({
-  refspec, dir, defaultBranch, stateBranch = STATE_BRANCH, lockBranch = LOCK_BRANCH, run = realRun, sha,
+  refspec, dir, defaultBranch, stateBranch = STATE_BRANCH, lockBranch = LOCK_BRANCH, gitRun, sha,
 }) {
+  // The runner is the caller's fenced one; there is no unfenced default.
+  if (typeof gitRun !== 'function') throw new Error('checkPush needs a fenced git runner');
   const spelled = checkRefspec(refspec, defaultBranch);
   if (!spelled.allowed) return spelled;
   const { branch } = spelled;
-  const git = (args) => run('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
+  const git = (args) => gitRun('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
 
   const shallow = await git(['rev-parse', '--is-shallow-repository']);
   if (shallow.code !== 0) return { allowed: false, refused: PUSH_REFUSALS.unchecked };
@@ -553,7 +555,7 @@ export async function checkPush({
   if (rules[branch]) {
     const refusal = branch === stateBranch ? PUSH_REFUSALS.state : PUSH_REFUSALS.lock;
     const checked = await checkCommits({
-      dir, branch, sha: commit, run, allowed: rules[branch], refused: refusal, scan: branch === stateBranch,
+      dir, branch, sha: commit, gitRun, allowed: rules[branch], refused: refusal, scan: branch === stateBranch,
     });
     if (!checked.allowed) return checked;
   }
@@ -1018,7 +1020,7 @@ export async function startHelper({
       if (copied !== null) return { ok: false, refused: copied };
 
       const keyed = keyedFor(ctx);
-      const checked = await checkPush({ refspec, dir: mirror, defaultBranch, run: keyed, sha: INCOMING });
+      const checked = await checkPush({ refspec, dir: mirror, defaultBranch, gitRun: keyed, sha: INCOMING });
       if (checked.refused === PUSH_REFUSALS.shallow) {
         // A shallow marker came in with the objects: start the mirror afresh next time.
         fs.rmSync(mirror, { recursive: true, force: true });
@@ -1210,6 +1212,7 @@ export async function startHelper({
   // The git environment of a connection: the key's own pairs (narrow), or the director's sign-in
   // through the host tool (quick), with the transport the recorded remote needs laid last.
   const signInHost = (project) => hostOf(readProject(project)?.host);
+  // An unknown host maps to null: quick then has no credential helper at all and fails closed.
   const hostOf = (host) => (host === 'github' || host === 'gitlab' ? host : null);
   const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(mode === 'narrow' ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
   const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
@@ -1398,7 +1401,7 @@ export async function startHelper({
     const sha = resolved.stdout.trim();
     if (resolved.code !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return { ok: false, refused: PUSH_REFUSALS.missing };
     const checked = await checkCommits({
-      dir, branch: PROFILE_BRANCH, sha, run: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'), push: 'profile',
+      dir, branch: PROFILE_BRANCH, sha, gitRun: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'), push: 'profile',
     });
     if (!checked.allowed) return { ok: false, refused: checked.refused };
     if (stopped()) return STOP_REFUSAL;
@@ -1598,10 +1601,10 @@ export async function startHelper({
     return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
   }
 
-  // Whether the configuration git reads when `runner` runs in `mirror` sets any
+  // Whether the configuration git reads when the fenced `fenced` runs in `mirror` sets any
   // key matching `pattern`: 'none', 'some', or 'unreadable'.
-  async function configSets(runner, mirror, pattern) {
-    const listed = await runner('git', ['config', '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
+  async function configSets(fenced, mirror, pattern) {
+    const listed = await fenced('git', ['config', '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
     if (listed.code === 1) return 'none';
     if (listed.code !== 0) return 'unreadable';
     return listed.stdout.trim() === '' ? 'none' : 'some';

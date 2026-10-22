@@ -1109,9 +1109,19 @@ test('a hostile global git config reaches none of the helper\'s git, in quick or
         await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
         await g(dir, 'branch', '-f', 'feature');
         // Only the helper and its git see the hostile home; the test's own git calls do not.
+        const calls = [];
+        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
         await withProcessEnv({ HOME: scratch, USERPROFILE: scratch, XDG_CONFIG_HOME: path.join(scratch, 'xdg') }, () => withHelper(fakeAdapter(), async (client) => {
           assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
-        }, { envFor }));
+        }, { envFor, run: recordingRun }));
+        // The local-path remote never asks for a credential, so the helper's pairs are checked directly.
+        const pushEnv = calls.find((c) => c.args.includes('push')).options.env;
+        const helpers = pairsOf(pushEnv).filter(([k]) => k === 'credential.helper').map(([, v]) => v);
+        if (label === 'quick') {
+          assert.equal(helpers.length, 2, 'quick: the cleared list, then the host tool');
+          assert.equal(helpers[0], '');
+          assert.match(helpers[1], / auth git-credential$/);
+        } else assert.deepEqual(helpers, [], 'narrow: no credential helper');
       });
       const heads = async (url) => (await run('git', ['ls-remote', '--heads', url], { env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } })).stdout;
       assert.match(await heads(p.remote.url), /refs\/heads\/feature/, `${label}: lands on the recorded remote`);
@@ -1128,11 +1138,11 @@ test('a local path is reached only for a project whose recorded remote is one', 
       const dir = stateDir('o__p');
       const calls = [];
       const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
-      const protocolOfFetch = async () => {
+      const protocolOfFetch = async (keyEnv = null) => {
         calls.length = 0;
         await withHelper(fakeAdapter(), async (client) => {
           await client.testMerge({ project: 'o__p', a: 'main', b: 'wheelhouse-state' });
-        }, { run: recordingRun });
+        }, { run: recordingRun, ...(keyEnv ? { envFor: async () => keyEnv } : {}) });
         return calls.find((c) => c.args.includes('fetch') && c.args.includes('origin'))?.options.env.GIT_ALLOW_PROTOCOL;
       };
       assert.equal(await protocolOfFetch(), 'https:file', 'a local-path remote: a local path is reached');
@@ -1140,6 +1150,9 @@ test('a local path is reached only for a project whose recorded remote is one', 
       writeProject('o__p', { folder: os.tmpdir(), remoteUrl, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
       await g(dir, 'remote', 'set-url', 'origin', remoteUrl);
       assert.equal(await protocolOfFetch(), 'https', 'an https remote: https only');
+      // A connection whose own environment asks for a local path does not widen an https remote.
+      const asked = await protocolOfFetch({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR, GIT_ALLOW_PROTOCOL: 'https:file' });
+      assert.equal(asked, 'https', 'a narrow environment asking for https:file on an https record: https only');
     });
   } finally { p.cleanup(); }
 });
