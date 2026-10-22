@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
-import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
+import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, beingSetUp } from './kit.js';
 import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';

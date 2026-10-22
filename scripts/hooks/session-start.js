@@ -112,7 +112,7 @@ export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLO
 // Each agent's tool sheet. The adapters' registry (scripts/agents/index.js) reaches the setup and
 // evaluation code, which a hook must not load, so the session start holds each sheet on its own, as
 // the kit holds each agent's translation. An agent with no entry here is given no sheet.
-const TOOL_SHEETS = Object.freeze({ 'claude-code': claudeCodeSheet });
+export const TOOL_SHEETS = Object.freeze({ 'claude-code': claudeCodeSheet });
 
 // The lines that tell a session its agent's tools and where the Wheelhouse command is: the agent's
 // tool sheet, then the command line (the front desk's command, which the playbooks' other scripts

@@ -116,22 +116,25 @@ function failureLine({ code, stderr }) {
   return `Locked may be partly changed (exit code ${code}): run the update again`;
 }
 
-// The command the administrator prompt runs, as one chain. The new scripts, the
-// lineage folder (the manifest the session start checks the installed skills against,
-// and the register), the adapters' folder (the hook kit and guards import from it) and Node.js go in beside the live ones and are checked there; only then are they
-// swapped in (mv), so a failed copy never leaves them missing. A failure removes
-// what was copied and exits. The settings file goes in last, and everything is
+// The command the administrator prompt runs, as one chain. The new scripts, the lineage folder
+// (the manifest the session start checks the installed skills against, and the register), the
+// adapters' folder (the hook kit and guards import from it) and Node.js go in beside the live ones
+// and are checked there; only then are they swapped in (mv), so a failed copy never leaves them
+// missing. The adapters go in first: the new scripts import from that folder and the old scripts
+// never do, so a hook firing between two swaps never meets new scripts without their adapters. A
+// failure removes what was copied and exits. The settings file goes in last, and everything is
 // root's and not writable by anyone else.
 function adminShell({ dir, stage, nodeSource }) {
   const own = path.join(dir, 'wheelhouse');
-  const names = [...LOCKED_FOLDERS, 'bin'];
+  // The swap order: adapters, then the other folders, then bin (which the destructuring below takes last).
+  const names = ['adapters', ...LOCKED_FOLDERS.filter((n) => n !== 'adapters'), 'bin'];
   const [fresh, aside, live] = ['.new', '.old', ''].map((suffix) => names.map((n) => q(path.join(own, `${n}${suffix}`))));
   const [binNew, binOld, bin] = [fresh.at(-1), aside.at(-1), live.at(-1)];
   const settingsNew = q(`${filePath(dir)}.new`);
   const chain = [
     `mkdir -p ${q(own)}`,
     `rm -rf ${[...fresh, ...aside].join(' ')} ${settingsNew}`,
-    ...LOCKED_FOLDERS.map((n, i) => `cp -R ${q(path.join(stage, 'wheelhouse', n))} ${fresh[i]}`),
+    ...names.slice(0, -1).map((n, i) => `cp -R ${q(path.join(stage, 'wheelhouse', n))} ${fresh[i]}`),
     `mkdir ${binNew}`,
     `cp ${q(nodeSource)} ${q(path.join(own, 'bin.new', 'node'))}`,
     `chmod 755 ${q(path.join(own, 'bin.new', 'node'))}`,

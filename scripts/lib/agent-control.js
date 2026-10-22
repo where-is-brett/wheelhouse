@@ -66,7 +66,9 @@ export function plainControlNames() {
 }
 
 // The control patterns as the sandbox's write list names them: `./name`, folders without `/**`,
-// and none with a wildcard (its list skips wildcards on Linux and WSL2).
+// and none with a wildcard (its list skips wildcards on Linux and WSL2). A name that may sit in any
+// folder (`**/X`) is named as the one in the project's root, the one place a literal path can reach.
 export function controlWritePaths() {
-  return AGENT_CONTROL.map((p) => (p.endsWith('/**') ? p.slice(0, -3) : p)).filter((p) => !/[*?[\]]/.test(p)).map((p) => `./${p}`);
+  return AGENT_CONTROL.map((p) => (p.endsWith('/**') ? p.slice(0, -3) : p.startsWith('**/') ? p.slice(3) : p))
+    .filter((p) => !/[*?[\]]/.test(p)).map((p) => `./${p}`);
 }

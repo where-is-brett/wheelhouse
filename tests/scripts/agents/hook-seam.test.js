@@ -5,6 +5,7 @@ import os from 'node:os';
 import { Readable } from 'node:stream';
 import { hookMain, answer, TRANSLATORS } from '../../../scripts/hooks/kit.js';
 import { READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS } from '../../../scripts/hooks/stop-guard.js';
+import { TOOL_SHEETS } from '../../../scripts/hooks/session-start.js';
 import { AGENTS, adapterFor } from '../../../scripts/agents/index.js';
 import claudeCode from '../../../adapters/claude-code/index.js';
 import tools from '../../../adapters/claude-code/tools.js';
@@ -86,4 +87,8 @@ test('an input shaped like another agent\'s, which the kit has no translation fo
 test('every agent has a kit translation, and Claude Code\'s is the adapter\'s own', () => {
   for (const name of AGENTS) assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);
   assert.equal(TRANSLATORS['claude-code'].translate, adapterFor('claude-code').translate);
+});
+
+test('every agent has a session-start tool sheet, and it is the adapter\'s own', () => {
+  for (const name of AGENTS) assert.equal(TOOL_SHEETS[name], adapterFor(name).toolSheet, `the session start holds a different tool sheet for ${name}`);
 });

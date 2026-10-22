@@ -400,7 +400,7 @@ test('Claude Code\'s deny rules carry the new paths', () => {
   const write = s.sandbox.filesystem.denyWrite;
   for (const p of ['./.github/hooks', './.github/copilot', './.github/agents', './.github/skills', './.github/instructions', './.github/prompts', './.github/copilot-instructions.md',
     './.github/mcp.json', './.github/lsp.json', './.github/plugin', './.agents', './plugin.json', './.plugin', './com.github.copilot', './.vscode', './.codex', './.cursor', './.gemini',
-    './.gitattributes', '~/.copilot', '~/.agents', '~/.vscode/extensions', '~/Library/Application Support/Code/User', '~/AppData/Roaming/Code/User', '~/.config/Code/User']) {
+    './.gitattributes', './AGENTS.md', './GEMINI.md', '~/.copilot', '~/.agents', '~/.vscode/extensions', '~/Library/Application Support/Code/User', '~/AppData/Roaming/Code/User', '~/.config/Code/User']) {
     assert.ok(write.includes(p), p);
   }
   assert.ok(write.every((p) => !p.includes('*')), 'no wildcard in the sandbox list');
