@@ -16,6 +16,7 @@ const REPO = 'a-director/product';
 const PROJECT = 'projects/a-director%2Fproduct';
 const SHA = '46322a2e182ab8e1bcace1b058b1818f5c93f61f';
 const OTHER = '3f6c1a9e2b7d4c8f0a5e1b9d6c2f7a4e8b0d3c5f';
+const A_PARENT = '9999999999999999999999999999999999999999';
 const ENV = { GITLAB_TOKEN: 'glpat-FAKEKEY0123456789', GITLAB_HOST: 'git.example.org' };
 const SINCE = '2026-10-01T00:00:00.000Z';
 const NOW = new Date('2026-10-22T00:00:00.000Z');
@@ -105,35 +106,55 @@ const step4 = recorded('step-4-protection-and-pipelines.json');
 // source "external" (check 71, step 4).
 const POSTED = step4.commands.find((c) => /"source":"external"/.test(c.output) && c.output.startsWith('[{')).output.replace(/<ID>/g, '7').replace(/<TOKEN>|<TIMESTAMP>/g, 'x');
 
-test('pipelinesFor gives the commit\'s pipelines and each merge request\'s head pipeline, newest first', async () => {
+test('pipelinesFor marks the merging request\'s own head pipeline, and a newer run of the commit by another request is not the head', async () => {
   const { a, calls } = adapter('gitlab', [
-    ['/pipelines?sha=', json([{ id: 4, status: 'failed', source: 'merge_request_event', ref: 'refs/merge-requests/7/head', sha: SHA, web_url: 'https://x', user: { username: 'x' } }])],
-    [`/repository/commits/${SHA}/merge_requests`, json([{ iid: 7, state: 'merged' }])],
+    ['/pipelines?sha=', json([
+      { id: 12, status: 'success', source: 'merge_request_event', ref: 'refs/merge-requests/8/head', sha: SHA, web_url: 'https://x', user: { username: 'x' } },
+      { id: 4, status: 'failed', source: 'merge_request_event', ref: 'refs/merge-requests/7/head', sha: SHA },
+    ])],
     ['/merge_requests/7', json({ iid: 7, head_pipeline: { id: 9, status: 'success', source: 'external', ref: 'refs/heads/work-7', sha: SHA, detailed_status: { text: 'x' } } })],
   ]);
-  const got = await a.pipelinesFor(SHA);
-  assert.deepEqual(got, [
-    { id: 9, status: 'success', source: 'external', ref: 'refs/heads/work-7', sha: SHA },
-    { id: 4, status: 'failed', source: 'merge_request_event', ref: 'refs/merge-requests/7/head', sha: SHA },
-  ]);
-  assert.equal(calls.length, 3);
+  const got = await a.pipelinesFor(SHA, { number: 7 });
+  assert.deepEqual(got.map((p) => [p.id, p.source, p.head]), [[12, 'merge_request_event', false], [9, 'external', true], [4, 'merge_request_event', false]]);
+  assert.deepEqual(Object.keys(got[0]).sort(), ['head', 'id', 'ref', 'sha', 'source', 'status']);
+  assert.equal(calls.length, 2, 'no other request is read, and none is cut short');
   assert.ok(!JSON.stringify(got).includes('web_url'));
   await assert.rejects(a.pipelinesFor('--help'), /commit/);
+  await assert.rejects(a.pipelinesFor(SHA, { number: 0 }), /whole number/);
+});
+
+test('a head pipeline that did not run on the commit is not kept; one on a merged-results commit whose parent it is, is', async () => {
+  const stranger = { id: 20, status: 'success', source: 'merge_request_event', ref: 'refs/merge-requests/7/head', sha: OTHER };
+  const one = adapter('gitlab', [['/pipelines?sha=', json([])], ['/merge_requests/7', json({ head_pipeline: stranger })]]);
+  assert.deepEqual(await one.a.pipelinesFor(SHA, { number: 7 }), []);
+  const results = { id: 21, status: 'success', source: 'merge_request_event', ref: 'refs/merge-requests/7/merge', sha: OTHER };
+  const two = adapter('gitlab', [
+    ['/pipelines?sha=', json([])],
+    [`/repository/commits/${OTHER}`, json({ id: OTHER, parent_ids: [A_PARENT, SHA] })],
+    ['/merge_requests/7', json({ head_pipeline: results })],
+  ]);
+  assert.deepEqual((await two.a.pipelinesFor(SHA, { number: 7 })).map((p) => [p.id, p.head]), [[21, true]]);
+  const elsewhere = adapter('gitlab', [
+    ['/pipelines?sha=', json([])],
+    [`/repository/commits/${OTHER}`, json({ id: OTHER, parent_ids: [A_PARENT] })],
+    ['/merge_requests/7', json({ head_pipeline: results })],
+  ]);
+  assert.deepEqual(await elsewhere.a.pipelinesFor(SHA, { number: 7 }), []);
 });
 
 test('a status the project key posted reads as a pipeline whose source is external (the recorded answer)', async () => {
-  const { a } = adapter('gitlab', [['/pipelines?sha=', { stdout: POSTED }], ['/commits/', json([])]]);
+  const { a } = adapter('gitlab', [['/pipelines?sha=', { stdout: POSTED }]]);
   const [posted] = await a.pipelinesFor(SHA);
   assert.equal(posted.source, 'external');
   assert.equal(posted.status, 'success');
-  assert.deepEqual(Object.keys(posted).sort(), ['id', 'ref', 'sha', 'source', 'status']);
+  assert.equal(posted.head, false);
 });
 
 test('pipelinesFor throws when it could not look, so a failed read is not "no pipeline"', async () => {
   const { a } = adapter('gitlab', [['/pipelines?sha=', { code: 1, stderr: 'glab: 500 Internal Server Error (HTTP 500)' }]]);
-  await assert.rejects(a.pipelinesFor(SHA), /failed/);
-  const lost = adapter('gitlab', [['/pipelines?sha=', json([])], ['/commits/', { code: 1, stderr: 'glab: 500 Internal Server Error (HTTP 500)' }]]);
-  await assert.rejects(lost.a.pipelinesFor(SHA), /failed/);
+  await assert.rejects(a.pipelinesFor(SHA, { number: 7 }), /failed/);
+  const lost = adapter('gitlab', [['/pipelines?sha=', json([])], ['/merge_requests/7', { code: 1, stderr: 'glab: 500 Internal Server Error (HTTP 500)' }]]);
+  await assert.rejects(lost.a.pipelinesFor(SHA, { number: 7 }), /failed/);
 });
 
 // --- protection ---
@@ -145,7 +166,7 @@ const AUDIT = [
 ];
 
 test('on Premium, protectionEvents reads the project\'s audit events and keeps only the protection ones', async () => {
-  const { a, calls } = adapter('gitlab', [['/audit_events', json(AUDIT)]]);
+  const { a, calls } = adapter('gitlab', [['/audit_events', json(AUDIT)], ['/protected_branches', json(BRANCHES)], [PROJECT, json(SETTINGS)]]);
   const got = await a.protectionEvents({ since: SINCE, now: NOW });
   assert.equal(got.source, 'audit-events');
   assert.deepEqual(got.events, [
@@ -153,8 +174,32 @@ test('on Premium, protectionEvents reads the project\'s audit events and keeps o
     { at: '2026-10-14T03:00:00.000Z', by: 'Someone', what: 'Changed an approval rule' },
   ]);
   assert.deepEqual(calls[0].args, ['api', `${PROJECT}/audit_events?created_after=${encodeURIComponent(SINCE)}&per_page=100&page=1`]);
-  assert.equal(calls.length, 1);
   assert.ok(!JSON.stringify(got).includes('10.0.0.9'));
+});
+
+test('on Premium the protection is also read and compared, so a change no audit event names still shows', async () => {
+  const last = { at: '2026-10-05T00:00:00.000Z', branches: { main: { push: [0], merge: [40], force: false } }, pipelinesMustSucceed: true, skippedPipelineCounts: false };
+  const looser = [{ ...BRANCHES[0], merge_access_levels: [{ access_level: 30 }] }];
+  const { a } = adapter('gitlab', [['/audit_events', json([])], ['/protected_branches', json(looser)], [PROJECT, json(SETTINGS)]]);
+  const got = await a.protectionEvents({ since: SINCE, last, now: NOW });
+  assert.equal(got.source, 'audit-events');
+  assert.equal(got.compared, true);
+  assert.equal(got.snapshot.branches.main.merge[0], 30);
+  assert.deepEqual(got.events.map((e) => [e.at, e.what]), [[null, 'main: who may merge changed from Maintainers to Developers + Maintainers']]);
+});
+
+test('on Premium a reading that cannot be made leaves the audit events standing alone, but an unreachable host is thrown', async () => {
+  const cannot = adapter('gitlab', [['/audit_events', json(AUDIT)], ['/protected_branches', NO_ACCESS], [PROJECT, json(SETTINGS)]]);
+  const got = await cannot.a.protectionEvents({ since: SINCE, now: NOW });
+  assert.equal(got.compared, false);
+  assert.equal(got.events.length, 2);
+  const away = adapter('gitlab', [['/audit_events', json(AUDIT)], ['/protected_branches', { code: 1, stderr: 'dial tcp: connection refused' }]]);
+  assert.equal((await away.a.protectionEvents({ since: SINCE, now: NOW }).catch((e) => e)).code, 'HOST_UNREACHABLE');
+});
+
+test('a failure that names no HTTP status in brackets is thrown, not read as a status', async () => {
+  const { a } = adapter('gitlab', [['/audit_events', { code: 1, stderr: 'glab: request to 403.example.org failed' }]]);
+  await assert.rejects(a.protectionEvents({ since: SINCE, now: NOW }), /failed/);
 });
 
 const BRANCHES = [{ id: 1, name: 'main', push_access_levels: [{ access_level: 0 }], merge_access_levels: [{ access_level: 40 }], allow_force_push: false, extra: 'x' }];
@@ -248,11 +293,13 @@ test('every history call only reads, and no key is in an argument', async () => 
   const { a, calls } = adapter('gitlab', [
     ['merge_requests?state=merged', json([])],
     ['/pipelines?sha=', json([])],
-    ['/commits/', json([])],
+    ['/merge_requests/7', json({})],
     ['/audit_events', json([])],
+    ['/protected_branches', json([])],
+    [PROJECT, json({})],
   ]);
   await a.mergedRequests({ since: SINCE });
-  await a.pipelinesFor(SHA);
+  await a.pipelinesFor(SHA, { number: 7 });
   await a.protectionEvents({ since: SINCE, now: NOW });
   for (const call of calls) {
     assert.equal(call.args[0], 'api');

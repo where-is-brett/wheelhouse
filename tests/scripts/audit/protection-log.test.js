@@ -90,3 +90,22 @@ test('a reading that cannot be kept is said, and the report still has its change
   const got = await keepingProtection({ project: 'shop', adapter: reading(snap('2026-10-05T00:00:00.000Z')), now: clock('2026-10-05T00:00:00.000Z') })({ since: SINCE });
   assert.equal(got.kept, false);
 }));
+
+test('where there are audit events and the protection could also be read, the reading is kept and both kinds of change are shown', () => withHome(async () => {
+  const adapter = {
+    async protectionEvents({ last }) {
+      return {
+        source: 'audit-events', compared: true, first: last === null, snapshot: snap('2026-10-10T00:00:00.000Z', [30]),
+        events: [
+          { at: '2026-10-08T00:00:00.000Z', by: 'x', what: 'Changed a protected branch' },
+          ...(last === null ? [] : [{ at: null, by: null, what: 'main: who may merge changed', between: [last.at, '2026-10-10T00:00:00.000Z'] }]),
+        ],
+      };
+    },
+  };
+  writeProtectionLog('shop', { snapshot: snap('2026-10-05T00:00:00.000Z'), changes: [] });
+  const got = await keepingProtection({ project: 'shop', adapter, now: clock('2026-10-10T00:00:00.000Z') })({ since: SINCE });
+  assert.equal(got.source, 'audit-events');
+  assert.deepEqual(got.events.map((e) => e.what), ['Changed a protected branch', 'main: who may merge changed']);
+  assert.equal(readProtectionLog('shop').changes.length, 1, 'only the compared change is kept; audit events are read afresh');
+}));

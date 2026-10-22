@@ -50,7 +50,7 @@ function stub({ requests = [], pipelines = {}, states = {}, protection = { sourc
   return {
     calls,
     async mergedRequests(args) { calls.push(['mergedRequests', args]); if (fail.merged) throw fail.merged; return requests; },
-    async pipelinesFor(sha) { calls.push(['pipelinesFor', sha]); if (fail.pipelines) throw fail.pipelines; return pipelines[sha] ?? [run(1, 'merge_request_event')]; },
+    async pipelinesFor(sha, options) { calls.push(['pipelinesFor', sha, options]); if (fail.pipelines) throw fail.pipelines; return pipelines[sha] ?? [run(1, 'merge_request_event')]; },
     async protectionEvents(args) { calls.push(['protectionEvents', args]); if (fail.protection) throw fail.protection; return protection; },
     async prState(number) {
       calls.push(['prState', number]);
@@ -262,25 +262,20 @@ test('on Free, the first look has no earlier reading and says so, without callin
 
 // --- Lean ---
 
+const lean = (pr, kind, data, when) => ({ ...plain(kind, data, when), tier: 'lean' });
+
 test('Lean\'s entries are marked, not gaps', async () => {
   await withHome(async () => {
-    const lean = (pr, kind, data, when) => ({ ...plain(kind, data, when), tier: 'lean' });
     const events = [
-      // Made at Lean, before the project moved up: a merge with no host record, an approval for a
-      // commit that is not the merged one on the host.
+      // Made at Lean, before the project moved up: a merge the host does not list.
       lean(3, 'report', { work: 'old-thing', outcome: 'merged', pr: 3, summary: 's', rulings: [] }),
       lean(3, 'approval', { pr: 3, commit: C }),
-      lean(4, 'approval', { pr: 4, commit: C }),
-      lean(4, 'review', { pr: 4, commit: C, verdict: 'CLEAN' }),
     ];
-    const host = stub({ requests: [merged(4, D)], states: { 3: 'closed' } });
+    const host = stub({ requests: [], states: { 3: 'closed' } });
     const r = await report(events, host);
-    assert.deepEqual(r.gaps, [], 'no gap against the host for anything Lean kept');
+    assert.deepEqual(r.gaps, [], 'no gap against the host for a Lean entry the host does not list');
     assert.deepEqual(host.calls.filter((c) => c[0] === 'prState'), [], 'Lean\'s entries are not looked up on the host');
-    assert.equal(r.lean.length, 4);
-    const four = r.rows.find((x) => x.number === 4);
-    assert.equal(four.lean, true);
-    assert.equal(four.commit, D);
+    assert.equal(r.lean.length, 2);
     const three = r.rows.find((x) => x.number === 3);
     assert.equal(three.lean, true);
     assert.equal(three.onHost, false);
@@ -290,10 +285,38 @@ test('Lean\'s entries are marked, not gaps', async () => {
   });
 });
 
+test('a Lean mark on a change the host lists only labels the row: every check still runs', async () => {
+  await withHome(async () => {
+    // Unsigned records carrying a Lean mark: an approval and a review of C for a change that merged D.
+    // Anyone who can write a record can add the mark, so it removes no gap.
+    const events = [lean(4, 'approval', { pr: 4, commit: C }), lean(4, 'review', { pr: 4, commit: C, verdict: 'CLEAN' })];
+    const r = await report(events, stub({ requests: [merged(4, D)] }));
+    assert.deepEqual(kinds(r), ['no-approval']);
+    const row = r.rows[0];
+    assert.equal(row.lean, true, 'still labelled');
+    assert.equal(row.approvals.length, 0, 'never counted');
+    assert.equal(row.reviews.length, 0);
+    assert.equal(row.leanApprovals[0].commit, C);
+    const text = renderAudit(r);
+    assert.match(text, /\(Lean's\)/);
+    assert.match(text, /Lean's approval \(not counted\)/);
+    assert.match(text, /no-approval/);
+  });
+});
+
+test('a forged Lean entry does not hide a merged commit other than the approved one, or an external pipeline', async () => {
+  await withHome(async () => {
+    const events = [approval(5, A), lean(5, 'approval', { pr: 5, commit: B }), lean(6, 'approval', { pr: 6, commit: C })];
+    const host = stub({ requests: [merged(5, B), merged(6, C)], pipelines: { [C]: [run(9, 'external')] } });
+    const r = await report(events, host);
+    assert.deepEqual(r.gaps.map((g) => [g.kind, g.pr]), [['other-commit', 5], ['no-approval', 6], ['external-pipeline', 6]]);
+  });
+});
+
 test('a Lean entry does not cover a change that has records of its own at the merged commit', async () => {
   await withHome(async () => {
-    const lean = { ...approval(4, C), tier: 'lean' };
-    const r = await report([lean, approval(4, D)], stub({ requests: [merged(4, D)] }));
+    const mark = { ...approval(4, C), tier: 'lean' };
+    const r = await report([mark, approval(4, D)], stub({ requests: [merged(4, D)] }));
     assert.deepEqual(r.gaps, []);
     assert.equal(r.rows[0].lean, false);
   });
@@ -349,6 +372,62 @@ test('a merged request whose merged commit the host did not give is incomplete, 
     const r = await report([approval(7, A)], stub({ requests: [merged(7, null)] }));
     assert.equal(r.complete, false);
     assert.deepEqual(r.gaps, []);
+  });
+});
+
+test('the merging request is named when the pipelines are asked for', async () => {
+  await withHome(async () => {
+    const host = stub({ requests: [merged(7, A)] });
+    await report([approval(7, A)], host);
+    assert.deepEqual(host.calls.find((x) => x[0] === 'pipelinesFor').slice(1), [A, { number: 7 }]);
+  });
+});
+
+test('a posted status on the merged commit is still the head pipeline when another request ran the commit again, newer', async () => {
+  await withHome(async () => {
+    const other = { ...run(12, 'merge_request_event'), head: false };
+    const head = { ...run(9, 'external'), head: true };
+    const r = await report([approval(7, A)], stub({ requests: [merged(7, A)], pipelines: { [A]: [other, head] } }));
+    assert.deepEqual(kinds(r), ['external-pipeline']);
+    assert.equal(r.rows[0].ci.id, 9);
+  });
+});
+
+test('a record of a merge that names no pull request makes the report incomplete, and is not dropped', async () => {
+  await withHome(async () => {
+    const events = [plain('report', { work: 'a-thing', outcome: 'merged', summary: 's', rulings: [] }, '2026-10-10T00:00:00.000Z')];
+    const r = await report(events, stub());
+    assert.equal(r.complete, false);
+    assert.ok(r.incomplete.some((l) => /does not say which pull request/.test(l)));
+    assert.ok(!/No gaps/.test(renderAudit(r)));
+  });
+});
+
+test('on Free\'s first look the report does not say the protection has not changed', async () => {
+  await withHome(async () => {
+    const r = await report([], stub({ protection: { source: 'compared', compared: true, first: true, events: [] } }));
+    const text = renderAudit(r);
+    assert.match(text, /No gaps: /);
+    assert.match(text, /nothing to compare the protection with yet/);
+    assert.ok(!/protection has not changed/.test(text));
+    const later = await report([], stub({ protection: { source: 'compared', compared: true, first: false, events: [] } }));
+    assert.match(renderAudit(later), /the protection has not changed/);
+  });
+});
+
+test('a kept reading that was damaged makes the report incomplete', async () => {
+  await withHome(async () => {
+    const r = await report([], stub({ protection: { source: 'compared', compared: true, first: true, damaged: true, events: [] } }));
+    assert.equal(r.complete, false);
+    assert.ok(r.incomplete.some((l) => /protection reading kept/.test(l)));
+    assert.ok(!/No gaps/.test(renderAudit(r)));
+  });
+});
+
+test('the limits say what the comparison does not cover', async () => {
+  await withHome(async () => {
+    const text = renderAudit(await report([], stub({ protection: { source: 'compared', compared: true, first: false, events: [] } })));
+    for (const word of ['protected tags', 'merge method', 'discussions', 'member']) assert.match(text, new RegExp(word));
   });
 });
 
@@ -506,6 +585,20 @@ test('the command refuses wrong arguments, an unknown project and a bad date, ea
     assert.match(err.text(), /has not been set up/);
     assert.equal(await main(['--project', 'shop', '--since', 'last week'], options), 1);
     assert.match(err.text(), /must be a time/);
+    assert.equal(out.text(), '');
+  });
+});
+
+test('the command never repeats an error\'s own message, which could carry a key', async () => {
+  await inProject(async ({ options, out, err }) => {
+    const leaky = { ...options, envFor: async () => { throw new Error(`connection failed with ${KEY}`); } };
+    assert.equal(await main(['--project', 'shop', '--since', '2026-10-01'], leaky), 1);
+    assert.ok(!err.text().includes(KEY));
+    assert.match(err.text(), /could not be read/);
+    const down = Object.assign(new Error(HOST_UNREACHABLE('https://git.example.org')), { code: 'HOST_UNREACHABLE' });
+    const away = sink();
+    assert.equal(await main(['--project', 'shop', '--since', '2026-10-01'], { ...options, err: away, envFor: async () => { throw down; } }), 1);
+    assert.match(away.text(), /can't be reached/);
     assert.equal(out.text(), '');
   });
 });

@@ -61,16 +61,21 @@ export function writeProtectionLog(project, { snapshot, changes }) {
 }
 
 // The report's `protectionEvents` for a project: asks the adapter with the earlier reading, and on a
-// host that compares (no audit events) keeps the new reading and the changes it found. Changes
-// first seen before `since` are not shown. Where the host has audit events, nothing is kept.
+// host that read the protection now keeps the new reading and the changes it found (on every licence:
+// a change no audit event names still shows). Changes first seen before `since` are not shown; audit
+// events, which carry their own times, are read afresh each time.
 export function keepingProtection({ project, adapter, now = () => new Date() }) {
   return async ({ since }) => {
     const log = readProtectionLog(project);
     const at = now();
     const result = await adapter.protectionEvents({ since, last: log.snapshot, now: at });
-    if (result.source !== 'compared') return result;
+    // No reading was made (a licence with audit events whose comparison could not be read): nothing to keep.
+    if (!result.snapshot) return result;
+    // A change the comparison found has no time of its own (`at: null`); audit events do, and are read afresh.
+    const found = result.events.filter((e) => e.at === null);
+    const timed = result.events.filter((e) => e.at !== null);
     const seen = at.toISOString();
-    const changes = [...log.changes, ...result.events.map((e) => ({ what: e.what, between: e.between ?? null, observedAt: seen }))];
+    const changes = [...log.changes, ...found.map((e) => ({ what: e.what, between: e.between ?? null, observedAt: seen }))];
     let kept = true;
     try {
       writeProtectionLog(project, { snapshot: result.snapshot, changes });
@@ -78,11 +83,12 @@ export function keepingProtection({ project, adapter, now = () => new Date() }) 
       kept = false;
     }
     return {
-      source: 'compared',
+      source: result.source,
+      compared: true,
       first: log.snapshot === null,
       damaged: log.damaged,
       kept,
-      events: changes.slice(-MOST_CHANGES).filter((c) => c.observedAt >= since).map((c) => ({ at: null, by: null, what: c.what, between: c.between })),
+      events: [...timed, ...changes.slice(-MOST_CHANGES).filter((c) => c.observedAt >= since).map((c) => ({ at: null, by: null, what: c.what, between: c.between }))],
     };
   };
 }

@@ -188,7 +188,7 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
     if (code === 0) return { status: 200, body: json(args, stdout) };
     const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
     if (failure !== null) throw failure;
-    const named = /\(HTTP (\d{3})\)/.exec(stderr) ?? /\b([45]\d\d)\b/.exec(stderr);
+    const named = /\(HTTP (\d{3})\)/.exec(stderr);
     if (named) return { status: Number(named[1]), body: null };
     const said = scrub(stderr || stdout, env);
     throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
@@ -196,9 +196,9 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
   const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
   const c = commands(tools);
 
-  async function history(name, argument) {
+  async function history(name, ...args) {
     if (typeof c[name] !== 'function') throw new Error(HISTORY_GITLAB_ONLY);
-    return c[name](argument);
+    return c[name](...args);
   }
 
   return {
@@ -226,7 +226,8 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
     // The history calls of the audit report. They only read. The host's own history is the second
     // record the report checks the computer's against (scripts/audit/report.js).
     mergedRequests: async ({ since } = {}) => history('mergedRequests', { since: when(since, 'time to read from') }),
-    pipelinesFor: async (sha) => history('pipelinesFor', commit(sha)),
+    // `number` names the request that merged the commit, whose own head pipeline is the one that counts.
+    pipelinesFor: async (sha, { number } = {}) => history('pipelinesFor', commit(sha), number === undefined ? undefined : wholeNumber(number)),
     protectionEvents: async ({ since, last = null, now = new Date() } = {}) => history('protectionEvents', {
       since: when(since, 'time to read from'),
       last: earlier(last),

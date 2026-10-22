@@ -15,8 +15,10 @@
 // merged commit other than the one approved or reviewed (a Merge click on GitLab that names no
 // commit merges one pushed just before, check 71); a merge whose head pipeline was a posted status
 // and not a run (check 71); a change to the protection; a merge the record claims and the host does
-// not show. Entries Lean kept before the project moved up are marked as Lean's, not compared with
-// the host. A report that could not read the host, or all of the record, says it is incomplete and
+// not show. Entries Lean kept before the project moved up are marked as Lean's. A Lean mark is
+// only a label: it is not signed, so it never counts as an approval or a review, and every change
+// the host lists as merged keeps every check; a Lean entry for a change the host does not list is
+// a row, not a gap. A report that could not read the host, or all of the record, says it is incomplete and
 // why, and never says there are no gaps.
 //
 // The records it reads that other parts of the plan have not yet made are read by these names, and a
@@ -89,9 +91,11 @@ function versionsOf(reports) {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-function newestPipeline(pipelines) {
+// The head pipeline: the one the merging request itself had (marked `head`), else the newest of the
+// commit's. Another request's newer run of the same commit is not the head.
+function headPipeline(pipelines) {
   const list = (Array.isArray(pipelines) ? pipelines : []).filter((p) => Number.isInteger(p?.id));
-  const top = list.sort((a, b) => b.id - a.id)[0];
+  const top = list.find((p) => p.head === true) ?? list.sort((a, b) => b.id - a.id)[0];
   return top ? { id: top.id, status: String(top.status ?? 'unknown'), source: typeof top.source === 'string' ? top.source : null } : { id: null, status: 'none', source: null };
 }
 
@@ -115,6 +119,8 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
   };
   const leanEntries = [];
   const levelEvents = [];
+  const unplaced = [];
+  const inPeriodAt = (at) => Date.parse(at) >= Date.parse(sinceIso) && Date.parse(at) <= Date.parse(nowIso);
   for (const e of all) {
     const pr = e.data.pr;
     if (isLean(e)) {
@@ -123,7 +129,12 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
       continue;
     }
     if (e.kind === 'level' && LEVELS.includes(e.data.level) && typeof e.data.allowance !== 'string') levelEvents.push(e);
-    if (!isPr(pr)) continue;
+    if (!isPr(pr)) {
+      // A record of a merge that does not say which pull request cannot be checked against the host.
+      const claimsMerge = e.kind === 'merge' || (e.kind === 'report' && e.data.outcome === 'merged');
+      if (claimsMerge && inPeriodAt(when(e))) unplaced.push(when(e));
+      continue;
+    }
     const s = slot(pr);
     if (e.kind === 'approval') {
       const proof = verify(e, keys) ? proofOf(e) : null;
@@ -148,6 +159,8 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
     }
   }
 
+  for (const at of unplaced) incomplete.push(`A record of a merge${at ? ` at ${at}` : ''} does not say which pull request it is for, so it could not be checked against the host`);
+
   // ---- The host's merges ----
   let requests = [];
   try {
@@ -166,10 +179,11 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
     const commit = typeof r.sha === 'string' && SHA.test(r.sha) ? r.sha : null;
     const approvals = s.approvals.map((a) => ({ ...a, matchesMerged: commit !== null && a.commit === commit }));
     const reviews = s.reviews.map((x) => ({ ...x, matchesMerged: commit !== null && x.commit === commit }));
-    // A change whose records are all Lean's was made before the project moved up: marked, not compared.
-    const lean = s.lean.length > 0 && approvals.length === 0 && reviews.length === 0 && s.unverified === 0;
-    const leanApprovals = lean ? s.lean.filter((e) => e.kind === 'approval').map((e) => ({ commit: e.data.commit, at: when(e), proof: null, matchesMerged: e.data.commit === commit })) : [];
-    const leanReviews = lean ? s.lean.filter((e) => e.kind === 'review').map((e) => ({ commit: e.data.commit, at: when(e), verdict: e.data.verdict ?? null, kind: null, matchesMerged: e.data.commit === commit })) : [];
+    // Lean's entries for this change are shown and labelled, and never counted: they carry no signature
+    // that could be checked, so a change the host lists keeps every check whatever Lean kept.
+    const lean = s.lean.length > 0 && approvals.length === 0 && reviews.length === 0;
+    const leanApprovals = s.lean.filter((e) => e.kind === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e) }));
+    const leanReviews = s.lean.filter((e) => e.kind === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? null }));
 
     // The level the computer ran at: the change's own record, else the latest one before the merge.
     const own = s.levels.sort((a, b) => (when(a) < when(b) ? -1 : 1)).at(-1);
@@ -182,7 +196,7 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
       incomplete.push(`#${r.number}: the host did not say which commit merged, so the record could not be compared with it`);
     } else {
       try {
-        ci = newestPipeline(await host.pipelinesFor(commit));
+        ci = headPipeline(await host.pipelinesFor(commit, { number: r.number }));
         pipelinesRead = true;
       } catch (error) {
         incomplete.push(`#${r.number}: ${plainReason(error, 'The pipelines of the merged commit')}, so its tests are not checked`);
@@ -192,12 +206,12 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
     const row = {
       number: r.number, title: r.title ?? '', url: r.url ?? null, mergedAt: r.mergedAt ?? null, mergedBy: r.mergedBy ?? null,
       commit, onHost: true, lean,
-      approvals: lean ? leanApprovals : approvals, reviews: lean ? leanReviews : reviews,
+      approvals, reviews, leanApprovals, leanReviews,
       ci, level, allowances: s.allowances, versions: versionsOf(s.reports), unverified: { approvals: s.unverified, reviews: s.unverifiedReviews },
     };
     rows.push(row);
 
-    if (!lean && commit !== null) {
+    if (commit !== null) {
       const by = r.mergedBy ? ` by ${r.mergedBy}` : '';
       if (approvals.length === 0) {
         const note = s.unverified > 0 ? `; ${s.unverified} approval ${s.unverified === 1 ? 'record' : 'records'} for it ${s.unverified === 1 ? 'does' : 'do'} not verify (not signed by an enrolled computer, or naming a proof Wheelhouse does not know)` : '';
@@ -266,8 +280,9 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
     rows.push({
       number: pr, title: typeof latestClaim?.data?.work === 'string' ? latestClaim.data.work : '', url: null, mergedAt: when(latestClaim) ?? null, mergedBy: null,
       commit: null, onHost: false, lean: true,
-      approvals: s.lean.filter((e) => e.kind === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e), proof: null, matchesMerged: false })),
-      reviews: s.lean.filter((e) => e.kind === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? null, kind: null, matchesMerged: false })),
+      approvals: [], reviews: [],
+      leanApprovals: s.lean.filter((e) => e.kind === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e) })),
+      leanReviews: s.lean.filter((e) => e.kind === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? null })),
       ci: null, level: null, allowances: [], versions: versionsOf(s.lean.filter((e) => e.kind === 'report')), unverified: { approvals: 0, reviews: 0 },
     });
   }
@@ -287,12 +302,17 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
       const where = e.at ? ` at ${e.at}` : (Array.isArray(e.between) && e.between[0] ? ` between ${e.between[0]} and ${e.between[1]}` : ' at a time the host did not give');
       gap('protection-change', null, null, `Protection changed${who}${where}: ${String(e.what ?? 'a protection setting').slice(0, MOST_SHOWN)}`);
     }
+    if (protection.damaged) incomplete.push('The protection reading kept for the last report could not be read, so changes since that report cannot be seen; the comparison starts afresh from this one');
     if (protection.source === 'compared') {
       limits.push('This host has no audit events at this licence (they are Premium and Ultimate\'s), so protection changes are found by comparing the protection read now with the protection read for the last report. A change made and undone between two reports is not seen.');
-      if (protection.damaged) limits.push('The reading kept for the last report could not be read, so the comparison starts afresh from this one.');
-      if (protection.kept === false) limits.push('The protection read for this report could not be kept, so the next report has nothing to compare with.');
-      if (protection.first) limits.push('There is no earlier reading to compare with, so this report cannot say whether the protection changed before now. The protection read now is kept, and the next report compares with it.');
+    } else if (protection.compared === false) {
+      limits.push('The protection could not also be read now for comparison, so only the audit events say what changed.');
     }
+    if (protection.compared !== false) {
+      limits.push('The comparison covers the protected branches (who may push and merge, force-push) and the two merge settings ("pipelines must succeed" and whether a skipped pipeline counts). It does not cover protected tags, the merge method, whether discussions must be resolved, or who is a member of the project.');
+    }
+    if (protection.kept === false) limits.push('The protection read for this report could not be kept, so the next report has nothing to compare with.');
+    if (protection.first && protection.compared !== false) limits.push('There is no earlier reading to compare with, so this report cannot say whether the protection changed before now. The protection read now is kept, and the next report compares with it.');
   }
 
   const order = (g) => (g.pr === null ? Number.MAX_SAFE_INTEGER : g.pr);
@@ -301,7 +321,7 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
 
   return {
     since: sinceIso, now: nowIso, complete: incomplete.length === 0, incomplete, limits, rows, gaps, waiting, lean: leanEntries,
-    protection: protection === null ? null : { source: protection.source, first: protection.first === true, events: protection.events, kept: protectionKept },
+    protection: protection === null ? null : { source: protection.source, first: protection.first === true, compared: protection.compared !== false, events: protection.events, kept: protectionKept },
   };
 }
 
@@ -312,16 +332,26 @@ const cell = (text) => String(text ?? '').replace(/[\r\n\u0085\u2028\u2029]+/g, 
 
 const notCounted = (n) => (n > 0 ? ` (${n} ${n === 1 ? 'record does' : 'records do'} not verify, so ${n === 1 ? 'it is' : 'they are'} not counted)` : '');
 
+// Lean's entries for the change: shown, labelled, and never counted.
+const leanApprovalLines = (row) => row.leanApprovals.map((a) => `Lean's approval (not counted): commit ${short(a.commit ?? '-')} at ${a.at ?? 'no time'}`);
+const leanReviewLines = (row) => row.leanReviews.map((x) => `Lean's review (not counted): commit ${short(x.commit ?? '-')} at ${x.at ?? 'no time'}, ${x.verdict ?? 'no verdict'}`);
+
 function approvalLine(row) {
-  if (row.approvals.length === 0) return `Approval: none on record${notCounted(row.unverified.approvals)}`;
-  return row.approvals.map((a) => `Approval: commit ${short(a.commit ?? '-')} at ${a.at ?? 'no time'}${a.proof ? `, proof ${a.proof}` : ''}${row.lean ? '' : (a.matchesMerged ? '' : ', not the merged commit')}`).join('\n- ');
+  const lean = leanApprovalLines(row);
+  const counted = row.approvals.length === 0
+    ? [`Approval: none on record${notCounted(row.unverified.approvals)}`]
+    : row.approvals.map((a) => `Approval: commit ${short(a.commit ?? '-')} at ${a.at ?? 'no time'}${a.proof ? `, proof ${a.proof}` : ''}${a.matchesMerged ? '' : ', not the merged commit'}`);
+  return [...counted, ...lean].join('\n- ');
 }
 function reviewLine(row) {
-  if (row.reviews.length === 0) return `Review: not recorded${notCounted(row.unverified.reviews)}`;
-  return row.reviews.map((x) => `Review: commit ${short(x.commit ?? '-')} at ${x.at ?? 'no time'}, ${x.verdict ?? 'no verdict'}, kind ${x.kind ?? 'not recorded'}${row.lean ? '' : (x.matchesMerged ? '' : ', not the merged commit')}`).join('\n- ');
+  const lean = leanReviewLines(row);
+  const counted = row.reviews.length === 0
+    ? [`Review: not recorded${notCounted(row.unverified.reviews)}`]
+    : row.reviews.map((x) => `Review: commit ${short(x.commit ?? '-')} at ${x.at ?? 'no time'}, ${x.verdict ?? 'no verdict'}, kind ${x.kind ?? 'not recorded'}${x.matchesMerged ? '' : ', not the merged commit'}`);
+  return [...counted, ...lean].join('\n- ');
 }
 function ciLine(row) {
-  if (row.lean && row.ci === null) return 'CI: not compared (Lean)';
+  if (!row.onHost) return 'CI: not compared (Lean)';
   if (row.ci === null) return 'CI: could not be read';
   if (row.ci.status === 'none') return 'CI: no pipeline found for the merged commit';
   return `CI: ${row.ci.status}${row.ci.source ? ` (${row.ci.source})` : ''}`;
@@ -345,7 +375,13 @@ export function renderAudit(report) {
 
   out.push(`## Gaps (${report.gaps.length})`, '');
   if (report.gaps.length === 0) {
-    out.push(report.complete ? 'No gaps: every merged change has a matching approval, the merged commit is the one approved and reviewed, its pipeline ran, and the protection has not changed.' : 'Nothing was found in the part that could be checked. The part that could not be checked is listed at the top of this report.');
+    const protectionClause = report.protection !== null && !(report.protection.first && report.protection.compared)
+      ? ', and the protection has not changed'
+      : '';
+    const firstLook = report.protection !== null && report.protection.first && report.protection.compared
+      ? ' There was nothing to compare the protection with yet, so whether it changed is not said.'
+      : '';
+    out.push(report.complete ? `No gaps: every merged change has a matching approval, the merged commit is the one approved and reviewed, and its pipeline ran${protectionClause}.${firstLook}` : 'Nothing was found in the part that could be checked. The part that could not be checked is listed at the top of this report.');
   } else {
     for (const g of report.gaps) out.push(`- **${g.kind}**: ${cell(g.text)}`);
   }
@@ -359,7 +395,7 @@ export function renderAudit(report) {
   if (report.rows.length === 0) out.push('None in the period.', '');
   for (const row of report.rows) {
     out.push(`### #${row.number}${row.title ? ` ${cell(row.title)}` : ''}${row.lean ? " (Lean's)" : ''}`, '');
-    if (row.lean) out.push(`Kept at Lean${row.onHost ? ' before the project moved up' : ''}: not compared with the host.`, '');
+    if (row.lean) out.push(row.onHost ? "Marked as Lean's. Lean's entries are not signed, so they are shown but never counted: this change was checked against the host like any other." : "Kept at Lean, and the host does not list it: not compared with the host.", '');
     if (row.onHost) {
       out.push(`- Merged: ${row.mergedAt ?? 'at a time the host did not give'}${row.mergedBy ? ` by ${cell(row.mergedBy)}` : ''}, commit ${row.commit ? short(row.commit) : 'not given'}`);
     } else {
@@ -384,7 +420,7 @@ export function renderAudit(report) {
   }
 
   if (report.lean.length > 0) {
-    out.push("## Kept at Lean (not compared with the host)", '');
+    out.push("## Entries Lean kept (never counted as approvals or reviews)", '');
     for (const e of report.lean) out.push(`- ${e.kind}${e.pr ? ` for #${e.pr}` : ''}${e.at ? ` at ${e.at}` : ''}`);
     out.push('');
   }
@@ -430,20 +466,32 @@ export async function main(argv, {
     err.write(`${USAGE}\n`);
     return 2;
   }
+  // Every line written here is ours. An error's own message is never repeated, since one from
+  // the connection or a tool could carry key material; the two coded lines for a host that is not
+  // there or a certificate not trusted are ours too.
+  let since;
   try {
-    const since = toIso(given.since, 'since');
-    const record = readProject(given.project);
-    if (!record) throw new Error('The project has not been set up on this computer');
-    if (record.host !== 'gitlab') {
-      err.write('The audit report is for GitLab in this version. This project is on GitHub, so no report was made.\n');
-      return 1;
-    }
+    since = toIso(given.since, 'since');
+  } catch {
+    err.write('The audit report could not be made: --since must be a time, such as 2026-10-01 or 2026-10-01T00:00:00Z\n');
+    return 1;
+  }
+  const record = readProject(given.project);
+  if (!record) {
+    err.write('The audit report could not be made: the project has not been set up on this computer\n');
+    return 1;
+  }
+  if (record.host !== 'gitlab') {
+    err.write('The audit report is for GitLab in this version. This project is on GitHub, so no report was made.\n');
+    return 1;
+  }
+  try {
     const adapter = adapterFor(record, await envFor(record));
     const skipped = [];
     const events = eventsFor(given.project, skipped);
     const host = {
       mergedRequests: (args) => adapter.mergedRequests(args),
-      pipelinesFor: (sha) => adapter.pipelinesFor(sha),
+      pipelinesFor: (sha, options) => adapter.pipelinesFor(sha, options),
       prState: (number) => adapter.prState(number),
       protectionEvents: keepingProtection({ project: given.project, adapter, now }),
     };
@@ -453,7 +501,8 @@ export async function main(argv, {
     out.write(renderAudit(report));
     return report.complete ? 0 : 1;
   } catch (error) {
-    err.write(`The audit report could not be made: ${error instanceof Error ? error.message : 'an unknown error'}\n`);
+    const line = CODED_LINE.has(error?.code) && typeof error.message === 'string' ? error.message : "the project's connection or records could not be read";
+    err.write(`The audit report could not be made: ${line}\n`);
     return 1;
   }
 }

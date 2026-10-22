@@ -12,7 +12,7 @@
 const PER_PAGE = 100;
 const MOST_PAGES = 20;
 const MOST_PIPELINES = 20;
-const MOST_REQUESTS_OF_A_COMMIT = 5;
+const MERGE_REF = /^refs\/merge-requests\/\d+\/merge$/;
 const TITLE_CHARS = 160;
 const WHAT_CHARS = 160;
 
@@ -84,6 +84,15 @@ export function gitlabHistory({ ask, read, project }) {
     ? { id: p.id, status: typeof p.status === 'string' ? p.status : 'unknown', source: typeof p.source === 'string' ? p.source : null, ref: typeof p.ref === 'string' ? oneLine(p.ref, 120) : null, sha: typeof p.sha === 'string' ? p.sha : null }
     : null);
 
+  // Whether a pipeline ran on the commit: on it, or on a merged-results commit whose parent it is.
+  async function ranOnCommit(pipeline, sha) {
+    if (typeof pipeline?.sha !== 'string') return false;
+    if (pipeline.sha === sha) return true;
+    if (typeof pipeline.ref !== 'string' || !MERGE_REF.test(pipeline.ref)) return false;
+    const commit = await ask(['api', `${project}/repository/commits/${pipeline.sha}`]);
+    return Array.isArray(commit?.parent_ids) && commit.parent_ids.includes(sha);
+  }
+
   async function snapshot(now) {
     const branches = {};
     for (const b of await pages(`${project}/protected_branches`)) {
@@ -119,32 +128,41 @@ export function gitlabHistory({ ask, read, project }) {
         }));
     },
 
-    // The pipelines of a commit, newest first: those GitLab lists for the commit, and the head
-    // pipeline of each merge request the commit is in (a merged-results pipeline runs on a commit of
-    // its own, so the commit's list does not hold it). A failed read is thrown, never read as none.
-    async pipelinesFor(sha) {
+    // The pipelines of a commit, newest first: those GitLab lists for the commit, and, when the merge
+    // request that merged it is named, that request's own head pipeline marked `head: true`. The head
+    // pipeline is kept only if it ran on the commit, or on a merged-results commit that has the commit
+    // as a parent (as gitlab.js's ciState does); another request's newer run on the same commit is in
+    // the list but is not the head. A failed read is thrown, never read as none.
+    async pipelinesFor(sha, number) {
       const found = new Map();
       const listed = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=${MOST_PIPELINES}&order_by=id&sort=desc`]);
       if (!Array.isArray(listed)) throw new Error('GitLab did not list the commit\'s pipelines');
-      for (const p of listed) { const one = pipelineOf(p); if (one) found.set(one.id, one); }
-      const requests = await ask(['api', `${project}/repository/commits/${sha}/merge_requests`]);
-      if (!Array.isArray(requests)) throw new Error('GitLab did not list the commit\'s merge requests');
-      for (const r of requests.filter((q) => Number.isInteger(q?.iid)).slice(0, MOST_REQUESTS_OF_A_COMMIT)) {
-        const full = await ask(['api', `${project}/merge_requests/${r.iid}`]);
-        const one = pipelineOf(full?.head_pipeline);
-        if (one) found.set(one.id, one);
+      for (const p of listed) { const one = pipelineOf(p); if (one) found.set(one.id, { ...one, head: false }); }
+      if (number !== undefined) {
+        const request = await ask(['api', `${project}/merge_requests/${number}`]);
+        const raw = request?.head_pipeline;
+        const one = pipelineOf(raw);
+        if (one && await ranOnCommit(raw, sha)) found.set(one.id, { ...one, head: true });
       }
       return [...found.values()].sort((a, b) => b.id - a.id);
     },
 
-    // Changes to the project's protection since `since`. With audit events (Premium and Ultimate):
-    // `{ source: 'audit-events', events: [{ at, by, what }] }`. Without (Free, or a key too low to read
-    // them): the protection read now, and compared with `last`, the protection the last report kept:
-    // `{ source: 'compared', first, snapshot, events: [{ at: null, by: null, what, between }] }`. `first`
-    // is true when there was no earlier reading to compare with.
+    // Changes to the project's protection since `since`. The protection is read now and compared with
+    // `last`, the protection the last report kept, whatever the licence, so a change that no audit
+    // event names still shows. Where the licence has audit events (Premium and Ultimate) they are read
+    // too, and say who and when: `{ source: 'audit-events', events: [{ at, by, what }, then the
+    // compared ones], snapshot, first, compared }`. Without them (Free, check 71 step 5; or an edition
+    // that has none): `{ source: 'compared', first, snapshot, events: [{ at: null, by: null, what,
+    // between }] }`. `first` is true when there was no earlier reading to compare with. On Premium a
+    // reading that cannot be made is `compared: false` and the audit events stand alone.
     async protectionEvents({ since, last = null, now = new Date() }) {
       const auditPath = `${project}/audit_events?created_after=${encodeURIComponent(since)}`;
       const audit = await read(['api', `${auditPath}&per_page=${PER_PAGE}&page=1`]);
+      const compare = async () => {
+        const snap = await snapshot(now);
+        const between = last === null ? null : [last.at ?? null, snap.at];
+        return { snap, changes: compareProtection(last, snap).map((what) => ({ at: null, by: null, what, between })) };
+      };
       if (audit.status === 200) {
         if (!Array.isArray(audit.body)) throw new Error('GitLab did not answer the audit events with a list');
         // The first page said yes; a full page may have more after it.
@@ -157,19 +175,20 @@ export function gitlabHistory({ ask, read, project }) {
             by: typeof e?.details?.author_name === 'string' ? oneLine(e.details.author_name, 80) : null,
             what: oneLine(e?.details?.custom_message ?? e?.details?.event_name ?? e?.event_name ?? e?.event_type ?? 'a protection setting changed', WHAT_CHARS),
           }));
-        return { source: 'audit-events', events };
+        try {
+          const { snap, changes } = await compare();
+          return { source: 'audit-events', compared: true, first: last === null, snapshot: snap, events: [...events, ...changes] };
+        } catch (error) {
+          // A host that cannot be reached is not a reading that cannot be made: it is thrown.
+          if (error?.code === 'HOST_UNREACHABLE' || error?.code === 'CERTIFICATE_NOT_TRUSTED') throw error;
+          return { source: 'audit-events', compared: false, events };
+        }
       }
       // Free is told by the refusal (check 71, step 5), and an edition with no audit events at all by
       // not finding them; any other refusal means the changes cannot be read.
       if (audit.status !== 403 && audit.status !== 404) throw new Error(`GitLab answered ${audit.status} to the list of audit events`);
-      const snap = await snapshot(now);
-      const between = last === null ? null : [last.at ?? null, snap.at];
-      return {
-        source: 'compared',
-        first: last === null,
-        snapshot: snap,
-        events: compareProtection(last, snap).map((what) => ({ at: null, by: null, what, between })),
-      };
+      const { snap, changes } = await compare();
+      return { source: 'compared', compared: true, first: last === null, snapshot: snap, events: changes };
     },
   };
 }
