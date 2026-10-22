@@ -21,7 +21,7 @@
 import { SETTINGS, definitionOf, checkSetting, say } from '../settings/catalogue.js';
 import { effectiveSettings, sayTime, sayValue } from '../settings/effective.js';
 import { AWAY, UNDO_MS } from '../lib/mod-numbers.js';
-import { SETTINGS_UNDER_STOP } from '../lib/calm-words.js';
+import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT } from '../lib/calm-words.js';
 import { stopState as defaultStopState } from '../lib/stop.js';
 import { confirmationFor, listEvents } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
@@ -73,16 +73,16 @@ const LEVEL_WORDS = {
 const PANE = {
   autonomy: { label: 'Autonomy', kind: 'levels' },
   showFirst: { label: 'Show before build', kind: 'levels' },
-  presence: { label: 'Presence', kind: 'presence' },
+  presence: { label: 'Availability', kind: 'presence' },
   milestones: { label: 'Feature milestones', kind: 'levels' },
-  efficiency: { label: 'Token efficiency', kind: 'levels' },
+  efficiency: { label: 'Thoroughness', kind: 'levels' },
   budget: { label: 'Budget', kind: 'none', why: BUDGET_WHY },
-  pace: { label: 'Pace', kind: 'levels' },
-  briefing: { label: 'Briefing', kind: 'levels' },
-  briefingGapHours: { label: 'Briefing gap', kind: 'none', why: ASK },
+  pace: { label: 'Builders at once', kind: 'levels' },
+  briefing: { label: 'Briefing length', kind: 'levels' },
+  briefingGapHours: { label: 'Hours before a new briefing', kind: 'none', why: ASK },
   explanations: { label: 'Explanations', kind: 'levels' },
   notifications: { label: 'Notifications', kind: 'none', why: ASK },
-  boardTab: { label: 'Board tab', kind: 'levels' },
+  boardTab: { label: 'Board opens on', kind: 'levels' },
   hours: { label: 'Working hours', kind: 'none', why: ASK },
   phase: { label: 'Product phase', kind: 'levels' },
   protection: { label: 'Protection', kind: 'none', why: ASK },
@@ -262,6 +262,58 @@ function rowOf(key, { effective, changes, nowMs, timeZone, locked }) {
   }
   const current = key === 'budget' ? wordOf(key, held.value) : sayValue(key, held.value);
   return { ...out, current, choices: [], here: false, why: spec.why };
+}
+
+// --- the groups ---
+
+const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them.';
+const YOU_NOTE = 'These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you.';
+const WINDOWS_LEVELS = { ask: 'Ask', guarded: 'Guarded', unattended: 'Unattended' };
+// The settings the front desk changes: a value and Change….
+const CHANGE_KEYS = ['protection', 'briefingGapHours', 'notifications', 'hours'];
+
+// A pane row as a group's row: a select for a setting with levels, a change for one the front desk
+// changes, else a value alone. `changed` goes with it while the change can still be undone.
+function groupRow(row) {
+  const out = { key: row.key, label: row.label };
+  if (row.here) {
+    const chosen = row.choices.find((c) => c.chosen);
+    Object.assign(out, { value: chosen ? chosen.id : null, kind: 'select', options: row.choices.map((c) => ({ value: c.id, label: c.label })) });
+    if (!chosen) out.current = row.current;
+  } else {
+    Object.assign(out, { value: row.current, kind: CHANGE_KEYS.includes(row.key) ? 'change' : 'value' });
+  }
+  if (row.changed) out.changed = row.changed;
+  return out;
+}
+
+// settingsGroups({ effective, changes?, now, timeZone, locked?, stop?, windows? }) -> Array<Group>
+// The Settings view's groups, each { id, title, note, rows }, in the order of design section
+// 23.6. `stop` is stopState's answer (Halted since the time it was set, else Working); `windows`
+// is the level this computer runs build commands at. Every row is plain data. Never throws.
+export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows } = {}) {
+  const byKey = new Map(settingsRows({ effective, changes, now, timeZone, locked }).map((row) => [row.key, groupRow(row)]));
+  const pick = (...keys) => keys.map((key) => byKey.get(key));
+  const halted = isRecord(stop) && stop.on === true;
+  const sinceMs = halted && typeof stop.at === 'string' ? Date.parse(stop.at) : NaN;
+  const builders = !halted ? 'Working' : Number.isFinite(sinceMs) ? `Halted since ${hhmmOf(sinceMs, timeZone)}` : 'Halted';
+  const build = { key: 'windowsBuildCommands', label: 'Build commands on Windows', value: WINDOWS_LEVELS[windows] ?? WINDOWS_LEVELS.ask, kind: 'change' };
+  return [
+    { id: 'stop', title: 'STOP', note: `STOP ${lower(STOP_HALTS)} ${ONLY_YOU_LIFT}`, rows: [{ key: 'builders', label: 'Builders', value: builders, kind: 'value' }] },
+    {
+      id: 'project',
+      title: 'This project',
+      note: PROJECT_NOTE,
+      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', 'phase'), build, ...pick('budget', 'protection')],
+    },
+    {
+      id: 'you',
+      title: 'You, in every project',
+      note: YOU_NOTE,
+      rows: pick('presence', 'briefing', 'briefingGapHours', 'explanations', 'boardTab', 'notifications', 'hours'),
+    },
+    { id: 'advanced', title: 'Advanced settings', note: '', rows: [{ key: 'advanced', label: 'Advanced settings', value: '', kind: 'change' }] },
+  ];
 }
 
 // settingsRows({ effective, changes?, now, timeZone, locked? }) -> Array<SettingsRow>

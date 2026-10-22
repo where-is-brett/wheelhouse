@@ -24,7 +24,7 @@
 //   { cmd: 'why', origin, cwd, card, hash }         Why? on a card: its answer noted quietly, no prompt
 //   { cmd: 'suggest', origin, cwd, card, hash, words } Suggest a change… on a card: its answer noted, and
 //                                                   the director's words handed on as one prompt
-//   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
+//   { cmd: 'settings', cwd }                        the settings pane's rows and groups, from the views on disk
 //   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
 //   { cmd: 'go', origin, cwd, since? }              /go or the pane: lifts STOP with a signed record;
 //                                                   the pane's carries the start of the STOP it drew
@@ -36,7 +36,7 @@
 import path from 'node:path';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress, whyCard as defaultWhy, suggestCard as defaultSuggest } from './press.js';
-import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, ADVANCED } from './settings-pane.js';
+import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -110,6 +110,7 @@ const DEFAULTS = {
   whyCard: defaultWhy,
   suggestCard: defaultSuggest,
   settingsRows: defaultRows,
+  settingsGroups: defaultGroups,
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
   readChanges: defaultChanges,
@@ -249,7 +250,10 @@ async function settings(req, d) {
   const found = siteOf(req.cwd, d);
   if (found === null) return no(SAYS.notProject);
   const effective = d.readEffective({ project: found.project, now: d.now });
-  return { ok: true, rows: d.settingsRows({ effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined }), text: ADVANCED };
+  const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined };
+  // The level build commands run at on Windows is kept per computer; the first one set is shown.
+  const builds = Object.entries(effective ?? {}).find(([key]) => key.startsWith('windowsBuildCommands:'));
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, stop: await d.stopState(), windows: builds?.[1]?.value }), text: ADVANCED };
 }
 
 // A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
@@ -507,6 +511,7 @@ export function lineOf(answer) {
   if (strings(answer?.woken)) out.woken = answer.woken;
   if (typeof answer?.wokeAt === 'string') out.wokeAt = answer.wokeAt;
   if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
+  if (Array.isArray(answer?.groups) && answer.groups.every(isRecord)) out.groups = answer.groups;
   if (typeof answer?.text === 'string') out.text = answer.text;
   return JSON.stringify(out);
 }

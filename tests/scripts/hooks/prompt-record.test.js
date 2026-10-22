@@ -178,7 +178,7 @@ test('Explain more and Not now record only the answer', async () => {
 
 test('Keep as is on a proposal\'s confirm card records only the answer, and signs nothing', async () => {
   await withHome(async () => {
-    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }, now: () => NOW });
+    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it' }, now: () => NOW });
     keepEvent(setting, profileDir());
     const c = fake();
     const options = ['Confirm', 'Not now', 'Explain more', 'Keep as is'].map((label) => ({ label }));

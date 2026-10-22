@@ -872,7 +872,7 @@ test('Keep as is closes a proposal\'s confirm card, and its proposal stays uncon
     // keptAsIs names it (ruling F49), so the lists of what waits for the director's confirmation leave it out.
     assert.deepEqual(kept.keptAsIs, [level.id]);
     // A profile setting's card kept as is here names the profile's event, which this project's state doesn't hold.
-    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }), id: 'profile-setting' };
+    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it' }), id: 'profile-setting' };
     const own = ev('card', 5, cardData(`What this is: a setting.\n${confirmLine(setting)}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line: confirmLine(setting) }));
     assert.deepEqual(build([level, card, own, ev('card-answer', 6, { card: own.id, label: 'Keep as is' })]).keptAsIs, ['profile-setting']);
   });
@@ -882,7 +882,7 @@ test('a project\'s confirm card for a profile setting closes once the profile ho
   await withHome(async (home) => {
     // A profile setting with a card in project B; the director confirmed it from project A's card,
     // so the confirmation is in the profile and B's state holds no answer.
-    const setting = ev('setting', 1, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' });
+    const setting = ev('setting', 1, { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it' });
     const line = confirmLine(setting);
     const card = ev('card', 2, cardData(`What this is: a setting.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
     const confirmation = conf(3, setting);

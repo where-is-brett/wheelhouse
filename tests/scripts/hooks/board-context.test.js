@@ -153,7 +153,7 @@ test('each command adds its text, and the board command takes build', async () =
 
     const settings = contextOf(await run(repo, '/WHEELHOUSE:SETTINGS', NOW));
     assert.ok(settings.startsWith(`${HEADINGS.settings}\n\n`), settings);
-    assert.match(settings, /Board tab shown first: build \(yours\)/);
+    assert.match(settings, /Board opens on: build \(yours\)/);
 
     const sources = contextOf(await run(repo, '/wheelhouse:sources', NOW));
     assert.ok(sources.startsWith(`${HEADINGS.sources}\n\n`), sources);
@@ -816,7 +816,7 @@ test('learning never runs under STOP, and a helper that never answers holds the 
 
 test('a setting waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
   await withProject(async ({ repo }) => {
-    const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you opened the build tab first on each of your last three visits' };
+    const data = { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you opened the build tab first on each of your last three visits' };
     // One the director set themselves, whose card wasn't written when `record setting` wrote it.
     const own = { key: 'briefing', value: 'short', words: 'Briefing length: short' };
     put(path.join(profileViewsDir(), 'unconfirmed.json'), [

@@ -363,7 +363,7 @@ test('Pace 2 from the settings pane is in force at once, confirmed, and shown on
   assert.equal(before.current, '3');
   assert.equal(before.from, 'the default');
 
-  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Pace is now 2, for this project' });
+  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Builders at once is now 2, for this project' });
   const after = await paceRow();
   assert.equal(after.current, '2');
   assert.equal(after.from, 'this project');
@@ -380,7 +380,7 @@ test('Pace 2 from the settings pane is in force at once, confirmed, and shown on
   // The board's settings show it, in force, with no confirm left waiting.
   const shown = await prompt(c, '/wheelhouse:settings');
   assert.ok(shown.startsWith(`${HEADINGS.settings}\n\n`), shown);
-  assert.match(shown, /^Pace \(builders at once\): 2 \(this project\)$/m);
+  assert.match(shown, /^Builders at once: 2 \(this project\)$/m);
   const board = await prompt(c, '/wheelhouse:board');
   assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
   assert.doesNotMatch(board, /not yet confirmed by you|Changed without your confirmation/, 'the board has nothing of it waiting for a confirm');
@@ -434,7 +434,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
 
   // The director steps away until the evening.
   const presence = await choose(c, 'presence', 'away-evening');
-  assert.deepEqual(presence, { ok: true, says: 'Presence is now away until 18:00, for all your projects' });
+  assert.deepEqual(presence, { ok: true, says: 'Availability is now away until 18:00, for all your projects' });
   const second = await waitingCard(c, 'Which colour goes on the sign-in button?');
   // When the front desk's session last ticked, by courier.json, which only a courier that ran moves on.
   const tickedAt = () => JSON.parse(fs.readFileSync(file, 'utf8')).sessions.find((s) => s.id === 'sess-front')?.at;
@@ -445,7 +445,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   assert.equal(held.submit, undefined, 'a card that blocks nothing waits while the director is away');
 
   // Back: the card held wakes then, and the one already sent doesn't.
-  assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Presence is now here, for all your projects' });
+  assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Availability is now here, for all your projects' });
   assert.deepEqual((await tick(c)).submit, [`${LEADS.courier} 1 new card (2). ${ask}`]);
   assert.equal(eventsOf('confirmation', profileDir()).length, 2, 'each presence chosen is confirmed');
 }));

@@ -544,7 +544,7 @@ test('a reply allows a build-command question\'s commands only on the computer t
 test('a reply-code Confirm on a profile setting\'s card closes the card in the project\'s waiting view', async () => {
   await withHome(async () => {
     // The setting is in the director's profile; its confirm card is in the project's state.
-    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' }, now: () => NOW });
+    const setting = makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board opens on: build' }, now: () => NOW });
     const inProfile = path.join(profileDir(), eventPath(setting));
     fs.mkdirSync(path.dirname(inProfile), { recursive: true });
     fs.writeFileSync(inProfile, JSON.stringify(setting));

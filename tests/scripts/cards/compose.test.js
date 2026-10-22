@@ -386,7 +386,7 @@ test("the recommended option's description starts \"Recommended:\" and carries t
 
 test('a proposal offers Keep as is in place of Show me; any other confirm card keeps its four', () => {
   const proposal = (kind, data) => inOwnHome(() => makeEvent({ kind, data, now: () => NOW }));
-  const learnt = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' });
+  const learnt = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it three times' });
   const level = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose it five times' });
   for (const event of [learnt, level]) {
     const { question, card } = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event } }));
@@ -399,7 +399,7 @@ test('a proposal offers Keep as is in place of Show me; any other confirm card k
     assert.equal(given.question.options[2].description, 'It stays.');
   }
   // A setting the director asked for, a ruling and a level without a reason are no proposals.
-  const asked = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' });
+  const asked = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board opens on: build' });
   const bare = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": level 2', because: '  ' });
   const ruling = proposal('ruling', { words: 'Money is shown in dollars', because: 'it is how we do it' });
   for (const event of [asked, bare, ruling]) {
@@ -480,7 +480,7 @@ test('an answer card refuses an own option called Why? or Suggest a change…', 
 });
 
 test('a proposal offers Keep as is in place of Show me, and no other card does', () => {
-  const learnt = inOwnHome(() => makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' }, now: () => NOW }));
+  const learnt = inOwnHome(() => makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it three times' }, now: () => NOW }));
   const { question } = composeCard(input('confirm', { what: `A change: ${learnt.data.words}`, target: { event: learnt } }));
   assert.deepEqual(question.options.map((o) => o.label), ['Confirm', SUGGEST, 'Keep as is', NOT_NOW]);
   assert.ok(!question.options.some((o) => o.label === SHOW_ME));

@@ -709,11 +709,11 @@ test('a setting the catalogue refuses is refused before it reaches the helper', 
     assert.deepEqual(helper.calls, []);
     // A project's setting goes to the project's state, the director's own to their profile.
     assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'pace', value: 2 }))).code, 0);
-    assert.deepEqual(helper.writes()[0].data, { key: 'pace', value: 2, words: 'Pace (builders at once): 2' });
+    assert.deepEqual(helper.writes()[0].data, { key: 'pace', value: 2, words: 'Builders at once: 2' });
     const profile = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'presence', value: 'away', until: '2026-10-20T00:00:00.000Z' }));
     assert.equal(profile.code, 0, profile.err);
     assert.deepEqual(helper.calls.find(([name]) => name === 'profile.write'), ['profile.write', {
-      kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-20T00:00:00.000Z', words: 'Presence: away, until 20 October 2026, 00:00 UTC' },
+      kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-20T00:00:00.000Z', words: 'Availability: away, until 20 October 2026, 00:00 UTC' },
     }]);
   });
 });
@@ -724,14 +724,14 @@ test('record setting records its confirm card and marks it asked, except a conce
     // The director's own setting: written to the profile, then its card, naming the id the profile gave it.
     const tab = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'boardTab', value: 'build', because: 'given by the front desk' }));
     assert.equal(tab.code, 0, tab.err);
-    const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' };
+    const data = { key: 'boardTab', value: 'build', words: 'Board opens on: build' };
     assert.deepEqual(helper.calls.filter(([name]) => name === 'profile.write'), [['profile.write', { kind: 'setting', data }]]);
     const [card, asked] = helper.writes();
     assert.equal(card.kind, 'card');
     assert.equal(card.data.line, confirmLine({ kind: 'setting', id: 'p-1', data }));
     assert.equal(tab.json.id, 'p-1');
     assert.equal(tab.json.card.question.question, card.data.question);
-    assert.ok(card.data.question.includes('Board tab shown first: build'));
+    assert.ok(card.data.question.includes('Board opens on: build'));
     assert.deepEqual(asked.data, { cards: [tab.json.card.id] });
 
     // A concept set to false counts at once (explanations get longer), so it needs no card.
@@ -749,7 +749,7 @@ test('record setting records its confirm card and marks it asked, except a conce
     assert.equal(pace, 0);
     const [setting, paceCard] = helper.writes().slice(before);
     assert.equal(setting.id, 'id-pace');
-    assert.equal(paceCard.data.line, confirmLine({ kind: 'setting', id: 'id-pace', data: { key: 'pace', value: 1, words: 'Pace (builders at once): 1' } }));
+    assert.equal(paceCard.data.line, confirmLine({ kind: 'setting', id: 'id-pace', data: { key: 'pace', value: 1, words: 'Builders at once: 1' } }));
 
     // Under STOP nothing is written, and no card is made for a setting that wasn't.
     const stopped = fakeHelper({ stop: true });
@@ -1083,7 +1083,7 @@ test('views and explain answer in short lines, and similar finds work that share
     assert.match((await run(helper, ['views', 'ideas'])).out, /A dark theme for the shop/);
     assert.match((await run(helper, ['views', 'glossary'])).out, /^pull request: /m);
     const settings = await run(helper, ['views', 'settings']);
-    assert.match(settings.out, /^Pace \(builders at once\): 3 \(the default\)$/m);
+    assert.match(settings.out, /^Builders at once: 3 \(the default\)$/m);
     assert.equal((await run(helper, ['views', 'secrets'])).code, 1);
 
     const explained = await run(helper, ['explain', 'pull', 'request']);
