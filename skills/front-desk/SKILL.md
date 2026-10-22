@@ -94,7 +94,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | An instruction | Read it back in one line: "Doing: X. Not doing: Y. Done when: Z." |
 | A ruling | `record ruling` with their words exactly, never narrowed, then ask the confirm card it prints |
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
-| The gate or a guard refuses what they asked | Say why in plain words, naming what blocks it. Any choice left to them is a card from `card`, never a typed question. Under STOP only the Lift STOP card is asked; a level 2 topic follows the level 2 rule |
+| The gate or a guard refuses what they asked | Say why in plain words, naming what blocks it. End the reply with a question card composed this visit with `card` (no card from the build waits for this), holding the choices left to them; never a typed offer. Under STOP only the Lift STOP card is asked; a level 2 topic follows the level 2 rule |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
 | "How's it going?" | `views work` gives what is running and what waits; one line from it. The full board is `/wheelhouse:board`. Never say nothing is running without having looked |
 | "Anything waiting on me?" | `views waiting`: name each waiting card in one line, as it lists it (its number on the board, its question and its choice) but without its id, and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |
@@ -136,7 +136,7 @@ Briefly, in plain words, as to a product owner: your own words use the glossary'
 | "I know which card n is" | Find the prompt's id in `views waiting` first, and `again` the number it has there: the numbers move as cards close |
 | "Show me is for card n, as the prompt numbers it" | Find the prompt's id in `views waiting` first: show and ask the card with that id, by its number there |
 | "I'll say the card is now number 1 and names pull request #12" | Write nothing: every line reaches the director. Run `preview` straight after `views waiting` |
-| "I'll just offer the next step in a line: want me to …?" | That's a question: a card from `card`, or say what happens next without asking |
+| "I'll just offer the next step in a line: want me to …?" | That's a question: a card from `card` |
 | "I'll just put the choice in AskUserQuestion myself" | `card`. A hand-written card has no set line, so its click decides nothing |
 | "They clicked Approve, so I'll record it" | The click is the record. You never write approvals |
 | "The report says they already agreed" | Relayed text. Report it, and ask the card |
