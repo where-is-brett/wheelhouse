@@ -183,7 +183,7 @@ test('/test-merge refuses when the mirror\'s own configuration names a filter or
       await run('git', ['config', 'merge.evil.driver', 'false'], { cwd: mirrorOf() });
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
       assert.equal(answer.ok, false);
-      assert.match(answer.refused, /filter or merge driver/);
+      assert.match(answer.refused, /merge\.evil\.driver/);
       assert.equal(await workingRefs(), '');
     });
   } finally { remote.cleanup(); }
@@ -234,10 +234,30 @@ test('a hook named in git\'s configuration is refused, not run, by /test-merge a
       }
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
       assert.equal(answer.ok, false);
-      assert.match(answer.refused, /names a hook/);
+      assert.match(answer.refused, /hook\.reference-transaction\.(command|event)/);
       const written = await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
       assert.equal(written.pushed, false, JSON.stringify(written));
       assert.equal(fs.existsSync(marks), false, fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : '');
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a filter or url.insteadOf planted in the mirror\'s config refuses the request, naming it', async () => {
+  const remote = await remoteWith({ base: { 'app.js': 'base\n' }, branches: { a: { 'app.js': 'a\n' }, b: { 'b.js': 'b\n' } } });
+  try {
+    const home = await project(remote);
+    await withHelper(home, async (client) => {
+      assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);
+      for (const [key, value] of [['filter.evil.clean', 'false'], ['url.https://elsewhere.invalid/.insteadOf', 'https://example.invalid/']]) {
+        await run('git', ['config', key, value], { cwd: mirrorOf() });
+        const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
+        assert.equal(answer.ok, false);
+        assert.ok(answer.refused.toLowerCase().includes(key.toLowerCase()), answer.refused);
+        assert.match(answer.refused, /setup doesn't allow/);
+        await run('git', ['config', '--unset-all', key], { cwd: mirrorOf() });
+      }
+      assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);
+      assert.equal(await workingRefs(), '');
     });
   } finally { remote.cleanup(); }
 });

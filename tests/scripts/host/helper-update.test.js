@@ -351,7 +351,7 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
 });
 
 test('a mirror that can\'t say whether the branch is up to date says so, not that it is behind', async () => {
-  // M5: carryFacts throws when the mirror's configuration names a filter.
+  // M5: a filter named in the mirror's configuration is refused by the look, so the fact is not read.
   const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
   try {
     const home = await project(pr.remote);
@@ -362,7 +362,13 @@ test('a mirror that can\'t say whether the branch is up to date says so, not tha
       assert.equal((await carried(client)).upToDate, true);
       await g(path.join(stateDir('o__p'), '..', 'mirror.git'), 'config', 'filter.x.clean', 'cat');
       const answer = await merge(client);
-      assert.deepEqual([answer.ok, answer.reasons], [false, ['whether the branch is up to date could not be checked']]);
+      // The look at the mirror refuses every read of it, so the changed files can't be read either.
+      assert.equal(answer.ok, false);
+      assert.deepEqual(answer.reasons, [
+        `no approval of ${pr.head.slice(0, 7)}`,
+        'whether the branch is up to date could not be checked',
+        'the changed files couldn\'t be read, so this needs the director\'s approval',
+      ]);
       assert.deepEqual(adapter.merges, []);
     });
   } finally { pr.remote.cleanup(); }

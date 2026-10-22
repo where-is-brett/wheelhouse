@@ -445,9 +445,12 @@ test('the folder\'s own git config never runs with the key: sshCommand, credenti
       await g(agent, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/o/p.git');
 
       await withHelper(fakeAdapter(), async (client) => {
-        assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'feature' }), { ok: true });
+        // The look at the folder's config refuses the push, naming the settings, before git runs there.
+        const answer = await client.push({ project: 'o__p', dir: agent, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        for (const key of ['core.sshcommand', 'credential.helper', 'core.gitproxy', 'core.askpass', 'http.proxy']) assert.ok(answer.refused.toLowerCase().includes(key), `${key}: ${answer.refused}`);
       }, { envFor: async () => env });
-      assert.match(await remoteHeads(p.remote.url), new RegExp(`refs/heads/feature ${sha}`));
+      assert.doesNotMatch(await remoteHeads(p.remote.url), new RegExp(`refs/heads/feature ${sha}`));
       assert.deepEqual(fs.readdirSync(leaks).filter((f) => f.endsWith('.txt')), [], 'nothing the folder configured ran');
       fs.rmSync(agent, { recursive: true, force: true });
     });
@@ -972,9 +975,11 @@ test('a folder\'s own uploadpack.packObjectsHook is not run', async () => {
       assert.equal(fs.existsSync(control), true, 'the hook is one git runs when it is in global configuration');
 
       await withHelper(fakeAdapter(), async (client) => {
-        assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'feature' }), { ok: true });
+        const answer = await client.push({ project: 'o__p', dir: agent, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /uploadpack\.packobjectshook/);
       });
-      assert.equal(fs.existsSync(marker), false, 'a repository\'s own setting is not honoured by git, so the hook did not run');
+      assert.equal(fs.existsSync(marker), false, 'the look refused the folder, so the hook did not run');
       fs.rmSync(agent, { recursive: true, force: true });
     });
   } finally { p.cleanup(); fs.rmSync(scratch, { recursive: true, force: true }); }
@@ -1153,6 +1158,110 @@ test('a local path is reached only for a project whose recorded remote is one', 
       // A connection whose own environment asks for a local path does not widen an https remote.
       const asked = await protocolOfFetch({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR, GIT_ALLOW_PROTOCOL: 'https:file' });
       assert.equal(asked, 'https', 'a narrow environment asking for https:file on an https record: https only');
+    });
+  } finally { p.cleanup(); }
+});
+
+// --- the helper looks before it trusts a repository ---
+
+// An agent's project folder holding one commit on `feature`, with `config` lines added to its .git/config.
+async function folderWith(lines = []) {
+  const dir = tempFolder('wh-proj-');
+  await g(dir, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+  await g(dir, 'add', '-A');
+  await g(dir, 'commit', '-q', '-m', 'One');
+  await g(dir, 'checkout', '-q', '-b', 'feature');
+  for (const [key, value] of lines) await g(dir, 'config', key, value);
+  return dir;
+}
+const lookCalls = (calls) => calls.filter((c) => c.file === 'git' && c.args.includes('--name-only') && c.args.includes('--list'));
+const recorder = (calls) => async (file, args, options) => {
+  calls.push({ file, args, cwd: options?.cwd, env: options?.env });
+  return run(file, args, options);
+};
+
+test('a push from a project folder whose config sets core.fsmonitor is refused, naming it, and nothing runs', async () => {
+  const p = await project();
+  const outside = tempFolder('wh-mark-');
+  const marks = path.join(outside, 'marks');
+  const script = path.join(outside, 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho ran >> "${marks.split(path.sep).join('/')}"\n`, { mode: 0o755 });
+  const dir = await folderWith([['core.fsmonitor', script.split(path.sep).join('/')]]);
+  try {
+    await as(p.home, async () => {
+      writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        const answer = await client.push({ project: 'o__p', dir, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /core\.fsmonitor/);
+        assert.match(answer.refused, /setup doesn't allow/);
+        assert.equal(fs.existsSync(marks), false);
+        assert.equal(await remoteHeads(p.remote.url).then((t) => t.includes('refs/heads/feature')), false);
+      });
+    });
+  } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('a key planted in the lock clone refuses the merge, naming it, before the lock is touched', async () => {
+  const p = await project();
+  const calls = [];
+  try {
+    await as(p.home, async () => {
+      const lockClone = path.join(stateDir('o__p'), '..', 'lock');
+      await run('git', ['config', 'core.fsmonitor', 'true'], { cwd: lockClone });
+      reviewAndApproval();
+      const adapter = fakeAdapter();
+      await withHelper(adapter, async (client) => {
+        const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /core\.fsmonitor/);
+        assert.deepEqual(adapter.merges, []);
+        const inLock = calls.filter((c) => c.cwd === lockClone);
+        assert.ok(inLock.length > 0 && lookCalls(inLock).length === inLock.length, 'only the look ran in the lock clone');
+      }, { run: recorder(calls) });
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a request looks at each repository once, however many git calls it makes', async () => {
+  const p = await project();
+  const calls = [];
+  try {
+    await as(p.home, () => withHelper(fakeAdapter(), async (client) => {
+      await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'w' } }); // makes the mirror
+      calls.length = 0;
+      const written = await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
+      assert.equal(written.pushed, true);
+      const looks = lookCalls(calls);
+      const byDir = new Map();
+      for (const c of looks) byDir.set(fs.realpathSync.native(c.cwd), (byDir.get(fs.realpathSync.native(c.cwd)) ?? 0) + 1);
+      assert.ok(byDir.size >= 2, 'the state clone and the mirror were looked at');
+      for (const [dir, count] of byDir) assert.equal(count, 1, `${dir} looked at ${count} times`);
+      const before = looks.length;
+      await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'y' } });
+      assert.equal(lookCalls(calls).length, before * 2, 'the next request looks again, once each');
+    }, { run: recorder(calls) }));
+  } finally { p.cleanup(); }
+});
+
+test('only the copy into the mirror may reach a local path', async () => {
+  const p = await project();
+  const calls = [];
+  try {
+    await as(p.home, async () => {
+      // A recorded remote at a host: no stand-in, so nothing but the copy may reach a path.
+      await g(stateDir('o__p'), 'remote', 'set-url', 'origin', 'https://example.invalid/o/p.git');
+      writeProject('o__p', { folder: os.tmpdir(), remoteUrl: 'https://example.invalid/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
+        const reaching = calls.filter((c) => c.file === 'git' && String(c.env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file'));
+        assert.ok(reaching.length >= 1, 'the copy ran');
+        const source = fs.realpathSync.native(stateDir('o__p'));
+        for (const c of reaching) assert.ok(c.args.includes('fetch') && c.args.includes(source), `a call other than the copy may reach a path: ${c.args.join(' ')}`);
+        const others = calls.filter((c) => c.file === 'git' && !reaching.includes(c));
+        assert.ok(others.length >= 1 && others.every((c) => !String(c.env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file')));
+      }, { run: recorder(calls) });
     });
   } finally { p.cleanup(); }
 });

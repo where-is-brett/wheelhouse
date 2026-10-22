@@ -35,6 +35,7 @@ import { cutAccess } from './cut-access.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
+import { refuseUnlistedSettings } from '../setup/git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
@@ -850,6 +851,7 @@ export async function startHelper({
       mode,
       env,
       signedOut,
+      looked: new Map(),
       // What git gets in the helper's own repositories for this connection, and the transport the
       // project's recorded remote needs (a local path only for a stand-in host).
       gitEnv: gitEnvOf(mode, env, readProject(project)?.host, readProject(project)?.remoteUrl),
@@ -903,9 +905,30 @@ export async function startHelper({
   // The connection's git over the project's (or profile's) recorded remote.
   const keyedFor = (ctx) => gitIn(ctx.gitEnv, HOST_MS, ctx.reach);
 
+  // Each request looks once at each repository of its own it uses (the mirror, the lock, state and
+  // profile clones, the lineage mirror) and at the folder it copies from, before its first git call
+  // there: the repository's config may hold nothing setup's allowed list leaves out. The answer, or
+  // the refusal, is kept in the request's context, so later calls there neither look again nor skip
+  // the refusal. `marker` is the file whose presence says a repository is there to look at (a
+  // repository not made yet has no config to hold anything).
+  async function lookOnce(ctx, dir, marker = null) {
+    if (marker !== null && !fs.existsSync(path.join(dir, marker))) return;
+    const looked = ctx.looked ?? new Map();
+    let key = path.resolve(dir);
+    try { key = fs.realpathSync.native(dir); } catch { /* the look says what is wrong */ }
+    if (!looked.has(key)) looked.set(key, refuseUnlistedSettings({ run, cwd: dir }));
+    await looked.get(key);
+  }
+  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git');
+  const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD');
+  const lookAtLock = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'lock'), '.git');
+
   // The lock clone is used by pushes and merges alike: one git call at a time.
   function lockHeld(project, ctx) {
     return oneAtATime(`lock:${project}`, async () => {
+      // The lock clone reads the state clone's remote first; a refusal ends the request here.
+      await lookAtState(ctx, project);
+      await lookAtLock(ctx, project);
       const counter = heldCounter({ project });
       return counter !== null && (await holdsLock({ project, counter, env: ctx.gitEnv })) === true;
     });
@@ -913,7 +936,9 @@ export async function startHelper({
 
   // The project's mirror, made if missing, with origin set from the helper's
   // own state clone.
-  async function mirrorFor(project) {
+  async function mirrorFor(project, ctx) {
+    await lookAtState(ctx, project);
+    await lookAtMirror(ctx, project);
     const plain = unkeyed;
     const origin = await plain('git', ['config', '--get', `remote.${REMOTE}.url`], { cwd: stateDir(project) });
     const url = origin.stdout.trim();
@@ -990,7 +1015,14 @@ export async function startHelper({
 
   // Copies `branch` in from `source` into the mirror's INCOMING ref, as described in pushToHost.
   // The refusal, or null once it has arrived.
-  async function copyIn(mirror, source, branch) {
+  async function copyIn(mirror, source, branch, ctx) {
+    // The folder's own config can name a program for git to run (core.fsmonitor and the like), so
+    // git is not run there until its settings have been looked at.
+    try {
+      await lookOnce(ctx, source);
+    } catch (error) {
+      return error instanceof Error ? error.message : 'the folder\'s git settings could not be read';
+    }
     const hooked = await configSets(unkeyed, mirror, '^hook\\.');
     if (hooked !== 'none') return 'the mirror\'s git configuration names a hook, or could not be read, so nothing is copied into it';
     await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
@@ -1006,7 +1038,7 @@ export async function startHelper({
 
   async function pushToHost({ project, branch, source, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
     return (async () => {
-      const mirror = await mirrorFor(project);
+      const mirror = await mirrorFor(project, ctx);
       // Copy the branch's objects in from the folder, with no key, and nothing
       // from the folder's config, hooks or replace refs taking part. The
       // incoming ref is cleared first: git leaves it alone when it declines a
@@ -1016,7 +1048,7 @@ export async function startHelper({
       // core.hooksPath set to the null file stops the hooks folder; a hook
       // named in the mirror's configuration (hook.<name>.command) would not
       // be stopped by it, so a mirror whose configuration sets one is refused.
-      const copied = await copyIn(mirror, source, branch);
+      const copied = await copyIn(mirror, source, branch, ctx);
       if (copied !== null) return { ok: false, refused: copied };
 
       const keyed = keyedFor(ctx);
@@ -1134,7 +1166,7 @@ export async function startHelper({
       return { ok: false, refused: PUSH_REFUSALS.unchecked };
     }
     try {
-      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch })));
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch, ctx })));
     } finally {
       await oneAtATime(`mirror:${project}`, () => dropRequestRefs(project));
       tidyAfterAnswer(project);
@@ -1142,11 +1174,11 @@ export async function startHelper({
   }
 
   // The body of a pull, in the project's mirror queue.
-  async function pullIn({ project, mirror, keyed, dir, branch }) {
+  async function pullIn({ project, mirror, keyed, dir, branch, ctx }) {
     const git = local(mirror);
     const refusal = await mirrorRefusal(mirror, keyed);
     if (refusal) return { ok: false, refused: refusal };
-    const copied = await copyIn(mirror, dir, branch);
+    const copied = await copyIn(mirror, dir, branch, ctx);
     if (copied !== null) return { ok: false, refused: copied };
     const shallow = await git([...NO_HOOKS, 'rev-parse', '--is-shallow-repository']);
     if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
@@ -1218,6 +1250,7 @@ export async function startHelper({
   const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
 
   async function ensureStateClone(project, ctx) {
+    await lookAtState(ctx, project);
     await cloneState({ project, remoteUrl: recordOf(project).remoteUrl, env: ctx.gitEnv });
   }
 
@@ -1233,6 +1266,7 @@ export async function startHelper({
   const lockRoute = (fn, { write = false } = {}) => (body, ctx) => oneAtATime(`lock:${body.project}`, async () => {
     if (write && stopped()) return STOP_REFUSAL;
     await oneAtATime(`state:${body.project}`, () => ensureStateClone(body.project, ctx));
+    await lookAtLock(ctx, body.project);
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
   });
@@ -1328,10 +1362,14 @@ export async function startHelper({
   // What git gets for the profile's own connection; the profile has no host requests.
   async function profileContext() {
     const { mode, env } = connectionOf(await profileEnvFor());
+    const looked = new Map();
+    // Before the request's first git call in the profile clone (every profile route's first step).
+    await lookOnce({ looked }, profileDir(), '.git');
     return {
       mode,
       env,
       signedOut: false,
+      looked,
       gitEnv: gitEnvOf(mode, env, profileRemote()?.connection?.host, profileRemote()?.remoteUrl),
       reach: reachFor(profileRemote()?.remoteUrl),
       secrets: secretsOf(env),
@@ -1575,7 +1613,7 @@ export async function startHelper({
   // project: the mirror and its refs are shared with pushes.
   function readChanges({ project, number, headSha, defaultBranch }, ctx) {
     return oneAtATime(`mirror:${project}`, async () => {
-      const mirror = await mirrorFor(project);
+      const mirror = await mirrorFor(project, ctx);
       return changedPaths({
         mirror, host: recordOf(project).host, number, headSha, defaultBranch, run: keyedFor(ctx), read: [SETTINGS_FILE],
       });
@@ -1589,15 +1627,18 @@ export async function startHelper({
   // moves the pins and passed the lineage job. The helper's own finding, never the caller's.
   // Resolves with `{ matched: false }` for any other pull request, else `{ matched: true, ok, ref,
   // sha, why? }`; anything that can't be read is not pins-only.
-  async function isPinsOnlyRelease({ pr, changes }) {
+  async function isPinsOnlyRelease({ pr, changes }, ctx) {
     const named = RELEASE_BRANCH.exec(typeof pr.headRef === 'string' ? pr.headRef : '');
     if (!named) return { matched: false };
     const sha = named[1];
     const change = changes === null ? null : pinsOnlyChange(changes.paths, changes.files?.[SETTINGS_FILE]);
     if (change === null) return { matched: true, ok: false, why: `it changes more than the Wheelhouse marketplace's ref in ${SETTINGS_FILE}` };
-    const checked = await oneAtATime('wheelhouse-release', () => checkRelease({
+    const checked = await oneAtATime('wheelhouse-release', async () => {
+      await lookOnce(ctx, path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), 'HEAD');
+      return checkRelease({
       ref: change.ref, sha, mirror: path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), url: wheelhouseRepo, git: (args, options) => gitIn({}, HOST_MS, reachFor(wheelhouseRepo))('git', args, options),
-    }));
+      });
+    });
     return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
   }
 
@@ -2037,7 +2078,7 @@ export async function startHelper({
     let releaseCheck = { matched: false };
     if (readable && !restore) {
       try {
-        releaseCheck = await isPinsOnlyRelease({ pr, changes });
+        releaseCheck = await isPinsOnlyRelease({ pr, changes }, ctx);
       } catch {
         releaseCheck = { matched: true, ok: false, why: 'it could not be checked' };
       }
@@ -2193,7 +2234,7 @@ export async function startHelper({
 
   // A runner for git in the mirror with the connection's key.
   async function inMirror(project, ctx, fn) {
-    const mirror = await mirrorFor(project);
+    const mirror = await mirrorFor(project, ctx);
     const keyed = keyedFor(ctx);
     const must = async (args, what) => {
       const answer = await keyed('git', args, { cwd: mirror, input: '' });
@@ -2546,7 +2587,7 @@ export async function startHelper({
     '/pull': (body, ctx) => doPull(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
     '/state/clone': stateRoute(async ({ project }, ctx) => {
-      await cloneState({ project, remoteUrl: recordOf(project).remoteUrl, env: ctx.gitEnv });
+      await ensureStateClone(project, ctx);
       return { ok: true };
     }, { clone: false }),
     '/state/write': stateRoute(doWrite, { write: true }),

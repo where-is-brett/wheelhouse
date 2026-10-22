@@ -15,8 +15,8 @@ export function git(dir, args, env = {}) {
   const allowed = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':');
   const reach = allowed.includes('http') ? 'loopback' : allowed.includes('file') ? 'local' : 'https';
   // look 'never': these are Wheelhouse's own clones under ~/.wheelhouse/, which no agent or project
-  // writes into; setup looks once before its sequence, and Task 4 of the security-gaps plan adds the
-  // helper's look once per request.
+  // writes into; setup looks once before its sequence, and the helper looks once per request at
+  // each repository it uses (lookOnce in scripts/host/helper.js), before its first call here.
   return safeGit({
     cwd: dir,
     env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env },
