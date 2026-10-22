@@ -796,3 +796,35 @@ test('scripts past 2 MB each or 8 MB together are refused', async () => {
     assert.ok(denied(await bash(ctx, './huge.sh')));
   });
 });
+
+// Fix round 4
+test('Bash reads a comment to the end of its line, quotes and all, and still looks for the host tools in it', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'gradle-like'), '#!/bin/sh\n# Don\'t touch this, it\'s generated\nexec "$JAVACMD" "$@"\n');
+    writeScript(path.join(ctx.main, 'c.sh'), '# don\'t\ngh x\n');
+    for (const command of ['./gradle-like', 'echo a#b', 'sh -c "echo hi # it\'s fine"']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+    for (const command of ['./c.sh', 'cat <<EOF\n# $(gh pr merge 1)\nEOF', 'echo ok # gh', 'echo `true # x` ; ./c.sh']) {
+      assert.ok(denied(await bash(ctx, command)), command);
+    }
+  });
+});
+
+test('the strict splitter reads # as a plain character', () => {
+  assert.deepEqual(words('node x.js # note', false), ['node', 'x.js', '#', 'note']);
+  assert.equal(words("node x.js # it's", false), null);
+});
+
+test('Bash reads the script a runner starts by its path, and refuses a bare parallel', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 't.sh'), 'gh x\n');
+    for (const command of ['watch ./t.sh', 'watch -n 5 ./t.sh', 'cat f | parallel', 'cat f | parallel -j 4', 'parallel ::: "gh x"',
+      'xargs ./t.sh < f', 'find . -exec ./t.sh {} \;', 'find . -execdir ./t.sh {} +']) {
+      assert.ok(denied(await bash(ctx, command)), command);
+    }
+    for (const command of ['find . -name \'*.js\' -exec grep -l foo {} +', 'ls | xargs wc -l', 'parallel echo ::: a b']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});

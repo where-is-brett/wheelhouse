@@ -8,7 +8,11 @@
 //   lenient  a backslash escapes the next character, and shell control operators
 //            (; & | ( ) < > backtick, newline, and $( or a backtick inside double
 //            quotes) end the word and start a new segment, so `x;gh` and `$(gh x)`
-//            show their command word. An unclosed quote still gives null.
+//            show their command word. An unclosed quote still gives null. An
+//            unquoted # at the start of a word starts a comment, which runs to the
+//            end of the line (or to the backtick that closes the substitution it
+//            is in); its text is one segment, split at spaces and operators, with
+//            no quote or backslash rules, so `# don't` reads.
 // segmentsWithOperators() also says which operator opened each segment.
 // On Windows a backslash outside quotes is a path separator and becomes a slash.
 
@@ -24,6 +28,9 @@ function scan(command, windows, strict, operators = []) {
   // the substitution ends ('`' or the depth of open parentheses reaches zero).
   let sub = null;
   let depth = 0;
+  // Whether an unquoted backtick substitution is open: a comment inside it ends
+  // at the closing backtick, as the shell cuts the substitution out first.
+  let tick = false;
   const chars = [...command];
   const endWord = () => {
     if (current !== null) segments.at(-1).push(current);
@@ -39,6 +46,8 @@ function scan(command, windows, strict, operators = []) {
       operators[operators.length - 1] = operator; // a redirect written before the command
     } else if (operator === '(' && ['<', '>'].includes(operators.at(-1))) {
       operators[operators.length - 1] = operator; // <( ) and >( ) run a command
+    } else if (operator === '#') {
+      operators[operators.length - 1] = operator;
     }
   };
   const add = (text) => { current = (current ?? '') + text; };
@@ -82,12 +91,26 @@ function scan(command, windows, strict, operators = []) {
       } else {
         endSegment(ch);
       }
+    } else if (!strict && ch === '#' && current === null) {
+      endSegment('#');
+      let word = null;
+      for (; i < chars.length && chars[i] !== '\n' && !(chars[i] === '`' && (tick || sub === '`')); i += 1) {
+        if (SPACES.has(chars[i]) || OPERATORS.has(chars[i])) {
+          if (word !== null) segments.at(-1).push(word);
+          word = null;
+        } else {
+          word = (word ?? '') + chars[i];
+        }
+      }
+      if (word !== null) segments.at(-1).push(word);
+      i -= 1; // the newline or backtick ends it as usual
     } else if (ch === '"' || ch === '\'') {
       quote = ch;
       current ??= '';
     } else if (strict ? (ch === ' ' || ch === '\t') : SPACES.has(ch)) {
       endWord();
     } else if (!strict && OPERATORS.has(ch)) {
+      if (ch === '`') tick = !tick;
       endSegment(ch);
     } else {
       add(ch);
@@ -112,7 +135,7 @@ export function segments(command, windows) {
 
 // The segments as segments() gives them, and for each the operator that opened
 // it (null for the first; '(' or a backtick for a substitution inside double
-// quotes). A segment opened by < or > holds a redirect's target.
+// quotes; '#' for a comment). A segment opened by < or > holds a redirect's target.
 export function segmentsWithOperators(command, windows) {
   const operators = [];
   const found = scan(command, windows, false, operators);

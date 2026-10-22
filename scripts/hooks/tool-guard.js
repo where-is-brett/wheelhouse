@@ -217,8 +217,8 @@ const SNIFF = 4096;
 
 // The index of a segment's command word: past assignments, options (and the
 // values of a wrapper's options), durations and wrappers such as env, sudo and
-// timeout, and the `function NAME` of a definition. A comment, and `command -v x`
-// which only looks a name up, have none. It is seg.length when there is none.
+// timeout, and the `function NAME` of a definition. `command -v x`, which only
+// looks a name up, has none. It is seg.length when there is none.
 function commandAt(seg, names) {
   let wrapper = null;
   for (let i = 0; i < seg.length; i += 1) {
@@ -226,7 +226,6 @@ function commandAt(seg, names) {
       if (wrapper !== null && (WRAPPER_VALUES[wrapper] ?? []).includes(seg[i])) i += 1;
       continue;
     }
-    if (seg[i].startsWith('#')) return seg.length; // a comment
     if (ASSIGNMENT.test(seg[i]) || DURATION.test(seg[i])) continue;
     if (names[i] === 'function') {
       i += 1; // and the function's name
@@ -390,10 +389,19 @@ function bashRefused(command, ctx, depth = 0) {
       const named = (counts.get(fold(lastPart(file))) ?? 0) > 1;
       return scriptRefused(file, inContext(dirs), depth, mode, named);
     };
+    // A runner starts the command in its words: a shell named there, `{}` as the
+    // command, or a script named by its path is held as a command word would be.
+    // A parallel with no command (before any :::) reads its commands from its input.
     const runner = RUNNERS.has(name) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
     if (runner >= 0) {
       if (segNames.slice(runner + 1).some((n) => SHELLS.has(n))) return true;
       if (RUNNER_FLAGS.has(seg[runner]) && seg[runner + 1] === '{}') return true;
+      const started = seg.slice(runner + 1).find((w) => /[\\/]/.test(w));
+      if (started !== undefined && script(started, 'path')) return true;
+      if (name === 'parallel' && runner === k) {
+        const end = args.findIndex((w) => /^:::/.test(w));
+        if (!(end < 0 ? args : args.slice(0, end)).some((w) => !OPTION.test(w) && !DURATION.test(w))) return true;
+      }
     }
     if (POSIX_SHELLS.has(name)) {
       const flag = args.findIndex((w) => SHELL_FLAG.test(w));
@@ -433,7 +441,7 @@ function bashRefused(command, ctx, depth = 0) {
       if (args.length === 0 || script(args[0], 'shell')) return true;
     } else if (MOVERS.has(lname)) {
       dirs = movedDirs(dirs, args.find((w) => !OPTION.test(w)), ctx);
-    } else if (/[\\/]/.test(seg[k]) && !seg[k].startsWith('#') && script(seg[k], 'path')) {
+    } else if (/[\\/]/.test(seg[k]) && script(seg[k], 'path')) {
       return true;
     }
     return false;
@@ -444,7 +452,7 @@ function bashRefused(command, ctx, depth = 0) {
   for (const [index, whole] of segs.entries()) {
     const redirect = operators[index] === '<' || operators[index] === '>';
     const names = whole.map(nameOf);
-    const comment = whole[0]?.startsWith('#');
+    const comment = operators[index] === '#';
     for (let i = 0; i < whole.length; i += 1) {
       const seg = whole;
       const word = seg[i];
@@ -474,7 +482,7 @@ function bashRefused(command, ctx, depth = 0) {
         }
       }
     }
-    if (ctx.wordsOnly) continue;
+    if (ctx.wordsOnly || comment) continue;
     if (!redirect) {
       if (pending !== null && commandRefused(pending)) return true;
       pending = [...whole];
