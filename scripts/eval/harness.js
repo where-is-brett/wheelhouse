@@ -131,21 +131,24 @@ function inRealHome(file) {
 // ~/.wheelhouse or any credential, the npm registry only), with EVAL_DENY_READ added. Per run:
 // `socket`, the run's stand-in helper's socket, the one Unix socket a command may reach (none
 // without it; never one in the real Wheelhouse home); `readable`, paths read again inside what is
-// denied; `writable`, paths written outside the project. The sandbox doesn't run on native
+// denied; `unreadable`, more paths a command may not read (the stand-in helper's key folder), added
+// to the sandbox's denied reads and to a Read deny rule; `writable`, paths written outside the project. The sandbox doesn't run on native
 // Windows, where Claude Code runs commands outside it and these settings change nothing.
-export function sessionSettings({ socket = null, readable = [], writable = [] } = {}) {
+export function sessionSettings({ socket = null, readable = [], writable = [], unreadable = [] } = {}) {
   if (socket !== null && (typeof socket !== 'string' || socket === '')) throw new Error('A session\'s socket is a path');
   if (socket !== null && inRealHome(socket)) throw new Error(`A session never reaches a socket in the real Wheelhouse home: ${socket}`);
   const { sandbox } = projectSettings({ webDomains: [] });
   const own = structuredClone(SESSION_SETTINGS);
+  // Each unreadable path by both its spellings (the temporary folder has two on macOS).
+  const hidden = [...new Set(unreadable.flatMap((p) => { try { return [p, fs.realpathSync(p)]; } catch { return [p]; } }))];
   return {
     ...own,
-    permissions: { ...own.permissions, deny: [...own.permissions.deny, ...EVAL_DENY_COMMANDS] },
+    permissions: { ...own.permissions, deny: [...own.permissions.deny, ...EVAL_DENY_COMMANDS, ...hidden.map((p) => `Read(/${p.split(path.sep).join('/')}/**)`)] },
     sandbox: {
       ...sandbox,
       filesystem: {
         ...sandbox.filesystem,
-        denyRead: [...new Set([...sandbox.filesystem.denyRead, ...EVAL_DENY_READ])],
+        denyRead: [...new Set([...sandbox.filesystem.denyRead, ...EVAL_DENY_READ, ...hidden])],
         ...(readable.length > 0 ? { allowRead: [...readable] } : {}),
         ...(writable.length > 0 ? { allowWrite: [...writable] } : {}),
       },
@@ -344,7 +347,7 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // `extraArgs` go on the command line after the rest, as given: only TAKEN_EXTRA_ARGS, or none. They
 // are not looked for in --help: `--permission-prompt-tool`, which a scenario that asks cards
 // needs (it is what gives a `claude -p` session AskUserQuestion, on 2.1.302), is
-// not listed there as a flag of its own. `socket`, `readable` and `writable` are the run's own
+// not listed there as a flag of its own. `socket`, `readable`, `writable` and `unreadable` are the run's own
 // for the sandbox (sessionSettings); `offered` lists denied tools the session is given (vettedOffer).
 export async function runSession({
   dir,
@@ -361,6 +364,7 @@ export async function runSession({
   socket = null,
   readable = [],
   writable = [],
+  unreadable = [],
   offered = [],
   timeoutMs = 20 * 60 * 1000,
   command = 'claude',
@@ -368,7 +372,7 @@ export async function runSession({
 }) {
   const extra = vettedExtraArgs(extraArgs);
   const offer = vettedOffer(offered, dir);
-  const settings = sessionSettings({ socket, readable, writable });
+  const settings = sessionSettings({ socket, readable, writable, unreadable });
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
   const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
@@ -553,6 +557,25 @@ async function commitSetup(dir) {
   await git('-c', 'user.name=Wheelhouse eval', '-c', 'user.email=eval@wheelhouse.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'Scenario set-up');
 }
 
+// Writes a trial's record and answers where, and under which trial. A record is never written over
+// (ruling F105): when another run has saved this trial's record since, the next free trial number
+// is taken.
+function saveRecord({ home, date, scenario, variant, trial, record }) {
+  let saved = trial;
+  let file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (;;) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ ...record, trial: saved }, null, 2) + '\n', { flag: 'wx' });
+      return { file, trial: saved };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      saved += 1;
+      file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
+    }
+  }
+}
+
 // Runs one trial of one scenario in one variant: makes the scratch project, runs
 // the scenario's setup(dir, variant), commits it, runs the session, asks the
 // scenario to judge it, writes the whole record to the evaluations folder in
@@ -571,13 +594,46 @@ async function commitSetup(dir) {
 // (runSession). A scenario's own `extraArgs` go to the session's command line, and its `offered`
 // tools are taken off the denied list (runSession). Resolves with the verdict, its reasons,
 // the record's file, the trial it was saved under, whether the session was handled, its tokens
-// and its one printed line.
-export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession }) {
+// and its one printed line. `beforePrompt({ scenario, variant, dir, context, runner, home })`, when given,
+// runs after the set-up and may answer { why, usage?, evidence? } to refuse the trial (see above).
+export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession, beforePrompt }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
   let context = {};
   try {
     context = (await scenario.setup(project.dir, variant)) ?? {};
     await commitSetup(project.dir);
+    // A check the runner makes after set-up and before the prompt (run.js, needsSandbox). When it
+    // refuses, the session is never started: the trial is a failed one that was not handled, with
+    // the check's reason and the tokens the check itself spent.
+    const refusal = typeof beforePrompt === 'function'
+      ? await beforePrompt({ scenario, variant, dir: project.dir, context, runner, home })
+      : null;
+    if (refusal) {
+      const spent = refusal.usage ?? { input: 0, output: 0 };
+      const why = refusal.why;
+      const stopped = {
+        id: scenario.id,
+        ...(scenario.leg ? { leg: scenario.leg } : {}),
+        title: scenario.title,
+        variant,
+        trial,
+        date,
+        pass: false,
+        why,
+        handled: false,
+        exitCode: null,
+        usage: spent,
+        mainSessionUsage: spent,
+        models: [],
+        subagents: [],
+        finalText: '',
+        ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
+        ...(refusal.evidence ? { check: refusal.evidence } : {}),
+        events: [],
+      };
+      const kept = saveRecord({ home, date, scenario, variant, trial, record: stopped });
+      return { pass: false, why, file: kept.file, trial: kept.trial, handled: false, usage: spent, line: describeRun({ id: scenarioName(scenario), variant, pass: false, why, usage: spent }) };
+    }
     const prompts = Array.isArray(scenario.prompts) ? scenario.prompts : [scenario.prompt];
     const turns = [];
     let resume = null;
@@ -599,6 +655,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         ...(scenario.offered ? { offered: scenario.offered } : {}),
         ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
         ...(context.readable ? { readable: context.readable } : {}),
+        ...(context.unreadable ? { unreadable: context.unreadable } : {}),
         ...(context.writable ? { writable: context.writable } : {}),
         ...(resume === null ? {} : { resume }),
       });
@@ -618,7 +675,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     // writes nothing and calls no tool by its nature: it took its prompt in hand when it compacted.
     // A pass that throws judges the run a fail; the record is written all the same.
     const compactedTurn = (t) => /^\/compact\b/.test(t.prompt) && t.events.some((e) => e.type === 'system' && e.subtype === 'compact_boundary');
-    const handled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
+    const sessionHandled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
     let judged;
     try {
       judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}) });
@@ -633,8 +690,18 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const finished = turns.length === prompts.length && turns.every((t) => finishedOf(t));
     // A session whose result event says it errored (it ran out of turns, say) never passes.
     const errored = turns.some((t) => t.events.findLast((event) => event.type === 'result')?.is_error === true);
+    // A pass may find the run inconclusive: it returns `handled: false` when it could not tell what
+    // stopped the route it watched, and the trial is then not handled and may be run again. The rule:
+    // `handled: false` is honoured only when the pass saw no failure. A pass that names a failure it
+    // saw, in `failures` (a non-empty list of reasons), keeps that failure whatever else it says: the
+    // trial counts as handled and judged, so a guard that failed once cannot be run away.
+    const sawFailure = Array.isArray(judged.failures) && judged.failures.length > 0;
+    // A failure the pass saw stands even when the session did not take its prompt in hand or did not
+    // finish (an unfinished session whose pass saw a failure stays a handled failure, rulings E21 and
+    // E24); without one, a session not handled stays so (Review Focus 4).
+    const handled = sawFailure || (sessionHandled && judged.handled !== false);
     let shown = handled;
-    let lead = handled ? judged.why : 'not handled';
+    let lead = handled ? judged.why : (sessionHandled && judged.why ? `not handled: ${judged.why}` : 'not handled');
     if (handled && !finished && judged.pass) {
       shown = false;
       lead = 'did not finish';
@@ -672,21 +739,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,
     };
-    // A record is never written over (ruling F105): when another run has saved this trial's record
-    // since, the next free trial number is taken, and the answer says which.
-    let saved = trial;
-    let file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    for (;;) {
-      try {
-        fs.writeFileSync(file, JSON.stringify({ ...record, trial: saved }, null, 2) + '\n', { flag: 'wx' });
-        break;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        saved += 1;
-        file = resultFile({ home, date, id: scenarioName(scenario), variant, trial: saved });
-      }
-    }
+    const { file, trial: saved } = saveRecord({ home, date, scenario, variant, trial, record });
     return { pass, why, file, trial: saved, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };
   } finally {
     try {
