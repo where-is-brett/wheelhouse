@@ -22,7 +22,9 @@ function names() {
 if (name !== 'node' && names().includes(name)) {
   // Node resolves the main module to an absolute path before this runs; the call's first argument
   // is that path made relative again, which is the word the caller typed.
-  const args = [path.relative(process.cwd(), process.argv[1] ?? ''), ...process.argv.slice(2)].filter((a, i) => i > 0 || a !== '');
+  // With no script (`-e`, `-p`), the flags stand in for the word.
+  const first = process.argv[1] === undefined ? process.execArgv : [path.relative(process.cwd(), process.argv[1])];
+  const args = [...first, ...process.argv.slice(2)];
   fs.appendFileSync(path.join(folder, 'calls.log'), `${[name, ...args].join(' ')}\n`);
   let accept = {};
   try {

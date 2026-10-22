@@ -19,11 +19,19 @@
 // puts `--require "<dir>/stand-in-preload.cjs"` at the front of NODE_OPTIONS. Run under a stand-in's
 // name, Node.js loads the preload first; the preload (tests/helpers/stand-in-preload.cjs) logs the
 // call, exits 0 for an accepted one and otherwise refuses with exit 1, and in any other Node.js
-// process does nothing. Because Node.js is the program, a flag it reads itself (`--version`, `-e`)
-// given to a stand-in is taken by Node.js before the stand-in can see it (an option Node.js doesn't
+// process does nothing. Because Node.js is the program, a flag it reads itself is taken by Node.js
+// before the stand-in can see it: `--version`, `-v`, `--help` and `-h` print Node.js's own answer
+// and exit 0, unlogged (no test may rely on a stand-in refusing them), and an option Node.js doesn't
 // know, such as `curl -s`, ends the process with exit 9 before the preload runs, so that call is
-// refused but not logged); only a call whose first argument is a plain word is logged as written
-// (a path-like first argument comes back normalised).
+// refused but not logged. Only a call whose first argument is a plain word is logged as written (a
+// path-like first argument comes back normalised; `-e` and `-p` log the flags in place of a word).
+// The stand-ins work only while NODE_OPTIONS reaches them: a child process given a PATH that keeps
+// the stand-in folder but drops NODE_OPTIONS (the eval harness's session environment does) finds
+// plain Node.js under the tool's name, which runs its arguments as a script. Code like that must be
+// handed a guarded run or spawn instead of relying on the PATH.
+// NODE_OPTIONS reads a backslash inside quotes as an escape, so the preload's path is written with
+// forward slashes, which Node.js on Windows accepts. `platform` lets a test build the Windows form
+// (`.exe` names, that path) on any system.
 // The node form is tested on every system (tests/helpers/stand-ins.test.js); its first real run on
 // Windows is still to come, at the Windows sitting.
 import fs from 'node:fs';
@@ -40,8 +48,8 @@ const quote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
 
 // Writes the node form's stand-ins into dir: a hard link to the Node.js binary per name, else (a
 // folder on another volume, a system that refuses links) one copy in dir and hard links to that.
-function writeNodeStandIns(dir) {
-  const exe = process.platform === 'win32' ? '.exe' : '';
+function writeNodeStandIns(dir, platform) {
+  const exe = platform === 'win32' ? '.exe' : '';
   let copy = null;
   for (const name of STOOD_IN) {
     const target = path.join(dir, `${name}${exe}`);
@@ -58,9 +66,15 @@ function writeNodeStandIns(dir) {
   }
 }
 
-export function standInTools({ accept = {}, form = process.platform === 'win32' ? 'node' : 'script' } = {}) {
+// The preload's path as NODE_OPTIONS can hold it.
+export function preloadOption(dir, platform = process.platform) {
+  const file = path.join(dir, 'stand-in-preload.cjs');
+  return `--require "${platform === 'win32' ? file.replaceAll('\\', '/') : file}"`;
+}
+
+export function standInTools({ accept = {}, platform = process.platform, form = platform === 'win32' ? 'node' : 'script', prefix = 'wh-shims-' } = {}) {
   if (!['script', 'node'].includes(form)) throw new Error(`There is no stand-in form named ${form}`);
-  const dir = tempFolder('wh-shims-');
+  const dir = tempFolder(prefix);
   const log = path.join(dir, 'calls.log');
   fs.writeFileSync(log, '');
   if (form === 'script') writeScripts(dir, log, accept);
@@ -68,13 +82,13 @@ export function standInTools({ accept = {}, form = process.platform === 'win32' 
     fs.writeFileSync(path.join(dir, 'accept.json'), JSON.stringify(accept));
     fs.writeFileSync(path.join(dir, 'stood-in.json'), JSON.stringify(STOOD_IN));
     fs.copyFileSync(PRELOAD, path.join(dir, 'stand-in-preload.cjs'));
-    writeNodeStandIns(dir);
+    writeNodeStandIns(dir, platform);
   }
   const before = process.env.PATH;
   const optionsBefore = process.env.NODE_OPTIONS;
   process.env.PATH = `${dir}${path.delimiter}${before}`;
   if (form === 'node') {
-    const preload = `--require "${path.join(dir, 'stand-in-preload.cjs')}"`;
+    const preload = preloadOption(dir, platform);
     process.env.NODE_OPTIONS = optionsBefore ? `${preload} ${optionsBefore}` : preload;
   }
   return {

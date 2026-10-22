@@ -339,7 +339,7 @@ function watched({ before } = {}) {
   const run = async (file, args, options = {}) => {
     calls.push({ args: [...args], cwd: options.cwd, env: options.env });
     await before?.(callOf(args));
-    return realRun(file, args, options);
+    return hostGuard(file, args, options);
   };
   return { calls, run };
 }
@@ -433,8 +433,8 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       assert.equal(fs.existsSync(mark), false);
 
       // A key not the one the card named is not published.
-      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, fingerprint: '000000000000' }, env, run: realRun, now: () => NOW }), { message: KEY_CHANGED });
-      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, computer: '99999999' }, env, run: realRun, now: () => NOW }), { message: KEY_CHANGED });
+      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, fingerprint: '000000000000' }, env, run: hostGuard, now: () => NOW }), { message: KEY_CHANGED });
+      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, computer: '99999999' }, env, run: hostGuard, now: () => NOW }), { message: KEY_CHANGED });
     } finally {
       remote.cleanup();
     }
@@ -528,14 +528,14 @@ test('a failed push of the key leaves the helper\'s profile branch as it was, an
       const client = helperClient({ address: helper.address });
       assert.deepEqual(await client.profile.clone({}), { ok: true, made: true });
       const before = await clean();
-      const failing = async (file, args, options) => (callOf(args)[0] === 'push' ? { code: 1, stdout: '', stderr: 'denied' } : realRun(file, args, options));
+      const failing = async (file, args, options) => (callOf(args)[0] === 'push' ? { code: 1, stdout: '', stderr: 'denied' } : hostGuard(file, args, options));
       await assert.rejects(publishEnrolment({ profile: profileRemote(), env: {}, run: failing, now: () => NOW }), { message: NOT_PUBLISHED });
       assert.deepEqual(await clean(), before, 'nothing on the helper\'s branch for its push rules to refuse');
       const wrote = await client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep the briefing short' } });
       assert.equal(wrote.ok, true, JSON.stringify(wrote));
       assert.equal(wrote.pushed, true);
       // Published after all, the helper's next push still goes through, carrying the key along.
-      assert.equal((await publishEnrolment({ profile: profileRemote(), env: {}, run: realRun, now: () => NOW })).published, true);
+      assert.equal((await publishEnrolment({ profile: profileRemote(), env: {}, run: hostGuard, now: () => NOW })).published, true);
       const next = await client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'detailed', words: 'Keep the briefing detailed' } });
       assert.equal(next.pushed, true, JSON.stringify(next));
       const files = (await g(remote.url, 'ls-tree', '-r', '--name-only', PROFILE_BRANCH)).split('\n');
@@ -557,7 +557,7 @@ test('the last uninstall takes this computer\'s key back out of the profile by i
       const own = ownKey();
       const env = directorGitEnv({ host: 'github', gitPath: 'git', platform: 'darwin' });
       const recorded = [];
-      await publishEnrolment({ profile: profileRemote(), env, run: realRun, record: (c) => recorded.push(c), now: () => NOW });
+      await publishEnrolment({ profile: profileRemote(), env, run: hostGuard, record: (c) => recorded.push(c), now: () => NOW });
       const { target, after } = recorded[0];
       const tipBefore = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
       const git = watched();
@@ -569,7 +569,7 @@ test('the last uninstall takes this computer\'s key back out of the profile by i
       assert.deepEqual(pushes.map((c) => callOf(c.args)), [['push', '--no-verify', '--porcelain', remote.url, `${tip}:refs/heads/${PROFILE_BRANCH}`]]);
       assert.ok(git.calls.every((c) => path.basename(c.cwd).startsWith('withdraw-')) && !fs.existsSync(git.calls[0].cwd));
       // Gone already: nothing to do.
-      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: realRun }), { put: true });
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: hostGuard }), { put: true });
       assert.equal(await g(remote.url, 'rev-parse', PROFILE_BRANCH), tip);
       // A key this computer's id holds since, not setup's, stays.
       const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-withdraw-'));
@@ -585,11 +585,11 @@ test('the last uninstall takes this computer\'s key back out of the profile by i
         fs.rmSync(work, { recursive: true, force: true });
       }
       const moved = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
-      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: realRun }), { put: false, why: 'it holds another key since setup, so it stays' });
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: hostGuard }), { put: false, why: 'it holds another key since setup, so it stays' });
       assert.equal(await g(remote.url, 'rev-parse', PROFILE_BRANCH), moved);
       // A host that can't be reached says so.
-      await assert.rejects(withdrawEnrolment({ profile: { ...profileRemote(), remoteUrl: path.join(os.tmpdir(), 'wh-no-such-remote.git') }, target, after, env, run: realRun }), { message: NOT_WITHDRAWN });
-      await assert.rejects(withdrawEnrolment({ profile: profileRemote(), target: 'github:o/p:keys/x.json', after, env, run: realRun }));
+      await assert.rejects(withdrawEnrolment({ profile: { ...profileRemote(), remoteUrl: path.join(os.tmpdir(), 'wh-no-such-remote.git') }, target, after, env, run: hostGuard }), { message: NOT_WITHDRAWN });
+      await assert.rejects(withdrawEnrolment({ profile: profileRemote(), target: 'github:o/p:keys/x.json', after, env, run: hostGuard }));
     } finally {
       remote.cleanup();
     }

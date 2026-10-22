@@ -6,7 +6,7 @@
 // clicks copied into the project's state once. Nothing real is pushed or installed: git runs for
 // real only against bare remotes in temporary folders, and `gh`, `claude` and protection are
 // stand-ins. Every home is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,6 +32,12 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { directorGitlabApi } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+
+// Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { g, push as fixturePush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -174,7 +180,7 @@ async function world({
       }
       return answer('', 1, 'unknown command');
     }
-    return realRun(file, args, options);
+    return hostGuard(file, args, options);
   };
   // Protection as Task 8's switchOnAsDirector gives it: here it notes what the host held when it
   // was asked, so the order can be read.

@@ -118,7 +118,7 @@ test('the foreman\'s commands for one project wait their turn: a retry sent whil
   const spans = [];
   let running = 0;
   const run = async (file, args, options = {}) => {
-    if (file !== process.execPath) return realRun(file, args, options);
+    if (file !== process.execPath) return hostGuard(file, args, options);
     running += 1;
     const span = { argv: args.slice(2), overlapped: running > 1 };
     spans.push(span);
@@ -160,7 +160,7 @@ test('the foreman\'s command gets no key or secret, and none comes back in its o
   const seen = [];
   const KEY = 'ghs_STANDINKEY0123456789abcdef';
   const run = async (file, args, options = {}) => {
-    if (file !== process.execPath) return realRun(file, args, options);
+    if (file !== process.execPath) return hostGuard(file, args, options);
     seen.push({ args, options });
     return { code: 0, stdout: `the key ${KEY}\n`, stderr: '' };
   };

@@ -5,7 +5,7 @@
 // a fake system box), protection read back, and the project's record and state clone. Nothing real
 // is signed in, created or pushed: `gh`, `glab`, the browser and the box are fakes, and git runs for
 // real only against bare remotes in temporary folders. Every home is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,6 +32,12 @@ import { readProject } from '../../../scripts/lib/projects.js';
 import { profileRemote } from '../../../scripts/profile/store.js';
 import { stateDir, profileDir, wheelhouseHome, computerId } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+
+// Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
@@ -82,7 +88,7 @@ function standIn(state = {}) {
   w.run = async (file, args = [], options = {}) => {
     const name = path.basename(file).replace(/\.exe$/, '');
     if (name === 'git' && w.gitFails?.(args)) return answer('', 1, 'refused by the test');
-    if (name !== 'gh' && name !== 'glab') return realRun(file, args, options);
+    if (name !== 'gh' && name !== 'glab') return hostGuard(file, args, options);
     const host = name === 'gh' ? 'github' : 'gitlab';
     w.calls.push({ tool: name, args: [...args], env: options.env });
     if (args[0] === 'auth' && args[1] === 'status') {
