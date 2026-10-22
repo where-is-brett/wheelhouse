@@ -52,6 +52,7 @@ You need: the Wheelhouse checkout, Node.js 22 or newer (Node 26.1 or newer is be
 - `write-...` trials: PASS means Windows refused the low process. The two controls are `write-inside-worktree` (should be allowed) and `medium-copy-starts`.
 - `rename-...` and `remove-...` trials: PASS means Windows refused the low process renaming or removing the worktree's `.git` file, `.claude`, `.mcp.json` or `.vscode`, which are kept at the normal level inside the low worktree. A FAIL says the entry was put back afterwards.
 - `read-...` trials are `SEEN`: they say whether the low process could read a marker in an ordinary scratch folder.
+- `credential-manager-low` is `SEEN`: a made-up item (`wheelhouse-probe-52`, a random value) is put in Credential Manager's `PasswordVault` at the normal level, the low process tries to read it, and it is removed. The line says `refused` or `read n characters`. It touches no other item. If a run is killed before the removal, delete the item from Credential Manager by hand (Windows Credentials, `wheelhouse-probe-52`). It tells check 73 whether Guarded keeps a low build from `gh`'s token on Windows.
 - `lock-reads-...` lines are the "no read up" attempts by each route; `LOCK_READS_ROUTE` is the first one that held (low can neither list nor read, and the probe itself still can).
 - `git-label-worktree`, `git-add-low`, `git-commit-low`: the labelling Task 6 will do, then git from low.
 - `npm-test-time` gives the normal and low times side by side.
@@ -60,5 +61,6 @@ You need: the Wheelhouse checkout, Node.js 22 or newer (Node 26.1 or newer is be
 
 - Whether the low copy started, and what its refusal said if not.
 - Every `FAIL`, with its line.
+- The `credential-manager-low` line.
 - `LOCK_READS_ROUTE`, and the `powershell-language-mode` and `node-version` lines.
 - Anything that looked like a window opening, or took far longer than the times printed.

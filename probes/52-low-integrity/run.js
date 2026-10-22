@@ -22,6 +22,7 @@
 // computer may flag them; without it each prints `SEEN <name>: skipped (--persistence-trials)`.
 // Usage: node probes/52-low-integrity/run.js [--persistence-trials]
 // Log (the trial lines and the exact scripts it used): <home>/.wheelhouse-probes/52-low-integrity/.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -322,6 +323,34 @@ async function reads(ctx) {
   await say(ctx, 'SEEN', 'git-credential-fill-scratch', `run at low against an empty scratch configuration, never against real credentials; git ${fill.started ? 'ran' : 'did not start'} (${tail(fill.stderr ?? fill.message ?? '', 120)}). What a real credential store gives a low process was not asked`);
 }
 
+// Credential Manager (see check 73): a made-up PasswordVault item is stored at the normal level, read from the
+// low process, then removed. Only the made-up item is touched, and only its length is printed.
+const VAULT_PRELUDE = "$null = [Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, ContentType=WindowsRuntime]; $v = New-Object Windows.Security.Credentials.PasswordVault; $r = 'wheelhouse-probe-52'; $u = 'probe';";
+export const VAULT_STORE = `${VAULT_PRELUDE} $v.Add((New-Object Windows.Security.Credentials.PasswordCredential($r, $u, $env:WHEELHOUSE_PROBE_52_VALUE)))`;
+export const VAULT_READ = `${VAULT_PRELUDE} $c = $v.Retrieve($r, $u); $c.RetrievePassword(); Write-Output ('length=' + $c.Password.Length)`;
+export const VAULT_REMOVE = `${VAULT_PRELUDE} try { $v.Remove($v.Retrieve($r, $u)) } catch { }`;
+const powershell = (script) => ['powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(script)]];
+
+export function credentialManagerLine(result) {
+  const length = /length=(\d+)/.exec(`${result?.stdout ?? ''}`)?.[1];
+  return result?.ok === true && length ? `read ${length} characters` : 'refused';
+}
+
+async function credentialManager(ctx) {
+  const value = crypto.randomBytes(12).toString('hex');
+  const stored = await exec(...powershell(VAULT_STORE), { env: { WHEELHOUSE_PROBE_52_VALUE: value } });
+  if (stored.code !== 0) {
+    await say(ctx, 'SEEN', 'credential-manager-low', `not tried: the made-up item could not be stored at the normal level (${tail(stored.stderr, 120)})`);
+    return;
+  }
+  ctx.vaultItem = true;
+  const [file, args] = powershell(VAULT_READ);
+  const read = await low(ctx, 'exec', [file, ...args]);
+  await say(ctx, 'SEEN', 'credential-manager-low', `${credentialManagerLine(read)} (a made-up PasswordVault item stored at the normal level, read from the low process; nothing else in Credential Manager was touched)`);
+  await exec(...powershell(VAULT_REMOVE));
+  ctx.vaultItem = false;
+}
+
 // Sets a no-read-up label on a fresh scratch folder by `apply`, then tries to read it from low and from here.
 async function tryLock(ctx, route, label, apply) {
   const dir = path.join(ctx.root, 'lock', `${route}-${label}`);
@@ -522,6 +551,7 @@ async function cleanup(ctx) {
   ctx.cleaned = true;
   const problems = [];
   const attempt = async (what, fn) => { try { await fn(); } catch (error) { problems.push(`${what}: ${error.message}`); } };
+  if (ctx.vaultItem) await attempt('Credential Manager item', () => exec(...powershell(VAULT_REMOVE)));
   if (ctx.runValue) await attempt('registry value', () => exec('reg', ['delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', ctx.runValue, '/f']));
   if (ctx.taskName) await attempt('scheduled task', () => exec('schtasks', ['/delete', '/tn', ctx.taskName, '/f']));
   if (ctx.startupFile) await attempt('startup file', () => fs.rmSync(ctx.startupFile, { force: true }));
@@ -589,6 +619,7 @@ export async function main(argv = process.argv.slice(2)) {
       await worktreeLabelling(ctx);
       await writes(ctx);
       await reads(ctx);
+      await credentialManager(ctx);
     } else {
       await say(ctx, 'SEEN', 'low-trials-skipped', 'the writes, reads and git trials need a low copy that starts; they were not run');
     }
