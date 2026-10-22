@@ -35,10 +35,10 @@ test('the stand-in helper answers a feature session\'s commands and records each
     assert.deepEqual(await client.state.answer({ cwd: dir, questionId: 'q-x-1' }), { ok: true, answer: null });
     assert.deepEqual(await client.state.answer({ cwd: dir, questionId: 'q-x-2' }), { ok: true, answer: 'yes' });
     assert.deepEqual(await client.lineage.provenance({ cwd: dir }), { ok: true, block: null, stop: false });
-    assert.equal((await client.merge({ project: 'p', number: 1 })).ok, false, 'anything else is refused');
+    assert.equal((await client.updateBranch({ project: 'p', number: 1 })).ok, false, 'anything else is refused');
 
     const records = helper.records();
-    assert.deepEqual(records.map((r) => r.route), ['push', 'push', 'pull', 'pr/open', 'pr/open', 'state/answer', 'state/answer', 'lineage/provenance', 'POST /merge']);
+    assert.deepEqual(records.map((r) => r.route), ['push', 'push', 'pull', 'pr/open', 'pr/open', 'state/answer', 'state/answer', 'lineage/provenance', 'POST /pr/update-branch']);
     assert.equal(records[0].sha, head);
     assert.equal(records[1].refused, true);
     assert.equal(records[2].branch, 'feature/x');
@@ -47,6 +47,58 @@ test('the stand-in helper answers a feature session\'s commands and records each
     assert.equal(records[8].unanswered, true);
   } finally {
     await helper.close();
+  }
+});
+
+const REVIEWED = 'c'.repeat(40);
+
+test('the stand-in helper signs the records a run starts with, and the merge route applies the real gate to them', async () => {
+  const blocked = await startStandInHelper({
+    address: testAddress(shortHome()),
+    state: { pullRequests: { 1: REVIEWED }, signed: [{ kind: 'review', data: { pr: 1, commit: REVIEWED, verdict: 'FINDINGS', findings: 2 } }] },
+  });
+  try {
+    const client = helperClient({ address: blocked.address });
+    assert.equal(blocked.events().length, 1, 'the signed record is in the state');
+    assert.equal(blocked.events()[0].kind, 'review');
+    assert.ok(blocked.events()[0].sig, 'it is signed');
+    assert.equal(blocked.views().reviews['1'][REVIEWED].kind, 'review', 'by a key the stand-in enrols, so the views count it');
+    const refused = await client.merge({ project: 'p', number: 1 });
+    assert.equal(refused.ok, false);
+    assert.match(refused.refused, /no CLEAN review of cccccc/);
+    assert.equal((await client.merge({ project: 'p', number: 9 })).ok, false, 'a pull request it does not know is not open');
+    assert.deepEqual(blocked.records().map((r) => [r.route, r.number, r.merged ?? false, r.refused ?? false]), [['merge', 1, false, true], ['merge', 9, false, true]]);
+  } finally {
+    await blocked.close();
+  }
+
+  const clean = await startStandInHelper({
+    address: testAddress(shortHome()),
+    state: { pullRequests: { 1: REVIEWED }, signed: [{ kind: 'review', data: { pr: 1, commit: REVIEWED, verdict: 'CLEAN', findings: 0 } }] },
+  });
+  try {
+    const client = helperClient({ address: clean.address });
+    assert.deepEqual(await client.merge({ project: 'p', number: 1 }), { ok: true, merged: true, sha: REVIEWED });
+    assert.equal((await client.merge({ project: 'p', number: 1 })).ok, false, 'a merged pull request is no longer open');
+  } finally {
+    await clean.close();
+  }
+
+  // The caller may raise the conditions, as with the real helper, and never lower the review's.
+  const raised = await startStandInHelper({
+    address: testAddress(shortHome()),
+    state: { pullRequests: { 1: REVIEWED }, signed: [{ kind: 'review', data: { pr: 1, commit: REVIEWED, verdict: 'CLEAN', findings: 0 } }] },
+  });
+  try {
+    const client = helperClient({ address: raised.address });
+    assert.match((await client.merge({ project: 'p', number: 1, stop: true })).refused, /STOP is on/);
+    assert.match((await client.merge({ project: 'p', number: 1, bypass: true })).refused, /bypass/);
+    assert.match((await client.merge({ project: 'p', number: 1, approvalRequired: true })).refused, /no approval of ccccccc/);
+    assert.match((await client.merge({ project: 'p', number: 1, touchesGuardrails: true })).refused, /no approval of ccccccc/);
+    assert.deepEqual(raised.records().filter((r) => r.merged === true), [], 'none of those merged');
+    assert.equal((await client.merge({ project: 'p', number: 1 })).ok, true, 'and without them it merges');
+  } finally {
+    await raised.close();
   }
 });
 
