@@ -109,6 +109,16 @@ function inside(fold, folder, file) {
   return target === base || target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
 }
 
+// The folders and files that hold Wheelhouse's keys and the computer's credentials, as given and by real path.
+function secretFolders(home, platform) {
+  const homeReal = resolveReal(home, home);
+  return [
+    path.join(home, '.wheelhouse'), path.join(homeReal, '.wheelhouse'),
+    wheelhouseHome(), resolveReal(wheelhouseHome(), home),
+    ...credentialPaths(platform).flatMap((c) => [path.join(home, ...c.split('/')), path.join(homeReal, ...c.split('/'))]),
+  ];
+}
+
 function fileRefusal(input, { home, platform, pluginRoot }) {
   const tool = input.tool_name;
   const args = input.tool_input ?? {};
@@ -124,11 +134,7 @@ function fileRefusal(input, { home, platform, pluginRoot }) {
     if (envName(path.basename(candidate), fold)) return refuse('read a .env file');
   }
   const homeReal = resolveReal(home, home);
-  const secrets = [
-    path.join(home, '.wheelhouse'), path.join(homeReal, '.wheelhouse'),
-    wheelhouseHome(), resolveReal(wheelhouseHome(), home),
-    ...credentialPaths(platform).flatMap((c) => [path.join(home, ...c.split('/')), path.join(homeReal, ...c.split('/'))]),
-  ];
+  const secrets = secretFolders(home, platform);
   for (const candidate of [absolute, real]) {
     if (secrets.some((s) => inside(fold, s, candidate))) return refuse('open Wheelhouse\'s keys or the credentials on this computer');
   }
@@ -195,19 +201,35 @@ function gitPushes(args) {
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
-const WRAPPERS = new Set(['command', 'builtin', 'exec', 'nohup', 'time', 'nice', 'sudo', 'doas', 'timeout', 'stdbuf', 'setsid', 'env', 'then', 'do', 'else', 'if', 'elif', 'while', 'until', '!']);
+const WRAPPERS = new Set(['command', 'builtin', 'exec', 'nohup', 'time', 'nice', 'sudo', 'doas', 'timeout', 'stdbuf', 'setsid', 'env', 'then', 'do', 'else', 'if', 'elif', 'while', 'until', '!', '{', '}']);
+// The options of a wrapper that take the next word as their value.
+const WRAPPER_VALUES = {
+  sudo: ['-u', '-g', '-C', '-h', '-p', '-r', '-t', '-U'], timeout: ['-s', '-k'], exec: ['-a'], env: ['-u', '-C'], nice: ['-n'], stdbuf: ['-i', '-o', '-e'],
+};
 const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
-const SCRIPT_LIMIT = 1024 * 1024;
+const RUNNERS = new Set(['xargs', 'parallel', 'watch']);
+const RUNNER_FLAGS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+const MOVERS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl', 'push-location']);
+const PWSH_VALUE_OPTIONS = new Set(['executionpolicy', 'ep', 'workingdirectory', 'wd', 'outputformat', 'of', 'inputformat', 'if', 'windowstyle', 'w', 'configurationname', 'configurationfile', 'settingsfile', 'custompipename']);
+const SCRIPT_LIMIT = 2 * 1024 * 1024;
+const READ_BUDGET = 8 * 1024 * 1024;
 const SNIFF = 4096;
 
-// The index of a segment's command word: past assignments, options, durations
-// and wrappers such as env, sudo and timeout. `command -v x` only looks a name
-// up, so it has none. It is seg.length when there is none.
+// The index of a segment's command word: past assignments, options (and the
+// values of a wrapper's options), durations and wrappers such as env, sudo and
+// timeout. `command -v x` only looks a name up, so it has none. It is seg.length
+// when there is none.
 function commandAt(seg, names) {
+  let wrapper = null;
   for (let i = 0; i < seg.length; i += 1) {
-    if (ASSIGNMENT.test(seg[i]) || OPTION.test(seg[i]) || DURATION.test(seg[i])) continue;
+    if (OPTION.test(seg[i])) {
+      if (wrapper !== null && (WRAPPER_VALUES[wrapper] ?? []).includes(seg[i])) i += 1;
+      continue;
+    }
+    if (ASSIGNMENT.test(seg[i]) || DURATION.test(seg[i])) continue;
     if (WRAPPERS.has(names[i])) {
       if (names[i] === 'command' && /^-[A-Za-z]*[vV]/.test(seg[i + 1] ?? '')) return seg.length;
+      wrapper = names[i];
       continue;
     }
     return i;
@@ -226,70 +248,168 @@ function shebangShell(text) {
   return POSIX_SHELLS.has(name);
 }
 
-// Whether a script file stops a command being let through: it can't be placed,
-// found or read, is not a regular file or is over 1 MB, or its text is refused.
-// Only a regular file is opened, so a device such as /dev/stdin can't block the
-// hook. A binary passes. With byPath, a text file whose shebang names something
-// other than a shell passes too, since a shell does not run it, and a missing
-// file passes unless `named` (another word of the command names it).
-function scriptRefused(file, dir, ctx, depth, byPath = false, named = true) {
-  if (depth > MAX_DEPTH) return true;
-  if (/[$`]/.test(file) || file.startsWith('~')) return true;
-  const absolute = path.isAbsolute(file) ? file : dir === null ? null : path.resolve(dir, file);
-  if (absolute === null) return true;
-  try {
-    const stat = fs.statSync(absolute);
-    if (!stat.isFile() || stat.size > SCRIPT_LIMIT) return true;
-    const head = Buffer.alloc(Math.min(SNIFF, stat.size));
-    const fd = fs.openSync(absolute, 'r');
-    try {
-      fs.readSync(fd, head, 0, head.length, 0);
-    } finally {
-      fs.closeSync(fd);
-    }
-    if (head.includes(0)) return false;
-    if (byPath && !shebangShell(head.toString('utf8'))) return false;
-    const text = fs.readFileSync(absolute, 'utf8');
-    return bashRefused(text, { ...ctx, cwd: path.dirname(absolute) }, depth + 1);
-  } catch (error) {
-    // A path that runs and is not there fails by itself, unless the command
-    // makes it first; `named` says another word of the command names it.
-    return !(byPath && !named && ['ENOENT', 'ENOTDIR'].includes(error?.code));
+// A script text without its comment lines (the shebang line is one).
+const withoutComments = (text) => text.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+
+// A command without the bodies of its here-documents whose terminator is
+// quoted (<<'X', <<"X", <<-'X'): nothing in them runs or expands, and they are
+// often prose. An unquoted body expands, so it stays.
+function withoutQuotedHeredocs(command) {
+  const lines = command.split('\n');
+  const kept = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    kept.push(lines[i]);
+    const m = /<<(-?)\s*(?:'([^']*)'|"([^"]*)")/.exec(lines[i]);
+    if (!m) continue;
+    const end = m[2] ?? m[3];
+    let j = i + 1;
+    while (j < lines.length && (m[1] ? lines[j].replace(/^\t+/, '') : lines[j]) !== end) j += 1;
+    i = j;
   }
+  return kept.join('\n');
+}
+
+// Reads one script file: 'missing' when it is not there, true when it is
+// refused, else false. Only a regular file is read: it is opened without
+// blocking and looked at through the descriptor, so a device or a fifo swapped
+// in cannot hold the hook. A result is kept by path, a file being read counts
+// as refused (so a loop refuses), and the bytes read in one decision are capped.
+function readScript(abs, ctx, depth, mode) {
+  const key = `${mode}\0${abs}`;
+  const { results } = ctx.state;
+  if (results.has(key)) return results.get(key);
+  let fd;
+  try {
+    const flags = fs.constants.O_RDONLY | (process.platform === 'win32' ? 0 : (fs.constants.O_NONBLOCK ?? 0));
+    fd = fs.openSync(abs, flags);
+  } catch (error) {
+    return ['ENOENT', 'ENOTDIR'].includes(error?.code) ? 'missing' : true;
+  }
+  results.set(key, true);
+  let result = true;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (stat.isFile() && stat.size <= SCRIPT_LIMIT && (ctx.state.bytes += stat.size) <= READ_BUDGET) {
+      const buffer = Buffer.alloc(stat.size);
+      let got = 0;
+      while (got < buffer.length) {
+        const n = fs.readSync(fd, buffer, got, buffer.length - got, got);
+        if (n === 0) break;
+        got += n;
+      }
+      const head = buffer.subarray(0, Math.min(SNIFF, got));
+      if (head.includes(0)) {
+        result = false;
+      } else if (mode === 'path' && !shebangShell(head.toString('utf8'))) {
+        result = false;
+      } else {
+        const text = buffer.subarray(0, got).toString('utf8');
+        result = bashRefused(withoutComments(text), { ...ctx, dirs: [path.dirname(abs)], wordsOnly: mode === 'batch' }, depth + 1);
+      }
+    }
+  } catch {
+    result = true;
+  } finally {
+    fs.closeSync(fd);
+  }
+  results.set(key, result);
+  return result;
+}
+
+// Whether a script file stops a command being let through: it can't be placed,
+// found or read, is not a regular file or is too big, or its text is refused. A
+// relative file is looked for in each folder the command might be in, and
+// refused if any copy is. A binary passes. In 'path' mode (a command word with a
+// slash) a text file whose shebang names something other than a shell passes
+// too, since a shell does not run it, and a file that is missing passes unless
+// `named` (another word of the command names it, as in `echo x > t.sh; ./t.sh`).
+// In 'batch' mode only the host tools and .env files named are looked for.
+// A file inside Wheelhouse's home or a credential folder is refused unread.
+function scriptRefused(file, ctx, depth, mode = 'shell', named = true) {
+  if (depth > MAX_DEPTH) return true;
+  let name = file;
+  if (name === '~' || name.startsWith('~/') || (ctx.windows && name.startsWith('~\\'))) name = expandHome(name, ctx.home, ctx.windows);
+  if (name === '' || /[$`]/.test(name) || name.startsWith('~')) return true;
+  if (ctx.windows && /^\/[A-Za-z]\//.test(name)) name = `${name[1].toUpperCase()}:${name.slice(2)}`;
+  const absolute = path.isAbsolute(name) || /^[A-Za-z]:[\\/]/.test(name);
+  if (!absolute && ctx.dirs === null) return true;
+  const candidates = [...new Set(absolute ? [name] : ctx.dirs.map((d) => path.resolve(d, name)))];
+  const found = [];
+  for (const candidate of candidates) {
+    try {
+      const real = resolveReal(candidate, candidate);
+      if ((ctx.secrets ?? []).some((s) => inside(ctx.fold, s, candidate) || inside(ctx.fold, s, real))) return true;
+    } catch {
+      return true;
+    }
+    const result = readScript(candidate, ctx, depth, mode);
+    if (result === true) return true;
+    if (result === false) found.push(candidate);
+  }
+  if (found.length > 0) return false;
+  return !(mode === 'path' && !named && !(ctx.windows && absolute));
+}
+
+// The folders a command might be in after a cd, pushd or Set-Location: the ones
+// it was in, and the target in each where that is a folder. A shell that stays
+// put when the target is missing, or leaves a subshell, is covered by keeping
+// the old ones. null means the target can't be told (a variable, a substitution,
+// `cd -`, a bare cd), so relative scripts can't be placed.
+function movedDirs(dirs, to, ctx) {
+  if (dirs === null || to === undefined || to === '' || to === '-' || /[$`]/.test(to)) return null;
+  const target = expandHome(to, ctx.home, ctx.windows);
+  if (target.startsWith('~')) return null;
+  const moved = [...dirs];
+  for (const dir of dirs) {
+    const next = path.resolve(dir, target);
+    try {
+      if (fs.statSync(next).isDirectory() && !moved.includes(next)) moved.push(next);
+    } catch {
+      // The shell stays where it was.
+    }
+  }
+  return moved;
 }
 
 // Whether a command line should be refused: a host tool, git push, a .env file,
 // an unreadable quote. Strings handed to a shell are split again. A shell fed by
-// a pipe or redirect (its segment has no script), and a script file that a shell,
-// `source` or a path runs, are read and held to the same rules; a script that
-// can't be read yet is refused. A script run by another program (`node x.js`,
-// `npm run`, `make`) is not looked into. A cd moves the folder that later
-// scripts are found in.
+// a pipe or redirect (its segment has no script), code made at run time by a
+// substitution, and a script file that a shell, `source` or a path runs, are
+// read and held to the same rules; a script that can't be read yet is refused.
+// A script run by another program (`node x.js`, `npm run`, `make`) is not looked
+// into. The files read in one decision are kept by path and capped in size.
 function bashRefused(command, ctx, depth = 0) {
   const { windows, fold } = ctx;
   if (depth > MAX_DEPTH) return true;
-  const split = segmentsWithOperators(command, windows);
+  const split = segmentsWithOperators(withoutQuotedHeredocs(command), windows);
   if (split === null) return true;
   const { segments: segs, operators } = split;
-  const again = (text) => bashRefused(text, ctx, depth + 1);
+  const inContext = (dirs) => ({ ...ctx, dirs });
+  let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
+  const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
-  let dir = ctx.cwd ?? null;
   const lastParts = segs.flat().map((w) => fold(lastPart(w)));
-  for (const [index, seg] of segs.entries()) {
-    const names = seg.map(nameOf);
-    for (let i = 0; i < seg.length; i += 1) {
+  for (const [index, whole] of segs.entries()) {
+    // The first word after < or > is a redirect's file; the words after it are a command.
+    const redirect = operators[index] === '<' || operators[index] === '>';
+    const names = whole.map(nameOf);
+    for (let i = 0; i < whole.length; i += 1) {
+      const seg = whole;
       const word = seg[i];
       const value = word.slice(word.indexOf('=') + 1);
       if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
       if (GIT_PUSHERS.has(names[i])) return true;
       if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
       for (const candidate of [word, value]) {
-        // A '<rev>:' prefix, as in HEAD:.env, is a path boundary too.
-        const name = fold(candidate.split(/[\\/:]/).at(-1));
-        if (envName(name, fold) || (name.startsWith('.e') && /[*?[]/.test(name))) return true;
+        // A '<rev>:' prefix, as in HEAD:.env, is a path boundary too; on Windows
+        // `.env:stream` and `.env::$DATA` name the file, so the name before the
+        // colon counts as well.
+        for (const name of [fold(lastPart(candidate)), fold(candidate.split(/[\\/:]/).at(-1))]) {
+          if (envName(name, fold) || (name.startsWith('.e') && /[*?[]/.test(name))) return true;
+        }
       }
       if (names[i] === 'eval' && again(seg.slice(i + 1).join(' '))) return true;
-      if (SHELL_FLAG.test(word) && i + 1 < seg.length && again(seg[i + 1])) return true;
+      if (SHELL_FLAG.test(word) && i + 1 < seg.length && (seg[i + 1] === '' || again(seg[i + 1]))) return true;
       if (PWSH.has(names[i]) && seg.slice(i + 1).some((w) => encodedFlag(w, windows))) return true;
       if (SHELLS.has(names[i]) && seg.slice(i + 1).some((w) => !OPTION.test(w) && again(w))) return true;
       if (names[i] === 'env') {
@@ -300,39 +420,62 @@ function bashRefused(command, ctx, depth = 0) {
         }
       }
     }
-    // The first word after < or > is a redirect's file, not a command.
-    if (operators[index] === '<' || operators[index] === '>') continue;
-    const k = commandAt(seg, names);
+    if (ctx.wordsOnly) continue;
+    const seg = redirect ? whole.slice(1) : whole;
+    const segNames = redirect ? names.slice(1) : names;
+    const k = commandAt(seg, segNames);
     if (k >= seg.length) continue;
-    const name = names[k];
+    const name = segNames[k];
+    const lname = name.toLowerCase();
     const args = seg.slice(k + 1);
-    const script = (file, byPath) => {
+    if (seg[k] === '' || /[$`]/.test(seg[k])) return true;
+    const script = (file, mode) => {
       const named = lastParts.filter((p) => p === fold(lastPart(file))).length > 1;
-      return scriptRefused(file, dir, ctx, depth, byPath, named);
+      return scriptRefused(file, inContext(dirs), depth, mode, named);
     };
-    const exec = seg.findIndex((w) => w === '-exec' || w === '-execdir');
-    const from = name === 'xargs' ? k : exec;
-    if (from >= 0 && names.slice(from + 1).some((n) => SHELLS.has(n))) return true;
+    const runner = RUNNERS.has(name) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
+    if (runner >= 0) {
+      if (segNames.slice(runner + 1).some((n) => SHELLS.has(n))) return true;
+      if (RUNNER_FLAGS.has(seg[runner]) && seg[runner + 1] === '{}') return true;
+    }
     if (POSIX_SHELLS.has(name)) {
       const flag = args.findIndex((w) => SHELL_FLAG.test(w));
       if (flag >= 0) {
         if (flag === args.length - 1) return true;
       } else {
         const file = args.find((w) => !OPTION.test(w));
-        if (args.includes('-') || args.includes('-s') || file === undefined || script(file, false)) return true;
+        if (args.includes('-') || args.includes('-s') || file === undefined || script(file, 'shell')) return true;
       }
     } else if (PWSH.has(name)) {
       if (args.length === 0 || args.includes('-')) return true;
       const f = args.findIndex((w) => /^-(file|f)$/i.test(w));
-      if (f >= 0 && (f === args.length - 1 || script(args[f + 1], false))) return true;
+      const commanded = args.some((w) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(w) || encodedFlag(w, windows));
+      if (f >= 0) {
+        if (f === args.length - 1 || script(args[f + 1], 'shell')) return true;
+      } else if (!commanded) {
+        // PowerShell takes its first plain word for -File.
+        for (let j = 0; j < args.length; j += 1) {
+          if (OPTION.test(args[j])) {
+            if (PWSH_VALUE_OPTIONS.has(args[j].replace(/^(--?|\/)/, '').toLowerCase())) j += 1;
+          } else {
+            if (script(args[j], 'shell')) return true;
+            break;
+          }
+        }
+      }
+    } else if (lname === 'iex' || lname === 'invoke-expression') {
+      if (args.length === 0 || args.some((w) => !OPTION.test(w) && again(w))) return true;
     } else if (name === 'cmd') {
       if (args.length === 0) return true;
+      const c = args.findIndex((w) => /^\/[ck]$/i.test(w));
+      if (c >= 0 && /\.(bat|cmd)$/i.test(args[c + 1] ?? '') && script(args[c + 1], 'batch')) return true;
+    } else if (name === 'eval') {
+      if (args.every((w) => w === '')) return true;
     } else if (name === 'source' || seg[k] === '.') {
-      if (args.length > 0 && script(args[0], false)) return true;
-    } else if (name === 'cd' || name === 'pushd') {
-      const to = args.find((w) => !OPTION.test(w));
-      dir = to === undefined || dir === null || to.startsWith('~') || to.includes('$') ? null : path.resolve(dir, to);
-    } else if (/[\\/]/.test(seg[k]) && !seg[k].startsWith('#') && script(seg[k], true)) {
+      if (args.length > 0 && script(args[0], 'shell')) return true;
+    } else if (MOVERS.has(lname)) {
+      dirs = movedDirs(dirs, args.find((w) => !OPTION.test(w)), ctx);
+    } else if (/[\\/]/.test(seg[k]) && !seg[k].startsWith('#') && script(seg[k], 'path')) {
       return true;
     }
   }
@@ -488,7 +631,8 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     // PowerShell exists on every system but is read as on Windows.
     const windows = platform === 'win32' || tool === 'PowerShell';
     const fold = foldFor(windows ? 'win32' : platform);
-    return bashRefused(command, { windows, fold, cwd }) ? refuse('run the host tools, push, or read a .env file') : undefined;
+    const ctx = { windows, fold, cwd, home, secrets: secretFolders(home, platform), state: { results: new Map(), bytes: 0 } };
+    return bashRefused(command, ctx) ? refuse('run the host tools, push, or read a .env file') : undefined;
   }
   try {
     return fileRefusal(input, { home, platform, pluginRoot }) ?? undefined;

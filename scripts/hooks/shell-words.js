@@ -35,6 +35,8 @@ function scan(command, windows, strict, operators = []) {
     if (segments.at(-1).length > 0) {
       segments.push([]);
       operators.push(operator);
+    } else if (operator === '<' || operator === '>') {
+      operators[operators.length - 1] = operator; // a redirect written before the command
     }
   };
   const add = (text) => { current = (current ?? '') + text; };
@@ -71,10 +73,10 @@ function scan(command, windows, strict, operators = []) {
     } else if (sub !== null && (ch === sub || ch === '(' || ch === ')') && !(ch === '(' && sub === '`')) {
       if (ch === '(') depth += 1;
       else if (sub === '`' || (depth -= 1) === 0) {
+        endSegment(ch); // pushes the word in progress
         sub = null;
         quote = '"';
         current = null;
-        endSegment(ch);
       } else {
         endSegment(ch);
       }

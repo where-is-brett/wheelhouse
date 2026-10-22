@@ -692,3 +692,99 @@ test('Bash allows clean scripts, binaries by path and shell names as arguments',
     for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
   });
 });
+
+const withWin = (ctx, command, platform = 'win32', tool = 'Bash') => run(ctx.base, ctx.home, call(ctx.main, tool, { command }), platform);
+
+test('Bash refuses a shebang script that runs the host tools, by path, by a shell and by source', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 's1'), '#!/bin/sh\ngh x\n');
+    fs.writeFileSync(path.join(ctx.main, 's2'), '#!/usr/bin/env bash\ngh x\n');
+    for (const command of ['./s1', 'sh s1', 'source s1', './s2', 'bash s2', 'source s2']) {
+      assert.ok(denied(await bash(ctx, command)), command);
+    }
+  });
+});
+
+test('Bash allows shebang scripts and comment lines, by path, by a shell and by source', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 's1'), '#!/bin/sh\n# gh x is only a comment\n  # sh\necho hi\n');
+    fs.writeFileSync(path.join(ctx.main, 's2'), '#!/usr/bin/env bash\nset -e\necho hi\n');
+    fs.writeFileSync(path.join(ctx.main, 'big.sh'), 'echo hi\n'.repeat(190000));
+    fs.mkdirSync(path.join(ctx.main, 'scripts'));
+    fs.writeFileSync(path.join(ctx.main, 'scripts', 'x.js'), 'gh x\n');
+    fs.writeFileSync(path.join(ctx.home, 'home.sh'), 'echo hi\n');
+    const commands = ['./s1', 'sh s1', 'source s1', './s2', 'bash s2', 'source s2', './big.sh', 'source ~/home.sh',
+      'cat > notes.txt <<\'X\'\nscripts/x.js holds the call\nX', 'git commit -F - <<\'EOF\'\nscripts/x.js: tidy\nEOF'];
+    for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('Bash refuses what hides behind braces, redirects, substitutions, wrapper options and folders', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 't.sh'), 'gh x\n');
+    const commands = [
+      '{ ./t.sh; }', '{ sh t.sh; }',
+      '2>/dev/null ./t.sh', '>out.txt sh t.sh', '<f sh', 'cat f | 2>/dev/null sh',
+      'sh -c "$(base64 -d x)"', 'eval "$(base64 -d x)"', '$(base64 -d x)',
+      '(cd sub); ./t.sh', 'cd nowhere; ./t.sh', 'pushd sub; popd; ./t.sh', 'cd "$(echo sub)" && ./t.sh',
+      'timeout -s KILL 5 sh t.sh', 'cat f | sudo -u x sh',
+      'echo "$(git push)"', 'echo "$(cat .env)"', 'echo "$(cat t.sh | sh)"',
+      'parallel sh ::: t.sh', 'watch sh t.sh', 'find . -ok sh {} \;', 'find . -name \'*.sh\' -exec {} \;',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('PowerShell refuses a script by its first word, iex and a changed folder', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 't.ps1'), 'gh x\n');
+    fs.writeFileSync(path.join(ctx.main, 'sub', 'u.sh'), 'gh x\n');
+    const commands = ['pwsh t.ps1', 'pwsh -NoProfile t.ps1', 'pwsh -ExecutionPolicy Bypass t.ps1', 'Get-Content t.txt | iex',
+      'Get-Content t.txt | Invoke-Expression', 'iex (Get-Content t.txt -Raw)', 'iex \'gh x\'', 'Set-Location sub; ./u.sh', 'sl sub; ./u.sh',
+      'Push-Location sub; ./u.sh', 'chdir sub; ./u.sh'];
+    for (const command of commands) assert.ok(denied(await withWin(ctx, command, 'darwin', 'PowerShell')), command);
+    assert.equal(await withWin(ctx, 'pwsh -NoProfile -ExecutionPolicy Bypass -Command Get-ChildItem', 'darwin', 'PowerShell'), undefined);
+  });
+});
+
+test('on Windows an .env stream, a batch file and a Git Bash path are refused', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 't.bat'), 'gh x\n');
+    for (const command of ['Get-Content .env::$DATA', 'Get-Content \'.env::$DATA\'', 'type .env:x', 'cmd /c t.bat', 'cmd /k t.bat', '/c/nowhere/t.sh']) {
+      assert.ok(denied(await withWin(ctx, command)), command);
+    }
+    assert.equal(await withWin(ctx, 'cmd /c "echo hi"'), undefined);
+  });
+});
+
+test('Bash refuses a script inside Wheelhouse\'s home', async () => {
+  await inProject(async (ctx) => {
+    fs.mkdirSync(path.join(ctx.home, 'wh'), { recursive: true });
+    fs.writeFileSync(path.join(ctx.home, 'wh', 'k.sh'), 'echo hi\n');
+    assert.ok(denied(await bash(ctx, `sh ${path.join(ctx.home, 'wh', 'k.sh')}`)));
+  });
+});
+
+test('scripts that call each other many times are read once each, and loops are refused', async () => {
+  await inProject(async (ctx) => {
+    for (let n = 1; n <= 5; n += 1) fs.writeFileSync(path.join(ctx.main, `l${n}.sh`), `${`./l${n + 1}.sh\n`.repeat(12)}`);
+    fs.writeFileSync(path.join(ctx.main, 'l6.sh'), 'echo hi\n');
+    fs.writeFileSync(path.join(ctx.main, 'loop1.sh'), './loop2.sh\n');
+    fs.writeFileSync(path.join(ctx.main, 'loop2.sh'), './loop1.sh\n');
+    const started = Date.now();
+    assert.equal(await bash(ctx, './l1.sh'), undefined);
+    assert.ok(Date.now() - started < 2000, 'under two seconds');
+    assert.ok(denied(await bash(ctx, './loop1.sh')));
+  });
+});
+
+test('scripts past 2 MB each or 8 MB together are refused', async () => {
+  await inProject(async (ctx) => {
+    const text = 'echo hi\n'.repeat(240000);
+    for (let n = 1; n <= 5; n += 1) fs.writeFileSync(path.join(ctx.main, `b${n}.sh`), text);
+    fs.writeFileSync(path.join(ctx.main, 'huge.sh'), 'echo hi\n'.repeat(300000));
+    assert.equal(await bash(ctx, './b1.sh; ./b2.sh; ./b3.sh; ./b4.sh'), undefined);
+    assert.ok(denied(await bash(ctx, './b1.sh; ./b2.sh; ./b3.sh; ./b4.sh; ./b5.sh')));
+    assert.ok(denied(await bash(ctx, './huge.sh')));
+  });
+});
