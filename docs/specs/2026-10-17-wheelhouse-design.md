@@ -1140,12 +1140,12 @@ Everything is built in one programme, in this order. Each step is usable before 
 
 | # | Scenario | Pass |
 |---|---|---|
-| 36 | The director presses **Suggest a change…** on the approval card in the pane (leg 1); presses **Show me** (leg 2); and, in the chat, types a why about a card (leg 3) | Leg 1: the change goes to the build as an order, no card is asked at the old head, and the front desk says one line. Leg 2: the preview link, then the card asked again alone. Leg 3: a short explanation with an everyday example, then that card again, alone, as composed. In every leg it records nothing and asks no other card |
+| 36 | The director presses **Suggest a change…** on the approval card in the pane (leg 1); presses **Show me** (leg 2); and, in the chat, types a why about a card (leg 3) | Leg 1: the change goes to the build as an order, no card is asked at the old head, and the front desk says one line. Leg 2: the preview link, then the card asked again alone. Leg 3: a short explanation with an everyday example, then that card again, alone, as composed. In every leg it records no answer and asks no other card |
 | 37 | The courier wakes the front desk for two new cards | One notification, naming no card's words, then the two new cards in one question and no other; at most one short closing line, with no briefing |
 
 On 20 October 2026 both passed three trials of three with Wheelhouse's lines and failed without them: without them the front desk took the prompt for text that wasn't the director's and did nothing it asked. Since those runs the playbook's section on the baseline from the private note has come in from `main`, so both variants now hold it as well; it doesn't touch the lines these scenarios test. The same day both were run again, one trial each, with each session kept from the director's own as the front desk's are: each passed with the lines and failed without (`docs/evals/mod.md`); those reruns are the counted results.
 
-Scenario 36 was changed on 23 October 2026 to the three legs above (the pane's Suggest a change… on the approval card, Show me, and the chat's typed why); every counted run of it before that is of the old press, **Explain more**, so a rerun of 36's legs is due and has not been made (`docs/evals/mod.md`).
+Scenario 36 has three legs (the pane's Suggest a change… on the approval card, Show me, and the chat's typed why). Its counted runs before 23 October 2026 are of **Explain more**, and a rerun is due (`docs/evals/mod.md`).
 
 **Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **Real use** follows the evaluation as a whole: Wheelhouse is used for all work on the first project, with no small-feature pilot first (the director's decision of 19 October 2026, section 17.2).
 
