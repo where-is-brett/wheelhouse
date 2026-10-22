@@ -16,11 +16,11 @@ Breaking the letter of these rules is breaking their spirit.
 
 ## The command
 
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/setup/cli.js" <form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>`, `apply <step> <hash>`, `status`, `resume`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
+The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>`, `apply <step> <hash>`, `status`, `resume`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
 
 ## Asking a card
 
-A `card` is AskUserQuestion's question, ready: ask it as `questions: [card]`, exactly as printed, with nothing changed, added or left out. Before it, at most one plain line on what it is about. Never read out a hash, a set line or JSON.
+A `card` is your clickable-question tool's question, ready: ask it as `questions: [card]`, exactly as printed, with nothing changed, added or left out. Before it, at most one plain line on what it is about. Never read out a hash, a set line or JSON.
 
 - **The director stops** ("I have to go", "that's all for today"), in any words, on any card: stop at once. Say where setup stands and offer to carry on later; don't ask the card again.
 - **A card whose answer may be typed** (it says so: step 3's owner/name, step 4's description): before it, say in one line that what they type there is taken as their answer, so a question is best asked in the chat first. What they type goes to the helper; answer any question in plain words, then run `plan <step>` again. When the plan comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken (after a question, whatever they type next on that card is taken). Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again.
@@ -63,7 +63,7 @@ A `card` is AskUserQuestion's question, ready: ask it as `questions: [card]`, ex
 Its Go-ahead card comes first, like any step. After the click, wait until `status` says step 10's "own checks finished" (the board isn't green yet: that is your part). Then, in this session:
 
 1. `health`, with no lines: it names `trials.pr` and `trials.project`.
-2. `node "${CLAUDE_PLUGIN_ROOT}/scripts/health/trials.js" --pr <pr> --project <project>`.
+2. The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.
 3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused.
 4. Show the director `lines` and the `board`, as they are. Green: setup is finished; give the `briefing`, as it is. Not green: tell them plainly what failed and what to do (the lines say), and offer to carry on later.
 

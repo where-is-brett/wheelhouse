@@ -8,6 +8,7 @@ import packaging from './packaging.js';
 import settings from './settings.js';
 import sessions from './sessions.js';
 import tools from './tools.js';
+import toolSheet from './tool-sheet.js';
 import translate from './translate.js';
 import { main as runEvals } from '../../scripts/eval/run.js';
 
@@ -22,8 +23,8 @@ export default Object.freeze({
   sessions,
   cards: Object.freeze({ binding: Object.freeze(['signed-hook']) }),
   packaging,
-  // Task 5 adds the tool sheet.
-  toolSheet: '',
+  // The playbooks' general words, mapped to Claude Code's tools (tool-sheet.md); the session start hands it over.
+  toolSheet,
   safetyLine: () => [],
   evalRunner: Object.freeze({ run: ({ argv = [], ...options } = {}) => runEvals(argv, options) }),
 });
