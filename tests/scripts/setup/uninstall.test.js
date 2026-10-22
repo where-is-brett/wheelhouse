@@ -397,6 +397,8 @@ test('the state branch and the profile are kept unless their own card says delet
       const { question } = composeCard(ask.card);
       assert.ok(question.options.some((o) => o.label === 'Keep it'));
       assert.match(question.options.find((o) => o.label === 'Keep it').description, /^Recommended: /);
+      assert.ok(!question.options.some((o) => o.label === 'Suggest a change…'), 'setup\'s own chat has no front-desk turn for it');
+      assert.equal(question.question.split('\n').at(-1), 'To know more, just ask.');
     }
     // Nothing on the host is deleted by the plan itself.
     assert.equal(got.changes.some((c) => /delete-repository/.test(c.put)), false);

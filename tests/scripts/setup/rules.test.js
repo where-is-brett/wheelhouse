@@ -226,7 +226,7 @@ test('Let me correct some asks about each rule: kept as found, corrected in type
     const first = (await plan(5)).ask;
     assert.match(first.id, /^rule-[0-9a-f]{10}$/);
     assert.match(first.card.question, /Found in CLAUDE\.md line 1, paraphrase: "Never push straight to main\."/);
-    assert.deepEqual(first.card.options.map((o) => o.label), [RULE_LABELS.keep, RULE_LABELS.leave, 'Suggest a change…']);
+    assert.deepEqual(first.card.options.map((o) => o.label), [RULE_LABELS.keep, RULE_LABELS.leave]);
     const kept = await answer(first.card, RULE_LABELS.keep);
     assert.deepEqual(kept.map((s) => s.body.target.data), [{ words: 'Never push straight to main.', source: { file: 'CLAUDE.md', line: 1 }, original: false }]);
 

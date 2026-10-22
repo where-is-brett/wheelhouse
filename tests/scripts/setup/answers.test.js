@@ -86,7 +86,7 @@ test('a question card is recorded as asked and an exact answer is kept, signed, 
     assert.equal(asked.ask.id, 'host');
     const { card } = asked.ask;
     assert.equal(card.header, 'Question');
-    assert.deepEqual(card.options.map((o) => o.label), ['GitHub', 'GitLab', 'Suggest a change…']);
+    assert.deepEqual(card.options.map((o) => o.label), ['GitHub', 'GitLab']);
     assert.ok(card.question.startsWith('Setup step 3 needs to know'), card.question);
     assert.ok(!/Reply code:|Set up step/.test(card.question), card.question);
     // Recorded as asked for this run; the step's shown time is the Go-ahead card's, so none yet.

@@ -477,7 +477,7 @@ export function setupRoutes({
     if (got.ask?.card.kind === 'confirm-all') {
       const { rules } = got.ask;
       card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'confirm-all', target: { count: rules.length, hash: planHash(rules) } }).question;
-    } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question' }).question;
+    } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question', suggest: false }).question;
     else if (got.changes) card = composeCard({ ...cleanDeep(got.card, []), kind: 'setup', target: { step: step.n, hash: got.hash } }).question;
     if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.

@@ -165,6 +165,26 @@ test('a set line without its reply code, or with another card\'s code, is refuse
   assert.match(reason(await decide(call(q), inProject)), /Question 1/);
 });
 
+test('a line after the set line other than its reply code line is refused', async () => {
+  const card = textOf('approval');
+  const rows = card.split('\n');
+  const at = rows.indexOf(setLineOf(card));
+  const problem = 'has a line after its set line other than its reply code line';
+  // Between the set line and the reply code, as "and pull request #43" would extend the line.
+  const between = [...rows.slice(0, at + 1), 'and pull request #43', ...rows.slice(at + 1)].join('\n');
+  assert.ok(cardProblems(between).includes(problem));
+  // After the reply code.
+  assert.ok(cardProblems(`${card}\nand pull request #43`).includes(problem));
+  assert.ok(cardProblems(`${card}\n\nsome words`).includes(problem));
+  const q = asked('approval', { question: between });
+  assert.match(reason(await decide(call(q), inProject)), /has a line after its set line other than its reply code line/);
+  // A card with no reply code takes nothing after its set line either.
+  assert.ok(cardProblems(`${textOf('setup')}\nand step 7`).includes(problem));
+  // A trailing line break is no line, and every composed card of every kind still passes.
+  assert.deepEqual(cardProblems(`${card}\n`), []);
+  for (const kind of Object.keys(INPUTS)) assert.deepEqual(cardProblems(cardOf(kind)), [], kind);
+});
+
 test('a second reply code line, even the right one, is refused', () => {
   const card = textOf('approval');
   const code = replyCodeLine(replyCode(setLineOf(card)));

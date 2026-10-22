@@ -278,7 +278,7 @@ function sameThing(kind, what, target) {
 // 23.4). `build` says the card answers a build-command question (one that names its `commands`). A
 // confirm card for a proposal (its `target`) offers Keep as is in place of Show me. A question's
 // own options come first, then Suggest a change… unless it has four of its own.
-function offered(kind, given, { build = false, target } = {}) {
+function offered(kind, given, { build = false, target, suggest = true } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -294,7 +294,7 @@ function offered(kind, given, { build = false, target } = {}) {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
     const own = kind === 'answer' && build && buildOptions(list);
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
-    return [...list, ...(list.length < CARD.options ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
+    return [...list, ...(list.length < CARD.options && suggest ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
@@ -308,8 +308,10 @@ function offered(kind, given, { build = false, target } = {}) {
 }
 
 // Whether a card's question has only its own options to offer, with a change left to the typed
-// answer: an answer or a product question that offers no Suggest a change….
-const typesChange = (kind, labels) => (kind === 'answer' || kind === 'question') && !labels.includes(SUGGEST);
+// answer: an answer or a product question that offers no Suggest a change… and was not composed
+// without it (`suggest: false`), which leaves nothing to type.
+const typesChange = (parts) => (parts.kind === 'answer' || parts.kind === 'question') && parts.suggest !== false
+  && !parts.options.some((o) => o.label === SUGGEST);
 
 // The chat's text from a card's parts, in the order of design section 23.4: the question; what it
 // is (once, where the question is the same words); why it is the director's; what happens
@@ -317,7 +319,6 @@ const typesChange = (kind, labels) => (kind === 'answer' || kind === 'question')
 // more is there for the asking, or, for a question with four options of its own, that a change is
 // typed; then the set line and the reply code, each on a line of its own. No part has a label.
 export function textOf(parts) {
-  const labels = parts.options.map((o) => o.label);
   return [
     parts.ask,
     ...(parts.what === parts.ask ? [] : [parts.what]),
@@ -325,7 +326,7 @@ export function textOf(parts) {
     parts.meanwhile,
     ...(parts.checks === undefined ? [] : [parts.checks]),
     ...(parts.changed === undefined ? [] : [`${WHAT_CHANGED} ${parts.changed}`]),
-    typesChange(parts.kind, labels) ? TO_CHANGE_IT : TO_KNOW_MORE,
+    typesChange(parts) ? TO_CHANGE_IT : TO_KNOW_MORE,
     ...(parts.line === null ? [] : [parts.line]),
     ...(parts.code === null ? [] : [replyCodeLine(parts.code)]),
   ].join('\n');
@@ -340,6 +341,8 @@ export function textOf(parts) {
 // the words ASKS gives, or its `what`. `size` (optional) is a few words such as "Small feature";
 // `optional` (optional) is the whole minutes an optional card takes. `revises` (optional) is the id
 // of the card a revised proposal replaces, and then `changed` says in one line what changed.
+// `suggest` (optional) is false for a question or an answer that offers no Suggest a change….
+
 // `glossary` (optional) is the glossary whose terms found in the card's words become the card's
 // concepts when `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
 // the card is made from, which the card keeps so it is made once: a card with no set line (a
@@ -357,6 +360,8 @@ export function composeCard(input) {
   const meanwhile = words(kind, 'meanwhile', input.meanwhile);
   const ask = input.ask === undefined ? undefined : words(kind, 'ask', input.ask);
   const size = input.size === undefined ? undefined : words(kind, 'size', input.size);
+  if (input.suggest !== undefined && typeof input.suggest !== 'boolean') fail(kind, 'suggest', 'must be true or false');
+  if (input.suggest === false && kind !== 'answer' && kind !== 'question') fail(kind, 'suggest', 'can be left off a question or an answer card only: the others decide what they offer');
   if (input.optional !== undefined && !isCount(input.optional)) fail(kind, 'optional', 'must be whole minutes, from 1');
   if (input.revises !== undefined && !(typeof input.revises === 'string' && /^\S+$/.test(input.revises))) fail(kind, 'revises', 'must be the id of the card it replaces');
   if (input.revises === undefined && input.changed !== undefined) fail(kind, 'changed', 'belongs to a revised card only');
@@ -376,7 +381,7 @@ export function composeCard(input) {
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
-  const buttons = offered(kind, input.options, { build, target: input.target });
+  const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
@@ -396,6 +401,7 @@ export function composeCard(input) {
     ...(changed === undefined ? {} : { changed }),
     line,
     code,
+    ...(input.suggest === false ? { suggest: false } : {}),
     ...(input.optional === undefined ? {} : { optional: input.optional }),
     ...(input.revises === undefined ? {} : { revises: input.revises }),
   };

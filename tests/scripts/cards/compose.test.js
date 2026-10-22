@@ -447,6 +447,31 @@ test('an answer card with three own options adds Suggest a change…; with four 
   refused({ recommend: 'Semicolon' }, /recommend/, 'answer');
 });
 
+test('suggest: false leaves Suggest a change… off a question card, and the card still ends with To know more, just ask.', () => {
+  const opt = (n) => ({ label: `Option ${n}`, says: `Means ${n}.` });
+  for (const kind of ['question', 'answer']) {
+    for (const count of [2, 3, 4]) {
+      const own = [1, 2, 3, 4].slice(0, count).map(opt);
+      const { question, card } = composeCard(input(kind, { options: own, recommend: 'Option 1', suggest: false }));
+      assert.deepEqual(question.options.map((o) => o.label), own.map((o) => o.label), `${kind} with ${count}`);
+      const plain = lines(question.question).filter((l) => l !== LINES[kind] && !l.startsWith('Reply code:'));
+      assert.equal(plain.at(-1), TO_KNOW_MORE, `${kind} with ${count}`);
+      assert.ok(!question.question.includes(TO_CHANGE_IT));
+      assert.equal(card.parts.suggest, false);
+      assert.equal(textOf(card.parts), question.question);
+      assert.equal(textOf(JSON.parse(JSON.stringify(card.parts))), question.question, 'through the state');
+      assert.doesNotThrow(() => inOwnHome(() => makeEvent({ kind: 'card', data: card, now: () => NOW })));
+    }
+  }
+  // Without it (or with suggest: true) a card keeps Suggest a change….
+  assert.ok(composeCard(input('question')).question.options.some((o) => o.label === SUGGEST));
+  assert.ok(composeCard(input('question', { suggest: true })).question.options.some((o) => o.label === SUGGEST));
+  assert.ok(!Object.hasOwn(composeCard(input('question')).card.parts, 'suggest'));
+  // It is a boolean, and only a question or an answer can leave Suggest a change… off.
+  for (const bad of ['no', 0, null]) refused({ suggest: bad }, /suggest/, 'question');
+  refused({ suggest: false }, /suggest/, 'approval');
+});
+
 test('an answer card refuses an own option called Why? or Suggest a change…', () => {
   for (const label of [WHY, SUGGEST]) {
     refused({ options: [{ label, says: 'x' }, { label: 'Tab', says: 'y' }], recommend: 'Tab' }, new RegExp(`options.*${label.replace(/[?…]/g, '.')}`), 'answer');

@@ -4,7 +4,7 @@
 // are followed by the line that says more is there for the asking, "To know more, just ask." (for
 // a question with four options of its own, the line that says a change is typed). A card with a set
 // line has that one line, its own reply code line (none for a kind the composer gives no code, such
-// as setup's, a trust card's or uninstall's), and plain lines that between them name what the set
+// as setup's, a trust card's or uninstall's) and nothing after it, and plain lines that between them name what the set
 // line names (for a trust card, the computer it trusts; for uninstall's, the project) and no other
 // pull request or commit. Given the question object, its options are checked too: one is
 // recommended, and none is Explain more. The prompt record is what refuses a wrong click, so this
@@ -98,6 +98,10 @@ export function cardProblems(question) {
   } else if (codes.length === 0) problems.push(`carries a set line without its reply code line, "${expected}"`);
   else if (codes.some((c) => c !== expected)) problems.push(`carries the wrong reply code line for its set line: it should be "${expected}"`);
   else if (codes.length > 1) problems.push('carries its reply code line more than once');
+
+  // Nothing but its reply code line may follow the set line: a line there would be read by the prompt record beside it.
+  const after = lines.slice(lines.indexOf(line) + 1, lines.at(-1) === '' ? -1 : undefined);
+  if (after.some((l) => !l.startsWith(REPLY_CODE))) problems.push('has a line after its set line other than its reply code line');
 
   // Every plain line together must name what the set line names, and no other pull request or commit.
   const why = found === null ? null : whatProblem(found.kind, plain.join(' ').trim(), found.target, { abbreviated: true });
