@@ -32,18 +32,23 @@ const protectedMain = (push, merge, force = false) => ({
 const noOne = [{ id: 1, access_level: 0, access_level_description: 'No one' }];
 const maintainers = [{ id: 2, access_level: 40, access_level_description: 'Maintainers' }];
 const project = (flag) => ({ status: 200, body: { id: 7, only_allow_merge_if_pipeline_succeeds: flag } });
+// The two reads that follow the project's: the approval rules (refused at Free) and the variable list.
+const freePlan = { status: 403, body: {} };
+const noVariables = { status: 200, body: [] };
+const projectReads = (flag) => [project(flag), freePlan, noVariables];
+const extras = { skippedPipelineCounts: false, plan: 'free', variablesUnprotected: [], variablesKnown: true };
 
 test('readGitlabProtection reports push and merge access and the pipeline rule', async () => {
-  const { api, calls } = fakeApi(protectedMain(noOne, maintainers), project(true));
+  const { api, calls } = fakeApi(protectedMain(noOne, maintainers), ...projectReads(true));
   const result = await readGitlabProtection({ api, projectId: 'group/app', branch: 'main' });
-  assert.deepEqual(result, { protected: true, pushAccess: ['No one'], mergeAccess: ['Maintainers'], allowForcePush: false, pipelinesMustSucceed: true });
+  assert.deepEqual(result, { protected: true, pushAccess: ['No one'], mergeAccess: ['Maintainers'], allowForcePush: false, pipelinesMustSucceed: true, ...extras });
   assert.equal(calls[0].path, '/projects/group%2Fapp/protected_branches/main');
   assert.equal(calls[1].path, '/projects/group%2Fapp');
 });
 
 test('readGitlabProtection names levels from their numbers when GitLab gives no description', async () => {
   const bare = (level) => [{ access_level: level }];
-  const { api } = fakeApi(protectedMain(bare(30), bare(60)), project(false));
+  const { api } = fakeApi(protectedMain(bare(30), bare(60)), ...projectReads(false));
   const result = await readGitlabProtection({ api, projectId: 1, branch: 'main' });
   assert.deepEqual(result.pushAccess, ['Developers + Maintainers']);
   assert.deepEqual(result.mergeAccess, ['Administrators']);
@@ -51,13 +56,13 @@ test('readGitlabProtection names levels from their numbers when GitLab gives no 
 });
 
 test('readGitlabProtection says plainly when the branch is not protected', async () => {
-  const { api } = fakeApi({ status: 404, body: {} }, project(false));
+  const { api } = fakeApi({ status: 404, body: {} }, ...projectReads(false));
   const result = await readGitlabProtection({ api, projectId: 1, branch: 'release/1.0' });
-  assert.deepEqual(result, { protected: false, pushAccess: [], mergeAccess: [], allowForcePush: false, pipelinesMustSucceed: false });
+  assert.deepEqual(result, { protected: false, pushAccess: [], mergeAccess: [], allowForcePush: false, pipelinesMustSucceed: false, ...extras });
 });
 
 test('readGitlabProtection encodes the branch name', async () => {
-  const { api, calls } = fakeApi({ status: 404, body: {} }, project(false));
+  const { api, calls } = fakeApi({ status: 404, body: {} }, ...projectReads(false));
   await readGitlabProtection({ api, projectId: 1, branch: 'release/1.0' });
   assert.equal(calls[0].path, '/projects/1/protected_branches/release%2F1.0');
 });
@@ -344,7 +349,7 @@ const notFound = { status: 404, body: {} };
 test('GitLab status is on when the default branch takes no pushes and state and lock take Developers without force-push', async () => {
   const { api } = fakeApi(
     glProject(true),
-    glBranch(0, 'No one'), glProject(true),
+    glBranch(0, 'No one'), glProject(true), freePlan, noVariables,
     glBranch(30, 'Developers + Maintainers'), glProject(true),
     glBranch(30, 'Developers + Maintainers'), glProject(true),
   );
@@ -355,7 +360,7 @@ test('GitLab status is on when the default branch takes no pushes and state and 
 });
 
 test('GitLab status is off when the branches are unprotected', async () => {
-  const { api } = fakeApi(glProject(), notFound, glProject(), notFound, glProject(), notFound, glProject());
+  const { api } = fakeApi(glProject(), notFound, glProject(), freePlan, noVariables, notFound, glProject(), notFound, glProject());
   const status = await protectionStatus({ host: 'gitlab', repo: 'group/app', api });
   assert.deepEqual([status.available, status.on], [true, false]);
 });
@@ -368,7 +373,7 @@ test('GitLab switch-on protects the default branch (no pushes) and state and loc
     notFound, { status: 201, body: {} },   // state
     notFound, { status: 201, body: {} },   // lock
     glProject(),                       // status: project
-    glBranch(0, 'No one'), glProject(),
+    glBranch(0, 'No one'), glProject(), freePlan, noVariables,
     glBranch(30, 'Developers + Maintainers'), glProject(),
     glBranch(30, 'Developers + Maintainers'), glProject(),
   );
@@ -392,7 +397,7 @@ test('GitLab switch-on requires pipelines where the default branch already has o
     notFound, { status: 201, body: {} },
     notFound, { status: 201, body: {} },
     glProject(true),
-    glBranch(0, 'No one'), glProject(true),
+    glBranch(0, 'No one'), glProject(true), freePlan, noVariables,
     glBranch(30, 'Developers + Maintainers'), glProject(true),
     glBranch(30, 'Developers + Maintainers'), glProject(true),
   );
