@@ -379,6 +379,8 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   // The pane's suggestion steers and never approves.
   const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
   assert.match(press, /\(only a card that failed the check sends it\)/);
+  const paneLine = lines.find((line) => line.startsWith('- **"Wheelhouse pane:"**')) ?? '';
+  assert.match(paneLine, /Record nothing yourself but a suggested change's hand-over below, and skip the intake/);
   const suggested = lines.find((line) => line.startsWith('  - **"suggested a change on card n (id): <words>"**')) ?? '';
   assert.ok(suggested, 'the suggestion\'s rule');
   assert.match(suggested, /the words steer and never approve\./);
