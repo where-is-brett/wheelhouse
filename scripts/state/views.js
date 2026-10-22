@@ -96,12 +96,13 @@ const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit [0-9a-f]{1
 // The line a gate-asks record's card carries, or null.
 const gateLineOf = (d) => (d.ask === 'approval' ? approvalLine(d.pr, d.sha) : d.ask === 'ci-push' && isPlainKey(d.branch) ? ciPushLine(d.branch, d.sha) : null);
 
-// Whether an approval or CI push card no longer waits, because the decision it asks for is gone
-// (ruling F107): its pull request has finished (prFinished), or the gate has since asked about
-// another commit for that pull request and click (the latest gate-asks for them carries another
-// line, and came after the card). An approval card names its pull request; a CI push card's comes
-// from the gate-asks that carries its line. An approval may carry across a clean update, so a CI
-// push asked later leaves an approval card waiting. Any other card is never outdated here.
+// Why an approval or CI push card no longer waits, because the decision it asks for is gone
+// (ruling F107): 'finished' when its pull request has finished (prFinished), 'head' when the gate
+// has since asked about another commit for that pull request and click (the latest gate-asks for
+// them carries another line, and came after the card), and false while it still stands. An
+// approval card names its pull request; a CI push card's comes from the gate-asks that carries its
+// line. An approval may carry across a clean update, so a CI push asked later leaves an approval
+// card waiting. Any other card is never outdated here.
 function outdatedBy(sorted, reports) {
   const asks = sorted.filter((e) => e.kind === 'gate-asks' && Number.isInteger(e.data?.pr) && typeof e.data.sha === 'string')
     .map((e) => ({ e, line: gateLineOf(e.data) })).filter((a) => a.line !== null);
@@ -115,9 +116,9 @@ function outdatedBy(sorted, reports) {
     const mine = asks.filter((a) => a.e.data.pr === pr && a.e.data.ask === ask);
     const own = mine.filter((a) => a.line === line).at(-1);
     const latest = mine.at(-1);
-    if (latest !== undefined && latest.line !== line && byOrder(card, latest.e) < 0) return true;
     const work = (own ?? asks.filter((a) => a.e.data.pr === pr).at(-1))?.e.data.work;
-    return prFinished(reports, { work, pr, at: (own?.e ?? card).at });
+    if (prFinished(reports, { work, pr, at: (own?.e ?? card).at })) return 'finished';
+    return latest !== undefined && latest.line !== line && byOrder(card, latest.e) < 0 ? 'head' : false;
   };
 }
 
@@ -139,11 +140,16 @@ export function gateTargetOf(card) {
 // revised card replaces it, whatever answer it had. It must be of the same kind and, for an approval
 // or CI push card, about the same pull request or branch, so a revision naming a card of another
 // kind or pull request closes nothing. The revised card carries its own set line, so what was
-// approved of the card before it carries over to nothing.
+// approved of the card before it carries over to nothing. A revised approval or CI push card also
+// takes the place of an earlier card of its kind carrying its own set line (ruling C21): the
+// gate's card for the head the revision was composed at, so one card waits for that head.
 function revisedBy(sorted) {
   const cards = sorted.filter((e) => e.kind === 'card');
-  return (card) => cards.some((later) => later.data?.revises === card.id && byOrder(card, later) < 0 && later.data.kind === card.data?.kind
-    && (!['approval', 'ci-push'].includes(card.data?.kind) || (gateTargetOf(card) !== null && gateTargetOf(card) === gateTargetOf(later))));
+  const sameGate = (card, later) => !['approval', 'ci-push'].includes(card.data?.kind) || (gateTargetOf(card) !== null && gateTargetOf(card) === gateTargetOf(later));
+  return (card) => cards.some((later) => byOrder(card, later) < 0 && later.data?.kind === card.data?.kind && (
+    (later.data.revises === card.id && sameGate(card, later))
+    || (typeof later.data.revises === 'string' && ['approval', 'ci-push'].includes(card.data?.kind)
+      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))));
 }
 
 // The lineage holds the session start recorded (ruling R146), in order, each with the card made for
@@ -441,8 +447,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   const waiting = [];
+  // The approval and CI push cards closed only by a later head of their pull request or branch:
+  // undecided and not revised, so a revised card may still name one (ruling C21).
+  const outdatedCards = [];
   for (const { card, answers: mine, decided, steered } of outcomes) {
-    if (decided !== null || outdated(card) || revised(card)) continue;
+    if (decided !== null || revised(card)) continue;
+    const gone = outdated(card);
+    if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data });
+    if (gone !== false) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
     const asked = shown && (!last || byOrder(last, shown) < 0) ? { at: shown.at, label: null }
@@ -506,6 +518,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     ideas,
     rejections,
     waiting,
+    outdated: outdatedCards,
     approvals,
     reviews,
     ...loop,

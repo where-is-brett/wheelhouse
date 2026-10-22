@@ -1724,7 +1724,7 @@ The card's five parts are all still there (section 5.3). The pane shows them as 
 - **Send hands the front desk a prompt** naming the card, as a press does (section 17.1): "Wheelhouse pane: the director suggested a change on card 2 (<id>): <their words>". A toast says "Sent to the front desk. A new proposal will follow."
 - **On a card that carries an approval** (an approval or a CI push), **the change goes to the build as an order** (`record work`, in the front desk's own words), and the revised card comes only once the pull request's head has moved. The front desk's command refuses a revised approval at the same head. Every other kind is revised at once.
 - **The card stays waiting,** marked "You suggested a change at 14:10. A new proposal is on its way, and nothing goes live meanwhile."
-- **The revised proposal is a new card,** with its own commit, set line and reply code, headed "Approval · revised", with a "What changed:" sentence. The old card closes when it arrives. Nothing approved before can stand for the new one.
+- **The revised proposal is a new card,** with its own commit, set line and reply code, headed "Approval · revised", with a "What changed:" sentence. The old card closes when it arrives, and the revised card takes the place of the gate's own card for the new head, so one card waits for it. Nothing approved before can stand for the new one.
 - **The words steer and never approve** (section 12.3). The prompt record never counts them as an answer, and they record nothing.
 - **Where the pane can't draw a box** (a phone's pane, which has no text input), the button says "Type your change in the chat, and I'll know it's about card 1."
 

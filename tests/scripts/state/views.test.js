@@ -16,7 +16,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1113,6 +1113,38 @@ test('a revision of another kind or another pull request closes nothing', async 
     const otherBranch = pushCard(2, ciPushLine('wh/y', B), { revises: first.id });
     assert.deepEqual(waitingIds([first, sameBranch]), [sameBranch.id]);
     assert.deepEqual(waitingIds([first, otherBranch]), [first.id, otherBranch.id]);
+  });
+});
+
+test('an approval card closed by a later head is listed as outdated, and its revision takes the place of the gate\'s card at its own head', async () => {
+  await withHome(() => {
+    const old = gateCard(2, approvalLine(7, A));
+    const steered = ev('card-answer', 3, { card: old.id, label: SUGGEST });
+    const moved = gateAsk(4, { sha: B });
+    const plain = gateCard(5, approvalLine(7, B));
+    const line = approvalLine(7, B);
+    const revised = ev('card', 6, cardData(`What this is: a click the gate waits for.\n${line}`, { line, revises: old.id }));
+    // The head moved: the old card no longer waits, and is listed as closed by a later head.
+    const before = build([gateAsk(1), old, steered, moved, plain]);
+    assert.deepEqual(before.waiting.map((c) => c.id), [plain.id]);
+    assert.deepEqual(before.outdated.map((c) => c.id), [old.id]);
+    assert.equal(before.outdated[0].data.line, approvalLine(7, A));
+    // The revision at the head the gate asks about takes the place of the gate's card for it: one card waits.
+    const after = build([gateAsk(1), old, steered, moved, plain, revised]);
+    assert.deepEqual(after.waiting.map((c) => c.id), [revised.id]);
+    assert.equal(after.status.waitingCount, 1);
+    // A revised card made before the gate's card for its head leaves the gate's card nothing to make.
+    assert.equal(build([gateAsk(1), old, moved, revised]).gateAsks['7'].card, revised.id);
+    // A plain card with the same line does not replace another; a revision of another pull request takes no place.
+    assert.equal(waitingIds([gateAsk(1), old, moved, plain, gateCard(6, line)]).length, 2);
+    const elsewhere = ev('card', 6, cardData(`What this is: a click.\n${approvalLine(8, B)}`, { line: approvalLine(8, B), revises: old.id }));
+    assert.deepEqual(waitingIds([gateAsk(1), old, moved, plain, elsewhere]), [plain.id, elsewhere.id]);
+    // A card closed because its work finished, decided, or revised already is not listed as outdated.
+    assert.deepEqual(build([gateAsk(1), old, moved, reportEv(7, 'merged')]).outdated, []);
+    assert.deepEqual(build([gateAsk(1), old, ev('card-answer', 3, { card: old.id, label: 'Not now' }), moved]).outdated.map((c) => c.id), [old.id]);
+    assert.deepEqual(build([gateAsk(1), old, moved, revised]).outdated, []);
+    // A card that still waits is not outdated.
+    assert.deepEqual(build([gateAsk(1), old]).outdated, []);
   });
 });
 

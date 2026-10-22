@@ -651,3 +651,61 @@ test('an approval card steered with Suggest a change… is revised once the chan
     assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head2, guardrailPaths: [], criticalAreas: [] });
   });
 });
+
+test('a gate\'s approval card steered with Suggest a change… is revised at the head the gate asks about next: one revised card waits for it, the old code answers nothing and the click signs the new head', async () => {
+  await onComputer(async (world) => {
+    await building(world, 'banner', 'The Easter banner');
+    const head = await openPr(world, 7, 'banner', { 'src/home.js': 'export const banner = \'Hot cross buns are back\';\n' });
+    // The foreman's merge found the gate waiting for the director's approval; the visit makes its card.
+    await buildLoop(world, 'gate-asks', { work: 'banner', pr: 7, ask: 'approval', sha: head });
+    world.at(HOUR);
+    const [card] = (await frontDesk(world, ['cards'])).questions;
+    assert.equal(setLineOf(card.question), approvalLine(7, head));
+    const { id } = (await viewsOf(world)).waiting.find((c) => c.data.line === approvalLine(7, head));
+    const oldCode = replyCode(approvalLine(7, head));
+    await ask(world, [card], { [card.question]: 'Suggest a change…' });
+    assert.deepEqual(eventsOf('approval'), []);
+
+    // The build commits the change; the foreman's merge records the gate asking about the new head,
+    // and a visit makes the gate's card for it before the front desk composes the revision.
+    await g(world.work, 'checkout', '-q', 'feature/banner');
+    writeFiles(world.work, { 'src/home.js': 'export const banner = \'Hot cross buns are back, in bigger type\';\n' });
+    await g(world.work, 'add', '-A');
+    await g(world.work, 'commit', '-q', '-m', 'Bigger banner type');
+    await g(world.work, 'push', '-q', 'origin', 'feature/banner');
+    const head2 = await g(world.work, 'rev-parse', 'HEAD');
+    const reviewed = await world.client.state.record({
+      project: P, event: makeEvent({ kind: 'review', data: { pr: 7, commit: head2, verdict: 'CLEAN' }, now: world.now }),
+    });
+    assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+    await buildLoop(world, 'gate-asks', { work: 'banner', pr: 7, ask: 'approval', sha: head2 });
+    world.at(2 * HOUR);
+    assert.deepEqual((await frontDesk(world, ['cards'])).questions.map((q) => setLineOf(q.question)), [approvalLine(7, head2)]);
+
+    // The revision names the old card, closed by the later head, and takes the place of the gate's card.
+    const revised = await frontDesk(world, ['card'], {
+      ...approvalCard(7, 'changes the banner on the shop\'s home page, in bigger type.'), revises: id, changed: 'The banner is in bigger type.',
+    });
+    assert.equal(setLineOf(revised.question.question), approvalLine(7, head2));
+    assert.match(revised.question.question, /What changed: The banner is in bigger type\./);
+    const waiting = (await viewsOf(world)).waiting;
+    assert.deepEqual(waiting.map((c) => [c.id, c.data.line, c.data.revises]), [[revised.id, approvalLine(7, head2), id]]);
+    // The next visit makes no other card for that head.
+    world.at(3 * HOUR);
+    await frontDesk(world, ['cards']);
+    assert.deepEqual((await viewsOf(world)).waiting.map((c) => c.id), [revised.id]);
+
+    // The old card's code answers nothing.
+    const reply = JSON.parse(await runBridge({
+      stdin: Readable.from([JSON.stringify({ cmd: 'reply', origin: 'bridge', text: `${oldCode.toLowerCase()} approve`, cwd: world.checkout })]),
+      deps: { client: world.client, now: world.now },
+    }));
+    assert.deepEqual(reply, { ok: false, says: 'That card\'s answer can\'t be recorded now' });
+    assert.deepEqual(eventsOf('approval'), []);
+
+    // Approve on the revised card signs the new head, and the gate merges it.
+    await ask(world, [revised.question], { [revised.question.question]: 'Approve' });
+    assert.deepEqual(eventsOf('approval').map((e) => [e.data.pr, e.data.commit]), [[7, head2]]);
+    assert.deepEqual(await merge(world, 7), { ok: true, merged: true, sha: head2, guardrailPaths: [], criticalAreas: [] });
+  });
+});

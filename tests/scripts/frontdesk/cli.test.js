@@ -1058,6 +1058,45 @@ test('card with revises and changed composes a revised card; revises naming no w
   });
 });
 
+test('card with revises may name an approval card closed by a later head, and the revised card takes the place of the gate\'s card for that head', async () => {
+  await inHome(async () => {
+    const target = { pr: 7, sha: FULL };
+    const old = cardEvent({ ...APPROVAL, target }, 2);
+    const steered = makeEvent({ kind: 'card-answer', data: { card: old.id, label: 'Suggest a change…' }, now: () => T(3) });
+    // The build committed the change: the gate asks about the new head, and its plain card waits for it.
+    const plain = cardEvent({ ...APPROVAL, target: { pr: 7, sha: LATER } }, 5);
+    const events = [EXPORT, gateAsks(APPROVE_ASK, () => T(1)), old, steered, gateAsks({ ask: 'approval', sha: LATER }, () => T(4)), plain];
+    const helper = fakeHelper({ events, head: LATER });
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [plain.id]);
+    const revision = { ...APPROVAL, because: 'the banner is bigger now', revises: old.id, changed: 'The banner is in bigger type.' };
+    // A revision at the old card's own head, or naming the gate's card at the head it is composed at, is refused.
+    const atOld = await run(helper, ['card'], JSON.stringify({ ...revision, target }));
+    assert.equal(atOld.err, 'a revised approval needs the change committed first\n');
+    const ofPlain = await run(helper, ['card'], JSON.stringify({ ...revision, revises: plain.id, target: { pr: 7, sha: LATER } }));
+    assert.equal(ofPlain.err, 'a revised approval needs the change committed first\n');
+    assert.deepEqual(helper.writes(), []);
+    // At the new head, named by the pull request alone, the revised card is composed and takes the gate's card's place.
+    const done = await run(helper, ['card'], JSON.stringify({ ...revision, target: { pr: 7 } }));
+    assert.equal(done.code, 0, done.err);
+    assert.notEqual(done.json.id, plain.id);
+    assert.deepEqual(helper.writes().map((w) => w.kind), ['card', 'asked']);
+    const recorded = helper.held.find((e) => e.id === done.json.id);
+    assert.equal(recorded.data.line, approvalLine(7, LATER));
+    assert.equal(recorded.data.revises, old.id);
+    assert.equal(recorded.data.parts.changed, 'The banner is in bigger type.');
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [done.json.id]);
+    // The old card is revised now, so it is no card to revise again; no second card is made.
+    const again = await run(helper, ['card'], JSON.stringify({ ...revision, target: { pr: 7 } }));
+    assert.equal(again.err, 'revises names no waiting card of this kind\n');
+    assert.equal(cardWrites(helper).length, 1);
+    // A card closed for any other reason is not one to revise: its work merged.
+    const merged = makeEvent({ kind: 'report', data: { work: 'export-csv', outcome: 'merged', summary: 'Done.', rulings: [], pr: 7 }, now: () => T(6) });
+    const finished = fakeHelper({ events: [...events, merged], head: LATER });
+    const refused = await run(finished, ['card'], JSON.stringify({ ...revision, target: { pr: 7 } }));
+    assert.equal(refused.err, 'revises names no waiting card of this kind\n');
+  });
+});
+
 test('views waiting shows a steered card\'s time', async () => {
   await inHome(async () => {
     const steered = cardEvent(PRODUCT(1), 1);

@@ -385,7 +385,7 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   assert.ok(suggested, 'the suggestion\'s rule');
   assert.match(suggested, /the words steer and never approve\./);
   assert.match(suggested, /Find the card by its id in `views waiting`\. For an approval or ci-push card the code must change first: run `record work` as `wheelhouse:intake`'s order does \(the card's work, its `place`\), with the change in your own words, never theirs; no read-back, no card\./);
-  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit\. For any other kind, revise the proposal as the words ask and compose the new card at once\./);
+  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For any other kind, revise the proposal as the words ask and compose the new card at once\./);
   assert.match(suggested, /Ask no card now, and never the old one again\. Say only: "Noted\. A new proposal will follow\."/);
   // A pick of Suggest a change… in the chat.
   const pick = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';

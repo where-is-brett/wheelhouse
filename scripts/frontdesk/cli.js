@@ -6,8 +6,9 @@
 //                   card asks yet, the card for each click the merge gate waits for, and one for
 //                   each lineage hold. Under STOP, the Lift STOP card alone
 //   card            composes one card from the composer's input and records it ({ question, id });
-//                   with `revises`, the id of a card of its kind waiting now, and `changed`, one
-//                   line saying what changed, it is a revised card that replaces the one it names
+//                   with `revises`, the id of a card of its kind waiting now or closed by a later
+//                   head, and `changed`, one line saying what changed, it is a revised card that
+//                   replaces the one it names
 //   again <n>       the card the board numbers n, with its id, to ask again
 //   why <n>         notes that the director asked why about the card the board numbers n, and
 //                   prints one line; it never gives the card again: explain, then run `again <n>`
@@ -376,8 +377,9 @@ function topicOf(given) {
 // `alreadyAsked` when a visit has handed it out already. The card handed out is recorded as asked.
 // An approval whose target names only the pull request gets its head commit from the host. A
 // topic is kept in lower case, so the delegation review counts it as one. A revised card names the
-// card it replaces by `revises`, which must wait now and be of the card's kind; it carries the same
-// set line as that card, so only that card is passed over when looking for one that already does.
+// card it replaces by `revises`, which must wait now, or have been closed by a later head of its pull
+// request or branch, and be of the card's kind. A card already waiting with its set line comes back
+// only when it is itself a revised card: the gate's plain card for that head is replaced instead.
 // An approval or CI push card revised at the same head commit is refused: the change must be committed first.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
@@ -394,17 +396,20 @@ export async function card({ client, cwd, input, now }) {
     target = { ...target, sha };
   }
   const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
-  // The card revised must wait now, be of this kind and, for an approval or CI push card, be about
-  // the same pull request or branch, or the waiting view would close nothing.
-  if (data.revises !== undefined && !views.waiting.some((c) => c.id === data.revises && c.data?.kind === data.kind
-    && gateTargetOf(c) === gateTargetOf({ data }))) {
-    throw new CliError('revises names no waiting card of this kind');
-  }
+  // The card revised must wait now, or have been closed only by a later head of its pull request or
+  // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same
+  // pull request or branch, or the waiting view would close nothing.
+  const revised = data.revises === undefined ? undefined : [...views.waiting, ...(Array.isArray(views.outdated) ? views.outdated : [])]
+    .find((c) => c.id === data.revises && c.data?.kind === data.kind && gateTargetOf(c) === gateTargetOf({ data }));
+  if (data.revises !== undefined && revised === undefined) throw new CliError('revises names no waiting card of this kind');
   // An approval or CI push card signs a head commit, so a revision at the same head describes a change the code doesn't hold.
-  if (data.revises !== undefined && ['approval', 'ci-push'].includes(data.kind) && views.waiting.some((c) => c.id === data.revises && c.data?.line === data.line)) {
+  if (revised !== undefined && ['approval', 'ci-push'].includes(data.kind) && revised.data?.line === data.line) {
     throw new CliError('a revised approval needs the change committed first');
   }
-  const found = existingCard(views, data.line, { except: data.revises });
+  // A revised card takes the place of the gate's plain card at its own head, so for a revision only
+  // a revised card already carrying the line comes back.
+  const carrying = existingCard(views, data.line, { except: data.revises });
+  const found = carrying !== null && (revised === undefined || views.waiting.find((c) => c.id === carrying).data?.revises !== undefined) ? carrying : null;
   if (found !== null) {
     const waiting = views.waiting.find((c) => c.id === found);
     if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: found, alreadyAsked: true };
