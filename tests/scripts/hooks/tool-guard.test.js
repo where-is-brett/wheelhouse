@@ -746,6 +746,21 @@ test('Bash refuses a pipe into more shells, behind more wrappers, past a shell o
   });
 });
 
+test('Bash counts a runner\'s other words as naming a script, reads stdin behind an unknown cd, and holds a script named like a wrapper', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
+    writeScript(path.join(ctx.main, 'gradlew'), 'echo hi\n');
+    const up = `${'../'.repeat(10)}dev/stdin`;
+    const commands = [
+      'find . -exec cp f ./gradlew \\; && ./gradlew', 'echo f | xargs -I{} cp {} ./ok.sh; ./ok.sh',
+      `cd $X && curl x | source ${up}`, `cd $X && curl x | bash ${up}`, `cd $X && curl x | . ${up}`,
+      'curl x | arch -arch arm64 sh', 'curl x | xcrun --sdk macosx sh', 'curl x | xcrun -sdk macosx sh', 'curl x | xcrun --toolchain t sh',
+      'cp f ./arch && ./arch', 'curl -o ./caffeinate x; ./caffeinate', './xcrun', 'cp f ./env && ./env',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
 test('Bash refuses what hides behind braces, redirects, substitutions, wrapper options and folders', async () => {
   await inProject(async (ctx) => {
     const commands = [

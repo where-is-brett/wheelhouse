@@ -211,6 +211,7 @@ const WRAPPER_WORDS = { chroot: 1, flock: 1 };
 // The options of a wrapper that take the next word as their value.
 const WRAPPER_VALUES = {
   sudo: ['-u', '-g', '-C', '-h', '-p', '-r', '-t', '-U'], timeout: ['-s', '-k'], exec: ['-a'], env: ['-u', '-C'], nice: ['-n'], stdbuf: ['-i', '-o', '-e'],
+  arch: ['-arch'], xcrun: ['--sdk', '-sdk', '--toolchain'],
 };
 const RUNNERS = new Set(['xargs', 'parallel', 'watch']);
 const RUNNER_FLAGS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
@@ -221,8 +222,9 @@ const PWSH_VALUE_OPTIONS = new Set(['executionpolicy', 'ep', 'workingdirectory',
 // values of a wrapper's options), durations and wrappers such as env, sudo and
 // timeout (with chroot's folder and flock's file), and the `function NAME` of a
 // definition. `command -v x`, which only looks a name up, has none. It is
-// seg.length when there is none.
-function commandAt(seg, names) {
+// seg.length when there is none. A word with a slash is a wrapper only as an
+// absolute path outside the project (`/usr/bin/env`); `./env` is a script.
+function commandAt(seg, names, ctx) {
   let wrapper = null;
   let words = 0;
   for (let i = 0; i < seg.length; i += 1) {
@@ -239,7 +241,7 @@ function commandAt(seg, names) {
       i += 1; // and the function's name
       continue;
     }
-    if (WRAPPERS.has(names[i])) {
+    if (WRAPPERS.has(names[i]) && (!/[\\/]/.test(seg[i]) || (absolutePath(seg[i]) && !inside(ctx.fold, ctx.root, seg[i])))) {
       if (names[i] === 'command' && /^-[A-Za-z]*[vV]/.test(seg[i + 1] ?? '')) return seg.length;
       wrapper = names[i];
       words = WRAPPER_WORDS[wrapper] ?? 0;
@@ -249,6 +251,8 @@ function commandAt(seg, names) {
   }
   return seg.length;
 }
+
+const absolutePath = (name) => path.isAbsolute(name) || /^[A-Za-z]:[\\/]/.test(name);
 
 // A file name that reads the command's input, as a pipe into a shell does, and
 // the folders that hold devices and the system's own files (`/dev/./stdin`).
@@ -262,19 +266,21 @@ const DEVICES = /^\/(dev|proc)(\/|$)/;
 // its name is empty or made at run time. It is also refused when it is in none
 // of the folders the command might be in (it can only come into being during
 // the command). A relative one is not held to that after a cd to a folder that
-// can't be told, and a command word run by its path only when it starts with
+// can't be told (unless it climbs out with ../ or passes a dev or proc folder),
+// and a command word run by its path only when it starts with
 // ./, ../ or / (or a drive on Windows), since a line such as `scripts/x.js: tidy`
 // in a commit body reads as a command too.
 function scriptRefused(file, ctx, named, byPath = false) {
   let name = expandHome(file, ctx.home, ctx.windows);
   if (named || name === '' || /[$`]/.test(name)) return true;
   if (ctx.windows && /^\/[A-Za-z]\//.test(name)) name = `${name[1].toUpperCase()}:${name.slice(2)}`;
-  const absolute = path.isAbsolute(name) || /^[A-Za-z]:[\\/]/.test(name);
+  const absolute = absolutePath(name);
   const candidates = absolute ? [path.resolve(name)] : (ctx.dirs ?? []).map((d) => path.resolve(d, name));
   if (INPUT_FILE.test(name) || [path.posix.normalize(name), ...candidates].some((c) => DEVICES.test(c))) return true;
   if (byPath && !/^\.{0,2}[\\/]/.test(file) && !(ctx.windows && /^[A-Za-z]:[\\/]/.test(file))) return false;
   if (name.startsWith('~')) return true;
-  if (!absolute && ctx.dirs === null) return false;
+  // With no folder known, a path that climbs out or passes a dev or proc folder may reach /dev/stdin.
+  if (!absolute && ctx.dirs === null) return /^\.\.\/|(^|\/)(dev|proc)(\/|$)/.test(path.posix.normalize(name.replace(/\\/g, '/')));
   return !candidates.some((c) => fs.existsSync(c));
 }
 
@@ -343,11 +349,12 @@ function bashRefused(command, ctx, depth = 0) {
   const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
   // The words of a command that are scripts it runs, as [index, run by its path].
+  // A runner's is the command it starts, its first plain word, when that has a slash.
   const scriptsRun = (seg, names, k) => {
     const found = [];
     const runner = RUNNERS.has(names[k]) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
-    const started = runner < 0 ? -1 : seg.findIndex((w, j) => j > runner && /[\\/]/.test(w));
-    if (started >= 0) found.push([started, true]);
+    const started = runner < 0 ? -1 : seg.findIndex((w, j) => j > runner && !OPTION.test(w) && !DURATION.test(w) && w !== '{}');
+    if (started >= 0 && /[\\/]/.test(seg[started])) found.push([started, true]);
     let j = -1;
     if (POSIX_SHELLS.has(names[k])) {
       if (!seg.slice(k + 1).some((w) => SHELL_FLAG.test(w))) j = shellScriptAt(seg, k);
@@ -413,7 +420,7 @@ function bashRefused(command, ctx, depth = 0) {
   const unnamed = new Set();
   for (const { words, places } of checks) {
     const names = words.map(nameOf);
-    const k = commandAt(words, names);
+    const k = commandAt(words, names, ctx);
     if (k >= words.length) continue;
     if (['test', '[', '[['].includes(names[k])) places.forEach((p) => unnamed.add(p));
     for (const [j] of scriptsRun(words, names, k)) unnamed.add(places[j]);
@@ -426,7 +433,7 @@ function bashRefused(command, ctx, depth = 0) {
   }
   const commandRefused = (seg) => {
     const segNames = seg.map(nameOf);
-    const k = commandAt(seg, segNames);
+    const k = commandAt(seg, segNames, ctx);
     // sudo -s and sudo -i with no command start a shell that reads the input.
     if (k >= seg.length) return segNames.some((n, i) => ['sudo', 'doas'].includes(n) && seg.slice(i + 1).some((w) => ['-s', '-i', '--shell', '--login'].includes(w)));
     const name = segNames[k];
@@ -627,7 +634,8 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     // PowerShell exists on every system but is read as on Windows.
     const windows = platform === 'win32' || tool === 'PowerShell';
     const fold = foldFor(windows ? 'win32' : platform);
-    return bashRefused(command, { windows, fold, cwd, home }) ? refuse('run the host tools, push, or read a .env file') : undefined;
+    const root = found?.record?.folder ?? setup?.folder ?? cwd;
+    return bashRefused(command, { windows, fold, cwd, home, root }) ? refuse('run the host tools, push, or read a .env file') : undefined;
   }
   try {
     return fileRefusal(input, { home, platform, pluginRoot }) ?? undefined;
