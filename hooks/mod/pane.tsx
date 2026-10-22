@@ -23,7 +23,7 @@ import { ask, type Answer, type PaneModel } from './ask'
 import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_NEEDS_YOU, NOT_HERE, SETTING_UP, staleLine as staleWords } from './numbers'
 import { body, footnote, group, heading, small, status, title } from './calm'
 import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED, NOT_HANDED_FOREMAN } from './cards'
-import { drawSettings, forgetAsks, showBoard, showSettings } from './settings'
+import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
 // turn, since each press says at once that it was taken (design section 17.1); check 41 turns this
@@ -358,7 +358,7 @@ function nextLine(card: Record<string, unknown>): string {
 
 // The pane, top to bottom (design section 23.3): the line saying what is shown is old; STOP, or
 // the STOP is on group; the verdict; the card, with the next card's subject and Back and Next;
-// what is being built; launch; health and this week; and the foot. Each is a group, and an empty
+// what is being built; launch; health and this week; and the foot, whose Settings is the only button on the board view (the settings view has its own Board). Each is a group, and an empty
 // one is left out. Every line is plain Text: a card's text is drawn whole, as written, and the
 // bridge has made every other line one line of plain words. Or the settings view.
 export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
@@ -513,7 +513,6 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     <Box flexDirection="column" gap="xs">
       {live && (
         <Box flexDirection="row" gap="sm">
-          {small(t, 'board', 'Board', () => showBoard($))}
           {small(t, 'settings', 'Settings', () => showSettings($))}
         </Box>
       )}

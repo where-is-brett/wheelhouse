@@ -422,9 +422,11 @@ function namedFunctions(code) {
 }
 
 const PANE_FILES = ['cards.tsx', 'settings.tsx'];
-// A press is passed as a Button's onPress, directly or through the drawing kit's button functions
-// (hooks/mod/calm.tsx), which take it as their last argument and set it as the Button's onPress.
-const ON_PRESS = /(?:onPress\s*=\s*\{|\b(?:filled|outlined|small|stopButton)\([^\n]*,)\s*(?:async\s*)?(?:\([^)]*\)\s*=>\s*)?$/;
+// A press is passed as a Button's onPress, or as the last argument of the drawing kit's button
+// functions (hooks/mod/calm.tsx), and only as an arrow that calls it on a click: a press called
+// while drawing, or in any other argument, would send as the pane draws.
+const ARROW = '(?:async\\s*)?\\(\\)\\s*=>\\s*$';
+const ON_PRESS = new RegExp(`(?:onPress\\s*=\\s*\\{\\s*|\\b(?:filled|outlined|small)\\(\\s*t\\s*,[^,()]+,[^,()]+,\\s*|\\bstopButton\\(\\s*t\\s*,\\s*)${ARROW}`);
 
 // paneOrigin(sources) -> { ok, why? }: `origin: 'pane'` appears only inside functions whose
 // names begin `press` in cards.tsx and settings.tsx, which those files pass as `onPress` (or to the

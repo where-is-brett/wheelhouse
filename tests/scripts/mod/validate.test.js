@@ -214,7 +214,7 @@ test('the pane origin outside a press handler fails', () => {
     async function pressApprove($, card) { await ask($, { cmd: 'reply', origin: 'pane', card }) }
     const pressLift = async ($) => { await ask($, { origin: "pane" }) }
     export const Card = ({ $, card }) => <Button onPress={() => pressApprove($, card)} />
-    export const Lift = ({ $ }) => <Button onPress={pressLift} />`;
+    export const Lift = ({ $ }) => <Button onPress={() => pressLift($)} />`;
   assert.deepEqual(paneOrigin({ 'hooks/mod/cards.tsx': good, 'hooks/mod/settings.tsx': good }), { ok: true });
   assert.deepEqual(paneOrigin(SOURCES), { ok: true });
   assert.deepEqual(paneOrigin(repoSources()), { ok: true });
@@ -235,6 +235,30 @@ test('the pane origin outside a press handler fails', () => {
   assert.match(called.why, /pressApprove/);
   const unused = paneOrigin({ 'hooks/mod/settings.tsx': "const pressOnly = async ($) => { await ask($, { origin: 'pane' }) }\nexport const x = 1" });
   assert.equal(unused.ok, true);
+  // A press is accepted only as an arrow that calls it on a click, to onPress or as the last
+  // argument of the kit's button functions; called while drawing, or in another argument, it fails.
+  const press = `${good}\nasync function pressStop($, after) { await ask($, { origin: 'pane' }) }\n`;
+  for (const use of [
+    "const a = <Button onPress={() => pressStop($, after)} />",
+    "const a = <Button onPress={async () => pressStop($, after)} />",
+    "const a = filled(t, 'k', 'Label', () => pressStop($, after))",
+    "const a = outlined(t, key, 'Label', async () => pressStop($, after))",
+    "const a = small(t, 'k', 'Label', () => pressStop($, after))",
+    "const a = stopButton(t, () => pressStop($, after))",
+  ]) {
+    assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, true, use);
+  }
+  for (const use of [
+    "const a = <Button onPress={pressStop($, after)} />",
+    "const a = <Button onPress={pressStop} />",
+    "const a = filled(t, 'k', 'L', pressStop($, after))",
+    "const a = filled(t, pressStop($, after), 'L', noop)",
+    "const a = [small(t, 'a', 'b', noop), pressStop($, after)]",
+    "const a = filled(t, 'k', pressStop($, after), () => noop())",
+    "const a = stopButton(t, pressStop($, after))",
+  ]) {
+    assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, false, use);
+  }
   const calledInHandler = paneOrigin({ 'hooks/mod/cards.tsx': `${good}\nasync function pressTwo($) { await pressApprove($, 1) }` });
   assert.equal(calledInHandler.ok, false);
 });

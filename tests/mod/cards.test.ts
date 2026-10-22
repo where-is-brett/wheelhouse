@@ -120,7 +120,7 @@ test('each button the bridge gave a card is drawn, and a press sends its card, h
     await start($, surface)
     const ui = await mount($, surface)
     // STOP's button, then the shown card's three, in the bridge's order, then Next and Settings.
-    expect(await buttons(ui)).toEqual(['stop', cardKey('card-1', 'Approve'), cardKey('card-1', 'Not now'), cardKey('card-1', 'Explain more'), 'next', 'board', 'settings'])
+    expect(await buttons(ui)).toEqual(['stop', cardKey('card-1', 'Approve'), cardKey('card-1', 'Not now'), cardKey('card-1', 'Explain more'), 'next', 'settings'])
     for (const label of ['Approve', 'Not now', 'Explain more']) {
       expect((await ui.find({ key: cardKey('card-1', label) }))?.props.label).toBe(label)
     }
@@ -143,7 +143,7 @@ test('a card with a note and no buttons gets none, and its note is drawn under i
     await ui.press({ key: 'next' })
     const drawn = await texts(ui)
     expect(drawn.indexOf(CANT_ANSWER)).toBe(drawn.indexOf(SECOND) + 1)
-    expect(await buttons(ui)).toEqual(['stop', 'back', 'board', 'settings'])
+    expect(await buttons(ui)).toEqual(['stop', 'back', 'settings'])
     // A card with no note draws none.
     await ui.press({ key: 'back' })
     expect(await texts(ui)).not.toContain(CANT_ANSWER)

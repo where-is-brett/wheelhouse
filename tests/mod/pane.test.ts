@@ -205,7 +205,6 @@ test('the pane draws each card\'s text as plain text, one card at a time', async
       'Usage: 23% of the five-hour window',
       '4 ideas · 1 new since yesterday',
       'The helper isn\'t answering',
-      'Board',
       'Settings',
       'Updated 14:02',
     ])
