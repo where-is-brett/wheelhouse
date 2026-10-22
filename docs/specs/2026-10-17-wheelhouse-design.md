@@ -197,7 +197,7 @@ The rules for cards:
 - **Its options.** A card that decides something offers its deciding label (**Approve**, **Confirm**, **Push it** and so on), **Suggest a change…**, **Show me** and **Not now** (section 23.4). A feature's question carries up to three of its own options and **Suggest a change…**, or all four of its own with a change left to the free-text answer; a product question with no set line carries its own options the same way. The question tool takes at most four, and dropping one of a feature's options would decide for the director. A proposal learnt from how the director works offers **Keep as is** in place of **Show me** (section 5.5).
 - **Checked by a hook.** Before the question tool runs, the card check refuses a card missing one of its five parts, one whose set line has no reply code or another card's, one with two set lines, and one whose first part names another pull request, commit or record than its set line. It informs rather than guards: if it fails itself it lets the card through, since the prompt record is what refuses a wrong click (section 12.3).
 - **Asked once.** The board-context hook tells the front desk how many cards wait that no visit has asked. Its command gives at most four, most important first (STOP or an incident; level 4; a question that holds up all work; level 3; the rest; then oldest first), and records them as asked, so a card dismissed with no answer isn't offered on every turn. Composing a card whose set line is already waiting gives back the waiting card.
-- **"Not now" keeps a card waiting.** So do **Show me** and asking why. **Suggest a change…** keeps it waiting until the revised card, with its own set line, closes it (section 23.3). Only an option that decides, or a signed record carrying the card's question, closes it. A card put off isn't asked on the next visit: it stays on the board, and the director asks for it again by its number there.
+- **"Not now" keeps a card waiting.** So do **Show me** and asking why. **Suggest a change…** keeps it waiting until the revised card, with its own set line, closes it (section 23.3). On a card that carries an approval (an approval or a CI push), the change goes to the build first, and the revised card comes only once the pull request's head has moved (section 23.3). Only an option that decides, or a signed record carrying the card's question, closes it. A card put off isn't asked on the next visit: it stays on the board, and the director asks for it again by its number there.
 - **The build loop's records become cards** when the front desk next asks: a feature's open question an answer card; a click the merge gate waits for (the build loop's `gate-asks`) an approval or CI-push card, made once, and a CI-push card asked again only when its click lapsed before the push; a lineage hold one card with no set line, saying in plain words which kits differ, that edits and commands are held, and that no click lifts it: the next session start whose check matches does (build-loop design, section 14.6).
 - **Under STOP** the front desk's command gives the Lift STOP card alone, recommending **Not now**, since the front desk can't know why STOP was set (section 12.7).
 - **The command's input** goes in a file, never a heredoc, which Claude Code refuses whatever the allow rules say (seen on 2.1.302, 20 October 2026). The front desk writes the JSON with its own file tool, to the session's scratchpad where its system prompt names one, otherwise to `.wheelhouse/front-desk.json` in the project, and runs `node "<plugin>/scripts/frontdesk/cli.js" <command> < <file>`. The project's local settings allow that command by its full path and that one file's writing, with no prompt; nothing reads the file as trusted. The session start keeps `.wheelhouse/` out of git in the project's main folder, before the front desk's first write.
@@ -236,7 +236,7 @@ Every message is sorted before anything is done, by the intake's two checks and 
 
 Where the two layers conflict, the project wins. The front desk proposes each learnt change as a one-line card, and nothing changes until the director confirms, with one exception below: an explanation may get longer at once.
 
-**What is learnt.** *Designer's call* for each. Scripts count it from the director's clicks, never the model: the board-context hook works it out on the first prompt of each visit, outside the sandbox, since the front desk can't read the profile or the state, and never under STOP. A reply code counts as the click it stands for. Each proposal is a one-line confirm card, asked with that visit's cards.
+**What is learnt.** *Designer's call* for each. Scripts count it from the director's clicks, never the model: the board-context hook works it out on the first prompt of each visit, outside the sandbox, since the front desk can't read the profile or the state, and never under STOP. A reply code counts as the click it stands for. Each proposal is a one-line confirm card, asked with that visit's cards. A press of Why? in the pane is noted quietly in the background, so it counts as Explain more did; a note that fails is lost, which only means an explanation stays as long as it was (section 21).
 
 - **A concept known.** Once cards using a concept were answered on three different days without **Explain more** (counting only after the last Explain more on it), it is proposed as known. Confirmed, the glossary's word is kept as it is, with no meaning given.
 - **A longer explanation needs no confirmation.** **Explain more** on a card using a concept the director knows sets it back to not known at once, with no card. Forgetting that the director knows something only makes an explanation longer, so it fails safe.
@@ -1140,10 +1140,12 @@ Everything is built in one programme, in this order. Each step is usable before 
 
 | # | Scenario | Pass |
 |---|---|---|
-| 36 | The director presses **Explain more** on a card in the pane | The front desk explains the card in one short sentence with an everyday example, then asks that card again, alone, as composed; it records nothing and asks no other card |
+| 36 | The director presses **Suggest a change…** on the approval card in the pane (leg 1); presses **Show me** (leg 2); and, in the chat, types a why about a card (leg 3) | Leg 1: the change goes to the build as an order, no card is asked at the old head, and the front desk says one line. Leg 2: the preview link, then the card asked again alone. Leg 3: a short explanation with an everyday example, then that card again, alone, as composed. In every leg it records nothing and asks no other card |
 | 37 | The courier wakes the front desk for two new cards | One notification, naming no card's words, then the two new cards in one question and no other; at most one short closing line, with no briefing |
 
 On 20 October 2026 both passed three trials of three with Wheelhouse's lines and failed without them: without them the front desk took the prompt for text that wasn't the director's and did nothing it asked. Since those runs the playbook's section on the baseline from the private note has come in from `main`, so both variants now hold it as well; it doesn't touch the lines these scenarios test. The same day both were run again, one trial each, with each session kept from the director's own as the front desk's are: each passed with the lines and failed without (`docs/evals/mod.md`); those reruns are the counted results.
+
+Scenario 36 was changed on 23 October 2026 to the three legs above (the pane's Suggest a change… on the approval card, Show me, and the chat's typed why); every counted run of it before that is of the old press, **Explain more**, so a rerun of 36's legs is due and has not been made (`docs/evals/mod.md`).
 
 **Hooks, scripts and the adapter** get unit tests. **Setup** gets the timed runs (section 15). **Real use** follows the evaluation as a whole: Wheelhouse is used for all work on the first project, with no small-feature pilot first (the director's decision of 19 October 2026, section 17.2).
 
@@ -1555,6 +1557,21 @@ The added costs are:
 - the timed run's "about 15 minutes" read as up to 17 minutes, fixed before the run rather than after it (ruling R149; section 20). *Designer's call.*
 - the timed run undone by setup's own uninstall in the throwaway account, which also tries uninstall for real and takes that computer's enrolment off the profile, with deleting the account as the backstop; the times read before it, since uninstall removes setup's records of the questions and answers (ruling R150; section 20). *Designer's call.*
 
+**From the Calm plan** (`docs/superpowers/plans/2026-10-21-wheelhouse-calm-interface.md`, 21 to 23 October 2026), each settled without the director:
+
+- Suggest a change… not on Lift STOP, nor on the cards answered only in setup's or the session start's own chat (setup, the rules found, the baseline, trust and uninstall): STOP is lifted or it isn't, and those cards are steps of a list the director clicks through, not proposals (section 23.3). *Designer's call.*
+- a revision closing only a card of its own kind and pull request, so a revised card naming any other card closes nothing and a slip can't close an unrelated approval (section 23.3). *Designer's call.*
+- a card's parts having to build its text: the pane draws the parts but the prompt record signs the text, so a card whose parts don't build its text gets only Why?, which asks the front desk (section 23.3). *Designer's call.*
+- Why? noted quietly: the press opens the reasons at once and notes Why? in the background for learning, and a note that fails is lost, which only means an explanation stays as long as it was (sections 5.5 and 23.3). *Designer's call.*
+- the words of a suggestion living only in the prompt: cut at 500 characters, on one line, and never stored (section 23.3). *Designer's call.*
+- the launch bar kept as text until the Mac sitting shows whether a `Box` draws it (section 23.10). *Designer's call.*
+- a suggested change on a card that carries an approval (an approval or a CI push) going to the build as an order (`record work`, in the front desk's own words), the revised card coming only once the pull request's head has moved, and the front desk's command refusing a revised approval at the same head; other kinds revised at once (sections 5.3 and 23.3). *Designer's call.*
+- Why? on a card that fails its check sending the quiet note and handing the front desk a prompt, not opening in place (section 23.3). *Designer's call.*
+- a settings row with no value in force (Availability away for a while) drawing no pop-up but its words and Change…, and a pick of the value already in force sending nothing (section 23.6). *Designer's call.*
+- the pane drawing "what this is" under the ask, left out only when it is the same words (section 23.3). *Designer's call.*
+- the briefing at its standard length cutting every other part before a waiting card, and a waiting card shedding its line and its recommendation before it is cut (section 23.5). *Designer's call.*
+- scenario 36 being three legs, the pane's Suggest a change… on the approval card, Show me, and the chat's typed why, its counted runs being of the old press and a rerun due (section 18). *Designer's call.*
+
 Cards A and B of the safety plan, Cards 1 and 2 of the board-and-usage plan, Card 1 of the front desk plan and Card 1 of the setup plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
 
 ## 22. Decided by the director
@@ -1685,7 +1702,7 @@ The tint is the theme's blue, not Claude's orange accent, because orange sits to
 **A card, part by part:**
 
 1. **The header row:** its kind and place ("Approval · 1 of 2"), dim, with a small Not now at the right.
-2. **The question,** as a heading: "Put 'save a search' live?"
+2. **The question,** as a heading: "Put 'save a search' live?" Under it, **what this is**, in body text, left out only when it is the same words as the question.
 3. **The small line,** in footnote: its size, why it is the director's and how long it has waited ("Small feature · changes what users see · asked 2 hours ago"). An optional card adds "optional · 3 min".
 4. **The recommendation and why,** in one sentence of body text.
 5. **The thing itself and Why?** "See 'save a search' ↗" is a link where the work has a preview address. Where it has none, it is a small "Show me" button that starts a front-desk turn. Why? is a small button that opens, in place and with no Claude turn: why it's the director's, what each choice means, and what happens meanwhile. It then reads "Hide why".
@@ -1698,13 +1715,14 @@ The card's five parts are all still there (section 5.3). The pane shows them as 
 
 - **A card that decides something:** its deciding answer and Suggest a change…, with Not now in the corner and Why?.
 - **A feature's question:** its own options, the recommended one filled and the rest outlined, then Suggest a change…. The pane isn't bound by the question tool's four.
-- **A card whose form fails the check:** only Why?, which then starts a front-desk turn, since its parts can't be trusted to show.
+- **A card whose form fails the check:** only Why?. It sends the quiet note and hands the front desk a prompt, and does not open in place, since the card's parts can't be trusted to show. A card's parts must build its text: the prompt record signs the text, so a card whose parts don't build it gets only Why?.
 - **Setup's cards and the others with no buttons:** still none, with the line saying where each is answered.
 
 **Suggest a change… in the pane.** The director's ruling of 20 October 2026 (section 22):
 
 - **A box opens inside the card,** with "What would you change?", a filled Send (switched off while the box is empty) and an outlined Cancel. The pane draws its own box because it can't move the cursor into the chat's message box. `$.prompt.fill` may be refused in Desktop, so it isn't relied on.
 - **Send hands the front desk a prompt** naming the card, as a press does (section 17.1): "Wheelhouse pane: the director suggested a change on card 2 (<id>): <their words>". A toast says "Sent to the front desk. A new proposal will follow."
+- **On a card that carries an approval** (an approval or a CI push), **the change goes to the build as an order** (`record work`, in the front desk's own words), and the revised card comes only once the pull request's head has moved. The front desk's command refuses a revised approval at the same head. Every other kind is revised at once.
 - **The card stays waiting,** marked "You suggested a change at 14:10. A new proposal is on its way, and nothing goes live meanwhile."
 - **The revised proposal is a new card,** with its own commit, set line and reply code, headed "Approval · revised", with a "What changed:" sentence. The old card closes when it arrives. Nothing approved before can stand for the new one.
 - **The words steer and never approve** (section 12.3). The prompt record never counts them as an answer, and they record nothing.
@@ -1732,6 +1750,7 @@ These are written into the chat, so Claude's own headings, lists and tables draw
 - **"Since you were last here"** marks anything new wherever it appears, with counts ("+2").
 - **Section labels in sentence case,** never coloured or in capitals.
 - **Tables where you compare.** The board's work table keeps the "You'll see it" column.
+- **At its standard length the briefing cuts every other part before a waiting card,** and a waiting card sheds its line and its recommendation before it is cut.
 - **Empty parts fold away** into one dim line, never a heading saying "None".
 - **The briefing's foot:** usage on track, spend, "ask me anything", and the full board.
 - **The board's director view,** in order: the verdict and when it was updated; waiting on you, each card with its small line ("Small feature · level 3 · asked 2 hours ago. If not now, it waits."); on the way to launch ("3 of 5 blockers cleared, 1 since you were last here", what is still open with the director's own marked, and what's next in order); being built; changed for your users, with "Plus 9 changes behind the scenes you don't need to see."; ideas with their order; health and this week; and rulings, "For a glance, not a decision. Disagree? Say so and it becomes a question for you."
@@ -1746,6 +1765,7 @@ Settings is a grouped, inset list, like System Settings on the Mac and Settings 
 - **A row is one setting:** its name on the left, as a noun, and its value on the right in plain words ("Autonomy: Balanced"), never a sentence.
 - **A setting with levels** shows them in a pop-up menu (`Select`). In Desktop that is the Mac's own pop-up button, the one System Settings uses.
 - **A setting the front desk changes** shows its value and a small "Change…" button, which asks the front desk. These are Protection, Build commands on Windows, Notifications, Working hours and the briefing gap.
+- **A setting with no value in force** (Availability while the director is away for a while) draws no pop-up, but its words and Change…. A pick of the value already in force sends nothing.
 - **A setting with nothing to change** shows its value alone. Budget is "Report only" while budget allocation is in the backlog.
 - **Each group** has a short dim note under it, saying what the group is.
 
@@ -1850,6 +1870,8 @@ Wheelhouse speaks as the front desk: a calm, capable manager who has done the re
 | **Learning and the evaluations** | `scripts/frontdesk/`, section 18's scenarios | Where learning (section 5.5) counts **Explain more**, it counts a press of Why? or a question asking why. Section 18's scenario 36, and the designer's calls in section 21 that name Explain more, read as Why? in the pane and asking why in the chat |
 | **Tests** | `tests/` | The words above are set words, so tests hold them. The mod proof (`npm run mod-check`) covers the new press and the `ui.select` handler |
 
+**Built on 23 October 2026** (`docs/superpowers/plans/2026-10-21-wheelhouse-calm-interface.md`): the pane, Settings, the cards' parts, Why? and Suggest a change…, and the words everywhere else, with the decisions it settled in section 21. What remains is check 42 at the Mac (section 23.10) and the real runs of scenario 36.
+
 ### 23.10 To check at the Mac sitting
 
 These can only be seen on the real thing. Each has its fallback, so none holds up the build.
@@ -1862,6 +1884,13 @@ These can only be seen on the real thing. Each has its fallback, so none holds u
 - **How a screen reader reads the pane:** in order, with each button's name.
 - **Whether the pane shows on the phone at all,** and if so, without a text box or pop-ups.
 - **Whether `$.prompt.fill` works in Desktop.** The pane's own box doesn't depend on it.
+- **Whether pressing Enter in the Suggest box sends.** The test kit can't reach it. If not, the filled Send is the way.
+- **Whether a Select with no option picked ever sends by itself.** It should never. A pick of the value already in force sends nothing.
+- **Whether Not now sits at the card's right.** The header row uses space-between. If not, it moves to the card's foot.
+- **Whether STOP's label is red inside Desktop's button.** If not, STOP keeps its words and its place apart from the filled button.
+- **A Settings pop-up's look and the Suggest box's focus.**
+
+The run sheet, with each check's fallback and numbered steps for the Mac, about 15 minutes, is check 42 (`docs/checks/42-calm-desktop.md`). It is held for the director's sitting.
 
 ### 23.11 Set aside
 
