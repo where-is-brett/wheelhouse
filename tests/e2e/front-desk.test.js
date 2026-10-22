@@ -642,7 +642,7 @@ test('an approval card steered with Suggest a change… is revised once the chan
       stdin: Readable.from([JSON.stringify({ cmd: 'reply', origin: 'bridge', text: `${oldCode.toLowerCase()} approve`, cwd: world.checkout })]),
       deps: { client: world.client, now: world.now },
     }));
-    assert.equal(reply.ok, false, JSON.stringify(reply));
+    assert.deepEqual(reply, { ok: false, says: 'That card\'s answer can\'t be recorded now' });
     assert.deepEqual(eventsOf('approval'), []);
 
     // The click on the revised card signs its own commit, and the gate merges that.

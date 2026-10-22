@@ -51,7 +51,7 @@ import { SETUP_STEPS } from '../../scripts/lib/setup-run.js';
 import { stopState } from '../../scripts/lib/stop.js';
 import { startRun, markStep, addChanges, newId } from '../../scripts/setup/journal.js';
 import { composeCard } from '../../scripts/cards/compose.js';
-import { replyCode, setLineOf } from '../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, setLineOf } from '../../scripts/state/card-lines.js';
 import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey, verify, readEnrolled } from '../../scripts/state/signing.js';
 import { readCursor, writeCursor } from '../../scripts/watcher/core.js';
@@ -590,7 +590,8 @@ function textsUnder(dir) {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
-    return entry.isDirectory() ? textsUnder(full) : [fs.readFileSync(full, 'utf8')];
+    if (entry.isDirectory()) return textsUnder(full);
+    return entry.isFile() ? [fs.readFileSync(full, 'utf8')] : [];
   });
 }
 
@@ -615,9 +616,22 @@ test('Why? notes quietly; a suggestion on an approval hands the words on, signs 
   const drawn = drawnCard(await tick(c), card.id);
   const code = replyCode(setLineOf(card.question.question));
 
+  // The pane draws the card's parts word for word.
+  assert.equal(drawn.parts.ask, `Put pull request #${PR} live?`);
+  assert.equal(drawn.parts.what, 'Proposed change #7 adds the sign-in page.');
+  assert.equal(drawn.parts.recommendation, 'Approve, because the checks passed and the change is small.');
+  assert.equal(drawn.parts.line, approvalLine(PR, c.head));
+  assert.equal(drawn.parts.code, code);
+  assert.equal(drawn.parts.meanwhile, APPROVAL.meanwhile);
+  assert.equal(drawn.steered, null);
+  assert.equal(drawn.revised, false);
+  // The card is shown in the chat and put off, so its reply code is live.
+  await click(c, card.question, 'Not now');
+  assert.equal(eventsOf('shown').length, 1);
+
   // Why? answers quietly: no words, no prompt, the card still waiting.
   assert.deepEqual(await bridge(c, { cmd: 'why', origin: 'pane', cwd: c.folder, card: drawn.id, hash: drawn.hash }), { ok: true });
-  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Why?']);
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Not now', 'Why?']);
   assert.deepEqual(eventsOf('approval'), []);
   assert.equal(drawnCard(await tick(c), card.id).id, card.id, 'still waiting');
 
@@ -630,12 +644,18 @@ test('Why? notes quietly; a suggestion on an approval hands the words on, signs 
   assert.ok(sent.submit[0].startsWith(`${LEADS.pane} the director suggested a change on card ${drawn.n} (${card.id}): `), sent.submit[0]);
   assert.ok(sent.submit[0].includes('zq-suggestion-marker'), 'the prompt carries the words');
   assert.deepEqual(eventsOf('approval'), [], 'the words signed nothing');
-  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Why?', 'Suggest a change…']);
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Not now', 'Why?', 'Suggest a change…']);
   assert.deepEqual(kept(), []);
-  // The words are in no file of state, of pending/ or of the profile.
-  for (const dir of [stateDir(PROJECT), pendingDir(PROJECT), profileDir()]) {
-    for (const text of textsUnder(dir)) assert.equal(text.includes('zq-suggestion-marker'), false, dir);
-  }
+  // The words are in no file anywhere in the Wheelhouse home.
+  for (const text of textsUnder(wheelhouseHome())) assert.equal(text.includes('zq-suggestion-marker'), false);
+  // The prompt handed on, sent back as a reply, is no answer.
+  const replied = await bridge(c, { cmd: 'reply', origin: 'bridge', text: sent.submit[0], cwd: c.folder });
+  assert.equal(replied.ok, false, JSON.stringify(replied));
+  assert.deepEqual(eventsOf('approval'), []);
+  assert.deepEqual(kept(), []);
+  // The pane draws the card as steered.
+  const steeredCard = drawnCard(await tick(c), card.id);
+  assert.equal(typeof steeredCard.steered, 'string');
   // The card is steered and still waits for its revision.
   const waiting = (await c.client.state.views({ project: PROJECT })).views.waiting.find((w) => w.id === card.id);
   assert.equal(typeof waiting.steered, 'string', 'the card is marked steered');
@@ -658,6 +678,9 @@ test('Why? notes quietly; a suggestion on an approval hands the words on, signs 
   assert.equal(drawnCard(after, card.id), undefined, 'the old card is closed');
   const drawnRevised = drawnCard(after, revised.id);
   assert.equal(drawnRevised.kind, 'approval');
+  assert.equal(drawnRevised.revised, true);
+  assert.deepEqual(drawnRevised.buttons[0], { label: 'Approve', does: 'record', shape: 'filled' });
+  assert.equal(drawnRevised.parts.line, approvalLine(PR, head2));
   assert.equal(after.pane.cards.filter((x) => x.kind === 'approval').length, 1);
   const newCode = replyCode(setLineOf(revised.question.question));
   assert.notEqual(newCode, code, 'the revised card is for the new head');
@@ -665,7 +688,7 @@ test('Why? notes quietly; a suggestion on an approval hands the words on, signs 
   // The old card answers nothing: not its pane press, and not its reply code.
   assert.equal((await press(c, drawn, 'Approve')).ok, false);
   const old = await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code} approve`, cwd: c.folder });
-  assert.equal(old.ok, false, JSON.stringify(old));
+  assert.deepEqual(old, { ok: false, says: 'That card\'s answer can\'t be recorded now' });
   assert.deepEqual(eventsOf('approval'), []);
 
   // Approve on the revised card signs the revised card's own commit.
