@@ -648,6 +648,23 @@ test('Why? on a card failing its check hands the front desk a prompt naming the 
   }
 })
 
+test('Why? on a card with no parts sends the quiet why and hands the front desk a prompt naming the card, never a press', async ($, on) => {
+  const whole = { ...model(false).cards[0], buttons: [{ label: 'Why?', does: 'turn', shape: 'small' }], note: CANT_ANSWER }
+  const { seen, clear, start, clock } = world(on, () => ({ ok: true }), withCards([whole]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    expect(await texts(ui)).toContain(FIRST)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Why?') })
+    await clock.settle()
+    expect(seen.requests).toEqual([{ cmd: 'why', origin: 'pane', cwd: ROOT, card: 'card-1', hash: 'aaaaaaaaaaaa' }])
+    expect(seen.submits.map((p: any) => p.text)).toEqual(['Wheelhouse pane: the director pressed Why? on card 1 (card-1).'])
+    expect(seen.toasts).toEqual([])
+    await ui.unmount()
+  }
+})
+
 test('Show me is a link ending ↗ when the card has an href, else a small button', async ($, on) => {
   const bare = partsCard({ buttons: GIVEN.map((b) => (b.label === 'Show me' ? { label: 'Show me', does: 'turn', shape: 'small' } : b)) })
   let cards = [partsCard()]

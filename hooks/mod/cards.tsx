@@ -228,7 +228,8 @@ function givenOf(card: Card): Given[] {
 const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null)
 
 // A card with no parts: its text whole as plain text, its note under it, and one button per entry
-// of its buttons, keyed by the card's id and the label.
+// of its buttons, keyed by the card's id and the label. Its Why? has no reasons to open, so it hands
+// the front desk a prompt naming the card, as Why? does on a card failing its check.
 function drawWhole($: EngineInterface, e: RenderInput<'Pane'>, card: Card, pressing: Pressing, live: boolean, after: After) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const id = typeof card.id === 'string' ? card.id : null
@@ -242,6 +243,7 @@ function drawWhole($: EngineInterface, e: RenderInput<'Pane'>, card: Card, press
           {labels.map((label) => {
             if (pressing?.on === id && pressing.label === label) return <Text>{RECORDING}</Text>
             if (pressing !== null) return <Text dimColor>{label}</Text>
+            if (label === WHY) return <Button key={`card:${id}:${label}`} label={label} onPress={() => pressWhy($, card, true)} />
             return <Button key={`card:${id}:${label}`} label={label} onPress={() => pressButton($, card, label, after)} />
           })}
         </Box>
