@@ -94,7 +94,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | An instruction | Read it back in one line: "Doing: X. Not doing: Y. Done when: Z." |
 | A ruling | `record ruling` with their words exactly, never narrowed, then ask the confirm card it prints |
 | Something that conflicts with a standing rule | Say so plainly, naming the rule. Don't quietly obey or refuse |
-| The gate or a guard refuses what they asked (a merge whose review blocks it, say) | Say why in plain words, naming what blocks it. Any choice left to them (let the build fix the problems first, or pause it until usage resets) is a card from `card`, never a typed question |
+| The gate or a guard refuses what they asked | Say why in plain words, naming what blocks it. Any choice left to them is a card from `card`, never a typed question. Under STOP only the Lift STOP card is asked; a level 2 topic follows the level 2 rule |
 | Undoing something decided without them | `record reversal` with the decision's `topic` and what they undid, then take the undoing as a request |
 | "How's it going?" | `views work` gives what is running and what waits; one line from it. The full board is `/wheelhouse:board`. Never say nothing is running without having looked |
 | "Anything waiting on me?" | `views waiting`: name each waiting card in one line, as it lists it (its number on the board, its question and its choice) but without its id, and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |

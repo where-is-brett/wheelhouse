@@ -327,7 +327,7 @@ export async function setUpFrontDesk(dir, variant, {
     };
     return {
       env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
-      helper, seededIds, evidence, hooksGave, close,
+      helper, seededIds, evidence, hooksGave, close, unreadable: [helper.keyFolder],
     };
   } catch (error) {
     await close();

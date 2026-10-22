@@ -151,7 +151,7 @@ export async function setUpFeature(dir, {
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });
     return {
-      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: repositoryReadable(), writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
+      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: repositoryReadable(), unreadable: [helper.keyFolder], writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
     };
   } catch (error) {
     await close();

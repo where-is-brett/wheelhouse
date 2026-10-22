@@ -131,21 +131,24 @@ function inRealHome(file) {
 // ~/.wheelhouse or any credential, the npm registry only), with EVAL_DENY_READ added. Per run:
 // `socket`, the run's stand-in helper's socket, the one Unix socket a command may reach (none
 // without it; never one in the real Wheelhouse home); `readable`, paths read again inside what is
-// denied; `writable`, paths written outside the project. The sandbox doesn't run on native
+// denied; `unreadable`, more paths a command may not read (the stand-in helper's key folder), added
+// to the sandbox's denied reads and to a Read deny rule; `writable`, paths written outside the project. The sandbox doesn't run on native
 // Windows, where Claude Code runs commands outside it and these settings change nothing.
-export function sessionSettings({ socket = null, readable = [], writable = [] } = {}) {
+export function sessionSettings({ socket = null, readable = [], writable = [], unreadable = [] } = {}) {
   if (socket !== null && (typeof socket !== 'string' || socket === '')) throw new Error('A session\'s socket is a path');
   if (socket !== null && inRealHome(socket)) throw new Error(`A session never reaches a socket in the real Wheelhouse home: ${socket}`);
   const { sandbox } = projectSettings({ webDomains: [] });
   const own = structuredClone(SESSION_SETTINGS);
+  // Each unreadable path by both its spellings (the temporary folder has two on macOS).
+  const hidden = [...new Set(unreadable.flatMap((p) => { try { return [p, fs.realpathSync(p)]; } catch { return [p]; } }))];
   return {
     ...own,
-    permissions: { ...own.permissions, deny: [...own.permissions.deny, ...EVAL_DENY_COMMANDS] },
+    permissions: { ...own.permissions, deny: [...own.permissions.deny, ...EVAL_DENY_COMMANDS, ...hidden.map((p) => `Read(/${p.split(path.sep).join('/')}/**)`)] },
     sandbox: {
       ...sandbox,
       filesystem: {
         ...sandbox.filesystem,
-        denyRead: [...new Set([...sandbox.filesystem.denyRead, ...EVAL_DENY_READ])],
+        denyRead: [...new Set([...sandbox.filesystem.denyRead, ...EVAL_DENY_READ, ...hidden])],
         ...(readable.length > 0 ? { allowRead: [...readable] } : {}),
         ...(writable.length > 0 ? { allowWrite: [...writable] } : {}),
       },
@@ -344,7 +347,7 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // `extraArgs` go on the command line after the rest, as given: only TAKEN_EXTRA_ARGS, or none. They
 // are not looked for in --help: `--permission-prompt-tool`, which a scenario that asks cards
 // needs (it is what gives a `claude -p` session AskUserQuestion, on 2.1.302), is
-// not listed there as a flag of its own. `socket`, `readable` and `writable` are the run's own
+// not listed there as a flag of its own. `socket`, `readable`, `writable` and `unreadable` are the run's own
 // for the sandbox (sessionSettings); `offered` lists denied tools the session is given (vettedOffer).
 export async function runSession({
   dir,
@@ -361,6 +364,7 @@ export async function runSession({
   socket = null,
   readable = [],
   writable = [],
+  unreadable = [],
   offered = [],
   timeoutMs = 20 * 60 * 1000,
   command = 'claude',
@@ -368,7 +372,7 @@ export async function runSession({
 }) {
   const extra = vettedExtraArgs(extraArgs);
   const offer = vettedOffer(offered, dir);
-  const settings = sessionSettings({ socket, readable, writable });
+  const settings = sessionSettings({ socket, readable, writable, unreadable });
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
   const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
@@ -651,6 +655,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         ...(scenario.offered ? { offered: scenario.offered } : {}),
         ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
         ...(context.readable ? { readable: context.readable } : {}),
+        ...(context.unreadable ? { unreadable: context.unreadable } : {}),
         ...(context.writable ? { writable: context.writable } : {}),
         ...(resume === null ? {} : { resume }),
       });

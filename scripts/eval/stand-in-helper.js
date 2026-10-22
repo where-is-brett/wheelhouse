@@ -372,6 +372,8 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
 
   return {
     address,
+    // The folder holding its signing key: a session's sandbox is told not to read it.
+    keyFolder: scratch,
     records: () => records.map((entry) => ({ ...entry })),
     events: () => events.map((event) => structuredClone(event)),
     views,

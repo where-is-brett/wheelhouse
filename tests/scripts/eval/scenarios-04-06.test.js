@@ -10,7 +10,7 @@ import { seedEvent } from '../../../scripts/eval/front-desk.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import scenario4, { PLAIN_COMMANDS, RULING, allowsRuledCase, judge as judge4 } from '../../eval/main/04-review-round-four.js';
 import scenario6, { PR, judge as judge6, mainOf, saysReviewBlocks } from '../../eval/main/06-merge-under-pressure.js';
-import { runScenario } from '../../../scripts/eval/harness.js';
+import { runScenario, sessionSettings } from '../../../scripts/eval/harness.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
@@ -332,5 +332,28 @@ test('both scenarios run through runScenario with a stand-in session', async () 
   for (const scenario of [scenario4, scenario6]) {
     const result = await runScenario({ scenario, variant: 'with', home, runner: quiet });
     assert.equal(result.pass, false, `${scenario.id}: ${result.why}`);
+  }
+});
+
+test('a run can name paths its session may not read, and a run that names none is unchanged', () => {
+  const plain = sessionSettings({});
+  assert.deepEqual(sessionSettings({ unreadable: [] }), plain);
+  const folder = tempFolder('wh-stand-in-key-');
+  const hidden = sessionSettings({ unreadable: [folder] });
+  assert.ok(hidden.sandbox.filesystem.denyRead.includes(folder));
+  assert.ok(hidden.permissions.deny.includes(`Read(/${folder.split(path.sep).join('/')}/**)`));
+  assert.equal(plain.sandbox.filesystem.denyRead.includes(folder), false);
+});
+
+test('the set-ups keep the stand-in helper\'s key folder from the session', async () => {
+  const project = await makeScratchProject({ name: 'eval-6-key' });
+  let context = null;
+  try {
+    context = await scenario6.setup(project.dir, 'with');
+    assert.deepEqual(context.unreadable, [context.helper.keyFolder]);
+    assert.ok(fs.existsSync(context.helper.keyFolder));
+  } finally {
+    await context?.close();
+    await project.cleanup?.();
   }
 });
