@@ -8,10 +8,7 @@
 //   lenient  a backslash escapes the next character, and shell control operators
 //            (; & | ( ) < > backtick, newline, and $( or a backtick inside double
 //            quotes) end the word and start a new segment, so `x;gh` and `$(gh x)`
-//            show their command word. An unclosed quote still gives null, and so
-//            does a double quote inside a substitution opened within double
-//            quotes (`"$(x "y")"`), whose quoting this splitter does not follow.
-//            A # is an ordinary character: a comment is read as words.
+//            show their command word. An unclosed quote still gives null.
 // segmentsWithOperators() also says which operator opened each segment.
 // On Windows a backslash outside quotes is a path separator and becomes a slash.
 
@@ -85,8 +82,6 @@ function scan(command, windows, strict, operators = []) {
       } else {
         endSegment(ch);
       }
-    } else if (sub !== null && ch === '"') {
-      return null; // a quote inside "$( )" or "` `"
     } else if (ch === '"' || ch === '\'') {
       quote = ch;
       current ??= '';

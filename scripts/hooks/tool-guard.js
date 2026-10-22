@@ -238,16 +238,24 @@ function commandAt(seg, names) {
   return seg.length;
 }
 
+// A file name that reads the command's input, as a pipe into a shell does.
+const INPUT_FILE = /^(-|\/dev\/stdin|\/dev\/fd\/\d+|\/proc\/self\/fd\/\d+)$/;
+
 // Whether a script that a shell, `source` or a path runs stops the command. The
 // file is never opened: only the command line and whether anything is at the
 // path are looked at. It is refused when another word of the command has the
 // same last part (`named`: the command writes, copies, downloads or chmods it),
-// when it is in none of the folders the command might be in (it can only come
-// into being during the command), when it is relative and the folder can't be
-// told, or when its name is empty or made at run time.
-function scriptRefused(file, ctx, named) {
+// when it reads the command's input, or when its name is empty or made at run
+// time. It is also refused when it is in none of the folders the command might
+// be in (it can only come into being during the command), or is relative and
+// the folder can't be told; a command word run by its path is held to that only
+// when it starts with ./, ../ or / (or a drive on Windows), since a line such as
+// `scripts/x.js: tidy` in a commit body reads as a command too.
+function scriptRefused(file, ctx, named, byPath = false) {
   let name = expandHome(file, ctx.home, ctx.windows);
-  if (named || name === '' || /[$`]/.test(name) || name.startsWith('~')) return true;
+  if (named || INPUT_FILE.test(name) || name === '' || /[$`]/.test(name)) return true;
+  if (byPath && !/^\.{0,2}[\\/]/.test(file) && !(ctx.windows && /^[A-Za-z]:[\\/]/.test(file))) return false;
+  if (name.startsWith('~')) return true;
   if (ctx.windows && /^\/[A-Za-z]\//.test(name)) name = `${name[1].toUpperCase()}:${name.slice(2)}`;
   const absolute = path.isAbsolute(name) || /^[A-Za-z]:[\\/]/.test(name);
   if (!absolute && ctx.dirs === null) return true;
@@ -302,7 +310,7 @@ function bashRefused(command, ctx, depth = 0) {
     const args = seg.slice(k + 1);
     // Code made at run time: an empty word, or an unquoted $( that leaves a lone $.
     if (seg[k] === '' || seg[k].endsWith('$')) return true;
-    const script = (file) => scriptRefused(file, inContext(dirs), (counts.get(fold(lastPart(file))) ?? 0) > 1);
+    const script = (file, byPath) => scriptRefused(file, inContext(dirs), (counts.get(fold(lastPart(file))) ?? 0) > 1, byPath);
     // A runner starts the command in its words: a shell named there, `{}` as the
     // command, or a script named by its path is held as a command word would be.
     // A parallel with no command (before any :::) reads its commands from its input.
@@ -311,7 +319,7 @@ function bashRefused(command, ctx, depth = 0) {
       if (segNames.slice(runner + 1).some((n) => SHELLS.has(n))) return true;
       if (RUNNER_FLAGS.has(seg[runner]) && seg[runner + 1] === '{}') return true;
       const started = seg.slice(runner + 1).find((w) => /[\\/]/.test(w));
-      if (started !== undefined && script(started)) return true;
+      if (started !== undefined && script(started, true)) return true;
       if (name === 'parallel' && runner === k) {
         const end = args.findIndex((w) => /^:::/.test(w));
         if (!(end < 0 ? args : args.slice(0, end)).some((w) => !OPTION.test(w) && !DURATION.test(w))) return true;
@@ -355,7 +363,7 @@ function bashRefused(command, ctx, depth = 0) {
       if (args.length === 0 || script(args[0])) return true;
     } else if (MOVERS.has(lname)) {
       dirs = movedDirs(dirs, args.find((w) => !OPTION.test(w)), ctx);
-    } else if (/[\\/]/.test(seg[k]) && script(seg[k])) {
+    } else if (/[\\/]/.test(seg[k]) && script(seg[k], true)) {
       return true;
     }
     return false;

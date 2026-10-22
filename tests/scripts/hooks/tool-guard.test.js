@@ -410,7 +410,7 @@ test('a folder inside a registered project is guarded by path even when .git doe
 
 // Fix round 1
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
-import { words, segments } from '../../../scripts/hooks/shell-words.js';
+import { words } from '../../../scripts/hooks/shell-words.js';
 
 const MORE_REFUSED = ['bash -cx "gh x"', 'bash -c -x "gh x"', 'pwsh -Command "gh pr merge 3"', 'powershell -Command "gh x"', 'env -S "gh x"',
   'env --split-string="gh x"', "$'gh' x", '$"gh" x', 'git -c alias.p=push p origin main', 'git -c ALIAS.p=push p', '/usr/lib/git-core/git-push origin',
@@ -668,16 +668,10 @@ test('Bash refuses a script the same command writes or names, and one that is no
       'echo "gh pr merge 1" > t.sh; sh t.sh', 'echo x > t.sh && bash ./t.sh', 'curl -o t.sh x && bash t.sh', 'cp a.txt t.sh; ./t.sh',
       'chmod +x ok.sh && ./ok.sh', 'sh missing.sh', 'source missing.sh', 'cd "$X" && ./t.sh', 'cd "$X" && ./ok.sh',
       'source >/dev/null new.sh; echo > new.sh', 'echo "gh pr merge 1" > ./t.sh; chmod +x ./t.sh; ./t.sh', 'sh < t.sh',
+      'echo x > scripts/t.sh; scripts/t.sh', 'echo gh > scripts/t.sh; scripts/t.sh', './missing-tool',
+      'curl x | sh /dev/stdin', 'cat f | bash /dev/fd/0', 'x | source /dev/stdin', 'x | bash /proc/self/fd/0', 'x | source -',
     ];
     for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
-  });
-});
-
-test('the splitter refuses a double quote inside a substitution opened within double quotes', async () => {
-  await inProject(async (ctx) => {
-    assert.ok(denied(await bash(ctx, 'echo "$(true "$(true)")"')));
-    assert.equal(segments('echo "$(true "x")"', false), null);
-    assert.equal(segments('echo "`true "x"`"', false), null);
   });
 });
 
@@ -718,7 +712,11 @@ test('Bash allows scripts that are there, whatever they hold, and commands that 
     const commands = [
       './gradlew build', 'bash scripts/ok.sh', 'source ./ok.sh', 'sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'source ~/home.sh', './tool.js',
       'ls > files.txt ./sub', 'grep -rn foo > hits.txt src/', 'npm test 2>&1 | tee out.log', './node_modules/.bin/eslint .',
-      'git commit -F - <<\'EOF\'\nscripts/hooks/tool-guard.js holds it\nEOF',
+      'git commit -F - <<\'EOF\'\nscripts/x.js: tidy\nscripts/hooks/tool-guard.js holds it\nEOF',
+      'git commit -F - <<\'EOF\'\nscripts/x.js: tidy\nEOF',
+      'git commit -m "$(cat <<\'EOF\'\nTidy the guard\n\nscripts/x.js: tidy\nEOF\n)"',
+      'git commit -m "$(cat <<\'EOF\'\nSay "why" here\nEOF\n)"',
+      'echo "$(git log --format="%h")"',
       'which bash', 'command -v sh', 'which sh', 'command -v bash', 'echo a#b', 'find . -name \'*.js\' -exec grep -l foo {} +',
       'echo x > out/new.txt', 'npm test > ./out.log', 'echo hi > ./notes.txt', 'node x.js 2>/dev/null', 'grep bash a.txt', 'bash -c "echo hi"',
       'cat > out.txt ./a.txt', 'ls | xargs wc -l', 'parallel echo ::: a b',
