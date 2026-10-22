@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 import { loadBoardInputs } from '../board/inputs.js';
-import { boardModel, numberedWaiting, oneLine, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
+import { boardModel, numberedWaiting, oneLine, seeOf, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
 import { glanceLine } from '../board/render.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { sayTime } from '../settings/effective.js';
@@ -22,11 +22,11 @@ import { listEvents } from '../state/events.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../lib/mod-numbers.js';
 import { importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { answerLine } from '../state/card-lines.js';
-import { STOP_LINE } from '../board/health.js';
+import { ownLineOf, brokenCount } from '../board/health.js';
 import { cardButtons, kindOf } from './buttons.js';
 import { previewFor } from './previews.js';
 import { readSeen } from '../briefing/seen.js';
-import { SHOW_ME, verdict, sinceLine, askedAgo, ASKED_JUST_NOW } from '../lib/calm-words.js';
+import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 
 const VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
@@ -34,22 +34,12 @@ export const QUESTION_WAITS = 'A question from the build waits; the front desk w
 const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas'];
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
-// What the pane says of a piece of work the director sees only when it is done, or before it merges.
-const SEE_BEFORE_MERGE = 'Before it merges';
-const SEE_IN_BRIEFING = 'In your briefing when it is done';
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
 const NO_INPUTS = 'The board\'s inputs couldn\'t be read this time';
 const NO_CLOCK = 'The pane\'s clock couldn\'t be read';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// Whose own line a health line is, read before its words are made plain: STOP's, as the glance
-// reads it, an open incident's, by the incident the board names on it, or neither (null).
-function ownLineOf(line) {
-  if (typeof line.incident === 'string') return 'incident';
-  const text = String(line.text);
-  return text === STOP_LINE || text.startsWith(`${STOP_LINE}, `) ? 'stop' : null;
-}
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 
 function attempt(read, fallback) {
@@ -110,18 +100,6 @@ function clockTime(value) {
   const time = typeof value === 'string' ? new Date(value) : null;
   if (time === null || Number.isNaN(time.getTime())) return null;
   return `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`;
-}
-
-// "asked 2 hours ago", from the time a card was made to now; null when either can't be read or
-// the card is from after now.
-function waitedWords(at, clock) {
-  const then = typeof at === 'string' ? Date.parse(at) : Number.NaN;
-  if (Number.isNaN(then) || clock === null || then > clock.getTime()) return null;
-  const minutes = Math.floor((clock.getTime() - then) / 60000);
-  if (minutes < 1) return ASKED_JUST_NOW;
-  if (minutes < 60) return askedAgo(minutes, 'minute');
-  if (minutes < 60 * 24) return askedAgo(Math.floor(minutes / 60), 'hour');
-  return askedAgo(Math.floor(minutes / (60 * 24)), 'day');
 }
 
 function clockOf(now) {
@@ -222,20 +200,15 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
       // The card's parts as the composer kept them, already in plain words; null for a card with none, which is drawn as its text.
       parts: isRecord(data.parts) ? data.parts : null,
       steered: clockTime(card.steered),
-      waited: waitedWords(card.at, clock),
+      waited: askedSince(card.at, clock),
       revised: typeof data.revises === 'string',
     }];
   }), []);
 
-  // When the director sees a piece of work: before it merges where it is shown first, else in the briefing.
-  const seeOf = (work) => {
-    const entry = isRecord(views?.work) && isRecord(views.work[work]) ? views.work[work] : {};
-    return entry.work?.data?.shownFirst === true || entry.approval?.shownFirst === true ? SEE_BEFORE_MERGE : SEE_IN_BRIEFING;
-  };
   const building = part('list of what is building', () => {
     const lines = list(model?.build?.features).filter((f) => f.step === 'building').map((f) => {
       const slice = isRecord(f.slice) && Number.isInteger(f.slice.n) && Number.isInteger(f.slice.m) ? `, slice ${f.slice.n} of ${f.slice.m}` : '';
-      return { text: plain(`Building ${oneLine(f.title) || oneLine(f.work) || 'untitled work'}${slice}`), see: seeOf(f.work) };
+      return { text: plain(`Building ${oneLine(f.title) || oneLine(f.work) || 'untitled work'}${slice}`), see: seeOf(isRecord(views?.work) ? views.work[f.work] : undefined) };
     });
     return lines.length <= PANE_LINES ? lines : [...lines.slice(0, PANE_LINES - 1), { text: `and ${lines.length - PANE_LINES + 1} more building`, see: null }];
   }, []);
@@ -259,13 +232,13 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
   // The offline model leaves out the blockers and the ideas, which the glance doesn't need and its
   // reading may not open; the pane has them in its own views, so the board model is built again
   // from those for its launch and ideas.
-  const fuller = part('launch and ideas', () => (clock === null ? null : boardModel({ project, views, events: [], now: () => clock })?.director), null);
+  const fuller = part('launch and ideas', () => (clock === null ? null : boardModel({ project, views, events: [], now: () => clock, since: sinceAt })?.director), null);
 
   const launch = part('progress to launch', () => {
     const progress = fuller?.launch;
     if (!isRecord(progress) || !Number.isInteger(progress.total) || progress.total < 1) return null;
     const mine = new Set(Array.isArray(fuller.ideas?.now) ? fuller.ideas.now : []);
-    const gained = Object.values(isRecord(views?.blockers) ? views.blockers : {}).filter((b) => isRecord(b) && isRecord(b.data) && b.data.resolved === true && after(b.at)).length;
+    const gained = Number.isInteger(progress.gained) ? progress.gained : 0;
     const next = (Array.isArray(progress.next) ? progress.next : []).filter((t) => typeof t === 'string' && t !== '').slice(0, PANE_LINES)
       .map((t) => ({ text: plain(t), yours: mine.has(t) }));
     return { resolved: Number.isInteger(progress.resolved) ? progress.resolved : 0, total: progress.total, gained: Math.min(gained, progress.total), next };
@@ -291,7 +264,7 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
   }, []);
 
   // Broken is a line at stop level that isn't STOP's own: STOP is the director's doing, not a fault.
-  const broken = health.filter((l) => l.level === 'stop' && l.of !== 'stop').length;
+  const broken = brokenCount(healthLines);
   const sinceHour = clockTime(sinceAt);
 
   return {

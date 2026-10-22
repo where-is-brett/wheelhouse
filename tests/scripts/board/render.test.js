@@ -5,8 +5,8 @@ import { renderBoard, glanceLine } from '../../../scripts/board/render.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 
-const DIRECTOR = ['Waiting on you', 'Progress to launch', 'Work in progress', 'What changed for users', 'The ideas list', 'Health', 'Budget', 'Rulings made within the rules'];
-const BUILD = ['Features and their slices', 'Open pull requests', 'Quality this week', 'Decisions made along the way', 'Shortcuts and risks', 'Usage by part'];
+const DIRECTOR = ['Waiting on you', 'On the way to launch', 'Being built', 'Changed for your users', 'Ideas, in order', 'Health and this week', 'Rulings'];
+const BUILD = ['Features and their parts', 'Changes waiting to join', 'Quality this week', 'Decisions along the way', 'Shortcuts and risks', 'Usage by part'];
 
 const lanes = (over = {}) => ({ quick: [], small: [], feature: [], bug: [], ...over });
 
@@ -18,12 +18,21 @@ function fullModel(over = {}) {
     director: {
       first: ['A setting: pace 2, not yet confirmed by you'],
       waiting: [
-        { n: 1, what: 'Approve the sign-in page', since: '2026-10-17T09:00:00.000Z' },
+        {
+          n: 1, what: 'Approve the sign-in page', since: '2026-10-19T10:00:00.000Z', small: 'Small feature', level: 3,
+          meanwhile: 'If not now, it waits; nothing else is held up.',
+        },
         { n: 2, what: 'Which colour for the button?', since: null },
       ],
-      launch: { phase: 'before-launch', resolved: 1, total: 3, blockers: ['Payments', 'Privacy page'], next: ['Search'] },
-      inProgress: lanes({ feature: [{ title: 'Sign-in page', step: 'building' }], bug: [{ title: 'Broken logo', step: 'planned' }] }),
-      changed: [{ what: 'People can reset their password', at: '2026-10-18T10:00:00.000Z' }],
+      launch: { phase: 'before-launch', resolved: 1, gained: 1, total: 3, blockers: ['Payments', 'Privacy page'], next: ['Search', 'Dark mode'] },
+      inProgress: lanes({
+        feature: [{ title: 'Sign-in page', step: 'building', see: 'Before it merges' }],
+        bug: [{ title: 'Broken logo', step: 'planned', see: 'In your briefing when it is done' }],
+      }),
+      changed: [
+        { what: 'People can reset their password', at: '2026-10-18T10:00:00.000Z' },
+        { what: 'Pull request #9 merged', at: '2026-10-18T09:00:00.000Z', behind: true },
+      ],
       ideas: { now: ['Dark mode'], next: [], later: ['A mobile app'] },
       health: [{ level: 'stop', text: 'STOP is on, since 18 October 2026' }, { level: 'ok', text: 'Protection: Standard' }],
       budget: { week: { from: '2026-10-13T00:00:00.000Z', to: '2026-10-20T00:00:00.000Z', tokens: 1200000, usd: 84 }, share: 34, setting: 'report', unusual: ['One session used 3.0M tokens, against a usual 400K: a long review'] },
@@ -53,46 +62,77 @@ function fullModel(over = {}) {
 
 const headingsOf = (text) => text.split('\n').filter((line) => /^#{2,3} /.test(line)).map((line) => line.replace(/^#+ /, ''));
 
-test('the director tab comes first by default, and the build tab when asked', () => {
+test('the board opens with the verdict and when it was updated', () => {
+  const lines = renderBoard(fullModel()).split('\n');
+  // Two things wait, and STOP being on is the director's doing, not a fault.
+  assert.equal(lines[0], 'Two things need you. Nothing is broken.');
+  assert.equal(lines[1], '');
+  assert.equal(lines[2], 'Wheelhouse\'s board for owner__demo. Updated 19 October 2026, 12:00 UTC.');
+  const broken = fullModel();
+  broken.director.waiting = [];
+  broken.director.health = [{ level: 'stop', text: 'Incident i1 is open, so nothing merges: x', incident: 'i1' }];
+  assert.equal(renderBoard(broken).split('\n')[0], 'Nothing needs you. One thing is broken.');
+  const unreadable = fullModel({ builtAt: null });
+  assert.match(renderBoard(unreadable).split('\n')[2], /^Wheelhouse's board for owner__demo\. The time of this reading couldn't be read\.$/);
+});
+
+test('the board\'s director view comes in section 23.5\'s order, with its set phrases', () => {
   const text = renderBoard(fullModel());
   assert.deepEqual(headingsOf(text), ['Changed without your confirmation', 'Director', ...DIRECTOR, 'Build', ...BUILD]);
   assert.equal(renderBoard(fullModel(), { tab: 'director' }), text);
-  const build = renderBoard(fullModel(), { tab: 'build' });
-  assert.deepEqual(headingsOf(build), ['Changed without your confirmation', 'Build', ...BUILD, 'Director', ...DIRECTOR]);
   // A tab that isn't one of the two is the director's.
   assert.equal(renderBoard(fullModel(), { tab: 'other' }), text);
 
-  // The words of each section.
-  assert.match(text, /^- 1\\\. Approve the sign-in page, waiting since 17 October 2026$/m);
+  // Waiting on you: each card with its small line.
+  assert.match(text, /^- 1\\\. Approve the sign-in page {2}\n {2}Small feature · level 3 · asked 2 hours ago\. If not now, it waits; nothing else is held up\.$/m);
   assert.match(text, /^- 2\\\. Which colour for the button\?$/m);
+  // On the way to launch.
   assert.match(text, /^- Phase: before launch$/m);
-  assert.match(text, /^- Launch blockers: 1 of 3 resolved$/m);
-  assert.match(text, /^- Blocker: Payments$/m);
+  assert.match(text, /^- 1 of 3 blockers cleared, 1 since you were last here$/m);
+  assert.match(text, /^- Still open: Payments$/m);
   assert.match(text, /^- Next: Search$/m);
-  assert.match(text, /^- Feature lane: Sign-in page, building$/m);
-  assert.match(text, /^- Bug lane: Broken logo, planned$/m);
-  assert.match(text, /^- People can reset their password \(18 October 2026\)$/m);
+  assert.match(text, /^- Next: Dark mode \(yours\)$/m);
+  // Being built keeps its "You'll see it" column.
+  assert.match(text, /^\| Work \| Where it is \| You'll see it \|\n\|---\|---\|---\|\n\| Sign-in page \| Feature lane, building \| Before it merges \|\n\| Broken logo \| Bug lane, planned \| In your briefing when it is done \|$/m);
+  // Changed for your users, with the changes behind the scenes counted.
+  assert.match(text, /^- People can reset their password \(18 October 2026\)\n\nPlus 1 change behind the scenes you don't need to see\.$/m);
+  assert.doesNotMatch(text, /Pull request #9 merged/);
   assert.match(text, /^- Now: Dark mode$/m);
   assert.match(text, /^- Later: A mobile app$/m);
   assert.match(text, /^- STOP is on, since 18 October 2026$/m);
   assert.match(text, /^- This week: 1\.2M tokens, about \$84 at API prices, 34% of your weekly allowance$/m);
   assert.match(text, /^- One session used 3\.0M tokens, against a usual 400K: a long review$/m);
   assert.match(text, /^- Budget: spending is reported, with no limit set$/m);
-  assert.match(text, /^- Use British spelling \(16 October 2026\)$/m);
-  assert.match(text, /^- Sign-in page \(feature lane\): building, slice 2 of 5, pull request #12$/m);
-  assert.match(text, /^- Pull request #12 for sign-in: its review found 3 problems$/m);
-  assert.match(text, /^- Pull request #14: not reviewed yet$/m);
-  assert.match(text, /^- Pull request #15 for search: blocked: Checks red on #15; not reviewed yet$/m);
-  assert.match(text, /^- 4 reviews, 1 with findings, 3 findings in all$/m);
-  assert.match(text, /^- Store sessions in a cookie: simpler \(17 October 2026\)$/m);
-  assert.match(text, /^- No rate limit on sign-in; it would cost later: a day of work$/m);
-  assert.match(text, /^- Front desk: 100K tokens, about \$1$/m);
-  assert.match(text, /^- Feature builders: 900K tokens, about \$9$/m);
-  assert.match(text, /^- Subagents: 50K tokens$/m);
-  assert.match(text.split('\n')[0], /owner__demo.*19 October 2026, 12:00 UTC/);
+  assert.match(text, /^### Rulings\nFor a glance, not a decision\. Disagree\? Say so and it becomes a question for you\.\n- Use British spelling \(16 October 2026\)$/m);
+  // Their order.
+  const at = (h) => text.indexOf(`### ${h}`);
+  for (let i = 1; i < DIRECTOR.length; i += 1) assert.ok(at(DIRECTOR[i - 1]) < at(DIRECTOR[i]), DIRECTOR[i]);
+  assert.ok(text.indexOf('Two things need you.') < text.indexOf('## Director'));
 });
 
-test('every section has its heading and says None when empty', () => {
+test('the build view opens with one sentence, then its parts in order', () => {
+  const build = renderBoard(fullModel(), { tab: 'build' });
+  assert.deepEqual(headingsOf(build).slice(0, 8), ['Changed without your confirmation', 'Build', ...BUILD]);
+  assert.deepEqual(headingsOf(build).slice(8), ['Director', ...DIRECTOR]);
+  assert.match(build, /^## Build\nFour features are being built and 3 changes are waiting to join\.$/m);
+  assert.match(build, /^- Sign-in page \(feature lane\): building, slice 2 of 5, pull request #12$/m);
+  assert.match(build, /^- Pull request #12 for sign-in: its review found 3 problems$/m);
+  assert.match(build, /^- Pull request #14: not reviewed yet$/m);
+  assert.match(build, /^- Pull request #15 for search: blocked: Checks red on #15; not reviewed yet$/m);
+  assert.match(build, /^- 4 reviews, 1 with findings, 3 findings in all$/m);
+  assert.match(build, /^- Store sessions in a cookie: simpler \(17 October 2026\)$/m);
+  assert.match(build, /^- No rate limit on sign-in; it would cost later: a day of work$/m);
+  assert.match(build, /^- Front desk: 100K tokens, about \$1$/m);
+  assert.match(build, /^- Feature builders: 900K tokens, about \$9$/m);
+  assert.match(build, /^- Subagents: 50K tokens$/m);
+  assert.deepEqual(headingsOf(build), headingsOf(renderBoard(fullModel(), { tab: 'build' })));
+  const quiet = fullModel();
+  quiet.build.features = [];
+  quiet.build.pullRequests = [];
+  assert.match(renderBoard(quiet, { tab: 'build' }), /^## Build\nNothing is being built and no change is waiting to join\.$/m);
+});
+
+test('a part with nothing in it has no heading: the empty parts fold into one italic line', () => {
   const empty = fullModel({
     director: {
       first: [], waiting: [], launch: { phase: null, resolved: 0, total: 0, blockers: [], next: [] }, inProgress: lanes(), changed: [],
@@ -105,13 +145,15 @@ test('every section has its heading and says None when empty', () => {
   });
   const text = renderBoard(empty);
   // The unconfirmed changes show only when there are some.
-  assert.deepEqual(headingsOf(text), ['Director', ...DIRECTOR, 'Build', ...BUILD]);
-  const lines = text.split('\n');
-  for (const heading of [...DIRECTOR, ...BUILD]) {
-    const at = lines.indexOf(`### ${heading}`);
-    assert.ok(at >= 0, heading);
-    assert.equal(lines[at + 1], 'None', heading);
-  }
+  assert.deepEqual(headingsOf(text), ['Director', 'Build']);
+  assert.doesNotMatch(text, /\bNone\b/);
+  assert.match(text, /^\*Nothing waiting on you, no launch blockers, nothing being built, nothing changed for your users, no ideas yet, nothing to report on health, no rulings\.\*$/m);
+  assert.match(text, /^\*No features, no changes waiting to join, no reviews this week, no decisions along the way, no shortcuts or risks, no usage by part\.\*$/m);
+  assert.match(text, /^Nothing needs you\. Nothing is broken\.$/m);
+  // Only the empty parts are folded.
+  const some = fullModel();
+  some.director.rulings = [];
+  assert.match(renderBoard(some), /^\*No rulings\.\*$/m);
 });
 
 test('a board too long for the context is cut section by section with and N more', () => {
@@ -205,11 +247,12 @@ test('with every input missing, the board and the glance still come out and name
   const m = boardModel({});
   const text = renderBoard(m);
   assert.ok(text.length > 0 && text.length <= CONTEXT_CHARS);
-  assert.deepEqual(headingsOf(text), ['Director', ...DIRECTOR, 'Build', ...BUILD, 'What couldn\'t be read']);
+  // The board always says spending is reported, so that part is there.
+  assert.deepEqual(headingsOf(text), ['Director', 'Health and this week', 'Build', 'What couldn\'t be read']);
   for (const line of m.missing) assert.ok(text.includes(`- ${line}`), line);
   assert.match(text, /There is no state for this project on this computer yet/);
   assert.match(text, /Usage counts aren't on yet/);
-  assert.match(text.split('\n')[0], /the time couldn't be read/);
+  assert.match(text, /^Wheelhouse's board\. The time of this reading couldn't be read\.$/m);
   assert.equal(glanceLine(m), 'Wheelhouse · no state yet');
   // Nothing at all, or the wrong shape, still gives a board and a line.
   for (const bad of [undefined, null, 'x', [], { director: 5, build: 'x', missing: 'y' }]) {

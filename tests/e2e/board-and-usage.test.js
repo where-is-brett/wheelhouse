@@ -287,7 +287,7 @@ test('telemetry posted to the receiver shows as this week\'s usage on the board 
     c.time(3 * HOUR);
     const briefing = await prompt(c, 'Good morning');
     assert.ok(briefing.startsWith(`${HEADINGS.briefing}\n\n`), briefing);
-    assert.ok(bodyOf(briefing).endsWith('Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance.'), briefing);
+    assert.ok(bodyOf(briefing).endsWith('Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance. On track.\n\nAsk me anything. For the full board, type /wheelhouse:board.'), briefing);
   } finally {
     if (receiver) {
       receiver.kill();
@@ -423,13 +423,16 @@ test('a profile setting confirmed by a click changes the briefing\'s length; a p
     // The front desk writes the director's wish into the profile; it has no effect until confirmed.
     const wrote = await c.act(() => c.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep my briefings short' } }));
     assert.equal(wrote.ok, true, JSON.stringify(wrote));
-    assert.equal(numbered(bodyOf(await prompt(c, '/wheelhouse:briefing'))).length, shownStandard);
+    // Still the standard length: the line saying when the last briefing was costs it an entry or so.
+    const unconfirmed = bodyOf(await prompt(c, '/wheelhouse:briefing'));
+    assert.ok(wordsIn(unconfirmed) <= BRIEFING_WORDS.standard, unconfirmed);
+    assert.ok(Math.abs(numbered(unconfirmed).length - shownStandard) <= 1, unconfirmed);
 
     const setting = await c.act(() => eventsOf('setting', profileDir()).find((e) => e.id === wrote.id));
     await click(c, { question: `${confirmLine(setting)}?`, options: ['Confirm', 'Not now'], label: 'Confirm' });
     const short = bodyOf(await prompt(c, '/wheelhouse:briefing'));
     assert.ok(wordsIn(short) <= BRIEFING_WORDS.short, short);
-    assert.ok(numbered(short).length < shownStandard, short);
+    assert.ok(numbered(short).length < numbered(unconfirmed).length, short);
 
     // A project setting, confirmed the same way, wins over the profile's.
     const project = await write(c, 'setting', { key: 'briefing', value: 'detailed', words: 'Give this project the detailed briefing' });
@@ -557,9 +560,13 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     assert.ok(wordsIn(body) <= BRIEFING_WORDS.standard, `${wordsIn(body)} words:\n${body}`);
     assert.ok(!body.includes('Cards to ask'), body);
 
-    const parts = body.split('\n\n');
+    // The verdict opens it, then when the last briefing was; the foot is usage and the way to the board.
+    const [verdictPart, sincePart, ...parts] = body.split('\n\n');
+    assert.equal(verdictPart, '14 things need you. Nothing is broken.');
+    assert.match(sincePart, /^Since \d\d:\d\d, about 3 hours$/);
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [
-      'Not in effect until you confirm:', 'Waiting on you:', 'Changed for users:', 'Progress:', 'To watch:', 'Usage this week: 300K tokens.',
+      'Not in effect until you confirm:', 'Waiting on you (+14):', 'Changed for users (+1):', 'Progress:', 'To watch:',
+      'Usage this week: 300K tokens. On track.', 'Ask me anything. For the full board, type /wheelhouse:board.',
     ]);
     assert.deepEqual(parts[0].split('\n').slice(1), ['- A ruling: Prices show two decimal places']);
     const waiting = parts[1].split('\n').slice(1);

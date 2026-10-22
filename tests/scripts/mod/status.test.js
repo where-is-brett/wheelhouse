@@ -17,6 +17,7 @@ import { CANT_ANSWER } from '../../../scripts/mod/buttons.js';
 import { cardNumbered } from '../../../scripts/cards/visit.js';
 import { composeCard, textOf } from '../../../scripts/cards/compose.js';
 import { markSeen } from '../../../scripts/briefing/seen.js';
+import { briefingModel } from '../../../scripts/briefing/model.js';
 import { previewFor, previewsFile } from '../../../scripts/mod/previews.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
@@ -408,6 +409,10 @@ test('the model carries the verdict, the since line, launch, health, ideas, buil
   const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   // Three cards wait (two cards and a question from the build), and nothing is broken.
   assert.equal(model.verdict, 'Three things need you. Nothing is broken.');
+  // The briefing opens with the same sentence, and the board's table says the same of when the work is seen.
+  const inputs = await loadInputs();
+  assert.equal(briefingModel({ model: inputs.model, usage: inputs.usage, sources: inputs.sources, now: NOW }).verdict, model.verdict);
+  assert.equal(inputs.model.director.inProgress.feature[0].see, model.building[0].see);
   assert.equal(model.since, `Since you were last here at ${hhmm(new Date('2026-10-19T09:10:00.000Z'))}.`);
   assert.deepEqual(model.launch, { resolved: 2, total: 3, gained: 1, next: [{ text: 'Gift cards', yours: true }, { text: 'Queued one', yours: false }] });
   assert.deepEqual(model.ideas, { count: 2, fresh: 1 });

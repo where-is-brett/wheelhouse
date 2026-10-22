@@ -36,6 +36,7 @@ import { helperClient } from '../host/helper-client.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { phonePushResult } from '../lib/setup-run.js';
+import { readSeen } from '../briefing/seen.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -168,6 +169,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     phonePush: offline ? null : attempt(() => phonePushResult()),
   }));
 
-  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock });
+  // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.
+  const since = offline ? null : attempt(() => readSeen(project, { now: clock }).briefedAt);
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock, since });
   return { project, model, usage, sources, settings };
 }

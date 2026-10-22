@@ -31,8 +31,13 @@ test('every set word is one line of British English with no exclamation mark', (
     ['staleLine', words.staleLine('14:05', '14:02')], ['sinceLine', words.sinceLine('09:10')],
     ['verdict', words.verdict({ waiting: 3, broken: 2 })], ['askedAgo', words.askedAgo(2, 'hour')],
     ['decidedToast', words.decidedToast('Approve', 'It goes live within the hour.')], ['awayToast', words.awayToast('Away until 18:00', true)],
+    ['askedSince', words.askedSince('2026-10-19T10:00:00.000Z', Date.parse('2026-10-19T12:00:00.000Z'))], ['optionalMark', words.optionalMark(3)],
+    ['recommends', words.recommends('Approve, because the checks passed.')], ['behindTheScenes', words.behindTheScenes(9)],
+    ['sinceAbout', words.sinceAbout('09:10', 5 * 3600000)], ['buildHeadline', words.buildHeadline({ building: 3, joining: 2 })],
+    ['foldedParts', words.foldedParts(['changed', 'ideas'])],
+    ...Object.entries(words.EMPTY_PARTS).map(([key, value]) => [`EMPTY_PARTS.${key}`, value]),
   );
-  assert.equal(lines.length, 33, 'every word is held');
+  assert.equal(lines.length, 64, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -132,4 +137,59 @@ test('no message in the mod or the bridge has an exclamation mark, Oops or Great
       assert.ok(!/[a-z]{3}/i.test(quoted) || !quoted.includes('!'), `${path.relative(root, file)} has an exclamation mark in "${quoted}"`);
     }
   }
+});
+
+test('askedSince says how long ago a card was asked, from the time it was made', () => {
+  const now = Date.parse('2026-10-19T12:00:00.000Z');
+  const said = (at, clock = now) => words.askedSince(at, clock);
+  assert.equal(said('2026-10-19T11:59:40.000Z'), 'asked just now');
+  assert.equal(said('2026-10-19T11:59:00.000Z'), 'asked 1 minute ago');
+  assert.equal(said('2026-10-19T11:15:00.000Z'), 'asked 45 minutes ago');
+  assert.equal(said('2026-10-19T10:00:00.000Z'), 'asked 2 hours ago');
+  assert.equal(said('2026-10-19T11:00:00.000Z'), 'asked 1 hour ago');
+  assert.equal(said('2026-10-17T12:00:00.000Z'), 'asked 2 days ago');
+  assert.equal(words.askedSince('2026-10-19T10:00:00.000Z', new Date(now)), 'asked 2 hours ago');
+  // A time that can't be read, a clock that can't, or a card from after now, says nothing.
+  for (const odd of [null, undefined, 'yesterday', 42, '2026-10-19T12:00:01.000Z']) assert.equal(said(odd), null);
+  for (const clock of [null, Number.NaN, 'now']) assert.equal(said('2026-10-19T10:00:00.000Z', clock), null);
+  assert.equal(words.askedSince('2026-10-19T10:00:00.000Z', undefined), null);
+});
+
+test('the briefing\'s and the board\'s set phrases', () => {
+  assert.equal(words.SEE_BEFORE_MERGE, 'Before it merges');
+  assert.equal(words.SEE_IN_BRIEFING, 'In your briefing when it is done');
+  assert.equal(words.YOULL_SEE_IT, 'You\'ll see it');
+  assert.equal(words.RULINGS_NOTE, 'For a glance, not a decision. Disagree? Say so and it becomes a question for you.');
+  assert.equal(words.ASK_ME_ANYTHING, 'Ask me anything.');
+  assert.equal(words.FULL_BOARD, 'For the full board, type /wheelhouse:board.');
+  assert.equal(words.USAGE_ON_TRACK, 'On track.');
+  assert.equal(words.ASK_FOR_THE_BOARD, 'Ask for the board.');
+  assert.equal(words.optionalMark(3), 'optional · 3 min');
+  assert.equal(words.recommends('Approve, because the checks passed.'), 'I recommend Approve, because the checks passed.');
+  assert.equal(words.behindTheScenes(9), 'Plus 9 changes behind the scenes you don\'t need to see.');
+  assert.equal(words.behindTheScenes(1), 'Plus 1 change behind the scenes you don\'t need to see.');
+});
+
+test('sinceAbout says when the director was last briefed and about how long ago', () => {
+  const hours = (n) => n * 3600000;
+  assert.equal(words.sinceAbout('09:10', hours(5)), 'Since 09:10, about 5 hours');
+  assert.equal(words.sinceAbout('09:10', 0), 'Since 09:10, about a minute');
+  assert.equal(words.sinceAbout('09:10', 30 * 60000), 'Since 09:10, about 30 minutes');
+  assert.equal(words.sinceAbout('09:10', hours(1)), 'Since 09:10, about an hour');
+  assert.equal(words.sinceAbout('09:10', hours(26)), 'Since 09:10, about 26 hours');
+  assert.equal(words.sinceAbout('09:10', hours(72)), 'Since 09:10, about 3 days');
+});
+
+test('the build headline is one sentence, a number opening it a word up to nine', () => {
+  assert.equal(words.buildHeadline({ building: 3, joining: 2 }), 'Three features are being built and 2 changes are waiting to join.');
+  assert.equal(words.buildHeadline({ building: 1, joining: 1 }), 'One feature is being built and 1 change is waiting to join.');
+  assert.equal(words.buildHeadline({ building: 0, joining: 0 }), 'Nothing is being built and no change is waiting to join.');
+  assert.equal(words.buildHeadline({ building: 12, joining: 0 }), '12 features are being built and no change is waiting to join.');
+});
+
+test('foldedParts folds the empty parts into one italic line, or nothing', () => {
+  assert.equal(words.foldedParts(['changed', 'ideas']), '*Nothing changed for your users, no ideas yet.*');
+  assert.equal(words.foldedParts(['rulings']), '*No rulings.*');
+  assert.equal(words.foldedParts([]), '');
+  assert.equal(words.foldedParts(['unknown']), '');
 });

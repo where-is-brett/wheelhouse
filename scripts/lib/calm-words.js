@@ -71,6 +71,81 @@ export const UNDO_IN_PANE = 'Undo in the pane for a minute.';
 // How long ago a card was asked: "asked just now", "asked 2 hours ago".
 export const ASKED_JUST_NOW = 'asked just now';
 export const askedAgo = (n, unit) => `asked ${n} ${unit}${n === 1 ? '' : 's'} ago`;
+// How long ago a card was asked, from the time it was made to `now` (a Date or milliseconds):
+// "asked 2 hours ago"; null when either can't be read or the card is from after now.
+export function askedSince(at, now) {
+  const then = typeof at === 'string' ? Date.parse(at) : Number.NaN;
+  const nowMs = now instanceof Date ? now.getTime() : now;
+  if (Number.isNaN(then) || typeof nowMs !== 'number' || Number.isNaN(nowMs) || then > nowMs) return null;
+  const minutes = Math.floor((nowMs - then) / 60000);
+  if (minutes < 1) return ASKED_JUST_NOW;
+  if (minutes < 60) return askedAgo(minutes, 'minute');
+  if (minutes < 60 * 24) return askedAgo(Math.floor(minutes / 60), 'hour');
+  return askedAgo(Math.floor(minutes / (60 * 24)), 'day');
+}
+
+// What the pane and the board say of a piece of work the director sees only when it is done, or
+// before it merges, and the heading of the column that says it.
+export const SEE_BEFORE_MERGE = 'Before it merges';
+export const SEE_IN_BRIEFING = 'In your briefing when it is done';
+export const YOULL_SEE_IT = 'You\'ll see it';
+// The board's note under its rulings, and the briefing's and the board's closing lines.
+export const RULINGS_NOTE = 'For a glance, not a decision. Disagree? Say so and it becomes a question for you.';
+export const ASK_ME_ANYTHING = 'Ask me anything.';
+export const FULL_BOARD = 'For the full board, type /wheelhouse:board.';
+export const USAGE_ON_TRACK = 'On track.';
+// The line that points the director to the board when a briefing is cut to nothing else.
+export const ASK_FOR_THE_BOARD = 'Ask for the board.';
+// The mark on a card that can wait, with the minutes it takes.
+export const optionalMark = (minutes) => `optional · ${minutes} min`;
+// The front desk's recommendation on a card ("Approve, because the checks passed.").
+export const recommends = (recommendation) => `I recommend ${recommendation}`;
+// What the board says of the changes the director need not see.
+export const behindTheScenes = (n) => `Plus ${n} ${n === 1 ? 'change' : 'changes'} behind the scenes you don't need to see.`;
+// "Since 09:10, about 5 hours": when the director was last briefed and how long ago that was.
+export function sinceAbout(hhmm, ms) {
+  const minutes = Math.max(0, Math.round(ms / 60000));
+  let about;
+  if (minutes < 2) about = 'about a minute';
+  else if (minutes < 60) about = `about ${minutes} minutes`;
+  else if (minutes < 60 * 2) about = 'about an hour';
+  else if (minutes < 60 * 48) about = `about ${Math.round(minutes / 60)} hours`;
+  else about = `about ${Math.round(minutes / (60 * 24))} days`;
+  return `Since ${hhmm}, ${about}`;
+}
+// A count that opens a sentence is a word up to nine and a figure from ten.
+export const startCount = (n) => (n < 10 ? NUMBER_WORDS[n] : String(n));
+// The build view's one-sentence headline: how much is being built and how much waits to join.
+export function buildHeadline({ building, joining }) {
+  const first = building === 0 ? 'Nothing is being built' : `${startCount(building)} ${building === 1 ? 'feature is' : 'features are'} being built`;
+  const second = joining === 0 ? 'no change is waiting to join' : `${joining} ${joining === 1 ? 'change is' : 'changes are'} waiting to join`;
+  return `${first} and ${second}.`;
+}
+// What a part with nothing in it is called when empty parts are folded into one dim line,
+// "Nothing changed for your users, no ideas yet."
+export const EMPTY_PARTS = {
+  waiting: 'nothing waiting on you',
+  launch: 'no launch blockers',
+  building: 'nothing being built',
+  changed: 'nothing changed for your users',
+  ideas: 'no ideas yet',
+  health: 'nothing to report on health',
+  rulings: 'no rulings',
+  features: 'no features',
+  joining: 'no changes waiting to join',
+  quality: 'no reviews this week',
+  decisions: 'no decisions along the way',
+  risks: 'no shortcuts or risks',
+  usage: 'no usage by part',
+  briefingChanged: 'nothing changed for users',
+  briefingProgress: 'nothing in progress',
+  briefingWatch: 'nothing to watch',
+};
+// An italic line (Markdown) folding the empty parts named by `keys` into one: "Nothing a, none b."
+export function foldedParts(keys) {
+  const said = keys.map((key) => EMPTY_PARTS[key]).filter(Boolean).join(', ');
+  return said === '' ? '' : `*${said.charAt(0).toUpperCase()}${said.slice(1)}.*`;
+}
 
 // What each deciding button is said to have done, in the past.
 const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift STOP': 'STOP lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };

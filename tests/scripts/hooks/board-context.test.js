@@ -402,7 +402,7 @@ test('a work title is kept as written, and the words around it go through', asyn
       return inputs;
     };
     const board = contextOf(await run(repo, '/wheelhouse:board build', NOW, { load }));
-    assert.match(board, /\n- Fix CI on slice 2 \(feature process level\): building, slice 1 of 3, proposed change #12\n/);
+    assert.match(board, /\n- Fix CI on slice 2 \(feature process level\): building, piece 1 of 3, proposed change #12\n/);
     // The term's first mention was replaced above, so this one stays and the end gives its meaning.
     assert.match(board, /\n- Pull request #12 for Review the PR page: its independent check found nothing to fix\n/);
     assert.match(board, /\n\nTerms: [^]*pull request means a proposed change[^]*\.$/);

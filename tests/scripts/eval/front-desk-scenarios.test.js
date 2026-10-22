@@ -152,7 +152,8 @@ test('promptContext gives what the real board context hook gives over the same s
   const home = shortHome();
   const { ago } = clock();
   const seed = seed9(ago);
-  const views = standInViews(seed);
+  // The detailed length, so the real text's health lines don't cost the entries that the stand-in's text keeps.
+  const views = { ...standInViews(seed), settings: { briefing: { key: 'briefing', id: 'sb', at: ago(500), value: 'detailed', before: null } } };
   const at = new Date();
   const real = await as(home, async () => {
     const P = 'owner__name';

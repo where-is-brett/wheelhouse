@@ -36,7 +36,6 @@ import { SAYS as PRESS_SAYS } from '../../scripts/mod/press.js';
 import { readPaneStatus, hashOf } from '../../scripts/mod/status.js';
 import { courierFile } from '../../scripts/mod/courier.js';
 import { watchFile } from '../../scripts/mod/watch.js';
-import { FIRST_LINE } from '../../scripts/mod/digest.js';
 import { readSeen } from '../../scripts/briefing/seen.js';
 import { repliedDir } from '../../scripts/mod/reply.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
@@ -482,8 +481,9 @@ test('/digest gives the briefing, and a prompt within the next two hours brings 
 
   const digest = await bridge(c, { cmd: 'digest', origin: 'composer', cwd: c.folder });
   assert.equal(digest.ok, true);
-  assert.ok(digest.text.startsWith(`${FIRST_LINE}\n\n`), digest.text);
-  assert.match(digest.text, /^Waiting on you:\n1\. Which photo goes on the home page\?$/m);
+  // It opens with the verdict, the pane's sentence.
+  assert.ok(digest.text.startsWith('One thing needs you. Nothing is broken.\n\n'), digest.text);
+  assert.match(digest.text, /^Waiting on you \(\+1\):\n1\. Which photo goes on the home page\?$/m);
   // The briefing is marked given; the director's last message is not a command's to move.
   const given = readSeen(PROJECT);
   assert.equal(given.promptAt, seen.promptAt);
