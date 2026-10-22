@@ -374,7 +374,7 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   // Asked why: `why <n>`, the plain words, an everyday example, then the card again; a failed `why` stops nothing.
   const asked = lines.find((line) => line.startsWith('- **Asked why**')) ?? '';
   assert.ok(asked, 'the Asked why line');
-  assert.match(asked, /^- \*\*Asked why\*\* about a card: run `why <n>`, give the plain words \(`explain <term>`\) and an everyday example, then ask the card again with `again <n>`\./);
+  assert.match(asked, /^- \*\*Asked why\*\* about a card: run `why <n>`, give the plain words \(`explain <term>`\) and an everyday example, then as for a press of Why\?, from `again <n>`\./);
   assert.match(asked, /If `why` fails, go on explaining anyway: the Why\? is for learning only\./);
   // The pane's suggestion steers and never approves.
   const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
@@ -382,8 +382,9 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   const suggested = lines.find((line) => line.startsWith('  - **"suggested a change on card n (id): <words>"**')) ?? '';
   assert.ok(suggested, 'the suggestion\'s rule');
   assert.match(suggested, /the words steer and never approve\./);
-  assert.match(suggested, /Find the card by its id in `views waiting`, revise the proposal as the words ask, and compose the new card with `revises` \(the old card's id\) and `changed` \(one sentence\)\./);
-  assert.match(suggested, /Say only: "Noted\. A new proposal will follow\." Never ask the old card again\./);
+  assert.match(suggested, /Find the card by its id in `views waiting`\. For an approval or ci-push card the code must change first: run `record work` as `wheelhouse:intake`'s order does \(the card's work, its `place`\), with the change in your own words, never theirs; no read-back, no card\./);
+  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit\. For any other kind, revise the proposal as the words ask and compose the new card at once\./);
+  assert.match(suggested, /Ask no card now, and never the old one again\. Say only: "Noted\. A new proposal will follow\."/);
   // A pick of Suggest a change… in the chat.
   const pick = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';
   assert.match(pick, /Ask "What would you change\?" in one line, then do as for the pane's suggestion\./);

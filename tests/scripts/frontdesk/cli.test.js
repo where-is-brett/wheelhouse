@@ -1037,15 +1037,21 @@ test('card with revises and changed composes a revised card; revises naming no w
     assert.equal(unsaid.code, 1);
     assert.match(unsaid.err, /changed/);
     assert.deepEqual(helper.writes(), []);
-    // Composed: recorded as a new card carrying the same set line, though the card it revises carries it too.
-    const done = await run(helper, ['card'], JSON.stringify(revision));
+    // Refused: the same head, which holds none of the change the words describe.
+    const sameHead = await run(helper, ['card'], JSON.stringify(revision));
+    assert.equal(sameHead.code, 1);
+    assert.equal(sameHead.err, 'a revised approval needs the change committed first\n');
+    assert.deepEqual(helper.writes(), []);
+    // Composed once the head has moved: a new card with its own set line.
+    const moved = { ...revision, target: { pr: 7, sha: DOC } };
+    const done = await run(helper, ['card'], JSON.stringify(moved));
     assert.equal(done.code, 0, done.err);
     assert.notEqual(done.json.id, old.id);
     assert.equal(done.json.alreadyAsked, undefined);
     const recorded = helper.held.find((e) => e.id === done.json.id);
     assert.equal(recorded.data.revises, old.id);
     assert.equal(recorded.data.parts.changed, 'It now says the review was clean.');
-    assert.equal(recorded.data.line, old.data.line);
+    assert.notEqual(recorded.data.line, old.data.line);
     assert.deepEqual(helper.writes().map((w) => w.kind), ['card', 'asked']);
     // It replaces the card it revises on the board.
     assert.deepEqual(helper.views().waiting.map((c) => c.id).sort(), [other.id, elsewhere.id, done.json.id].sort());

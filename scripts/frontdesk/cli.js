@@ -378,6 +378,7 @@ function topicOf(given) {
 // topic is kept in lower case, so the delegation review counts it as one. A revised card names the
 // card it replaces by `revises`, which must wait now and be of the card's kind; it carries the same
 // set line as that card, so only that card is passed over when looking for one that already does.
+// An approval or CI push card revised at the same head commit is refused: the change must be committed first.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
@@ -398,6 +399,10 @@ export async function card({ client, cwd, input, now }) {
   if (data.revises !== undefined && !views.waiting.some((c) => c.id === data.revises && c.data?.kind === data.kind
     && gateTargetOf(c) === gateTargetOf({ data }))) {
     throw new CliError('revises names no waiting card of this kind');
+  }
+  // An approval or CI push card signs a head commit, so a revision at the same head describes a change the code doesn't hold.
+  if (data.revises !== undefined && ['approval', 'ci-push'].includes(data.kind) && views.waiting.some((c) => c.id === data.revises && c.data?.line === data.line)) {
+    throw new CliError('a revised approval needs the change committed first');
   }
   const found = existingCard(views, data.line, { except: data.revises });
   if (found !== null) {

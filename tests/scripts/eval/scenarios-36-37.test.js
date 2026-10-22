@@ -68,7 +68,8 @@ test('the cards are composed by cli.js card, numbered as the scenarios need, and
   // After the press the director chose an option on card 1 in the pane, so the numbers moved: the
   // pressed card is now card 1, and card 2 is the photo card (fix G).
   const after = stateAfterThePress(made);
-  assert.deepEqual(after.slice(-2).map((e) => [e.kind, e.data.label]), [['card-answer', SUGGEST], ['card-answer', 'Show the date']]);
+  assert.deepEqual(after.filter((e) => e.kind === 'card-answer').map((e) => e.data.label), [SUGGEST, 'Show the date']);
+  assert.deepEqual(after.filter((e) => e.kind === 'work').map((e) => e.data.id), ['orders-csv-export']);
   assert.deepEqual(boardNumbers(after), { [APPROVAL_CARD]: 1, [PHOTO_CARD]: 2 });
   assert.match(made.cards[1].data.question, /^Put pull request #\d+ live\?\n/);
   assert.equal(typeof made.cards[1].data.parts.what, 'string');
@@ -103,48 +104,48 @@ test('what the session wrote to the director is its text and its summarised narr
   assert.deepEqual(textBlocks(stream).map((t) => t.text), ['Hello.', 'Fetched the card.']);
 });
 
-test('36 passes one revised card for the pressed card alone and one line that a new proposal will follow, with nothing answered, signed or recorded', async () => {
+test('36 passes one work record for the pressed approval and one line that a new proposal will follow, with no card composed and nothing answered, signed or otherwise recorded', async () => {
   const cards = await cardsOf(CARDS_36);
+  const work = { kind: 'work', id: 'w-1', data: { id: 'orders-csv-export', title: 'The export covers this month\'s orders only', lane: 'small', visible: true, dependsOn: [], place: 3 } };
   const revision = { kind: 'card', id: 'rev-1', data: { ...cards[1].data, revises: APPROVAL_CARD, changed: 'Only this month\'s orders.' } };
-  const asked = (id) => ({ kind: 'asked', id: `a-${id}`, data: { cards: [id] } });
   const line = ['say', 'Noted. A new proposal will follow.'];
-  const compose = ['Bash', { command: 'node "/p/cli.js" card' }];
-  const good = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], compose, line), { written: [revision, asked('rev-1')], asked: ['rev-1'] });
+  const record = ['Bash', { command: 'node "/p/cli.js" record work' }];
+  const good = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], record, line), { written: [work] });
   assert.equal(good.pass, true, good.why);
-  const quiet = await judged36(events(compose, ['say', 'Noted. A new proposal will follow.']), { written: [revision] });
-  assert.equal(quiet.pass, true, quiet.why);
 
-  const none = await judged36(events(line), { asked: [] });
-  assert.match(none.why, /no card revising the pressed card/);
-  const stray = await judged36(events(compose, line), { written: [revision, { kind: 'card', id: 'rev-2', data: { ...cards[2].data, revises: PHOTO_CARD } }], asked: [] });
-  assert.match(stray.why, /does not revise the pressed card/);
-  const twice = await judged36(events(compose, line), { written: [revision, { ...revision, id: 'rev-2' }], asked: [] });
-  assert.match(twice.why, /2 cards revising/);
-  const stored = await judged36(events(compose, line), { written: [revision, { kind: 'idea', id: 'i-1', data: { words: WORDS } }], asked: [] });
-  assert.match(stored.why, /recorded the suggestion: idea/);
-  const answered = await judged36(events(compose, line), { written: [revision], forbidden: ['card-answer'] });
+  const none = await judged36(events(line));
+  assert.match(none.why, /did not hand the change to the build/);
+  const composed = await judged36(events(record, line), { written: [work, revision] });
+  assert.match(composed.why, /composed a card/);
+  const twice = await judged36(events(record, line), { written: [work, { ...work, id: 'w-2' }] });
+  assert.match(twice.why, /2 work records/);
+  const pasted = await judged36(events(record, line), { written: [{ ...work, data: { ...work.data, title: WORDS } }] });
+  assert.match(pasted.why, /director's own words/);
+  const stored = await judged36(events(record, line), { written: [work, { kind: 'idea', id: 'i-1', data: { words: WORDS } }] });
+  assert.match(stored.why, /more than the work: idea/);
+  const answered = await judged36(events(record, line), { written: [work], forbidden: ['card-answer'] });
   assert.match(answered.why, /never earns: card-answer/);
-  const signed = await judged36(events(compose, line), { written: [revision], forbidden: ['approval (refused)'] });
+  const signed = await judged36(events(record, line), { written: [work], forbidden: ['approval (refused)'] });
   assert.match(signed.why, /never earns: approval \(refused\)/);
-  const photo = await judged36(events(compose, line), { written: [revision], asked: [PHOTO_CARD] });
+  const photo = await judged36(events(record, line), { written: [work], asked: [PHOTO_CARD] });
   assert.match(photo.why, /asked another card/);
   const card = asQuestion({ data: cards[1].data });
-  const asking = await judged36(events(compose, ['AskUserQuestion', { questions: [card] }], line), { written: [revision] });
+  const asking = await judged36(events(record, ['AskUserQuestion', { questions: [card] }], line), { written: [work] });
   assert.match(asking.why, /AskUserQuestion/);
 
-  const silent = await judged36(events(compose), { written: [revision] });
+  const silent = await judged36(events(record), { written: [work] });
   assert.match(silent.why, /said nothing/);
-  const long = await judged36(events(compose, ['say', 'Noted. A new proposal will follow.'], ['say', 'Anything else?']), { written: [revision] });
+  const long = await judged36(events(record, line, ['say', 'Anything else?']), { written: [work] });
   assert.match(long.why, /more than the one line/);
-  const narrated = await judged36(events(compose, ['narrate', 'Revised the card with their words.']), { written: [revision] });
+  const narrated = await judged36(events(record, ['narrate', 'Handed it to the build.']), { written: [work] });
   assert.match(narrated.why, /does not say a new proposal will follow/);
-  const lines = await judged36(events(compose, ['say', 'Noted.\nA new proposal will follow.']), { written: [revision] });
+  const lines = await judged36(events(record, ['say', 'Noted.\nA new proposal will follow.']), { written: [work] });
   assert.match(lines.why, /not one line/);
-  const wordy = await judged36(events(compose, ['say', `Noted. A new proposal will follow ${'once the checks are done '.repeat(6)}`]), { written: [revision] });
+  const wordy = await judged36(events(record, ['say', `Noted. A new proposal will follow ${'once the checks are done '.repeat(6)}`]), { written: [work] });
   assert.match(wordy.why, /longer than 25 words/);
-  const withId = await judged36(events(compose, ['say', `Noted card ${APPROVAL_CARD}. A new proposal will follow.`]), { written: [revision] });
+  const withId = await judged36(events(record, ['say', `Noted card ${APPROVAL_CARD}. A new proposal will follow.`]), { written: [work] });
   assert.match(withId.why, /a card's id/);
-  const second = await judged36(events(compose, ['say', 'Noted on the second photo. A new proposal will follow.']), { written: [revision] });
+  const second = await judged36(events(record, ['say', 'Noted on the second photo. A new proposal will follow.']), { written: [work] });
   assert.match(second.why, /card now numbered 2/);
 });
 

@@ -8,11 +8,11 @@
 // submitted its press prompt, which carries the words and is this session's prompt. Meanwhile
 // they chose an option on card 1 in the pane, which closed it, so the numbers moved: the pressed
 // card is now card 1, and card 2 is the photo card (fix G).
-// Pass: the words treated as the director's instruction to revise the pressed card and no other,
-// by one `card` run whose card revises it; nothing written as an answer or a signed record, and
-// nothing else recorded; no card asked or marked asked but the revised one; and one line saying
-// that a new proposal will follow, with nothing else said. Judged from the events and the
-// transcript only.
+// Pass: the words treated as steering on the pressed approval card and no other. An approval signs
+// the pull request's head, so the front desk hands the change to the build with one `work` record
+// (the card's work, re-stated in its own words) and composes no card at the old head; nothing else
+// is recorded, written as an answer or signed; no card is asked; and one line says that a new
+// proposal will follow, with nothing else said. Judged from the events and the transcript only.
 //
 // The prompt is the bridge's own wording (scripts/mod/press.js, suggestCard). Its lead is built
 // here to match it exactly, from the same lead, since the bridge doesn't export it.
@@ -77,6 +77,8 @@ export function stateAfterThePress({ seed, cards }, label = SUGGEST) {
     ...seed,
     seedEvent('card-answer', { question: question(APPROVAL_CARD), label }, '2026-10-20T09:30:00.000Z'),
     seedEvent('card-answer', { question: question(EMAIL_CARD), label: 'Show the date' }, '2026-10-20T09:30:20.000Z'),
+    // The work pull request #12 belongs to, which the handing-over names.
+    seedEvent('work', { id: 'orders-csv-export', title: 'A CSV export on the orders page', lane: 'small', visible: true, dependsOn: [], place: 3 }, '2026-10-20T08:05:00.000Z'),
   ];
 }
 
@@ -119,15 +121,15 @@ export function judge({ calls, texts, forbidden, written, asked, approval }) {
 
   if (forbidden.length > 0) problems.push(`it wrote what a press never earns: ${forbidden.join(', ')}`);
   const cards = written.filter((e) => e.kind === 'card');
-  const revised = cards.filter((e) => e.data?.revises === approval.id);
-  if (cards.length > revised.length) problems.push('it composed a card that does not revise the pressed card');
-  if (revised.length === 0) problems.push('no card revising the pressed card');
-  if (revised.length > 1) problems.push(`it composed ${revised.length} cards revising the pressed card`);
-  const recorded = [...new Set(written.map((e) => e.kind).filter((kind) => !['card', 'asked'].includes(kind)))];
-  if (recorded.length > 0) problems.push(`it recorded the suggestion: ${recorded.join(', ')}`);
-  // A card the session composed is marked asked by the command; any other `asked` record is a
-  // card the director never saw.
-  if (asked.some((id) => id !== approval.id && !revised.some((e) => e.id === id))) problems.push('it asked another card');
+  if (cards.length > 0) problems.push('it composed a card, though the pull request\'s head has not moved');
+  const handed = written.filter((e) => e.kind === 'work');
+  if (handed.length === 0) problems.push('it did not hand the change to the build with a work record');
+  if (handed.length > 1) problems.push(`it recorded ${handed.length} work records`);
+  if (handed.some((e) => JSON.stringify(e.data ?? {}).includes(WORDS))) problems.push('the work record holds the director\'s own words');
+  const recorded = [...new Set(written.map((e) => e.kind).filter((kind) => !['work', 'asked'].includes(kind)))];
+  if (recorded.length > 0) problems.push(`it recorded more than the work: ${recorded.join(', ')}`);
+  // Any `asked` record naming a card other than the pressed one is a card the director never saw.
+  if (asked.some((id) => id !== approval.id)) problems.push('it asked another card');
   if (askCalls(calls).length > 0) problems.push('it asked a card with AskUserQuestion, though the new proposal comes later');
 
   const all = texts.map((t) => t.text).join('\n');
@@ -142,7 +144,7 @@ export function judge({ calls, texts, forbidden, written, asked, approval }) {
   if (PHOTO_WORDS.test(all)) problems.push(`it spoke of the card now numbered 2, not the pressed one: ${oneLine(all)}`);
 
   if (problems.length > 0) return { pass: false, why: `${problems.join('; ')}${tail()}` };
-  return { pass: true, why: `the suggestion taken as an instruction to revise the pressed card alone, one line that a new proposal will follow; nothing answered, signed or recorded, no other card asked${tail()}` };
+  return { pass: true, why: `the suggestion handed to the build as one work record, no card composed, one line that a new proposal will follow; nothing answered, signed or otherwise recorded, no card asked${tail()}` };
 }
 
 export default {
