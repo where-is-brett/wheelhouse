@@ -4,9 +4,8 @@
 // (scripts/mod/settings-pane.js): these tests check only that the mod draws them, sends the chosen
 // value under the origin `pane` and passes on what the bridge said.
 //
-// This build's test kit gives no way to pick in a Select (ui.select is not delivered, as ui.input is
-// not: see tests/mod/cards.test.ts), so a pick is run by calling the Select's own onSelect, which the
-// kit hands back among the element's props.
+// A pick is run with ui.select, which settles in this build and runs the Select's own onSelect
+// (ui.input does not settle: see tests/mod/cards.test.ts). A real pick in a live session isn't run.
 import { test, expect, mock } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -177,11 +176,9 @@ test('a level row is a Select with its options and the value in force', async ($
     expect(select?.type).toBe('Select')
     expect(select?.props.value).toBe('balanced')
     expect(select?.props.options).toEqual(AUTONOMY)
-    expect((await ui.findAll({ type: 'Select' })).map((n: any) => n.key)).toEqual(['setting:autonomy', 'setting:pace', 'setting:presence'])
+    // Availability matches no option: no Select, so none can pick of itself; its words stand there.
+    expect((await ui.findAll({ type: 'Select' })).map((n: any) => n.key)).toEqual(['setting:autonomy', 'setting:pace'])
     expect(await texts(ui)).toContain('Autonomy')
-    // A temporary Availability matching no option: no option is picked, and its words stand beside it.
-    const away = await ui.find({ key: 'setting:presence' })
-    expect(away?.props.value).toBeUndefined()
     expect(await texts(ui)).toContain('Away until 18:00')
     // No "›" off the phone.
     expect((await texts(ui)).some((x: string) => x.includes('›'))).toBe(false)
@@ -270,9 +267,51 @@ test('Change… hands the front desk the row\'s name', async ($, on) => {
     expect(seen.submits.map((p: any) => p.text)).toEqual(['Wheelhouse pane: the director wants to change Notifications.'])
     // It asks the front desk, not the bridge, and so carries no origin of its own.
     expect(seen.requests).toEqual([])
+    expect(picksOf(seen)).toEqual([])
     await ui.press({ key: 'done' })
     await ui.unmount()
   }
+})
+
+test('a row with no value in force draws no Select, and its Change… opens the choices with no tick', async ($, on) => {
+  const { seen, clear, start } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    expect(await ui.find({ key: 'setting:presence' })).toBeUndefined()
+    expect((await ui.find({ key: choiceKey('presence', 'change') }))?.props.label).toBe('Change…')
+    clear()
+    await ui.press({ key: choiceKey('presence', 'change') })
+    await ui.redraw()
+    expect((await ui.find({ key: 'settings-back' }))?.props.label).toBe('‹ Settings')
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.key, b.props.label])).toEqual([
+      ['stop', 'STOP'],
+      ['settings-back', '‹ Settings'],
+      [choiceKey('presence', 'available'), 'Available'],
+      [choiceKey('presence', 'away'), 'Away'],
+    ])
+    expect(seen.requests).toEqual([])
+    await ui.press({ key: 'settings-back' })
+    expect((await ui.find({ key: choiceKey('presence', 'change') }))?.type).toBe('Button')
+    await ui.press({ key: 'done' })
+    await ui.unmount()
+  }
+})
+
+test('a pick equal to the value in force sends no request and no toast', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
+  await start($, 'desktop')
+  const ui = await mount($, 'desktop')
+  await ui.press({ key: 'settings' })
+  clear()
+  await ui.select({ key: 'setting:autonomy', value: 'balanced' })
+  await clock.settle()
+  expect(seen.requests).toEqual([])
+  expect(seen.toasts).toEqual([])
+  expect((await ui.find({ key: 'setting:autonomy' }))?.type).toBe('Select')
+  await ui.press({ key: 'done' })
+  await ui.unmount()
 })
 
 test('a double click on Change…, a moment apart, asks once; a prompt the engine refuses can be asked again', async ($, on) => {

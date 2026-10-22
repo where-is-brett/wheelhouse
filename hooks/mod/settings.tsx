@@ -72,8 +72,13 @@ async function choose($: EngineInterface, key: string | null) {
 
 // A pick in a row: a Select's, a choice on the phone's page, or Undo (`undo`). One press is
 // recorded at a time, as a button's is; a pick the bridge refuses (STOP is on) says so, and the
-// read after it draws the row back at the value in force.
-async function pressChoice($: EngineInterface, key: string, rowLabel: string, choice: string) {
+// read after it draws the row back at the value in force. A pick of the value already in force
+// (`held`) sends nothing; Undo is not a pick of a value.
+async function pressChoice($: EngineInterface, key: string, choice: string, held: string | null | undefined) {
+  if (choice === held) {
+    await choose($, null)
+    return
+  }
   if (!(await claim($, { on: `setting:${key}`, label: choice }))) return
   await choose($, null)
   await carry($, { cmd: 'setting', origin: 'pane', key, choice }, RECORDING, () => release($), () => readSettings($))
@@ -167,8 +172,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
   const recording = (key: string) => pressing?.on === `setting:${key}` && pressing.label !== 'ask'
   const undoing = (key: string) => pressing?.on === `setting:${key}` && pressing.label === UNDO
 
-  // The phone's page of one row's choices, each a Button with a tick after the one in force.
-  if (phone && live && typeof choosing.value === 'string') {
+  // A row's choices on their own page (the phone's, and a row with no value in force anywhere), each a Button with a tick after the one in force.
+  if (live && typeof choosing.value === 'string') {
     const open = groups.flatMap(rowsOf).find((row) => row.key === choosing.value)
     if (open !== undefined) {
       const key = open.key as string
@@ -180,7 +185,7 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
           {optionsOf(open).map((option) => {
             const label = option.value === open.value ? `${option.label} ✓` : option.label
             return pressing === null
-              ? outlined(t, `setting:${key}:${option.value}`, label, () => pressChoice($, key, name, option.value))
+              ? outlined(t, `setting:${key}:${option.value}`, label, () => pressChoice($, key, option.value, open.value))
               : footnote(t, label)
           })}
         </t.Box>
@@ -198,12 +203,21 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
     const options = optionsOf(row)
     if (!live || pressing !== null || options.length === 0) return valueOf(row)
     if (phone) return outlined(t, `setting:${key}`, `${name}  ${shownOf(row)} ›`, () => choose($, key))
+    // No value in force (a temporary setting matching no option): its words, and Change… opens the choices. No Select, which might pick one of itself.
+    if (typeof row.value !== 'string') {
+      return (
+        <t.Box flexDirection="row" gap="sm">
+          {footnote(t, shownOf(row))}
+          {small(t, `setting:${key}:change`, CHANGE, () => choose($, key))}
+        </t.Box>
+      )
+    }
     return (
       <t.Select
         key={`setting:${key}`}
         options={options}
         value={typeof row.value === 'string' ? row.value : undefined}
-        onSelect={(v: string) => pressChoice($, key, name, v)}
+        onSelect={(v: string) => pressChoice($, key, v, row.value)}
       />
     )
   }
@@ -221,7 +235,7 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
     const name = row.label as string
     if (undoing(key)) return body(t, RECORDING)
     if (!live || pressing !== null) return footnote(t, 'Undo')
-    return small(t, `setting:${key}:undo`, 'Undo', () => pressChoice($, key, name, UNDO))
+    return small(t, `setting:${key}:undo`, 'Undo', () => pressChoice($, key, UNDO, row.value))
   }
 
   const rowOf = (row: Row) => {
@@ -245,7 +259,6 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
                 {picker}
               </t.Box>
             )}
-          {row.value === null && typeof row.current === 'string' && !(phone || pressing !== null || !live) && footnote(t, row.current)}
           {changed}
         </t.Box>
       )
