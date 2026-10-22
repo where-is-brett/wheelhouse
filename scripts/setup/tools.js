@@ -52,7 +52,7 @@ import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind } from '../host/company-ca.js';
-import { composeCard } from '../cards/compose.js';
+import { composeCard, isTooLong } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -740,7 +740,10 @@ function cardFor(changes, status, platform) {
   try {
     composeCard({ ...long, target: { step: 2, hash: '0'.repeat(64) } });
     return long;
-  } catch { /* too long: the terse card below */ }
+  } catch (error) {
+    if (!isTooLong(error)) throw error;
+    // too long: the terse card below
+  }
   return card(`Setup step 2, ${SETUP_TITLES[2]}: ${terse.join('; ')}.`);
 }
 

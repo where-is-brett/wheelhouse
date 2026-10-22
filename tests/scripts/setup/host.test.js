@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
+  hostStep, cardFor, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
@@ -34,7 +34,7 @@ import { readProject } from '../../../scripts/lib/projects.js';
 import { profileRemote } from '../../../scripts/profile/store.js';
 import { stateDir, profileDir, wheelhouseHome, computerId } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { composeCard } from '../../../scripts/cards/compose.js';
+import { composeCard, isTooLong } from '../../../scripts/cards/compose.js';
 import { termsIn, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
@@ -1091,6 +1091,58 @@ test('step 3\'s card for a company\'s GitLab behind its own authority, with the 
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     assert.ok(question.question.length <= 1200, String(question.question.length));
   });
+});
+
+// Step 3's card for a company's GitLab behind its own authority, with the certificate, the typed token, the
+// admin's part, the profile repository and (joining) the computer's key: it composes whatever the names'
+// lengths, and always says the two safety things.
+test('step 3\'s card on a company\'s GitLab composes for ordinary and for very long names, joining or not, with the two safety phrases', async () => {
+  const lengths = [];
+  const cases = [
+    ['gitlab.acme.com:8443', 'engineering/shop', 'sam'],
+    ['gitlab.example.com', 'platform/customer-portal', 'a-director'],
+    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER],
+    [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200)],
+    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name'],
+  ];
+  for (const [hostName, repo, user] of cases) {
+    const base = `https://${hostName}`;
+    const owner = repo.split('/').slice(0, -1).join('/');
+    const name = repo.split('/').at(-1);
+    for (const kind of ['joining', 'new', 'existing']) {
+      const product = kind === 'joining' ? { isNew: false, joining: true, host: null, repo, name }
+        : kind === 'new' ? { isNew: true, host: 'gitlab', name, base } : { isNew: false, host: 'gitlab', repo, name, base };
+      const changes = [
+        { kind: 'host', target: 'gitlab', action: 'certificate', base },
+        { kind: 'host', target: 'gitlab', action: 'sign-in', via: 'token' },
+        { kind: 'host', target: 'gitlab', action: 'profile-repository', repo: `${user}/${PROFILE_REPO}` },
+        { kind: 'host', target: 'gitlab', action: 'enrolment' },
+      ];
+      const card = cardFor({ host: 'gitlab', changes, product, owner: kind === 'joining' ? null : owner, user, way: WAYS.narrow, app: null, signedIn: false, appKeys: null, twoAccounts: false, base });
+      const { question } = composeCard({ ...card, target: { step: 3, hash: planHash(changes) } });
+      assert.ok(question.question.length <= 1200, `${kind} ${hostName}: ${question.question.length}`);
+      lengths.push(`${kind} ${hostName.length}/${repo.length}/${user.length}: ${question.question.length}`);
+      assert.match(card.what, /for that address only \(certificate checks stay on\)/, `${kind} ${hostName}`);
+      assert.match(card.what, /pasted into your computer's box, never the chat/, `${kind} ${hostName}`);
+      assert.match(card.what, /for your company's GitLab admin/);
+      assert.deepEqual(termsIn(card.what.split('; ').filter((part) => /token|admin|certificate/.test(part)).join('; '), glossaryOf({})), []);
+    }
+  }
+  // GitHub names too: a joining or first computer with very long account and app names still composes.
+  for (const joiningNow of [true, false]) {
+    const long = 'o'.repeat(200);
+    const card = cardFor({
+      host: 'github', changes: [{ kind: 'host', target: 'github', action: 'sign-in' }, { kind: 'host', target: 'github', action: 'profile-repository', repo: `${long}/${PROFILE_REPO}` }, { kind: 'host', target: 'github', action: 'enrolment' }],
+      product: joiningNow ? { isNew: false, joining: true, host: null, repo: `${long}/${long}`, name: long } : { isNew: false, host: 'github', repo: `${long}/${long}`, name: long },
+      owner: long, user: `${long}-me`, way: WAYS.own, app: { own: true, account: long, name: long }, signedIn: false, appKeys: null, twoAccounts: true, base: 'https://gitlab.com',
+    });
+    composeCard({ ...card, target: { step: 3, hash: '0'.repeat(64) } });
+  }
+  assert.ok(lengths.length > 0);
+  // Only the length refusal sends the card to a shorter form; any other fault surfaces.
+  assert.equal(isTooLong(new Error('A setup card text would pass 1200 characters (it is 1300)')), true);
+  assert.equal(isTooLong(new Error('A setup card needs its why')), false);
+  assert.throws(() => cardFor({ host: 'gitlab', changes: [], product: null }), TypeError);
 });
 
 test('on a company\'s GitLab the typed token is the way offered, and the card names the admin\'s part', async () => {
