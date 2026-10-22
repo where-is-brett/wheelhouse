@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, withGitConfig, HOST_UNREACHABLE,
-  CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal,
+  CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog,
 } from '../../../scripts/host/company-ca.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
@@ -22,27 +22,35 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
-const SCRIPTS = fileURLToPath(new URL('../../../scripts/', import.meta.url));
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+// Where code that could switch a check off would be: the scripts, and the adapters and the editor extension where they exist.
+const CODE_FOLDERS = ['scripts', 'adapters', 'vscode', 'hooks'].map((name) => path.join(ROOT, name)).filter((dir) => fs.existsSync(dir));
 const BASE = 'https://git.example.org:8443';
 const GLAB_HOST = 'git.example.org:8443';
 const TOKEN = 'glpat-STANDINTOKEN0123456789';
 
-// Made-up certificates: the bodies are base64 text, which is all the export reads.
-const pem = (body) => `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----\n`;
-const ROOT_A = pem('QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB');
-const ROOT_B = pem('QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC');
-const COMPANY = pem('Q09NUEFOWUNPTVBBTllDT01QQU5ZQ09NUEFOWUNPTVBBTllDT01Q');
+// Public test certificates (tests/fixtures/certs/, made for tests, their keys not kept): three
+// authorities in date, a server's own certificate, and an authority that expired in 2020.
+const certificate = (name) => /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----\n?/.exec(
+  fs.readFileSync(fileURLToPath(new URL(`../../fixtures/certs/${name}.pem`, import.meta.url)), 'utf8'),
+)[0].replace(/\n?$/, '\n');
+const ROOT_A = certificate('ca-valid');
+const ROOT_B = certificate('ca-two');
+const COMPANY = certificate('ca-company');
+const LEAF = certificate('leaf');
+const EXPIRED = certificate('ca-expired');
+const NOW = () => new Date('2026-10-22T00:00:00.000Z');
 
 function jsFilesIn(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) return jsFilesIn(full);
-    return entry.name.endsWith('.js') ? [full] : [];
+    return /\.(?:js|mjs|cjs|ts)$/.test(entry.name) ? [full] : [];
   });
 }
 
 // Every spelling that switches a certificate check off, in an environment, a git setting or a flag.
-const CHECKS_OFF = /GIT_SSL_NO_VERIFY|NODE_TLS_REJECT_UNAUTHORIZED|sslVerify['"]?\s*[,:=]?\s*['"]?(?:false|0|no|off)\b|skip_tls_verify|--insecure\b|--no-check-certificate|['"]-k['"]/i;
+const CHECKS_OFF = /GIT_SSL_NO_VERIFY|NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized['"]?\s*[:=]\s*(?:false|0)\b|sslVerify['"]?\s*[,:=]?\s*['"]?(?:false|0|no|off)\b|skip_tls_verify|--insecure\b|--no-check-certificate|['"]-k['"]/i;
 
 const GLAB_UNREACHABLE = [
   'ERROR Get "https://git.example.org:8443/api/v4/projects/o%2Fp": dial tcp [::1]:8443: connect: connection refused.',
@@ -73,11 +81,15 @@ const gitlabAdapter = (answer) => {
 test('no route ever sets GIT_SSL_NO_VERIFY, NODE_TLS_REJECT_UNAUTHORIZED=0, sslVerify false or -k', async () => {
   // The code: no script writes any of the spellings.
   const found = [];
-  for (const file of jsFilesIn(SCRIPTS)) {
+  for (const file of CODE_FOLDERS.flatMap(jsFilesIn)) {
     fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-      if (CHECKS_OFF.test(line)) found.push(`${path.relative(SCRIPTS, file)}:${i + 1}`);
+      if (CHECKS_OFF.test(line)) found.push(`${path.relative(ROOT, file)}:${i + 1}`);
     });
   }
+  assert.ok(CODE_FOLDERS.some((dir) => dir.endsWith('scripts')));
+  // The scan sees each spelling.
+  for (const line of ['GIT_SSL_NO_VERIFY=1', 'process.env.NODE_TLS_REJECT_UNAUTHORIZED = \'0\'', '{ rejectUnauthorized: false }', 'http.sslVerify=false', 'args.push(\'-k\')', '--insecure']) assert.match(line, CHECKS_OFF);
+  assert.doesNotMatch('[\'http.sslVerify\', \'true\']', CHECKS_OFF);
   assert.deepEqual(found, []);
 
   // The routes: what they produce, on both systems, switches nothing off.
@@ -97,6 +109,8 @@ test('no route ever sets GIT_SSL_NO_VERIFY, NODE_TLS_REJECT_UNAUTHORIZED=0, sslV
   // And the routes refuse to be asked for it.
   assert.throws(() => withGitConfig({}, [{ key: 'http.sslVerify', value: 'false' }]), /certificate/i);
   assert.throws(() => withGitConfig({}, [{ key: `http.${BASE}/.sslVerify`, value: '0' }]), /certificate/i);
+  // And refuse an environment whose count of git settings is not a whole number.
+  for (const bad of ['two', '-1', '1.5', '']) assert.throws(() => withGitConfig({ GIT_CONFIG_COUNT: bad }, gitCaConfig(BASE, caFile(home), 'darwin')), /whole number/);
 });
 
 test('an unreachable host gives HOST_UNREACHABLE and keeps the push for later', async () => {
@@ -200,7 +214,7 @@ test('exportSystemRoots reads the system roots and the System keychain on macOS,
     if (keychain.endsWith('SystemRootCertificates.keychain')) return { code: 0, stdout: `${ROOT_A}${ROOT_B}`, stderr: '' };
     return { code: 0, stdout: `${COMPANY}${ROOT_A}`, stderr: '' };
   });
-  const text = await exportSystemRoots({ platform: 'darwin', run: mac });
+  const text = await exportSystemRoots({ platform: 'darwin', run: mac, now: NOW });
   assert.deepEqual(mac.calls.map((c) => [c.file, ...c.args]), [
     ['security', 'find-certificate', '-a', '-p', '/System/Library/Keychains/SystemRootCertificates.keychain'],
     ['security', 'find-certificate', '-a', '-p', '/Library/Keychains/System.keychain'],
@@ -210,20 +224,32 @@ test('exportSystemRoots reads the system roots and the System keychain on macOS,
 
   // One keychain unreadable: the other still gives its certificates.
   const half = glabRun((args) => (args.at(-1) === '/Library/Keychains/System.keychain' ? { code: 44, stdout: '', stderr: 'could not be found' } : { code: 0, stdout: ROOT_A, stderr: '' }));
-  assert.equal(await exportSystemRoots({ platform: 'darwin', run: half }), ROOT_A);
+  assert.equal(await exportSystemRoots({ platform: 'darwin', run: half, now: NOW }), ROOT_A);
 
   // Windows: the machine's Root store, read through PowerShell and written out as PEM.
   const win = glabRun(() => ({ code: 0, stdout: `${ROOT_B.replace(/\n/g, '\r\n')}${COMPANY.replace(/\n/g, '\r\n')}`, stderr: '' }));
-  const winText = await exportSystemRoots({ platform: 'win32', run: win });
+  const winText = await exportSystemRoots({ platform: 'win32', run: win, now: NOW });
   assert.equal(winText, `${ROOT_B}${COMPANY}`);
   assert.ok(win.calls.length >= 1);
   assert.ok(win.calls.every((c) => /^powershell(\.exe)?$/i.test(path.win32.basename(String(c.file)))));
 
   // Nothing readable is an error in plain words, and another system is not guessed at.
-  await assert.rejects(exportSystemRoots({ platform: 'darwin', run: glabRun(() => ({ code: 1, stdout: '', stderr: '' })) }), /certificates/);
-  await assert.rejects(exportSystemRoots({ platform: 'linux', run: mac }), /macOS and Windows/);
+  await assert.rejects(exportSystemRoots({ platform: 'darwin', run: glabRun(() => ({ code: 1, stdout: '', stderr: '' })), now: NOW }), /certificates/);
+  await assert.rejects(exportSystemRoots({ platform: 'linux', run: mac, now: NOW }), /macOS and Windows/);
   // A run that throws is the same as one that found nothing.
-  await assert.rejects(exportSystemRoots({ platform: 'darwin', run: async () => { throw new Error('spawn security ENOENT'); } }), /certificates/);
+  await assert.rejects(exportSystemRoots({ platform: 'darwin', run: async () => { throw new Error('spawn security ENOENT'); }, now: NOW }), /certificates/);
+});
+
+test('only authorities still in date are kept: a server\'s own certificate and an expired authority are left out', async () => {
+  const garbage = '-----BEGIN CERTIFICATE-----\nQUFBQUFB\n-----END CERTIFICATE-----\n';
+  const mixed = `${LEAF}${ROOT_A}${EXPIRED}${garbage}${COMPANY}`;
+  const mac = glabRun((args) => ({ code: 0, stdout: args.at(-1).endsWith('System.keychain') && !args.at(-1).includes('Root') ? mixed : '', stderr: '' }));
+  assert.equal(await exportSystemRoots({ platform: 'darwin', run: mac, now: NOW }), `${ROOT_A}${COMPANY}`);
+  const win = glabRun(() => ({ code: 0, stdout: mixed.replace(/\n/g, '\r\n'), stderr: '' }));
+  assert.equal(await exportSystemRoots({ platform: 'win32', run: win, now: NOW }), `${ROOT_A}${COMPANY}`);
+  // The same authority is out of date after its end: the filter follows the clock it is given.
+  await assert.rejects(exportSystemRoots({ platform: 'darwin', run: glabRun(() => ({ code: 0, stdout: `${LEAF}${EXPIRED}`, stderr: '' })), now: NOW }), /certificates/);
+  await assert.rejects(exportSystemRoots({ platform: 'darwin', run: glabRun(() => ({ code: 0, stdout: ROOT_A, stderr: '' })), now: () => new Date('2060-01-01T00:00:00.000Z') }), /certificates/);
 });
 
 test('the Windows form uses the system store for that address', () => {
@@ -282,6 +308,15 @@ test('a certificate failure and an unreachable server are different cards', asyn
     assert.doesNotMatch(error.message, /x509|tls:/);
     return true;
   });
+  // schannel's own wording (git on Windows) and the others read as the same failure.
+  for (const text of [
+    'schannel: SEC_E_UNTRUSTED_ROOT (0x80090325) - The certificate chain was issued by an authority that is not trusted.',
+    'schannel: next InitializeSecurityContext failed: CRYPT_E_NO_REVOCATION_CHECK (0x80092012) - The revocation function was unable to check revocation for the certificate',
+    'fatal: unable to access \'https://git.example.org/\': schannel: The certificate chain was issued by an authority that is not trusted.',
+    'SSL certificate problem: unable to get local issuer certificate',
+  ]) assert.equal(outputKind(text), 'certificate', text);
+  assert.equal(outputKind('Failed to connect to git.example.org port 443'), 'unreachable');
+  assert.equal(outputKind('remote: HTTP Basic: Access denied'), null);
   assert.notEqual(CERTIFICATE_NOT_TRUSTED(BASE), HOST_UNREACHABLE(BASE));
   assert.match(CERTIFICATE_NOT_TRUSTED(BASE), /never switches/i);
 });
@@ -291,7 +326,7 @@ test('a merge that could not reach the host says so, and a stale head says the h
 
   // Not merged, and not a refusal's line.
   const seen = new Set();
-  for (const text of GLAB_UNREACHABLE) {
+  for (const text of GLAB_UNREACHABLE.filter((t) => !/timeout|deadline/.test(t))) {
     const { adapter } = merging(text);
     const merged = await adapter.merge({ number: 3, sha: SHA });
     assert.equal(merged.merged, false);
@@ -301,6 +336,34 @@ test('a merge that could not reach the host says so, and a stale head says the h
     seen.add(merged.reason);
   }
   assert.equal(seen.size, 1);
+
+  // A command that waited and gave up may have reached the host first: said as not confirmed.
+  for (const text of GLAB_UNREACHABLE.filter((t) => /timeout|deadline/.test(t))) {
+    const merged = await merging(text).adapter.merge({ number: 3, sha: SHA });
+    assert.equal(merged.merged, false);
+    assert.equal(merged.unreachable, true);
+    assert.equal(merged.reason, `The merge could not be confirmed. ${HOST_UNREACHABLE(BASE)}`);
+  }
+
+  // A certificate not trusted is not a refusal either.
+  const untrusted = await merging(GLAB_CERTIFICATE).adapter.merge({ number: 3, sha: SHA });
+  assert.deepEqual(untrusted, { merged: false, certificate: true, reason: `Not merged. ${CERTIFICATE_NOT_TRUSTED(BASE)}` });
+
+  // glab's standard error is its own words: the host's answer on standard output, which can quote
+  // a connection or a certificate, is not read as one.
+  const quoted = gitlabAdapter((args) => (args[1] === 'merge'
+    ? { code: 1, stdout: '{"message":"dial tcp: connection refused x509 certificate is not trusted"}', stderr: '403 Forbidden' }
+    : { code: 0, stdout: '{}', stderr: '' }));
+  const refusedByHost = await quoted.adapter.merge({ number: 3, sha: SHA });
+  assert.equal(refusedByHost.unreachable, undefined);
+  assert.equal(refusedByHost.certificate, undefined);
+  assert.equal(refusedByHost.reason, 'this sign-in is not allowed to merge it');
+  const quotedRead = gitlabAdapter(() => ({ code: 1, stdout: '{"message":"dial tcp: connection refused"}', stderr: 'ERROR 404 Not Found' }));
+  await assert.rejects(quotedRead.adapter.defaultBranch(), (error) => {
+    assert.equal(error.code, undefined);
+    assert.match(error.message, /^glab api projects\/o%2Fp failed: ERROR 404/);
+    return true;
+  });
 
   // glab's wrapped "SHA does not\n  match HEAD", from the recording of check 71.
   const stale = await merging(WRAPPED_SHA).adapter.merge({ number: 3, sha: SHA });
@@ -329,4 +392,44 @@ test('applying the certificate runs only through run, and the file is the only t
   // On Windows git is told to use the system store; Node.js and glab use the file.
   const win = await applyCompanyCa({ base: BASE, home: tempFolder('wh-ca-'), platform: 'win32', run: glabRun(() => ({ code: 0, stdout: COMPANY, stderr: '' })) });
   assert.deepEqual(win.gitConfig, [{ key: `http.${BASE}/.sslBackend`, value: 'schannel' }]);
+});
+
+test('an address that is not https is refused before anything is written or run', async () => {
+  for (const bad of ['http://git.example.org', 'ftp://git.example.org', 'git.example.org', '--host', '']) {
+    const home = shortHome();
+    const run = glabRun(() => ({ code: 0, stdout: ROOT_A, stderr: '' }));
+    await assert.rejects(applyCompanyCa({ base: bad, home, platform: 'darwin', run }), /https/, bad);
+    assert.deepEqual(run.calls, [], bad);
+    assert.ok(!fs.existsSync(caFile(home)), bad);
+  }
+  // A plain http address on this computer is allowed, as everywhere else.
+  const home = shortHome();
+  const run = glabRun((args) => (args[0] === 'find-certificate' ? { code: 0, stdout: ROOT_A, stderr: '' } : { code: 0, stdout: '', stderr: '' }));
+  const applied = await applyCompanyCa({ base: 'http://127.0.0.1:8929', home, platform: 'darwin', run });
+  assert.equal(applied.glabHost, '127.0.0.1:8929');
+});
+
+test('the git setting is added for a company GitLab only, once the file exists', () => {
+  const home = shortHome();
+  const record = { host: 'gitlab', base: BASE };
+  assert.deepEqual(companyGitEnv({ A: '1' }, record, { home, platform: 'darwin' }), { A: '1' });
+  writeCaFile({ home, pem: COMPANY });
+  const given = companyGitEnv({ A: '1' }, record, { home, platform: 'darwin' });
+  assert.deepEqual(given, { A: '1', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `http.${BASE}/.sslCAInfo`, GIT_CONFIG_VALUE_0: caFile(home) });
+  for (const other of [{ host: 'github', base: BASE }, { host: 'gitlab', base: 'https://gitlab.com' }, { host: 'gitlab' }, { host: 'gitlab', base: 'nonsense' }]) {
+    assert.deepEqual(companyGitEnv({ A: '1' }, other, { home, platform: 'darwin' }), { A: '1' }, JSON.stringify(other));
+  }
+});
+
+test('the helper\'s record of where GitLab is out of reach keeps a project for a while, and forgets it when reached', () => {
+  let clock = Date.parse('2026-10-22T00:00:00.000Z');
+  const log = makeAwayLog({ now: () => new Date(clock) });
+  assert.deepEqual(log.fresh(), {});
+  log.set('o__p', BASE);
+  log.set('o__q', BASE);
+  assert.deepEqual(log.fresh(), { o__p: BASE, o__q: BASE });
+  log.clear('o__q');
+  assert.deepEqual(log.fresh(), { o__p: BASE });
+  clock += 16 * 60 * 1000;
+  assert.deepEqual(log.fresh(), {});
 });

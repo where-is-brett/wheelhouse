@@ -10,7 +10,7 @@ import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
 import { publicHttps } from '../screens/pages.js';
 import { parseRemote, listed, isDefaultHost, hostWords, DEFAULT_GITLAB } from './gitlab-base.js';
-import { hostFailure, outputKind, lineFor } from './company-ca.js';
+import { hostFailure, outputKind, lineFor, timedOut } from './company-ca.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
@@ -127,7 +127,8 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
     const { code, stdout, stderr } = await attempt(args, input);
     if (code !== 0) {
       // A server that is not there, or a certificate not trusted, is said in our own words, with a code.
-      const failure = host === 'gitlab' ? hostFailure(`${stderr}\n${stdout}`, base) : null;
+      // Read from glab's standard error alone: its standard output is the host's answer, not its own words.
+      const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
       if (failure !== null) throw failure;
       const said = scrub(stderr || stdout, env);
       throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
@@ -157,10 +158,11 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
     return { merged: false, queued: true, reason: QUEUE_LINE };
   }
   // What a failed command says about reaching the host: null, or { kind, line } for a server that is
-  // not there or a certificate not trusted, which a merge reports apart from a refusal.
+  // not there or a certificate not trusted, which a merge reports apart from a refusal (`timedOut`:
+  // the command waited and gave up, so whether it took effect is not known).
   function hostFault(output) {
     const kind = host === 'gitlab' ? outputKind(output) : null;
-    return kind === null ? null : { kind, line: lineFor(kind, base) };
+    return kind === null ? null : { kind, line: lineFor(kind, base), timedOut: kind === 'unreachable' && timedOut(output) };
   }
   const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault };
   const c = commands(tools);

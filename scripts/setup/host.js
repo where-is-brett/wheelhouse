@@ -102,7 +102,8 @@ import { sameRemote } from '../state/git.js';
 import { listEvents } from '../state/events.js';
 import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
 import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
-import { toolsStatus, originUrl } from './tools.js';
+import { toolsStatus, originUrl, applyCompanyCa } from './tools.js';
+import { caFile, probeCertificate, companyGitEnv, gitlabBaseOf } from '../host/company-ca.js';
 import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
   PROFILE_TARGET,
@@ -175,6 +176,9 @@ export const OWN_APP_WAIT_MS = 10 * 60 * 1000;
 // serve the earlier projects, and the profile. The plan waits with it; apply refuses with it.
 export const oneAppLine = ({ kept, using, where }) => `This computer keeps one GitHub App's keys, and they serve your other projects through ${kept}, so ${where} can't be connected through ${using} until a later Wheelhouse update`;
 export const NO_APP_LISTED = 'Step 3\'s list names no GitHub App';
+// Said when setup has given this computer the company's certificate: a program already running
+// reads its trusted certificates when it starts, so the step goes on in a fresh process.
+export const CERTIFICATE_GIVEN = (base) => `Setup has given this computer your company's certificate for ${base}, for that address only. Step 3 stopped here so the certificate takes effect: ask for step 3's card again`;
 export const STOPPED = 'STOP came on, so setup stopped here; once STOP is lifted, a fresh Go ahead carries on';
 // How often the browser sign-in looks at STOP while it waits.
 export const STOP_LOOK_MS = 1000;
@@ -658,8 +662,9 @@ export async function directorGitlabApi({ run = realRun, fetch = globalThis.fetc
 // The environment setup's git runs with: the director's own sign-in, through their host tool as
 // git's only credential helper, never the narrow key, with git's global and system config shut
 // out and no hooks (ruling R109, scripts/setup/git.js, setupGitEnv).
-export function directorGitEnv({ host, gitPath = 'git', env = process.env, platform = process.platform } = {}) {
-  return setupGitEnv({ host, gitPath, env, platform });
+export function directorGitEnv({ host, gitPath = 'git', env = process.env, platform = process.platform, base } = {}) {
+  // With the company's certificate for a company GitLab's address, once setup has made it (company-ca.js).
+  return companyGitEnv(setupGitEnv({ host, gitPath, env, platform }), { host, base }, { platform });
 }
 
 // ---- The repositories ----
@@ -1265,6 +1270,7 @@ export async function switchOnAsDirector({ host, repo, run = realRun, api }) {
 function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false, base = DEFAULT_GITLAB }) {
   const name = NAME[host];
   const parts = [];
+  if (changes.some((c) => c.action === 'certificate')) parts.push(`your company's own certificate for ${base}, copied from this computer's own certificate store and given to Node.js, glab and git for that address only (certificate checks stay on)`);
   if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
@@ -1334,6 +1340,9 @@ export function hostStep({
   hostUrl = httpsRemote, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
   gitlab = ({ run: r, fetch: f, baseUrl }) => directorGitlabApi({ run: r, fetch: f, baseUrl }),
   profileRoutes = null, views = readProfileViews,
+  // Whether GitLab's certificate is trusted from here, and how the company's is given to the tools
+  // (company-ca.js, tools.js): stand-ins in tests.
+  certificateProbe = probeCertificate, trustCertificate = applyCompanyCa,
 } = {}) {
   // The profile's routes through the helper, for the person's own app's record: `profileRoutes`
   // stands in for them in tests; otherwise made when apply needs them.
@@ -1443,6 +1452,12 @@ export function hostStep({
       const profileJoins = profileNow === null || (profileNow.connection?.mode === 'narrow' && profileNow.host === host);
       const twoAccounts = app !== null && !app.own && typeof owner === 'string' && typeof user === 'string' && !sameLogin(owner, user) && profileJoins;
       const changes = [];
+      // A company's GitLab whose certificate this computer does not trust, and no certificate given yet
+      // (the file is there once it has been): the company's own is given first, for that address only.
+      if (host === 'gitlab' && base !== DEFAULT_GITLAB && !fs.existsSync(caFile(wheelhouseHome()))
+        && await certificateProbe({ fetch, base }) === 'certificate') {
+        changes.push({ kind: 'host', target: host, action: 'certificate', base });
+      }
       if (!signedIn) changes.push({ kind: 'host', target: host, action: 'sign-in' });
       if (product.isNew) {
         changes.push({ kind: 'host', target: host, action: 'repository', name: product.name, repo, private: true });
@@ -1526,9 +1541,22 @@ export function hostStep({
       }
       if (join !== null) answerRecord({ joined: join.name });
       else if (joinedRepo(thisRun) !== null) answerRecord({ joined: null });
+      // The company's certificate comes before anything reaches the host. The address is the connection's
+      // own, checked before anything is run; the certificate and glab's setting are made, and the git
+      // settings for that address kept in the journal (git gets them in the environment of its calls).
+      const certificate = changes.find((c) => c.action === 'certificate') ?? null;
+      if (certificate !== null) {
+        if (host !== 'gitlab' || certificate.base !== base) throw new Error('Step 3\'s list gives a certificate for an address other than the connection\'s, so nothing was done: ask for step 3\'s card again');
+        const given = await trustCertificate({ base, platform, run });
+        record({
+          id: newId('chg'), kind: 'answer', target: `step 3: the company's certificate`, before: null,
+          after: { certificate: { base, file: given.file, glabHost: given.glabHost, gitConfig: given.gitConfig } },
+        });
+        throw new Error(CERTIFICATE_GIVEN(base));
+      }
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
-      const gitEnv = directorGitEnv({ host, gitPath: git.path, platform });
+      const gitEnv = directorGitEnv({ host, gitPath: git.path, platform, base });
       const { user } = await signIn({ host, run, say, stopped, base });
       // A repository the card named on one account is never made on another.
       for (const c of changes.filter((x) => (x.action === 'repository' || x.action === 'profile-repository') && typeof x.repo === 'string')) {
@@ -1658,7 +1686,7 @@ export function hostStep({
       if (enrolment !== null) {
         halt();
         await publishEnrolment({
-          profile, listed: enrolment, gitPath: git.path, env: directorGitEnv({ host: Object.hasOwn(TOOL, profile.host) ? profile.host : host, gitPath: git.path, platform }), run, record, now,
+          profile, listed: enrolment, gitPath: git.path, env: directorGitEnv({ host: Object.hasOwn(TOOL, profile.host) ? profile.host : host, gitPath: git.path, platform, base: gitlabBaseOf(profile) ?? undefined }), run, record, now,
         });
       }
       say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : 'narrow'}`);

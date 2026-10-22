@@ -30,7 +30,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
-import { unreachableRefusal, awayLine, outputKind } from './company-ca.js';
+import { unreachableRefusal, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
@@ -626,13 +626,15 @@ export function envForConnection(connectionFor, { fetch, now } = {}) {
 
 // envFor may answer `{ mode, env }` or a bare environment. A bare one is quick
 // when it carries no key, narrow when it does.
-function connectionOf(answer) {
+export function connectionOf(answer) {
   if (answer && typeof answer === 'object' && (answer.mode === 'quick' || answer.mode === 'narrow')
     && answer.env && typeof answer.env === 'object') {
     return { mode: answer.mode, env: answer.env };
   }
   const env = answer && typeof answer === 'object' ? answer : {};
-  const keyed = Object.keys(env).some((k) => k === 'GH_TOKEN' || k === 'GITLAB_TOKEN' || /^GIT_CONFIG_VALUE_\d+$/.test(k));
+  // A GIT_CONFIG_VALUE_<n> is a key unless its setting is the company's certificate (company-ca.js).
+  const keyed = Object.keys(env).some((k) => k === 'GH_TOKEN' || k === 'GITLAB_TOKEN'
+    || (/^GIT_CONFIG_VALUE_\d+$/.test(k) && !certificateSetting(env[`GIT_CONFIG_KEY_${k.slice('GIT_CONFIG_VALUE_'.length)}`])));
   return { mode: keyed ? 'narrow' : 'quick', env };
 }
 
@@ -821,6 +823,11 @@ export async function startHelper({
 
   const sharedEnv = serialisePerProject((project) => envFor(project));
 
+  // The company's certificate for a project record's GitLab address, added to a git environment.
+  const companyGit = (env, record) => companyGitEnv(env, { host: record?.host, base: gitlabBaseOf(record) ?? undefined });
+  // Where GitLab was lately out of reach, by project, for the board (served on /health).
+  const awayLog = makeAwayLog({ now });
+
   // Each request reads the environment once, before anything else, keeps its
   // secrets for scrubbing that request's answer, and gives that same
   // environment to the adapter.
@@ -855,8 +862,9 @@ export async function startHelper({
       mode,
       env,
       signedOut,
-      // What git gets in the helper's own repositories for this connection.
-      gitEnv: mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env },
+      // What git gets in the helper's own repositories for this connection, with the company's
+      // certificate for this project's GitLab address when setup has made it (company-ca.js).
+      gitEnv: companyGit(mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env }, readProject(project)),
       secrets: secretsOf(env),
       adapter: async () => {
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
@@ -1020,7 +1028,11 @@ export async function startHelper({
         // A shallow marker came in with the objects: start the mirror afresh next time.
         fs.rmSync(mirror, { recursive: true, force: true });
       }
-      if (!checked.allowed) return { ok: false, refused: (checked.away === true ? awayLine(recordOf(project)) : null) ?? checked.refused };
+      if (!checked.allowed) {
+        const line = checked.away === true ? awayLine(recordOf(project)) : null;
+        if (line !== null) awayLog.set(project, gitlabBaseOf(recordOf(project)));
+        return { ok: false, refused: line ?? checked.refused };
+      }
 
       // A code push that changes a CI file goes only with the director's click
       // for this commit, and then with the director's own sign-in.
@@ -1041,11 +1053,17 @@ export async function startHelper({
 
       if (stopped() && !allowStop) return STOP_REFUSAL;
       const pushed = await pusher('git', ['push', '--no-verify', '--porcelain', REMOTE, `${checked.sha}:refs/heads/${branch}`], { cwd: mirror });
-      if (pushed.code === 0) return { ok: true, sha: checked.sha };
+      if (pushed.code === 0) {
+        awayLog.clear(project);
+        return { ok: true, sha: checked.sha };
+      }
       if (pushed.timedOut) return { ok: false, refused: 'the host did not answer the push in time' };
       // A GitLab that cannot be reached is one line, and the push stays here to be sent later.
       const away = unreachableRefusal(recordOf(project), pushed.stderr);
-      if (away !== null) return { ok: false, refused: away };
+      if (away !== null) {
+        awayLog.set(project, gitlabBaseOf(recordOf(project)));
+        return { ok: false, refused: away };
+      }
       const refused = pushed.stdout.split('\n').find((line) => line.startsWith('!') && line.includes(`refs/heads/${branch}`));
       // Another computer's push can land between ours: the host then declines to move the branch
       // ("failed to update ref", "incorrect old value provided"), which is the same as the branch having moved on.
@@ -1315,7 +1333,7 @@ export async function startHelper({
       mode,
       env,
       signedOut: false,
-      gitEnv: mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env },
+      gitEnv: companyGit(mode === 'narrow' ? { ...ISOLATED, ...env } : { ...env }, profileRemote()),
       secrets: secretsOf(env),
       adapter: async () => refuse('the profile makes no requests of the host'),
     };
@@ -2095,6 +2113,8 @@ export async function startHelper({
       return { ok: false, refused: reasons.join('; '), reasons, ...found };
     }
     const merged = await adapter.merge({ number, sha: headSha });
+    if (merged?.unreachable === true) awayLog.set(project, gitlabBaseOf(recordOf(project)));
+    else if (merged?.merged === true) awayLog.clear(project);
     // The front desk adds the briefing line for a pins-only release.
     if (merged?.merged === true) return { ok: true, merged: true, sha: headSha, ...found, ...(pinsOnly ? { ...release, briefing: briefingLine(releaseCheck.ref) } : {}) };
     return { ok: false, refused: merged?.reason || 'the host did not merge the pull request', ...found };
@@ -2486,8 +2506,13 @@ export async function startHelper({
       try {
         const adapter = await ctx.adapter();
         const branch = await defaultBranchOf(project, adapter);
-        return await adapter.hasCi(await adapter.branchHead(branch), branch) ? 'present' : 'none';
-      } catch { return 'unknown'; }
+        const has = await adapter.hasCi(await adapter.branchHead(branch), branch);
+        awayLog.clear(project);
+        return has ? 'present' : 'none';
+      } catch (error) {
+        if (error?.code === 'HOST_UNREACHABLE') awayLog.set(project, gitlabBaseOf(recordOf(project)));
+        return 'unknown';
+      }
     };
     const [onOrNot, checks] = await Promise.all([protection(), ci()]);
     return { ok: true, protection: onOrNot, ci: checks };
@@ -2702,7 +2727,10 @@ export async function startHelper({
 
   async function handle(req, res) {
     const url = new URL(req.url ?? '/', 'http://helper');
-    if (url.pathname === '/health') return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}) });
+    if (url.pathname === '/health') {
+      const away = awayLog.fresh();
+      return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}) });
+    }
     const route = Object.hasOwn(routes, url.pathname) ? routes[url.pathname] : null;
     if (!route) {
       req.resume();

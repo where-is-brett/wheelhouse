@@ -14,9 +14,11 @@ import {
   hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
+import { caFile, probeCertificate } from '../../../scripts/host/company-ca.js';
+import { applyCompanyCa } from '../../../scripts/setup/tools.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupGit } from '../../../scripts/setup/git.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
@@ -1068,6 +1070,111 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
     const folder = productFolder('shop');
     await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
     await assert.rejects(answerAll(stepFor(w), ctxFor(folder), choose()), /localhost:8929.*not GitHub or GitLab/);
+  });
+});
+
+// ---- The company's own certificate (check 71) ----
+
+const COMPANY_ORIGIN = 'https://git.example.org:8443';
+const authorityFixture = () => fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+
+async function companyProduct() {
+  const folder = productFolder('shop');
+  fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
+  await withOrigin(folder, `${COMPANY_ORIGIN}/${USER}/shop.git`);
+  return folder;
+}
+
+test('a company GitLab whose certificate is not trusted gets a certificate step first, recorded in the journal, and the step carries on in a fresh process', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = await companyProduct();
+    const probed = [];
+    const calls = [];
+    const certificateRun = async (file, args) => {
+      calls.push([path.basename(file), ...args]);
+      return file === 'security' ? { code: 0, stdout: authorityFixture(), stderr: '' } : { code: 0, stdout: '', stderr: '' };
+    };
+    const step = stepFor(w, {
+      certificateProbe: async (a) => { probed.push(a.base); return 'certificate'; },
+      trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
+    });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(probed, [COMPANY_ORIGIN]);
+    assert.deepEqual(planned.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
+    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443.*that address only.*certificate checks stay on/);
+    assert.ok(planned.changes.findIndex((c) => c.action === 'certificate') < planned.changes.findIndex((c) => c.action === 'sign-in'));
+    assert.ok(!fs.existsSync(caFile(wheelhouseHome())), 'planning changes nothing');
+
+    // Applied: the file, glab's setting for host:port, a journal entry holding the git setting for that
+    // address; nothing is signed in, and nothing is pushed (git is not run).
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => {
+      assert.equal(error.message, CERTIFICATE_GIVEN(COMPANY_ORIGIN));
+      return true;
+    });
+    const file = caFile(wheelhouseHome());
+    assert.equal(fs.readFileSync(file, 'utf8'), authorityFixture().replace(/^#.*\n/gm, ''));
+    assert.deepEqual(calls.map((c) => c[0]), ['security', 'security', 'glab']);
+    assert.deepEqual(calls.at(-1).slice(1), ['config', 'set', 'ca_cert', file, '--host', 'git.example.org:8443']);
+    assert.ok(!w.calls.some((c) => c.tool === 'glab' && c.args[0] === 'auth' && c.args[1] === 'login'));
+    const entry = findRun(folder).changes.find((c) => c.kind === 'answer' && c.after?.certificate);
+    assert.deepEqual(entry.after.certificate, {
+      base: COMPANY_ORIGIN, file, glabHost: 'git.example.org:8443', gitConfig: [{ key: `http.${COMPANY_ORIGIN}/.sslCAInfo`, value: file }],
+    });
+
+    // Planned again (the fresh process): the file is there, so the certificate is not asked of GitLab again.
+    probed.length = 0;
+    const again = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(probed, []);
+    assert.ok(again.changes.every((c) => c.action !== 'certificate'));
+  });
+});
+
+test('no certificate step is listed when GitLab\'s certificate is trusted, the address is the public service\'s, or the probe cannot tell', async () => {
+  for (const [answer, origin, want] of [['ok', COMPANY_ORIGIN, 1], ['unreachable', COMPANY_ORIGIN, 1], ['other', COMPANY_ORIGIN, 1], ['certificate', 'https://gitlab.com', 0]]) {
+    await withHome(async () => {
+      const w = standIn({ signedIn: { github: true, gitlab: false } });
+      const folder = productFolder('shop');
+      fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
+      await withOrigin(folder, `${origin}/${USER}/shop.git`);
+      let probes = 0;
+      const step = stepFor(w, { certificateProbe: async () => { probes += 1; return answer; } });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+      assert.equal(probes, want, `${answer} ${origin}`);
+      assert.ok(planned.changes.every((c) => c.action !== 'certificate'), `${answer} ${origin}`);
+    });
+  }
+  // The probe itself: a trusted certificate is 'ok' whatever GitLab then answers; the codes decide the rest.
+  const failing = (code) => async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code }) }); };
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: async () => ({ status: 401, body: null }) }), 'ok');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('UNABLE_TO_VERIFY_LEAF_SIGNATURE') }), 'certificate');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('ECONNREFUSED') }), 'unreachable');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('EWHATEVER') }), 'other');
+});
+
+test('setup\'s git carries the company\'s certificate for that address once the file is made, and only then', async () => {
+  await withHome(async () => {
+    const certificateKey = `http.${COMPANY_ORIGIN}/.sslCAInfo`;
+    const pairs = (env) => Object.keys(env).filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]);
+    const before = directorGitEnv({ host: 'gitlab', platform: 'darwin', base: COMPANY_ORIGIN });
+    assert.ok(!pairs(before).some(([k]) => k === certificateKey));
+    fs.mkdirSync(path.dirname(caFile(wheelhouseHome())), { recursive: true });
+    fs.writeFileSync(caFile(wheelhouseHome()), authorityFixture());
+    const after = directorGitEnv({ host: 'gitlab', platform: 'darwin', base: COMPANY_ORIGIN });
+    assert.deepEqual(pairs(after).filter(([k]) => /ssl/i.test(k) && k.startsWith('http.') && !k.startsWith('http.sslVerify')), [[certificateKey, caFile(wheelhouseHome())]]);
+    assert.equal(after.GIT_CONFIG_COUNT, String(pairs(after).length));
+    assert.equal(after.GIT_CONFIG_GLOBAL, '/dev/null');
+    assert.equal(after.GIT_CONFIG_NOSYSTEM, '1');
+    // The sign-in helper and the fence are still there, ahead of it.
+    assert.ok(pairs(after).some(([k, v]) => k === 'credential.helper' && /auth git-credential/.test(v)));
+    assert.deepEqual(pairs(after).find(([k]) => k === 'http.sslVerify'), ['http.sslVerify', 'true']);
+    // Not for the public service, GitHub, or a call that names no address.
+    for (const given of [{ host: 'gitlab', base: 'https://gitlab.com' }, { host: 'github', base: COMPANY_ORIGIN }, { host: 'gitlab' }]) {
+      assert.ok(!pairs(directorGitEnv({ ...given, platform: 'darwin' })).some(([k]) => /sslcainfo|sslbackend/i.test(k)), JSON.stringify(given));
+    }
+    // On Windows it is the system store.
+    const win = directorGitEnv({ host: 'gitlab', platform: 'win32', base: COMPANY_ORIGIN });
+    assert.ok(pairs(win).some(([k, v]) => k === `http.${COMPANY_ORIGIN}/.sslBackend` && v === 'schannel'));
   });
 });
 

@@ -82,6 +82,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { caEnv } from '../host/company-ca.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
@@ -583,7 +584,7 @@ export function setupRoutes({
     };
     try {
       const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome], {
-        cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
+        cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);
       child?.unref?.();

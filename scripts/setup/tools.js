@@ -41,7 +41,7 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
-import { caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig } from '../host/company-ca.js';
+import { caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf } from '../host/company-ca.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -381,12 +381,14 @@ export function nodeRefusal(node) {
 // reaches this address (withGitConfig), and Node.js's as `nodeEnv`. A step that applies it adds it to
 // the journal as it does any other change.
 export async function applyCompanyCa({ base, home = wheelhouseHome(), platform = process.platform, run = realRun, refresh = false } = {}) {
+  // The address is checked first (https, or http on this computer): nothing is written or run for another.
+  const address = addressOf(base);
   const file = caFile(home);
   if (refresh || !fs.existsSync(file)) writeCaFile({ home, pem: await exportSystemRoots({ platform, run }) });
-  const host = new URL(base).host;
+  const host = new URL(address).host;
   const set = await quietly(run, toolPath('glab', { platform }), glabCaArgs(host, file));
   if (set.code !== 0) throw new Error(`glab could not be given the company's certificate for ${host}`);
-  return { file, glabHost: host, nodeEnv: caEnv(home), gitConfig: gitCaConfig(base, file, platform) };
+  return { file, glabHost: host, nodeEnv: caEnv(home), gitConfig: gitCaConfig(address, file, platform) };
 }
 
 // ---- The installers ----

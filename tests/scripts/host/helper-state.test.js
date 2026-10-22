@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { HOST_UNREACHABLE } from '../../../scripts/host/company-ca.js';
+import { HOST_UNREACHABLE, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
+import { connectionOf } from '../../../scripts/host/helper.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -78,7 +79,7 @@ async function privateRepo() {
 
 // One computer: its own home, an enrolled signing key, a project record, and a
 // helper whose connection is the key. (In this process, so one call at a time.)
-async function computer(repo, { adapter = fakeAdapter(), envFor, project = {} } = {}) {
+async function computer(repo, { adapter = fakeAdapter(), envFor, project = {}, run: runOver } = {}) {
   const home = shortHome();
   const entry = await as(home, async () => {
     const made = makeSigningKey();
@@ -91,6 +92,7 @@ async function computer(repo, { adapter = fakeAdapter(), envFor, project = {} } 
   const helper = await as(home, () => startHelper({
     address: testAddress(home),
     adapterFor: async () => adapter,
+    ...(runOver ? { run: runOver } : {}),
     envFor: envFor ?? (async () => ({ mode: 'narrow', env: hostKeyEnv(repo.host.url, TOKEN) })),
     now: () => new Date(T0.getTime() + 1000 * (tick += 1)),
   }));
@@ -656,9 +658,73 @@ test('a write while a company GitLab is away says so in the one line, and is kep
       assert.equal(away.ok, true);
       assert.equal(away.pushed, false);
       assert.equal(away.refused, HOST_UNREACHABLE(repo.host.url));
+      // The helper says so on /health, for the board, for this project alone.
+      assert.deepEqual((await c.client.health()).away, { [PROJECT]: repo.host.url });
       assert.deepEqual(await c.client.state.sync({ project: PROJECT }), { ok: true, pulled: false, unpushed: 1 });
     });
   } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
+});
+
+test('git is given the company\'s certificate for that project\'s address only, once setup has made the file', async () => {
+  const repo = await privateRepo();
+  const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+  const seen = [];
+  const spy = (file, args, options) => {
+    seen.push({ file, args, env: options?.env ?? {} });
+    return run(file, args, options);
+  };
+  const gitlab = { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } };
+  const settingsOf = (env) => Object.keys(env).filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]);
+  const certificateKey = `http.${repo.host.url}/.sslCAInfo`;
+  const c = await computer(repo, { project: gitlab, run: spy });
+  try {
+    // Before setup has made the file: no certificate setting anywhere.
+    await c.as(async () => {
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+    });
+    const gitCalls = () => seen.filter((s) => s.file === 'git' && s.env.GIT_CONFIG_COUNT !== undefined);
+    assert.ok(gitCalls().length > 0);
+    assert.ok(gitCalls().every((s) => !settingsOf(s.env).some(([k]) => /sslcainfo|sslbackend/i.test(k))));
+    // After: the setting for this address, beside the key, in the environment of the call (no file of git's).
+    seen.length = 0;
+    const file = await c.as(async () => {
+      const made = writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
+      assert.equal(made, caFile(process.env.WHEELHOUSE_HOME));
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } })).pushed, true);
+      return made;
+    });
+    const withIt = gitCalls().filter((s) => settingsOf(s.env).some(([k]) => k === certificateKey));
+    assert.ok(withIt.length > 0);
+    for (const s of gitCalls()) {
+      const own = settingsOf(s.env).filter(([k]) => /ssl/i.test(k));
+      assert.deepEqual(own, [[certificateKey, file]]);
+      assert.equal(s.env.GIT_CONFIG_COUNT, String(settingsOf(s.env).length));
+    }
+    assert.ok(withIt.some((s) => s.args.includes('push')), 'the push carries it');
+    assert.ok(!seen.some((s) => s.args.some((a) => /--global|--system/.test(String(a)))));
+  } finally { await c.close(); await repo.cleanup(); }
+  // A GitHub project never gets it, file or no file.
+  const other = await privateRepo();
+  seen.length = 0;
+  const d = await computer(other, { run: spy });
+  try {
+    await d.as(async () => {
+      writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
+      assert.equal((await d.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+    });
+    assert.ok(seen.every((s) => !JSON.stringify(s.env).includes('sslCAInfo')));
+  } finally { await d.close(); await other.cleanup(); }
+});
+
+test('an environment carrying only the certificate setting is not a key', () => {
+  const certificate = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://git.example.org/.sslCAInfo', GIT_CONFIG_VALUE_0: '/home/pat/.wheelhouse/ca/company.pem' };
+  assert.equal(connectionOf(certificate).mode, 'quick');
+  assert.equal(connectionOf({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://git.example.org/.sslBackend', GIT_CONFIG_VALUE_0: 'schannel' }).mode, 'quick');
+  // The header with a key still makes it narrow, with the certificate beside it or not.
+  const header = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://git.example.org/.extraheader', GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic eDp5' };
+  assert.equal(connectionOf(header).mode, 'narrow');
+  assert.equal(connectionOf({ ...header, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_1: certificate.GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_1: certificate.GIT_CONFIG_VALUE_0 }).mode, 'narrow');
+  assert.equal(connectionOf({ GITLAB_TOKEN: 'glpat-x' }).mode, 'narrow');
 });
 
 test('two computers writing at once through their own helpers both land', async () => {

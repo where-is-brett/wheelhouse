@@ -167,8 +167,10 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       if (code !== 0) {
         // A merge that could not reach the host, or did not trust its certificate, is not a refusal:
         // it says so, and its own flag tells the caller why.
-        const fault = hostFault(`${stderr}\n${stdout}`);
-        if (fault !== null) return { merged: false, [fault.kind]: true, reason: `Not merged. ${fault.line}` };
+        // glab's standard error is its own words. A command that waited and gave up may have
+        // reached the host before it did, so that is said as not confirmed, as settle does.
+        const fault = hostFault(stderr);
+        if (fault !== null) return { merged: false, [fault.kind]: true, reason: `${fault.timedOut ? 'The merge could not be confirmed.' : 'Not merged.'} ${fault.line}` };
         return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitLab did not merge the merge request') };
       }
       return settle({
