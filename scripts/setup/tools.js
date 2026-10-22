@@ -233,14 +233,14 @@ function outsideProject(from, folder) {
   }
   let file;
   try {
-    file = fs.realpathSync(from);
+    file = fs.realpathSync.native(from);
   } catch {
     throw new Error(`Your company's list at ${from} could not be read, so setup did not fetch glab`);
   }
   if (typeof folder === 'string') {
     const roots = [path.resolve(folder)];
     try {
-      roots.push(fs.realpathSync(folder));
+      roots.push(fs.realpathSync.native(folder));
     } catch { /* the folder as given */ }
     const inside = (target, root) => {
       const rel = path.relative(root, target);

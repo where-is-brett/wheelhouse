@@ -283,6 +283,36 @@ test('a company list written as a relative path, or lying inside the project fol
   });
 });
 
+// A volume that ignores case: a folder named in a different case is the same folder, so a list reached that way is inside it.
+const caseBlind = (() => {
+  const probe = fs.realpathSync.native(tempFolder('wh-case-probe-'));
+  const upper = path.join(path.dirname(probe), path.basename(probe).toUpperCase());
+  try {
+    return upper !== probe && fs.existsSync(upper);
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
+test('a company list reached through the project folder written in a different case is refused as inside it', { skip: caseBlind ? false : 'this file system tells upper and lower case apart' }, async () => {
+  const INSIDE = /inside this project's folder.*keep the list outside the project/;
+  await withHome(async () => {
+    const { dir } = listFolder();
+    const m = computer();
+    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const folder = projectWith();
+    const inFolder = path.join(folder, 'tools');
+    fs.cpSync(dir, inFolder, { recursive: true });
+    const shouted = path.join(path.dirname(folder), path.basename(folder).toUpperCase());
+    const listInShoutedFolder = path.join(shouted, 'tools', 'list.json');
+    assert.notEqual(shouted, folder);
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ glabFrom: `company ${listInShoutedFolder}` }));
+    await assert.rejects(step.plan(ctxFor(folder)), INSIDE);
+    await assert.rejects(fetchHostTool({ tool: 'glab', platform: 'darwin', arch: 'arm64', fetch: noFetch, run: m.run, source: glabSource({ setting: `company ${listInShoutedFolder}` }), folder }), INSIDE);
+    assert.deepEqual(m.unpacked, []);
+  });
+});
+
 // ---- Test 2 ----
 
 test('a copy with no checksum is named on the card', async () => {
