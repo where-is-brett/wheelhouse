@@ -3,7 +3,8 @@
 // connection's key, so these work against a private repository (a stand-in
 // host that refuses any request without the key) from a computer whose own
 // code has no key at all.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -36,6 +37,11 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { waitLongerOnTheHelper } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -88,6 +94,7 @@ async function computer(repo, { adapter = fakeAdapter(), envFor } = {}) {
   });
   let tick = 0; // each call to now() is a second later, so a touch is never the same as the take before it
   const helper = await as(home, () => startHelper({
+    run: hostGuard,
     address: testAddress(home),
     adapterFor: async () => adapter,
     envFor: envFor ?? (async () => ({ mode: 'narrow', env: hostKeyEnv(repo.host.url, TOKEN) })),

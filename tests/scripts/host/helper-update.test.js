@@ -3,7 +3,8 @@
 // section 12): the helper merges the default branch into the pull request's
 // branch in its own mirror and pushes the merge; a signed review of an
 // earlier commit still counts when the feature's own changes did not move.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -23,6 +24,11 @@ import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
 import { until as waitUntil } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -119,7 +125,7 @@ const approved = (commitSha) => record('approval', { pr: 7, commit: commitSha })
 // One helper for the home, with the adapter for the host, and `options` for startHelper.
 async function withHelper(home, adapter, fn, options = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     try {
       return await fn(helperClient({ address: helper.address }));
     } finally { await helper.close(); }
@@ -334,7 +340,7 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
     const fetches = [];
     const counting = (file, args, options) => {
       if (args.includes('fetch')) fetches.push(args);
-      return run(file, args, options);
+      return hostGuard(file, args, options);
     };
     const adapter = fakeAdapter(pr.remote);
     await withHelper(home, adapter, async (client) => {
@@ -707,7 +713,7 @@ function heldShoot() {
 // Starts a helper for `home`, runs `fn(client, helper)`, and closes the helper if `fn` did not.
 async function withOpenHelper(home, adapter, fn, options) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     let closed = false;
     const close = async () => { closed = true; await helper.close(); };
     try {

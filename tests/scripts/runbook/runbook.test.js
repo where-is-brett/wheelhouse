@@ -1,7 +1,8 @@
 // tests/scripts/runbook/runbook.test.js
 // The runbook's five steps (design section 12.7), served by the host helper,
 // and runbook.js, the only command STOP lets through.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -27,6 +28,11 @@ import { listEvents } from '../../../scripts/state/events.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = new Date('2026-10-18T12:00:00.000Z');
 const MIN = 60 * 1000;
@@ -124,6 +130,7 @@ function fakeAdapter(overrides = {}) {
 async function viaHelper(s, adapter, fn, extra = {}) {
   await as(s.home, async () => {
     const helper = await startHelper({
+      run: hostGuard,
       address: testAddress(s.home), adapterFor: async () => adapter, envFor: async () => ({}), now: () => NOW, ...extra,
     });
     try { await fn(helperClient({ address: helper.address }), helper); } finally { await helper.close(); }
@@ -597,7 +604,7 @@ test('with no sign-in either, a runbook route that needs the host answers with t
   const envFor = envForConnection((project) => readProject(project).connection, { fetch: noFetch, now: () => NOW });
   const failing = async (file, args, options) => (args.includes('fetch') && !options?.env?.GH_TOKEN
     ? { code: 1, stdout: '', stderr: AUTH_FAILURE, timedOut: false }
-    : run(file, args, options));
+    : hostGuard(file, args, options));
   try {
     await viaHelper(s, fakeAdapter(), async (client) => {
       assert.deepEqual(await client.runbook.candidates({ project: 'o__p' }), { ok: false, refused: PUSH_REFUSALS.ciSignIn });
@@ -613,7 +620,7 @@ test('a restore that changes a CI file is pushed with the director\'s sign-in on
   const env = { GH_TOKEN: FAKE_KEY, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraHeader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x:${FAKE_KEY}`).toString('base64')}` };
   const pushed = async (scene, sceneEnv, key) => {
     const calls = [];
-    const recording = async (file, args, options) => { calls.push({ args, env: options?.env }); return run(file, args, options); };
+    const recording = async (file, args, options) => { calls.push({ args, env: options?.env }); return hostGuard(file, args, options); };
     let answer;
     await as(scene.home, async () => { click(3, { sha: scene.c1.slice(0, 12) }); });
     await viaHelper(scene, fakeAdapter(), async (client) => { answer = await client.runbook.restoreMain({ project: 'o__p', sha: scene.c1 }); }, { envFor: async () => sceneEnv, run: recording });

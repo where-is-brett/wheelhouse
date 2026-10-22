@@ -1,7 +1,9 @@
 // tests/scripts/setup/cli.test.js
 // Setup's one command, `cli.js <plan | apply | status | resume>`: each form asks the helper's
 // setup routes for this folder, and says what they answered.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,6 +19,11 @@ import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { keepClick } from '../../../scripts/setup/clicks.js';
 import { readJournal } from '../../../scripts/setup/journal.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const SCRIPT = fileURLToPath(new URL('../../../scripts/setup/cli.js', import.meta.url));
 const STEPS_MODULE = fileURLToPath(new URL('../../helpers/setup-steps.js', import.meta.url));
@@ -153,6 +160,7 @@ test('against the helper, a card is planned, refused without its click, applied 
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
     fs.writeFileSync(path.join(home, 'test-world.json'), JSON.stringify({ 1: [{ file: 'x.json', key: ['a'], value: 1 }] }));
     const helper = await startHelper({
+      run: hostGuard,
       address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => T0, setupSteps: STEPS_MODULE, userHome: user,
     });
     const client = helperClient({ address: helper.address });

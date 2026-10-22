@@ -137,7 +137,7 @@ export async function runTrials(deps = {}) {
   });
 
   await trial('run gh', 'refused', () => {
-    const paths = ghPaths();
+    const paths = deps.ghPaths ?? ghPaths();
     const gh = paths.find((p) => fs.existsSync(p));
     // A copy the sandbox won't even let the agent see is one it can't run.
     if (!gh && paths.some((p) => hidden(fs, p))) return 'refused';

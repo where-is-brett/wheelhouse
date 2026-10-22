@@ -2,7 +2,9 @@
 // A pull request that only moves the project to a pins-only Wheelhouse release needs the signed
 // review but not the director's approval; the helper works that out itself, from the changed
 // file and from Wheelhouse's repository at the tag, and lowers nothing else.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,6 +24,11 @@ import { RELEASE_WHY, briefingLine, releaseBranch, releaseChange, settingsText, 
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const BODY = matchingBody();
 const T0 = new Date('2026-10-19T01:00:00.000Z');
@@ -111,7 +118,7 @@ async function mergeRelease({ pr, headRef, repo, before = () => {}, ci = 'succes
         ciState: async (sha) => ({ sha, state: ci }),
         merge: async (args) => { merges.push(args); return { merged: true }; },
       };
-      const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), wheelhouseRepo: repo.url });
+      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), wheelhouseRepo: repo.url });
       try {
         const answer = await helperClient({ address: helper.address }).merge({ project: 'o__p', number: 7, stop: false, bypass: false, ...body });
         return { answer, merges };

@@ -59,10 +59,15 @@ import { projectConfig } from '../../scripts/watcher/main.js';
 import { readWake } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
-import { standInTools } from '../helpers/host-stand-ins.js';
+import { standInTools, guardedRun } from '../helpers/host-stand-ins.js';
 import { prOnHost } from '../helpers/pr-on-host.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper, WAIT_MS } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -168,7 +173,7 @@ async function onComputer({ register = true } = {}, body) {
         remoteUrl: profileRemote.url, host: 'github', repo: 'o/profile', connection: { host: 'github', mode: 'quick', project: 'o/profile' },
       }));
       freshFacts();
-      const helper = await startHelper({ address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}) });
+      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}) });
       try {
         c.client = helperClient({ address: helper.address });
         if (register) {

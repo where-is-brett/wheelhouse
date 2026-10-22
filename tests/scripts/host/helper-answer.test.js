@@ -1,7 +1,9 @@
 // tests/scripts/host/helper-answer.test.js
 // /state/answer: the label of a question's verified answer, from the views alone,
 // and null for anything else. Read-only, so STOP lets it through.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,6 +18,11 @@ import { dataHash, eventPath, makeEvent } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (n) => () => new Date(T0.getTime() + n * 1000);
@@ -56,7 +63,7 @@ const click = (n, extra = {}) => makeEvent({
 });
 
 async function withHelper(fn) {
-  const helper = await startHelper({ address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
+  const helper = await startHelper({ run: hostGuard, address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
   try {
     return await fn(helperClient({ address: helper.address }));
   } finally {

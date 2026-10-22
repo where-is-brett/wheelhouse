@@ -35,9 +35,14 @@ import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { approvalLine, confirmLine, replyCode, replyCodeLine } from '../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
-import { standInTools } from '../helpers/host-stand-ins.js';
+import { standInTools, guardedRun } from '../helpers/host-stand-ins.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper, until, WAIT_MS } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -142,7 +147,7 @@ async function setUp({ prFiles } = {}) {
     }));
     freshFacts(T0);
   });
-  const helper = await as(home, () => startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), now }));
+  const helper = await as(home, () => startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), now }));
   const client = helperClient({ address: helper.address });
   await as(home, async () => assert.deepEqual(await client.state.clone({ project: PROJECT }), { ok: true }));
   const c = {

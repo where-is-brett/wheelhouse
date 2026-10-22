@@ -17,6 +17,7 @@
 // waker in Shape 2, which starts nothing and prints its wakes. Pictures of a preview are taken by a
 // stand-in for scripts/screens/shoot.js, in a browser whose path is Chrome's (ruling F61).
 import { test, before, beforeEach, afterEach, after } from 'node:test';
+import { run as realRun } from '../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -40,11 +41,16 @@ import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
 import { makeWaker } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
-import { standInTools } from '../helpers/host-stand-ins.js';
+import { standInTools, guardedRun } from '../helpers/host-stand-ins.js';
 import { writeFiles } from '../helpers/lineage.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed } from '../helpers/sandbox-wall.js';
 import { waitLongerOnTheHelper, until as waitUntil, WAIT_MS } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -162,6 +168,7 @@ async function makeWorld() {
       remoteUrl: profileRemote.url, host: 'github', repo: 'o/profile', connection: { host: 'github', mode: 'quick', project: 'o/profile' },
     }));
     const helper = await startHelper({
+      run: hostGuard,
       address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}), now,
       screens: { shoot: standInShoot(world), browser: CHROME },
     });

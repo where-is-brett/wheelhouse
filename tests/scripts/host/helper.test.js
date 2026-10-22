@@ -1,5 +1,6 @@
 // tests/scripts/host/helper.test.js
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -22,6 +23,11 @@ import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
 import { until } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -62,6 +68,7 @@ function fakeAdapter(overrides = {}) {
 // Runs fn with a helper on the current home's test address.
 async function withHelper(adapter, fn, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), ...extra,
   });
   try {
@@ -153,7 +160,7 @@ test('the Windows address is a named pipe for the user', () => {
 
 test('a socket path that is too long is refused with a plain error', { skip: unixOnly }, async () => {
   const address = path.join(os.tmpdir(), 'x'.repeat(120), 'helper.sock');
-  await assert.rejects(startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }), /too long/);
+  await assert.rejects(startHelper({ run: hostGuard, address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }), /too long/);
 });
 
 test('a second helper refuses to start while the first answers', async () => {
@@ -161,7 +168,7 @@ test('a second helper refuses to start while the first answers', async () => {
   try {
     await as(home, () => withHelper(fakeAdapter(), async (client, helper) => {
       await assert.rejects(
-        startHelper({ address: helper.address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }),
+        startHelper({ run: hostGuard, address: helper.address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }),
         /already running/,
       );
       assert.equal((await client.health()).ok, true, 'the first is untouched');
@@ -637,7 +644,7 @@ test('a push or merge refusal never includes a key', async () => {
   const calls = [];
   const recordingRun = async (file, args, options) => {
     calls.push({ file, args, env: options?.env });
-    return run(file, args, options);
+    return hostGuard(file, args, options);
   };
   const leaky = fakeAdapter({
     prState: async () => { throw new Error(`gh pr view failed: bad credentials ${FAKE_KEY}`); },
@@ -771,7 +778,7 @@ test('quick and narrow both shut out the system and user git config; quick signs
       ];
       for (const [label, envFor, mode] of cases) {
         const calls = [];
-        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
+        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
         await withHelper(fakeAdapter(), async (client) => {
           await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
           await g(dir, 'branch', '-f', 'feature');
@@ -845,7 +852,7 @@ test('a folder that takes too long to read is refused', async () => {
       await g(dir, 'branch', 'feature');
       const slowFolder = async (file, args, options) => (args.includes('fetch') && args.includes(dir)
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
-        : run(file, args, options));
+        : hostGuard(file, args, options));
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: 'reading the folder took too long' });
       }, { run: slowFolder });
@@ -897,7 +904,7 @@ test('a push that times out is refused, saying so', async () => {
       await g(dir, 'branch', 'feature');
       const slowHost = async (file, args, options) => (args.includes('push')
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
-        : run(file, args, options));
+        : hostGuard(file, args, options));
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: 'the host did not answer the push in time' });
       }, { run: slowHost });
@@ -916,7 +923,7 @@ test('the mirror drops its per-request refs, keeps the base, and tidies after th
       await g(dir, 'branch', 'feature');
       await g(dir, 'branch', 'second');
       const calls = [];
-      const recording = async (file, args, options) => { calls.push({ args, cwd: options?.cwd }); return run(file, args, options); };
+      const recording = async (file, args, options) => { calls.push({ args, cwd: options?.cwd }); return hostGuard(file, args, options); };
       const refs = async () => (await run('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror })).stdout.trim();
       const collected = (from) => calls.slice(from).some((c) => c.args.includes('gc') && c.args.includes('--auto') && c.cwd === mirror);
       // The tidy runs after the answer, behind it on the same queue: wait until it has run.
@@ -991,7 +998,7 @@ test('two helpers starting at once leave one running and none orphaned', { skip:
     await as(home, async () => {
       for (let round = 0; round < 8; round += 1) {
         const address = testAddress(home);
-        const start = () => startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
+        const start = () => startHelper({ run: hostGuard, address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
         const settled = await Promise.allSettled([start(), start(), start()]);
         const running = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
         try {
@@ -1034,7 +1041,7 @@ test('a helper that finds another starting says so in its own words', { skip: un
       const address = testAddress(home);
       fs.writeFileSync(`${address}.start`, `${process.pid}\n`);
       await assert.rejects(
-        startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}), startWaitMs: 150 }),
+        startHelper({ run: hostGuard, address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}), startWaitMs: 150 }),
         /Another helper is starting/,
       );
       assert.equal(fs.existsSync(`${address}.start`), true, 'a lock that is not ours is left alone');
@@ -1115,7 +1122,7 @@ test('a hostile global git config reaches none of the helper\'s git, in quick or
         await g(dir, 'branch', '-f', 'feature');
         // Only the helper and its git see the hostile home; the test's own git calls do not.
         const calls = [];
-        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
+        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
         await withProcessEnv({ HOME: scratch, USERPROFILE: scratch, XDG_CONFIG_HOME: path.join(scratch, 'xdg') }, () => withHelper(fakeAdapter(), async (client) => {
           assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
         }, { envFor, run: recordingRun }));
@@ -1142,7 +1149,7 @@ test('a local path is reached only for a project whose recorded remote is one', 
     await as(p.home, async () => {
       const dir = stateDir('o__p');
       const calls = [];
-      const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
+      const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
       const protocolOfFetch = async (keyEnv = null) => {
         calls.length = 0;
         await withHelper(fakeAdapter(), async (client) => {
@@ -1178,7 +1185,7 @@ async function folderWith(lines = []) {
 const lookCalls = (calls) => calls.filter((c) => c.file === 'git' && c.args.includes('--name-only') && c.args.includes('--list'));
 const recorder = (calls) => async (file, args, options) => {
   calls.push({ file, args, cwd: options?.cwd, env: options?.env });
-  return run(file, args, options);
+  return hostGuard(file, args, options);
 };
 
 test('a push from a project folder whose config sets core.fsmonitor is refused, naming it, and nothing runs', async () => {

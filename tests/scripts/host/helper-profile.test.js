@@ -1,7 +1,8 @@
 // tests/scripts/host/helper-profile.test.js
 // The director's profile through the helper: its own repository (a bare one here), its
 // own branch, its own push rules, and the weekly backup of each project's state into it.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +21,11 @@ import { keysDir } from '../../../scripts/lib/paths.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const PROJECT = 'o__p';
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -57,6 +63,7 @@ async function computer({ profile = true, shared } = {}) {
   let tick = 0;
   const now = () => new Date(T0.getTime() + 1000 * (tick += 1));
   const helper = await as(home, () => startHelper({
+    run: hostGuard,
     address: testAddress(home),
     adapterFor: async () => fakeAdapter(),
     envFor: async () => ({ mode: 'quick', env: {} }),

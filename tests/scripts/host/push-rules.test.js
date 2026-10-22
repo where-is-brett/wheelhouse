@@ -1,5 +1,6 @@
 // tests/scripts/host/push-rules.test.js
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,6 +21,11 @@ import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
 import { parseProvenance, removeProvenance } from '../../../scripts/lineage/provenance.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const SESSION = 'sess-1';
 
@@ -231,7 +237,7 @@ test('the default branch is read from the host, not assumed to be main', async (
     const address = process.platform === 'win32'
       ? helperAddress({ platform: 'win32', user: `test-${crypto.randomBytes(4).toString('hex')}` })
       : path.join(home, 'helper.sock');
-    helper = await startHelper({ address, adapterFor: async () => adapter, envFor: async () => ({}) });
+    helper = await startHelper({ run: hostGuard, address, adapterFor: async () => adapter, envFor: async () => ({}) });
     const client = helperClient({ address: helper.address });
     const refused = await client.push({ project: 'o__p', dir: work.dir, refspec: 'trunk' });
     assert.deepEqual(refused, { ok: false, refused: PUSH_REFUSALS.defaultBranch });
@@ -307,7 +313,7 @@ function click(overrides = {}, ago = 1) {
 
 async function viaHelper(s, fn, { env = {}, runWith = run } = {}) {
   await as(s.home, async () => {
-    const helper = await startHelper({ address: testAddress(s.home), adapterFor, envFor: async () => env, now: () => NOW, run: runWith });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(s.home), adapterFor, envFor: async () => env, now: () => NOW, run: runWith });
     try { await fn(helperClient({ address: helper.address }), helper); } finally { await helper.close(); }
   });
 }
@@ -357,7 +363,7 @@ test('a CI change with the director\'s fresh click for this commit is pushed wit
   const s = await scenario({ change: { '.github/workflows/ci.yml': 'on: push\n' } });
   const env = { GH_TOKEN: FAKE_KEY, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraHeader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x:${FAKE_KEY}`).toString('base64')}` };
   const calls = [];
-  const recording = async (file, args, options) => { calls.push({ file, args, env: options?.env }); return run(file, args, options); };
+  const recording = async (file, args, options) => { calls.push({ file, args, env: options?.env }); return hostGuard(file, args, options); };
   try {
     await as(s.home, async () => click({ sha: s.sha }, 9));
     await viaHelper(s, async (client) => {
@@ -380,7 +386,7 @@ test('where the director is not signed in, the CI push says so', async () => {
   const env = { GH_TOKEN: FAKE_KEY };
   const failsWithoutKey = async (file, args, options) => (args.includes('push') && !options?.env?.GH_TOKEN
     ? { code: 1, stdout: '', stderr: 'fatal: could not read Username', timedOut: false }
-    : run(file, args, options));
+    : hostGuard(file, args, options));
   try {
     await as(s.home, async () => click({ sha: s.sha }));
     await viaHelper(s, async (client) => {
@@ -445,7 +451,7 @@ test('a push from a folder outside the project is refused', async () => {
 test('a push from a partial clone is refused, and git never ran in it', async () => {
   const s = await scenario({ change: { 'a.txt': 'a\n' } });
   const seen = [];
-  const watching = async (file, args, options) => { seen.push(options?.cwd); return run(file, args, options); };
+  const watching = async (file, args, options) => { seen.push(options?.cwd); return hostGuard(file, args, options); };
   try {
     for (const line of ['[extensions]\n\tpartialClone = origin\n', '[remote "origin"]\n\tPROMISOR = true\n']) {
       fs.appendFileSync(path.join(s.work, '.git', 'config'), line);
@@ -507,7 +513,7 @@ test('/pr/open refuses a base other than the default branch, and a head the push
 test('a folder with no repository of its own, beside a partial clone named <folder>.git, is refused', async () => {
   const s = await scenario({ change: { 'a.txt': 'a\n' } });
   const seen = [];
-  const watching = async (file, args, options) => { seen.push(options?.cwd); return run(file, args, options); };
+  const watching = async (file, args, options) => { seen.push(options?.cwd); return hostGuard(file, args, options); };
   try {
     const bare = path.join(s.home, 'work', 'foo');
     fs.mkdirSync(bare);
@@ -591,7 +597,7 @@ test('a non-authentication failure of the director\'s CI push is reported as git
   const env = { GH_TOKEN: FAKE_KEY };
   const broken = async (file, args, options) => (args.includes('push') && !options?.env?.GH_TOKEN
     ? { code: 1, stdout: '', stderr: 'fatal: remote hung up', timedOut: false }
-    : run(file, args, options));
+    : hostGuard(file, args, options));
   try {
     await as(s.home, async () => click({ sha: s.sha }));
     await viaHelper(s, async (client) => {

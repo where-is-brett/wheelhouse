@@ -4,7 +4,8 @@
 // sandbox with no key or secret in its environment, and gives back the exit code and output.
 // And a feature session's push and pull name its worktree, from which the helper places the
 // project (ruling R157); a pull hands back the host's branch as a bundle (final review, I1).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +23,11 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeBareRemote, g, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const P = 'o__p';
 const NOT_MAIN = { ok: false, refused: 'the foreman\'s commands run only in the project\'s main checkout' };
@@ -54,7 +60,7 @@ const adapter = { defaultBranch: async () => 'main' };
 
 async function withHelper(home, fn, options = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     try {
       return await fn(helperClient({ address: helper.address }), helper);
     } finally {

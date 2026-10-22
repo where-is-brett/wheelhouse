@@ -1,7 +1,9 @@
 // tests/scripts/frontdesk/cli.test.js
 // The front desk's one command, against a fake helper that keeps its events in memory and builds
 // the views from them as the real one does (the delegation review too).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +34,11 @@ import { CARD } from '../../../scripts/lib/front-desk.js';
 import { CLICK_MS } from '../../../scripts/lib/core-numbers.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
@@ -1271,7 +1278,7 @@ test('through the real helper, the command places the project from its folder an
       enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
       await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const adapter = { defaultBranch: async () => 'main', prState: async () => ({ headSha: FULL, state: 'open' }) };
-      const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}) });
+      const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}) });
       try {
         const client = helperClient({ address: helper.address });
         const say = async (argv, input) => {

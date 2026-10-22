@@ -2,7 +2,9 @@
 // The helper stamps every pull request it opens or updates with what built it, from the
 // session's provenance on this computer, and its merge gate refuses a pull request whose
 // block does not match the installed Wheelhouse's manifest.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -29,6 +31,11 @@ import { readManifest } from '../../../scripts/lineage/manifest.js';
 import { projectOf } from '../../../scripts/hooks/kit.js';
 import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
+
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const NO_PROVENANCE = /this session's provenance is not on this computer/;
@@ -50,6 +57,7 @@ function fakeAdapter(overrides = {}) {
 
 async function withHelper(adapter, fn, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), ...extra,
   });
   try {

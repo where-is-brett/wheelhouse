@@ -38,7 +38,7 @@ import { writeKey, readKey } from '../../../scripts/host/keys.js';
 import { openInstaller } from '../../../scripts/setup/tools.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { standInTools } from '../../helpers/host-stand-ins.js';
+import { standInTools, guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
@@ -46,6 +46,11 @@ import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-fi
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = () => new Date('2026-10-20T03:00:00.000Z');
 const SLUG = 'o__Cafe-Menu';
@@ -1504,6 +1509,7 @@ test('through the helper, uninstall runs in its own process, and the helper stop
       // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
       // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
       const helper = await startHelper({
+        run: hostGuard,
         address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
         onStop: (close) => { stopped = true; return close(); },
       });

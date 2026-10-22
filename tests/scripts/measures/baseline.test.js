@@ -3,7 +3,9 @@
 // director gives the note's figures at the front desk. `cli.js baseline` asks the helper, which
 // reads the figures back on a card; only the director's signed click on that card writes
 // <wheelhouseHome()>/measures/baseline.json, and the figures go nowhere else.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +26,11 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { LOCAL_PATHS } from '../../helpers/git-fixture.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const T0 = new Date('2026-10-19T03:00:00.000Z');
 // Made-up figures, each distinctive enough to search a home for.
@@ -88,7 +95,7 @@ async function withHelper(fn) {
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
     try {
       await fn({ home, client: helperClient({ address: helper.address }), setClock: (at) => { clock = at; } });
     } finally {

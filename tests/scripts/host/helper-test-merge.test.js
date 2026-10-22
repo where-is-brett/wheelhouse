@@ -2,7 +2,8 @@
 // /test-merge: two branches merged in the helper's own mirror with
 // `git merge-tree`, which checks nothing out and runs nothing from either
 // branch (design section 12).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +16,11 @@ import { setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const fakeAdapter = () => ({
   defaultBranch: async () => 'main',
@@ -64,7 +70,7 @@ async function project(remote) {
 
 async function withHelper(home, fn, { env = {} } = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => env });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => env });
     try {
       return await fn(helperClient({ address: helper.address }));
     } finally {

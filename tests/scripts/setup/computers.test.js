@@ -5,7 +5,8 @@
 // after the director's Trust it on a card naming that computer, the day its key was added and the
 // key's fingerprint. Git runs for real only against bare remotes in temporary folders; every home
 // is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -32,6 +33,11 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { withHome, as, shortHome, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
 const ADDED = '2026-10-19T22:30:00.000Z';
@@ -515,6 +521,7 @@ test('a failed push of the key leaves the helper\'s profile branch as it was, an
       }));
       let tick = 0;
       helper = await startHelper({
+        run: hostGuard,
         address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({ mode: 'quick', env: {} }),
         now: () => new Date(NOW.getTime() + 1000 * (tick += 1)),
       });

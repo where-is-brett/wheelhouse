@@ -4,7 +4,8 @@
 // repository (behind the stand-in HTTP host for the narrow connection), gh and
 // glab are a fake adapter, and the hooks' `decide` functions are called with
 // the input Claude Code sends.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -32,6 +33,11 @@ import { startHttpHost } from '../helpers/http-host.js';
 import { hostKeyEnv } from '../helpers/host-key.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -91,6 +97,7 @@ async function makeComputer(remoteUrl, { adapter = fakeAdapter(), envFor = async
   });
   let ms = 0;
   const helper = await as(home, () => startHelper({
+    run: hostGuard,
     address: testAddress(home), adapterFor: async () => adapter, envFor, now: () => new Date(T0.getTime() + ms),
   }));
   const client = helperClient({ address: helper.address });
