@@ -20,6 +20,7 @@ test('the probe refuses to run without --consent, and knows no other option', as
 test('the search list is read from the quoted lines and compared in order', () => {
   const out = '    "/Users/x/Library/Keychains/login.keychain-db"\n    "/Library/Keychains/System.keychain"\n';
   const list = parseSearchList(out);
+  assert.deepEqual(parseSearchList('security> "/a/login.keychain-db"\n'), ['/a/login.keychain-db']);
   assert.deepEqual(list, ['/Users/x/Library/Keychains/login.keychain-db', '/Library/Keychains/System.keychain']);
   assert.ok(sameList(list, [...list]));
   assert.ok(!sameList(list, [...list].reverse()));
@@ -53,12 +54,12 @@ test('commands for security -i are quoted, one per line', () => {
   assert.equal(interactiveLine(['create-keychain', '-p', 'a b"c', '/t/x']), '"create-keychain" "-p" "a b\\"c" "/t/x"\n');
 });
 
-// A stand-in for every program: security -i commands are read from input and recorded.
+// A stand-in for every program. `security -i` input is parsed into words; direct calls are recorded as they are.
 function standIn({ list = LIST_OUT, onCommand } = {}) {
   const commands = [];
   const exec = async (file, args, { input } = {}) => {
-    if (file === '/usr/bin/security' && args[0] === '-i') {
-      const words = [...input.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+    if (file === '/usr/bin/security') {
+      const words = args[0] === '-i' ? [...input.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]) : args;
       commands.push(words);
       if (onCommand) await onCommand(words);
       if (words[0] === 'list-keychains' && words.length === 3) return { code: 0, stdout: list, stderr: '' };
@@ -75,35 +76,73 @@ const quiet = async (fn) => {
   console.error = () => {};
   try { return await fn(); } finally { console.log = out; console.error = err; }
 };
+const run = (deps) => quiet(() => main(['--consent'], { platform: 'darwin', fileSize: () => 1, ...deps }));
 
 test('the probe refuses before any change when the search list reads back empty, and never sets the list', async () => {
   const { exec, commands } = standIn({ list: '' });
-  const code = await quiet(() => main(['--consent'], { exec, platform: 'darwin', proc: new EventEmitter(), exit() {} }));
-  assert.equal(code, 1);
+  assert.equal(await run({ exec, proc: new EventEmitter() }), 1);
   assert.deepEqual(commands.map((c) => c[0]), ['list-keychains']);
 });
 
-test('a normal run makes the keychain, restores the same list and deletes the keychain', async () => {
+test('a login keychain name is matched at a path separator only', () => {
+  assert.match(searchListProblem(['/x/mylogin.keychain-db']), /login keychain/);
+  assert.equal(searchListProblem(['/x/login.keychain']), null);
+});
+
+test('a normal run makes the keychain, finds the item, restores the same list and deletes the keychain', async () => {
   const { exec, commands } = standIn();
   const proc = new EventEmitter();
-  const code = await quiet(() => main(['--consent'], { exec, platform: 'darwin', proc, exit() {} }));
-  assert.equal(code, 0);
+  assert.equal(await run({ exec, proc }), 0);
   const names = commands.map((c) => c[0]);
-  assert.ok(names.indexOf('create-keychain') < names.indexOf('delete-keychain'));
-  const set = commands.find((c) => c[0] === 'list-keychains' && c[3] === '-s');
-  assert.deepEqual(set.slice(4), [LOGIN]);
+  assert.ok(names.indexOf('create-keychain') < names.indexOf('find-generic-password'));
+  assert.ok(names.indexOf('find-generic-password') < names.indexOf('delete-keychain'));
+  assert.ok(commands.some((c) => c[0] === 'list-keychains' && c[3] === '-s' && c[4] === LOGIN));
   assert.equal(proc.listenerCount('SIGINT'), 0);
 });
 
-test('a signal partway through puts the list back, deletes the keychain and exits 130', async () => {
-  const proc = new EventEmitter();
-  const exits = [];
-  const { exec, commands } = standIn({ onCommand: async (words) => { if (words[0] === 'add-generic-password') proc.emit('SIGINT'); } });
-  const exited = new Promise((resolve) => { exits.push(resolve); });
-  const done = quiet(() => main(['--consent'], { exec, platform: 'darwin', proc, exit: (c) => exits[0](c) }));
-  assert.equal(await exited, 130);
-  await done;
+test('a keychain file that was not made stops the run before the item is added, and tidies up', async () => {
+  const { exec, commands } = standIn();
+  assert.equal(await run({ exec, proc: new EventEmitter(), fileSize: () => 0 }), 1);
   const names = commands.map((c) => c[0]);
+  assert.ok(!names.includes('add-generic-password'));
   assert.ok(names.includes('delete-keychain'));
-  assert.ok(commands.some((c) => c[0] === 'list-keychains' && c[3] === '-s' && c[4] === LOGIN));
+});
+
+test('an item that is not found after add stops the run before any read', async () => {
+  const { exec, commands } = standIn({ onCommand: () => {} });
+  const failing = async (file, args, options) => (args[0] === 'find-generic-password' ? { code: 44, stdout: '', stderr: '' } : exec(file, args, options));
+  assert.equal(await run({ exec: failing, proc: new EventEmitter() }), 1);
+  assert.ok(commands.every((c) => !c.includes('-w') || c[0] === 'add-generic-password'), 'no read of the value');
+  assert.ok(commands.some((c) => c[0] === 'delete-keychain'));
+});
+
+test('two signals partway through: no step begins after the first, the tidy-up runs once, and the run ends 130', async () => {
+  const proc = new EventEmitter();
+  const { exec, commands } = standIn({ onCommand: async (words) => {
+    if (words[0] === 'add-generic-password') { proc.emit('SIGINT'); proc.emit('SIGTERM'); }
+    if (words[0] === 'delete-keychain') proc.emit('SIGINT'); // a signal during the tidy-up
+  } });
+  assert.equal(await run({ exec, proc }), 130);
+  const names = commands.map((c) => c[0]);
+  assert.ok(!names.includes('find-generic-password'), 'no step after the signal');
+  assert.equal(names.filter((n) => n === 'delete-keychain').length, 1);
+  const restores = commands.filter((c) => c[0] === 'list-keychains' && c[3] === '-s');
+  assert.equal(restores.length, 1);
+  assert.deepEqual(restores[0].slice(4), [LOGIN]);
+});
+
+test('a SIGTERM while a step is pending waits for that step, then tidies', async () => {
+  const proc = new EventEmitter();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { exec, commands } = standIn({ onCommand: async (words) => {
+    if (words[0] === 'create-keychain') { proc.emit('SIGTERM'); await gate; }
+  } });
+  const done = run({ exec, proc });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(!commands.some((c) => c[0] === 'delete-keychain'), 'not tidied while the step runs');
+  release();
+  assert.equal(await done, 130);
+  const names = commands.map((c) => c[0]);
+  assert.ok(names.indexOf('create-keychain') < names.indexOf('delete-keychain'));
 });

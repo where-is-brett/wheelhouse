@@ -22,7 +22,7 @@ Whether denying reads of `~/Library/Keychains` stops a sandboxed `security find-
    - `plain`, with no sandbox;
    - `deny-scratch-folder`, under `sandbox-exec` denying `file-read*` of the scratch keychain's folder;
    - `deny-real-keychains`, under `sandbox-exec` denying `file-read*` of `~/Library/Keychains` while reading the scratch file by path (the control: it should read, as the denial does not cover the file).
-4. Deletes the keychain file, puts the search list back exactly, checks it is as it was, and prints `search-list: as it was`. It never reads any other item and never touches the login keychain. Its commands go to `security -i` on standard input, so the throwaway password and value are never in an argument list. Ctrl-C, a closed terminal or a kill signal runs the same tidy-up.
+4. Deletes the keychain file, puts the search list back exactly, checks it is as it was, and prints `search-list: as it was`. It never reads any other item and never touches the login keychain. The three commands that carry the throwaway password or value (create, unlock, add) go to `security -i` on standard input, so those are never in an argument list; the keychain file's existence and the item's presence (a look without `-w`) are then checked directly. Ctrl-C, a closed terminal or a kill signal stops the run at its next step and runs the tidy-up once.
 
 The Windows half is check 52's, in `probes/52-low-integrity/run.js`: a made-up generic Windows Credential written at the normal level, read from the low process, deleted. Web Credentials (`PasswordVault`) are another store and are not tried.
 
