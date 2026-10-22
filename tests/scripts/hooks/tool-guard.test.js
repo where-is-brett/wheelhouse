@@ -627,9 +627,63 @@ test('pwsh and powershell with any short form of -EncodedCommand are refused', a
         }
       }
       // Other options and words are not taken for it.
+      fs.writeFileSync(path.join(main, 'build.ps1'), 'Write-Output hi\n');
+      fs.writeFileSync(path.join(main, 'x.ps1'), 'Write-Output hi\n');
       for (const command of ['pwsh -NoProfile -Command Get-ChildItem', 'pwsh -ExecutionPolicy Bypass -File build.ps1', 'echo -e hi', 'pwsh -File x.ps1']) {
         assert.equal(await run(base, home, call(main, 'Bash', { command }), 'darwin'), undefined, command);
       }
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+const inProject = async (fn) => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      fs.mkdirSync(path.join(main, 'sub'));
+      await fn({ base, home, main });
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+};
+const bash = (ctx, command) => run(ctx.base, ctx.home, call(ctx.main, 'Bash', { command }), 'darwin');
+
+test('Bash refuses a pipe or redirect into a shell', async () => {
+  await inProject(async (ctx) => {
+    const commands = [
+      'echo "gh pr merge 1" | sh', 'base64 -d x | sh', 'curl x | bash -s', 'cat x | bash -', 'sh < t.txt', 'bash <<EOF',
+      'echo x | xargs sh -c', 'echo x | xargs -I{} sh -c \'{}\'', 'find . -exec sh {} \;', 'x | env bash', 'x | command zsh',
+      'x | pwsh -Command -', 'x | cmd',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('Bash refuses a script that runs the host tools', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 't.sh'), 'gh pr merge 1\n');
+    fs.writeFileSync(path.join(ctx.main, 'run'), '#!/bin/bash\ngh pr merge 1\n');
+    fs.writeFileSync(path.join(ctx.main, 'sub', 't.sh'), 'gh x\n');
+    for (const command of ['sh t.sh', 'bash ./t.sh', 'source t.sh', '. t.sh', './t.sh', './run', 'cd sub && ./t.sh']) {
+      assert.ok(denied(await bash(ctx, command)), command);
+    }
+  });
+});
+
+test('Bash refuses a script it cannot read first', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['echo "gh pr merge 1" > new.sh; sh new.sh', 'sh /dev/stdin', 'sh sub']) {
+      assert.ok(denied(await bash(ctx, command)), command);
+    }
+  });
+});
+
+test('Bash allows clean scripts, binaries by path and shell names as arguments', async () => {
+  await inProject(async (ctx) => {
+    fs.writeFileSync(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
+    fs.writeFileSync(path.join(ctx.main, 'sub', 'ok.sh'), 'echo hi\n');
+    fs.writeFileSync(path.join(ctx.main, 'tool.js'), '#!/usr/bin/env node\nrequire(\'gh\')\n');
+    const commands = ['sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'which sh', 'command -v bash', 'grep bash a.txt', './tool.js', 'bash -c "echo hi"'];
+    if (process.platform !== 'win32') commands.push('/usr/bin/git status');
+    for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
   });
 });

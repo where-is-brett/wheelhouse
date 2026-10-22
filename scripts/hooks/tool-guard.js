@@ -193,14 +193,85 @@ function gitPushes(args) {
   return false;
 }
 
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const DURATION = /^\d+(\.\d+)?[smhd]?$/;
+const WRAPPERS = new Set(['command', 'builtin', 'exec', 'nohup', 'time', 'nice', 'sudo', 'doas', 'timeout', 'stdbuf', 'setsid', 'env', 'then', 'do', 'else', 'if', 'elif', 'while', 'until', '!']);
+const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
+const SCRIPT_LIMIT = 1024 * 1024;
+const SNIFF = 4096;
+
+// The index of a segment's command word: past assignments, options, durations
+// and wrappers such as env, sudo and timeout. `command -v x` only looks a name
+// up, so it has none. It is seg.length when there is none.
+function commandAt(seg, names) {
+  for (let i = 0; i < seg.length; i += 1) {
+    if (ASSIGNMENT.test(seg[i]) || OPTION.test(seg[i]) || DURATION.test(seg[i])) continue;
+    if (WRAPPERS.has(names[i])) {
+      if (names[i] === 'command' && /^-[A-Za-z]*[vV]/.test(seg[i + 1] ?? '')) return seg.length;
+      continue;
+    }
+    return i;
+  }
+  return seg.length;
+}
+
+// Whether the first line of a script text makes it a shell script: it has no
+// shebang, or the shebang names a shell, directly or through env.
+function shebangShell(text) {
+  const first = text.split(/\r?\n/, 1)[0];
+  if (!first.startsWith('#!')) return true;
+  const words = first.slice(2).trim().split(/\s+/);
+  let name = lastPart(words[0] ?? '');
+  if (name === 'env') name = lastPart(words.slice(1).find((w) => !w.startsWith('-')) ?? '');
+  return POSIX_SHELLS.has(name);
+}
+
+// Whether a script file stops a command being let through: it can't be placed,
+// found or read, is not a regular file or is over 1 MB, or its text is refused.
+// Only a regular file is opened, so a device such as /dev/stdin can't block the
+// hook. A binary passes. With byPath, a text file whose shebang names something
+// other than a shell passes too, since a shell does not run it.
+function scriptRefused(file, dir, ctx, depth, byPath = false) {
+  if (depth > MAX_DEPTH) return true;
+  if (/[$`]/.test(file) || file.startsWith('~')) return true;
+  const absolute = path.isAbsolute(file) ? file : dir === null ? null : path.resolve(dir, file);
+  if (absolute === null) return true;
+  try {
+    const stat = fs.statSync(absolute);
+    // By path, a folder or device (the /dev/null of `2>/dev/null`) is not run as a script.
+    if (!stat.isFile()) return !byPath;
+    if (stat.size > SCRIPT_LIMIT) return true;
+    const head = Buffer.alloc(Math.min(SNIFF, stat.size));
+    const fd = fs.openSync(absolute, 'r');
+    try {
+      fs.readSync(fd, head, 0, head.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (head.includes(0)) return false;
+    if (byPath && !shebangShell(head.toString('utf8'))) return false;
+    const text = fs.readFileSync(absolute, 'utf8');
+    return bashRefused(text, { ...ctx, cwd: path.dirname(absolute) }, depth + 1);
+  } catch {
+    return true;
+  }
+}
+
 // Whether a command line should be refused: a host tool, git push, a .env file,
-// an unreadable quote. Strings handed to a shell are split again.
-function bashRefused(command, windows, fold, depth = 0) {
+// an unreadable quote. Strings handed to a shell are split again. A shell fed by
+// a pipe or redirect (its segment has no script), and a script file that a shell,
+// `source` or a path runs, are read and held to the same rules; a script that
+// can't be read yet is refused. A script run by another program (`node x.js`,
+// `npm run`, `make`) is not looked into. A cd moves the folder that later
+// scripts are found in.
+function bashRefused(command, ctx, depth = 0) {
+  const { windows, fold } = ctx;
   if (depth > MAX_DEPTH) return true;
   const segs = segments(command, windows);
   if (segs === null) return true;
-  const again = (text) => bashRefused(text, windows, fold, depth + 1);
+  const again = (text) => bashRefused(text, ctx, depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
+  let dir = ctx.cwd ?? null;
   for (const seg of segs) {
     const names = seg.map(nameOf);
     for (let i = 0; i < seg.length; i += 1) {
@@ -225,6 +296,36 @@ function bashRefused(command, windows, fold, depth = 0) {
           if (split && again(split[1])) return true;
         }
       }
+    }
+    const k = commandAt(seg, names);
+    if (k >= seg.length) continue;
+    const name = names[k];
+    const args = seg.slice(k + 1);
+    const script = (file, byPath) => scriptRefused(file, dir, ctx, depth, byPath);
+    const exec = seg.findIndex((w) => w === '-exec' || w === '-execdir');
+    const from = name === 'xargs' ? k : exec;
+    if (from >= 0 && names.slice(from + 1).some((n) => SHELLS.has(n))) return true;
+    if (POSIX_SHELLS.has(name)) {
+      const flag = args.findIndex((w) => SHELL_FLAG.test(w));
+      if (flag >= 0) {
+        if (flag === args.length - 1) return true;
+      } else {
+        const file = args.find((w) => !OPTION.test(w));
+        if (args.includes('-') || args.includes('-s') || file === undefined || script(file, false)) return true;
+      }
+    } else if (PWSH.has(name)) {
+      if (args.length === 0 || args.includes('-')) return true;
+      const f = args.findIndex((w) => /^-(file|f)$/i.test(w));
+      if (f >= 0 && (f === args.length - 1 || script(args[f + 1], false))) return true;
+    } else if (name === 'cmd') {
+      if (args.length === 0) return true;
+    } else if (name === 'source' || seg[k] === '.') {
+      if (args.length > 0 && script(args[0], false)) return true;
+    } else if (name === 'cd' || name === 'pushd') {
+      const to = args.find((w) => !OPTION.test(w));
+      dir = to === undefined || dir === null || to.startsWith('~') || to.includes('$') ? null : path.resolve(dir, to);
+    } else if (/[\\/]/.test(seg[k]) && !seg[k].startsWith('#') && script(seg[k], true)) {
+      return true;
     }
   }
   return false;
@@ -379,7 +480,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     // PowerShell exists on every system but is read as on Windows.
     const windows = platform === 'win32' || tool === 'PowerShell';
     const fold = foldFor(windows ? 'win32' : platform);
-    return bashRefused(command, windows, fold) ? refuse('run the host tools, push, or read a .env file') : undefined;
+    return bashRefused(command, { windows, fold, cwd }) ? refuse('run the host tools, push, or read a .env file') : undefined;
   }
   try {
     return fileRefusal(input, { home, platform, pluginRoot }) ?? undefined;
