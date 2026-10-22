@@ -14,14 +14,17 @@ import { WHY } from '../../../scripts/lib/calm-words.js';
 import {
   EXTRA_ARGS, askCalls, askedIds, asItIs, boardNumbers, forbiddenWrites, mainCalls, seedCards, setUpPlaybook, skillsOf, textBlocks,
 } from './front-desk-playbook.js';
-import { APPROVAL_CARD, CARDS, PHOTO_CARD, PHOTO_WORDS, README } from './36-pane-press.js';
+import { APPROVAL_CARD, CARDS, PHOTO_CARD, README } from './36-pane-press.js';
 
 // What the director types in the chat.
 export const PROMPT = 'why? card 2';
 
-// An everyday example, in the playbook's own form ("It's like …") or the few set phrases that
-// open one; "I'd like" or "compared with the old page" don't count.
-export const EXAMPLE = /\b(?:it'?s|it is|that'?s)\s+(?:a bit\s+|rather\s+|just\s+)?like\b|\bfor example\b|\bfor instance\b|\bimagine\b|\bthink of it as\b/i;
+// An everyday example, in the playbook's own form ("It's like …") or the set phrases that open
+// one; "I'd like" or "compared with the old page" don't count.
+export const EXAMPLE = /\b(?:it'?s|it is|that'?s)\s+(?:a bit\s+|rather\s+|just\s+)?like\b|\bfor example\b|\bfor instance\b|\bimagine\b|\bthink of it (?:as|like)\b|\blike an?\b|\bworks like\b|\bas if\b|\bjust as\b|\bsay you\b|\bpicture\b/i;
+
+// What would name the photo card in an explanation; "picture" is left out, since it opens an example.
+const PHOTO_WORDS = /\bphotos?\b|\bimages?\b|\bproduct pages?\b/i;
 
 const RAN_WHY = /cli\.js"?\s+why\s+(\d+)\b/;
 const RAN_AGAIN = /cli\.js"?\s+again\s+(\d+)\b/;

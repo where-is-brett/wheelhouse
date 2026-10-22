@@ -165,6 +165,11 @@ test('36\'s why leg passes `why 2`, an explanation with an everyday example, the
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { whys: [] })).why, /not noted once/);
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { whys: [card.question, card.question] })).why, /not noted once/);
   assert.match((await judgedWhy(events(why(), ['say', explanation], ask()))).why, /not asked again with `again 2`/);
+  const base = 'Card 2 adds a button that downloads the orders as a spreadsheet, so you decide whether people get it. ';
+  for (const opener of ['Think of it like a draft handed to an editor.', 'It works like a draft handed to an editor.', 'Say you hand a draft to an editor first.', 'It is as if an editor reads the draft first.', 'Just as an editor reads a draft before printing.', 'Picture a draft on an editor\'s desk.', 'It is like a draft handed to an editor.']) {
+    const got = await judgedWhy(events(why(), ['say', base + opener], again(), ask()));
+    assert.equal(got.pass, true, `${opener}: ${got.why}`);
+  }
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(3), again(), ask()), { asked: [PHOTO_CARD, APPROVAL_CARD] })).why, /another card/);
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask(asQuestion({ data: cards[2].data }))), { asked: [PHOTO_CARD] })).why, /another card/);
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { forbidden: ['card-answer'] })).why, /never earns: card-answer/);
