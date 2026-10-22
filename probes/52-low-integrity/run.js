@@ -323,32 +323,70 @@ async function reads(ctx) {
   await say(ctx, 'SEEN', 'git-credential-fill-scratch', `run at low against an empty scratch configuration, never against real credentials; git ${fill.started ? 'ran' : 'did not start'} (${tail(fill.stderr ?? fill.message ?? '', 120)}). What a real credential store gives a low process was not asked`);
 }
 
-// Credential Manager (see check 73): a made-up PasswordVault item is stored at the normal level, read from the
-// low process, then removed. Only the made-up item is touched, and only its length is printed.
-const VAULT_PRELUDE = "$null = [Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, ContentType=WindowsRuntime]; $v = New-Object Windows.Security.Credentials.PasswordVault; $r = 'wheelhouse-probe-52'; $u = 'probe';";
-export const VAULT_STORE = `${VAULT_PRELUDE} $v.Add((New-Object Windows.Security.Credentials.PasswordCredential($r, $u, $env:WHEELHOUSE_PROBE_52_VALUE)))`;
-export const VAULT_READ = `${VAULT_PRELUDE} $c = $v.Retrieve($r, $u); $c.RetrievePassword(); Write-Output ('length=' + $c.Password.Length)`;
-export const VAULT_REMOVE = `${VAULT_PRELUDE} try { $v.Remove($v.Retrieve($r, $u)) } catch { }`;
+// Credential Manager (see check 73): a made-up generic Windows Credential (CRED_TYPE_GENERIC, the kind `gh` keeps its token
+// as, written with CredWriteW) is stored at the normal level, read from the low process with CredReadW, and deleted with
+// CredDeleteW. Only the made-up target is named; its value is passed by environment to the storing process and never printed.
+export const VAULT_TARGET = 'wheelhouse-probe-52';
+const CRED_CSHARP = [
+  'using System; using System.Runtime.InteropServices;',
+  'public static class WhCred52 {',
+  '  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]',
+  '  struct CREDENTIAL { public uint Flags; public uint Type; public string TargetName; public string Comment;',
+  '    public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten; public uint CredentialBlobSize; public IntPtr CredentialBlob;',
+  '    public uint Persist; public uint AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; }',
+  '  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredWriteW(ref CREDENTIAL c, uint flags);',
+  '  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredReadW(string target, uint type, uint flags, out IntPtr c);',
+  '  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredDeleteW(string target, uint type, uint flags);',
+  '  [DllImport("advapi32.dll")] static extern void CredFree(IntPtr c);',
+  '  public static int Write(string target, string user, string value) {',
+  '    IntPtr blob = Marshal.StringToCoTaskMemUni(value);',
+  '    CREDENTIAL c = new CREDENTIAL(); c.Type = 1; c.TargetName = target; c.UserName = user; c.Persist = 2;',
+  '    c.CredentialBlobSize = (uint)(value.Length * 2); c.CredentialBlob = blob;',
+  '    bool ok = CredWriteW(ref c, 0); int e = ok ? 0 : Marshal.GetLastWin32Error(); Marshal.FreeCoTaskMem(blob); return e; }',
+  '  public static string Length(string target) {',
+  '    IntPtr p; if (!CredReadW(target, 1, 0, out p)) return "error=" + Marshal.GetLastWin32Error();',
+  '    CREDENTIAL c = (CREDENTIAL)Marshal.PtrToStructure(p, typeof(CREDENTIAL)); uint n = c.CredentialBlobSize / 2; CredFree(p); return "length=" + n; }',
+  '  public static int Delete(string target) { return CredDeleteW(target, 1, 0) ? 0 : Marshal.GetLastWin32Error(); }',
+  '}',
+].join('\n');
+const CRED_PRELUDE = `Add-Type -TypeDefinition @'\n${CRED_CSHARP}\n'@\n$t = '${VAULT_TARGET}'\n`;
+export const VAULT_STORE = `${CRED_PRELUDE}Write-Output ('write=' + [WhCred52]::Write($t, 'probe', $env:WHEELHOUSE_PROBE_52_VALUE))`;
+export const VAULT_READ = `${CRED_PRELUDE}Write-Output ([WhCred52]::Length($t))`;
+export const VAULT_REMOVE = `${CRED_PRELUDE}Write-Output ('delete=' + [WhCred52]::Delete($t))`;
 const powershell = (script) => ['powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(script)]];
 
+// Win32 error 5 is access denied; 1168 is "not found". Anything else is not a verdict on the label.
 export function credentialManagerLine(result) {
-  const length = /length=(\d+)/.exec(`${result?.stdout ?? ''}`)?.[1];
-  return result?.ok === true && length ? `read ${length} characters` : 'refused';
+  const said = `${result?.stdout ?? ''}`;
+  const length = /length=(\d+)/.exec(said)?.[1];
+  if (result?.ok === true && length) return `read ${length} characters`;
+  if (/error=5\b/.test(said)) return 'refused';
+  const error = /error=(\d+)/.exec(said)?.[1];
+  return `inconclusive: ${error ? `Windows error ${error}` : 'the call did not run'}`;
 }
 
 async function credentialManager(ctx) {
   const value = crypto.randomBytes(12).toString('hex');
+  ctx.vaultItem = true; // set first: the removal is harmless when nothing was stored, and covers an interruption mid-store
   const stored = await exec(...powershell(VAULT_STORE), { env: { WHEELHOUSE_PROBE_52_VALUE: value } });
-  if (stored.code !== 0) {
-    await say(ctx, 'SEEN', 'credential-manager-low', `not tried: the made-up item could not be stored at the normal level (${tail(stored.stderr, 120)})`);
-    return;
+  if (stored.code !== 0 || !/write=0\b/.test(stored.stdout)) {
+    await say(ctx, 'SEEN', 'credential-manager-low', `not tried: the made-up credential could not be stored at the normal level (${tail(`${stored.stdout} ${stored.stderr}`, 160)})`);
+  } else {
+    const [file, args] = powershell(VAULT_READ);
+    const read = await low(ctx, 'exec', [file, ...args]);
+    const line = credentialManagerLine(read);
+    await say(ctx, 'SEEN', 'credential-manager-low', `${line}${line.startsWith('inconclusive') ? ` (${brief(read)})` : ''} (a made-up generic credential, ${VAULT_TARGET}, stored at the normal level and read from the low process with CredReadW; nothing else in Credential Manager was named)`);
   }
-  ctx.vaultItem = true;
-  const [file, args] = powershell(VAULT_READ);
-  const read = await low(ctx, 'exec', [file, ...args]);
-  await say(ctx, 'SEEN', 'credential-manager-low', `${credentialManagerLine(read)} (a made-up PasswordVault item stored at the normal level, read from the low process; nothing else in Credential Manager was touched)`);
+  await removeCredential(ctx);
+}
+
+// Deletes the made-up credential, then checks it is gone.
+async function removeCredential(ctx) {
   await exec(...powershell(VAULT_REMOVE));
-  ctx.vaultItem = false;
+  const check = await exec(...powershell(VAULT_READ));
+  const gone = /error=1168\b/.test(check.stdout);
+  ctx.vaultItem = !gone;
+  await say(ctx, 'SEEN', 'credential-manager-item', gone ? 'removed' : `still there or not confirmed: delete ${VAULT_TARGET} by hand (Credential Manager, Windows Credentials, or \`cmdkey /delete:${VAULT_TARGET}\`)`);
 }
 
 // Sets a no-read-up label on a fresh scratch folder by `apply`, then tries to read it from low and from here.

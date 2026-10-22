@@ -69,4 +69,4 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 70 | Lean in VS Code with nothing added | Not run yet | None yet |
 | 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
 | 72 | The add-on at Lean | Not run yet | None yet |
-| 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Not run yet; deferred, waiting for the Mac sitting | [73-keychain.md](73-keychain.md) |
+| 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Deferred (held for the director's Mac sitting) | [73-keychain.md](73-keychain.md) |
