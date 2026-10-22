@@ -779,8 +779,8 @@ test('an approval card shows what it is under the ask while Why? is closed, and 
 
 // Suggest a change…: the box in the card. The words typed into it reach the pane through the
 // Input's onInput and onSubmit, which this build's test kit does not deliver (ui.input never
-// settles, even for an Input holding a single trivial handler), so Send with words and Enter are
-// not run here.
+// settles, even for an Input holding a single trivial handler), so typing and Enter are not run
+// here; the tests below seed the words through a state kept by the test (keepState).
 const SUGGEST_KEY = cardKey('card-1', 'Suggest a change…')
 const BOX = 'suggest:card-1'
 const suggestBridge = (request: any) => (request.cmd === 'suggest' ? { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggests a change to card 1 (card-1).'] } : { ok: true })
@@ -863,6 +863,103 @@ test('on the phone the button says to type the change in the chat', async ($, on
   expect(await ui.find({ key: 'suggest-cancel' })).toBeUndefined()
   const note = (await textNodes(ui)).find((n: any) => n.text === NOTE)
   expect(note?.props.size).toBe('footnote')
+  expect(seen.requests).toEqual([])
+  await ui.unmount()
+})
+
+// The session's state kept by the test, so a box's words can be seeded and read back: the test kit
+// delivers no typing (see above), and `$.state` is not on the test's `$`.
+function keepState(on: any) {
+  const store = new Map<string, { value: any, version: number }>()
+  const at = (e: any) => `${e.plugin}/${e.key}`
+  on('state.get', (_: any, e: any) => {
+    const held = store.get(at(e))
+    return { value: { value: held?.value, version: held?.version ?? 0 } }
+  })
+  on('state.set', (_: any, e: any) => {
+    const held = store.get(at(e))
+    if (e.ifVersion !== undefined && e.ifVersion !== (held?.version ?? 0)) return { value: { isSet: false } }
+    store.set(at(e), { value: e.value, version: (held?.version ?? 0) + 1 })
+    return { value: { isSet: true } }
+  })
+  return {
+    suggesting: () => store.get('wheelhouse/suggesting')?.value ?? null,
+    seed: (words: string) => store.set('wheelhouse/suggesting', { value: { card: 'card-1', words }, version: 1 }),
+  }
+}
+const SENT = 'Sent to the front desk. A new proposal will follow.'
+const SUGGEST_PROMPT = 'Wheelhouse pane: the director suggests a change to card 1 (card-1).'
+const SUGGESTION = { cmd: 'suggest', origin: 'pane', cwd: ROOT, card: 'card-1', hash: 'aaaaaaaaaaaa', words: 'make it blue' }
+
+test('Send sends the suggest press with the words and nothing else, hands the prompt on and clears the words', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, (r: any) => (r.cmd === 'suggest' ? { ok: true, says: SENT, submit: [SUGGEST_PROMPT] } : { ok: true }), withCards([partsCard()]))
+  const state = keepState(on)
+  for (const surface of SURFACES) {
+    await start($, surface)
+    state.seed('make it blue')
+    const ui = await mount($, surface)
+    expect((await ui.find({ key: BOX }))?.props.value).toBe('make it blue')
+    clear()
+    await ui.press({ key: 'suggest-send' })
+    await clock.settle()
+    expect(seen.requests).toEqual([SUGGESTION])
+    expect(seen.toasts).toContain(SENT)
+    expect(seen.submits.map((p: any) => p.text)).toEqual([SUGGEST_PROMPT])
+    await ui.redraw()
+    expect(await ui.find({ key: BOX })).toBeUndefined()
+    expect(state.suggesting()).toBeNull()
+    await ui.unmount()
+  }
+})
+
+test('a second Send while the first records sends nothing', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, (r: any) => (r.cmd === 'suggest' ? { hold: 2000, then: { ok: true, says: SENT, submit: [SUGGEST_PROMPT] } } : { ok: true }), withCards([partsCard()]))
+  const state = keepState(on)
+  await start($, 'desktop')
+  state.seed('make it blue')
+  const ui = await mount($, 'desktop')
+  clear()
+  const first = ui.press({ key: 'suggest-send' })
+  await clock.advance(10)
+  await ui.redraw()
+  expect(await ui.find({ key: 'suggest-send' })).toBeUndefined()
+  expect(await texts(ui)).toContain('Recording…')
+  await clock.advance(2500)
+  await first
+  await clock.settle()
+  expect(seen.requests.filter((r: any) => r.cmd === 'suggest')).toEqual([SUGGESTION])
+  expect(seen.requests.filter((r: any) => r.cmd === 'press')).toEqual([])
+  expect(seen.submits).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a refusal from the bridge is shown, the box closes and nothing is handed on', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, (r: any) => (r.cmd === 'suggest' ? { ok: false, says: 'That card changed while you were reading it.' } : { ok: true }), withCards([partsCard()]))
+  const state = keepState(on)
+  await start($, 'desktop')
+  state.seed('make it blue')
+  const ui = await mount($, 'desktop')
+  clear()
+  await ui.press({ key: 'suggest-send' })
+  await clock.settle()
+  expect(seen.toasts).toContain('That card changed while you were reading it.')
+  expect(seen.submits).toEqual([])
+  await ui.redraw()
+  expect(await ui.find({ key: BOX })).toBeUndefined()
+  expect(state.suggesting()).toBeNull()
+  await ui.unmount()
+})
+
+test('Cancel clears the words as well as closing the box', async ($, on) => {
+  const { seen, clear, start } = world(on, suggestBridge, withCards([partsCard()]))
+  const state = keepState(on)
+  await start($, 'desktop')
+  state.seed('make it blue')
+  const ui = await mount($, 'desktop')
+  clear()
+  await ui.press({ key: 'suggest-cancel' })
+  await ui.redraw()
+  expect(state.suggesting()).toBeNull()
   expect(seen.requests).toEqual([])
   await ui.unmount()
 })
