@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { decide, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { hookMain } from '../../../scripts/hooks/kit.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { baselineCard } from '../../../scripts/measures/baseline.js';
+import { BASELINE_PHRASES } from '../../../scripts/lib/measures-clicks.js';
+import { TO_KNOW_MORE, TO_CHANGE_IT } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { withHome } from '../../helpers/homes.js';
@@ -67,54 +70,80 @@ const reason = (out) => {
   assert.equal(out?.hookSpecificOutput?.permissionDecision, 'deny');
   return out.hookSpecificOutput.permissionDecisionReason;
 };
-// A composed approval card's text with one line swapped for another.
+// A composed card's text with the lines starting so removed, or one line swapped for another.
 const without = (text, start) => text.split('\n').filter((l) => !l.startsWith(start)).join('\n');
 const swap = (text, from, to) => text.replace(from, to);
+// The same text, as the question object AskUserQuestion takes it.
+const asked = (kind, over = {}) => ({ ...cardOf(kind), ...over });
 
-test('a composed card passes', async () => {
+test('a composed card of every kind passes, as its text and as its question', async () => {
   for (const kind of Object.keys(INPUTS)) {
     assert.deepEqual(cardProblems(textOf(kind)), [], kind);
+    assert.deepEqual(cardProblems(cardOf(kind)), [], `${kind}: with its options`);
     assert.equal(await decide(call(cardOf(kind)), inProject), undefined, kind);
   }
+  // A card with four options of its own says a change is typed in place of "To know more, just ask."
+  const four = ['A', 'B', 'C', 'D'].map((label) => ({ label, says: `${label} goes ahead.` }));
+  const typed = composeCard({ ...INPUTS.answer, options: four, recommend: 'A' }).question;
+  assert.ok(typed.question.includes(TO_CHANGE_IT) && !typed.question.includes(TO_KNOW_MORE));
+  assert.deepEqual(cardProblems(typed), []);
 });
 
 test('a level 4 card, with its checks line, passes', () => {
   const { question } = composeCard({ ...INPUTS.approval, level: 4, checks: 'The release checks stay on and run before it merges.' });
   assert.deepEqual(cardProblems(question.question), []);
+  assert.deepEqual(cardProblems(question), []);
+});
+
+test('a card missing "To know more, just ask." is refused', async () => {
+  for (const kind of ['approval', 'question', 'answer', 'setup']) {
+    const lacking = without(textOf(kind), TO_KNOW_MORE);
+    const problems = cardProblems(lacking);
+    assert.equal(problems.length, 1, kind);
+    assert.equal(problems[0], 'lacks its "To know more, just ask." line', kind);
+    const text = reason(await decide(call(asked(kind, { question: lacking })), inProject));
+    assert.match(text, /Question 1/, kind);
+    assert.match(text, /To know more, just ask\./, kind);
+  }
+  // The line must close the plain lines: said earlier, with something after it, it doesn't count.
+  const lines = textOf('question').split('\n');
+  const moved = [lines.at(-1), ...lines.slice(0, -1)].join('\n');
+  assert.equal(cardProblems(moved).length, 1);
+  // An old card in labelled parts, or a plain sentence, is refused.
+  assert.equal(cardProblems('What this is: x\nWhy it\'s coming to you: y\nOptions: z\nMy recommendation: z, because y.\nWhile you decide: w').length, 1);
+  assert.equal(cardProblems('Which separator do you want?').length, 1);
+  assert.equal(cardProblems('').length, 1);
+});
+
+test('a card with fewer than three plain lines before its last is refused', () => {
+  // Ask, why and meanwhile are the three a question needs: its what is the ask. A card with a question of its own has four.
+  const rows = textOf('question').split('\n');
+  assert.equal(rows.length, 4);
+  for (const drop of [0, 1, 2]) {
+    const short = rows.filter((_, i) => i !== drop).join('\n');
+    const problems = cardProblems(short);
+    assert.equal(problems.length, 1, `without line ${drop}`);
+    assert.match(problems[0], /has 2 plain lines before "To know more, just ask\.", and needs at least 3/);
+  }
+  assert.match(cardProblems(rows.slice(2).join('\n')).join(' '), /has 1 plain line before/);
+  assert.match(cardProblems(TO_KNOW_MORE).join(' '), /has 0 plain lines before/);
+  // A blank line is no line, and is refused as one.
+  assert.deepEqual(cardProblems(`${rows[0]}\n\n${rows[1]}\n${rows[2]}\n${rows[3]}`), ['has an empty line, and every line before its set line holds words']);
+  assert.equal(cardProblems(`\n${rows[0]}\n\n${rows[1]}\n${rows[3]}\n`).length, 2);
+  // A card with a set line is held to the same count before its set line.
+  const approval = textOf('approval').split('\n');
+  assert.deepEqual(cardProblems(approval.filter((_, i) => i !== 2).join('\n')), [], 'a card with a question of its own has four, so three is enough');
+  assert.equal(cardProblems(approval.filter((_, i) => i !== 2 && i !== 3).join('\n')).length, 1);
+  assert.deepEqual(cardProblems(approval.join('\n')), []);
 });
 
 test('every question of a call is checked, and the refusal names the one at fault', async () => {
   const good = cardOf('lift-stop');
-  const bad = { ...cardOf('approval'), question: without(textOf('approval'), 'My recommendation:') };
+  const bad = asked('approval', { question: without(textOf('approval'), TO_KNOW_MORE) });
   const text = reason(await decide(call(good, bad), inProject));
   assert.match(text, /Question 2/);
-  assert.match(text, /My recommendation:/);
+  assert.match(text, /To know more, just ask\./);
   assert.doesNotMatch(text, /Question 1/);
-});
-
-test('a card missing its recommendation is refused, naming the part', async () => {
-  for (const kind of ['approval', 'question']) {
-    const q = { ...cardOf(kind), question: without(textOf(kind), 'My recommendation:') };
-    const text = reason(await decide(call(q), inProject));
-    assert.match(text, /My recommendation:/, kind);
-    assert.match(text, /Question 1/, kind);
-  }
-});
-
-test('each of the five parts is needed, with words after its label', () => {
-  for (const label of ['What this is:', "Why it's coming to you:", 'Options:', 'My recommendation:', 'While you decide:']) {
-    const missing = cardProblems(without(textOf('question'), label));
-    assert.equal(missing.length, 1, label);
-    assert.match(missing[0], new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    const empty = cardProblems(swap(textOf('question'), new RegExp(`^${label}.*$`, 'm'), label));
-    assert.equal(empty.length, 1, `${label} with nothing after it`);
-  }
-});
-
-test('a plain sentence with none of the parts is refused', async () => {
-  const text = reason(await decide(call({ question: 'Which separator do you want?', header: 'Question', options: [], multiSelect: false }), inProject));
-  assert.match(text, /What this is:/);
-  assert.match(text, /While you decide:/);
 });
 
 test('a set line without its reply code, or with another card\'s code, is refused', async () => {
@@ -132,7 +161,7 @@ test('a set line without its reply code, or with another card\'s code, is refuse
   assert.match(wrong[0], /reply code/i);
   assert.match(wrong[0], new RegExp(replyCode(setLineOf(card))));
 
-  const q = { ...cardOf('approval'), question: without(card, 'Reply code:') };
+  const q = asked('approval', { question: without(card, 'Reply code:') });
   assert.match(reason(await decide(call(q), inProject)), /Question 1/);
 });
 
@@ -148,33 +177,44 @@ test('two set lines in one question are refused', async () => {
   const problems = cardProblems(twice);
   assert.equal(problems.length, 1);
   assert.match(problems[0], /one set line/);
-  const q = { ...cardOf('approval'), question: twice };
+  const q = asked('approval', { question: twice });
   assert.match(reason(await decide(call(q), inProject)), /one set line/);
 });
 
-test('a first part naming pull request #12 over a set line for #13 is refused', async () => {
+test('a card naming another pull request in any plain line is refused', async () => {
   const card = textOf('approval');
-  const wrong = swap(card, 'Pull request #13', 'Pull request #12');
-  const problems = cardProblems(wrong);
-  assert.ok(problems.length >= 1);
-  assert.match(problems.join('\n'), /#13/);
-  const q = { ...cardOf('approval'), question: wrong };
-  assert.match(reason(await decide(call(q), inProject)), /Question 1/);
+  // The question, what, why or meanwhile line, each in turn.
+  for (const [from, to] of [
+    ['Put pull request #13 live?', 'Put pull request #12 live?'],
+    ['Pull request #13', 'Pull request #12'],
+    ['It changes what users see', 'It follows pull request #12, which changes what users see'],
+    ['Nothing is released', 'Pull request #12 stays as it is, and nothing is released'],
+  ]) {
+    const wrong = swap(card, from, to);
+    assert.notEqual(wrong, card, from);
+    const problems = cardProblems(wrong);
+    assert.equal(problems.length, 1, from);
+    assert.match(problems[0], /^has words that must name pull request #13, and no other/, from);
+    assert.match(reason(await decide(call(asked('approval', { question: wrong })), inProject)), /Question 1/);
+  }
   // Naming both, or neither, is refused too.
   assert.ok(cardProblems(swap(card, 'Pull request #13', 'Pull request #13 and #12')).length >= 1);
-  assert.ok(cardProblems(swap(card, 'Pull request #13', 'A pull request')).length >= 1);
+  const neither = card.split('\n').map((l) => l.replace(/#13/g, 'it')).join('\n');
+  assert.ok(cardProblems(neither.replace(approvalLine(13, FULL), approvalLine(13, FULL))).length >= 1);
 });
 
-test('a first part naming a commit other than its set line\'s is refused', () => {
+test('a card naming another commit in its question line is refused', () => {
   const card = textOf('approval');
-  const wrong = swap(card, 'changes the wording', 'at 0123456789ab changes the wording');
-  assert.match(cardProblems(wrong).join('\n'), /commit/);
+  const wrong = swap(card, 'Put pull request #13 live?', 'Put pull request #13 live, at commit 0123456789ab?');
+  assert.match(cardProblems(wrong).join('\n'), /^has words that names commit 0123456789ab/);
   // Naming the set line\'s own commit, short or in full, is fine.
-  assert.deepEqual(cardProblems(swap(card, 'changes the wording', `at ${FULL.slice(0, 7)} changes the wording`)), []);
-  assert.deepEqual(cardProblems(swap(card, 'changes the wording', `at ${FULL} changes the wording`)), []);
+  assert.deepEqual(cardProblems(swap(card, 'Put pull request #13 live?', `Put pull request #13 live, at ${FULL.slice(0, 7)}?`)), []);
+  assert.deepEqual(cardProblems(swap(card, 'Put pull request #13 live?', `Put pull request #13 live, at ${FULL}?`)), []);
+  // So is another commit in any other plain line.
+  assert.match(cardProblems(swap(card, 'changes the wording', 'at 0123456789ab changes the wording')).join('\n'), /commit/);
 });
 
-test('the first part must name what each kind\'s set line names', () => {
+test('the plain lines must name, between them, what each kind\'s set line names', () => {
   const cases = {
     'incident-fix': ['incident bad-total', 'incident other-one'],
     'approve-work': ['(export-csv)', '(import-csv)'],
@@ -189,25 +229,68 @@ test('the first part must name what each kind\'s set line names', () => {
     const card = textOf(kind);
     assert.ok(card.includes(right), `${kind} sample holds ${right}`);
     assert.deepEqual(cardProblems(card), [], kind);
-    assert.ok(cardProblems(swap(card, right, wrong)).length >= 1, `${kind}: ${wrong}`);
+    // Wherever the plain lines say it, as the question line may too.
+    const changed = card.replace(new RegExp(right.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), wrong);
+    assert.ok(cardProblems(changed).length >= 1, `${kind}: ${wrong}`);
   }
 });
 
-test('only the first part is held to the set line\'s subject', () => {
+test('words that name the set line\'s subject in any plain line are enough', () => {
+  // The question line may be the one to name it, and the what line another thing.
   const card = textOf('approval');
-  const aside = swap(card, 'Nothing is released', 'Pull request #12 stays as it is, and nothing is released');
-  assert.deepEqual(cardProblems(aside), []);
+  const moved = card.split('\n');
+  moved[1] = moved[1].replace('Pull request #13', 'This');
+  assert.deepEqual(cardProblems(moved.join('\n')), [], 'the question line names pull request #13');
 });
 
-test('a first part that runs over several lines is read to its end', () => {
-  const card = textOf('approval').replace('\nWhy it\'s coming to you:', '\nIt also touches pull request #12.\nWhy it\'s coming to you:');
-  assert.ok(cardProblems(card).length >= 1);
-});
-
-test('a question with no set line needs only the five parts', () => {
+test('a question with no set line needs only its plain lines', () => {
   assert.deepEqual(cardProblems(textOf('question')), []);
   // Its words may mention a pull request: nothing there is a set line to match.
   assert.deepEqual(cardProblems(swap(textOf('question'), 'The export', 'Pull request #12 and the export')), []);
+});
+
+test('a card with no option recommended, or two, is refused', async () => {
+  const card = cardOf('approval');
+  const plain = (o) => ({ ...o, description: o.description.replace(/^Recommended: /, '') });
+  const none = { ...card, options: card.options.map(plain) };
+  assert.deepEqual(cardProblems(none), ['names no recommended option']);
+  const two = { ...card, options: card.options.map((o, i) => (i === 1 ? { ...o, description: `Recommended: ${o.description}` } : o)) };
+  assert.deepEqual(cardProblems(two), ['names two recommended options']);
+  const three = { ...card, options: card.options.map((o) => ({ ...o, description: `Recommended: ${plain(o).description}` })) };
+  assert.deepEqual(cardProblems(three), ['names 4 recommended options']);
+  assert.match(reason(await decide(call(none), inProject)), /Question 1 \("Approval"\) names no recommended option\./);
+  assert.match(reason(await decide(call(two), inProject)), /names two recommended options/);
+  // The text alone has no options to judge.
+  assert.deepEqual(cardProblems(card.question), []);
+});
+
+test('a card offering Explain more is refused', async () => {
+  const card = cardOf('approval');
+  const offering = { ...card, options: [...card.options.slice(0, 3), { label: 'Explain more', description: 'I explain it in plainer words.' }] };
+  assert.deepEqual(cardProblems(offering), ["offers Explain more, which is not one of a card's options"]);
+  assert.match(reason(await decide(call(offering), inProject)), /offers Explain more/);
+  // Options given as plain labels are read too.
+  assert.deepEqual(cardProblems({ question: card.question, options: ['Explain more'] }), ['names no recommended option', "offers Explain more, which is not one of a card's options"]);
+});
+
+test('the reply-code rules hold as before', () => {
+  const card = textOf('approval');
+  assert.deepEqual(cardProblems(card), []);
+  assert.match(cardProblems(without(card, 'Reply code:'))[0], /set line without its reply code line, "Reply code: [A-Z0-9]{4}"/);
+  assert.match(cardProblems(`${card}\nReply code: AAAA`)[0], /carries the wrong reply code line/);
+  assert.match(cardProblems(`${card}\n${card.split('\n').at(-1)}`)[0], /more than once/);
+});
+
+test('the baseline card is still judged as before', async () => {
+  const figures = { usd: 4127.35, merges: 37, from: '2026-09-01', to: '2026-09-30', counted: 'Every merged pull request on the first version, counted by hand.' };
+  const question = baselineCard(figures, DOC);
+  assert.deepEqual(cardProblems(question), [], 'its words are in the form');
+  // A card that was not the helper\'s own is refused in a project, whatever its form, as before.
+  const text = reason(await decide(call(question), inProject));
+  assert.match(text, /The director has not seen this card\. Question 1 reads as the baseline card but is not the card the helper composed/);
+  // A card holding the baseline\'s words that is not the baseline card is refused by the composer.
+  assert.throws(() => composeCard({ ...INPUTS.question, what: `${BASELINE_PHRASES.what}: US$100.00 for 4 merged pull requests.` }), /baseline card's words/);
+  assert.throws(() => composeCard({ ...INPUTS.question, options: [{ label: 'Comma', says: `${BASELINE_PHRASES.record}.` }, OWN[1]] }), /baseline card's words/);
 });
 
 test('only an AskUserQuestion call in a Wheelhouse project is checked', async () => {
@@ -250,7 +333,7 @@ test('hooks.json runs it on AskUserQuestion before the director sees the card, w
 });
 
 test('the refusal tells the front desk where a right card comes from', async () => {
-  const q = { ...cardOf('approval'), question: without(textOf('approval'), 'Reply code:') };
+  const q = asked('approval', { question: without(textOf('approval'), 'Reply code:') });
   assert.match(reason(await decide(call(q), inProject)), /cli\.js card/);
 });
 
@@ -260,10 +343,10 @@ test('the card check hook and cardProblems agree on every composed card', async 
     const lines = card.question.split('\n');
     const variants = [
       card.question,
-      lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
+      lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       lines.filter((l) => !l.startsWith('Reply code:')).join('\n'),
       `${card.question}\n${lines.at(-1)}`,
-      card.question.replace(/^Why it's coming to you:.*$/m, "Why it's coming to you:"),
+      lines.slice(1).join('\n'),
       card.question.replace(/#\d+/g, '#99'),
     ];
     for (const question of variants) {
