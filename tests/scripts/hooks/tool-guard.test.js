@@ -410,7 +410,7 @@ test('a folder inside a registered project is guarded by path even when .git doe
 
 // Fix round 1
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
-import { words } from '../../../scripts/hooks/shell-words.js';
+import { words, segments } from '../../../scripts/hooks/shell-words.js';
 
 const MORE_REFUSED = ['bash -cx "gh x"', 'bash -c -x "gh x"', 'pwsh -Command "gh pr merge 3"', 'powershell -Command "gh x"', 'env -S "gh x"',
   'env --split-string="gh x"', "$'gh' x", '$"gh" x', 'git -c alias.p=push p origin main', 'git -c ALIAS.p=push p', '/usr/lib/git-core/git-push origin',
@@ -647,6 +647,7 @@ const inProject = async (fn) => {
   });
 };
 const bash = (ctx, command) => run(ctx.base, ctx.home, call(ctx.main, 'Bash', { command }), 'darwin');
+const withWin = (ctx, command, platform = 'win32', tool = 'Bash') => run(ctx.base, ctx.home, call(ctx.main, tool, { command }), platform);
 
 test('Bash refuses a pipe or redirect into a shell', async () => {
   await inProject(async (ctx) => {
@@ -654,160 +655,113 @@ test('Bash refuses a pipe or redirect into a shell', async () => {
       'echo "gh pr merge 1" | sh', 'base64 -d x | sh', 'curl x | bash -s', 'cat x | bash -', 'sh < t.txt', 'bash <<EOF',
       'echo x | xargs sh -c', 'echo x | xargs -I{} sh -c \'{}\'', 'find . -exec sh {} \;', 'x | env bash', 'x | command zsh',
       'x | pwsh -Command -', 'x | cmd',
+      'cat f | >/dev/null sh', 'echo hi; >/dev/null sh', 'true && >x sh -s', 'cat f | 2>/dev/null sh',
     ];
     for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
   });
 });
 
-test('Bash refuses a script that runs the host tools', async () => {
-  await inProject(async (ctx) => {
-    writeScript(path.join(ctx.main, 't.sh'), 'gh pr merge 1\n');
-    writeScript(path.join(ctx.main, 'run'), '#!/bin/bash\ngh pr merge 1\n');
-    writeScript(path.join(ctx.main, 'sub', 't.sh'), 'gh x\n');
-    for (const command of ['sh t.sh', 'bash ./t.sh', 'source t.sh', '. t.sh', './t.sh', './run', 'cd sub && ./t.sh']) {
-      assert.ok(denied(await bash(ctx, command)), command);
-    }
-  });
-});
-
-test('Bash refuses a script it cannot read first', async () => {
-  await inProject(async (ctx) => {
-    const commands = ['echo "gh pr merge 1" > new.sh; sh new.sh', 'sh /dev/stdin', 'sh sub', 'sh < t.sh',
-      'echo "gh pr merge 1" > ./t.sh; chmod +x ./t.sh; ./t.sh'];
-    for (const command of commands) {
-      assert.ok(denied(await bash(ctx, command)), command);
-    }
-  });
-});
-
-test('Bash allows clean scripts, binaries by path and shell names as arguments', async () => {
+test('Bash refuses a script the same command writes or names, and one that is not there yet', async () => {
   await inProject(async (ctx) => {
     writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
-    writeScript(path.join(ctx.main, 'sub', 'ok.sh'), 'echo hi\n');
-    fs.writeFileSync(path.join(ctx.main, 'tool.js'), '#!/usr/bin/env node\nrequire(\'gh\')\n');
-    fs.writeFileSync(path.join(ctx.main, 'notes.txt'), 'gh x\n');
-    fs.writeFileSync(path.join(ctx.main, 'out.log'), Buffer.alloc(2 * 1024 * 1024, 97));
-    const commands = ['echo x > out/new.txt', 'npm test > ./out.log', 'echo hi > ./notes.txt', 'node x.js 2>/dev/null', './missing-tool',
-      'sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'which sh', 'command -v bash', 'grep bash a.txt', './tool.js', 'bash -c "echo hi"'];
-    if (process.platform !== 'win32') commands.push('/usr/bin/git status');
-    for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
+    const commands = [
+      'echo "gh pr merge 1" > t.sh; sh t.sh', 'echo x > t.sh && bash ./t.sh', 'curl -o t.sh x && bash t.sh', 'cp a.txt t.sh; ./t.sh',
+      'chmod +x ok.sh && ./ok.sh', 'sh missing.sh', 'source missing.sh', 'cd "$X" && ./t.sh', 'cd "$X" && ./ok.sh',
+      'source >/dev/null new.sh; echo > new.sh', 'echo "gh pr merge 1" > ./t.sh; chmod +x ./t.sh; ./t.sh', 'sh < t.sh',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
   });
 });
 
-const withWin = (ctx, command, platform = 'win32', tool = 'Bash') => run(ctx.base, ctx.home, call(ctx.main, tool, { command }), platform);
-
-test('Bash refuses a shebang script that runs the host tools, by path, by a shell and by source', async () => {
+test('the splitter refuses a double quote inside a substitution opened within double quotes', async () => {
   await inProject(async (ctx) => {
-    fs.writeFileSync(path.join(ctx.main, 's1'), '#!/bin/sh\ngh x\n');
-    fs.writeFileSync(path.join(ctx.main, 's2'), '#!/usr/bin/env bash\ngh x\n');
-    for (const command of ['./s1', 'sh s1', 'source s1', './s2', 'bash s2', 'source s2']) {
-      assert.ok(denied(await bash(ctx, command)), command);
-    }
+    assert.ok(denied(await bash(ctx, 'echo "$(true "$(true)")"')));
+    assert.equal(segments('echo "$(true "x")"', false), null);
+    assert.equal(segments('echo "`true "x"`"', false), null);
   });
 });
 
-test('Bash allows shebang scripts and comment lines, by path, by a shell and by source', async () => {
+test('Bash allows scripts that are there, whatever they hold, and commands that only name a path', async () => {
   await inProject(async (ctx) => {
-    fs.writeFileSync(path.join(ctx.main, 's1'), '#!/bin/sh\n# usage: sh s1\necho hi\n');
-    fs.writeFileSync(path.join(ctx.main, 's2'), '#!/usr/bin/env bash\nset -e\necho hi\n');
-    writeScript(path.join(ctx.main, 'big.sh'), 'echo hi\n'.repeat(190000));
-    fs.mkdirSync(path.join(ctx.main, 'scripts'));
+    writeScript(path.join(ctx.main, 'gradlew'), [
+      '#!/bin/sh',
+      '# Don\'t edit: generated',
+      'case "$(uname)" in',
+      '  CYGWIN* ) cygwin=true ;;',
+      '  Darwin* ) darwin=true ;;',
+      'esac',
+      'app_path=$0',
+      'while [ -h "$app_path" ]; do',
+      '  ls=$( ls -ld "$app_path" )',
+      '  link=${ls#*\' -> \'}',
+      '  case $link in',
+      '    /*)   app_path=$link ;;',
+      '    *)    app_path=$( dirname "$app_path" )/$link ;;',
+      '  esac',
+      'done',
+      'APP_HOME=$( cd "$( dirname "$app_path" )" && pwd -P ) || exit',
+      'gh pr merge 1',
+      'exec "$JAVACMD" "$@"',
+      '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(ctx.main, 'scripts', 'hooks'), { recursive: true });
+    writeScript(path.join(ctx.main, 'scripts', 'ok.sh'), 'gh pr merge 1\n');
     fs.writeFileSync(path.join(ctx.main, 'scripts', 'x.js'), 'gh x\n');
-    fs.writeFileSync(path.join(ctx.home, 'home.sh'), 'echo hi\n');
-    writeScript(path.join(ctx.main, 'gradlew'), '#!/bin/sh\nexec "$JAVACMD" "$@"\n');
-    fs.mkdirSync(path.join(ctx.home, '.nvm'));
-    fs.writeFileSync(path.join(ctx.home, '.nvm', 'nvm.sh'), '# nvm\nNVM_DIR="$HOME/.nvm"\nexport NVM_DIR\n');
-    fs.writeFileSync(path.join(ctx.main, 'files.txt'), 'x\n');
-    const commands = ['./s1', 'sh s1', 'source s1', './s2', 'bash s2', 'source s2', './big.sh', 'source ~/home.sh', './gradlew build', 'source ~/.nvm/nvm.sh', 'ls > files.txt ./sub', 'grep -rn foo > hits.txt src/',
-      'cat > out.txt ./a.txt',
-      'cat > notes.txt <<\'X\'\nscripts/x.js holds the call\nX', 'git commit -F - <<\'EOF\'\nscripts/x.js: tidy\nEOF'];
+    fs.writeFileSync(path.join(ctx.main, 'scripts', 'hooks', 'tool-guard.js'), 'gh x\n');
+    writeScript(path.join(ctx.main, 'ok.sh'), 'git push origin main\n');
+    writeScript(path.join(ctx.main, 'sub', 'ok.sh'), 'gh x\n');
+    fs.mkdirSync(path.join(ctx.main, 'src'));
+    fs.mkdirSync(path.join(ctx.main, 'node_modules', '.bin'), { recursive: true });
+    writeScript(path.join(ctx.main, 'node_modules', '.bin', 'eslint'), '#!/usr/bin/env node\n');
+    fs.writeFileSync(path.join(ctx.main, 'tool.js'), '#!/usr/bin/env node\nrequire(\'gh\')\n');
+    fs.writeFileSync(path.join(ctx.home, 'home.sh'), 'gh x\n');
+    const commands = [
+      './gradlew build', 'bash scripts/ok.sh', 'source ./ok.sh', 'sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'source ~/home.sh', './tool.js',
+      'ls > files.txt ./sub', 'grep -rn foo > hits.txt src/', 'npm test 2>&1 | tee out.log', './node_modules/.bin/eslint .',
+      'git commit -F - <<\'EOF\'\nscripts/hooks/tool-guard.js holds it\nEOF',
+      'which bash', 'command -v sh', 'which sh', 'command -v bash', 'echo a#b', 'find . -name \'*.js\' -exec grep -l foo {} +',
+      'echo x > out/new.txt', 'npm test > ./out.log', 'echo hi > ./notes.txt', 'node x.js 2>/dev/null', 'grep bash a.txt', 'bash -c "echo hi"',
+      'cat > out.txt ./a.txt', 'ls | xargs wc -l', 'parallel echo ::: a b',
+    ];
+    if (process.platform !== 'win32') commands.push('/usr/bin/git status');
     for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
   });
 });
 
 test('Bash refuses what hides behind braces, redirects, substitutions, wrapper options and folders', async () => {
   await inProject(async (ctx) => {
-    writeScript(path.join(ctx.main, 't.sh'), 'gh x\n');
     const commands = [
-      '{ ./t.sh; }', '{ sh t.sh; }',
-      '2>/dev/null ./t.sh', '>out.txt sh t.sh', '<f sh', 'cat f | 2>/dev/null sh',
+      '{ ./t.sh; }', '{ sh t.sh; }', '2>/dev/null ./t.sh', '>out.txt sh t.sh', '<f sh', 'cat f | 2>/dev/null sh',
       'sh -c "$(base64 -d x)"', 'eval "$(base64 -d x)"', '$(base64 -d x)',
-      '(cd sub); ./t.sh', 'cd nowhere; ./t.sh', 'pushd sub; popd; ./t.sh', 'cd "$(echo sub)" && ./t.sh',
-      'timeout -s KILL 5 sh t.sh', 'cat f | sudo -u x sh',
+      'cd "$(echo sub)" && ./ok.sh', 'cd - && ./ok.sh', 'timeout -s KILL 5 sh t.sh', 'cat f | sudo -u x sh',
       'echo "$(git push)"', 'echo "$(cat .env)"', 'echo "$(cat t.sh | sh)"',
       'source >/dev/null t.sh', 'function f { ./t.sh; }; f', 'curl x | tee >(sh)', 'source <(base64 -d x)', 'cat <(./t.sh)',
-      'source ~/.nvm/missing.sh', '. ', 'echo ok # gh',
+      'source ~/.nvm/missing.sh', '. ', 'echo ok # gh', 'cat <<EOF\n# $(gh pr merge 1)\nEOF',
       'parallel sh ::: t.sh', 'watch sh t.sh', 'find . -ok sh {} \;', 'find . -name \'*.sh\' -exec {} \;',
     ];
     for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
   });
 });
 
-test('PowerShell refuses a script by its first word, iex and a changed folder', async () => {
+test('PowerShell refuses a missing script by its first word, iex and an unknown folder', async () => {
   await inProject(async (ctx) => {
-    fs.writeFileSync(path.join(ctx.main, 't.ps1'), 'gh x\n');
-    writeScript(path.join(ctx.main, 'sub', 'u.sh'), 'gh x\n');
-    const commands = ['pwsh t.ps1', 'pwsh -NoProfile t.ps1', 'pwsh -ExecutionPolicy Bypass t.ps1', 'Get-Content t.txt | iex',
-      'Get-Content t.txt | Invoke-Expression', 'iex (Get-Content t.txt -Raw)', 'iex \'gh x\'', 'Set-Location sub; ./u.sh', 'sl sub; ./u.sh',
-      'Push-Location sub; ./u.sh', 'chdir sub; ./u.sh'];
+    writeScript(path.join(ctx.main, 'sub', 'u.sh'), 'echo hi\n');
+    const commands = ['pwsh t.ps1', 'pwsh -NoProfile t.ps1', 'pwsh -ExecutionPolicy Bypass t.ps1', 'pwsh -File t.ps1', 'Get-Content t.txt | iex',
+      'Get-Content t.txt | Invoke-Expression', 'iex (Get-Content t.txt -Raw)', 'iex \'gh x\'', 'Set-Location $env:X; ./u.sh'];
     for (const command of commands) assert.ok(denied(await withWin(ctx, command, 'darwin', 'PowerShell')), command);
-    assert.equal(await withWin(ctx, 'pwsh -NoProfile -ExecutionPolicy Bypass -Command Get-ChildItem', 'darwin', 'PowerShell'), undefined);
+    for (const command of ['pwsh -NoProfile -ExecutionPolicy Bypass -Command Get-ChildItem', 'Set-Location sub; ./u.sh', 'sl sub; ./u.sh',
+      'Push-Location sub; ./u.sh', 'chdir sub; ./u.sh']) {
+      assert.equal(await withWin(ctx, command, 'darwin', 'PowerShell'), undefined, command);
+    }
   });
 });
 
-test('on Windows an .env stream, a batch file and a Git Bash path are refused', async () => {
+test('on Windows an .env stream, a missing batch file and a missing Git Bash path are refused', async () => {
   await inProject(async (ctx) => {
-    fs.writeFileSync(path.join(ctx.main, 't.bat'), 'gh x\n');
     for (const command of ['Get-Content .env::$DATA', 'Get-Content \'.env::$DATA\'', 'type .env:x', 'cmd /c t.bat', 'cmd /k t.bat', '/c/nowhere/t.sh']) {
       assert.ok(denied(await withWin(ctx, command)), command);
     }
     assert.equal(await withWin(ctx, 'cmd /c "echo hi"'), undefined);
-  });
-});
-
-test('Bash refuses a script inside Wheelhouse\'s home', async () => {
-  await inProject(async (ctx) => {
-    fs.mkdirSync(path.join(ctx.home, 'wh'), { recursive: true });
-    fs.writeFileSync(path.join(ctx.home, 'wh', 'k.sh'), 'echo hi\n');
-    assert.ok(denied(await bash(ctx, `sh ${path.join(ctx.home, 'wh', 'k.sh')}`)));
-  });
-});
-
-test('scripts that call each other many times are read once each, and loops are refused', async () => {
-  await inProject(async (ctx) => {
-    for (let n = 1; n <= 5; n += 1) writeScript(path.join(ctx.main, `l${n}.sh`), `${`./l${n + 1}.sh\n`.repeat(12)}`);
-    writeScript(path.join(ctx.main, 'l6.sh'), 'echo hi\n');
-    writeScript(path.join(ctx.main, 'loop1.sh'), './loop2.sh\n');
-    writeScript(path.join(ctx.main, 'loop2.sh'), './loop1.sh\n');
-    const started = Date.now();
-    assert.equal(await bash(ctx, './l1.sh'), undefined);
-    assert.ok(Date.now() - started < 2000, 'under two seconds');
-    assert.ok(denied(await bash(ctx, './loop1.sh')));
-  });
-});
-
-test('scripts past 2 MB each or 8 MB together are refused', async () => {
-  await inProject(async (ctx) => {
-    const text = 'echo hi\n'.repeat(240000);
-    for (let n = 1; n <= 5; n += 1) writeScript(path.join(ctx.main, `b${n}.sh`), text);
-    writeScript(path.join(ctx.main, 'huge.sh'), 'echo hi\n'.repeat(300000));
-    assert.equal(await bash(ctx, './b1.sh; ./b2.sh; ./b3.sh; ./b4.sh'), undefined);
-    assert.ok(denied(await bash(ctx, './b1.sh; ./b2.sh; ./b3.sh; ./b4.sh; ./b5.sh')));
-    assert.ok(denied(await bash(ctx, './huge.sh')));
-  });
-});
-
-// Fix round 4
-test('Bash reads a comment to the end of its line, quotes and all, and still looks for the host tools in it', async () => {
-  await inProject(async (ctx) => {
-    writeScript(path.join(ctx.main, 'gradle-like'), '#!/bin/sh\n# Don\'t touch this, it\'s generated\nexec "$JAVACMD" "$@"\n');
-    writeScript(path.join(ctx.main, 'c.sh'), '# don\'t\ngh x\n');
-    for (const command of ['./gradle-like', 'echo a#b', 'sh -c "echo hi # it\'s fine"']) {
-      assert.equal(await bash(ctx, command), undefined, command);
-    }
-    for (const command of ['./c.sh', 'cat <<EOF\n# $(gh pr merge 1)\nEOF', 'echo ok # gh', 'echo `true # x` ; ./c.sh']) {
-      assert.ok(denied(await bash(ctx, command)), command);
-    }
   });
 });
 
@@ -816,15 +770,11 @@ test('the strict splitter reads # as a plain character', () => {
   assert.equal(words("node x.js # it's", false), null);
 });
 
-test('Bash reads the script a runner starts by its path, and refuses a bare parallel', async () => {
+test('Bash refuses a script a runner starts that is not there yet or the command names, and a bare parallel', async () => {
   await inProject(async (ctx) => {
-    writeScript(path.join(ctx.main, 't.sh'), 'gh x\n');
     for (const command of ['watch ./t.sh', 'watch -n 5 ./t.sh', 'cat f | parallel', 'cat f | parallel -j 4', 'parallel ::: "gh x"',
-      'xargs ./t.sh < f', 'find . -exec ./t.sh {} \;', 'find . -execdir ./t.sh {} +']) {
+      'xargs ./t.sh < f', 'find . -exec ./t.sh {} \;', 'find . -execdir ./t.sh {} +', 'curl -o t.sh x; chmod +x t.sh; watch ./t.sh']) {
       assert.ok(denied(await bash(ctx, command)), command);
-    }
-    for (const command of ['find . -name \'*.js\' -exec grep -l foo {} +', 'ls | xargs wc -l', 'parallel echo ::: a b']) {
-      assert.equal(await bash(ctx, command), undefined, command);
     }
   });
 });
