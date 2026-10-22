@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  reachFor, safeGitEnv, safeGit, directorSignIn,
+  reachFor, safeGitEnv, safeGit, directorSignIn, lookRefusalLine, safeKeyName, LookRefusal,
 } from '../../../scripts/lib/safe-git.js';
 import { unlistedSettingsLine, NULL_FILE } from '../../../scripts/setup/git.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -184,4 +184,47 @@ test('a hook named in config and a url.insteadOf are refused by name, and an ext
   const got = await safeGit({ cwd: r.root, look: 'never' })(['-c', 'protocol.ext.allow=always', 'fetch', `ext::sh -c 'echo ran >> "${r.mark}"'`, 'main']);
   assert.notEqual(got.code, 0);
   assert.equal(fs.existsSync(r.mark), false);
+});
+
+test('with a caller, a refused look is a LookRefusal worded for that caller, and never setup\'s line', async () => {
+  const r = await repo();
+  await plain(['config', 'core.fsmonitor', 'false'], r.root);
+  const lines = {};
+  for (const caller of ['helper', 'foreman', 'survey', 'feature', 'reinstall']) {
+    await assert.rejects(safeGit({ cwd: r.root, caller })(['status']), (e) => {
+      lines[caller] = e.message;
+      return e instanceof LookRefusal && e.message.includes('core.fsmonitor');
+    }, caller);
+  }
+  assert.equal(new Set(Object.values(lines)).size, 5, 'each caller has its own line');
+  for (const line of Object.values(lines)) {
+    assert.doesNotMatch(line, /setup|Go ahead/i);
+    // The helper reads these phrases as a failure to sign in; no caller's line may hold them.
+    assert.doesNotMatch(line, /authentication|could not read username|permission denied|\b40[13]\b|not logged in|auth login|sign in/i);
+  }
+  assert.match(lines.foreman, /No worktree was made/);
+  assert.throws(() => safeGit({ cwd: r.root, caller: 'nobody' }), /unknown caller/);
+});
+
+test('a caller\'s line keeps its echoed names short, few and plain, and lets no token through', () => {
+  const token = `ghp_${'a1B2c3D4'.repeat(5)}`;
+  const keys = [`branch.${token}.remote`, `url.https://user:${token}@host/.insteadof`, `x.${'y'.repeat(300)}.z`, 'a.b', 'c.d', 'e.f', 'g.h'];
+  const line = lookRefusalLine('survey', { keys });
+  assert.equal(line.includes(token), false);
+  assert.equal(line.includes('a1B2c3D4a1B2'), false);
+  assert.match(line, /and 2 more/);
+  assert.ok(line.length < 700, String(line.length));
+  assert.equal(safeKeyName('core.\u001b[31mx\n'), 'core.31mx');
+  assert.ok(safeKeyName(`k.${'z'.repeat(200)}`.replace(/z{24,}/, 'z-z-z-z-')).length <= 83);
+  assert.match(lookRefusalLine('helper', { unread: true }), /could not be read/);
+});
+
+test('an argument may not lift the fence with -c, bar the named exception', async () => {
+  const r = await repo();
+  const git = safeGit({ cwd: r.root, look: 'never' });
+  for (const args of [['-c', 'core.hooksPath=/x', 'status'], ['-c', 'core.fsmonitor=/x', 'status'], ['-c', 'CORE.HOOKSPATH=/x', 'status'], ['--config-env=core.sshCommand=VAR', 'status']]) {
+    await assert.rejects(git(args), /may not set/, args.join(' '));
+  }
+  assert.equal((await git(['-c', 'core.editor=true', 'status', '--porcelain'])).code, 0);
+  assert.equal((await git(['-c', 'core.quotepath=off', 'status', '--porcelain'])).code, 0);
 });

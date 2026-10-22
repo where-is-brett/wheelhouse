@@ -380,7 +380,7 @@ export async function pull({ client, worktree }) {
   const file = path.join(featurePaths(worktree).dir, 'pull.bundle');
   // The fenced route; the bundle is a file on this computer, so a local path is let through. A
   // setting off the allowed list in the worktree's repository is refused with the look's line.
-  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', timeoutMs: PULL_MS });
+  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', timeoutMs: PULL_MS, caller: 'feature' });
   const git = async (args) => {
     try {
       return await fenced(args, { env: { GIT_TERMINAL_PROMPT: '0' }, input: '' });

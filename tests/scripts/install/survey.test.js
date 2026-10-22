@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
-import { batchSshCommand, commandsIn, deniedByStandard, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
+import { batchSshCommand, commandsIn, deniedByStandard, reachOfOrigin, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -277,7 +277,7 @@ test('the survey refuses, naming it, a project whose config sets core.sshCommand
   };
   await assert.rejects(
     surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') }),
-    (error) => /core\.sshcommand/i.test(error.message) && /core\.fsmonitor/i.test(error.message) && /setup doesn't allow/.test(error.message),
+    (error) => /core\.sshcommand/i.test(error.message) && /core\.fsmonitor/i.test(error.message) && /does not allow/.test(error.message) && /run the survey again/.test(error.message) && !/setup|Go ahead/i.test(error.message),
   );
   assert.equal(fs.existsSync(marker), false, 'the planted program ran');
   assert.equal(calls.some((args) => args[0] === 'fetch' || args.includes('fetch')), false, 'git went on after the refusal');
@@ -324,6 +324,22 @@ async function surveyWithOrigin(url, { sshEnv = {} } = {}) {
   await surveyProject({ folder, manifest: { upstreams: [] }, run: recording, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-'), sshEnv });
   return calls.find((c) => c.args.includes('fetch'));
 }
+
+test('an origin that is an ssh host alias with no user is reached over ssh, and a drive letter is not', async () => {
+  const alias = await surveyWithOrigin('github-work:org/repo.git');
+  assert.equal(alias.env.GIT_ALLOW_PROTOCOL, 'https:ssh');
+  assert.equal(alias.env.GIT_SSH_COMMAND, 'ssh -o BatchMode=yes');
+  const scp = await surveyWithOrigin('git@github.com:org/repo.git');
+  assert.equal(scp.env.GIT_ALLOW_PROTOCOL, 'https:ssh');
+  const https = await surveyWithOrigin('https://example.invalid/o/p.git');
+  assert.equal(https.env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.equal(reachOfOrigin('github-work:org/repo.git'), 'ssh');
+  assert.equal(reachOfOrigin('C:\\x\\y.git', { platform: 'win32' }), 'local');
+  assert.equal(reachOfOrigin('C:/x/y.git', { platform: 'win32' }), 'local');
+  for (const url of ['ext::sh -c x', 'file:///srv/x.git', 'https://example.invalid/x', 'C:foo']) {
+    assert.notEqual(reachOfOrigin(url, { platform: 'win32' }), 'ssh', url);
+  }
+});
 
 test('the fetch keeps the director\'s own ssh command and adds BatchMode to it', async () => {
   assert.equal(batchSshCommand({ env: {} }), 'ssh -o BatchMode=yes');

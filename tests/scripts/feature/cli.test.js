@@ -561,7 +561,7 @@ test('a feature\'s pull refuses, naming it, a worktree whose config holds a key 
   ]) {
     git(tree, ...args);
     if (key === 'hook.x.command') git(tree, 'config', 'hook.x.event', 'post-merge');
-    await assert.rejects(pull({ client, worktree: tree }), (e) => e instanceof CliError && e.message.includes(key) && e.message.includes("setup doesn't allow"), key);
+    await assert.rejects(pull({ client, worktree: tree }), (e) => e instanceof CliError && e.message.includes(key) && e.message.includes('does not allow') && /run pull again/.test(e.message) && !/setup|Go ahead/i.test(e.message), key);
     assert.equal(fs.existsSync(marker), false, key);
     assert.equal(fs.existsSync(path.join(tree, 'b.txt')), false, key);
     git(tree, 'config', '--unset-all', key);

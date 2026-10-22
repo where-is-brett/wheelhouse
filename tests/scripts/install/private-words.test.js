@@ -245,3 +245,20 @@ test('with no remote, every local branch and tag name is read', async () => {
   const hits = (await scanRepo({ root, words: ['quillandink'] })).filter((h) => h.where === 'ref');
   assert.deepEqual(hits.map((h) => h.at).sort(), ['refs/heads/***', 'refs/tags/v1-***']);
 });
+
+test('git log never verifies signatures, so a planted gpg.program does not run', async () => {
+  const root = await makeRepo();
+  const marker = path.join(tempFolder('wh-gpg-'), 'ran');
+  const program = path.join(path.dirname(marker), 'gpg.sh');
+  fs.writeFileSync(program, `#!/bin/sh\necho ran >> "${marker.replace(/\\/g, '/')}"\nexit 1\n`, { mode: 0o755 });
+  await g(root, 'config', 'gpg.program', program);
+  await g(root, 'config', 'log.showSignature', 'true');
+  const seen = [];
+  const recording = async (file, args, options) => {
+    seen.push(args);
+    return run(file, args, options);
+  };
+  await scanRepo({ root, words: ['lanternshop'], run: recording });
+  assert.equal(fs.existsSync(marker), false, 'the planted program ran');
+  assert.ok(seen.some((args) => args.includes('log') && args.includes('log.showSignature=false')));
+});

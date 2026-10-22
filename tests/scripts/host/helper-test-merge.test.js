@@ -10,6 +10,7 @@ import path from 'node:path';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { safeKeyName } from '../../../scripts/lib/safe-git.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { setStop } from '../../../scripts/lib/stop.js';
@@ -258,8 +259,9 @@ test('a filter or url.insteadOf planted in the mirror\'s config refuses the requ
         await run('git', ['config', key, value], { cwd: mirrorOf() });
         const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
         assert.equal(answer.ok, false);
-        assert.ok(answer.refused.toLowerCase().includes(key.toLowerCase()), answer.refused);
-        assert.match(answer.refused, /setup doesn't allow/);
+        assert.ok(answer.refused.toLowerCase().includes(safeKeyName(key).toLowerCase()), answer.refused);
+        assert.match(answer.refused, /does not allow/);
+        assert.doesNotMatch(answer.refused, /setup|Go ahead/i);
         await run('git', ['config', '--unset-all', key], { cwd: mirrorOf() });
       }
       assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);

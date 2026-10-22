@@ -230,6 +230,20 @@ test('the undo reinstalls the previous release, including after the clean-up', a
   assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
 });
 
+test('the reinstall answers with a plain refusal, not an error, when the marketplace copy holds a setting off the list', async () => {
+  const pc = computer();
+  const planted = async (command, args, options) => (command === 'git' && args[0] === 'config'
+    ? { code: 0, stdout: 'core.fsmonitor\0', stderr: '' }
+    : pc.run(command, args, options));
+  const done = await undo({ project: 'o__p', projectDir: pc.projectDir, claudeHome: pc.claudeHome, run: planted, resolved: DIRECT, previous: { ref: 'v1.0.0', sha: 'a'.repeat(40) } });
+  assert.equal(done.ok, false);
+  assert.deepEqual(done.installed, []);
+  assert.match(done.line, /core\.fsmonitor/);
+  assert.match(done.line, /Nothing was reinstalled/);
+  assert.doesNotMatch(done.line, /setup|Go ahead/i);
+  assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
+});
+
 test('the reinstall stops when the computer\'s marketplace is not at the release', async () => {
   const pc = computer();
   // The settings name A, but the commit given is another: the marketplace's copy is not at it.

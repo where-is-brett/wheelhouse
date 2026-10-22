@@ -1202,7 +1202,9 @@ test('a push from a project folder whose config sets core.fsmonitor is refused, 
         const answer = await client.push({ project: 'o__p', dir, refspec: 'feature' });
         assert.equal(answer.ok, false);
         assert.match(answer.refused, /core\.fsmonitor/);
-        assert.match(answer.refused, /setup doesn't allow/);
+        assert.match(answer.refused, /does not allow/);
+        assert.doesNotMatch(answer.refused, /setup|Go ahead/i);
+        assert.match(answer.refused, /try the request again/);
         assert.equal(fs.existsSync(marks), false);
         assert.equal(await remoteHeads(p.remote.url).then((t) => t.includes('refs/heads/feature')), false);
       });

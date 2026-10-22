@@ -35,7 +35,7 @@ import { cutAccess } from './cut-access.js';
 import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
-import { refuseUnlistedSettings } from '../setup/git.js';
+import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
 import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
@@ -389,7 +389,7 @@ function isPartialClone(dir) {
 }
 
 // A repository's git settings that the look refused (or could not read): its text is the route's refusal.
-export class LookRefusal extends Error {}
+export { LookRefusal };
 
 export const PUSH_REFUSALS = {
   plain: 'only a plain branch name may be pushed',
@@ -914,19 +914,21 @@ export async function startHelper({
   // the refusal, is kept in the request's context, so later calls there neither look again nor skip
   // the refusal. `marker` is the file whose presence says a repository is there to look at (a
   // repository not made yet has no config to hold anything).
-  async function lookOnce(ctx, dir, marker = null) {
+  async function lookOnce(ctx, dir, marker = null, what = null) {
     if (marker !== null && !fs.existsSync(path.join(dir, marker))) return;
     const { looked } = ctx;
     if (!(looked instanceof Map)) throw new Error('the request has no record of the repositories it has looked at');
     let key = path.resolve(dir);
     try { key = fs.realpathSync.native(dir); } catch { /* the look says what is wrong */ }
-    if (!looked.has(key)) looked.set(key, refuseUnlistedSettings({ run, cwd: dir }).catch((error) => {
-      throw new LookRefusal(error instanceof Error ? error.message : 'the repository\'s git settings could not be read');
-    }));
+    if (!looked.has(key)) {
+      looked.set(key, lookAtSettings({ run, cwd: dir }).then((found) => {
+        if (found.unread || found.keys.length > 0) throw new LookRefusal(lookRefusalLine('helper', found, { what }));
+      }));
+    }
     await looked.get(key);
   }
-  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git');
-  const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD');
+  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git', "the project's state repository");
+  const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD', "the project's mirror repository");
   // Whether the mirror's look refused in this request: then nothing more runs git there.
   async function mirrorRefused(ctx, project) {
     try {
@@ -936,7 +938,7 @@ export async function startHelper({
       return true;
     }
   }
-  const lookAtLock = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'lock'), '.git');
+  const lookAtLock = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'lock'), '.git', "the project's lock repository");
 
   // The lock clone is used by pushes and merges alike: one git call at a time.
   function lockHeld(project, ctx) {
@@ -1036,7 +1038,7 @@ export async function startHelper({
     // The folder's own config can name a program for git to run (core.fsmonitor and the like), so
     // git is not run there until its settings have been looked at.
     try {
-      await lookOnce(ctx, source);
+      await lookOnce(ctx, source, null, 'the folder being copied from');
     } catch (error) {
       return error instanceof Error ? error.message : 'the folder\'s git settings could not be read';
     }
@@ -1381,7 +1383,7 @@ export async function startHelper({
     const { mode, env } = connectionOf(await profileEnvFor());
     const looked = new Map();
     // Before the request's first git call in the profile clone (every profile route's first step).
-    await lookOnce({ looked }, profileDir(), '.git');
+    await lookOnce({ looked }, profileDir(), '.git', "the director's profile repository");
     return {
       mode,
       env,
@@ -1651,7 +1653,7 @@ export async function startHelper({
     const change = changes === null ? null : pinsOnlyChange(changes.paths, changes.files?.[SETTINGS_FILE]);
     if (change === null) return { matched: true, ok: false, why: `it changes more than the Wheelhouse marketplace's ref in ${SETTINGS_FILE}` };
     const checked = await oneAtATime('wheelhouse-release', async () => {
-      await lookOnce(ctx, path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), 'HEAD');
+      await lookOnce(ctx, path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), 'HEAD', "Wheelhouse's release mirror");
       return checkRelease({
       ref: change.ref, sha, mirror: path.join(wheelhouseHome(), 'lineage', 'wheelhouse.git'), url: wheelhouseRepo, git: (args, options) => gitIn({}, HOST_MS, reachFor(wheelhouseRepo))('git', args, options),
       });
@@ -1659,7 +1661,7 @@ export async function startHelper({
     return checked.ok ? { matched: true, ok: true, ref: change.ref, sha } : { matched: true, ok: false, why: checked.why };
   }
 
-  // Whether the configuration git reads when the fenced `fenced` runs in `mirror` sets any
+  // Whether the configuration git reads when the fenced runner `fenced` runs in `mirror` sets any
   // key matching `pattern`: 'none', 'some', or 'unreadable'.
   async function configSets(fenced, mirror, pattern) {
     const listed = await fenced('git', ['config', '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
@@ -1911,7 +1913,10 @@ export async function startHelper({
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
       facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
-    } catch { /* not readable: not known whether it is up to date, and nothing carries */ }
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+      /* not readable: not known whether it is up to date, and nothing carries */
+    }
     let shown = false;
     // With no approval needed, or under STOP, where the gate refuses anyway, nothing is compared
     // or photographed.

@@ -325,10 +325,11 @@ export function batchSshCommand({ env = process.env } = {}) {
 }
 
 // How the fetch reaches an origin's address: 'ssh' for ssh:// and scp-style (user@host:path),
-// else what reachFor says ('https', or 'local' for a path on this computer).
-const SCP_STYLE = /^[^\s/\\@:]+@[^\s/\\:]+:/;
-function reachOfOrigin(url) {
-  return /^ssh:\/\//i.test(url) || SCP_STYLE.test(url) ? 'ssh' : reachFor(url);
+// (the user is optional, as an ~/.ssh/config alias has none; a host of two or more characters keeps
+// `C:` a drive letter), else what reachFor says ('https', or 'local' for a path on this computer).
+const SCP_STYLE = /^(?:[^\s/\\@:]+@)?[^\s/\\:]{2,}:(?!\/\/|:)/;
+export function reachOfOrigin(url, { platform = process.platform } = {}) {
+  return /^ssh:\/\//i.test(url) || SCP_STYLE.test(url) ? 'ssh' : reachFor(url, { platform });
 }
 
 async function readInFlight({ folder, host, git, run, sshEnv }) {
@@ -458,7 +459,7 @@ async function surveyIn({ project, manifest, run, upstreams, host, scheduled, cl
   const routes = new Map();
   const git = async (args, cwd = project, { allowFail = false, env = {}, reach = 'https', look = 'each' } = {}) => {
     const key = `${look}|${reach}|${cwd}`;
-    if (!routes.has(key)) routes.set(key, safeGit({ run, cwd, env: { GIT_OPTIONAL_LOCKS: '0' }, reach, look, timeoutMs: GIT_WAIT_MS }));
+    if (!routes.has(key)) routes.set(key, safeGit({ run, cwd, env: { GIT_OPTIONAL_LOCKS: '0' }, reach, look, timeoutMs: GIT_WAIT_MS, caller: 'survey' }));
     const result = await routes.get(key)(['-c', 'core.quotepath=off', ...args], { env });
     if (result.code !== 0) {
       if (allowFail) return '';

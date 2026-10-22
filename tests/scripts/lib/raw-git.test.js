@@ -21,8 +21,11 @@ function jsFiles(dir) {
 }
 // A process-starting call (run, spawn, execFile and the like; not a fenced wrapper closure) that names git or the located git as its program (or after the runner): run('git', ...),
 // runner(run, gitPath, ...), execSync('git ...'). Not setupGit() or safeGit(), which name no program.
-const STARTERS = '(?:run|realRun|runner|runProgram|spawn|spawnSync|execFile|execFileSync)';
-const runsGit = (text) => new RegExp(`\\b${STARTERS}\\(\\s*(?:\\w+,\\s*)?(?:['"\`]git['"\`]|gitPath)\\s*,`).test(text) || /\b\w+\(\s*(?:run|realRun),\s*(?:['"`]git['"`]|gitPath)\s*,/.test(text) || /\bexecSync\(\s*['"`]git\b/.test(text);
+// Starters include any name holding "spawn" (nodeSpawn, spawnSync) or starting "execFile" (execFileAsync), and the program
+// may be 'git', the located gitPath, or git held in a constant (GIT, gitExe, gitBin).
+const STARTERS = '(?:run|realRun|runner|runProgram|\\w*[Ss]pawn\\w*|execFile\\w*|execSync)';
+const GIT_PROGRAM = '(?:[\'"`]git[\'"`]|gitPath|GIT|gitExe|gitBin)';
+const runsGit = (text) => new RegExp(`\\b${STARTERS}\\(\\s*(?:\\w+,\\s*)?${GIT_PROGRAM}\\s*,`).test(text) || /\b\w+\(\s*(?:run|realRun),\s*(?:['"`]git['"`]|gitPath)\s*,/.test(text) || /\bexecSync\(\s*['"`]git\b/.test(text);
 // The files under `root`/scripts that run git by neither route nor listed exception.
 function offenders(root, exceptions) {
   const listed = new Set(exceptions.map((e) => e.file));
@@ -51,6 +54,21 @@ test('a planted file that runs git without the route fails the check', () => {
   fs.writeFileSync(path.join(root, 'scripts/x/quiet.js'), 'export const a = 1;\n');
   assert.deepEqual(offenders(root, []).sort(), ['scripts/x/ex.js', 'scripts/x/fenced.js', 'scripts/x/gp.js', 'scripts/x/raw.js']);
   assert.deepEqual(offenders(root, [{ file: 'scripts/x/raw.js', reason: 'x' }]).sort(), ['scripts/x/ex.js', 'scripts/x/fenced.js', 'scripts/x/gp.js']);
+});
+
+test('the guard sees the starter variants and git held in a constant', () => {
+  const root = tempFolder('wh-raw-git-');
+  fs.mkdirSync(path.join(root, 'scripts/x'), { recursive: true });
+  const planted = {
+    'node-spawn.js': "nodeSpawn('git', ['status']);\n",
+    'spawn-path.js': 'childSpawnSync(gitPath, [\'status\']);\n',
+    'exec-async.js': "const execFileAsync = promisify(execFile);\nawait execFileAsync('git', ['status']);\n",
+    'constant.js': "const GIT = 'git';\nawait run(GIT, ['status']);\n",
+    'exe.js': "await runner(run, gitExe, ['status']);\nawait run(gitBin, []);\n",
+    'quiet.js': "const respawned = 1;\nawait run('node', ['x.js']);\n",
+  };
+  for (const [name, text] of Object.entries(planted)) fs.writeFileSync(path.join(root, 'scripts/x', name), text);
+  assert.deepEqual(offenders(root, []).sort(), ['scripts/x/constant.js', 'scripts/x/exe.js', 'scripts/x/exec-async.js', 'scripts/x/node-spawn.js', 'scripts/x/spawn-path.js']);
 });
 
 test('every exception names a reason and a file that exists', () => {

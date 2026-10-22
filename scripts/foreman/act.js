@@ -141,7 +141,7 @@ import { CARD } from '../lib/front-desk.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram } from '../lib/run.js';
-import { safeGit } from '../lib/safe-git.js';
+import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
 } from '../protection/windows-builds.js';
@@ -334,6 +334,9 @@ function realFolders(root, parts) {
 // The sections of the repository's own git configuration that could run a
 // program, or read more configuration, when git checks out the worktree
 // (ruling R93): a smudge filter an agent set would run in the foreman's git.
+// This check stays: the look reads the config in the checkout's own context, but an includeIf
+// file is read only on its branch or in its git folder, so the new worktree's git could act on
+// what the look did not see (scripts/lib/safe-git.js says the same).
 const RISKY_SECTIONS = Object.freeze(['filter', 'include', 'includeif']);
 
 // Refuses when <checkout>/.git/config (or its config.worktree) holds a
@@ -365,12 +368,13 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   // The fenced route, looking at the repository's settings before each call: a setting off the
   // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
   const fenced = safeGit({
-    run: ctx.run, cwd: checkout, look: 'each', timeoutMs: GIT_MS,
+    run: ctx.run, cwd: checkout, look: 'each', timeoutMs: GIT_MS, caller: 'foreman',
   });
   const git = async (args) => {
     try {
       return await fenced(args, { env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1' } });
     } catch (e) {
+      if (e instanceof LookRefusal) return refuse(e.message);
       return refuse(`${oneLine(e.message, 600)}; no worktree was made: ask the director`);
     }
   };

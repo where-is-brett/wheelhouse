@@ -102,10 +102,11 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
     .map(({ word, wordNo }) => ({ lower: word.trim().toLowerCase(), wordNo }));
   // It scans the maintainer's own checkout, whose ordinary keys the allowed list would refuse, and
   // none of its commands runs a filter, diff driver or pager under the fence (--no-ext-diff and
-  // --no-textconv stay), so the fence alone is used.
+  // --no-textconv stay), so the fence alone is used. `log.showSignature` is switched off, so a
+  // `git log` never runs the checkout's `gpg.program` to verify a signature.
   const fenced = safeGit({ run, cwd: root, env: { GIT_OPTIONAL_LOCKS: '0' }, look: 'never' });
   const git = async (args, { input, encoding } = {}) => {
-    const result = await fenced(['-c', 'core.quotepath=off', ...args], { input, encoding });
+    const result = await fenced(['-c', 'core.quotepath=off', '-c', 'log.showSignature=false', ...args], { input, encoding });
     return result.code === 0 ? result.stdout : null;
   };
   const hits = [];
@@ -185,7 +186,7 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
     }
   }
   const range = ref === '' ? ['-n', String(commits)] : [`${ref}..HEAD`];
-  const logged = await git(['log', '--format=%H%x1f%B%x1e', ...range]);
+  const logged = await git(['log', '--no-show-signature', '--format=%H%x1f%B%x1e', ...range]);
   const messages = (logged ?? '').split('\x1e').map((r) => r.replace(/^\s+/, '')).filter(Boolean);
   for (const entry of messages) {
     const [sha, body = ''] = entry.split('\x1f');
@@ -194,7 +195,7 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
 
   // The lines each of those commits added, so a word added and then taken out again before the
   // push still fails. A line is numbered within its commit's changes, as `git log -p -U0` prints them.
-  const patches = await git(['log', '-p', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--format=%x1e%H', ...range]);
+  const patches = await git(['log', '--no-show-signature', '-p', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', '--format=%x1e%H', ...range]);
   for (const entry of (patches ?? '').split('\x1e').filter((e) => e.trim() !== '')) {
     const [first, ...rest] = entry.replace(/\r\n/g, '\n').split('\n');
     const lines = rest.join('\n').replace(/^\n+/, '').split('\n');
@@ -211,7 +212,7 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
 
   // The file names each of those commits touched, old and new names of a rename both, so a name
   // added and taken out again before the push still fails. The header lines above are not read.
-  const touched = await git(['log', '--name-only', '--no-renames', '-z', '--format=%x1e%H', ...range]);
+  const touched = await git(['log', '--no-show-signature', '--name-only', '--no-renames', '-z', '--format=%x1e%H', ...range]);
   for (const entry of (touched ?? '').split('\x1e').filter((e) => e.trim() !== '')) {
     const [sha, ...names] = entry.split('\0');
     for (const name of names.map((n) => n.replace(/^\n/, '')).filter(Boolean)) nameHits(name, 'diff', sha.trim());
