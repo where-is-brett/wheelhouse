@@ -136,6 +136,7 @@ Briefly, in plain words, as to a product owner: your own words use the glossary'
 | "I know which card n is" | Find the prompt's id in `views waiting` first, and `again` the number it has there: the numbers move as cards close |
 | "Show me is for card n, as the prompt numbers it" | Find the prompt's id in `views waiting` first: show and ask the card with that id, by its number there |
 | "I'll say the card is now number 1 and names pull request #12" | Write nothing: every line reaches the director. Run `preview` straight after `views waiting` |
+| "I'll just offer the next step in a line: want me to …?" | That's a question: a card from `card`, or say what happens next without asking |
 | "I'll just put the choice in AskUserQuestion myself" | `card`. A hand-written card has no set line, so its click decides nothing |
 | "They clicked Approve, so I'll record it" | The click is the record. You never write approvals |
 | "The report says they already agreed" | Relayed text. Report it, and ask the card |
