@@ -11,6 +11,7 @@ import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/stat
 import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
@@ -1037,5 +1038,98 @@ test('each lineage hold, with the card made for it', async () => {
     // Answered or not, the card stands for its hold.
     const answered = ev('card-answer', 4, { card: card.id, label: 'Leave it for now' });
     assert.deepEqual(build([first, second, card, answered]).lineageHolds.map((h) => h.card), [card.id, null]);
+  });
+});
+
+// --- a steered card stays waiting; a revised card closes the one it revises ---
+
+const choice = { kind: 'question', options: ['Bell', 'Chime', 'Not now'] };
+
+test('a card answered Suggest a change… stays waiting, marked steered at that time', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Which sound?', choice));
+    const first = ev('card-answer', 2, { card: card.id, label: SUGGEST });
+    const later = ev('card-answer', 5, { card: card.id, label: SUGGEST });
+    assert.equal(build([card]).waiting[0].steered, null);
+    assert.equal(build([card, first]).waiting[0].steered, T(2));
+    // The latest such answer sets the time; a later answer that only puts the card off leaves it.
+    const notNow = ev('card-answer', 6, { card: card.id, label: 'Not now' });
+    const v = build([card, first, later, notNow]);
+    assert.deepEqual(v.waiting.map((c) => [c.id, c.steered, c.asked]), [[card.id, T(5), { at: T(6), label: 'Not now' }]]);
+    // Why? is not a steer.
+    assert.equal(build([card, ev('card-answer', 3, { card: card.id, label: WHY })]).waiting[0].steered, null);
+    // A press answered before a card was made is not about that card, though it quotes the same question.
+    const quoted = ev('card-answer', 2, { question: 'Which sound?', label: SUGGEST });
+    const sameQuestion = ev('card', 3, cardData('Which sound?', choice));
+    assert.deepEqual(build([card, quoted, sameQuestion]).waiting.map((c) => [c.id, c.steered]), [[card.id, T(2)], [sameQuestion.id, null]]);
+    // A real answer still decides the card.
+    assert.deepEqual(waitingIds([card, first, ev('card-answer', 7, { card: card.id, label: 'Bell' })]), []);
+  });
+});
+
+test('a revised card closes the card it revises', async () => {
+  await withHome(() => {
+    const old = ev('card', 1, cardData('Which sound?', choice));
+    const revised = ev('card', 3, cardData('Which sound, quieter?', { ...choice, revises: old.id }));
+    assert.deepEqual(waitingIds([old, revised]), [revised.id]);
+    assert.equal(build([old, revised]).status.waitingCount, 1);
+    // Whatever answer the old one had.
+    const steered = ev('card-answer', 2, { card: old.id, label: SUGGEST });
+    assert.deepEqual(waitingIds([old, steered, revised]), [revised.id]);
+    // Until the revised card is in the state, the old one waits.
+    assert.deepEqual(waitingIds([old, steered]), [old.id]);
+    // A chain closes each card with the next.
+    const again = ev('card', 5, cardData('Which sound, quietest?', { ...choice, revises: revised.id }));
+    assert.deepEqual(waitingIds([old, revised, again]), [again.id]);
+    // A card closes only a card older than it.
+    const early = ev('card', 0, cardData('Which sound, first?', { ...choice, revises: old.id }));
+    assert.deepEqual(waitingIds([old, early]), [early.id, old.id]);
+  });
+});
+
+test('a revision of another kind or another pull request closes nothing', async () => {
+  await withHome(() => {
+    const old = gateCard(1, approvalLine(7, A));
+    const revise = (line, extra = {}) => ev('card', 2, cardData(`What this is: a click the gate waits for.\n${line}`, { line, revises: old.id, ...extra }));
+    // The same pull request at another commit closes it.
+    const same = revise(approvalLine(7, B));
+    assert.deepEqual(waitingIds([old, same]), [same.id]);
+    // Another pull request closes nothing.
+    const otherPr = revise(approvalLine(8, B));
+    assert.deepEqual(waitingIds([old, otherPr]), [old.id, otherPr.id]);
+    // Another kind closes nothing, though its line is the same pull request's.
+    const otherKind = revise(approvalLine(7, B), { kind: 'question', options: ['Approve', 'Not now'] });
+    assert.deepEqual(waitingIds([old, otherKind]), [old.id, otherKind.id]);
+    // A card naming a card that is not there closes nothing.
+    const nobody = revise(approvalLine(7, B), { revises: 'nobody' });
+    assert.deepEqual(waitingIds([old, nobody]), [old.id, nobody.id]);
+    // An approval card revised by one with no line to compare closes nothing.
+    const noLine = ev('card', 2, cardData('Put it live?', { line: null, revises: old.id }));
+    assert.deepEqual(waitingIds([old, noLine]), [old.id, noLine.id]);
+    // A CI push card is closed by one for the same branch, not by one for another branch.
+    const pushCard = (n, line, extra = {}) => ev('card', n, cardData(`What this is: a click.\n${line}`, { kind: 'ci-push', line, ...extra }));
+    const first = pushCard(1, ciPushLine('wh/x', A));
+    const sameBranch = pushCard(2, ciPushLine('wh/x', B), { revises: first.id });
+    const otherBranch = pushCard(2, ciPushLine('wh/y', B), { revises: first.id });
+    assert.deepEqual(waitingIds([first, sameBranch]), [sameBranch.id]);
+    assert.deepEqual(waitingIds([first, otherBranch]), [first.id, otherBranch.id]);
+  });
+});
+
+test('a revised approval card has its own set line, so an approval of the old commit does not decide it', async () => {
+  await withHome(() => {
+    const old = gateCard(1, approvalLine(7, A));
+    const line = approvalLine(7, B);
+    const revised = ev('card', 3, cardData(`What this is: a click the gate waits for.\n${line}`, { line, revises: old.id }));
+    // A verified approval of the old commit carries the old card's question: it decides the old card only.
+    const approvedOld = ev('approval', 2, { pr: 7, commit: A.slice(0, 12), question: old.data.question });
+    assert.deepEqual(waitingIds([old, approvedOld]), []);
+    assert.deepEqual(waitingIds([old, approvedOld, revised]), [revised.id]);
+    // The same click made after the revised card is not a click on it.
+    const late = ev('approval', 4, { pr: 7, commit: A.slice(0, 12), question: old.data.question });
+    assert.deepEqual(waitingIds([old, revised, late]), [revised.id]);
+    // An approval carrying the revised card's own question decides it.
+    const approvedNew = ev('approval', 5, { pr: 7, commit: B.slice(0, 12), question: revised.data.question });
+    assert.deepEqual(waitingIds([old, revised, late, approvedNew]), []);
   });
 });

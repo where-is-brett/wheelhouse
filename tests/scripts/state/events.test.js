@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
+import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -499,7 +500,7 @@ test('each new action needs its own fields and refuses others', async () => {
     for (const bad of [
       { ...a['approve-work'], lane: 'huge' }, { ...a['approve-work'], shownFirst: 'yes' }, { ...a['approve-work'], hash: 'zz' }, { ...a['approve-work'], work: 'Bad Id' },
       { ...a.answer, questionId: 'nope' }, { ...a.answer, questionHash: 'zz' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
-      { ...a.answer, label: 'Why?' }, { ...a.answer, label: 'Suggest a change…' },
+      { ...a.answer, label: 'Why?' }, { ...a.answer, label: 'Suggest a change…' }, { ...a.answer, label: 'Show me' },
       { ...a.amend, hash: H.slice(0, 11) }, { ...a['lift-incident'], incident: '' }, { ...a['incident-fix'], pr: 0 }, { ...a['incident-fix'], pr: '3' },
     ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
   });
@@ -650,14 +651,14 @@ test('an uninstall action names the project and the full hash of the list, and c
   });
 });
 
-test('a card answer labelled Why? or Suggest a change… is not an answer', async () => {
+test('a card answer labelled Why?, Suggest a change… or Show me is not an answer', async () => {
   await withHome(() => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
     const setupAnswer = { action: 'setup-answer', runId: 'run-0123456789', step: 4, questionId: 'live-data', question: 'Live data?', label: 'No live data', text: null };
     for (const base of [ACTION_SHAPES.answer, setupAnswer]) {
       assert.doesNotThrow(() => makeEvent({ kind: 'action', data: base, now: at(1) }), `${base.action} with its own label`);
-      for (const label of ['Why?', 'Suggest a change…', 'Not now', 'Explain more']) {
+      for (const label of PUT_OFF) {
         assert.throws(() => makeEvent({ kind: 'action', data: { ...base, label }, now: at(1) }), /not an answer/, `${base.action} labelled ${label}`);
       }
     }

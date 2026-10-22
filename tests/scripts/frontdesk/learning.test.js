@@ -14,6 +14,7 @@ import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/sign
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
 import { DELEGATE_AFTER, KNOWN_AFTER } from '../../../scripts/lib/front-desk.js';
 import { as, tempFolder } from '../../helpers/homes.js';
+import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 // Noon UTC on a day of October 2026: consecutive days are different days in any time zone.
@@ -470,5 +471,31 @@ test('the review is due every two weeks by default and follows the setting', asy
     assert.equal(delegationReview([weekly, ...events], { now: when(day(17)) }).due, false);
     // With no review yet, since is null and everything counts.
     assert.deepEqual(delegationReview([first, ...five(11)], { now: when(day(17)) }).since, null);
+  });
+});
+
+test('Why? counts as Explain more for a concept known and for plain explanations', async () => {
+  await inHome(async () => {
+    const made = setting('known:pull-request', true, day(5));
+    const known = profileOf({ events: [made, makeEvent({ ...confirmationFor(made), now: when(day(5, 1)) })], settings: { 'known:pull-request': true } });
+    const card = cardAt(day(10));
+    assert.deepEqual(conceptProposals([card, answer(card, WHY, day(10, 5))], known, { now: when(day(11)) }), [{ concept: 'pull-request', known: false, confirm: false }]);
+    // Suggest a change… steers the card and says nothing about a concept.
+    const steered = cardAt(day(10));
+    assert.deepEqual(conceptProposals([steered, answer(steered, SUGGEST, day(10, 5))], known, { now: when(day(11)) }), []);
+    // A card with Why? on it does not count toward a concept becoming known, as one with Explain more does not.
+    const decidedThree = [10, 11, 12].flatMap((d) => decided(day(d)));
+    assert.equal(conceptProposals(decidedThree, profileOf(), { now: when(day(14)) }).length, 1);
+    const asked = cardAt(day(13));
+    assert.deepEqual(conceptProposals([...decidedThree, asked, answer(asked, WHY, day(13, 5)), answer(asked, 'Plain', day(13, 10))], profileOf(), { now: when(day(14)) }), []);
+
+    // Three cards with Why? in a week propose plain explanations.
+    const explained = (d) => {
+      const c = cardAt(day(d), []);
+      return [c, answer(c, WHY, day(d, 1))];
+    };
+    const events = [...explained(10), ...explained(12), ...explained(15)];
+    const proposed = settingProposals(events, profileOf({ settings: { explanations: 'some-terms' } }), { now: when(day(16)), boardAsks: [] });
+    assert.deepEqual(proposed.map(({ key, value }) => ({ key, value })), [{ key: 'explanations', value: 'plain' }]);
   });
 });

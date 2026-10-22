@@ -11,7 +11,7 @@ import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
-import { CARD, CARD_KINDS } from '../lib/front-desk.js';
+import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 
 export const PLAIN_KINDS = [
@@ -63,7 +63,7 @@ const ACTION_OWN = {
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
-const NOT_AN_ANSWER = ['Explain more', 'Not now', 'Why?', 'Suggest a change…'];
+const NOT_AN_ANSWER = PUT_OFF;
 
 const isSlug = (x) => typeof x === 'string' && SLUG.test(x);
 const isText = (x) => typeof x === 'string' && x !== '';

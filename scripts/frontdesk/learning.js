@@ -36,7 +36,7 @@ import { CARD_KINDS, DELEGATE_AFTER, KNOWN_AFTER } from '../lib/front-desk.js';
 
 // How long a Not now or a Keep as is on a proposal's card holds the proposal back.
 export const TURNED_DOWN_DAYS = 30;
-// Explain more on this many different cards within this many days proposes plain explanations.
+// Explain more or Why? on this many different cards within this many days proposes plain explanations.
 export const EXPLAINED_CARDS = 3;
 export const EXPLAINED_DAYS = 7;
 // The build tab asked for on this many visits running proposes it as the board's first tab.
@@ -113,7 +113,7 @@ function conceptsOf(card) {
 }
 
 // conceptProposals(events, profile, { now, enrolled, outcomes, dayOf }) -> [{ concept, known, confirm }], by concept.
-// A concept is proposed as known (confirm: true, a card for the `known:<concept>` setting) once
+// Why? counts wherever Explain more does. A concept is proposed as known (confirm: true, a card for the `known:<concept>` setting) once
 // cards holding it were decided with no Explain more on KNOWN_AFTER different days, counting only
 // cards decided after the latest Explain more on any card holding it and after its latest setting
 // in the profile. Explain more on a card holding a concept known in force, after the latest
@@ -157,7 +157,7 @@ export function conceptSetting({ concept, known }) {
 
 // settingProposals(events, profile, { now, enrolled, outcomes, boardAsks }) -> [{ key, value, because }].
 // `boardTab: build` when the latest board command of each of the last BOARD_VISITS visits that had
-// one named build, and `explanations: plain` when EXPLAINED_CARDS different cards got Explain more
+// one named build, and `explanations: plain` when EXPLAINED_CARDS different cards got Explain more or Why?
 // within EXPLAINED_DAYS while some-terms is in force. Either counts only what came after that
 // setting's latest event in the profile, and neither is proposed when it is the value in force.
 export function settingProposals(events, profile, { now, enrolled, outcomes: given, boardAsks = [] } = {}) {
