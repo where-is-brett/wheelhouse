@@ -137,6 +137,8 @@ export const signUpUrl = (host, base = DEFAULT_GITLAB) => (host === 'gitlab' ? `
 // How long the browser sign-in may take (GitHub's codes last 15 minutes), and how long and how often
 // setup looks for the app's installation and its reach once the Install page is open.
 export const SIGN_IN_WAIT_MS = 15 * 60 * 1000;
+// How long `glab` may take to take a typed token.
+export const SIGN_IN_TOKEN_WAIT_MS = 60 * 1000;
 export const INSTALL_WAIT_MS = 8 * 60 * 1000;
 export const INSTALL_POLL_MS = 5 * 1000;
 // The project keys: a name GitLab shows, and the longest life it allows (check 22).
@@ -594,10 +596,54 @@ export async function signInStatus({ host, run = realRun, base = DEFAULT_GITLAB 
   return { signedIn: user !== null, user };
 }
 
+// Which way a sign-in to the host goes. The public service and a company's GitLab where the company
+// has registered an OAuth application (`glab`'s `client_id` is set for the host) use the browser; a
+// company's GitLab with none has no browser route, so the director types a token (check 71, where
+// `glab` said "Set 'client_id' first"). The browser route needs the company's GitLab admin to register
+// an application, which is the company's item, not setup's; the typed token works without one.
+export async function signInRoute({ run = realRun, base = DEFAULT_GITLAB } = {}) {
+  if (base === DEFAULT_GITLAB) return 'browser';
+  const got = await ask(run, 'gitlab', ['config', 'get', 'client_id', '-g', '--host', addressOf('gitlab', base)], base);
+  return got.code === 0 && String(got.stdout ?? '').trim() !== '' ? 'browser' : 'token';
+}
+
+// The token route: a page on the company's GitLab opens for a token to be made, the director pastes
+// it into the computer's own hidden box (never the chat), and it goes to `glab auth login --stdin` on
+// standard input: never an argument, the environment, a line said or an error. `glab` keeps it where
+// its default keeps it, as for the browser route (the operating system's keyring; no option that
+// puts it in a file is used), and setup reads it back only as it does today, with
+// `glab auth status --show-token`.
+const SIGN_IN_TOKEN_NAME = 'Wheelhouse sign-in';
+const NO_TOKEN = 'No GitLab token was given, so setup could not sign in; a fresh Go ahead asks again';
+async function signInWithToken({ run, base, say, stopped, open, askSecret, platform }) {
+  const address = addressOf('gitlab', base);
+  say(`Your company's GitLab, ${address}, has no sign-in through the browser set up, so make a token on the page that opens, then paste it into the box your computer shows: never into the chat`);
+  await open(tokenUrl({ host: 'gitlab', owner: '', repos: [], name: SIGN_IN_TOKEN_NAME, base }));
+  let token;
+  try {
+    token = await askSecret({ title: 'Wheelhouse: GitLab token', prompt: 'Paste the GitLab token you just made. It goes straight to your computer\'s own sign-in for GitLab, never the chat.' }, platform);
+  } catch {
+    throw new Error(NO_TOKEN);
+  }
+  if (typeof token !== 'string' || token.trim() === '') throw new Error(NO_TOKEN);
+  if (stopped()) throw new Error(STOPPED);
+  await quietly(run, toolPath('glab'), ['auth', 'login', '--hostname', address, '--stdin', '--git-protocol', 'https'], {
+    input: `${token.trim()}\n`, timeoutMs: SIGN_IN_TOKEN_WAIT_MS, env: { GITLAB_HOST: address },
+  });
+  if (stopped()) throw new Error(STOPPED);
+  const after = await signInStatus({ host: 'gitlab', run, base });
+  if (!after.signedIn) throw new Error(`Setup could not sign in to GitLab: ${address} did not accept the token. Make a new one with the api scope and a fresh Go ahead asks again`);
+  return after;
+}
+
 // The existing sign-in, with no browser step; otherwise the tool's own browser sign-in, run with the
-// director's environment, whose one-time code is said as it is shown. STOP coming on while it waits
-// (`stopped`) ends it, and the step stops.
-export async function signIn({ host, run = realRun, say = () => {}, stopped = () => false, base = DEFAULT_GITLAB }) {
+// director's environment, whose one-time code is said as it is shown, or on a company's GitLab with no
+// OAuth application a typed token (`signInRoute`). STOP coming on while it waits (`stopped`) ends it,
+// and the step stops.
+export async function signIn({
+  host, run = realRun, say = () => {}, stopped = () => false, base = DEFAULT_GITLAB,
+  open = (url) => openPage(url, { run }), askSecret = realAskSecret, platform = process.platform,
+}) {
   // glab defaults to ssh for git; a company's GitLab is set to https, as setup's git uses (check 71).
   const withHttps = async (found) => {
     if (host === 'gitlab' && base !== DEFAULT_GITLAB) await ask(run, host, ['config', 'set', 'git_protocol', 'https', '--host', addressOf(host, base)], base);
@@ -605,6 +651,9 @@ export async function signIn({ host, run = realRun, say = () => {}, stopped = ()
   };
   const before = await signInStatus({ host, run, base });
   if (before.signedIn) return withHttps(before);
+  if (host === 'gitlab' && await signInRoute({ run, base }) === 'token') {
+    return withHttps(await signInWithToken({ run, base, say, stopped, open, askSecret, platform }));
+  }
   say(`Sign in to ${NAME[host]} in the browser page that opens. No account yet? Make one first at ${signUpUrl(host, base)}`);
   let said = false;
   const onOutput = (text) => {
@@ -1271,7 +1320,10 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   const name = NAME[host];
   const parts = [];
   if (changes.some((c) => c.action === 'certificate')) parts.push(`your company's own certificate for ${base}, copied from this computer's own certificate store and given to Node.js, glab and git for that address only (certificate checks stay on)`);
-  if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
+  const signing = changes.find((c) => c.action === 'sign-in');
+  if (signing?.via === 'token') {
+    parts.push(`sign in to ${name} with a token: make a token on your company's GitLab page that opens (no account? sign up at ${signUpUrl(host, base)}), then paste it into the box your computer shows, never the chat. The sign-in through the browser needs your company's GitLab admin to register an application for it with the scopes api, read_user, write_repository, openid and profile, which is the company's job, not setup's`);
+  } else if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
     parts.push(`a private repository ${where} with a README, this folder connected to it, its files kept`);
@@ -1317,9 +1369,9 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
   };
 }
 
-function directorFor({ signedIn, way, host, app, appKeys, joining = false, twoAccounts = false }) {
+function directorFor({ signedIn, way, host, app, appKeys, joining = false, twoAccounts = false, via = null }) {
   const parts = ['One click'];
-  if (!signedIn) parts.push('your sign-in in the browser');
+  if (!signedIn) parts.push(via === 'token' ? 'a token made on your company\'s GitLab page and pasted into your computer\'s box' : 'your sign-in in the browser');
   if (way !== WAYS.quick && host === 'github' && app !== null) {
     if (app.own && typeof app.clientId !== 'string' && joining) parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page (and, if your app is not in your profile, Enable Device Flow ticked and Create clicked first)');
     else if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and two ticks on the Install page');
@@ -1459,7 +1511,12 @@ export function hostStep({
       if (host === 'gitlab' && base !== DEFAULT_GITLAB && await certificateProbe({ fetch, base, home: wheelhouseHome() }) === 'certificate') {
         changes.push({ kind: 'host', target: host, action: 'certificate', base, ...(fs.existsSync(caFile(wheelhouseHome())) ? { refresh: true } : {}) });
       }
-      if (!signedIn) changes.push({ kind: 'host', target: host, action: 'sign-in' });
+      // A company's GitLab with no OAuth application registered has no browser sign-in: the change says
+      // the way is a typed token (signInRoute), and the card says what the browser way would need.
+      if (!signedIn) {
+        const via = host === 'gitlab' && base !== DEFAULT_GITLAB && await signInRoute({ run, base }) === 'token' ? 'token' : null;
+        changes.push({ kind: 'host', target: host, action: 'sign-in', ...(via === null ? {} : { via }) });
+      }
       if (product.isNew) {
         changes.push({ kind: 'host', target: host, action: 'repository', name: product.name, repo, private: true });
         changes.push({ kind: 'folder', target: ctx.folder, action: 'connect', branch: 'main' });
@@ -1489,7 +1546,7 @@ export function hostStep({
       return {
         changes,
         card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts, base }),
-        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, twoAccounts }),
+        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, twoAccounts, via: changes.find((c) => c.action === 'sign-in')?.via ?? null }),
       };
     },
 
@@ -1558,7 +1615,7 @@ export function hostStep({
       const git = await findGit({ platform, run });
       if (!git?.ok || typeof git.path !== 'string') throw new Error('git is not on this computer yet; step 2 installs it');
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform, base });
-      const { user } = await signIn({ host, run, say, stopped, base });
+      const { user } = await signIn({ host, run, say, stopped, base, open: opener, askSecret, platform });
       // A repository the card named on one account is never made on another.
       for (const c of changes.filter((x) => (x.action === 'repository' || x.action === 'profile-repository') && typeof x.repo === 'string')) {
         if (c.repo.split('/')[0] !== user) throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);

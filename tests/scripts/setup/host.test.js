@@ -1073,6 +1073,36 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
   });
 });
 
+test('on a company\'s GitLab the typed token is the way offered, and the card names the admin\'s part', async () => {
+  const TYPED = 'glpat-never-on-a-card-0001';
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['localhost:8929'] }));
+    await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
+    const step = stepFor(w, { certificateProbe: async () => 'ok' });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    const signing = planned.changes.find((c) => c.action === 'sign-in');
+    assert.equal(signing.via, 'token');
+    assert.match(planned.card.what, /make a token on your company's GitLab page/);
+    assert.match(planned.card.what, /never the chat/);
+    assert.match(planned.card.what, /admin to register an application/);
+    assert.match(planned.card.what, /company's job, not setup's/);
+    assert.match(planned.director, /token/);
+    assert.doesNotMatch(planned.card.what, new RegExp(TYPED));
+    // Where the company has registered an application, the browser way stays.
+    const registered = standIn({ signedIn: { github: true, gitlab: false } });
+    const base = registered.run;
+    registered.run = async (file, args = [], options = {}) => {
+      if (path.basename(file) === 'glab' && args[0] === 'config' && args[1] === 'get') return { code: 0, stdout: 'an-application-id\n', stderr: '' };
+      return base(file, args, options);
+    };
+    const browser = await answerAll(stepFor(registered, { certificateProbe: async () => 'ok' }), ctxFor(folder), choose({ way: WAYS.narrow }));
+    assert.deepEqual(browser.changes.find((c) => c.action === 'sign-in'), { kind: 'host', target: 'gitlab', action: 'sign-in' });
+    assert.match(browser.card.what, /in your browser/);
+  });
+});
+
 // ---- The company's own certificate (check 71) ----
 
 const COMPANY_ORIGIN = 'https://git.example.org:8443';

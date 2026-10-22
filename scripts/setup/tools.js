@@ -21,6 +21,16 @@
 // -P. Only the helper runs that copy (scripts/lib/host-tools.js's toolPath), so nothing else needs
 // it on the path. Which one: the host the project's `origin` names, or both while it names none.
 //
+// Where the public GitLab is blocked, the project's `glabFrom` setting (.claude/wheelhouse.json) reads
+// `company <path or address>` and `glab` is taken from the company's own list instead: a JSON file
+// shaped like GitLab's release (`tag_name`, and `assets.links` of { name, direct_asset_url, sha256? },
+// with a `checksums.txt` link where the company has one). A path is read from disk, its files beside
+// the list; an address is fetched over https only, no redirect followed, every file on the list's own
+// host. The version in the list is checked against the file's, and the checksum where the list gives
+// one. A list that gives none is named on step 2's card (`checksum: 'none'` on the change), and only
+// that change, once the director has said Go ahead, lets the copy be used. Nothing downloaded runs
+// before then, and the one run at apply is `--version`.
+//
 // The step also writes one allow rule into the project's .claude/settings.local.json, by key, for
 // setup's own command (ruling R43), so the playbook's calls before step 7 are not asked about
 // each time. With everything here and the rule in, nothing is listed, and the step settles with
@@ -41,7 +51,7 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
-import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf } from '../host/company-ca.js';
+import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind } from '../host/company-ca.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -176,6 +186,138 @@ async function latestTag(fetch, releases) {
   return tagFromLocation(response.headers.get('location'));
 }
 
+// ---- glab from the company's own list ----
+
+export const GLAB_FROM_LINE = 'glabFrom reads "gitlab" (glab\'s official release, the default) or "company <path or address>" (your company\'s own list), so setup did not fetch glab';
+const ADDRESS_ONLY_HTTPS = 'A company\'s address is fetched only over https, so setup did not fetch glab from it';
+const LIST_LIMIT = 1024 * 1024;
+
+// Where `glab` comes from: { kind: 'gitlab', from: null } (the official release) or
+// { kind: 'company', from } with `from` a path or an https address, as written in the setting.
+export function glabSource({ setting } = {}) {
+  const text = typeof setting === 'string' ? setting.trim() : '';
+  if (text === '' || text === 'gitlab') return { kind: 'gitlab', from: null };
+  const from = /^company(?:\s+(\S[\s\S]*))?$/.exec(text)?.[1]?.trim();
+  if (!from) throw new Error(GLAB_FROM_LINE);
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(from)) {
+    let address = null;
+    try {
+      address = new URL(from);
+    } catch { /* not an address */ }
+    if (address?.protocol !== 'https:' || address.username || address.password || !address.hostname) throw new Error(ADDRESS_ONLY_HTTPS);
+  }
+  return { kind: 'company', from };
+}
+
+// The project's `glabFrom` setting, read from its committed configuration without judging the rest
+// of the file; undefined when there is none.
+export function readGlabFrom(folder) {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'))?.glabFrom;
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const isAddress = (from) => /^https:\/\//i.test(from);
+
+// The company's list read, on disk or at its address, as the release the fetch needs: its version
+// (or null), the checksums it gives (from a `checksums.txt` link and from `sha256` on the links), the
+// names, and how to read one file. Only the list and its checksum file are read here.
+async function companyRelease({ from, folder, fetch }) {
+  let listText;
+  let bytesOf;
+  if (isAddress(from)) {
+    const listUrl = new URL(from);
+    const resolve = (name, link) => {
+      let url = null;
+      try {
+        url = new URL(link ?? name, listUrl);
+      } catch { /* not an address */ }
+      if (url === null || url.protocol !== 'https:' || url.host !== listUrl.host || url.username || url.password) {
+        throw new Error(`${name} is not on the company's list host, so setup did not fetch it`);
+      }
+      return url.href;
+    };
+    const get = async (url) => {
+      try {
+        return await getOk(fetch, url, { redirect: 'error' });
+      } catch (error) {
+        const kind = failureKind(error);
+        if (kind === 'certificate') {
+          throw new Error(`The certificate at ${listUrl.host}, where your company's list is, isn't one this computer trusts, and setup never switches certificate checks off. Save the list and its files in a folder on this computer and name the list's path in glabFrom instead`);
+        }
+        if (kind === 'unreachable') throw new Error(`Your company's list at ${listUrl.host} can't be reached from here, perhaps off the company network`);
+        throw error;
+      }
+    };
+    listText = await (await get(from)).text();
+    bytesOf = { resolve, bytes: async (url) => Buffer.from(await (await get(url)).arrayBuffer()), text: async (url) => (await get(url)).text() };
+  } else {
+    const file = path.resolve(folder ?? '.', from);
+    const beside = path.dirname(file);
+    const resolve = (name, link) => {
+      const leaf = link ?? name;
+      if (leaf === '' || leaf === '.' || leaf === '..' || path.basename(leaf) !== leaf || /[\\/]/.test(leaf)) throw new Error(`${name} is not beside the company's list, so setup did not use it`);
+      return path.join(beside, leaf);
+    };
+    const read = (target) => {
+      const info = fs.lstatSync(target);
+      if (!info.isFile()) throw new Error(`${path.basename(target)} is not a plain file, so setup did not use it`);
+      return fs.readFileSync(target);
+    };
+    try {
+      if (fs.statSync(file).size > LIST_LIMIT) throw new Error('too large');
+      listText = fs.readFileSync(file, 'utf8');
+    } catch {
+      throw new Error(`Your company's list at ${file} could not be read, so setup did not fetch glab`);
+    }
+    bytesOf = { resolve, bytes: async (target) => read(target), text: async (target) => read(target).toString('utf8') };
+  }
+  let list;
+  try {
+    list = JSON.parse(listText);
+  } catch {
+    throw new Error('Your company\'s list is not a readable list, so setup did not fetch glab');
+  }
+  const links = Array.isArray(list?.assets?.links) ? list.assets.links.filter((l) => l && typeof l.name === 'string') : [];
+  if (links.length === 0) throw new Error('Your company\'s list names no files, so setup did not fetch glab');
+  const byName = new Map(links.map((l) => [l.name, bytesOf.resolve(l.name, typeof l.direct_asset_url === 'string' ? l.direct_asset_url : undefined)]));
+  const sums = new Map();
+  if (byName.has('checksums.txt')) {
+    for (const [name, sum] of parseChecksums(await bytesOf.text(byName.get('checksums.txt')))) sums.set(name, sum);
+  }
+  for (const l of links) {
+    if (l.sha256 === undefined) continue;
+    if (typeof l.sha256 !== 'string' || !/^[0-9a-fA-F]{64}$/.test(l.sha256)) throw new Error(`The checksum the company's list gives for ${l.name} is not readable, so setup did not use it`);
+    if (!sums.has(l.name)) sums.set(l.name, l.sha256.toLowerCase());
+  }
+  return {
+    company: true,
+    tag: typeof list.tag_name === 'string' && list.tag_name !== '' ? list.tag_name : null,
+    checksumText: [...sums].map(([name, sum]) => `${sum}  ${name}`).join('\n'),
+    names: [...byName.keys()],
+    bytesFor: (name) => bytesOf.bytes(byName.get(name)),
+  };
+}
+
+// What a company's list says about the glab file this computer would take: its version and whether
+// the list gives a checksum for it. Reads only.
+async function describeCompany({ source, folder, fetch, platform, arch }) {
+  const release = await companyRelease({ from: source.from, folder, fetch });
+  const name = pickArchive('glab', release.names, platform, arch);
+  const version = versionOf(name);
+  checkListedVersion(release, version);
+  return { from: 'company', source: source.from, version, checksum: parseChecksums(release.checksumText).has(name) ? 'listed' : 'none' };
+}
+
+function checkListedVersion(release, version) {
+  if (release.tag !== null && release.tag.replace(/^v/, '') !== version) {
+    throw new Error(`The company's list says ${release.tag}, but its glab file is ${version}, so setup did not use it`);
+  }
+}
+
 // Where each host tool's official release lives. Neither needs a token.
 const SOURCES = {
   gh: async (fetch) => {
@@ -225,14 +367,26 @@ function findBinary(dir, name) {
 // unpacked in a new folder beside it, run once, and only then put in place, with the release's tag
 // kept beside it in `version`. `record(change)`, when given, gets the folder's change just before
 // it is put in place. Gives the program's path and version.
-export async function fetchHostTool({ tool, platform = process.platform, arch = process.arch, fetch = globalThis.fetch, run = realRun, record } = {}) {
+export async function fetchHostTool({
+  tool, platform = process.platform, arch = process.arch, fetch = globalThis.fetch, run = realRun, record,
+  source = { kind: 'gitlab', from: null }, folder, allowNoChecksum = false, expectVersion,
+} = {}) {
   if (!HOST_TOOLS.includes(tool)) throw new Error(`There is no host tool named ${tool}`);
-  const release = await SOURCES[tool](fetch);
+  const company = source?.kind === 'company';
+  if (company && tool !== 'glab') throw new Error(`A company's list gives glab only, not ${tool}`);
+  const release = company ? await companyRelease({ from: source.from, folder, fetch }) : await SOURCES[tool](fetch);
   const sums = parseChecksums(release.checksumText);
   const name = pickArchive(tool, release.names, platform, arch);
   const version = versionOf(name);
-  const bytes = await getBytes(fetch, official(release.urlFor(name), tool));
-  verifyChecksum(name, bytes, sums);
+  if (company) checkListedVersion(release, version);
+  if (expectVersion !== undefined && expectVersion !== version) throw new Error(`The company's list now offers glab ${version}, not ${expectVersion} as the card said: ask for step 2's card again`);
+  const tagged = release.tag ?? `v${version}`;
+  // A copy the list gives no checksum for is used only once the card that says so has been agreed.
+  if (company && !sums.has(name) && !allowNoChecksum) {
+    throw new ChecksumError(`${name} has no checksum on the company's list, so setup did not use it until a card says so and you agree`);
+  }
+  const bytes = company ? await release.bytesFor(name) : await getBytes(fetch, official(release.urlFor(name), tool));
+  if (!company || sums.has(name)) verifyChecksum(name, bytes, sums);
   const target = toolFolder(tool);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const work = fs.mkdtempSync(path.join(path.dirname(target), `.${tool}-`));
@@ -250,7 +404,7 @@ export async function fetchHostTool({ tool, platform = process.platform, arch = 
     const program = path.join(staged, 'bin', binary);
     fs.copyFileSync(findBinary(unpacked, binary), program);
     if (platform !== 'win32') fs.chmodSync(program, 0o755);
-    fs.writeFileSync(path.join(staged, 'version'), `${release.tag}\n`);
+    fs.writeFileSync(path.join(staged, 'version'), `${tagged}\n`);
     const ran = await run(program, ['--version']);
     if (ran.code !== 0) throw new Error(`${tool} was fetched but would not run`);
     let before = null;
@@ -258,7 +412,7 @@ export async function fetchHostTool({ tool, platform = process.platform, arch = 
       before = { version: fs.readFileSync(path.join(target, 'version'), 'utf8').trim() };
     } catch { /* none there, or none setup fetched */ }
     if (typeof record === 'function') {
-      record({ id: newId('chg'), kind: 'folder', target, before: fs.existsSync(target) ? before ?? {} : null, after: { tool, version: release.tag } });
+      record({ id: newId('chg'), kind: 'folder', target, before: fs.existsSync(target) ? before ?? {} : null, after: { tool, version: tagged } });
     }
     if (fs.existsSync(target)) fs.renameSync(target, path.join(work, 'earlier'));
     fs.renameSync(staged, target);
@@ -535,9 +689,15 @@ function cardFor(changes, status, platform) {
   for (const c of changes.filter((x) => x.kind === 'process')) {
     lines.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
   }
-  const fetched = changes.filter((c) => c.action === 'fetch').map((c) => c.tool);
+  const fetches = changes.filter((c) => c.action === 'fetch');
+  const fetched = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
   if (fetched.length > 0) {
     lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
+  }
+  for (const c of fetches.filter((x) => x.from === 'company')) {
+    lines.push(`${c.tool}, the host's command-line tool: taken from your company's list at ${c.source}, version ${c.version}, into Wheelhouse's tools folder, and not from the public release; ${c.checksum === 'listed'
+      ? 'checked against the checksum your company\'s list gives'
+      : 'your company\'s list gives no checksum for it, so setup cannot check it is the file your company meant. Setup runs it only to read its version. Say Not now to look at the list first'}`);
   }
   if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
@@ -602,7 +762,15 @@ export function toolsStep({
           ? { kind: 'process', target: 'git', action: 'wait' }
           : { kind: 'process', target: 'git', action: 'install', waitsFor: WAITS_FOR[platform] });
       }
-      for (const tool of hostTools) if (!status[tool].ok) changes.push({ kind: 'folder', target: toolFolder(tool), action: 'fetch', tool });
+      for (const tool of hostTools) {
+        if (status[tool].ok) continue;
+        const change = { kind: 'folder', target: toolFolder(tool), action: 'fetch', tool };
+        // Where the project's glabFrom names the company's own list, glab comes from there; what the list
+        // says (its version, whether it gives a checksum) goes on the card before anything is fetched.
+        const source = tool === 'glab' ? glabSource({ setting: readGlabFrom(ctx.folder) }) : null;
+        if (source?.kind === 'company') Object.assign(change, await describeCompany({ source, folder: ctx.folder, fetch, platform, arch }));
+        changes.push(change);
+      }
       const rule = allowRule(setupCommand(pluginRoot, { platform }));
       if (rule !== null) {
         const file = path.join(ctx.folder, '.claude', 'settings.local.json');
@@ -629,7 +797,10 @@ export function toolsStep({
         if (!started.started) throw new Error(`the ${c.target} installer did not start${started.why ? `: ${started.why}` : ''}`);
         record({ id: newId('chg'), kind: 'process', target: started.image, before: null, after: { tool: c.target, pid: started.pid, startedAt: now().toISOString(), image: started.image } });
       });
-      const fetches = changes.filter((c) => c.action === 'fetch').map((c) => fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record }));
+      const fetches = changes.filter((c) => c.action === 'fetch').map((c) => (c.from === 'company'
+        // What the card said: the list it named, the version it gave, and whether it gave a checksum.
+        ? fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record, source: glabSource({ setting: `company ${c.source}` }), folder: ctx.folder, expectVersion: c.version, allowNoChecksum: c.checksum === 'none' })
+        : fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record })));
       // The rule is written once every installer's start is recorded, so a write that fails can't
       // leave an installer open that the journal doesn't know about.
       const failed = (await Promise.allSettled([...installs, ...fetches])).find((r) => r.status === 'rejected');

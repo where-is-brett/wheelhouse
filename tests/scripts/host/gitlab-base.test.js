@@ -101,6 +101,9 @@ test('glab is told the company\'s host, with its port, through GITLAB_HOST', asy
   const run = async (file, args, options = {}) => {
     calls.push({ file: path.basename(file), args: [...args], env: options.env });
     if (args[0] === 'auth' && args[1] === 'status') return signedIn ? { code: 0, stdout: 'Logged in', stderr: '' } : { code: 1, stdout: '', stderr: 'not logged in' };
+    // The company has registered an OAuth application, so the sign-in goes through the browser (Part 6 Task 3
+    // makes a typed token the way where none is registered).
+    if (args[0] === 'config' && args[1] === 'get') return { code: 0, stdout: 'a-registered-application\n', stderr: '' };
     if (args[0] === 'auth' && args[1] === 'login') { signedIn = true; return { code: 0, stdout: '', stderr: '' }; }
     if (args[0] === 'api') return { code: 0, stdout: JSON.stringify({ username: 'a-director' }), stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
