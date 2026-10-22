@@ -10,7 +10,7 @@
 //
 // With `offline` (the status line, which has half a second and whose reads can't be interrupted)
 // only what the glance needs is read, each a file of known size or a view by name: the waiting,
-// questions, work and features views, STOP, the weekly share from the allowance file alone, and
+// questions, work, features and blockers views, STOP, the weekly share from the allowance file alone, and
 // the small files health reads (the host facts' cache, the profile's address). No raw events,
 // other views, settings, usage days, sources, key files, setup journal or the project's
 // configuration are read, no browser is looked for, and nothing is asked of the helper, so the
@@ -42,7 +42,7 @@ export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // the helper as tried, before the reading as a whole stops waiting.
 const FACTS_MARGIN_MS = 150;
 // The views the glance counts from.
-const GLANCE_VIEWS = ['waiting', 'questions', 'work', 'features'];
+const GLANCE_VIEWS = ['waiting', 'questions', 'work', 'features', 'blockers'];
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const LATE = Symbol('late');

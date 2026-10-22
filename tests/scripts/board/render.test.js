@@ -155,18 +155,50 @@ test('text from events never becomes a link or a heading on the board', () => {
 });
 
 test('the glance line keeps to 80 characters and leaves out parts with nothing to say', () => {
-  assert.equal(glanceLine(fullModel()), 'Wheelhouse · 2 waiting · 3 building · week 34% · STOP on');
+  assert.equal(glanceLine(fullModel()), 'Wheelhouse · 2 waiting · 3 building · launch 1 of 3 · week 34% · STOP on');
   const calm = fullModel();
   calm.director.waiting = [];
   calm.director.health = [{ level: 'stop', text: 'Incident i1 is open, so nothing merges: x' }];
   calm.director.budget.share = null;
   calm.build.features = [];
+  calm.director.launch = { phase: null, resolved: 0, total: 0, blockers: [], next: [] };
   assert.equal(glanceLine(calm), 'Wheelhouse');
   const many = fullModel();
   many.director.waiting = Array.from({ length: 789 }, (_, i) => ({ n: i + 1, what: 'x', since: null }));
   many.director.budget.share = 99.6;
-  assert.equal(glanceLine(many), 'Wheelhouse · 789 waiting · 3 building · week 100% · STOP on');
+  assert.equal(glanceLine(many), 'Wheelhouse · 789 waiting · 3 building · launch 1 of 3 · week 100% · STOP on');
   for (const m of [fullModel(), calm, many]) assert.ok(glanceLine(m).length <= 80);
+});
+
+test('the glance carries launch progress while blockers are open', () => {
+  assert.match(glanceLine(fullModel()), / · launch 1 of 3 · /);
+  const done = fullModel();
+  done.director.launch = { phase: 'launched', resolved: 3, total: 3, blockers: [], next: [] };
+  assert.doesNotMatch(glanceLine(done), /launch/);
+  const none = fullModel();
+  none.director.launch = { phase: null, resolved: 0, total: 0, blockers: [], next: [] };
+  assert.doesNotMatch(glanceLine(none), /launch/);
+});
+
+test('the glance drops the week\'s share first, then launch, to stay within 80 characters, and never STOP on', () => {
+  const m = fullModel();
+  m.director.waiting = Array.from({ length: 12345 }, (_, i) => ({ n: i + 1, what: 'x', since: null }));
+  m.director.launch = { phase: 'before-launch', resolved: 1, total: 3, blockers: [], next: [] };
+  const full = 'Wheelhouse · 12345 waiting · 3 building · launch 1 of 3 · week 34% · STOP on';
+  assert.equal(glanceLine(m), full);
+  m.director.launch.resolved = 10;
+  m.director.launch.total = 99999;
+  const noWeek = 'Wheelhouse · 12345 waiting · 3 building · launch 10 of 99999 · STOP on';
+  assert.equal(glanceLine(m), noWeek);
+  m.build.features = Array.from({ length: 123456 }, () => ({ step: 'building' }));
+  m.director.launch.total = 9999999;
+  m.director.launch.resolved = 1234567;
+  assert.equal(glanceLine(m), 'Wheelhouse · 12345 waiting · 123456 building · STOP on');
+  m.director.waiting = Array.from({ length: 5 }, (_, i) => ({ n: i + 1, what: 'x', since: null }));
+  m.director.launch = { phase: 'before-launch', resolved: 1, total: 3, blockers: [], next: [] };
+  m.director.budget.share = 99.6;
+  const ok = glanceLine(m);
+  assert.ok(ok.length <= 80 && ok.endsWith('STOP on'), ok);
 });
 
 test('with every input missing, the board and the glance still come out and name what is missing', () => {

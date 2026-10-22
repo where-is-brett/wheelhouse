@@ -221,22 +221,38 @@ export function renderBoard(model, { tab = 'director', limit = CONTEXT_CHARS } =
   }
 }
 
-// glanceLine(model): "Wheelhouse · 2 waiting · 3 building · week 34% · STOP on", each part only
-// when it has something to say, at most GLANCE_CHARS.
+// glanceLine(model): "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34% · STOP on", each
+// part only when it has something to say; "launch r of t" while the project has blockers open. At
+// most GLANCE_CHARS: where it would pass, the week's share drops first, then the launch part,
+// before any cut with "…". STOP on is never dropped.
 export function glanceLine(model) {
   try {
     if (!isRecord(model)) return 'Wheelhouse';
-    const parts = ['Wheelhouse'];
-    if (list(model.missing).includes(NO_STATE)) parts.push('no state yet');
+    const head = ['Wheelhouse'];
+    if (list(model.missing).includes(NO_STATE)) head.push('no state yet');
     const waiting = records(model.director?.waiting).length;
-    if (waiting > 0) parts.push(`${waiting} waiting`);
+    if (waiting > 0) head.push(`${waiting} waiting`);
     const building = records(model.build?.features).filter((f) => f.step === 'building').length;
-    if (building > 0) parts.push(`${building} building`);
+    if (building > 0) head.push(`${building} building`);
+    const progress = model.director?.launch;
+    const launch = isRecord(progress) && Number.isInteger(progress.total) && progress.total > 0 && Number.isInteger(progress.resolved)
+      && progress.resolved >= 0 && progress.resolved < progress.total ? `launch ${progress.resolved} of ${progress.total}` : null;
     const share = model.director?.budget?.share;
-    if (isNumber(share)) parts.push(`week ${Math.round(share)}%`);
-    if (records(model.director?.health).some((line) => line.level === 'stop' && (line.text === STOP_LINE || String(line.text).startsWith(`${STOP_LINE}, `)))) parts.push('STOP on');
-    const line = parts.join(' · ');
-    return line.length <= GLANCE_CHARS ? line : `${line.slice(0, GLANCE_CHARS - 1)}…`;
+    const week = isNumber(share) ? `week ${Math.round(share)}%` : null;
+    const stop = records(model.director?.health).some((line) => line.level === 'stop' && (line.text === STOP_LINE || String(line.text).startsWith(`${STOP_LINE}, `))) ? 'STOP on' : null;
+    const join = (parts) => parts.join(' · ');
+    const tail = stop ? [stop] : [];
+    for (const optional of [[launch, week], [launch], []]) {
+      const line = join([...head, ...optional.filter(Boolean), ...tail]);
+      if (line.length <= GLANCE_CHARS) return line;
+    }
+    // Still too long: the front is cut with "…" and STOP on stays.
+    if (!stop) {
+      const line = join(head);
+      return `${line.slice(0, GLANCE_CHARS - 1)}…`;
+    }
+    const room = GLANCE_CHARS - ` · ${stop}`.length - 1;
+    return `${join(head).slice(0, room)}… · ${stop}`;
   } catch {
     return 'Wheelhouse';
   }
