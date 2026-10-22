@@ -34,3 +34,6 @@ export async function g(dir, ...args) {
 // What a caller adds to let the state and profile git reach a local-path remote (a stand-in host):
 // the same transport setup's reaching() asks for.
 export const LOCAL_PATHS = { GIT_ALLOW_PROTOCOL: 'https:file' };
+
+// As LOCAL_PATHS, for the plain-http loopback stand-in host (tests/helpers/http-host.js).
+export const LOOPBACK_HTTP = { GIT_ALLOW_PROTOCOL: 'https:http' };

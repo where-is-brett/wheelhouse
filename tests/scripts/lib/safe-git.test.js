@@ -27,6 +27,12 @@ test('reachFor: paths and file:// are local, on both systems; https, ssh and scp
   for (const url of ['https://github.com/o/p.git', 'ssh://git@github.com/o/p', 'git@github.com:o/p.git']) assert.equal(reachFor(url), 'https', url);
 });
 
+test('reachFor: plain http on loopback only is loopback, and maps to https:http', () => {
+  for (const url of ['http://127.0.0.1:8080/x', 'http://localhost/x', 'http://[::1]:9/x']) assert.equal(reachFor(url), 'loopback', url);
+  for (const url of ['http://example.com/x', 'http://127.0.0.1.example.com/x', 'http://localhost.evil.com/x']) assert.equal(reachFor(url), 'https', url);
+  assert.equal(safeGitEnv({}, { reach: 'loopback' }).GIT_ALLOW_PROTOCOL, 'https:http');
+});
+
 test('safeGitEnv carries the whole fence, and the transport its reach names, replacing any given', () => {
   const env = safeGitEnv({});
   assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');

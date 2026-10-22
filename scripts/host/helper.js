@@ -1198,7 +1198,8 @@ export async function startHelper({
   // The transport the clones' git may use: a local path only where the recorded remote is one (a
   // stand-in host), https otherwise. The fence in state/git.js reads it from GIT_ALLOW_PROTOCOL.
   const LOCAL_PATHS = { GIT_ALLOW_PROTOCOL: 'https:file' };
-  const reachEnv = (remoteUrl) => (reachFor(remoteUrl) === 'local' ? LOCAL_PATHS : {});
+  const LOOPBACK_HTTP = { GIT_ALLOW_PROTOCOL: 'https:http' };
+  const reachEnv = (remoteUrl) => ({ local: LOCAL_PATHS, loopback: LOOPBACK_HTTP })[reachFor(remoteUrl)] ?? {};
   const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
 
   async function ensureStateClone(project, ctx) {

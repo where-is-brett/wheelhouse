@@ -25,14 +25,18 @@ const ALLOWED_VARS = new Set([
   'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
   'GIT_COMMITTER_DATE', 'GIT_ATTR_NOSYSTEM', 'GIT_NO_LAZY_FETCH',
 ]);
-const TRANSPORT = { https: 'https', local: 'https:file', ssh: 'https:ssh' };
+const TRANSPORT = { https: 'https', local: 'https:file', ssh: 'https:ssh', loopback: 'https:http' };
 
 // How a remote's address is reached: 'local' for a path on this computer (absolute, relative, a
-// drive letter or a share on Windows) or a file:// address; 'https' for everything else, an ssh or
+// drive letter or a share on Windows) or a file:// address; 'loopback' for an http:// address on
+// 127.0.0.1, localhost or [::1]; 'https' for everything else, an ssh or
 // scp-style address included (the transport that lets ssh through is asked for by name).
 export function reachFor(url, { platform = process.platform } = {}) {
   if (typeof url !== 'string' || url === '') return 'https';
   if (/^file:\/\//i.test(url)) return 'local';
+  // Plain http on this computer's own loopback only: the narrow-key tests' stand-in host. Setup never
+  // records such a remote for a real project. Any other http:// address stays refused.
+  if (/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(url)) return 'loopback';
   if (url.includes('::') || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(url)) return 'https';
   if (path.posix.isAbsolute(url) || /^\.\.?\//.test(url)) return 'local';
   if (platform === 'win32' && (path.win32.isAbsolute(url) || /^\.\.?\\/.test(url))) return 'local';

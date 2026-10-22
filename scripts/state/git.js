@@ -13,7 +13,8 @@ import { safeGitEnv } from '../lib/safe-git.js';
 // transport allowed: https, with a local path as well where the caller's
 // GIT_ALLOW_PROTOCOL already allows `file` (a local stand-in host).
 export function git(dir, args, env = {}) {
-  const reach = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file') ? 'local' : 'https';
+  const allowed = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':');
+  const reach = allowed.includes('http') ? 'loopback' : allowed.includes('file') ? 'local' : 'https';
   return run('git', ['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args], {
     cwd: dir,
     baseEnv: withoutGitVars(),
