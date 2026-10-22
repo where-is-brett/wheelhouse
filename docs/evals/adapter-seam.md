@@ -9,11 +9,11 @@ Twenty-seven numbers have scenario files, in four suites:
 - **The front desk** (`tests/eval/front-desk/`): 1, 2, 3, 5, 7, 8, 9, 10, 16.
 - **The main session** (`tests/eval/main/`): 4, 6, 13, 15, 18.
 - **The build loop** (`tests/eval/build-loop/`): 20, 21, 22, 23, 24, 25, 26, 27 (two legs: the bug route, and `route`, the front desk's route), 33, 34, 35.
-- **The mod** (`tests/eval/mod/`): 36 (legs `explain` and `show`) and 37 (legs the courier's wake, `unsent` and `reminder`).
+- **The mod** (`tests/eval/mod/`): 36 (its own leg, a press of Explain more, and the leg `show`) and 37 (legs the courier's wake, `unsent` and `reminder`).
 
 ## What it was run on
 
-Run on 22 and 23 October 2026, on macOS, with Claude Code 2.1.302, Superpowers 7.0.0, and Matt Pocock's skills, the organisation-synced copy this computer has. Each trial was `npm run eval -- <number> --variant with`, one or two at a time. The record of each, with every stream-json event, is in `~/.wheelhouse-evals/2026-10-22/` and `~/.wheelhouse-evals/2026-10-23/`, named `<id>[-<leg>]-with-<trial>.json`.
+Run on 22 and 23 October 2026, on macOS, with Claude Code 2.1.302, Superpowers 7.0.0, and Matt Pocock's skills as installed on this computer. Each trial was `npm run eval -- <number> --variant with`, one or two at a time. The record of each, with every stream-json event, is in `~/.wheelhouse-evals/2026-10-22/` and `~/.wheelhouse-evals/2026-10-23/`, named `<id>[-<leg>]-with-<trial>.json`.
 
 Two commits were run:
 
@@ -24,7 +24,7 @@ Scenarios 4, 13, 15, 18, 20 to 24 and 34 do not use a stand-in, so their first-q
 
 ## The stand-in finding
 
-The first queue had nine scenarios fail (1, 9, 13, 16, 26, 35, 36, 36 `show` and 37 `reminder`). Five of them (9, 35, 36, 36 `show` and 37 `reminder`) had one cause, which two of them said outright: "the session start never gave me the Wheelhouse command" (36) and "I don't have the Wheelhouse command" (37 `reminder`).
+The first queue had nine scenarios fail (1, 9, 13, 16, 26, 35, 36, 36 `show` and 37 `reminder`). Three of them said what was missing: "I can't load the clickable-question tool here" (9), "the session start never gave me the Wheelhouse command" (36) and "I don't have the Wheelhouse command" (37 `reminder`). All five of 9, 35, 36, 36 `show` and 37 `reminder` passed once the stand-ins were brought in line (36 `show` on its run again alone).
 
 Since this part, Wheelhouse's real session start gives a session the tool sheet and the line "The Wheelhouse command is ...", and the front desk's playbooks name the command and the tools that way. The evaluation's own stand-ins for the session start (`scripts/eval/front-desk.js` and `tests/eval/mod/front-desk-playbook.js`) still gave the front desk's line alone. A stand-in session could therefore not find the command or the clickable-question tool. Wheelhouse's own session start was right; the evaluation's stand-in was behind it.
 
@@ -116,7 +116,7 @@ No counted scenario fails because of the adapter seam. 24 of 27 pass. The three 
 
 ## The test suite and the mod's check
 
-Run as step 1 of Task 7, on the part's tip:
+Run as step 1 of Task 7, on the part's head (f4895bc):
 
-- **`npm test`**: passes. The full run (23 October 2026, on 11f53bd) had 0 failures and 1 skipped test. One file, `tests/scripts/host/helper-update.test.js`, hit the run's 480-second test timeout under the load of the whole run and was counted as cancelled; run alone it passes, all 28 of its tests (about 5 minutes alone), so it is a load timeout and not a failure. Without that file the run was 3,172 tests (3,171 pass, 1 skipped); with its 28, 3,200.
-- **`npm run mod-check`**: passes (79 tests across 5 files, 0 fail).
+- **`npm test`**: 3,178 tests, 3,177 pass, 0 fail, 1 skipped (the same skip as before this part), 23 October 2026. An earlier full run counted `tests/scripts/host/helper-update.test.js` as cancelled at the run's 480-second timeout under the load of the whole run; run alone it passes all 28 of its tests, and in the run above it passed.
+- **`npm run mod-check`**: passes, 79 tests across 5 files, 0 fail.
