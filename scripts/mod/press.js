@@ -33,7 +33,7 @@ import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pendi
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
-import { PUT_OFF } from '../lib/front-desk.js';
+import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
 import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
@@ -177,7 +177,8 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
 
-  if (label !== NOT_NOW && button.does === 'record') {
+  // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
+  if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
     return signed({ project, question, label, what, markers, shownAt: entry.at, api, left, now, liftStop, stopState });
   }
 

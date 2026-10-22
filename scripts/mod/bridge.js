@@ -391,7 +391,7 @@ async function tick(req, d) {
   // The watch runs beside the pane, so the two share the time the tick has.
   const watched = watching(found, role, clientOf(d), d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
-  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d) });
+  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d), client: clientOf(d) });
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
   // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.

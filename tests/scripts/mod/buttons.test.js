@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cardButtons, isSetupCard, isTrustCard, isUninstallCard, CANT_ANSWER, SETUP_ANSWER, TRUST_ANSWER, UNINSTALL_ANSWER } from '../../../scripts/mod/buttons.js';
-import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
+import { composeCard, DECIDING, textOf } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { TO_KNOW_MORE } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -73,7 +73,15 @@ const noButtonsFor = (kind) => {
   return { buttons: [], note: { trust: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
 };
 
-test('each kind of card gets its own buttons, and only the options it offers', () => {
+const FILLED = (label) => ({ label, does: 'record', shape: 'filled' });
+const SUGGEST_BUTTON = { label: 'Suggest a change…', does: 'suggest', shape: 'outlined' };
+const NOT_NOW_BUTTON = { label: 'Not now', does: 'record', shape: 'small', corner: true };
+const WHY_BUTTON = { label: 'Why?', does: 'why', shape: 'small' };
+const SHOW_ME_BUTTON = { label: 'Show me', does: 'turn', shape: 'small' };
+// What a card that fails the check gets: the front desk is asked.
+const FAILED_WHY = { label: 'Why?', does: 'turn', shape: 'small' };
+
+test('a card that decides something gets its deciding answer filled, Suggest a change… outlined, Not now small in the corner, Why? small and Show me', () => {
   for (const kind of SET_LINE_KINDS) {
     const got = cardButtons(dataOf(kind));
     if (NO_BUTTON_KINDS.includes(kind)) {
@@ -83,51 +91,90 @@ test('each kind of card gets its own buttons, and only the options it offers', (
     // STOP is lifted or it isn't, so that card offers no Suggest a change….
     assert.deepEqual(got, {
       buttons: [
-        { label: DECIDING[kind], does: 'record' },
-        { label: 'Not now', does: 'record' },
-        { label: 'Show me', does: 'turn' },
-        ...(kind === 'lift-stop' ? [] : [{ label: 'Suggest a change…', does: 'turn' }]),
+        FILLED(DECIDING[kind]),
+        ...(kind === 'lift-stop' ? [] : [SUGGEST_BUTTON]),
+        NOT_NOW_BUTTON,
+        WHY_BUTTON,
+        SHOW_ME_BUTTON,
       ],
       note: null,
     }, kind);
   }
 
-  // Only what the card offers is a button.
+  // Only what the card offers is a button; Why? is always there.
   const approval = dataOf('approval');
-  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Show me'] }).buttons, [
-    { label: 'Approve', does: 'record' },
-    { label: 'Show me', does: 'turn' },
-  ]);
-  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Not now'] }).buttons, [
-    { label: 'Approve', does: 'record' },
-    { label: 'Not now', does: 'record' },
-  ]);
+  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Show me'] }).buttons, [FILLED('Approve'), WHY_BUTTON, SHOW_ME_BUTTON]);
+  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Not now'] }).buttons, [FILLED('Approve'), NOT_NOW_BUTTON, WHY_BUTTON]);
+});
 
-  // An answer card: each of the question's own options records the answer; Suggest a change… turns.
-  assert.deepEqual(cardButtons(dataOf('answer')), {
-    buttons: [{ label: 'Comma', does: 'record' }, { label: 'Tab', does: 'record' }, { label: 'Suggest a change…', does: 'turn' }],
+test('Show me is a link with the preview address when there is one, else a small button that turns', () => {
+  const approval = dataOf('approval');
+  const shown = cardButtons(approval, { preview: 'https://preview.example.test/13' }).buttons.find((b) => b.label === 'Show me');
+  assert.deepEqual(shown, { label: 'Show me', does: 'turn', shape: 'link', href: 'https://preview.example.test/13' });
+  assert.deepEqual(cardButtons(approval, { preview: null }).buttons.find((b) => b.label === 'Show me'), SHOW_ME_BUTTON);
+  assert.deepEqual(cardButtons(approval, { preview: '' }).buttons.find((b) => b.label === 'Show me'), SHOW_ME_BUTTON);
+  // A card that offers no Show me gets no link either.
+  assert.equal(cardButtons({ ...approval, options: ['Approve'] }, { preview: 'https://preview.example.test/13' }).buttons.some((b) => b.label === 'Show me'), false);
+});
+
+test('a proposal\'s Keep as is is outlined and records the plain answer', () => {
+  const approval = dataOf('approval');
+  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Keep as is'] }).buttons, [
+    FILLED('Approve'), WHY_BUTTON, { label: 'Keep as is', does: 'record', shape: 'outlined' },
+  ]);
+});
+
+test('an answer card\'s recommended option is filled and the others outlined', () => {
+  const got = cardButtons(dataOf('answer'));
+  assert.deepEqual(got, {
+    buttons: [
+      { label: 'Comma', does: 'record', shape: 'filled' },
+      { label: 'Tab', does: 'record', shape: 'outlined' },
+      SUGGEST_BUTTON,
+      WHY_BUTTON,
+    ],
     note: null,
   });
   const four = ['One', 'Two', 'Three', 'Four'].map((label) => ({ label, says: `${label} it.` }));
-  const full = composeCard({ ...INPUTS.answer, recommend: 'One', options: four }).card;
-  assert.deepEqual(cardButtons(full).buttons, four.map((o) => ({ label: o.label, does: 'record' })));
+  const full = composeCard({ ...INPUTS.answer, recommend: 'Two', options: four }).card;
+  assert.deepEqual(cardButtons(full).buttons, [
+    { label: 'One', does: 'record', shape: 'outlined' },
+    { label: 'Two', does: 'record', shape: 'filled' },
+    { label: 'Three', does: 'record', shape: 'outlined' },
+    { label: 'Four', does: 'record', shape: 'outlined' },
+    WHY_BUTTON,
+  ]);
+  // A build-command question's own Not now is small, in the corner, and records.
+  const withNotNow = { ...dataOf('answer'), options: ['Comma', 'Tab', 'Not now'], descriptions: [...dataOf('answer').descriptions, 'Leave it for now.'] };
+  assert.deepEqual(cardButtons(withNotNow).buttons.at(-1), NOT_NOW_BUTTON);
+});
 
-  // A question card has no set line: every option is a turn to the front desk.
+test('a question with no set line has each option turn, the recommended one filled and the rest outlined', () => {
   assert.deepEqual(cardButtons(dataOf('question')), {
-    buttons: [{ label: 'Comma', does: 'turn' }, { label: 'Tab', does: 'turn' }, { label: 'Suggest a change…', does: 'turn' }],
+    buttons: [
+      { label: 'Comma', does: 'turn', shape: 'filled' },
+      { label: 'Tab', does: 'turn', shape: 'outlined' },
+      SUGGEST_BUTTON,
+      WHY_BUTTON,
+    ],
     note: null,
   });
+  // An old question with no parts has no reasons to open, and no Why?.
+  const { parts, ...old } = dataOf('question');
+  assert.deepEqual(cardButtons(old).buttons.map((b) => b.label), ['Comma', 'Tab', 'Suggest a change…']);
 });
 
 test('the deciding label is the first of the card\'s options that a click can sign', () => {
   const approval = dataOf('approval');
-  assert.deepEqual(cardButtons({ ...approval, options: ['Show me', 'Approve', 'Not now'] }).buttons, [
-    { label: 'Approve', does: 'record' },
-    { label: 'Not now', does: 'record' },
-    { label: 'Show me', does: 'turn' },
-  ]);
+  assert.deepEqual(cardButtons({ ...approval, options: ['Show me', 'Approve', 'Not now'] }).buttons, [FILLED('Approve'), NOT_NOW_BUTTON, WHY_BUTTON, SHOW_ME_BUTTON]);
   // A card whose options hold no label a click can sign has no deciding button.
-  assert.deepEqual(cardButtons({ ...approval, options: ['Go ahead', 'Not now'] }).buttons, [{ label: 'Not now', does: 'record' }]);
+  assert.deepEqual(cardButtons({ ...approval, options: ['Go ahead', 'Not now'] }).buttons, [NOT_NOW_BUTTON, WHY_BUTTON]);
+});
+
+test('a card without parts keeps its buttons, and Why? asks the front desk', () => {
+  const { parts, ...old } = dataOf('approval');
+  assert.deepEqual(cardButtons(old).buttons.find((b) => b.label === 'Why?'), { label: 'Why?', does: 'turn', shape: 'small' });
+  assert.ok(cardButtons(old).buttons.some((b) => b.does === 'record'));
 });
 
 // A composed approval card with its set line for pull request 14, and the right reply code for
@@ -144,10 +191,10 @@ function otherPullRequest() {
 test('a card with a set line for another pull request than its plain lines name gets no button that records anything', () => {
   const data = otherPullRequest();
   assert.match(cardProblems(data.question).join(' '), /pull request #14/);
-  // A card never offers Explain more, so there is no button to give in its place.
-  assert.deepEqual(cardButtons(data), { buttons: [], note: 'This card can\'t be answered here: ask the front desk about it.' });
+  // Only Why?, which asks the front desk: its parts can't be trusted to show.
+  assert.deepEqual(cardButtons(data), { buttons: [FAILED_WHY], note: 'This card can\'t be answered here: ask the front desk about it.' });
   assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the front desk about it.');
-  assert.deepEqual(cardButtons({ ...data, options: ['Approve', 'Not now'] }), { buttons: [], note: CANT_ANSWER });
+  assert.deepEqual(cardButtons({ ...data, options: ['Approve', 'Not now'] }), { buttons: [FAILED_WHY], note: CANT_ANSWER });
 });
 
 test('a card is judged by the card check\'s own tests, for every kind with a set line', () => {
@@ -171,7 +218,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       assert.ok(cardProblems(question).length > 0, `${kind}: ${question}`);
       const got = cardButtons({ ...data, question });
       assert.equal(got.buttons.some((b) => b.does === 'record'), false, `${kind}: ${question}`);
-      assert.deepEqual(got.buttons, [], kind);
+      assert.deepEqual(got.buttons, NO_BUTTON_KINDS.includes(kind) ? [] : [FAILED_WHY], kind);
       assert.equal(got.note, NO_BUTTON_KINDS.includes(kind) ? noButtonsFor(kind).note : CANT_ANSWER, kind);
     }
   }
@@ -220,6 +267,29 @@ test('a card whose kind and set line disagree, or that has no set line though it
     assert.equal(got.buttons.some((b) => b.does === 'record'), false);
     assert.equal(got.note, CANT_ANSWER);
   }
+});
+
+test('a card whose parts do not build its text gets only Why?, which turns', () => {
+  const data = dataOf('approval');
+  // The parts say more than the text the prompt record would sign.
+  const changed = { ...data, parts: { ...data.parts, meanwhile: 'Everything is released at once.' } };
+  assert.notEqual(textOf(changed.parts), changed.question);
+  assert.deepEqual(cardProblems({ question: changed.question, header: changed.header, options: changed.options.map((label, i) => ({ label, description: changed.descriptions[i] })) }), []);
+  assert.deepEqual(cardButtons(changed), { buttons: [FAILED_WHY], note: CANT_ANSWER });
+  // Parts that can't build any text at all.
+  assert.deepEqual(cardButtons({ ...data, parts: { kind: 'approval' } }), { buttons: [FAILED_WHY], note: CANT_ANSWER });
+  assert.deepEqual(cardButtons({ ...data, parts: 'text' }), { buttons: [FAILED_WHY], note: CANT_ANSWER });
+});
+
+test('a card failing the check gets only Why?, which turns, however its options read', () => {
+  const data = dataOf('approval');
+  // No recommended option among the descriptions fails the check on the whole question.
+  const unrecommended = { ...data, descriptions: data.descriptions.map((d) => d.replace(/^Recommended: /, '')) };
+  assert.match(cardProblems({ question: data.question, header: data.header, options: unrecommended.options.map((label, i) => ({ label, description: unrecommended.descriptions[i] })) }).join(' '), /recommended/);
+  assert.deepEqual(cardButtons(unrecommended), { buttons: [FAILED_WHY], note: CANT_ANSWER });
+  // A card with no descriptions at all can't show a recommendation.
+  const { descriptions, ...bare } = data;
+  assert.deepEqual(cardButtons(bare), { buttons: [FAILED_WHY], note: CANT_ANSWER });
 });
 
 test('junk gives no buttons and never throws', () => {

@@ -67,6 +67,10 @@ let handing: Promise<unknown> = Promise.resolve()
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
+// The lines of what is building: each is a line of words, or, from the bridge now, { text, see }.
+const buildingLines = (value: unknown): string[] => (Array.isArray(value)
+  ? value.map((item) => (typeof item === 'string' ? item : isRecord(item) && typeof item.text === 'string' ? item.text : '')).filter((line) => line !== '')
+  : [])
 const records = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.filter(isRecord) : [])
 
 // "14:01" for `$.clock.now()`'s milliseconds, in the computer's own time zone: the mod's Date
@@ -395,7 +399,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {later !== undefined && <Button key="next" label="Next" onPress={() => $.state.set(CARD, later)} />}
         </Box>
       )}
-      {strings(model.building).map((line) => <Text>{line}</Text>)}
+      {buildingLines(model.building).map((line) => <Text>{line}</Text>)}
       {health.filter((line) => line.of !== 'stop').map((line) => <Text>{line.text as string}</Text>)}
       {usage !== null && <Text>{usage}</Text>}
       {strings(model.missing).map((line) => <Text dimColor>{line}</Text>)}

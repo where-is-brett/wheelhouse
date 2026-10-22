@@ -185,6 +185,20 @@ test('Show me and Suggest a change… write the card answer and give one prompt 
   assert.deepEqual(client.calls.write[0].data, { question: asking.data.question, label: 'Comma' });
 }));
 
+test('Keep as is signs nothing: it writes the plain card answer, which decides the card, and gives one prompt', () => withKey(async () => {
+  const data = approvalCard();
+  // A proposal offers Keep as is in place of Show me.
+  const at = data.options.indexOf('Show me');
+  const kept = putCard({ ...data, options: data.options.map((o, i) => (i === at ? 'Keep as is' : o)), descriptions: data.descriptions.map((d, i) => (i === at ? 'Things stay as they are.' : d)) });
+  const client = fake();
+  assert.deepEqual(await press(kept, client, 'Keep as is'), {
+    made: true, says: 'Recorded: Keep as is on card 1', submit: [`Wheelhouse pane: the director pressed Keep as is on card 1 (${kept.id}).`],
+  });
+  assert.deepEqual(client.calls.order, ['write']);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: kept.data.question, label: 'Keep as is' } }]);
+  assert.deepEqual(signed(client), []);
+}));
+
 test('a card already answered, by a click, a reply code or a press, records nothing', () => withKey(async (home) => {
   const replied = path.join(home, 'projects', P, 'replied');
   const answered = { made: false, says: 'That card has already been answered' };

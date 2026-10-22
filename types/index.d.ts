@@ -2,9 +2,33 @@
 // The mod's contract: the values it keeps in the session's `$.state`, under its own name. Claude
 // Code holds every `$.state` key the mod names to this file.
 
-// A button the bridge gave a card (scripts/mod/buttons.js): its label, and whether a press records
-// it or hands the front desk a prompt. The mod draws the label and sends it; `does` is the bridge's.
-export type WheelhouseCardButton = { label?: string; does?: string };
+// A button the bridge gave a card (scripts/mod/buttons.js): its label, whether a press records it
+// ('record'), hands the front desk a prompt ('turn'), opens the card's reasons ('why') or opens the
+// box for the director's words ('suggest'), and its shape: 'filled', 'outlined', 'small' or 'link'.
+// A link carries its address in `href`; `corner` marks Not now, drawn in the card's header row.
+// The mod draws the label and sends it; `does` is the bridge's.
+export type WheelhouseCardButton = { label?: string; does?: string; shape?: string; href?: string; corner?: boolean };
+
+// A card's parts as the composer keeps them (scripts/cards/compose.js), in plain words. Every field
+// is read as possibly missing.
+export type WheelhouseCardParts = {
+  kind?: string;
+  header?: string;
+  ask?: string;
+  what?: string;
+  small?: string;
+  recommendation?: string;
+  options?: { label?: string; says?: string; recommended?: boolean }[];
+  why?: string;
+  meanwhile?: string;
+  checks?: string;
+  changed?: string;
+  line?: string | null;
+  code?: string | null;
+  suggest?: boolean;
+  optional?: number;
+  revises?: string;
+};
 
 // A waiting card as the pane's model holds it (scripts/mod/status.js). Its text is drawn whole.
 export type WheelhousePaneCard = {
@@ -18,7 +42,26 @@ export type WheelhousePaneCard = {
   note?: string | null;
   blocking?: boolean;
   asked?: boolean;
+  // The card's parts, or null for a card with none, which is drawn as its text.
+  parts?: WheelhouseCardParts | null;
+  // When the director last suggested a change on it, as HH:MM in the computer's own time, or null.
+  steered?: string | null;
+  // "asked 2 hours ago", or null.
+  waited?: string | null;
+  // Whether it is a revised proposal, replacing a card.
+  revised?: boolean;
 };
+
+// A piece of work being built, and when the director will see it (null for the line "and 2 more").
+export type WheelhouseBuilding = { text?: string; see?: string | null };
+
+// Progress to launch: blockers resolved of all, those resolved since the director's last visit, and
+// what is next, the director's own marked.
+export type WheelhouseLaunch = { resolved?: number; total?: number; gained?: number; next?: { text?: string; yours?: boolean }[] };
+
+// The health group's facts: whether all is well, the protection level (Standard or Locked) and the
+// week's share line. `health` stays the list of lines at watch or stop.
+export type WheelhouseHealthNote = { allWell?: boolean; protection?: string | null; week?: string | null };
 
 // A health line, `of` naming STOP's own line ('stop') or an incident's.
 export type WheelhouseHealthLine = { level?: string; text?: string; of?: string | null };
@@ -30,10 +73,19 @@ export type WheelhousePaneModel = {
   project?: string;
   at?: string | null;
   glance?: string;
+  // The one-line verdict, and the line saying when the director was last here (null for never).
+  verdict?: string;
+  since?: string | null;
+  launch?: WheelhouseLaunch | null;
+  ideas?: { count?: number; fresh?: number };
+  // When the model was built, as HH:MM.
+  updated?: string | null;
   stop?: { on?: boolean; since?: string | null };
   cards?: WheelhousePaneCard[];
-  building?: string[];
+  // Each piece of work as { text, see }; a model an older bridge wrote holds lines of words instead.
+  building?: (WheelhouseBuilding | string)[];
   health?: WheelhouseHealthLine[];
+  healthNote?: WheelhouseHealthNote;
   usage?: string | null;
   finished?: string[];
   incidents?: string[];
