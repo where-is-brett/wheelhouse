@@ -28,7 +28,14 @@ export const STOP_HALTS = 'Halts every builder at once.'
 export const ONLY_YOU_LIFT = 'Only you can lift it.'
 export const NOTHING_NEEDS_YOU = 'Nothing needs you.'
 export const RECORDING = 'Recording…'
+export const WHY = 'Why?'
+export const HIDE_WHY = 'Hide why'
+export const SHOW_ME = 'Show me'
+export const WHAT_CHANGED = 'What changed:'
+export const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
 export const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.'
 export const SETTING_UP = 'Setup is still running. This pane opens when it finishes.'
 // The line shown when the latest state could not be read: when it failed and which reading is shown.
 export const staleLine = (failedAt: string, shownAt: string) => `Couldn't read the latest at ${failedAt}. Showing ${shownAt}'s.`
+// The note for a suggestion made at a time (hh:mm).
+export const suggestedAt = (hhmm: string) => `You suggested a change at ${hhmm}. A new proposal is on its way, and nothing goes live meanwhile.`

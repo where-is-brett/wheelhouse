@@ -591,7 +591,7 @@ test('a Shape 2 foreman\'s tick submits each wake line in order', async ($, on) 
 
 // What a toast says when a tick's prompt can't be handed on: the courier's wake goes to the front
 // desk, a Shape 2 foreman's watcher lines to the foreman.
-const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
+const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
 const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
 
 test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by role, and the rest are handed on', async ($, on) => {

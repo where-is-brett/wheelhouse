@@ -209,7 +209,7 @@ test('a double click on Ask the front desk, a moment apart, asks once', async ($
     clear()
     control.refuseSubmit = true
     await ui.press({ key: choiceKey('notifications', 'ask') })
-    expect(seen.toasts).toEqual(['Wheelhouse couldn\'t hand that to the front desk'])
+    expect(seen.toasts).toEqual(['That didn\'t reach the front desk. Type it in the chat instead.'])
     expect((await ui.find({ key: choiceKey('notifications', 'ask') }))?.type).toBe('Button')
     control.refuseSubmit = false
     await ui.press({ key: choiceKey('notifications', 'ask') })

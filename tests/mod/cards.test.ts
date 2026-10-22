@@ -164,7 +164,7 @@ test('a press shows Recording at once and toasts the bridge\'s words', async ($,
     reply = { hold: 2000, then: { ok: true, says: 'Approved: the banner change merges next', submit: [] } }
     const pressed = ui.press({ key: cardKey('card-1', 'Approve') })
     await clock.settle()
-    expect(seen.toasts).toEqual(['Recording Approve on card 1'])
+    expect(seen.toasts).toEqual(['Recording…'])
     await ui.redraw()
     expect(await texts(ui)).toContain('Recording…')
     expect(await ui.find({ key: cardKey('card-1', 'Approve') })).toBeUndefined()
@@ -175,7 +175,7 @@ test('a press shows Recording at once and toasts the bridge\'s words', async ($,
     await clock.advance(2000)
     await pressed
     expect(seen.requests).toHaveLength(1)
-    expect(seen.toasts).toEqual(['Recording Approve on card 1', 'Approved: the banner change merges next'])
+    expect(seen.toasts).toEqual(['Recording…', 'Approved: the banner change merges next'])
     await ui.redraw()
     expect(await texts(ui)).not.toContain('Recording…')
     expect((await ui.find({ key: cardKey('card-1', 'Approve') }))?.type).toBe('Button')
@@ -184,7 +184,7 @@ test('a press shows Recording at once and toasts the bridge\'s words', async ($,
     clear()
     reply = { ok: false, says: 'That card has changed: look at the pane again' }
     await ui.press({ key: cardKey('card-1', 'Not now') })
-    expect(seen.toasts).toEqual(['Recording Not now on card 1', 'That card has changed: look at the pane again'])
+    expect(seen.toasts).toEqual(['Recording…', 'That card has changed: look at the pane again'])
     await ui.unmount()
   }
 })
@@ -198,7 +198,7 @@ test('a press the bridge never answers is a toast, and leaves the buttons live',
     clear()
     reply = { exitCode: 1 }
     await ui.press({ key: cardKey('card-1', 'Approve') })
-    expect(seen.toasts).toEqual(['Recording Approve on card 1', FAILED])
+    expect(seen.toasts).toEqual(['Recording…', FAILED])
     await ui.redraw()
     expect(await texts(ui)).not.toContain('Recording…')
     expect((await ui.find({ key: cardKey('card-1', 'Approve') }))?.type).toBe('Button')
@@ -206,7 +206,7 @@ test('a press the bridge never answers is a toast, and leaves the buttons live',
     clear()
     reply = { ok: false }
     await ui.press({ key: cardKey('card-1', 'Approve') })
-    expect(seen.toasts).toEqual(['Recording Approve on card 1', FAILED])
+    expect(seen.toasts).toEqual(['Recording…', FAILED])
     expect((await ui.find({ key: cardKey('card-1', 'Approve') }))?.type).toBe('Button')
     await ui.unmount()
   }
@@ -263,7 +263,7 @@ test('a press whose answer holds a prompt submits it', async ($, on) => {
     await ui.press({ key: cardKey('card-1', 'Explain more') })
     expect(seen.submits.map((p: any) => p.text)).toEqual([prompts[0]])
     expect(seen.submits[0].origin).toMatchObject({ kind: 'plugin', name: 'wheelhouse' })
-    expect(seen.toasts).toEqual(['Recording Explain more on card 1', 'Asking the front desk'])
+    expect(seen.toasts).toEqual(['Recording…', 'Asking the front desk'])
     // Several prompts go in order, each once.
     clear()
     reply = { ok: true, submit: prompts }
@@ -506,6 +506,250 @@ test('a press made while a tick runs gets its own tick once that one ends, and o
     expect(seen.ticks).toHaveLength(2)
     await clock.advance(1)
     expect(seen.ticks).toHaveLength(3)
+    await ui.unmount()
+  }
+})
+
+// A card of parts, as the bridge sends it (scripts/mod/status.js), and the buttons buttons.js gives it.
+const PARTS = {
+  kind: 'approval', header: 'Approval', ask: 'Put pull request #42 live?', what: 'The banner change.', small: 'Small feature · changes what users see',
+  recommendation: 'Approve, because the checks passed.',
+  options: [{ label: 'Approve', says: 'Puts it live.', recommended: true }, { label: 'Not now', says: 'Leaves it waiting.', recommended: false }],
+  why: 'It changes what your users see.', meanwhile: 'Nothing goes live meanwhile.',
+  line: 'Approve pull request #42 at commit 3f9c2a7b81d0', code: 'K7QD',
+}
+const GIVEN = [
+  { label: 'Approve', does: 'record', shape: 'filled' },
+  { label: 'Suggest a change…', does: 'suggest', shape: 'outlined' },
+  { label: 'Not now', does: 'record', shape: 'small', corner: true },
+  { label: 'Why?', does: 'why', shape: 'small' },
+  { label: 'Show me', does: 'turn', shape: 'link', href: 'https://example.com/preview' },
+]
+const partsCard = (extra: object = {}) => ({
+  id: 'card-1', n: 1, header: 'Approval', kind: 'approval', text: 'the card whole', hash: 'aaaaaaaaaaaa',
+  buttons: GIVEN, note: null, blocking: false, asked: false, parts: PARTS, steered: null, waited: 'asked 2 hours ago', revised: false, ...extra,
+})
+const withCards = (cards: object[]) => () => ({ ...frontDesk(), pane: { ...model(false), cards } })
+const textNodes = async (ui: any) => (await ui.findAll({ type: 'Text' }))
+const textOfNode = (n: any) => n.text
+const WHY_REASONS = ['It changes what your users see.', 'Approve: Puts it live.', 'Not now: Leaves it waiting.', 'Nothing goes live meanwhile.']
+
+test('an approval card draws its header row with Not now in the corner, its ask as a heading and its checking line in caption', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }), withCards([partsCard(), partsCard({ id: 'card-2', n: 2 })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const nodes = await textNodes(ui)
+    const drawn = nodes.map(textOfNode)
+    const at = drawn.indexOf('Approval · 1 of 2')
+    expect(at).toBeGreaterThan(-1)
+    expect(drawn.slice(at, at + 4)).toEqual(['Approval · 1 of 2', 'Not now', 'Put pull request #42 live?', 'Small feature · changes what users see · asked 2 hours ago'])
+    expect(drawn).toContain('Approve, because the checks passed.')
+    const by = (text: string) => nodes.find((n: any) => n.text === text)
+    expect(by('Put pull request #42 live?').props.size).toBe('heading')
+    expect(by('Small feature · changes what users see · asked 2 hours ago').props.size).toBe('footnote')
+    expect(by('Approval · 1 of 2').props.dimColor).toBe(true)
+    const line = by('Approve pull request #42 at commit 3f9c2a7b81d0 · K7QD')
+    expect(line.props.size).toBe('caption')
+    expect(line.props.mono).toBe(true)
+    expect(nodes.filter((n: any) => n.props.size === 'heading').map(textOfNode)).not.toContain('Approve, because the checks passed.')
+    expect((await ui.findAll({ type: 'Link' })).map((l: any) => l.props.label)).toEqual(['Show me ↗'])
+    expect(await ui.findAll({ type: 'Markdown' })).toHaveLength(0)
+    expect((await ui.find({ key: cardKey('card-1', 'Not now') }))?.props.variant).toBe('secondary')
+    await ui.unmount()
+  }
+})
+
+test('an optional card adds optional and its minutes to the small line', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }), withCards([partsCard({ waited: null, parts: { ...PARTS, optional: 3 } })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    expect(await texts(ui)).toContain('Small feature · changes what users see · optional · 3 min')
+    await ui.unmount()
+  }
+})
+
+test('Approve is the one filled button, and Suggest a change… is outlined beside it', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }), withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const all = await ui.findAll({ type: 'Button' })
+    expect(all.filter((b: any) => b.props.variant === 'primary').map((b: any) => b.key)).toEqual([cardKey('card-1', 'Approve')])
+    expect((await ui.find({ key: cardKey('card-1', 'Suggest a change…') }))?.props.variant).toBe('secondary')
+    const keys = all.map((b: any) => b.key)
+    expect(keys.indexOf(cardKey('card-1', 'Suggest a change…'))).toBe(keys.indexOf(cardKey('card-1', 'Approve')) + 1)
+    await ui.unmount()
+  }
+})
+
+test('Why? opens the reasons in place and reads Hide why, with no prompt submitted', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ ok: true }), withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    for (const reason of WHY_REASONS) expect(await texts(ui)).not.toContain(reason)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Why?') })
+    await ui.redraw()
+    const drawn = await texts(ui)
+    const nodes = await textNodes(ui)
+    for (const reason of WHY_REASONS) {
+      expect(drawn).toContain(reason)
+      expect(nodes.find((n: any) => n.text === reason).props.size).toBe('body')
+    }
+    expect(drawn.indexOf(WHY_REASONS[0])).toBeGreaterThan(drawn.indexOf('Approve, because the checks passed.'))
+    expect((await ui.find({ key: cardKey('card-1', 'Why?') }))?.props.label).toBe('Hide why')
+    expect(seen.submits).toEqual([])
+    expect(seen.toasts).toEqual([])
+    await ui.press({ key: cardKey('card-1', 'Why?') })
+    await ui.redraw()
+    for (const reason of WHY_REASONS) expect(await texts(ui)).not.toContain(reason)
+    expect((await ui.find({ key: cardKey('card-1', 'Why?') }))?.props.label).toBe('Why?')
+    expect(seen.submits).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('Why? sends the why press in the background, under the origin pane', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, () => ({ ok: true }), withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Why?') })
+    await clock.advance(10)
+    expect(seen.requests).toEqual([{ cmd: 'why', origin: 'pane', cwd: ROOT, card: 'card-1', hash: 'aaaaaaaaaaaa' }])
+    expect(seen.toasts).toEqual([])
+    await ui.redraw()
+    expect(await texts(ui)).not.toContain('Recording…')
+    // Closed again, so the next surface opens it afresh.
+    await ui.press({ key: cardKey('card-1', 'Why?') })
+    await ui.unmount()
+  }
+})
+
+test('Why? on a card failing its check hands the front desk a prompt naming the card, and opens nothing', async ($, on) => {
+  const failing = partsCard({ buttons: [{ label: 'Why?', does: 'turn', shape: 'small' }], note: CANT_ANSWER })
+  const { seen, clear, start, clock } = world(on, () => ({ ok: true }), withCards([failing]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Why?') })
+    await clock.settle()
+    expect(seen.requests).toEqual([{ cmd: 'why', origin: 'pane', cwd: ROOT, card: 'card-1', hash: 'aaaaaaaaaaaa' }])
+    expect(seen.submits.map((p: any) => p.text)).toEqual(['Wheelhouse pane: the director pressed Why? on card 1 (card-1).'])
+    await ui.redraw()
+    for (const reason of WHY_REASONS) expect(await texts(ui)).not.toContain(reason)
+    expect((await ui.find({ key: cardKey('card-1', 'Why?') }))?.props.label).toBe('Why?')
+    await ui.unmount()
+  }
+})
+
+test('Show me is a link ending ↗ when the card has an href, else a small button', async ($, on) => {
+  const bare = partsCard({ buttons: GIVEN.map((b) => (b.label === 'Show me' ? { label: 'Show me', does: 'turn', shape: 'small' } : b)) })
+  let cards = [partsCard()]
+  const { seen, clear, start } = world(on, () => ({ ok: true, submit: ['Wheelhouse pane: the director pressed Show me on card 1 (card-1).'] }), () => withCards(cards)())
+  for (const surface of SURFACES) {
+    cards = [partsCard()]
+    await start($, surface)
+    let ui = await mount($, surface)
+    const link = (await ui.findAll({ type: 'Link' }))[0]
+    expect(link.props.href).toBe('https://example.com/preview')
+    expect(link.props.label).toBe('Show me ↗')
+    expect(await ui.find({ key: cardKey('card-1', 'Show me') })).toBeUndefined()
+    await ui.unmount()
+
+    cards = [bare]
+    await start($, surface)
+    ui = await mount($, surface)
+    expect(await ui.findAll({ type: 'Link' })).toHaveLength(0)
+    clear()
+    await ui.press({ key: cardKey('card-1', 'Show me') })
+    expect(seen.requests).toEqual([{ cmd: 'press', origin: 'pane', cwd: ROOT, card: 'card-1', hash: 'aaaaaaaaaaaa', label: 'Show me' }])
+    expect(seen.submits).toHaveLength(1)
+    await ui.unmount()
+  }
+})
+
+test('a steered card says when the change was suggested, above its buttons, and keeps them', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }), withCards([partsCard({ steered: '14:10' })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const line = 'You suggested a change at 14:10. A new proposal is on its way, and nothing goes live meanwhile.'
+    const nodes = await textNodes(ui)
+    expect(nodes.find((n: any) => n.text === line)?.props.size).toBe('footnote')
+    const keys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.key)
+    expect(keys).toEqual(expect.arrayContaining([cardKey('card-1', 'Approve'), cardKey('card-1', 'Suggest a change…')]))
+    await ui.unmount()
+  }
+})
+
+test('a revised card is headed Approval · revised and says what changed', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }), withCards([partsCard({ revised: true, parts: { ...PARTS, changed: 'the banner is now blue' } })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const nodes = await textNodes(ui)
+    expect(nodes.map(textOfNode)).toContain('Approval · revised')
+    expect(nodes.find((n: any) => n.text === 'What changed: the banner is now blue')?.props.size).toBe('body')
+    await ui.unmount()
+  }
+})
+
+test('a card with no parts is drawn as its text, as before', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    const drawn = await texts(ui)
+    expect(drawn).toContain(FIRST)
+    expect(drawn).toContain('Card 1 of 2')
+    expect(await buttons(ui)).toContain(cardKey('card-1', 'Approve'))
+    await ui.unmount()
+  }
+})
+
+test('no card has a dismiss button', async ($, on) => {
+  const { start } = world(on, () => ({ ok: true }), withCards([partsCard(), partsCard({ id: 'card-2', n: 2 })]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    for (const b of await ui.findAll({ type: 'Button' })) expect(b.props.role).toBeUndefined()
+    expect((await buttons(ui)).filter((k: string) => /dismiss|close|×/i.test(k))).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('while a press records, the others are plain text and a double press sends once', async ($, on) => {
+  let reply: Reply = { ok: true }
+  const { seen, clear, start, clock } = world(on, () => reply, withCards([partsCard()]))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    clear()
+    reply = { hold: 2000, then: { ok: true, says: 'Approved' } }
+    const pressed = ui.press({ key: cardKey('card-1', 'Approve') })
+    await clock.settle()
+    await ui.redraw()
+    expect(seen.toasts).toEqual(['Recording…'])
+    const drawn = await texts(ui)
+    expect(drawn).toContain('Recording…')
+    for (const label of ['Suggest a change…', 'Not now', 'Why?']) {
+      expect(await ui.find({ key: cardKey('card-1', label) })).toBeUndefined()
+      expect(drawn).toContain(label)
+    }
+    expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
+    await clock.advance(2000)
+    await pressed
+    expect(seen.requests.map((r: any) => r.cmd)).toEqual(['press'])
+    clear()
+    reply = { ok: true }
+    await Promise.all([ui.press({ key: cardKey('card-1', 'Approve') }), ui.press({ key: cardKey('card-1', 'Approve') })])
+    expect(seen.requests).toHaveLength(1)
     await ui.unmount()
   }
 })

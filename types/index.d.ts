@@ -118,6 +118,8 @@ declare module 'claude-code' {
       tick: { at: number; failed: boolean };
       // The id of the card the pane shows.
       card: string;
+      // The id of the card whose Why? is open in place, or null.
+      why: string | null;
       // Whether a turn of the main loop is running.
       busy: boolean;
       // Where the session drew at its start, as session.start said; null for none.

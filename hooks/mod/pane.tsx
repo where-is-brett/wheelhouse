@@ -20,9 +20,9 @@
 // functions of hooks/mod/calm.tsx.
 import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, TurnCompleteInput } from 'claude-code'
 import { ask, type Answer, type PaneModel } from './ask'
-import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_NEEDS_YOU, NOT_HERE, SETTING_UP, staleLine as staleWords } from './numbers'
+import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_NEEDS_YOU, NOT_HANDED, NOT_HERE, SETTING_UP, staleLine as staleWords } from './numbers'
 import { body, footnote, group, heading, small, status, title } from './calm'
-import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED, NOT_HANDED_FOREMAN } from './cards'
+import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED_FOREMAN } from './cards'
 import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
@@ -436,12 +436,12 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const verdict = text(model.verdict) ?? text(model.glance) ?? PLAIN_TITLE
   const since = text(model.since)
 
-  // The card's place: Task 9 draws the card part by part; until then its text is drawn whole.
+  // The card, with its place: a card of parts says it in its own header row, one with none above it.
   const cardPart = card !== undefined
     ? (
       <Box flexDirection="column" gap="xs">
-        {footnote(t, `Card ${at + 1} of ${cards.length}`)}
-        {drawCard($, e, card, pressing, live, after)}
+        {!isRecord(card.parts) && footnote(t, `Card ${at + 1} of ${cards.length}`)}
+        {await drawCard($, e, card, `${at + 1} of ${cards.length}`, pressing, live, after)}
         {later !== undefined && footnote(t, nextLine(cards[at + 1]))}
         {live && cards.length > 1 && (
           <Box flexDirection="row" gap="sm">

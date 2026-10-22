@@ -214,14 +214,16 @@ test('the pane draws each card\'s text as plain text, one card at a time', async
 
     await ui.press({ key: 'next' })
     const second = await texts(ui)
-    expect(second).toContain('Card 2 of 2')
-    expect(second).toContain(SECOND)
+    // A card of parts says its place in its header row, and draws its ask, not its text.
+    expect(second).toContain('Question · 2 of 2')
+    expect(second).toContain('how exported files are named')
     expect(second).not.toContain(FIRST)
     expect(await ui.find({ key: 'next' })).toBeUndefined()
 
     await ui.press({ key: 'back' })
     expect(await texts(ui)).toContain(FIRST)
     expect(await texts(ui)).toContain('Card 1 of 2')
+    expect(await texts(ui)).not.toContain(SECOND)
     await ui.unmount()
   }
 })

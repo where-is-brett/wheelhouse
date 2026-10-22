@@ -10,8 +10,9 @@
 // passed as a Button's onPress; scripts/mod/validate.js checks it.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask, FAILED, type Answer, type PaneModel } from './ask'
-import { body, filled, footnote, stop as stopButton } from './calm'
-import { RECORDING } from './numbers'
+import { body, caption, filled, footnote, heading, link, outlined, small, stop as stopButton } from './calm'
+import type { Table } from './calm'
+import { HIDE_WHY, NOT_HANDED, PANE_LEAD, RECORDING, SHOW_ME, WHY, suggestedAt, WHAT_CHANGED } from './numbers'
 
 // A card of the pane's model. It comes from another process, so each field is read as anything.
 type Card = Record<string, unknown>
@@ -24,11 +25,11 @@ const STOPPING = { plugin: 'wheelhouse', key: 'stopping' } as const
 
 // Drawn in place of every button while a turn runs, when pane.tsx's HIDE_WHILE_BUSY is on.
 export const WAIT = 'Wait for Claude to finish, or type stop'
-// A toast for a prompt that couldn't be handed on: to the front desk, or a Shape 2 foreman's
-// watcher lines to the foreman.
-export const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
+// A Shape 2 foreman's watcher lines that couldn't be handed to the foreman. NOT_HANDED, for a
+// prompt that couldn't be handed to the front desk, is in numbers.ts.
 export const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
 const LIFT = 'lift-stop'
+const WHY_OPEN = { plugin: 'wheelhouse', key: 'why' } as const
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -99,7 +100,30 @@ export async function carry($: EngineInterface, request: Record<string, unknown>
 async function pressButton($: EngineInterface, card: Card, label: string, after: After) {
   const id = card.id as string
   if (!(await claim($, { on: id, label }))) return
-  await carry($, { cmd: 'press', origin: 'pane', card: id, hash: card.hash, label }, `Recording ${label}${typeof card.n === 'number' ? ` on card ${card.n}` : ''}`, () => release($), after)
+  await carry($, { cmd: 'press', origin: 'pane', card: id, hash: card.hash, label }, RECORDING, () => release($), after)
+}
+
+// Why? on a card. One the bridge gave as `why` opens or closes the reasons in place, and opening
+// tells the bridge quietly, never waiting for it and showing nothing. One it gave as `turn` (a
+// card whose parts can't be trusted to show) hands the front desk a prompt naming the card, after
+// the same quiet word, and opens nothing.
+async function pressWhy($: EngineInterface, card: Card, turn: boolean) {
+  const id = card.id as string
+  const cwd = await $.session.root()
+  const quiet = { cmd: 'why', origin: 'pane', cwd, card: id, hash: card.hash }
+  if (turn) {
+    if (!(await claim($, { on: id, label: WHY }))) return
+    void ask($, quiet)
+    try {
+      await submitAll($, [`${PANE_LEAD} the director pressed ${WHY} on card ${typeof card.n === 'number' ? card.n : id} (${id}).`])
+    } finally {
+      await release($)
+    }
+    return
+  }
+  const open = (await $.state.get(WHY_OPEN)).value === id
+  if (!open) void ask($, quiet)
+  await $.state.set(WHY_OPEN, open ? null : id)
 }
 
 // STOP: never held back by another press, only by its own.
@@ -139,9 +163,37 @@ export async function drawStop($: EngineInterface, e: RenderInput<'Pane'>, model
   return stopButton(t, () => pressStop($, after))
 }
 
-// A card: its text, drawn whole as plain text, its note under it, and one button per entry of
-// its buttons, keyed by the card's id and the label.
-export function drawCard($: EngineInterface, e: RenderInput<'Pane'>, card: Card, pressing: Pressing, live: boolean, after: After) {
+const isShape = (shape: unknown): shape is 'filled' | 'outlined' | 'small' | 'link' =>
+  shape === 'filled' || shape === 'outlined' || shape === 'small' || shape === 'link'
+
+// A button the bridge gave a card, as the mod reads it.
+type Given = { label: string, does: string, shape: 'filled' | 'outlined' | 'small' | 'link', href: string | null, corner: boolean }
+
+// The buttons the bridge gave a card, in its order, each label once. A shape the mod doesn't know
+// is drawn small.
+function givenOf(card: Card): Given[] {
+  const given = Array.isArray(card.buttons) ? card.buttons : []
+  const seen = new Set<string>()
+  const out: Given[] = []
+  for (const b of given) {
+    if (!isRecord(b) || typeof b.label !== 'string' || b.label === '' || seen.has(b.label)) continue
+    seen.add(b.label)
+    out.push({
+      label: b.label,
+      does: typeof b.does === 'string' ? b.does : 'record',
+      shape: isShape(b.shape) ? b.shape : 'small',
+      href: typeof b.href === 'string' && /^https:/.test(b.href) ? b.href : null,
+      corner: b.corner === true,
+    })
+  }
+  return out
+}
+
+const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null)
+
+// A card with no parts: its text whole as plain text, its note under it, and one button per entry
+// of its buttons, keyed by the card's id and the label.
+function drawWhole($: EngineInterface, e: RenderInput<'Pane'>, card: Card, pressing: Pressing, live: boolean, after: After) {
   const { Box, Text, Button } = $.ui.resolve(e)
   const id = typeof card.id === 'string' ? card.id : null
   const labels = id === null || !live ? [] : labelsOf(card)
@@ -160,4 +212,67 @@ export function drawCard($: EngineInterface, e: RenderInput<'Pane'>, card: Card,
       )}
     </Box>
   )
+}
+
+// One of a card's buttons in the shape the bridge gave it, or its plain word while another press
+// is recorded.
+function drawButton($: EngineInterface, t: Table, card: Card, id: string, b: Given, pressing: Pressing, open: boolean, after: After) {
+  if (b.shape === 'link' && b.href !== null) return link(t, b.href, b.label)
+  if (pressing?.on === id && pressing.label === b.label) return body(t, RECORDING)
+  if (pressing !== null) return footnote(t, b.label)
+  const key = `card:${id}:${b.label}`
+  const label = b.does === 'why' && open ? HIDE_WHY : b.label
+  // Each press is written out beside its shape, since scripts/mod/validate.js reads a press only as
+  // the last argument of filled, outlined or small.
+  const why = b.does === 'why' || (b.does === 'turn' && b.label === WHY)
+  const turn = b.does === 'turn'
+  if (b.shape === 'filled') return why ? filled(t, key, label, () => pressWhy($, card, turn)) : filled(t, key, label, () => pressButton($, card, b.label, after))
+  if (b.shape === 'outlined') return why ? outlined(t, key, label, () => pressWhy($, card, turn)) : outlined(t, key, label, () => pressButton($, card, b.label, after))
+  return why ? small(t, key, label, () => pressWhy($, card, turn)) : small(t, key, label, () => pressButton($, card, b.label, after))
+}
+
+// A card with parts, part by part (design section 23.3). `place` is "1 of 2". Nothing in its words
+// is a link or a heading but the ask.
+function drawParts($: EngineInterface, e: RenderInput<'Pane'>, card: Card, parts: Card, place: string | null, pressing: Pressing, open: boolean, live: boolean, after: After) {
+  const t = $.ui.resolve(e)
+  const { Box } = t
+  const id = typeof card.id === 'string' ? card.id : null
+  const header = text(parts.header) ?? text(card.header)
+  const where = card.revised === true ? 'revised' : place
+  const given = id === null || !live ? [] : givenOf(card)
+  const draw = (b: Given) => drawButton($, t, card, id as string, b, pressing, open, after)
+  const corner = given.find((b) => b.corner)
+  const minutes = typeof parts.optional === 'number' && parts.optional > 0 ? `optional · ${parts.optional} min` : null
+  const smallLine = [text(parts.small), text(card.waited), minutes].filter((x) => x !== null).join(' · ')
+  const options = Array.isArray(parts.options) ? parts.options.filter(isRecord) : []
+  const reasons = [text(parts.why), ...options.map((o) => (text(o.label) === null ? null : `${o.label}: ${text(o.says) ?? ''}`.replace(/: $/, ''))), text(parts.meanwhile)]
+  const row = given.filter((b) => !b.corner && (b.does === 'why' || b.shape === 'link' || b.label === SHOW_ME))
+  const answers = given.filter((b) => !b.corner && !row.includes(b))
+  const checking = [text(parts.line), text(parts.code)].filter((x) => x !== null).join(' · ')
+  const changed = text(parts.changed)
+  return (
+    <Box flexDirection="column" gap="xs">
+      <Box flexDirection="row" justifyContent="space-between">
+        {footnote(t, [header, where].filter((x) => x !== null).join(' · '))}
+        {corner !== undefined && draw(corner)}
+      </Box>
+      {text(parts.ask) !== null && heading(t, parts.ask as string)}
+      {smallLine !== '' && footnote(t, smallLine)}
+      {text(parts.recommendation) !== null && body(t, parts.recommendation as string)}
+      {card.revised === true && changed !== null && body(t, `${WHAT_CHANGED} ${changed}`)}
+      {row.length > 0 && <Box flexDirection="row" gap="sm">{row.map(draw)}</Box>}
+      {open && reasons.filter((r) => r !== null).map((r) => body(t, r as string))}
+      {typeof card.steered === 'string' && footnote(t, suggestedAt(card.steered))}
+      {answers.length > 0 && <Box flexDirection="row" gap="sm" flexWrap="wrap">{answers.map(draw)}</Box>}
+      {typeof card.note === 'string' && footnote(t, card.note)}
+      {checking !== '' && caption(t, checking)}
+    </Box>
+  )
+}
+
+// A card, drawn as its parts, or as its text whole when it has none. `place` is "1 of 2".
+export async function drawCard($: EngineInterface, e: RenderInput<'Pane'>, card: Card, place: string | null, pressing: Pressing, live: boolean, after: After) {
+  if (!isRecord(card.parts)) return drawWhole($, e, card, pressing, live, after)
+  const open = typeof card.id === 'string' && (await $.state.get(WHY_OPEN)).value === card.id
+  return drawParts($, e, card, card.parts, place, pressing, open, live, after)
 }
