@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UPGRADE } from '../lib/build-loop.js';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
+import { reachFor, safeGit } from '../lib/safe-git.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, MARKETPLACE_PATH, buildManifest, fetchUpstream, readManifest } from './manifest.js';
 import { REGISTER_PATH, checkAnchors, checkCarried, readRegister } from './register.js';
@@ -125,9 +126,10 @@ export function parseTo(words) {
 // The commit a tag of an upstream's repository points at, by `git ls-remote` through `run`.
 // An annotated tag gives its commit, not the tag object's own id.
 export async function resolveTag(upstream, tag, { run = defaultRun } = {}) {
-  const result = await run('git', ['ls-remote', '--tags', upstream.repo, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], {
-    baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: 120000,
-  });
+  // No repository is involved (ls-remote asks the remote), so there is no config to look at: the
+  // fence alone, with no folder of its own.
+  const git = safeGit({ run, reach: reachFor(upstream.repo), look: 'never', timeoutMs: 120000 });
+  const result = await git(['ls-remote', '--tags', upstream.repo, `refs/tags/${tag}`, `refs/tags/${tag}^{}`]);
   if (result.code !== 0) throw new Error(`${upstream.name}: git ls-remote failed: ${result.stderr.trim().split('\n').pop()}`);
   const found = {};
   for (const line of result.stdout.split('\n')) {
@@ -248,6 +250,8 @@ export class UpgradeStopped extends Error {
   }
 }
 
+// `land` is the maintainer's deliberate exception to the fenced git route: it commits in the
+// maintainer's own checkout with their identity and hooks, on purpose.
 // Plans the upgrade and, unless it is stopped, writes the new pins, manifest and register version
 // on a new branch of the repository at `root` and commits them. It never pushes: the branch goes
 // out as a pull request, by hand. The working tree must be clean, and nothing changes if the plan

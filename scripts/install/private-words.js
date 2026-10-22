@@ -18,7 +18,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRIVATE_SCAN_COMMITS } from '../lib/install-numbers.js';
 import { wheelhouseHome } from '../lib/paths.js';
-import { run as defaultRun, withoutGitVars } from '../lib/run.js';
+import { run as defaultRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 export const NO_LIST = 'No private list on this computer.';
@@ -99,10 +100,12 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
     : { word: entry?.word, wordNo: entry?.line ?? i + 1 }))
     .filter(({ word }) => typeof word === 'string' && word.trim() !== '')
     .map(({ word, wordNo }) => ({ lower: word.trim().toLowerCase(), wordNo }));
+  // It scans the maintainer's own checkout, whose ordinary keys the allowed list would refuse, and
+  // none of its commands runs a filter, diff driver or pager under the fence (--no-ext-diff and
+  // --no-textconv stay), so the fence alone is used.
+  const fenced = safeGit({ run, cwd: root, env: { GIT_OPTIONAL_LOCKS: '0' }, look: 'never' });
   const git = async (args, { input, encoding } = {}) => {
-    const result = await run('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', ...args], {
-      cwd: root, baseEnv: withoutGitVars(), env: { GIT_OPTIONAL_LOCKS: '0' }, input, encoding,
-    });
+    const result = await fenced(['-c', 'core.quotepath=off', ...args], { input, encoding });
     return result.code === 0 ? result.stdout : null;
   };
   const hits = [];

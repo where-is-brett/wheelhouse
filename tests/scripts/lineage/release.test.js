@@ -130,6 +130,9 @@ function computer() {
     calls.push([command, ...args].join(' '));
     if (command === 'git') {
       assert.equal(options.cwd, marketplaceDir);
+      // The look at the folder's own config comes first, and finds nothing.
+      if (args[0] === 'config') return ok();
+      assert.equal(options.env.GIT_CONFIG_GLOBAL, '/dev/null', 'git ran under the fence');
       return ok(`${RELEASES[at].sha}\n`);
     }
     assert.equal(command, 'claude');
@@ -209,7 +212,8 @@ test('the undo reinstalls the previous release, including after the clean-up', a
   assert.equal(done.line, `Wheelhouse v1.0.0 is installed for this project: wheelhouse ${'a'.repeat(12)}, superpowers ${'1'.repeat(12)}. Claude Code rewrote the project's settings on the way, so they were put back as the release has them.`);
   assert.deepEqual(pc.calls, [
     'claude plugin marketplace update wheelhouse',
-    'git -c core.hooksPath=/dev/null rev-parse HEAD',
+    'git config --includes --name-only --list -z',
+    'git rev-parse HEAD',
     'claude plugin update wheelhouse@wheelhouse --scope project --json',
     'claude plugin uninstall wheelhouse@wheelhouse --scope project --json',
     'claude plugin install wheelhouse@wheelhouse --scope project --json',
