@@ -80,6 +80,9 @@ function refusalOf(output, fallback) {
 // a page on this computer or its local network.
 const httpsOnly = publicHttps;
 
+// What the history calls say on a host whose history they do not read yet.
+export const HISTORY_GITLAB_ONLY = 'The audit report reads the history of a GitLab host; for GitHub it is not available in this version';
+
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
 // 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
@@ -101,6 +104,18 @@ function wholeNumber(n) {
 function commit(sha) {
   if (typeof sha !== 'string' || !SHA.test(sha)) throw new Error('The commit must be a full commit ID');
   return sha;
+}
+// An ISO 8601 time, as a UTC ISO string.
+function when(value, what) {
+  const ms = typeof value === 'string' || value instanceof Date ? Date.parse(value instanceof Date ? value.toISOString() : value) : NaN;
+  if (Number.isNaN(ms)) throw new Error(`The ${what} must be a time`);
+  return new Date(ms).toISOString();
+}
+// The protection reading the last report kept: an object, or null when there is none.
+function earlier(value) {
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('The earlier protection reading must be an object or null');
+  return value;
 }
 function text(value, what, { optional = false, empty = false } = {}) {
   if (optional && value === undefined) return undefined;
@@ -164,8 +179,27 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
     const kind = host === 'gitlab' ? outputKind(output) : null;
     return kind === null ? null : { kind, line: lineFor(kind, base), timedOut: kind === 'unreachable' && timedOut(output) };
   }
-  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault };
+  // A read whose refusal is an answer: { status, body }, with status 200 when it exited 0 and the
+  // HTTP status glab named when it did not. A host that cannot be reached, or a certificate not
+  // trusted, is thrown in our own words with its code, as `call` does; so is a failure that names no
+  // status.
+  async function read(args) {
+    const { code, stdout, stderr } = await attempt(args);
+    if (code === 0) return { status: 200, body: json(args, stdout) };
+    const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
+    if (failure !== null) throw failure;
+    const named = /\(HTTP (\d{3})\)/.exec(stderr) ?? /\b([45]\d\d)\b/.exec(stderr);
+    if (named) return { status: Number(named[1]), body: null };
+    const said = scrub(stderr || stdout, env);
+    throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
+  }
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
   const c = commands(tools);
+
+  async function history(name, argument) {
+    if (typeof c[name] !== 'function') throw new Error(HISTORY_GITLAB_ONLY);
+    return c[name](argument);
+  }
 
   return {
     defaultBranch: () => c.defaultBranch(),
@@ -189,6 +223,15 @@ export function makeAdapter({ host, repo, run, env, base = DEFAULT_GITLAB }) {
     // of it, or null when there is none or its address is not https. A failed read is thrown.
     previewUrl: async (sha) => c.previewUrl(commit(sha)),
     merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
+    // The history calls of the audit report. They only read. The host's own history is the second
+    // record the report checks the computer's against (scripts/audit/report.js).
+    mergedRequests: async ({ since } = {}) => history('mergedRequests', { since: when(since, 'time to read from') }),
+    pipelinesFor: async (sha) => history('pipelinesFor', commit(sha)),
+    protectionEvents: async ({ since, last = null, now = new Date() } = {}) => history('protectionEvents', {
+      since: when(since, 'time to read from'),
+      last: earlier(last),
+      now: new Date(when(now, 'time now')),
+    }),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({
         title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),

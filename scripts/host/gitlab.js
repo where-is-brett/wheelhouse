@@ -3,6 +3,7 @@
 // the adapter's values. Values the caller supplies are passed as `--flag=value`,
 // so one that starts with "-" cannot be read as a flag; descriptions go on
 // standard input. Commands that would otherwise ask for confirmation get --yes.
+import { gitlabHistory } from './gitlab-history.js';
 
 // Mergeability comes from `detailed_merge_status`. The recorded merge request
 // (tests/fixtures/host/gitlab/mr-view-closed.json) has this field and no
@@ -54,7 +55,7 @@ const stateOf = (pipeline) => (pipeline.source === 'external' ? 'none' : (PIPELI
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
 const ISSUE_ADDRESS = /(https?:\/\/\S+\/-\/(?:issues|work_items)\/(\d+))/;
 
-export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly, hostFault }) {
+export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly, hostFault, read }) {
   const R = ['-R', repo];
   const project = `projects/${encodeURIComponent(repo)}`;
   const ask = async (args, input) => json(args, await call(args, input));
@@ -95,6 +96,9 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
   }
 
   return {
+    // The read-only calls of the audit report (gitlab-history.js).
+    ...gitlabHistory({ ask, read, project }),
+
     async defaultBranch() {
       const answer = await ask(['api', project]);
       if (typeof answer?.default_branch !== 'string') throw new Error('GitLab did not say which branch is the default');
