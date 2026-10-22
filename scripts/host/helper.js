@@ -30,7 +30,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
 import { checkBaseUrl, gitlabApi } from './gitlab-key.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
-import { unreachableRefusal, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
+import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outputKind, companyGitEnv, makeAwayLog, gitlabBaseOf, certificateSetting } from './company-ca.js';
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
@@ -478,7 +478,10 @@ async function checkCommits({ dir, branch, sha, run, allowed, refused, scan = fa
   } else {
     const listed = await git(['ls-remote', '--heads', REMOTE, `refs/heads/${branch}`]);
     // `away`: the host could not be reached at all, which the caller says in its own line.
-    if (listed.code !== 0) return { allowed: false, refused: PUSH_REFUSALS.unchecked, away: outputKind(`${fetched.stderr}\n${listed.stderr}`) === 'unreachable' };
+    if (listed.code !== 0) {
+      const kind = outputKind(`${fetched.stderr}\n${listed.stderr}`);
+      return { allowed: false, refused: PUSH_REFUSALS.unchecked, away: kind === 'unreachable', untrusted: kind === 'certificate' };
+    }
     if (listed.stdout.trim() !== '') return { allowed: false, refused: PUSH_REFUSALS.unchecked };
   }
   const listed = await git(['rev-list', '--parents', ...range, '--']);
@@ -1031,12 +1034,13 @@ export async function startHelper({
       if (!checked.allowed) {
         const line = checked.away === true ? awayLine(recordOf(project)) : null;
         if (line !== null) awayLog.set(project, gitlabBaseOf(recordOf(project)));
-        return { ok: false, refused: line ?? checked.refused };
+        const untrusted = checked.untrusted === true ? certificateLine(recordOf(project)) : null;
+        return { ok: false, refused: line ?? untrusted ?? checked.refused };
       }
 
       // A code push that changes a CI file goes only with the director's click
       // for this commit, and then with the director's own sign-in.
-      let pusher = asOwn ? gitIn({}) : keyed;
+      let pusher = asOwn ? gitIn(companyGit({}, readProject(project))) : keyed;
       if (ciGuard) {
         let changes;
         try {
@@ -1046,7 +1050,7 @@ export async function startHelper({
         }
         if (touchesCi(changes.paths, changes.config)) {
           if (!ciClick(project, branch, checked.sha)) return { ok: false, refused: PUSH_REFUSALS.ciFile };
-          pusher = gitIn({});
+          pusher = gitIn(companyGit({}, readProject(project)));
         }
       }
       const asDirector = pusher !== keyed;
@@ -1064,6 +1068,9 @@ export async function startHelper({
         awayLog.set(project, gitlabBaseOf(recordOf(project)));
         return { ok: false, refused: away };
       }
+      // A certificate this computer does not trust is the certificate card's line, not git's own text.
+      const untrusted = certificateRefusal(recordOf(project), pushed.stderr);
+      if (untrusted !== null) return { ok: false, refused: untrusted };
       const refused = pushed.stdout.split('\n').find((line) => line.startsWith('!') && line.includes(`refs/heads/${branch}`));
       // Another computer's push can land between ours: the host then declines to move the branch
       // ("failed to update ref", "incorrect old value provided"), which is the same as the branch having moved on.
@@ -2337,7 +2344,7 @@ export async function startHelper({
       ...ctx,
       mode: 'quick',
       env: {},
-      gitEnv: {},
+      gitEnv: companyGit({}, readProject(project)),
       signedOut: true,
       adapter: async () => {
         own ??= Promise.resolve(adapterFor(project, { env: {}, envFor: async () => ({}), now }));

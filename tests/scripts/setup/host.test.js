@@ -1096,11 +1096,12 @@ test('a company GitLab whose certificate is not trusted gets a certificate step 
       return file === 'security' ? { code: 0, stdout: authorityFixture(), stderr: '' } : { code: 0, stdout: '', stderr: '' };
     };
     const step = stepFor(w, {
-      certificateProbe: async (a) => { probed.push(a.base); return 'certificate'; },
+      certificateProbe: async (a) => { probed.push([a.base, a.home]); return answer; },
       trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
     });
+    let answer = 'certificate';
     const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
-    assert.deepEqual(probed, [COMPANY_ORIGIN]);
+    assert.deepEqual(probed, [[COMPANY_ORIGIN, wheelhouseHome()]]);
     assert.deepEqual(planned.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
     assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443.*that address only.*certificate checks stay on/);
     assert.ok(planned.changes.findIndex((c) => c.action === 'certificate') < planned.changes.findIndex((c) => c.action === 'sign-in'));
@@ -1122,11 +1123,78 @@ test('a company GitLab whose certificate is not trusted gets a certificate step 
       base: COMPANY_ORIGIN, file, glabHost: 'git.example.org:8443', gitConfig: [{ key: `http.${COMPANY_ORIGIN}/.sslCAInfo`, value: file }],
     });
 
-    // Planned again (the fresh process): the file is there, so the certificate is not asked of GitLab again.
+    // Planned again (the fresh process): GitLab is asked with the file, which covers it, so no certificate step.
     probed.length = 0;
+    answer = 'ok';
     const again = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
-    assert.deepEqual(probed, []);
+    assert.deepEqual(probed, [[COMPANY_ORIGIN, wheelhouseHome()]]);
     assert.ok(again.changes.every((c) => c.action !== 'certificate'));
+  });
+});
+
+test('the certificate step is offered again whenever GitLab still does not trust, after a glab failure or with the file already there', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = await companyProduct();
+    const calls = [];
+    let glabWorks = false;
+    const certificateRun = async (file, args) => {
+      calls.push([path.basename(file), ...args]);
+      if (file === 'security') return { code: 0, stdout: authorityFixture(), stderr: '' };
+      return glabWorks ? { code: 0, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'glab: cannot write its configuration' };
+    };
+    let answer = 'certificate';
+    const step = stepFor(w, {
+      certificateProbe: async () => answer,
+      trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
+    });
+    const first = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(first.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
+
+    // glab fails: the step says so, and leaves no file (so nothing says the work is done).
+    await assert.rejects(applyStep(step, folder, first.changes, { answers: first.answers }), /glab could not be given the company's certificate for git\.example\.org:8443/);
+    assert.ok(!fs.existsSync(caFile(wheelhouseHome())));
+    assert.deepEqual(fs.readdirSync(path.dirname(caFile(wheelhouseHome()))), [], 'no staged file is left either');
+    assert.equal(findRun(folder).changes.filter((c) => c.after?.certificate).length, 0, 'nothing is journaled as done');
+
+    // The second plan offers the step again, and it now works.
+    const second = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(second.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
+    glabWorks = true;
+    await assert.rejects(applyStep(step, folder, second.changes, { answers: second.answers }), /Setup has given this computer your company's certificate/);
+    assert.ok(fs.existsSync(caFile(wheelhouseHome())));
+
+    // The file is there but GitLab is still not trusted (an authority IT installed since): offered again,
+    // with the certificates read again from the store, and the file replaced.
+    const old = fs.readFileSync(caFile(wheelhouseHome()), 'utf8');
+    const securityBefore = calls.filter((c) => c[0] === 'security').length;
+    const third = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(third.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN, refresh: true });
+    await assert.rejects(applyStep(step, folder, third.changes, { answers: third.answers }), /Setup has given this computer/);
+    assert.equal(calls.filter((c) => c[0] === 'security').length, securityBefore + 2, 'the store was read again');
+    assert.equal(fs.readFileSync(caFile(wheelhouseHome()), 'utf8'), old);
+
+    // A refresh whose glab step fails leaves the file that was there.
+    glabWorks = false;
+    await assert.rejects(applyStep(step, folder, third.changes, { answers: third.answers }), /glab could not be given/);
+    assert.equal(fs.readFileSync(caFile(wheelhouseHome()), 'utf8'), old);
+    assert.deepEqual(fs.readdirSync(path.dirname(caFile(wheelhouseHome()))), ['company.pem']);
+  });
+});
+
+test('the probe uses the company\'s file when it is there, and the certificates Node.js trusts otherwise', async () => {
+  await withHome(async () => {
+    const home = wheelhouseHome();
+    const asked = [];
+    const get = async ({ ca }) => { asked.push(ca); };
+    const fetch = async () => { asked.push('fetch'); return { status: 401 }; };
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get }), 'ok');
+    fs.mkdirSync(path.dirname(caFile(home)), { recursive: true });
+    fs.writeFileSync(caFile(home), authorityFixture());
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get }), 'ok');
+    assert.deepEqual(asked, ['fetch', authorityFixture()]);
+    const refuses = async () => { throw Object.assign(new Error('unable to verify'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }); };
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get: refuses }), 'certificate');
   });
 });
 

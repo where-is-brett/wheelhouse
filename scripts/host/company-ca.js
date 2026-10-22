@@ -16,6 +16,7 @@
 // and from the tools' wording, and neither card repeats the request or the server's own text.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import https from 'node:https';
 import path from 'node:path';
 import { wheelhouseHome } from '../lib/paths.js';
 import { DEFAULT_GITLAB } from './gitlab-base.js';
@@ -103,14 +104,27 @@ export async function exportSystemRoots({ platform = process.platform, run, syst
 // Writes the certificates to the file, replacing what was there. They are public, so the file is
 // readable; it is written whole or not at all.
 export function writeCaFile({ home, pem }) {
+  const staged = stageCaFile({ home, pem });
+  staged.commit();
+  return staged.file;
+}
+
+// The certificates written to a temporary file beside the real one: `commit` puts them in place
+// (a rename, so the file is whole or not there), `discard` removes them and leaves the real file as
+// it was. Setup commits only once the tool that uses the file has accepted it, so a failure cannot
+// leave a file that says the work is done.
+export function stageCaFile({ home, pem }) {
   const text = normalise(pem);
   if (text === '') throw new Error('There are no certificates to keep');
   const file = caFile(home);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, text, { mode: 0o644 });
-  fs.renameSync(temporary, file);
-  return file;
+  return {
+    file,
+    commit: () => fs.renameSync(temporary, file),
+    discard: () => fs.rmSync(temporary, { force: true }),
+  };
 }
 
 // ---- Giving it to each tool ----
@@ -235,6 +249,14 @@ export function unreachableRefusal(record, stderr) {
   return outputKind(stderr) === 'unreachable' ? awayLine(record) : null;
 }
 
+// The same for a certificate this computer does not trust: the certificate line, never git's own
+// SSL text (which can quote the address and the request).
+export const certificateLine = (record) => {
+  const base = gitlabBaseOf(record);
+  return base === null ? null : CERTIFICATE_NOT_TRUSTED(base);
+};
+export const certificateRefusal = (record, stderr) => (outputKind(stderr) === 'certificate' ? certificateLine(record) : null);
+
 // ---- Where the helper and setup use it ----
 
 // Whether a git setting is the certificate's (and so no key): an address's `sslCAInfo` or `sslBackend`.
@@ -272,13 +294,35 @@ export function makeAwayLog({ now = () => new Date(), keepMs = 15 * 60 * 1000 } 
 // Whether GitLab's certificate is trusted from here, asked without signing in: 'ok' when a TLS
 // connection is made (whatever GitLab then answers), 'certificate' when the certificate is not
 // trusted, 'unreachable' when the server is not there, else 'other'.
-export async function probeCertificate({ fetch = globalThis.fetch, base, timeoutMs = 8000 } = {}) {
+// With the company's file made (`home` holds `ca/company.pem`) the question is whether that file
+// covers GitLab's certificate, so an authority added after the file was made, or a file that did not
+// take, is found out; without it, whether the certificates Node.js already trusts do.
+export async function probeCertificate({ fetch = globalThis.fetch, base, home, get = httpsGet, timeoutMs = 8000 } = {}) {
   try {
-    const answer = await fetch(`${addressOf(base)}/api/v4/version`, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
+    const address = addressOf(base);
+    const url = `${address}/api/v4/version`;
+    const file = home === undefined ? null : caFile(home);
+    if (file !== null && address.startsWith('https:') && fs.existsSync(file)) {
+      await get({ url, ca: fs.readFileSync(file, 'utf8'), timeoutMs });
+      return 'ok';
+    }
+    const answer = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
     try { await answer?.body?.cancel?.(); } catch { /* nothing to read */ }
     return 'ok';
   } catch (error) {
-    const kind = failureKind(error);
-    return kind === 'other' ? 'other' : kind;
+    return failureKind(error);
   }
+}
+
+// One request to an https address, trusting exactly the certificates in `ca`; resolves when a TLS
+// connection is made and GitLab answers (whatever it says), rejects with the connection's error.
+function httpsGet({ url, ca, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { ca, timeout: timeoutMs }, (response) => {
+      response.resume();
+      resolve();
+    });
+    request.on('timeout', () => request.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
+    request.on('error', reject);
+  });
 }

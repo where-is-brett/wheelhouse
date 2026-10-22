@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, withGitConfig, HOST_UNREACHABLE,
-  CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog,
+  CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog, stageCaFile, certificateRefusal,
 } from '../../../scripts/host/company-ca.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
@@ -432,4 +432,29 @@ test('the helper\'s record of where GitLab is out of reach keeps a project for a
   assert.deepEqual(log.fresh(), { o__p: BASE });
   clock += 16 * 60 * 1000;
   assert.deepEqual(log.fresh(), {});
+});
+
+test('certificates are staged beside the file and put in place only on commit, so a failure leaves the file as it was', () => {
+  const home = shortHome();
+  const staged = stageCaFile({ home, pem: ROOT_A });
+  assert.ok(!fs.existsSync(caFile(home)), 'nothing is in place yet');
+  staged.discard();
+  assert.deepEqual(fs.readdirSync(path.dirname(caFile(home))), []);
+  writeCaFile({ home, pem: ROOT_A });
+  const again = stageCaFile({ home, pem: `${ROOT_A}${COMPANY}` });
+  assert.equal(fs.readFileSync(caFile(home), 'utf8'), ROOT_A, 'the old file stands while staged');
+  again.discard();
+  assert.equal(fs.readFileSync(caFile(home), 'utf8'), ROOT_A);
+  const last = stageCaFile({ home, pem: `${ROOT_A}${COMPANY}` });
+  last.commit();
+  assert.equal(fs.readFileSync(caFile(home), 'utf8'), `${ROOT_A}${COMPANY}`);
+  assert.deepEqual(fs.readdirSync(path.dirname(caFile(home))), ['company.pem']);
+});
+
+test('git\'s own SSL text is read as the certificate line for a GitLab record, and for nothing else', () => {
+  const record = { host: 'gitlab', connection: { baseUrl: BASE } };
+  const text = 'fatal: unable to access \'https://git.example.org:8443/o/p.git/\': SSL certificate problem: unable to get local issuer certificate';
+  assert.equal(certificateRefusal(record, text), CERTIFICATE_NOT_TRUSTED(BASE));
+  assert.equal(certificateRefusal({ host: 'github' }, text), null);
+  assert.equal(certificateRefusal(record, 'remote: HTTP Basic: Access denied'), null);
 });

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { HOST_UNREACHABLE, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
+import { HOST_UNREACHABLE, CERTIFICATE_NOT_TRUSTED, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { connectionOf } from '../../../scripts/host/helper.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
@@ -714,6 +714,27 @@ test('git is given the company\'s certificate for that project\'s address only, 
     });
     assert.ok(seen.every((s) => !JSON.stringify(s.env).includes('sslCAInfo')));
   } finally { await d.close(); await other.cleanup(); }
+});
+
+test('a write refused over the company\'s certificate says the certificate line, never git\'s own text', async () => {
+  const repo = await privateRepo();
+  let down = false;
+  const sslText = `fatal: unable to access '${repo.host.url}/o/p.git/': SSL certificate problem: unable to get local issuer certificate`;
+  const spy = (file, args, options) => (down && file === 'git' && (args.includes('fetch') || args.includes('ls-remote')) && args.includes('origin')
+    ? { code: 128, stdout: '', stderr: sslText, timedOut: false }
+    : run(file, args, options));
+  const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } }, run: spy });
+  try {
+    await c.as(async () => {
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+      down = true;
+      const refused = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
+      assert.equal(refused.pushed, false);
+      assert.equal(refused.refused, CERTIFICATE_NOT_TRUSTED(repo.host.url));
+      assert.doesNotMatch(JSON.stringify(refused), /SSL certificate problem|unable to access/);
+      assert.equal((await c.client.health()).away, undefined, 'a certificate is not an unreachable server');
+    });
+  } finally { await c.close(); await repo.cleanup(); }
 });
 
 test('an environment carrying only the certificate setting is not a key', () => {

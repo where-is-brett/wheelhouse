@@ -1452,11 +1452,12 @@ export function hostStep({
       const profileJoins = profileNow === null || (profileNow.connection?.mode === 'narrow' && profileNow.host === host);
       const twoAccounts = app !== null && !app.own && typeof owner === 'string' && typeof user === 'string' && !sameLogin(owner, user) && profileJoins;
       const changes = [];
-      // A company's GitLab whose certificate this computer does not trust, and no certificate given yet
-      // (the file is there once it has been): the company's own is given first, for that address only.
-      if (host === 'gitlab' && base !== DEFAULT_GITLAB && !fs.existsSync(caFile(wheelhouseHome()))
-        && await certificateProbe({ fetch, base }) === 'certificate') {
-        changes.push({ kind: 'host', target: host, action: 'certificate', base });
+      // A company's GitLab whose certificate this computer does not trust: the company's own is given
+      // first, for that address only. With the file made already, the question is whether it covers
+      // GitLab's certificate (an authority added since, or glab not having taken it, shows here), and the
+      // certificates are read again from the computer's store.
+      if (host === 'gitlab' && base !== DEFAULT_GITLAB && await certificateProbe({ fetch, base, home: wheelhouseHome() }) === 'certificate') {
+        changes.push({ kind: 'host', target: host, action: 'certificate', base, ...(fs.existsSync(caFile(wheelhouseHome())) ? { refresh: true } : {}) });
       }
       if (!signedIn) changes.push({ kind: 'host', target: host, action: 'sign-in' });
       if (product.isNew) {
@@ -1547,7 +1548,7 @@ export function hostStep({
       const certificate = changes.find((c) => c.action === 'certificate') ?? null;
       if (certificate !== null) {
         if (host !== 'gitlab' || certificate.base !== base) throw new Error('Step 3\'s list gives a certificate for an address other than the connection\'s, so nothing was done: ask for step 3\'s card again');
-        const given = await trustCertificate({ base, platform, run });
+        const given = await trustCertificate({ base, platform, run, refresh: certificate.refresh === true });
         record({
           id: newId('chg'), kind: 'answer', target: `step 3: the company's certificate`, before: null,
           after: { certificate: { base, file: given.file, glabHost: given.glabHost, gitConfig: given.gitConfig } },

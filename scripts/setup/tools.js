@@ -41,7 +41,7 @@ import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
-import { caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf } from '../host/company-ca.js';
+import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf } from '../host/company-ca.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -384,10 +384,16 @@ export async function applyCompanyCa({ base, home = wheelhouseHome(), platform =
   // The address is checked first (https, or http on this computer): nothing is written or run for another.
   const address = addressOf(base);
   const file = caFile(home);
-  if (refresh || !fs.existsSync(file)) writeCaFile({ home, pem: await exportSystemRoots({ platform, run }) });
+  // New certificates are staged beside the file and put in place only once glab has accepted it, so a
+  // failure leaves the file as it was (or none), never one that says the work is done.
+  const staged = refresh || !fs.existsSync(file) ? stageCaFile({ home, pem: await exportSystemRoots({ platform, run }) }) : null;
   const host = new URL(address).host;
   const set = await quietly(run, toolPath('glab', { platform }), glabCaArgs(host, file));
-  if (set.code !== 0) throw new Error(`glab could not be given the company's certificate for ${host}`);
+  if (set.code !== 0) {
+    staged?.discard();
+    throw new Error(`glab could not be given the company's certificate for ${host}`);
+  }
+  staged?.commit();
   return { file, glabHost: host, nodeEnv: caEnv(home), gitConfig: gitCaConfig(address, file, platform) };
 }
 
