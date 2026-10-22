@@ -89,7 +89,7 @@ test('every everyday setting is a row in the design\'s order, with its current c
     'notifications', 'boardTab', 'hours', 'phase', 'protection',
   ]);
   assert.deepEqual(rows.map((r) => r.label), [
-    'Autonomy', 'Show before build', 'Availability', 'Feature milestones', 'Thoroughness', 'Budget', 'Builders at once', 'Briefing length', 'Hours before a new briefing',
+    'Autonomy', 'Show before building', 'Availability', 'Feature milestones', 'Thoroughness', 'Budget', 'Builders at once', 'Briefing length', 'Hours before a new briefing',
     'Explanations', 'Notifications', 'Board opens on', 'Working hours', 'Product phase', 'Protection',
   ]);
 
@@ -589,7 +589,7 @@ test('the groups come in order, with their notes word for word', () => {
   assert.equal(groups[1].note, 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them.');
   assert.equal(groups[2].note, 'These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you.');
   assert.deepEqual(groups[1].rows.map((r) => r.label), [
-    'Autonomy', 'Show before build', 'Feature milestones', 'Builders at once', 'Thoroughness', 'Product phase', 'Build commands on Windows', 'Budget', 'Protection',
+    'Autonomy', 'Show before building', 'Feature milestones', 'Builders at once', 'Thoroughness', 'Product phase', 'Build commands on Windows', 'Budget', 'Protection',
   ]);
   assert.deepEqual(groups[2].rows.map((r) => r.label), [
     'Availability', 'Briefing length', 'Hours before a new briefing', 'Explanations', 'Board opens on', 'Notifications', 'Working hours',
@@ -649,4 +649,16 @@ test('a row changed less than a minute ago carries changed with undo', () => {
   assert.equal(groupRow(groups, 'autonomy').changed, undefined);
   const later = settingsGroups({ effective, changes, now: at('2026-10-19T05:01:00.000Z'), timeZone: SYDNEY });
   assert.equal(groupRow(later, 'pace').changed, undefined);
+});
+
+test('the bridge shows this computer\'s build-command level, not another\'s', async () => {
+  const entry = (computer, value) => ({ key: `windowsBuildCommands:${computer}`, value, from: 'project' });
+  const effective = { 'windowsBuildCommands:aaaaaaaa': entry('aaaaaaaa', 'unattended'), 'windowsBuildCommands:bbbbbbbb': entry('bbbbbbbb', 'guarded') };
+  const ask = (computer) => handle({ cmd: 'settings', cwd: '/work' }, {
+    now: at('2026-10-19T06:59:00.000Z'), projectOf: () => ({ project: P }), timeZone: SYDNEY, computer: () => computer,
+    readEffective: () => effective, readChanges: () => ({}), stopState: () => ({ on: false }),
+  });
+  assert.equal(groupRow((await ask('bbbbbbbb')).groups, 'windowsBuildCommands').value, 'Guarded');
+  assert.equal(groupRow((await ask('aaaaaaaa')).groups, 'windowsBuildCommands').value, 'Unattended');
+  assert.equal(groupRow((await ask('cccccccc')).groups, 'windowsBuildCommands').value, 'Ask');
 });

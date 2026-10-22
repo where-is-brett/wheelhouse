@@ -72,7 +72,7 @@ const LEVEL_WORDS = {
 };
 const PANE = {
   autonomy: { label: 'Autonomy', kind: 'levels' },
-  showFirst: { label: 'Show before build', kind: 'levels' },
+  showFirst: { label: 'Show before building', kind: 'levels' },
   presence: { label: 'Availability', kind: 'presence' },
   milestones: { label: 'Feature milestones', kind: 'levels' },
   efficiency: { label: 'Thoroughness', kind: 'levels' },

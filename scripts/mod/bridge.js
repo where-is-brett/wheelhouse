@@ -34,6 +34,8 @@
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
 import path from 'node:path';
+import { settingKey } from '../protection/windows-builds.js';
+import { computerId } from '../lib/paths.js';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress, whyCard as defaultWhy, suggestCard as defaultSuggest } from './press.js';
 import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, ADVANCED } from './settings-pane.js';
@@ -111,6 +113,7 @@ const DEFAULTS = {
   suggestCard: defaultSuggest,
   settingsRows: defaultRows,
   settingsGroups: defaultGroups,
+  computer: computerId,
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
   readChanges: defaultChanges,
@@ -251,9 +254,9 @@ async function settings(req, d) {
   if (found === null) return no(SAYS.notProject);
   const effective = d.readEffective({ project: found.project, now: d.now });
   const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined };
-  // The level build commands run at on Windows is kept per computer; the first one set is shown.
-  const builds = Object.entries(effective ?? {}).find(([key]) => key.startsWith('windowsBuildCommands:'));
-  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, stop: await d.stopState(), windows: builds?.[1]?.value }), text: ADVANCED };
+  // The level build commands run at on Windows is kept per computer: this computer's is shown.
+  const builds = effective?.[settingKey(d.computer())];
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
 }
 
 // A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
