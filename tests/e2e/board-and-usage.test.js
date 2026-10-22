@@ -568,13 +568,12 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
       'Not in effect until you confirm:', 'Waiting on you (+14):', 'Changed for users (+1):', 'Progress:', 'To watch:',
       'Usage this week: 300K tokens. On track.', 'Ask me anything. For the full board, type /wheelhouse:board.',
     ]);
-    assert.deepEqual(parts[0].split('\n').slice(1), ['- A ruling: Prices show two decimal places']);
+    // Fourteen cards wait and the waiting cards are the last thing cut, so the other parts give way first.
+    assert.deepEqual(parts[0].split('\n').slice(1), ['and 1 more']);
     const waiting = parts[1].split('\n').slice(1);
     assert.deepEqual(waiting.slice(0, -1), titles.slice(0, waiting.length - 1).map((title, i) => `${i + 1}. ${title}`), 'oldest first, numbered');
     assert.equal(waiting.at(-1), `and ${titles.length - (waiting.length - 1)} more`);
-    assert.deepEqual(parts[2].split('\n').slice(1), ['- Sign-in now remembers you for thirty days']);
-    assert.deepEqual(parts[3].split('\n').slice(1), ['- 1 proposed change added to the product']);
-    assert.match(parts[4], /\n- Agents act with your full GitHub or GitLab access, across all your projects\./);
+    for (const part of parts.slice(2, 5)) assert.deepEqual(part.split('\n').slice(1), ['and 1 more']);
   } finally {
     await c.close();
   }

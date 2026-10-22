@@ -155,7 +155,7 @@ test('each length keeps within its words, cutting from the end of each part with
       const body = lines.slice(start + 1, end);
       const shown = body.filter((line) => !line.startsWith('and '));
       shown.forEach((line, i) => assert.ok(line.endsWith(`${what} number ${i + 1} with a few more words`), line));
-      assert.deepEqual(body.slice(shown.length), [`and ${10 - shown.length} more`]);
+      assert.deepEqual(body.slice(shown.length), shown.length < 10 ? [`and ${10 - shown.length} more`] : []);
       shownBy[name] = (shownBy[name] ?? 0) + shown.length;
     }
   }
@@ -256,4 +256,32 @@ test('the briefing keeps to its length at each setting, whatever opens it', () =
     assert.equal(text.split('\n\n')[0], '12 things need you. 3 things are broken.');
     assert.match(text, /^Waiting on you \(\+4\):$/m);
   }
+});
+
+test('at the standard length, a three-card state with three watch lines shows every waiting card\'s title', () => {
+  const card = (title) => ({ title, line: 'It changes what users see on the sign-in page and the menu.', recommendation: 'Approve, because the checks passed and nothing else is held up.', optional: 3 });
+  const briefing = {
+    ...empty,
+    verdict: 'Three things need you. Nothing is broken.',
+    since: 'Since 09:10, about 5 hours',
+    waiting: [card('Approve the sign-in page'), card('Pick the photo for the home page'), card('Choose the opening hours wording')],
+    changed: ['Sign-up works on phones', 'Prices show in dollars'],
+    progress: ['Building Search, slice 2 of 5', 'Building Dark mode'],
+    watch: ['Your profile isn\'t backed up off this computer yet', 'Anthropic\'s models overview page changed', 'The fortnightly look at what I can decide alone is due'],
+    usage: 'Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance.',
+    onTrack: true,
+    plus: { waiting: 3, changed: 2 },
+  };
+  for (const [name, words] of Object.entries(BRIEFING_WORDS)) {
+    const text = briefingText(briefing, { words });
+    assert.ok(wordCount(text) <= words, `${name}: ${wordCount(text)} words`);
+  }
+  const text = briefingText(briefing, { words: BRIEFING_WORDS.standard });
+  for (const [i, entry] of briefing.waiting.entries()) assert.match(text, new RegExp(`^${i + 1}\\. ${entry.title}`, 'm'));
+  assert.doesNotMatch(text, /Waiting on you[^\n]*\n(?:[^\n]*\n)*?and \d+ more\n\nChanged/);
+  // The other parts give way first; a card sheds its line, then its recommendation, before any card is cut.
+  const tight = briefingText(briefing, { words: 60 });
+  const waitingBlock = tight.split('\n\n').find((block) => block.startsWith('Waiting on you'));
+  assert.ok(waitingBlock, tight);
+  assert.doesNotMatch(waitingBlock, /changes what users see/);
 });

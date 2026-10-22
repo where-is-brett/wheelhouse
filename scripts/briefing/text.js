@@ -29,14 +29,15 @@ const entries = (value) => (Array.isArray(value) ? value.map((v) => oneLine(v)).
 const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 
 // A waiting entry: a card's title (with its optional mark), its one line and its recommendation,
-// or the words alone for an entry that is only words.
-function waitingText(value) {
+// or the words alone for an entry that is only words. At `detail` 1 the line is left out, at 2 the
+// recommendation too, so a card can stay in a short briefing with only its title.
+function waitingText(value, detail = 0) {
   if (!isRecord(value)) return oneLine(value);
   const title = oneLine(value.title);
   if (title === '') return '';
   const minutes = Number.isInteger(value.optional) && value.optional > 0 ? ` · ${optionalMark(value.optional)}` : '';
   const recommendation = oneLine(value.recommendation);
-  return [`${title}${minutes}`, oneLine(value.line), recommendation === '' ? '' : recommends(recommendation)].filter(Boolean).join(BREAK);
+  return [`${title}${minutes}`, detail < 1 ? oneLine(value.line) : '', recommendation === '' || detail > 1 ? '' : recommends(recommendation)].filter(Boolean).join(BREAK);
 }
 
 // A part as it is cut so far: its heading, its first `shown` entries, then "and N more". An entry
@@ -75,7 +76,9 @@ const labelled = (label, plus) => `${label}${Number.isInteger(plus) && plus > 0 
 
 function write(b, limit) {
   const first = entries(b.first);
-  const waiting = (Array.isArray(b.waiting) ? b.waiting : []).map(waitingText).filter(Boolean);
+  const given = Array.isArray(b.waiting) ? b.waiting : [];
+  const waitingAt = (detail) => given.map((value) => waitingText(value, detail)).filter(Boolean);
+  const waiting = waitingAt(0);
   const plus = isRecord(b.plus) ? b.plus : {};
   const parts = [
     { heading: labelled('Not in effect until you confirm'), items: first },
@@ -100,6 +103,8 @@ function write(b, limit) {
   if (wordsIn(usage) > limit) usage = '';
   let ask = `${ASK_ME_ANYTHING} ${FULL_BOARD}`;
 
+  const waitingPart = parts[1];
+  let detail = 0;
   const counted = parts.map(partWords);
   const fixed = () => wordsIn(verdict) + wordsIn(since) + wordsIn(folded) + wordsIn(usage) + wordsIn(ask);
   let total = fixed() + counted.reduce((sum, n) => sum + n, 0);
@@ -108,12 +113,25 @@ function write(b, limit) {
     total -= wordsIn(folded);
     folded = '';
   }
+  // The other parts are cut first. The waiting cards are the last thing cut: each sheds its line,
+  // then its recommendation, before any card is cut whole.
   while (total > limit) {
     let pick = -1;
     for (let i = 0; i < parts.length; i += 1) {
-      if (parts[i].shown > 0 && (pick === -1 || parts[i].shown >= parts[pick].shown)) pick = i;
+      if (i !== 1 && parts[i].shown > 0 && (pick === -1 || parts[i].shown >= parts[pick].shown)) pick = i;
     }
-    if (pick === -1) break;
+    if (pick === -1) {
+      if (detail < 2 && waitingPart.items.length > 0) {
+        detail += 1;
+        waitingPart.items = waitingAt(detail);
+        const now = partWords(waitingPart);
+        total += now - counted[1];
+        counted[1] = now;
+        continue;
+      }
+      if (waitingPart.shown === 0) break;
+      pick = 1;
+    }
     parts[pick].shown -= 1;
     const now = partWords(parts[pick]);
     total += now - counted[pick];
@@ -129,8 +147,8 @@ function write(b, limit) {
     total -= wordsIn(ask);
     ask = '';
   }
-  for (let i = parts.length - 1; i >= 0 && total > limit; i -= 1) {
-    if (parts[i].items.length === 0) continue;
+  for (const i of [4, 3, 2, 0, 1]) {
+    if (total <= limit || parts[i].items.length === 0) continue;
     parts[i].hidden = true;
     total -= counted[i];
   }
