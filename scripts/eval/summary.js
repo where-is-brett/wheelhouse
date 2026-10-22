@@ -145,9 +145,14 @@ function judge(runs, legs, safety) {
 
 const reasons = (runs) => [...new Set(runs.map((run) => run.why).filter(Boolean))].join('; ');
 
-function rowFor(id, runs) {
-  const legs = [...new Set(runs.map(leg))];
-  const safety = runs.some((run) => run.safety === true);
+function rowFor(id, allRuns) {
+  // A trial recorded `notRun` (a scenario that needs the sandbox, on Windows: ruling E30) is
+  // neither a pass nor a failure: it is left out of every verdict, never run again, and its
+  // variant reads `not run` with its reason.
+  const runs = allRuns.filter((run) => !run.notRun);
+  const notRunWhy = Object.fromEntries(VARIANTS.map((variant) => [variant, allRuns.find((run) => run.variant === variant && run.notRun)?.notRun ?? null]));
+  const legs = [...new Set((runs.length ? runs : allRuns).map(leg))];
+  const safety = allRuns.some((run) => run.safety === true);
   const verdicts = Object.fromEntries(VARIANTS.map((variant) => [variant, judge(runs.filter((run) => run.variant === variant), legs, safety)]));
   // Marked to run again: a first round whose with failed or whose without passed, for
   // TRIALS_AGAIN trials; or a round run again that stopped short, for the trials it lacks. A safety
@@ -172,18 +177,22 @@ function rowFor(id, runs) {
   const own = reasons(failing.filter((run) => lead.round !== 'again' || run.round === 'again'));
   if (own) parts.push(own);
   if (lead.short) parts.push(`the round run again stopped at ${lead.done} of ${TRIALS_AGAIN}`);
-  const titles = [...new Set(runs.map((run) => run.title).filter(Boolean))];
+  for (const variant of VARIANTS) {
+    if (verdicts[variant].result === 'not run' && notRunWhy[variant]) parts.push(`${variant}: not run (${notRunWhy[variant]})`);
+  }
+  const titles = [...new Set(allRuns.map((run) => run.title).filter(Boolean))];
   return {
     id,
     title: titles.join('; '),
-    suite: runs[0].suite ?? null,
+    suite: allRuns[0].suite ?? null,
+    notRun: notRunWhy,
     with: verdicts.with.result,
     without: verdicts.without.result,
     trials: { with: verdicts.with.trials, without: verdicts.without.trials },
     passes: { with: verdicts.with.passes, without: verdicts.without.passes },
     first: { with: verdicts.with.round === 'again' ? verdicts.with.first : null, without: verdicts.without.round === 'again' ? verdicts.without.first : null },
     toRun,
-    tokens: sum(runs),
+    tokens: sum(allRuns),
     why: parts.join('; '),
     again,
     safety,
@@ -194,6 +203,7 @@ const notRun = (id, title, suite, why) => ({
   id,
   title,
   suite,
+  notRun: { with: null, without: null },
   with: 'not run',
   without: 'not run',
   trials: { with: 0, without: 0 },
@@ -264,6 +274,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // how the first round went: `pass (3 of 3; first trial failed)`.
 function verdictCell(row, variant) {
   const result = row[variant];
+  if (result === 'not run' && row.notRun?.[variant]) return `not run (${row.notRun[variant]})`;
   const n = row.trials[variant];
   const notes = n > 1 ? [`${row.passes[variant]} of ${n}`] : [];
   const first = row.first?.[variant];
@@ -309,6 +320,11 @@ export function summaryText(summary) {
       !summary.finished ? 'the run did not finish' : null,
     ].filter(Boolean);
     lines.push(`**The gate is not passed:** ${reasons.join('; ')}.`, '');
+  }
+  const skipped = summary.rows.filter((row) => row.notRun?.with || row.notRun?.without);
+  if (skipped.length) {
+    const why = [...new Set(skipped.flatMap((row) => [row.notRun.with, row.notRun.without]).filter(Boolean))].join('; ');
+    lines.push(`Not run on this computer (${why}): ${skipped.map((row) => row.id).join(', ')}. The gate is taken on the Mac.`, '');
   }
   const marked = summary.rows.filter((row) => row.again.length);
   if (marked.length) {

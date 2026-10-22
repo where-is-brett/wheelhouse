@@ -234,6 +234,9 @@ function hookText({ body, views, events, seen, usage, home }) {
 //               on feature/<work>, its files committed there
 //   pullRequests  { number: 'head' }: pull requests open when the run starts, each at the commit
 //               the feature's worktree branch holds ('head') or a full commit
+//   signed      [{ kind, data }], or a function that makes them from { head }: records the stand-in
+//               signs with its own key as the run starts, such as a review (startStandInHelper's
+//               `state.signed`); they are part of what the run started with
 //   lastPrompt  undefined for no board context hook (the build loop's scenarios); otherwise the
 //               time of the director's last prompt, or null for none, and with Wheelhouse the
 //               board context hook's text comes on each prompt (promptContext)
@@ -242,7 +245,7 @@ function hookText({ body, views, events, seen, usage, home }) {
 // seededIds, evidence, hooksGave, head, close }, with `reload`, the session start's text over the
 // seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added, in order.
 export async function setUpFrontDesk(dir, variant, {
-  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, lastPrompt, usage = null,
+  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null,
 } = {}) {
   assertUnderTmp(dir);
   // By its real path: the command runs nothing when started through a link in its path (the
@@ -282,6 +285,7 @@ export async function setUpFrontDesk(dir, variant, {
       head = git(at, 'rev-parse', 'HEAD');
     }
     if (typeof seed === 'function') seed = seed({ head });
+    if (typeof signed === 'function') signed = signed({ head });
     const pluginDirs = [];
     let appendSystemPrompt = PLAIN_PROMPT;
     let reloadText = null;
@@ -306,10 +310,10 @@ export async function setUpFrontDesk(dir, variant, {
     helper = await startStandInHelper({
       address,
       home,
-      state: { events: seed, approved, pullRequests: prs },
+      state: { events: seed, approved, pullRequests: prs, signed },
       onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home }),
     });
-    const seededIds = new Set(seed.map((e) => e.id));
+    const seededIds = new Set([...seed.map((e) => e.id), ...helper.events().map((e) => e.id)]);
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
     // What the hooks added, in order: { event, source, text }, and { …, text: null, failed } for a
     // hook that couldn't get its text from the stand-in.
@@ -323,7 +327,7 @@ export async function setUpFrontDesk(dir, variant, {
     };
     return {
       env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
-      helper, seededIds, evidence, hooksGave, close,
+      helper, seededIds, evidence, hooksGave, close, unreadable: [helper.keyFolder],
     };
   } catch (error) {
     await close();
