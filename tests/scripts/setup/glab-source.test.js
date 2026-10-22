@@ -69,15 +69,14 @@ const noFetch = async (url) => assert.fail(`nothing is fetched here, but ${url} 
 
 // ---- A fake computer: git, node and gh are here, glab is not; tar unpacks a stand-in, nothing runs ----
 
-function computer() {
+function computer({ present = { git: '/usr/bin/git', node: '/usr/local/bin/node', gh: '/opt/homebrew/bin/gh' } } = {}) {
   const calls = [];
   const answer = (stdout, code = 0) => ({ code, stdout, stderr: '' });
-  const present = { git: '/usr/bin/git', node: '/usr/local/bin/node', gh: '/opt/homebrew/bin/gh' };
   const unpacked = [];
   const run = async (file, args = [], options = {}) => {
     calls.push({ file, args: [...args], cwd: options.cwd, env: options.env });
     const name = file.split(/[\\/]/).pop();
-    if (name === 'which') return present[args[0]] ? answer(`${present[args[0]]}\n`) : answer('', 1);
+    if (name === 'which' || name === 'where') return present[args[0]] ? answer(`${present[args[0]]}\n`) : answer('', 1);
     if (name === 'xcode-select' && args[0] === '-p') return answer('/Library/Developer/CommandLineTools\n');
     if (name === 'tar') {
       const archivePath = path.resolve(options.cwd ?? '.', args[1]);
@@ -88,6 +87,7 @@ function computer() {
       return answer('');
     }
     if (args[0] === '--version') {
+      if (name === 'node' || file.endsWith('node.exe')) return answer('v22.3.0\n');
       if (file.includes(`${path.sep}tools${path.sep}`)) return answer('glab version 1.200.0 (2026-10-01)\n');
       return answer(name === 'node' ? 'v22.3.0\n' : `${name} version 2.100.0\n`);
     }
@@ -325,6 +325,45 @@ test('a copy with no checksum is named on the card', async () => {
     const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     assert.equal(fetchChange(await step.plan(ctxFor(folder))).checksum, 'listed');
   });
+});
+
+test('step 2\'s card composes in the worst first run, and the no-checksum warning stays on it', async () => {
+  // Git's installer on Windows, gh and glab to fetch, the permission rule, and a 200-character source.
+  for (const checksums of ['none', 'file']) {
+    await withHome(async () => {
+      const dir = fs.realpathSync.native(tempFolder('wh-long-'));
+      const { list } = listFolder({ checksums });
+      const long = path.join(dir, 'x'.repeat(200 - dir.length - '/list.json'.length - 1), 'list.json');
+      fs.mkdirSync(path.dirname(long), { recursive: true });
+      fs.copyFileSync(list, long);
+      for (const name of [NAME, WINDOWS_NAME]) fs.copyFileSync(path.join(path.dirname(list), name), path.join(path.dirname(long), name));
+      if (checksums === 'file') fs.copyFileSync(path.join(path.dirname(list), 'checksums.txt'), path.join(path.dirname(long), 'checksums.txt'));
+      assert.ok(long.length >= 190, String(long.length));
+      const folder = projectWith(`company ${long}`);
+      const m = computer({ present: { node: 'C:\\Program Files\\nodejs\\node.exe' } });
+      const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'x64', pluginRoot: 'C:\\Plugins\\wheelhouse', env: {} });
+      const planned = await step.plan({ ...ctxFor(folder), platform: 'win32' });
+      assert.ok(planned.changes.some((c) => c.kind === 'process'), 'git is to be installed');
+      assert.ok(planned.changes.some((c) => c.tool === 'gh' && c.action === 'fetch'));
+      assert.ok(planned.changes.some((c) => c.kind === 'json-key'));
+      const glab = fetchChange(planned);
+      assert.equal(glab.source, long);
+      assert.equal(glab.checksum, checksums === 'none' ? 'none' : 'listed');
+      // It composes, with the source off the card but kept in the change under the plan hash.
+      const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
+      assert.ok(question.question.length <= 1200);
+      assert.ok(!planned.card.what.includes(long));
+      if (checksums === 'none') {
+        assert.match(planned.card.what, /glab: from your company's list, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
+      } else {
+        assert.match(planned.card.what, /glab: from your company's list, checked/);
+        assert.doesNotMatch(planned.card.what, /no checksum/);
+      }
+      assert.deepEqual(termsIn(planned.card.what, glossaryOf({})), []);
+      // A different source gives a different list, so a different hash.
+      assert.notEqual(planHash(planned.changes), planHash(planned.changes.map((c) => (c.source ? { ...c, source: `${c.source}2` } : c))));
+    });
+  }
 });
 
 // ---- Test 3 ----

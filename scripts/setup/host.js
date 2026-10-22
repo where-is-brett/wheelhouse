@@ -92,6 +92,7 @@ import { startDeviceSignIn, waitForSignIn, installUrl } from '../host/github-app
 import { installationCovers } from '../host/connection.js';
 import { gitlabApi, makeProjectKey, isKeysSwitchedOff, checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { tokenUrl } from '../host/token-url.js';
+import { composeCard } from '../cards/compose.js';
 import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts } from '../host/gitlab-base.js';
 import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
@@ -1317,25 +1318,42 @@ export async function switchOnAsDirector({ host, repo, run = realRun, api }) {
 
 // ---- Step 3 ----
 
-function cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false, base = DEFAULT_GITLAB }) {
+// A card is limited in length (CARD.chars). A company's GitLab adds a certificate and a typed token to the
+// list, so the full wording is tried first and, when it does not compose, the same parts in fewer words.
+function cardFor(given) {
+  const full = cardParts(given, false);
+  try {
+    composeCard({ ...full, target: { step: 3, hash: '0'.repeat(64) } });
+    return full;
+  } catch { /* too long: the shorter wording below */ }
+  return cardParts(given, true);
+}
+
+function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false, base = DEFAULT_GITLAB }, tight) {
   const name = NAME[host];
   const parts = [];
-  if (changes.some((c) => c.action === 'certificate')) parts.push(`your company's own certificate for ${base}, copied from this computer's own certificate store and given to Node.js, glab and git for that address only (certificate checks stay on)`);
+  if (changes.some((c) => c.action === 'certificate')) {
+    parts.push(tight
+      ? `your company's own certificate for ${base}, for that address only (certificate checks stay on)`
+      : `your company's own certificate for ${base}, copied from this computer's own certificate store and given to Node.js, glab and git for that address only (certificate checks stay on)`);
+  }
   const signing = changes.find((c) => c.action === 'sign-in');
   if (signing?.via === 'token') {
-    parts.push(`sign in to ${name} with a token pasted into your computer's box, never the chat`);
-    parts.push('for your company\'s GitLab admin: register an application and give its id to glab here for the browser; the company\'s job, not setup\'s');
+    parts.push(tight ? 'sign in with a token pasted into your computer\'s box, never the chat' : `sign in to ${name} with a token pasted into your computer's box, never the chat`);
+    parts.push(tight
+      ? 'for your company\'s GitLab admin: the browser sign-in, if wanted; not setup\'s job'
+      : 'for your company\'s GitLab admin: register an application and give its id to glab here for the browser; the company\'s job, not setup\'s');
   } else if (!signedIn) parts.push(`sign in to ${name} in your browser (no account? sign up at ${signUpUrl(host, base)})`);
   if (product.isNew) {
     const where = owner ? `${owner}/${product.name} on ${name}` : `${product.name} on your ${name} account`;
-    parts.push(`a private repository ${where} with a README, this folder connected to it, its files kept`);
+    parts.push(tight ? `a private repository ${where}, connected to this folder` : `a private repository ${where} with a README, this folder connected to it, its files kept`);
   } else if (product.joining) {
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
     parts.push(`${product.repo ?? product.name} found on your ${name} ${accounts}, the one holding Wheelhouse's records, and checked out into this folder, its committed .claude/settings.json in place of the install's`);
   } else parts.push(`${product.repo} on ${name}, kept as it is`);
   if (changes.some((c) => c.action === 'profile-repository')) parts.push(`your private profile repository ${user ? `${user}/` : ''}${PROFILE_REPO} if there is none`);
   if (way === WAYS.quick) parts.push('Quick: your own sign-in, which reaches your whole account');
-  else if (host === 'gitlab') parts.push('Developer project keys for the project and profile, or where GitLab refuses, a token typed in your computer\'s own box');
+  else if (host === 'gitlab') parts.push(tight ? 'Developer project keys, or a token typed in your computer\'s box' : 'Developer project keys for the project and profile, or where GitLab refuses, a token typed in your computer\'s own box');
   else if (app === null) parts.push('your own GitHub App');
   else if (app.own && typeof app.clientId !== 'string' && product.joining) {
     // A joining computer's profile isn't here yet, so the app the first computer made can't be known.
@@ -1352,10 +1370,10 @@ function cardFor({ host, changes, product, owner, user, way, app, signedIn, appK
       : 'tick the project and profile on its Install page, not All repositories';
     parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}${appKeys === 'signed-in' ? ', as signed in already: ' : ': a code on GitHub, then '}${ticks}`);
   }
-  parts.push('the project\'s record and state branch');
+  parts.push(tight ? 'the project\'s record' : 'the project\'s record and state branch');
   if (changes.some((c) => c.action === 'enrolment')) parts.push(ENROLMENT_PART);
   // A joining computer's project already has its protection, from the first computer's step 7.
-  if (!product.joining) parts.push(protectionPlanLine(host));
+  if (!product.joining) parts.push(tight && host === 'gitlab' ? 'protection on at step 7, with your sign-in' : protectionPlanLine(host));
   return {
     kind: 'setup',
     level: 3,

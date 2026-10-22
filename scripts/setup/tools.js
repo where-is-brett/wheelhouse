@@ -52,6 +52,7 @@ import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind } from '../host/company-ca.js';
+import { composeCard } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -690,26 +691,39 @@ function directorFor(changes, platform) {
   return 'One click';
 }
 
-// The card of a list with something on it: an empty list settles the step (ruling R75).
+// The card of a list with something on it: an empty list settles the step (ruling R75). A card is
+// limited in length (CARD.chars), and a first run can list git's installer, both host tools and the
+// permission rule at once, so the full wording is tried first and, when it does not compose, a terse one:
+// one short clause for each, the source of a company's list left off the card (it stays in the change,
+// and so under the plan hash). The warning that a company's copy has no checksum is in both.
 function cardFor(changes, status, platform) {
-  const lines = [];
-  for (const c of changes.filter((x) => x.kind === 'process')) {
-    lines.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
-  }
+  const processes = changes.filter((x) => x.kind === 'process');
   const fetches = changes.filter((c) => c.action === 'fetch');
-  const fetched = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
-  if (fetched.length > 0) {
-    lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
+  const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
+  const company = fetches.filter((x) => x.from === 'company');
+  const rule = changes.some((c) => c.kind === 'json-key');
+  const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
+  const full = [];
+  for (const c of processes) full.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
+  if (official.length > 0) {
+    full.push(`${official.join(' and ')}, the host's command-line ${official.length === 1 ? 'tool' : 'tools'}: fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
   }
-  for (const c of fetches.filter((x) => x.from === 'company')) {
-    lines.push(`${c.tool}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
+  for (const c of company) {
+    full.push(`${c.tool}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
       ? 'checked against the checksum the list gives'
       : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
   }
-  if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
-  const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
-  const what = `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
-  return {
+  if (rule) full.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
+  const terse = [];
+  for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
+  if (official.length > 0) terse.push(`${official.join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
+  for (const c of company) {
+    terse.push(c.checksum === 'listed'
+      ? `${c.tool}: from your company's list, checked`
+      : `${c.tool}: from your company's list, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
+  }
+  if (rule) terse.push('one permission rule');
+  const card = (what) => ({
     kind: 'setup',
     level: 3,
     what,
@@ -719,9 +733,15 @@ function cardFor(changes, status, platform) {
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
     ],
     recommend: SETUP_LABEL,
-    because: 'each comes from its official source, and setup needs them for the next steps',
+    because: company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source, and setup needs them for the next steps',
     meanwhile: 'Setup waits at this step; nothing is installed.',
-  };
+  });
+  const long = card(`Setup step 2, ${SETUP_TITLES[2]}: ${full.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`);
+  try {
+    composeCard({ ...long, target: { step: 2, hash: '0'.repeat(64) } });
+    return long;
+  } catch { /* too long: the terse card below */ }
+  return card(`Setup step 2, ${SETUP_TITLES[2]}: ${terse.join('; ')}.`);
 }
 
 // The allow rules in a settings file, as they are; an empty list when there is no file. A file that

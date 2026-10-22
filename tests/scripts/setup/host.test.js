@@ -1075,6 +1075,24 @@ test('a company remote named in gitlabHosts, with its port, gives that address t
   });
 });
 
+test('step 3\'s card for a company\'s GitLab behind its own authority, with the certificate and the typed token, composes', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('A product whose folder has a very long name indeed, Zoë');
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
+    await withOrigin(folder, `https://git.example.org:8443/${USER}/a-product-with-a-long-name-to-fill-the-card.git`);
+    const step = stepFor(w, { certificateProbe: async () => 'certificate' });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, way: WAYS.narrow }));
+    assert.ok(planned.changes.some((c) => c.action === 'certificate'));
+    assert.equal(planned.changes.find((c) => c.action === 'sign-in').via, 'token');
+    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443, for that address only \(certificate checks stay on\)/);
+    assert.match(planned.card.what, /sign in with a token pasted into your computer's box, never the chat/);
+    assert.match(planned.card.what, /for your company's GitLab admin/);
+    const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    assert.ok(question.question.length <= 1200, String(question.question.length));
+  });
+});
+
 test('on a company\'s GitLab the typed token is the way offered, and the card names the admin\'s part', async () => {
   const TYPED = 'glpat-never-on-a-card-0001';
   await withHome(async () => {
