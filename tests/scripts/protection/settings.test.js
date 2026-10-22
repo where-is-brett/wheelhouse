@@ -381,3 +381,33 @@ test('claudeCodeSettings sets the stable channel and the floor', () => {
   for (const bad of [undefined, '', 'latest', '2.1', 'v2.1.100', 2]) assert.throws(() => claudeCodeSettings({ floor: bad }), /floor/, String(bad));
   assert.throws(() => claudeCodeSettings(), /floor/);
 });
+
+test('Claude Code\'s deny rules carry the new paths', () => {
+  const s = projectSettings(config);
+  const deny = s.permissions.deny;
+  // Project files: from the project's root, as the settings and hooks rules are.
+  for (const rule of ['Edit(/.github/hooks/**)', 'Edit(/.github/copilot/**)', 'Edit(/.github/agents/**)', 'Edit(/.github/skills/**)', 'Edit(/.github/instructions/**)',
+    'Edit(/.github/prompts/**)', 'Edit(/.github/copilot-instructions.md)', 'Edit(/.github/mcp.json)', 'Edit(/.github/lsp.json)', 'Edit(/.github/plugin/**)',
+    'Edit(**/AGENTS.md)', 'Edit(**/GEMINI.md)', 'Edit(/.agents/**)', 'Edit(/plugin.json)', 'Edit(/.plugin/**)', 'Edit(/com.github.copilot/**)',
+    'Edit(/.vscode/**)', 'Edit(/.codex/**)', 'Edit(/.cursor/**)', 'Edit(/.gemini/**)', 'Edit(/.gitattributes)']) {
+    assert.ok(deny.includes(rule), rule);
+  }
+  // The home folders, for every system's, in the form the credentials' rules use.
+  for (const folder of ['.copilot', '.agents', '.vscode/extensions', 'Library/Application Support/Code/User', 'AppData/Roaming/Code/User', '.config/Code/User']) {
+    assert.ok(deny.includes(`Edit(~/${folder}/**)`), folder);
+  }
+  // The sandbox holds what a shell writes: folders and files by name, with no wildcard.
+  const write = s.sandbox.filesystem.denyWrite;
+  for (const p of ['./.github/hooks', './.github/copilot', './.github/agents', './.github/skills', './.github/instructions', './.github/prompts', './.github/copilot-instructions.md',
+    './.github/mcp.json', './.github/lsp.json', './.github/plugin', './.agents', './plugin.json', './.plugin', './com.github.copilot', './.vscode', './.codex', './.cursor', './.gemini',
+    './.gitattributes', '~/.copilot', '~/.agents', '~/.vscode/extensions', '~/Library/Application Support/Code/User', '~/AppData/Roaming/Code/User', '~/.config/Code/User']) {
+    assert.ok(write.includes(p), p);
+  }
+  assert.ok(write.every((p) => !p.includes('*')), 'no wildcard in the sandbox list');
+  // What was there stays, in its place.
+  assert.deepEqual(write.slice(0, 5), ['~/.wheelhouse', '~/.claude', './.claude/settings.json', './.claude/settings.local.json', './.claude/hooks']);
+  assert.equal(new Set(deny).size, deny.length);
+  assert.equal(new Set(write).size, write.length);
+  // Reading stays allowed: no Read rule is made for them.
+  assert.ok(!deny.some((r) => r.startsWith('Read(') && /AGENTS|\.vscode|\.copilot|\.github/.test(r)));
+});

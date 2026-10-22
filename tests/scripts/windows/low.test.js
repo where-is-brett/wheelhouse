@@ -123,6 +123,9 @@ function repository({ vscode = true, claude = true, mcp = true } = {}) {
 }
 
 const labels = (fake) => fake.icacls().filter((a) => a[1] === '/setintegritylevel');
+// The folders other agents' control files live in, kept at the normal level beside .claude and .vscode (KEPT_NORMAL).
+const AGENT_FOLDERS = ['.agents', '.plugin', 'com.github.copilot', '.codex', '.cursor', '.gemini'];
+const keptFolderLabels = (root) => AGENT_FOLDERS.map((name) => [path.join(root, name), '/setintegritylevel', '(OI)(CI)M']);
 
 test('a worktree is labelled low, with its .git file, .claude and .mcp.json put back at the normal level', async () => {
   const { common, worktree } = repository();
@@ -136,6 +139,7 @@ test('a worktree is labelled low, with its .git file, .claude and .mcp.json put 
     [path.join(worktree, '.mcp.json'), '/setintegritylevel', 'M'],
     [path.join(worktree, '.claude'), '/setintegritylevel', '(OI)(CI)M'],
     [path.join(worktree, '.vscode'), '/setintegritylevel', '(OI)(CI)M'],
+    ...keptFolderLabels(worktree),
   ]);
 
   // A label Windows refuses fails the labelling, so the run gets the Ask rules.
@@ -152,7 +156,7 @@ test('a worktree with no .claude, .vscode or .mcp.json gets the two folders, emp
   const { common, worktree } = repository({ vscode: false, claude: false, mcp: false });
   const fake = fakeRun();
   await labelWorktree(worktree, { run: fake.run, commonDir: common, env: WIN });
-  for (const name of ['.claude', '.vscode']) {
+  for (const name of ['.claude', '.vscode', ...AGENT_FOLDERS]) {
     assert.ok(fs.statSync(path.join(worktree, name)).isDirectory(), name);
     assert.deepEqual(fs.readdirSync(path.join(worktree, name)), [], `${name} is empty`);
   }
@@ -162,6 +166,7 @@ test('a worktree with no .claude, .vscode or .mcp.json gets the two folders, emp
     [path.join(worktree, '.git'), '/setintegritylevel', 'M'],
     [path.join(worktree, '.claude'), '/setintegritylevel', '(OI)(CI)M'],
     [path.join(worktree, '.vscode'), '/setintegritylevel', '(OI)(CI)M'],
+    ...keptFolderLabels(worktree),
   ]);
 });
 
@@ -257,7 +262,7 @@ function selfTestScene(seen) {
 const said = (value) => ({ code: 0, stdout: `npm says nothing here\n${JSON.stringify(value)}\n`, stderr: '' });
 
 // The scratch folder the runner was given, and what was in it when it was started.
-const KEPT = ['.claude', '.vscode', '.git', '.mcp.json'];
+const KEPT = ['.claude', '.vscode', ...AGENT_FOLDERS, '.git', '.mcp.json', 'plugin.json', '.gitattributes'];
 function scratchSeen() {
   const seen = { scratch: null, entries: null };
   const answer = (value) => (args) => {
@@ -349,8 +354,11 @@ test('the self-test labels a scratch folder in the home as a worktree is, for th
     [scratch, '/setintegritylevel', '(OI)(CI)L'],
     [path.join(scratch, '.git'), '/setintegritylevel', 'M'],
     [path.join(scratch, '.mcp.json'), '/setintegritylevel', 'M'],
+    [path.join(scratch, 'plugin.json'), '/setintegritylevel', 'M'],
+    [path.join(scratch, '.gitattributes'), '/setintegritylevel', 'M'],
     [path.join(scratch, '.claude'), '/setintegritylevel', '(OI)(CI)M'],
     [path.join(scratch, '.vscode'), '/setintegritylevel', '(OI)(CI)M'],
+    ...keptFolderLabels(scratch),
   ]);
   // Labelled before the runner started.
   const runnerAt = fake.calls.findIndex((c) => nameOf(c.file) !== 'icacls');

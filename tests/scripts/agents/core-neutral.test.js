@@ -11,9 +11,10 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const ALLOWED_FOLDERS = ['adapters/', 'scripts/agents/', 'vscode/', 'probes/', 'tests/', 'docs/'];
 // Tooling folders that are not the product.
 const TOOLING_FOLDERS = ['node_modules/', '.git/', '.superpowers/', '.claude/'];
-// Core files that already name Copilot, each with why. Part 3 adds none.
+// Core files that name Copilot, each with why.
 const ALLOWED_CORE_FILES = {
   'scripts/lib/copilot-numbers.js': 'the numbers of the Copilot design, named once',
+  'scripts/lib/agent-control.js': 'the guardrail list names the folders and files that steer each agent, Copilot\'s among them (design section 6.5)',
 };
 
 function trackedFiles() {
