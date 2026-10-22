@@ -21,6 +21,7 @@ import { phonePushResult } from '../../../scripts/lib/setup-run.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../../../scripts/lib/setup-numbers.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
+import { PHONE_REACHES } from '../../../scripts/lib/calm-words.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { withProject, T0, SLUG } from '../../helpers/setup-answers.js';
 
@@ -110,6 +111,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.match(card.what, /Push when actions required/);
   assert.match(card.what, /step 6/);
   assert.match(card.what, /phone/);
+  assert.ok(card.what.includes(PHONE_REACHES), 'the card says what reaches the phone');
   assert.match(card.what, /allow/i);
   // Locked past the push (ruling R65): until the phone buzzes, or three minutes, longer than the
   // wait before the push is sent, so it goes out while the screen is still locked.

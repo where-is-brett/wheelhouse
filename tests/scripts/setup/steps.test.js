@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STEPS, planHash, firstUnfinished } from '../../../scripts/setup/steps.js';
+import { STEPS, planHash, firstUnfinished, stepProgress, STEP_MINUTES } from '../../../scripts/setup/steps.js';
 import { admitFolder, runApply, setupRoutes } from '../../../scripts/setup/engine.js';
 import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { setupLine, SETUP_TITLES, SETUP_LABEL, setLineOf } from '../../../scripts/state/card-lines.js';
@@ -439,4 +439,27 @@ test('a long step that fails part-way leaves every change it made in the journal
     assert.deepEqual(readJson(path.join(folder, 'x.json')), { a: 'theirs' });
     assert.equal(fs.existsSync(path.join(folder, 'y.json')), false, 'the file the step made goes too (ruling R138)');
   });
+});
+
+test('a step is headed by its place and minutes, what it is, what has happened and what carries on meanwhile', () => {
+  assert.deepEqual(stepProgress({ n: 3 }), ['Step 3 of 10 · about 2 minutes', 'Connecting to your code host', 'Setup has just started.']);
+  assert.equal(stepProgress({ n: 3, host: 'github' })[1], 'Connecting to GitHub');
+  assert.equal(stepProgress({ n: 3, host: 'gitlab' })[1], 'Connecting to GitLab');
+  assert.deepEqual(Object.keys(STEP_MINUTES).map(Number), STEPS.map((s) => s.n), 'every step has its minutes');
+  // Step 2 still installing: what carries on meanwhile names the tools, and the last step done is what has happened.
+  const run = {
+    steps: { 1: { doneAt: '2026-10-19T03:00:00.000Z' }, 2: { clickedAt: '2026-10-19T03:01:00.000Z' } },
+    changes: [
+      { step: 2, kind: 'process', after: { tool: 'git' } }, { step: 2, kind: 'process', after: { tool: 'gh' } }, { step: 2, kind: 'process', after: { tool: 'git' } },
+    ],
+  };
+  assert.deepEqual(stepProgress({ n: 3, run, running: (m) => m === 2, host: 'github' }), [
+    'Step 3 of 10 · about 2 minutes', 'Connecting to GitHub', 'Wheelhouse is installed.',
+    'Meanwhile, git and gh are still installing. Nothing for you to do there.',
+  ]);
+  // A step that needs the director is never described as something to leave alone.
+  assert.equal(stepProgress({ n: 4, run, running: (m) => m === 3 }).length, 3);
+  // A computer joining a project counts the steps it runs, and a step is placed among them.
+  const joining = { steps: {}, changes: [{ step: 3, kind: 'answer', after: { joined: 'jo/tide' } }] };
+  assert.equal(stepProgress({ n: 6, run: joining })[0], 'Step 4 of 7 · about 1 minute');
 });

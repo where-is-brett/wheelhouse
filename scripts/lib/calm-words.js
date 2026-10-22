@@ -164,3 +164,48 @@ export function decidedToast(label, meanwhile) {
 }
 // The toast for a pick of Availability: what it is now, and that it can be undone for a minute.
 export const awayToast = (said, undoable) => (undoable ? `${said}. ${UNDO_IN_PANE}` : `${said}.`);
+
+// What a setup step is, said as the doing of it ("Connecting to GitHub"), and what has happened once it is done.
+export const SETUP_DOING = Object.freeze({
+  1: 'Installing Wheelhouse',
+  2: 'Setting up the tools',
+  3: 'Connecting to your code host',
+  4: 'Asking three questions',
+  5: 'Going through the rules found',
+  6: 'Changing this computer\'s settings',
+  7: 'Putting the project\'s files up',
+  8: 'Locking Wheelhouse in',
+  9: 'Testing phone notifications',
+  10: 'Checking that everything is safe',
+});
+// Step 3 names the host once it is known.
+export const connectingTo = (host) => (host === 'github' ? 'Connecting to GitHub' : host === 'gitlab' ? 'Connecting to GitLab' : SETUP_DOING[3]);
+export const SETUP_DONE = Object.freeze({
+  1: 'Wheelhouse is installed.',
+  2: 'The tools are in place.',
+  3: 'The project is connected.',
+  4: 'Your three answers are kept.',
+  5: 'The rules found are confirmed.',
+  6: 'This computer\'s settings are changed.',
+  7: 'The project\'s files are up.',
+  8: 'Wheelhouse\'s checks are locked in.',
+  9: 'Phone notifications are tested.',
+  10: 'The health check is done.',
+});
+// The line that opens a setup step: its place among the steps this computer runs and its minutes.
+export const setupStepLine = (position, total, minutes) => `Step ${position} of ${total} · about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+// What carries on while the director's step is asked, and that it needs nothing from them.
+export const setupMeanwhile = (what) => `Meanwhile, ${what}. Nothing for you to do there.`;
+// What is going on, said for a step that runs by itself.
+export const SETUP_GOING = Object.freeze({
+  2: 'the tools are still installing',
+  7: 'the project\'s files are still going up',
+  10: 'the health checks are still running',
+});
+export const toolsInstalling = (tools) => `${tools.join(' and ')} ${tools.length === 1 ? 'is' : 'are'} still installing`;
+// What reaches the director's phone, said on the phone step's card.
+export const PHONE_REACHES = 'Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit.';
+// Setup's closing verdict: how many of the health check's checks passed.
+export const healthVerdict = (passed, total) => (passed === total
+  ? `All ${total} checks passed. Wheelhouse is ready.`
+  : `${passed} of ${total} checks passed. Here is what to do.`);

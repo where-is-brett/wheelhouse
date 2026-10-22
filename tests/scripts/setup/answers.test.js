@@ -315,7 +315,9 @@ test('a wait is passed to the playbook', async () => {
     };
     assert.deepEqual(await run(['plan', '9']), { step: 9, title: 'Phone notifications', wait: 2 * MINUTE, why: 'the push test waits two minutes' });
     const asked = await client.setup.plan({ folder, step: 3 });
-    assert.deepEqual(await run(['plan', '3']), { step: 3, title: 'The host and the connection', ask: asked.ask });
+    assert.deepEqual(await run(['plan', '3']), { step: 3, title: 'The host and the connection', progress: asked.progress, ask: asked.ask });
+    // A step that asks heads itself with its place, its time, what it is and what has happened.
+    assert.deepEqual(asked.progress, ['Step 3 of 10 · about 2 minutes', 'Connecting to your code host', 'Setup has just started.']);
     setWorld(home, { settle: [4] });
     assert.deepEqual(await run(['plan', '4']), { step: 4, title: 'Three questions', done: true });
   });

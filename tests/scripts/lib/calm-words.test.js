@@ -36,8 +36,14 @@ test('every set word is one line of British English with no exclamation mark', (
     ['sinceAbout', words.sinceAbout('09:10', 5 * 3600000)], ['buildHeadline', words.buildHeadline({ building: 3, joining: 2 })],
     ['foldedParts', words.foldedParts(['changed', 'ideas'])],
     ...Object.entries(words.EMPTY_PARTS).map(([key, value]) => [`EMPTY_PARTS.${key}`, value]),
+    ['setupStepLine', words.setupStepLine(3, 9, 2)], ['setupMeanwhile', words.setupMeanwhile('Node.js is still installing')],
+    ['toolsInstalling', words.toolsInstalling(['git', 'gh'])], ['connectingTo github', words.connectingTo('github')], ['connectingTo gitlab', words.connectingTo('gitlab')],
+    ['healthVerdict green', words.healthVerdict(4, 4)], ['healthVerdict red', words.healthVerdict(3, 4)],
+    ...Object.entries(words.SETUP_DOING).map(([key, value]) => [`SETUP_DOING.${key}`, value]),
+    ...Object.entries(words.SETUP_DONE).map(([key, value]) => [`SETUP_DONE.${key}`, value]),
+    ...Object.entries(words.SETUP_GOING).map(([key, value]) => [`SETUP_GOING.${key}`, value]),
   );
-  assert.equal(lines.length, 64, 'every word is held');
+  assert.equal(lines.length, 95, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -192,4 +198,16 @@ test('foldedParts folds the empty parts into one italic line, or nothing', () =>
   assert.equal(words.foldedParts(['rulings']), '*No rulings.*');
   assert.equal(words.foldedParts([]), '');
   assert.equal(words.foldedParts(['unknown']), '');
+});
+
+test('setup\'s step line, meanwhile line, phone words and verdict say what the design names', () => {
+  assert.equal(words.setupStepLine(3, 9, 2), 'Step 3 of 9 · about 2 minutes');
+  assert.equal(words.setupStepLine(5, 10, 1), 'Step 5 of 10 · about 1 minute');
+  assert.equal(words.connectingTo('github'), 'Connecting to GitHub');
+  assert.equal(words.setupMeanwhile('Node.js is still installing'), 'Meanwhile, Node.js is still installing. Nothing for you to do there.');
+  assert.equal(words.toolsInstalling(['git']), 'git is still installing');
+  assert.equal(words.toolsInstalling(['git', 'gh']), 'git and gh are still installing');
+  assert.equal(words.PHONE_REACHES, 'Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit.');
+  assert.equal(words.healthVerdict(4, 4), 'All 4 checks passed. Wheelhouse is ready.');
+  assert.equal(words.healthVerdict(3, 4), '3 of 4 checks passed. Here is what to do.');
 });

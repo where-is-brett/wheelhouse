@@ -50,6 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
+import { healthVerdict } from '../lib/calm-words.js';
 import { parseTrialLine } from '../lib/trial-lines.js';
 import { makeAdapter } from '../host/adapter.js';
 import { protectionStatus } from '../host/protection.js';
@@ -569,9 +570,14 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const here = run ?? runIn(folder);
   const lines = [];
   let green = true;
+  // Every check that holds the board, and how many of them passed: the verdict says so.
+  let total = 0;
+  let passed = 0;
+  const count = (ok) => { total += 1; if (ok) passed += 1; };
   const entry = here?.steps?.[HEALTH_STEP] ?? {};
   const record = helperRecord(here);
   if (!applied(here)) {
+    count(false);
     green = false;
     lines.push(entry.failed
       ? `Failed: step 10 did not finish: ${entry.failed}. ${RERUN} once each line below is seen to.`
@@ -581,6 +587,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const tried = new Map((record?.checks ?? []).map((c) => [c.name, c.result]));
   for (const [name, check] of Object.entries(HELPER_CHECKS)) {
     if (!tried.has(name)) {
+      count(false);
       if (record !== null) {
         green = false;
         lines.push(`Failed: setup couldn't try ${check.what} before step 10 stopped. ${RERUN}.`);
@@ -588,6 +595,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
       continue;
     }
     const result = tried.get(name);
+    count(passes(check, result));
     if (!passes(check, result)) green = false;
     lines.push(checkLine(check, result));
   }
@@ -596,6 +604,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     const cleanup = cleanupOf(here, record.pr);
     if (cleanup !== null) lines.push(checkLine(CLEANUP_CHECK, cleanup.closed && cleanup.deleted ? 'closed' : 'left open'));
     else if (record.open === true) {
+      count(false);
       green = false;
       lines.push(`Waiting: the trial pull request, number ${record.pr}, is open for this session's trials; it is closed once their lines are in.`);
     }
@@ -612,11 +621,13 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   }
   for (const [name, check] of Object.entries(SESSION_CHECKS)) {
     if (!given.has(name)) {
+      count(false);
       green = false;
       lines.push(`Not reported by the session: ${check.what}. Run step 10's trials in this session and hand in every line.`);
       continue;
     }
     const result = given.get(name);
+    count(passes(check, result, host));
     if (!passes(check, result, host)) green = false;
     lines.push(checkLine(check, result, { session: true, host }));
   }
@@ -625,17 +636,24 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const inputs = found === null ? { none: 'This folder isn\'t a registered project yet' } : await load({ cwd: found.record.folder, now, client });
   const health = Array.isArray(inputs?.model?.director?.health) ? inputs.model.director.health : null;
   if (health === null) {
+    count(false);
     green = false;
     lines.push(`Failed: the board couldn't be read: ${inputs?.none ?? 'its health lines are missing'}. ${RERUN}.`);
   } else {
     for (const line of health) {
-      if (line?.level === 'stop') green = false;
+      if (line?.level === 'stop') {
+        green = false;
+        count(false);
+      }
       lines.push(`Board: ${line.text}`);
     }
   }
+  // One verdict ends the lines.
+  const verdict = healthVerdict(passed, total);
+  lines.push(verdict);
   const board = inputs?.model ? renderBoard(inputs.model) : null;
   const trials = Number.isInteger(record?.pr) ? { pr: record.pr, project: record.project } : null;
-  return { green, lines, board, trials, project: found?.project ?? null };
+  return { green, lines, verdict, board, trials, project: found?.project ?? null };
 }
 
 // Removes a .env.local the session's trial left in the folder, only when it holds exactly the

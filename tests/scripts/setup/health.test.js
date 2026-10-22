@@ -404,6 +404,10 @@ test('a green run gives a green board', async () => {
     assert.ok(session.every((l) => l.startsWith('Passed:')));
     assert.ok(got.lines.includes('Board: Protection: Standard'));
     assert.match(got.board, /Wheelhouse's board/);
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `All ${checks} checks passed. Wheelhouse is ready.`);
+    assert.equal(got.lines.at(-1), got.verdict, 'one verdict ends the lines');
+    assert.equal(got.lines.filter((l) => /checks passed\./.test(l)).length, 1);
     const watched = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'watch', text: 'Your profile isn\'t backed up off this computer yet' }]) });
     assert.equal(watched.green, true);
   });
@@ -421,6 +425,9 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
     assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10 again.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
     assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
+    const every = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `${every - 3} of ${every} checks passed. Here is what to do.`);
+    assert.equal(got.lines.at(-1), got.verdict);
   });
 });
 
