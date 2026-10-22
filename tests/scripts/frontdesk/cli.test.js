@@ -1027,6 +1027,12 @@ test('card with revises and changed composes a revised card; revises naming no w
       assert.equal(refused.code, 1, revises);
       assert.equal(refused.err, 'revises names no waiting card of this kind\n', revises);
     }
+    // An approval of another pull request is no card of this kind to revise: the view would close nothing.
+    const elsewhere = cardEvent({ ...APPROVAL, what: 'Pull request #8 changes the footer.', target: { pr: 8, sha: DOC } }, 5);
+    helper.held.push(elsewhere);
+    const wrongPr = await run(helper, ['card'], JSON.stringify({ ...revision, revises: elsewhere.id }));
+    assert.equal(wrongPr.code, 1);
+    assert.equal(wrongPr.err, 'revises names no waiting card of this kind\n');
     const unsaid = await run(helper, ['card'], JSON.stringify({ ...revision, changed: undefined }));
     assert.equal(unsaid.code, 1);
     assert.match(unsaid.err, /changed/);
@@ -1042,7 +1048,7 @@ test('card with revises and changed composes a revised card; revises naming no w
     assert.equal(recorded.data.line, old.data.line);
     assert.deepEqual(helper.writes().map((w) => w.kind), ['card', 'asked']);
     // It replaces the card it revises on the board.
-    assert.deepEqual(helper.views().waiting.map((c) => c.id).sort(), [other.id, done.json.id].sort());
+    assert.deepEqual(helper.views().waiting.map((c) => c.id).sort(), [other.id, elsewhere.id, done.json.id].sort());
   });
 });
 

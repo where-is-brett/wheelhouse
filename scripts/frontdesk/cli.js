@@ -43,7 +43,7 @@ import { CARD } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
 import { answerLine, ID } from '../state/card-lines.js';
-import { countsAtOnce } from '../state/views.js';
+import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -393,11 +393,14 @@ export async function card({ client, cwd, input, now }) {
     target = { ...target, sha };
   }
   const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
-  if (data.revises !== undefined && !views.waiting.some((c) => c.id === data.revises && c.data?.kind === data.kind)) {
+  // The card revised must wait now, be of this kind and, for an approval or CI push card, be about
+  // the same pull request or branch, or the waiting view would close nothing.
+  if (data.revises !== undefined && !views.waiting.some((c) => c.id === data.revises && c.data?.kind === data.kind
+    && gateTargetOf(c) === gateTargetOf({ data }))) {
     throw new CliError('revises names no waiting card of this kind');
   }
-  const found = existingCard(views, data.line);
-  if (found !== null && found !== data.revises) {
+  const found = existingCard(views, data.line, { except: data.revises });
+  if (found !== null) {
     const waiting = views.waiting.find((c) => c.id === found);
     if (waiting.asked !== null && waiting.asked !== undefined) return { question: asQuestion(waiting), id: found, alreadyAsked: true };
     return { question: asQuestion(waiting), id: found, ...withProblems(await markAsked(client, cwd, [found], false)) };

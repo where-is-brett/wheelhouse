@@ -124,7 +124,7 @@ function outdatedBy(sorted, reports) {
 const CI_PUSH_LINE = /^Push the CI change on (.+) at commit [0-9a-f]{12} with your own sign-in$/;
 // What an approval or CI push card's set line is about: its pull request or its branch, or null
 // when the card is of another kind or its line says neither.
-function gateTargetOf(card) {
+export function gateTargetOf(card) {
   const line = card.data?.line;
   if (typeof line !== 'string') return null;
   if (card.data.kind === 'approval') {
