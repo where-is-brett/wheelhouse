@@ -60,7 +60,8 @@ test('the cards are composed by cli.js card, numbered as the scenarios need, and
   const after = stateAfterThePress(made);
   assert.deepEqual(after.slice(-2).map((e) => [e.kind, e.data.label]), [['card-answer', 'Explain more'], ['card-answer', 'Show the date']]);
   assert.deepEqual(boardNumbers(after), { [APPROVAL_CARD]: 1, [PHOTO_CARD]: 2 });
-  assert.match(made.cards[1].data.question, /^What this is: /);
+  assert.match(made.cards[1].data.question, /^Put pull request #\d+ live\?\n/);
+  assert.equal(typeof made.cards[1].data.parts.what, 'string');
   assert.equal(PROMPT_36, `Wheelhouse pane: the director pressed Explain more on card 2 (${APPROVAL_CARD}).`);
   assert.equal(scenario36.prompt, PROMPT_36);
   assert.deepEqual(scenario36.extraArgs, ['--permission-prompt-tool', 'stdio']);

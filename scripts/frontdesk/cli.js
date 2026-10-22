@@ -28,7 +28,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
-import { composeCard, answerInput, PART_LABELS } from '../cards/compose.js';
+import { composeCard, answerInput } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
@@ -149,16 +149,18 @@ async function wordsOf(client, views, now) {
   return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles] };
 }
 
-// The composer's input with what the director reads in plain words (design section 5.3): what,
-// why, what each option says, because, meanwhile and the checks line. They go through as one
+// The composer's input with what the director reads in plain words (design section 5.3): the
+// question, what, why, what each option says, because, what changed, meanwhile and the checks line. They go through as one
 // text, so each term is put in plain words where the card first uses it, and the meaning of a term
 // kept as written follows the last part. Labels, the recommendation and the target stay as given,
 // and so do quotations, commands, names and what the card's set line names. Null when the texts
 // can't be taken apart again.
 function plainInput(input, words) {
   const says = input.options.map((o) => (typeof o.says === 'string' ? o.says : null));
-  const texts = [input.what, input.why, ...says.filter((t) => t !== null), input.because, input.meanwhile, ...(input.checks === undefined ? [] : [input.checks])]
-    .map((t) => t.trim());
+  const texts = [
+    ...(input.ask === undefined ? [] : [input.ask]), input.what, input.why, ...says.filter((t) => t !== null), input.because,
+    ...(input.changed === undefined ? [] : [input.changed]), input.meanwhile, ...(input.checks === undefined ? [] : [input.checks]),
+  ].map((t) => t.trim());
   if (texts.some((t) => t.includes('\u0000'))) return null;
   const target = isPlain(input.target) ? input.target : {};
   const named = [target.work, target.incident, target.branch, target.event?.data?.words].filter((t) => typeof t === 'string' && t !== '');
@@ -171,12 +173,19 @@ function plainInput(input, words) {
     parts[parts.length - 1] = `${last}${/[.!?]$/.test(last) ? '' : '.'} ${text.slice(cut + 2)}`;
   }
   const next = () => parts.shift();
+  const ask = input.ask === undefined ? undefined : next();
   const what = next();
   const why = next();
   const options = input.options.map((o) => (typeof o.says === 'string' ? { ...o, says: next() } : o));
   const because = next();
+  const changed = input.changed === undefined ? undefined : next();
   const meanwhile = next();
-  return { ...input, what, why, options, because, meanwhile, ...(input.checks === undefined ? {} : { checks: next() }) };
+  return {
+    ...input, what, why, options, because, meanwhile,
+    ...(ask === undefined ? {} : { ask }),
+    ...(changed === undefined ? {} : { changed }),
+    ...(input.checks === undefined ? {} : { checks: next() }),
+  };
 }
 
 // Composes a card in the glossary's plain words. Its concepts are the terms its words use as
@@ -682,11 +691,14 @@ export async function view({ client, cwd, name, now }) {
     return listed(rules.map((r) => `${flat(r.words)} (${r.status === 'accepted' ? 'in force' : 'waiting for the director to confirm it'})`), 'The rulebook is empty.');
   }
   if (name === 'waiting') {
-    // Numbered as the board numbers them; a composed card is named by its first part, and each
-    // card by its id, which a press's prompt names beside its number.
+    // Numbered as the board numbers them; a composed card is named by its `what`, and each card by
+    // its id, which a press's prompt names beside its number. A card recorded before cards kept
+    // their parts is named by the line its text labels "What this is:".
     const firstPart = (id) => {
-      const text = views.waiting.find((c) => c.id === id)?.data?.question;
-      return typeof text === 'string' && text.startsWith(`${PART_LABELS[0]} `) ? text.slice(PART_LABELS[0].length + 1).split('\n')[0] : null;
+      const data = views.waiting.find((c) => c.id === id)?.data;
+      if (typeof data?.parts?.what === 'string' && data.parts.what !== '') return data.parts.what.split('\n')[0];
+      const old = 'What this is: ';
+      return typeof data?.question === 'string' && data.question.startsWith(old) ? data.question.slice(old.length).split('\n')[0] : null;
     };
     const items = numberedWaiting(views, events)
       .map((item) => `${item.n}. ${(item.card && firstPart(item.card)) || item.what}${item.card ? ` (card ${item.card})` : ''}`);

@@ -850,8 +850,8 @@ test('a level waiting for its confirmation whose card was not written gets its c
     await run(repo, 'Hello', NOW, { client: learnt });
     assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'level', id: 'l-old', data })]);
     assert.equal(stateWrites[0].cwd, repo);
-    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
-    assert.ok(stateWrites[0].data.question.includes(data.because));
+    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
+    assert.ok(stateWrites[0].data.descriptions[0].includes(data.because.replace(/[.!?]+$/, '')), 'the reason is on the recommended option');
     // Once a card in this project carries its line, none is written again.
     store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
     await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });

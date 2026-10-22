@@ -29,7 +29,7 @@ test('every set word is one line of British English with no exclamation mark', (
     ['staleLine', words.staleLine('14:05', '14:02')], ['sinceLine', words.sinceLine('09:10')],
     ['verdict', words.verdict({ waiting: 3, broken: 2 })],
   );
-  assert.equal(lines.length, 23, 'every word is held');
+  assert.equal(lines.length, 25, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -46,6 +46,8 @@ test('the set words are the ones the design names', () => {
   assert.equal(words.SHOW_ME, 'Show me');
   assert.equal(words.NOT_NOW, 'Not now');
   assert.equal(words.TO_KNOW_MORE, 'To know more, just ask.');
+  assert.equal(words.TO_CHANGE_IT, 'To change it, type what you\'d change.');
+  assert.equal(words.WHAT_CHANGED, 'What changed:');
   assert.equal(words.SUGGEST_SAYS, 'Tell me what you\'d change; I\'ll come back with a new proposal.');
   assert.equal(words.WHAT_WOULD_YOU_CHANGE, 'What would you change?');
   assert.equal(words.SENT_TO_FRONT_DESK, 'Sent to the front desk. A new proposal will follow.');

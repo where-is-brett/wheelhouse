@@ -182,14 +182,16 @@ test('cards turns an open feature question into one answer card, once', async ()
     // Its options are the question's own, with what each says, and its recommendation the question's.
     const [asked] = first.json.questions;
     assert.equal(asked.question, card.question);
-    assert.deepEqual(asked.options.slice(0, 2), [
-      { label: 'Comma', description: 'Commas between values; opens in any spreadsheet.' },
-      { label: 'Tab', description: 'Recommended: Tabs between values.' },
-    ]);
-    assert.match(card.question, /^What this is: The export needs to know which separator to use\.$/m);
-    assert.match(card.question, /^Why it's coming to you: It changes the file people download\.$/m);
-    assert.match(card.question, /^My recommendation: Tab, because /m);
-    assert.ok(card.question.includes(`While you decide: ${MEANWHILE}`));
+    assert.deepEqual(asked.options.slice(0, 2).map((o) => o.label), ['Comma', 'Tab']);
+    assert.equal(asked.options[0].description, 'Commas between values; opens in any spreadsheet.');
+    assert.match(asked.options[1].description, /^Recommended: Tabs between values, because the session building .* recommends it\.$/);
+    assert.deepEqual(asked.options.map((o) => o.label).at(-1), 'Suggest a change…');
+    const rows = card.question.split('\n');
+    assert.deepEqual(rows.slice(0, 2), ['The export needs to know which separator to use.', 'It changes the file people download.']);
+    assert.equal(rows[2], MEANWHILE);
+    assert.equal(rows[3], 'To know more, just ask.');
+    assert.equal(card.parts.what, 'The export needs to know which separator to use.');
+    assert.equal(card.parts.recommendation.startsWith('Tab, because '), true);
     assert.equal(MEANWHILE, 'that feature waits; the others carry on');
     assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
     // The next visit makes no second card for it: one is waiting, and it was asked.
@@ -210,22 +212,23 @@ test('a level 4 question becomes a card too, with what it does to the checks or 
     assert.equal(out.json.problems, undefined);
     const cards = helper.writes().filter((w) => w.kind === 'card').map((w) => w.data);
     assert.deepEqual(cards.map((c) => [c.line, c.level]), [[answerLine('q-export-csv-1'), 4], [answerLine('q-export-csv-2'), 4]]);
-    assert.match(cards[0].question, /^What this does to the checks: The export check stops running on this page\.$/m);
-    assert.ok(cards[1].question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
-    assert.equal(CHECKS_UNSAID, 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.');
-    // With four options of its own the card has no Explain more button, and it still composes with that line.
+    assert.match(cards[0].question, /^The export check stops running on this page\.$/m);
+    assert.ok(cards[1].question.split('\n').includes(CHECKS_UNSAID));
+    assert.equal(CHECKS_UNSAID, 'The build didn\'t say. Ask me why and I\'ll find out before you answer.');
+    // With four options of its own the card has no Suggest a change… button, and it still composes with that line.
     const four = { ...QUESTION, id: 'q-export-csv-3', level: 4, options: ['Comma', 'Tab', 'Semicolon', 'Pipe'].map((label) => ({ label, says: `${label} between values.` })) };
     const full = fakeHelper({ events: [questionEvent(four)] });
     const asked = await run(full, ['cards']);
     assert.equal(asked.json.problems, undefined);
     const [fourCard] = full.writes().filter((w) => w.kind === 'card').map((w) => w.data);
     assert.deepEqual(fourCard.options, ['Comma', 'Tab', 'Semicolon', 'Pipe']);
-    assert.ok(fourCard.question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
+    assert.ok(fourCard.question.split('\n').includes(CHECKS_UNSAID));
+    assert.ok(fourCard.question.split('\n').includes('To change it, type what you\'d change.'));
     // The work is named by its title; a question for work with no title, by the work's id.
-    assert.match(cards[0].question, /^My recommendation: Tab, because the session building Export a report as a spreadsheet recommends it\.$/m);
+    assert.match(cards[0].descriptions[1], /because the session building Export a report as a spreadsheet recommends it\.$/);
     const untitled = fakeHelper({ events: [questionEvent()] });
     await run(untitled, ['cards']);
-    assert.match(untitled.writes()[0].data.question, /because the session building export-csv recommends it\.$/m);
+    assert.match(untitled.writes().find((w) => w.kind === 'card').data.descriptions[1], /because the session building export-csv recommends it\.$/);
   });
 });
 
@@ -305,7 +308,8 @@ test('a gate-asks for an approval becomes one approval card for that pull reques
     assert.equal(card.line, approvalLine(7, FULL));
     assert.equal(setLineOf(card.question), approvalLine(7, FULL));
     // The work is named by its title, in plain words; the card is handed out at once and marked asked.
-    assert.match(card.question, /^What this is: \S.* #7 for Export a report as a spreadsheet /m);
+    assert.match(card.parts.what, /^\S.* #7 for Export a report as a spreadsheet /);
+    assert.equal(card.question.split('\n')[0], 'Put pull request #7 live?');
     assert.deepEqual(first.json.questions.map((q) => q.question), [card.question]);
     assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
     assert.deepEqual(cardProblems(card.question), []);
@@ -334,7 +338,8 @@ test('a gate-asks for a CI push becomes a CI push card for its branch and the up
     assert.equal(card.kind, 'ci-push');
     assert.equal(card.line, ciPushLine(BRANCH, MERGE));
     assert.equal(setLineOf(card.question), ciPushLine(BRANCH, MERGE));
-    assert.ok(card.question.split('\n')[0].includes(` ${BRANCH}`), card.question);
+    assert.ok(card.parts.what.includes(` ${BRANCH}`), card.question);
+    assert.equal(card.question.split('\n')[0], 'Push this change to the checks?');
     assert.deepEqual(card.options.slice(0, 1), ['Push it']);
     assert.deepEqual(cardProblems(card.question), []);
   });
@@ -802,15 +807,15 @@ test('review asks each proposal as a confirm card for a level, and records the r
     assert.equal(downCard.data.line, confirmLine({ kind: 'level', id: 'level-2', data: down.data }));
     assert.equal(downCard.data.kind, 'confirm');
     // Each card offers Keep as is, and says what a confirmed level does.
-    assert.deepEqual(downCard.data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
-    assert.deepEqual(upCard.data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
+    assert.deepEqual(downCard.data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
+    assert.deepEqual(upCard.data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
     assert.match(downCard.data.descriptions[0], /rulebook at level 2/);
     assert.match(downCard.data.descriptions[0], /without a card/);
     assert.match(downCard.data.descriptions[0], /briefing/);
     assert.doesNotMatch(downCard.data.question, /I decide these myself/);
     // The cards are asked as composed, marked asked, and the review is recorded after them.
     assert.deepEqual(first.questions.map((q) => q.question), [upCard.data.question, downCard.data.question]);
-    assert.ok(first.questions[1].question.includes(down.data.because));
+    assert.ok(first.questions[1].options[0].description.includes(down.data.because.replace(/[.!?]+$/, '')), 'the reason is on the recommended option');
     assert.equal(first.left, 0);
     assert.equal(first.problems, undefined);
     const cardIds = helper.held.filter((e) => e.kind === 'card' && e.data.kind === 'confirm').map((e) => e.id);
@@ -1097,7 +1102,7 @@ test('under STOP, cards gives the Lift STOP card alone, never recorded, and the 
     const [lift] = visit.json.questions;
     assert.equal(lift.header, 'Lift STOP');
     assert.equal(setLineOf(lift.question), LIFT_STOP);
-    assert.deepEqual(lift.options.map((o) => o.label), ['Lift STOP', 'Not now', 'Explain more', 'Show me']);
+    assert.deepEqual(lift.options.map((o) => o.label), ['Lift STOP', 'Show me', 'Not now']);
     // The four cards waiting stay on the board, counted as left; nothing is written, so nothing is refused.
     assert.equal(visit.json.left, 4);
     assert.equal(visit.json.problems, undefined);
@@ -1144,12 +1149,12 @@ test('a card\'s words are in the glossary\'s plain words; what must be recognise
     const card = helper.writes().find((w) => w.kind === 'card').data;
     assert.equal(out.json.questions[0].question, card.question);
     // Each term the director doesn't know is put in plain words where it is first used in the card.
-    assert.match(card.question, /^What this is: The proposed change for piece 2 needs an independent check before it can go on\.$/m);
+    assert.match(card.question, /^The proposed change for piece 2 needs an independent check before it can go on\.$/m);
     // A quotation and a command are kept as written.
-    assert.match(card.question, /^Why it's coming to you: Without it `npm run build` stays red, and "pull request" is the word the host shows\.$/m);
+    assert.match(card.question, /^Without it `npm run build` stays red, and "pull request" is the word the host shows\.$/m);
     // A term used again is kept, with its meaning at the end of the card's last part.
     const glossary = glossaryOf({});
-    assert.match(card.question, /^While you decide: .*\. Terms: (?:slice|review) means .+\.$/m);
+    assert.match(card.question, /^that feature waits; the others carry on\. Terms: (?:slice|review) means .+\.$/m);
     assert.ok(card.question.includes(`slice means ${glossary.slice.plain}`) && card.question.includes(`review means ${glossary.review.plain}`), card.question);
     // The labels the director clicks stay as the build wrote them.
     assert.deepEqual(card.options.slice(0, 2), ['Wait', 'Skip']);
@@ -1184,11 +1189,11 @@ test('the explanations setting and the concepts the director knows decide what i
     const some = fakeHelper({ events: [questionEvent(PLAIN_QUESTION)], profile: { explanations: setting('explanations', 'some-terms') } });
     await run(some, ['cards']);
     const kept = some.writes().find((w) => w.kind === 'card').data.question;
-    assert.match(kept, /^What this is: The pull request for slice 2 needs a review before it can go on\.$/m);
+    assert.match(kept, /^The pull request for slice 2 needs a review before it can go on\.$/m);
     assert.match(kept, / Terms: pull request means /);
     const known = fakeHelper({ events: [questionEvent(PLAIN_QUESTION)], profile: { 'known:pull-request': setting('known:pull-request', true) } });
     await run(known, ['cards']);
-    assert.match(known.writes().find((w) => w.kind === 'card').data.question, /^What this is: The pull request for piece 2 needs an independent check before it can go on\.$/m);
+    assert.match(known.writes().find((w) => w.kind === 'card').data.question, /^The pull request for piece 2 needs an independent check before it can go on\.$/m);
   });
 });
 
@@ -1197,7 +1202,7 @@ test('card and record ruling put their cards in plain words too, keeping what th
     const helper = fakeHelper();
     const approval = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }));
     assert.equal(approval.code, 0, approval.err);
-    assert.match(approval.json.question.question, /^What this is: Proposed change #7 changes the wording on the sign-in page\.$/m);
+    assert.match(approval.json.question.question, /^Proposed change #7 changes the wording on the sign-in page\.$/m);
     assert.ok(approval.json.question.question.includes(approvalLine(7, FULL)));
     const words = 'Every pull request needs a review';
     const ruling = await run(helper, ['record', 'ruling'], JSON.stringify({ words }));

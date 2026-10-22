@@ -111,7 +111,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
       // Then live data, which records nothing in the state: step 7 writes liveData from it.
       const live = await plan(4);
       assert.equal(live.ask.id, 'live-data');
-      assert.deepEqual(live.ask.card.options.map((o) => o.label), [LIVE_DATA.yes, LIVE_DATA.no, 'Explain more']);
+      assert.deepEqual(live.ask.card.options.map((o) => o.label), [LIVE_DATA.yes, LIVE_DATA.no, 'Suggest a change…']);
       assert.match(live.ask.card.options[0].description, /test data only/);
       assert.deepEqual(await answer(live.ask.card, LIVE_DATA.yes), []);
       assert.equal(answersFor(runId)['4.live-data'].label, LIVE_DATA.yes);
@@ -141,11 +141,11 @@ test('the README\'s words, or a description left for later, record what the card
   await withProject(async ({ folder, plan, answer }) => {
     answerStep3(folder, { realUsers: REAL_USERS.no });
     const asked = await plan(4);
-    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [PRODUCT.later, 'Explain more']);
+    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [PRODUCT.later, 'Suggest a change…']);
     const later = await answer(asked.ask.card, PRODUCT.later);
     assert.deepEqual(later.map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
-    // Explain more records nothing and is no answer.
-    assert.deepEqual(await answer(asked.ask.card, 'Explain more'), []);
+    // Suggest a change… records nothing and is no answer.
+    assert.deepEqual(await answer(asked.ask.card, 'Suggest a change…'), []);
   });
 });
 

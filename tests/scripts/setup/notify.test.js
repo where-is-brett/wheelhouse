@@ -120,7 +120,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.match(card.options[0].says, /two minutes/);
   // Nor is Later a put-off button the composer would refuse on a question: it is a kept answer.
   const composed = composeCard({ ...card, kind: 'question' }).question;
-  assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.later, 'Explain more']);
+  assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.later, 'Suggest a change…']);
 });
 
 test('through the helper, the card is a question with no set line, and Ready waits out the two minutes', async () => {
@@ -210,14 +210,14 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       const b = await planLater();
       assert.equal(b.ok, true, b.refused);
       assert.equal(b.ask.id, ARRIVED_ID);
-      assert.deepEqual(b.ask.card.options.map((o) => o.label), [ARRIVED.yes, ARRIVED.no, 'Explain more']);
+      assert.deepEqual(b.ask.card.options.map((o) => o.label), [ARRIVED.yes, ARRIVED.no, 'Suggest a change…']);
       assert.match(b.ask.card.question, /locked/);
       // A question of fact: the card recommends answering what was seen, not either answer as such.
-      assert.match(b.ask.card.question, /answer what you saw/);
+      assert.match(b.ask.card.options.map((o) => o.description).join(' '), /answer what you saw/);
       assert.equal(setLineOf(b.ask.card.question), null);
 
-      // Explain more is no answer: the card is asked again.
-      await answer(b.ask.card, 'Explain more');
+      // Suggest a change… is no answer: the card is asked again.
+      await answer(b.ask.card, 'Suggest a change…');
       assert.equal((await planLater()).ask.id, ARRIVED_ID);
 
       await answer(b.ask.card, label);

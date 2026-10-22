@@ -163,10 +163,10 @@ test('Not now writes the card answer alone, and the card stays waiting', () => w
   assert.deepEqual(kept.map((k) => [k.route, k.body.data.label]), [['write', 'Not now']]);
 }));
 
-test('Explain more and Show me write the card answer and give one prompt naming the card', () => withKey(async () => {
+test('Show me and Suggest a change… write the card answer and give one prompt naming the card', () => withKey(async () => {
   const first = putCard(approvalCard());
   const second = putCard(approvalCard(14), 1);
-  for (const label of ['Explain more', 'Show me']) {
+  for (const label of ['Show me', 'Suggest a change…']) {
     const client = fake();
     assert.deepEqual(await press(second, client, label), {
       made: true, says: `Recorded: ${label} on card 2`, submit: [`Wheelhouse pane: the director pressed ${label} on card 2 (${second.id}).`],
@@ -199,7 +199,7 @@ test('a card already answered, by a click, a reply code or a press, records noth
 
   // A reply code: the card shown with its code, then the reply taken by the helper.
   const coded = putCard(approvalCard(14), 1);
-  await decide(click(coded.data, 'Explain more'), clickDeps(fake()));
+  await decide(click(coded.data, 'Show me'), clickDeps(fake()));
   assert.equal((await replyRecord({ project: P, text: `${coded.data.code} Approve`, client: fake(), now: () => LATER })).made, true);
   client = fake();
   assert.deepEqual(await press(coded, client, 'Approve'), answered);
@@ -207,7 +207,7 @@ test('a card already answered, by a click, a reply code or a press, records noth
 
   // A reply whose record the helper hasn't taken yet: it waits in pending/.
   const waiting = putCard(approvalCard(15), 2);
-  await decide(click(waiting.data, 'Explain more'), clickDeps(fake()));
+  await decide(click(waiting.data, 'Show me'), clickDeps(fake()));
   assert.equal((await replyRecord({ project: P, text: `${waiting.data.code} Approve`, client: fake({ refuse: true }), now: () => LATER })).made, true);
   fs.rmSync(replied, { recursive: true, force: true });
   client = fake();
@@ -261,7 +261,7 @@ test('two presses at once record once', () => withKey(async () => {
 
   // A press and a reply on the same card at once.
   const coded = putCard(approvalCard(14), 1);
-  await decide(click(coded.data, 'Explain more'), clickDeps(fake({ takes: true })));
+  await decide(click(coded.data, 'Show me'), clickDeps(fake({ takes: true })));
   const both = fake({ takes: false });
   const mixed = await Promise.all([
     press(coded, both, 'Approve'),
@@ -325,12 +325,12 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   assert.equal(untouched(noted), 0);
   assert.deepEqual(pendingFiles(), []);
 
-  // Reading and explaining carry on: Explain more still gives its prompt.
+  // Reading and showing carry on: Show me still gives its prompt.
   const explain = fake({ stop: true });
-  const asked = await press(other, explain, 'Explain more');
+  const asked = await press(other, explain, 'Show me');
   assert.equal(asked.made, false);
-  assert.equal(asked.says, 'STOP is on, so that wasn\'t noted; the front desk has Explain more on card 1');
-  assert.deepEqual(asked.submit, [`Wheelhouse pane: the director pressed Explain more on card 1 (${other.id}).`]);
+  assert.equal(asked.says, 'STOP is on, so that wasn\'t noted; the front desk has Show me on card 1');
+  assert.deepEqual(asked.submit, [`Wheelhouse pane: the director pressed Show me on card 1 (${other.id}).`]);
   assert.equal(untouched(explain), 0);
   assert.equal(stopState().on, true);
 
@@ -374,9 +374,9 @@ test('a choice on a question card is claimed, so two presses at once record it o
   assert.deepEqual(await press(kept, second, 'Comma'), answered);
   assert.equal(untouched(second), 0);
 
-  // Explain more and Not now kept in pending/ don't close it, and claim nothing.
+  // Suggest a change… and Not now kept in pending/ don't close it, and claim nothing.
   const open = putCard(questionCard('Which separator should the report use?'), 2);
-  assert.equal((await press(open, fake({ refuse: true }), 'Explain more')).made, true);
+  assert.equal((await press(open, fake({ refuse: true }), 'Suggest a change…')).made, true);
   assert.equal(fs.existsSync(path.join(replied, open.id)), false);
   assert.equal((await press(open, fake(), 'Comma')).made, true);
 }));

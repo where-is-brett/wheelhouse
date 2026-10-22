@@ -169,7 +169,6 @@ export function trustCardInput({ computer, at, publicKey }) {
     options: [
       { label: TRUST_LABEL, says: `Records and clicks from computer ${computer} count here from now on.` },
       { label: 'Not now', says: 'Nothing is trusted, and this is asked again at a later session.' },
-      { label: 'Explain more' },
     ],
     recommend: TRUST_LABEL,
     because: `you set Wheelhouse up on that computer on ${day}; if you didn't, choose Not now`,

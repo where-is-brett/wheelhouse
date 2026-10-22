@@ -14,6 +14,11 @@ export const SHOW_ME = 'Show me';
 export const NOT_NOW = 'Not now';
 // The line that tells the director more is there for the asking.
 export const TO_KNOW_MORE = 'To know more, just ask.';
+// The line that stands in for it on a question that has four options of its own, where there is no
+// room for Suggest a change… and a change goes in the typed answer.
+export const TO_CHANGE_IT = 'To change it, type what you\'d change.';
+// What a revised card says first about how it differs from the card it replaces, then the sentence.
+export const WHAT_CHANGED = 'What changed:';
 // What Suggest a change… does, said under its button.
 export const SUGGEST_SAYS = 'Tell me what you\'d change; I\'ll come back with a new proposal.';
 // The prompt shown when the director has chosen to suggest a change.

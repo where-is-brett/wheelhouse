@@ -395,7 +395,8 @@ test('the state branch and the profile are kept unless their own card says delet
       assert.equal(ask.card.level, 4);
       assert.equal(ask.card.recommend, 'Keep it');
       const { question } = composeCard(ask.card);
-      assert.match(question.question, /Keep it/);
+      assert.ok(question.options.some((o) => o.label === 'Keep it'));
+      assert.match(question.options.find((o) => o.label === 'Keep it').description, /^Recommended: /);
     }
     // Nothing on the host is deleted by the plan itself.
     assert.equal(got.changes.some((c) => /delete-repository/.test(c.put)), false);
@@ -2324,6 +2325,8 @@ test('uninstall\'s card composes within the limit for a full setup with a long n
 // why" alone and the whole list's pointer shared, and a 141-character slug takes the whole list's
 // pointer both ways. Each composes within the composer's limit and points to `uninstall status`.
 test('uninstall\'s two shortest card texts are reached by the longest names, and compose within the limit (Task R N3)', async () => {
+  // The card's text holds no options, so the longest text fits for any name: the full one is reached even by the longest names, and the shorter ones are kept for a longer list.
+  const FULL = /^Remove Wheelhouse from [^\n]*: stop its jobs, [^\n]* Left as you changed them: /;
   const STAYS = /^Remove Wheelhouse from [^\n]*: stop its jobs, [^\n]* What stays, and why: cli\.js uninstall status\./;
   const WHOLE = /^Remove Wheelhouse from [^\n]*: the whole list is in cli\.js uninstall status\./;
   const reached = [];
@@ -2346,11 +2349,11 @@ test('uninstall\'s two shortest card texts are reached by the longest names, and
         assert.ok(question.question.length <= CARD.chars, `${at}: ${question.question.length}`);
         assert.deepEqual(cardProblems(question.question), [], at);
         assert.equal(card.line, uninstallLine(slug, got.hash), at);
-        reached.push([at, STAYS.test(got.card.what) ? 'stays' : WHOLE.test(got.card.what) ? 'whole' : got.card.what]);
+        reached.push([at, FULL.test(got.card.what) ? 'full' : STAYS.test(got.card.what) ? 'stays' : WHOLE.test(got.card.what) ? 'whole' : got.card.what]);
       }
     });
   }
-  assert.deepEqual(reached, [['100, alone', 'stays'], ['100, shared', 'whole'], ['141, alone', 'whole'], ['141, shared', 'whole']]);
+  assert.deepEqual(reached, [['100, alone', 'full'], ['100, shared', 'full'], ['141, alone', 'full'], ['141, shared', 'full']]);
 });
 
 // Review 1 Minor 3: where the .wheelhouse/ line came first (an earlier step 7 added it before the

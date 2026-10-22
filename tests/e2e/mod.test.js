@@ -291,7 +291,7 @@ test('a tick draws a waiting approval card; Approve from the pane lets the gate 
   assert.equal(drawn.kind, 'approval');
   assert.equal(drawn.text, card.question.question, 'the card\'s text, exactly as written');
   assert.equal(drawn.hash, hashOf(card.question.question));
-  assert.deepEqual(drawn.buttons, [{ label: 'Approve', does: 'record' }, { label: 'Not now', does: 'record' }, { label: 'Explain more', does: 'turn' }, { label: 'Show me', does: 'turn' }]);
+  assert.deepEqual(drawn.buttons, [{ label: 'Approve', does: 'record' }, { label: 'Not now', does: 'record' }, { label: 'Show me', does: 'turn' }, { label: 'Suggest a change…', does: 'turn' }]);
 
   assert.deepEqual(await press(c, drawn, 'Approve'), { ok: true, says: 'Recorded: Approve on card 1' });
   const approvals = eventsOf('approval');

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { composeCard, answerInput, questionProblem, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
+import { composeCard, answerInput, questionProblem, textOf, DECIDING, HEADERS, MEANWHILE, CHECKS_UNSAID, NO_REPLY_CODE } from '../../../scripts/cards/compose.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -15,6 +15,7 @@ import {
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
+import { SUGGEST, WHY, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, SUGGEST_SAYS, WHAT_CHANGED } from '../../../scripts/lib/calm-words.js';
 import { withHome as inOwnHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -93,33 +94,31 @@ test('every kind has an input here', () => {
   assert.deepEqual(Object.keys(INPUTS).sort(), [...CARD_KINDS].sort());
 });
 
-test("each kind's card carries the five parts in order, its set line and its reply code, but a setup card no code", () => {
+// The kinds whose question, when none is given, is their `what`.
+const ASKS_WHAT = ['answer', 'question', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall'];
+
+test("each kind's card carries its plain lines in Calm's order, then its set line and its reply code, but a setup card no code", () => {
   for (const kind of CARD_KINDS) {
     const { question, card } = composeCard(input(kind));
     const rows = lines(question.question);
-    const labels = ['What this is:', "Why it's coming to you:", 'Options:', 'My recommendation:', 'While you decide:'];
-    labels.forEach((label, i) => assert.ok(rows[i].startsWith(`${label} `), `${kind}: ${rows[i]}`));
-    assert.ok(rows[0].includes(INPUTS[kind].what), kind);
-    assert.ok(rows[1].includes(INPUTS[kind].why), kind);
-    assert.ok(rows[3].includes(INPUTS[kind].recommend), kind);
-    assert.ok(rows[3].startsWith(`My recommendation: ${INPUTS[kind].recommend}, because the checks passed and the change is small.`), rows[3]);
-    assert.ok(rows[4].includes(INPUTS[kind].meanwhile), kind);
+    // Where the question is the `what`, the text says it once.
+    const front = ASKS_WHAT.includes(kind) ? [INPUTS[kind].what] : [card.parts.ask, INPUTS[kind].what];
+    const plain = [...front, INPUTS[kind].why, INPUTS[kind].meanwhile, ...(INPUTS[kind].checks === undefined ? [] : [INPUTS[kind].checks]), TO_KNOW_MORE];
+    assert.deepEqual(rows.slice(0, plain.length), plain, kind);
+    const after = rows.slice(plain.length);
     if (kind === 'question') {
-      assert.equal(rows.length, 5, 'a product question has no set line and no reply code');
+      assert.deepEqual(after, [], 'a product question has no set line and no reply code');
       assert.equal(setLineOf(question.question), null);
       assert.equal(card.line, null);
       assert.equal(card.code, null);
     } else if (NO_REPLY_CODE.includes(kind)) {
-      // A level 4 card's checks line comes before its set line.
-      const after = INPUTS[kind].level === 4 ? 6 : 5;
-      if (after === 6) assert.equal(rows[5], `What this does to the checks: ${INPUTS[kind].checks}`);
-      assert.deepEqual(rows.slice(after), [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
+      assert.deepEqual(after, [LINES[kind]], 'a setup card is approved by its click alone, so it has no reply code');
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
       assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall']);
     } else {
-      assert.deepEqual(rows.slice(5), [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
+      assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, replyCode(LINES[kind]));
@@ -136,6 +135,130 @@ test("each kind's card carries the five parts in order, its set line and its rep
     // The state accepts the card data as composed.
     assert.doesNotThrow(() => inOwnHome(() => makeEvent({ kind: 'card', data: card, now: () => NOW })), kind);
   }
+});
+
+test('the chat text is the question, what, why, meanwhile and "To know more, just ask.", then the set line and the code', () => {
+  const { question } = composeCard(input('approval'));
+  assert.deepEqual(lines(question.question), [
+    'Put pull request #7 live?',
+    INPUTS.approval.what,
+    INPUTS.approval.why,
+    INPUTS.approval.meanwhile,
+    'To know more, just ask.',
+    approvalLine(7, FULL),
+    replyCodeLine(replyCode(approvalLine(7, FULL))),
+  ]);
+  assert.equal(TO_KNOW_MORE, 'To know more, just ask.');
+  // An explicit question replaces the default; the same words as `what` are said once.
+  const asked = composeCard(input('approval', { ask: "Put 'save a search' live? (pull request #7)" }));
+  assert.equal(lines(asked.question.question)[0], "Put 'save a search' live? (pull request #7)");
+  assert.equal(lines(asked.question.question).filter((l) => l === INPUTS.approval.what).length, 1);
+  const same = composeCard(input('approval', { ask: INPUTS.approval.what }));
+  assert.equal(lines(same.question.question).filter((l) => l === INPUTS.approval.what).length, 1);
+});
+
+test('no part label appears in the text', () => {
+  for (const kind of CARD_KINDS) {
+    const { question } = composeCard(input(kind, kind === 'approval' ? { level: 4, checks: 'It makes the review optional.' } : {}));
+    for (const label of ['What this is:', "Why it's coming to you:", 'Options:', 'My recommendation:', 'While you decide:', 'What this does to the checks:']) {
+      assert.ok(!question.question.includes(label), `${kind}: ${label}`);
+    }
+    // The options and the recommendation are in the options' descriptions, not the text.
+    for (const o of question.options) assert.ok(!question.question.includes(o.description), kind);
+  }
+});
+
+test('the default ask for each kind is one line ending in a question mark, or the card\'s what', () => {
+  const asks = {
+    approval: 'Put pull request #7 live?',
+    confirm: 'Confirm this?',
+    'lift-stop': 'Lift STOP?',
+    'ci-push': 'Push this change to the checks?',
+    runbook: 'Put the product back to an earlier release?',
+    'approve-work': 'Approve this work as written?',
+    amend: 'Change the approved work to this?',
+    'lift-incident': 'End the incident?',
+    'incident-fix': 'Merge this fix?',
+  };
+  for (const kind of CARD_KINDS) {
+    const { card } = composeCard(input(kind));
+    if (ASKS_WHAT.includes(kind)) {
+      assert.equal(card.parts.ask, INPUTS[kind].what, kind);
+      continue;
+    }
+    assert.equal(card.parts.ask, asks[kind], kind);
+    assert.ok(!/[\r\n]/.test(card.parts.ask) && card.parts.ask.endsWith('?'), kind);
+  }
+  // A runbook step asks its title, whichever step.
+  const one = composeCard(input('runbook', { what: 'The emergency steps start with: turn STOP on.', target: { step: 1 } }));
+  assert.equal(one.card.parts.ask, 'Turn STOP on?');
+});
+
+test('card.parts holds every part, and rebuilding the text from the parts gives the same text', () => {
+  for (const kind of CARD_KINDS) {
+    const given = input(kind);
+    const { question, card } = composeCard(given);
+    const parts = card.parts;
+    assert.equal(parts.kind, kind);
+    assert.equal(parts.header, HEADERS[kind]);
+    assert.equal(parts.what, given.what);
+    assert.equal(parts.why, given.why);
+    assert.equal(parts.meanwhile, given.meanwhile);
+    assert.equal(parts.small, given.why, 'with no size, the small line is the reason');
+    assert.equal(parts.recommendation, `${given.recommend}, because ${given.because.replace(/\.$/, '')}.`);
+    assert.equal(parts.line, card.line);
+    assert.equal(parts.code, card.code);
+    assert.equal(Object.hasOwn(parts, 'checks'), given.checks !== undefined, kind);
+    assert.deepEqual(parts.options.map((o) => o.label), card.options);
+    assert.deepEqual(parts.options.map((o) => o.recommended), card.options.map((l) => l === given.recommend));
+    assert.equal(parts.options.filter((o) => o.recommended).length, 1, kind);
+    assert.equal(textOf(parts), question.question, kind);
+    assert.equal(textOf(JSON.parse(JSON.stringify(parts))), question.question, `${kind}: through the state`);
+  }
+  const sized = composeCard(input('approval', { size: 'Small feature', optional: 3 })).card.parts;
+  assert.equal(sized.small, `Small feature · ${INPUTS.approval.why}`);
+  assert.equal(sized.optional, 3);
+  assert.ok(!Object.hasOwn(composeCard(input('approval')).card.parts, 'optional'));
+  refused({ size: '' }, /size/);
+  refused({ optional: 0 }, /optional/);
+  refused({ optional: 2.5 }, /optional/);
+  refused({ optional: '3' }, /optional/);
+  refused({ ask: '   ' }, /ask/);
+  refused({ ask: 'Put it live?\nYes?' }, /ask/);
+  refused({ ask: approvalLine(7, FULL) }, /ask/);
+});
+
+test('a revised card needs changed, keeps revises, and says "What changed:"', () => {
+  const { question, card } = composeCard(input('approval', { revises: 'e-20261021-old', changed: 'The wording now says "sign in", not "log in".' }));
+  assert.equal(card.revises, 'e-20261021-old');
+  assert.equal(card.parts.revises, 'e-20261021-old');
+  assert.equal(card.parts.changed, 'The wording now says "sign in", not "log in".');
+  const rows = lines(question.question);
+  const at = rows.indexOf('What changed: The wording now says "sign in", not "log in".');
+  assert.ok(at > 0, 'the line is there');
+  assert.equal(rows[at - 1], INPUTS.approval.meanwhile);
+  assert.equal(rows[at + 1], TO_KNOW_MORE);
+  assert.equal(WHAT_CHANGED, 'What changed:');
+  assert.equal(textOf(card.parts), question.question);
+  // A revised card of level 4 puts the checks line before what changed.
+  const four = lines(composeCard(input('approval', { level: 4, checks: 'It makes review optional.', revises: 'e-old', changed: 'Smaller.' })).question.question);
+  assert.deepEqual(four.slice(3, 7), [INPUTS.approval.meanwhile, 'It makes review optional.', 'What changed: Smaller.', TO_KNOW_MORE]);
+  refused({ revises: 'e-old' }, /changed/);
+  refused({ revises: 'e-old', changed: '  ' }, /changed/);
+  refused({ revises: 'e-old', changed: 'a\nb' }, /changed/);
+  refused({ changed: 'Smaller.' }, /changed/);
+  for (const bad of ['', 'two words', 7]) refused({ revises: bad, changed: 'x' }, /revises/);
+  assert.ok(!Object.hasOwn(composeCard(input('approval')).card, 'revises'));
+  // The words of what changed name no other pull request or commit than the set line's.
+  refused({ revises: 'e-old', changed: 'It was pull request #9 before.' }, /text.*#7/);
+  assert.doesNotThrow(() => inOwnHome(() => makeEvent({ kind: 'card', data: card, now: () => NOW })));
+});
+
+test('every plain line names no other pull request or commit than the set line', () => {
+  for (const over of [{ why: 'Pull request #9 is related.' }, { meanwhile: 'Commit 1234567890ab waits.' }, { ask: 'Put pull request #9 live?' }]) {
+    refused(over, /text/);
+  }
+  assert.doesNotThrow(() => composeCard(input('approval', { why: 'Pull request #7 is the one.' })));
 });
 
 test('the set line and the first part name the same pull request and commit', () => {
@@ -178,59 +301,102 @@ test('the first part names what the set line names, for every kind', () => {
   composeCard(input('lift-stop', { what: 'Everything is paused.' }));
 });
 
-test('a level-4 card without what it does to the checks is refused', () => {
+test('a level-4 card without what it does to the checks is refused, and one with it carries its checks line', () => {
   refused({ level: 4 }, /checks/);
   refused({ level: 4, checks: '  ' }, /checks/);
   const { question, card } = composeCard(input('approval', { level: 4, checks: 'It makes the review step optional for small changes.' }));
   const rows = lines(question.question);
-  assert.ok(rows[5].startsWith('What this does to the checks: It makes the review'));
+  assert.deepEqual(rows.slice(3, 6), [INPUTS.approval.meanwhile, 'It makes the review step optional for small changes.', TO_KNOW_MORE], 'the checks line comes before "To know more, just ask."');
   assert.equal(rows[6], approvalLine(7, FULL));
+  assert.equal(card.parts.checks, 'It makes the review step optional for small changes.');
   assert.equal(card.level, 4);
   refused({ checks: 'Nothing.' }, /checks/);
 });
 
-test('decision cards offer the deciding label, Not now, Explain more and Show me', () => {
+test('an approval card offers Approve, Suggest a change…, Show me and Not now, in that order', () => {
+  const { question, card } = composeCard(input('approval'));
+  assert.deepEqual(question.options.map((o) => o.label), ['Approve', SUGGEST, SHOW_ME, NOT_NOW]);
+  assert.deepEqual(card.options, ['Approve', 'Suggest a change…', 'Show me', 'Not now']);
+  assert.equal(question.options[1].description, SUGGEST_SAYS);
+  assert.equal(SUGGEST_SAYS, "Tell me what you'd change; I'll come back with a new proposal.");
+  assert.ok(!card.options.includes('Explain more'), 'Explain more is never offered');
+});
+
+test('decision cards offer the deciding label, Suggest a change…, Show me and Not now; the kinds answered in setup\'s own chat and lift-stop offer no Suggest a change…', () => {
   const expected = {
     approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift STOP', 'ci-push': 'Push it', runbook: 'Do it',
     'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix', setup: 'Go ahead',
   };
+  const lists = {
+    'lift-stop': (label) => [label, SHOW_ME, NOT_NOW],
+    setup: (label) => [label, SHOW_ME, NOT_NOW],
+  };
   for (const [kind, label] of Object.entries(expected)) {
     assert.equal(DECIDING[kind], label);
     const { question } = composeCard(input(kind));
-    assert.deepEqual(question.options.map((o) => o.label), [label, 'Not now', 'Explain more', 'Show me'], kind);
+    assert.deepEqual(question.options.map((o) => o.label), (lists[kind] ?? ((l) => [l, SUGGEST, SHOW_ME, NOT_NOW]))(label), kind);
     assert.ok(question.options.length <= CARD.options);
     for (const o of question.options) assert.ok(typeof o.description === 'string' && o.description.length > 0);
     assert.equal(question.options.filter((o) => o.description.startsWith('Recommended:')).length, 1, kind);
     assert.ok(question.options[0].description.startsWith('Recommended:'));
-    assert.ok(lines(question.question)[2].includes('Explain more'), 'the options part names every button');
   }
+  // None of the kinds answered in setup's or the session start's own chat offers Suggest a change… or Explain more.
+  const offers = (kind) => composeCard(input(kind)).question.options.map((o) => o.label);
+  assert.deepEqual(offers('confirm-all'), ['Confirm all', 'Let me correct some', NOT_NOW]);
+  assert.deepEqual(offers('trust'), ['Trust it', NOT_NOW]);
+  assert.deepEqual(offers('uninstall'), ['Remove it', NOT_NOW]);
+  assert.deepEqual(offers('baseline'), ['Record these', NOT_NOW]);
+  for (const kind of ['lift-stop', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall']) {
+    assert.ok(!offers(kind).includes(SUGGEST), `${kind} offers no Suggest a change…`);
+  }
+  for (const kind of CARD_KINDS) assert.ok(!offers(kind).includes('Explain more'), `${kind} offers no Explain more`);
   // Recommending Not now moves the mark; the descriptions given override the defaults.
   const { question } = composeCard(input('approval', {
     recommend: 'Not now', options: [says('Approve'), { label: 'Not now', says: 'Wait for the next release.' }],
   }));
-  assert.equal(question.options[1].description, 'Recommended: Wait for the next release.');
+  assert.equal(question.options[3].description, 'Recommended: Wait for the next release, because the checks passed and the change is small.');
   assert.ok(!question.options[0].description.startsWith('Recommended:'));
   // Only labels the card offers can be described or recommended, and the deciding one is needed.
   refused({ options: [says('Approve'), says('Delete everything')] }, /options.*Delete everything/);
   refused({ options: [{ label: 'Not now', says: 'Wait.' }] }, /options.*Approve/);
+  refused({ options: [says('Approve'), { label: 'Explain more' }] }, /options.*Explain more/);
+  refused({ options: [says('Approve'), { label: 'Why?' }] }, /options.*Why\?/);
   refused({ recommend: 'Delete everything' }, /recommend/);
   refused({ options: [says('Approve'), says('Approve')] }, /options.*twice|options.*Approve/);
+  refused({ options: [says('Lift STOP'), { label: SUGGEST }] }, /options.*Suggest a change/, 'lift-stop');
+  refused({ options: [says('Go ahead'), { label: 'Explain more' }] }, /options.*Explain more/, 'setup');
+  refused({ options: [says('Trust it'), { label: SUGGEST }] }, /options.*Suggest a change/, 'trust');
+  // A put-off or steering button may leave out what it says, or give it.
+  assert.equal(composeCard(input('approval', { options: [says('Approve'), { label: SUGGEST, says: 'Say what to change.' }] })).question.options[1].description, 'Say what to change.');
 });
 
-test('a confirm card for a proposal offers Keep as is in place of Show me; any other confirm card keeps its four', () => {
+test("the recommended option's description starts \"Recommended:\" and carries the reason", () => {
+  const { question, card } = composeCard(input('approval'));
+  assert.equal(question.options[0].description, 'Recommended: It approve and goes ahead, because the checks passed and the change is small.');
+  assert.deepEqual(card.descriptions, question.options.map((o) => o.description));
+  // The reason follows the says without its full stop, as a clause.
+  const stop = composeCard(input('approval', { options: [{ label: 'Approve', says: 'It goes live within the hour.' }], because: 'The checks passed.' }));
+  assert.equal(stop.question.options[0].description, 'Recommended: It goes live within the hour, because the checks passed.');
+  // Exactly one option is led by "Recommended:" on every kind.
+  for (const kind of CARD_KINDS) {
+    const got = composeCard(input(kind)).question.options.filter((o) => o.description.startsWith('Recommended:'));
+    assert.equal(got.length, 1, kind);
+  }
+});
+
+test('a proposal offers Keep as is in place of Show me; any other confirm card keeps its four', () => {
   const proposal = (kind, data) => inOwnHome(() => makeEvent({ kind, data, now: () => NOW }));
   const learnt = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' });
   const level = proposal('level', { key: 'copy-changes', value: 2, words: '"copy-changes": decide alone and tell you (level 2)', because: 'you chose it five times' });
   for (const event of [learnt, level]) {
     const { question, card } = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event } }));
-    assert.deepEqual(question.options.map((o) => o.label), ['Confirm', 'Not now', 'Explain more', 'Keep as is'], event.kind);
-    assert.deepEqual(card.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
-    assert.match(question.options[3].description, /as they are/);
-    assert.match(question.options[3].description, /isn't asked again for a while/);
-    assert.ok(lines(question.question)[2].includes('Keep as is'));
+    assert.deepEqual(question.options.map((o) => o.label), ['Confirm', SUGGEST, 'Keep as is', NOT_NOW], event.kind);
+    assert.deepEqual(card.options, ['Confirm', SUGGEST, 'Keep as is', NOT_NOW]);
+    assert.match(question.options[2].description, /as they are/);
+    assert.match(question.options[2].description, /isn't asked again for a while/);
     // What Keep as is says may be given, as a put-off button's may.
     const given = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event }, options: [says('Confirm'), { label: 'Keep as is', says: 'It stays.' }] }));
-    assert.equal(given.question.options[3].description, 'It stays.');
+    assert.equal(given.question.options[2].description, 'It stays.');
   }
   // A setting the director asked for, a ruling and a level without a reason are no proposals.
   const asked = proposal('setting', { key: 'boardTab', value: 'build', words: 'Board tab shown first: build' });
@@ -238,37 +404,61 @@ test('a confirm card for a proposal offers Keep as is in place of Show me; any o
   const ruling = proposal('ruling', { words: 'Money is shown in dollars', because: 'it is how we do it' });
   for (const event of [asked, bare, ruling]) {
     const { question } = composeCard(input('confirm', { what: `A change: ${event.data.words}`, target: { event } }));
-    assert.deepEqual(question.options.map((o) => o.label), ['Confirm', 'Not now', 'Explain more', 'Show me'], event.kind);
+    assert.deepEqual(question.options.map((o) => o.label), ['Confirm', SUGGEST, SHOW_ME, NOT_NOW], event.kind);
     refused({ what: `A change: ${event.data.words}`, target: { event }, options: [says('Confirm'), says('Keep as is')] }, /options.*Keep as is/, 'confirm');
   }
   // Any other kind of card can't offer it either.
   refused({ options: [says('Approve'), says('Keep as is')] }, /options.*Keep as is/);
 });
 
-test('an answer card carries up to three of its own options and Explain more, or four without it; five are refused', () => {
+test('an answer card with three own options adds Suggest a change…; with four it adds none and says to type a change; five are refused', () => {
   const opt = (n) => ({ label: `Option ${n}`, says: `Means ${n}.` });
   const three = composeCard(input('answer', { options: [opt(1), opt(2), opt(3)], recommend: 'Option 2' }));
-  assert.deepEqual(three.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', 'Explain more']);
-  assert.ok(three.question.options[1].description.startsWith('Recommended: Means 2.'));
+  assert.deepEqual(three.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', SUGGEST]);
+  assert.ok(three.question.options[1].description.startsWith('Recommended: Means 2, because'));
   assert.ok(three.question.options.every((o) => o.description));
+  assert.ok(lines(three.question.question).includes(TO_KNOW_MORE));
+  assert.ok(!three.question.question.includes(TO_CHANGE_IT));
   const two = composeCard(input('answer'));
-  assert.deepEqual(two.question.options.map((o) => o.label), ['Comma', 'Tab', 'Explain more']);
+  assert.deepEqual(two.question.options.map((o) => o.label), ['Comma', 'Tab', SUGGEST]);
   const four = composeCard(input('answer', { options: [opt(1), opt(2), opt(3), opt(4)], recommend: 'Option 4' }));
   assert.deepEqual(four.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', 'Option 4']);
   assert.deepEqual(four.card.options, ['Option 1', 'Option 2', 'Option 3', 'Option 4']);
+  assert.equal(TO_CHANGE_IT, "To change it, type what you'd change.");
+  assert.equal(lines(four.question.question).at(-3), TO_CHANGE_IT, 'in place of "To know more, just ask."');
+  assert.ok(!four.question.question.includes(TO_KNOW_MORE));
+  assert.equal(textOf(four.card.parts), four.question.question);
   refused({ options: [opt(1), opt(2), opt(3), opt(4), opt(5)] }, /options.*(four|4)/, 'answer');
   refused({ options: [] }, /options/, 'answer');
   // A button that put-offs share a name with would never be an answer.
   for (const label of PUT_OFF) refused({ options: [{ label, says: 'x' }, opt(2)], recommend: 'Option 2' }, /options/, 'answer');
+  refused({ options: [{ label: 'Why?', says: 'x' }, opt(2)], recommend: 'Option 2' }, /options.*Why\?/, 'answer');
+  refused({ options: [{ label: SUGGEST, says: 'x' }, opt(2)], recommend: 'Option 2' }, /options.*Suggest a change/, 'answer');
   refused({ options: [opt(1), opt(1)], recommend: 'Option 1' }, /options/, 'answer');
   refused({ options: [{ label: 'Comma', says: '' }, opt(2)] }, /options/, 'answer');
   // The same holds for a product question, which has no set line.
   const asked = composeCard(input('question', { options: [opt(1), opt(2), opt(3)], recommend: 'Option 1' }));
-  assert.deepEqual(asked.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', 'Explain more']);
-  assert.equal(composeCard(input('question', { options: [opt(1), opt(2), opt(3), opt(4)], recommend: 'Option 1' })).question.options.length, 4);
+  assert.deepEqual(asked.question.options.map((o) => o.label), ['Option 1', 'Option 2', 'Option 3', SUGGEST]);
+  const typed = composeCard(input('question', { options: [opt(1), opt(2), opt(3), opt(4)], recommend: 'Option 1' }));
+  assert.equal(typed.question.options.length, 4);
+  assert.equal(lines(typed.question.question).at(-1), TO_CHANGE_IT);
   refused({ options: [opt(1), opt(2), opt(3), opt(4), opt(5)], recommend: 'Option 1' }, /options/, 'question');
   // An answer card's recommendation is one of its buttons.
   refused({ recommend: 'Semicolon' }, /recommend/, 'answer');
+});
+
+test('an answer card refuses an own option called Why? or Suggest a change…', () => {
+  for (const label of [WHY, SUGGEST]) {
+    refused({ options: [{ label, says: 'x' }, { label: 'Tab', says: 'y' }], recommend: 'Tab' }, new RegExp(`options.*${label.replace(/[?…]/g, '.')}`), 'answer');
+    refused({ options: [{ label, says: 'x' }, { label: 'Tab', says: 'y' }], recommend: 'Tab' }, /options/, 'question');
+  }
+});
+
+test('a proposal offers Keep as is in place of Show me, and no other card does', () => {
+  const learnt = inOwnHome(() => makeEvent({ kind: 'setting', data: { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it three times' }, now: () => NOW }));
+  const { question } = composeCard(input('confirm', { what: `A change: ${learnt.data.words}`, target: { event: learnt } }));
+  assert.deepEqual(question.options.map((o) => o.label), ['Confirm', SUGGEST, 'Keep as is', NOT_NOW]);
+  assert.ok(!question.options.some((o) => o.label === SHOW_ME));
 });
 
 test("concepts default to the glossary terms in the card's text", () => {
@@ -439,14 +629,14 @@ test("the prompt record earns the right record from each composed card's decidin
       check(signed[0]);
       // The card is also shown with its reply code.
       assert.deepEqual(helper.calls.record.filter((r) => r.event.kind === 'shown').map((r) => r.event.data.code), [replyCode(LINES[kind])], kind);
-      // A click on a put-off button earns nothing signed.
+      // A click on Suggest a change… earns nothing signed.
       const off = fakeHelper();
       await decide({
         cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
-        tool_input: { questions: [question], answers: { [question.question]: 'Explain more' } },
-        tool_response: { answers: { [question.question]: 'Explain more' } },
+        tool_input: { questions: [question], answers: { [question.question]: SUGGEST } },
+        tool_response: { answers: { [question.question]: SUGGEST } },
       }, { client: off, now: () => NOW, projectOf: () => ({ project: P }) });
-      assert.deepEqual(off.calls.record.map((r) => r.event.kind).filter((k) => k !== 'shown'), [], `${kind}: Explain more`);
+      assert.deepEqual(off.calls.record.map((r) => r.event.kind).filter((k) => k !== 'shown'), [], `${kind}: Suggest a change…`);
     }
   });
 });
@@ -460,9 +650,11 @@ test('questionProblem says why a question from the build could not be its answer
   // The composer's answer card from the same input: the question's own words and options.
   const { card } = composeCard(answerInput(question, 'Export a report'));
   assert.equal(card.line, answerLine('q-export-csv-1'));
-  assert.match(card.question, /^My recommendation: Tab, because the session building Export a report recommends it\.$/m);
-  assert.ok(card.question.includes(`While you decide: ${MEANWHILE}`));
-  assert.ok(composeCard(answerInput({ ...question, level: 4 }, 'x')).card.question.includes(`What this does to the checks: ${CHECKS_UNSAID}`));
+  const tab = card.descriptions[card.options.indexOf('Tab')];
+  assert.equal(tab, 'Recommended: Tabs between values; safe for text with commas, because the session building Export a report recommends it.');
+  assert.ok(lines(card.question).includes(MEANWHILE));
+  assert.ok(lines(composeCard(answerInput({ ...question, level: 4 }, 'x')).card.question).includes(CHECKS_UNSAID));
+  assert.equal(CHECKS_UNSAID, "The build didn't say. Ask me why and I'll find out before you answer.");
   const five = ['A', 'B', 'C', 'D', 'E'].map((label) => ({ label, says: `${label} goes ahead.` }));
   for (const [name, bad, why] of [
     ['five options', { ...question, options: five, recommendation: 'A' }, /at most 4/],
@@ -481,14 +673,14 @@ test('a build-command question\'s answer card offers the design\'s three options
   assert.equal(questionProblem(asked), null);
   const { question, card } = composeCard(answerInput(asked, 'Export a report'));
   assert.equal(card.line, answerLine('q-export-csv-2'));
-  assert.deepEqual(card.options, ['Allow this time', 'Allow for this feature', 'Not now', 'Explain more']);
+  assert.deepEqual(card.options, ['Allow this time', 'Allow for this feature', 'Not now', SUGGEST]);
   assert.ok(question.options[0].description.startsWith('Recommended: '));
   assert.ok(card.question.includes('npm test'), 'the card names the commands');
   // In plain words, as the front desk rewrites what each option says, the card is still composed.
   const input = answerInput(asked, 'Export a report');
   const plain = composeCard({ ...input, options: input.options.map((o) => ({ ...o, says: `In plain words: ${o.label.toLowerCase()}.` })) });
   assert.deepEqual(plain.card.options, card.options);
-  assert.ok(plain.card.question.includes('Not now: In plain words: not now'));
+  assert.equal(plain.card.descriptions[2], 'In plain words: not now.');
   // Only a question that names its commands, with the design's three labels in order, carries Not
   // now; a product question never does.
   const changed = [
@@ -505,7 +697,7 @@ test('a build-command question\'s answer card offers the design\'s three options
 
 test('setup\'s card of the rules found offers Confirm all and Let me correct some, names its count, and has no reply code', () => {
   const { question, card } = composeCard(input('confirm-all'));
-  assert.deepEqual(card.options, ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']);
+  assert.deepEqual(card.options, ['Confirm all', 'Let me correct some', 'Not now']);
   assert.equal(question.header, 'Rules found');
   assert.equal(card.code, null);
   assert.equal(setLineOf(question.question), confirmAllLine(DOC, 2));
@@ -519,11 +711,11 @@ test('setup\'s card of the rules found offers Confirm all and Let me correct som
   assert.equal(setLineOf(one.question.question), confirmAllLine(DOC, 1));
 });
 
-test('uninstall\'s card (ruling R90): level 4, no reply code, Remove it, Not now and Explain more, and a first part naming the project', () => {
+test('uninstall\'s card (ruling R90): level 4, no reply code, Remove it and Not now, and a first part naming the project', () => {
   const { question, card } = composeCard(input('uninstall'));
   assert.equal(question.header, 'Uninstall');
   assert.equal(DECIDING.uninstall, 'Remove it');
-  assert.deepEqual(card.options, ['Remove it', 'Not now', 'Explain more']);
+  assert.deepEqual(card.options, ['Remove it', 'Not now']);
   assert.equal(card.code, null);
   assert.equal(card.line, 'Remove Wheelhouse from cafe menu as listed, fedcba987654');
   assert.ok(!question.question.includes('Reply code:'));

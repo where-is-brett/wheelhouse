@@ -522,6 +522,11 @@ test('a card event needs its kind, options and level', async () => {
     make({ ...CARD_DATA, recommend: 'Approve' });
     // The words on each button, one for each option, so the card can be asked again as composed.
     make({ ...CARD_DATA, descriptions: ['Approve it.', 'Wait.', 'Say it plainer.', 'Show it.'] });
+    // The card's parts, and the id of the card a revised proposal replaces.
+    const parts = { kind: 'approval', ask: 'Put it live?', what: 'A change.', why: 'It is yours.', meanwhile: 'Nothing is released.', options: [] };
+    make({ ...CARD_DATA, parts, revises: 'e-old' });
+    for (const bad of [{ ...parts, ask: '' }, { ...parts, options: 'x' }, 'text', [], null]) assert.throws(() => make({ ...CARD_DATA, parts: bad }), /card event.*parts/);
+    assert.throws(() => make({ ...CARD_DATA, revises: 7 }), /card event.*revises/);
     for (const kind of ['approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'question']) {
       make({ ...CARD_DATA, kind });
     }

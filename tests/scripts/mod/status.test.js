@@ -87,9 +87,9 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
   assert.equal(first.hash.length, CARD_HASH_CHARS);
   assert.equal(first.kind, 'approval');
   assert.equal(first.header, 'Approval');
-  assert.deepEqual(first.buttons.map((b) => [b.label, b.does]), [['Approve', 'record'], ['Not now', 'record'], ['Explain more', 'turn'], ['Show me', 'turn']]);
+  assert.deepEqual(first.buttons.map((b) => [b.label, b.does]), [['Approve', 'record'], ['Not now', 'record'], ['Show me', 'turn'], ['Suggest a change…', 'turn']]);
   assert.equal(first.note, null);
-  assert.deepEqual(third.buttons.map((b) => [b.label, b.does]), [['Comma', 'record'], ['Tab', 'record'], ['Explain more', 'turn']]);
+  assert.deepEqual(third.buttons.map((b) => [b.label, b.does]), [['Comma', 'record'], ['Tab', 'record'], ['Suggest a change…', 'turn']]);
   // A question from the build that no card asks yet is one line and no buttons.
   assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the front desk will ask it');

@@ -136,7 +136,7 @@ test('each example input in the playbook is accepted as written, the approval wi
       assert.ok(answered.question.question.includes(approvalLine(12, HEAD)), answered.question.question);
       assert.equal(h.writes.filter((w) => w.kind === 'card').length, 1);
     }
-    if (args === 'record ruling') assert.ok(answered.card.question.question.startsWith('What this is:'));
+    if (args === 'record ruling') assert.equal(answered.card.question.question.split('\n')[0], 'Confirm this?');
   }
   assert.deepEqual(seen.sort(), ['card', 'record ruling']);
 });

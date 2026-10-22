@@ -389,9 +389,9 @@ test('a feature\'s question becomes a composed card, a click answers it, and onl
     assert.equal(visit.left, 0);
     const [card] = visit.questions;
     // Composed from the question as the build recorded it: its own options, and its set line.
-    assert.deepEqual(labelsOf(card), ['CSV', 'Excel', 'Explain more']);
+    assert.deepEqual(labelsOf(card), ['CSV', 'Excel', 'Suggest a change…']);
     assert.equal(setLineOf(card.question), answerLine('q-export-1'));
-    assert.match(card.question, /^What this is: /);
+    assert.match(card.question, /^Should the orders export download as CSV or as an Excel workbook\?\n/);
     assert.match(card.options[0].description, /^Recommended:/);
 
     await ask(world, visit.questions, { [card.question]: 'CSV' });
@@ -421,7 +421,7 @@ test('an approval card answered by its reply code from the phone lets the gate m
     assert.equal(setLineOf(question.question), approvalLine(7, head));
     const code = replyCode(approvalLine(7, head));
     assert.ok(question.question.includes(code), 'the card carries its reply code');
-    assert.deepEqual(labelsOf(question), ['Approve', 'Not now', 'Explain more', 'Show me']);
+    assert.deepEqual(labelsOf(question), ['Approve', 'Suggest a change…', 'Show me', 'Not now']);
     // At the computer, the director puts it off; the card's code is now on record.
     await ask(world, [question], { [question.question]: 'Not now' });
     assert.equal(eventsOf('shown').length, 1);
@@ -496,7 +496,7 @@ test('a card answered Not now stays on the board and is not asked on the next vi
 
     // It stays on the board, waiting on the director, where they can ask for it by its number.
     const board = await prompt(world, '/wheelhouse:board');
-    assert.match(board, /^### Waiting on you\n- 1\\\. What this is: Should the orders export download as CSV or as an Excel workbook\?/m, board);
+    assert.match(board, /^### Waiting on you\n- 1\\\. Should the orders export download as CSV or as an Excel workbook\?/m, board);
     const again = await frontDesk(world, ['again', '1']);
     assert.deepEqual(again.questions.map((q) => q.question), [card.question]);
   });

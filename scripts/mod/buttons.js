@@ -16,6 +16,7 @@
 import { cardProblems } from '../hooks/card-check.js';
 import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
+import { SUGGEST, NOT_NOW } from '../lib/calm-words.js';
 import { setLinesOf, TRUST_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
@@ -29,8 +30,6 @@ export const TRUST_ANSWER = 'This card can\'t be answered here: answer it in the
 export const UNINSTALL_ANSWER = 'This card can\'t be answered here: answer it in the chat where uninstall asked it.';
 const ANSWER_LINE = /^Answer question /;
 const SETUP_LINE = /^(?:Set up step |Confirm all [1-9][0-9]* rules? as listed, )/;
-const EXPLAIN = 'Explain more';
-const NOT_NOW = 'Not now';
 // What a card offers to turn to the front desk, apart from its own options.
 const TURNS = PUT_OFF.filter((label) => label !== NOT_NOW);
 
@@ -102,12 +101,12 @@ function buttonsOf(card) {
   const line = lines.length === 1 ? lines[0] : null;
   const problems = cardProblems(text);
   if (line === null || problems.length > 0 || (kind === 'answer') !== ANSWER_LINE.test(line) || kind === 'question') {
-    return { buttons: offered(EXPLAIN) ? [button(EXPLAIN, 'turn')] : [], note: CANT_ANSWER };
+    return { buttons: [], note: CANT_ANSWER };
   }
 
   if (kind === 'answer') {
     const own = offers.filter((label) => !PUT_OFF.includes(label)).map((label) => button(label, 'record'));
-    return { buttons: [...own, ...(offered(EXPLAIN) ? [button(EXPLAIN, 'turn')] : [])], note: null };
+    return { buttons: [...own, ...(offered(SUGGEST) ? [button(SUGGEST, 'turn')] : [])], note: null };
   }
 
   const deciding = offers.find((label) => SIGNED_LABELS.includes(label));

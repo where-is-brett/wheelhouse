@@ -341,7 +341,6 @@ export function rulesCard(name, rules, { more = false } = {}) {
       { label: CONFIRM_ALL_LABEL, says: 'Each goes into the rulebook as shown.' },
       { label: CORRECT_SOME_LABEL, says: 'Keep, reword or leave out each in turn.' },
       { label: 'Not now', says: 'Nothing is recorded yet.' },
-      { label: 'Explain more', says: 'I explain it more plainly.' },
     ],
     recommend: CONFIRM_ALL_LABEL,
     because: 'the project already follows them',

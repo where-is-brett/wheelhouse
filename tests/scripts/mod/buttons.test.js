@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { cardButtons, isSetupCard, isTrustCard, isUninstallCard, CANT_ANSWER, SETUP_ANSWER, TRUST_ANSWER, UNINSTALL_ANSWER } from '../../../scripts/mod/buttons.js';
 import { composeCard, DECIDING } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
+import { TO_KNOW_MORE } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine, uninstallLine } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
@@ -79,12 +80,13 @@ test('each kind of card gets its own buttons, and only the options it offers', (
       assert.deepEqual(got, noButtonsFor(kind), kind);
       continue;
     }
+    // STOP is lifted or it isn't, so that card offers no Suggest a change….
     assert.deepEqual(got, {
       buttons: [
         { label: DECIDING[kind], does: 'record' },
         { label: 'Not now', does: 'record' },
-        { label: 'Explain more', does: 'turn' },
         { label: 'Show me', does: 'turn' },
+        ...(kind === 'lift-stop' ? [] : [{ label: 'Suggest a change…', does: 'turn' }]),
       ],
       note: null,
     }, kind);
@@ -92,18 +94,18 @@ test('each kind of card gets its own buttons, and only the options it offers', (
 
   // Only what the card offers is a button.
   const approval = dataOf('approval');
-  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Explain more'] }).buttons, [
+  assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Show me'] }).buttons, [
     { label: 'Approve', does: 'record' },
-    { label: 'Explain more', does: 'turn' },
+    { label: 'Show me', does: 'turn' },
   ]);
   assert.deepEqual(cardButtons({ ...approval, options: ['Approve', 'Not now'] }).buttons, [
     { label: 'Approve', does: 'record' },
     { label: 'Not now', does: 'record' },
   ]);
 
-  // An answer card: each of the question's own options records the answer; Explain more turns.
+  // An answer card: each of the question's own options records the answer; Suggest a change… turns.
   assert.deepEqual(cardButtons(dataOf('answer')), {
-    buttons: [{ label: 'Comma', does: 'record' }, { label: 'Tab', does: 'record' }, { label: 'Explain more', does: 'turn' }],
+    buttons: [{ label: 'Comma', does: 'record' }, { label: 'Tab', does: 'record' }, { label: 'Suggest a change…', does: 'turn' }],
     note: null,
   });
   const four = ['One', 'Two', 'Three', 'Four'].map((label) => ({ label, says: `${label} it.` }));
@@ -112,7 +114,7 @@ test('each kind of card gets its own buttons, and only the options it offers', (
 
   // A question card has no set line: every option is a turn to the front desk.
   assert.deepEqual(cardButtons(dataOf('question')), {
-    buttons: [{ label: 'Comma', does: 'turn' }, { label: 'Tab', does: 'turn' }, { label: 'Explain more', does: 'turn' }],
+    buttons: [{ label: 'Comma', does: 'turn' }, { label: 'Tab', does: 'turn' }, { label: 'Suggest a change…', does: 'turn' }],
     note: null,
   });
 });
@@ -139,12 +141,12 @@ function otherPullRequest() {
   return { ...data, question };
 }
 
-test('a card with a set line for another pull request than its first part names gets Explain more only', () => {
+test('a card with a set line for another pull request than its plain lines name gets no button that records anything', () => {
   const data = otherPullRequest();
   assert.match(cardProblems(data.question).join(' '), /pull request #14/);
-  assert.deepEqual(cardButtons(data), { buttons: [{ label: 'Explain more', does: 'turn' }], note: 'This card can\'t be answered here: ask the front desk about it.' });
+  // A card never offers Explain more, so there is no button to give in its place.
+  assert.deepEqual(cardButtons(data), { buttons: [], note: 'This card can\'t be answered here: ask the front desk about it.' });
   assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the front desk about it.');
-  // Without Explain more among its options, there is no button to give.
   assert.deepEqual(cardButtons({ ...data, options: ['Approve', 'Not now'] }), { buttons: [], note: CANT_ANSWER });
 });
 
@@ -156,19 +158,20 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
     else assert.ok(cardButtons(data).buttons.some((b) => b.does === 'record'), kind);
     const lines = data.question.split('\n');
     const broken = [
-      lines.filter((l) => !l.startsWith('My recommendation:')).join('\n'),
+      lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card and uninstall's have no reply code line to take away (rulings R36,
       // R80, R90).
       ...([...SETUP_KINDS, 'trust', 'uninstall'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
-      data.question.replace(/^While you decide:.*$/m, 'While you decide:'),
+      // Without its reason and its meanwhile, a card has too few plain lines.
+      lines.filter((l) => l !== INPUTS[kind].why && l !== INPUTS[kind].meanwhile).join('\n'),
     ];
     for (const question of broken) {
       assert.ok(cardProblems(question).length > 0, `${kind}: ${question}`);
       const got = cardButtons({ ...data, question });
       assert.equal(got.buttons.some((b) => b.does === 'record'), false, `${kind}: ${question}`);
-      assert.deepEqual(got.buttons, NO_BUTTON_KINDS.includes(kind) ? [] : [{ label: 'Explain more', does: 'turn' }], kind);
+      assert.deepEqual(got.buttons, [], kind);
       assert.equal(got.note, NO_BUTTON_KINDS.includes(kind) ? noButtonsFor(kind).note : CANT_ANSWER, kind);
     }
   }
@@ -251,7 +254,7 @@ test('a setup card gets no button on the pane, whatever it offers and whatever k
   // Its note says where to answer it: setup asks it in its own chat, not the front desk.
   assert.equal(SETUP_ANSWER, 'This card can\'t be answered here: answer it in the chat where setup asked it.');
   assert.notEqual(SETUP_ANSWER, CANT_ANSWER);
-  assert.deepEqual(setup.options, ['Go ahead', 'Not now', 'Explain more', 'Show me']);
+  assert.deepEqual(setup.options, ['Go ahead', 'Show me', 'Not now']);
   assert.deepEqual(cardButtons(setup), NO_BUTTONS);
   // Offering only Go ahead, or only the turns, it still gets nothing.
   assert.deepEqual(cardButtons({ ...setup, options: ['Go ahead'] }), NO_BUTTONS);
@@ -271,7 +274,7 @@ test('a setup card gets no button on the pane, whatever it offers and whatever k
 test('setup\'s card of the rules found gets no button on the pane either, by its kind or by its line', () => {
   const rules = dataOf('confirm-all');
   assert.equal(isSetupCard(rules), true);
-  assert.deepEqual(rules.options, ['Confirm all', 'Let me correct some', 'Not now', 'Explain more']);
+  assert.deepEqual(rules.options, ['Confirm all', 'Let me correct some', 'Not now']);
   assert.equal(rules.code, null);
   assert.deepEqual(cardButtons(rules), NO_BUTTONS);
   for (const kind of ['approval', 'confirm', 'question', undefined]) {

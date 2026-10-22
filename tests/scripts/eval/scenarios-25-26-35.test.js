@@ -260,8 +260,8 @@ test('a card is judged by its card event and how it was put to the director', ()
   assert.equal(howAsked(events(['say', `Here is the card.\n\n${card.line}`]), card), 'in its reply');
   assert.equal(howAsked(events(['say', 'Change export as written. Click below.']), card), 'in its reply', 'its first part counts');
   // Every label counts only with the card's own words: what the option it recommends says (F83).
-  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Not now**, **Explain more** or **Show me**.']), card), 'in its reply');
-  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Not now**, **Explain more** or **Show me**.']), card), null, 'the buttons alone say nothing of the change');
+  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Suggest a change…**, **Show me** or **Not now**.']), card), 'in its reply');
+  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Suggest a change…**, **Show me** or **Not now**.']), card), null, 'the buttons alone say nothing of the change');
   assert.equal(howAsked(events(['say', 'Shall I change it? Not now is fine too.']), card), null, 'some of its labels are not the card');
   assert.equal(howAsked(events(['ToolSearch', { query: 'select:AskUserQuestion' }]), card), null, 'a search for the tool alone is not asking');
   assert.equal(howAsked(events(['say', 'Done.'], ['AskUserQuestion', { questions: [question] }, '', { parent: 'p1' }]), card), null, 'a subagent\'s call is not the session\'s');
