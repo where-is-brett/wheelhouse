@@ -972,3 +972,40 @@ test('a helper that never answers is waited for no longer than HELPER_MS', () =>
   const got = handled.value;
   assert.ok(got.pane.missing.includes(NO_HELPER));
 }));
+
+test('a pane origin is the only one the bridge takes for why, suggest and setting', () => withHome(async () => {
+  enrolKey();
+  const calls = [];
+  const spy = (name, answer) => async (args) => { calls.push([name, args]); return answer; };
+  const extra = {
+    whyCard: spy('why', { made: true }),
+    suggestCard: spy('suggest', { made: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] }),
+    pressSetting: spy('setting', { made: true, says: 'Pace is now 1, for this project' }),
+  };
+  const requests = [
+    { cmd: 'why', cwd: '/work', card: 'c', hash: 'h' },
+    { cmd: 'suggest', cwd: '/work', card: 'c', hash: 'h', words: 'x' },
+    { cmd: 'setting', cwd: '/work', key: 'pace', choice: 'undo' },
+  ];
+  for (const request of requests) {
+    for (const origin of ['composer', 'bridge', 'sdk', 'peer', 'Pane', '', undefined, ['pane']]) {
+      assert.deepEqual(await handle({ ...request, origin }, deps(extra)), { ok: false, says: 'Only a press in the pane counts as one' });
+    }
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(pendingFiles(), []);
+
+  assert.deepEqual(await handle({ ...requests[0], origin: 'pane' }, deps(extra)), { ok: true });
+  const suggested = await handle({ ...requests[1], origin: 'pane' }, deps(extra));
+  assert.deepEqual(suggested, { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] });
+  assert.deepEqual(JSON.parse(lineOf(suggested)).submit, suggested.submit);
+  assert.equal((await handle({ ...requests[2], origin: 'pane' }, deps(extra))).ok, true);
+  assert.deepEqual(calls.map(([name, args]) => [name, args.project]), [['why', P], ['suggest', P], ['setting', P]]);
+  assert.deepEqual([calls[1][1].card, calls[1][1].hash, calls[1][1].words], ['c', 'h', 'x']);
+  // Outside a project, nothing is pressed.
+  for (const request of requests) assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ ...extra, projectOf: () => null })), { ok: false, says: 'This isn\'t a Wheelhouse project' });
+  assert.equal(calls.length, 3);
+  // A suggestion refused hands no prompt and is not ok.
+  const refused = { suggestCard: spy('suggest', { made: false, says: 'That card changed while you were reading. Here is the new one.' }) };
+  assert.deepEqual(await handle({ ...requests[1], origin: 'pane' }, deps(refused)), { ok: false, says: 'That card changed while you were reading. Here is the new one.' });
+}));

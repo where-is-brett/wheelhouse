@@ -13,11 +13,16 @@
 // which the views work out from the confirmed events, so a change made in the chat meanwhile is
 // the one handed back to.
 //
-// Under STOP the helper refuses every write, so a press records nothing and says so. Budget
-// allocation is in the backlog (design section 14.1): the budget row offers no choice.
+// A row also offers Undo for UNDO_MS after its latest change was confirmed: the choice `undo`
+// sets the value in force before that change, signed and confirmed as any pick is.
+//
+// Under STOP every pick, Undo included, records nothing and says so. Budget allocation is in the
+// backlog (design section 14.1): the budget row offers no choice.
 import { SETTINGS, definitionOf, checkSetting, say } from '../settings/catalogue.js';
 import { effectiveSettings, sayTime, sayValue } from '../settings/effective.js';
-import { AWAY } from '../lib/mod-numbers.js';
+import { AWAY, UNDO_MS } from '../lib/mod-numbers.js';
+import { SETTINGS_UNDER_STOP } from '../lib/calm-words.js';
+import { stopState as defaultStopState } from '../lib/stop.js';
 import { confirmationFor, listEvents } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget, BUDGET_MS } from '../hooks/pending.js';
@@ -38,7 +43,8 @@ const DAY_MS = 24 * HOUR_MS;
 
 export const SAYS = {
   notOffered: 'That choice isn\'t offered now',
-  stopOn: 'Settings change once STOP is lifted',
+  stopOn: SETTINGS_UNDER_STOP,
+  nothingToUndo: 'There\'s nothing to undo now',
   notTaken: 'That setting couldn\'t be changed now: the helper didn\'t take it',
   late: 'The helper didn\'t answer in time; if the change lands, it waits for your Confirm',
   failed: 'That setting couldn\'t be changed this time',
@@ -233,7 +239,7 @@ function heldOf(effective, key) {
   return { value: structuredClone(SETTINGS[key].default), from: 'default' };
 }
 
-function rowOf(key, { effective, nowMs, timeZone, locked }) {
+function rowOf(key, { effective, changes, nowMs, timeZone, locked }) {
   const spec = PANE[key];
   const base = { key, label: spec.label };
   if (key === 'protection') {
@@ -243,6 +249,7 @@ function rowOf(key, { effective, nowMs, timeZone, locked }) {
   }
   const held = heldOf(effective, key);
   const out = { ...base, from: FROM[held.from] ?? FROM.default };
+  if (undoOf(key, changes, nowMs) !== null) out.changed = { at: changes[key].at, undo: true };
   if (typeof held.until === 'string') out.until = held.until;
   if (spec.kind === 'presence') {
     const chosen = presenceChosen(held, nowMs, timeZone);
@@ -257,11 +264,12 @@ function rowOf(key, { effective, nowMs, timeZone, locked }) {
   return { ...out, current, choices: [], here: false, why: spec.why };
 }
 
-// settingsRows({ effective, now, timeZone, locked? }) -> Array<SettingsRow>
-// `effective` is effectiveSettings' answer; `locked` is whether the project is Locked, when the
-// caller knows it. Every row is plain data. Never throws.
-export function settingsRows({ effective, now = () => new Date(), timeZone, locked } = {}) {
-  const context = { effective, nowMs: instantOf(now), timeZone, locked };
+// settingsRows({ effective, changes?, now, timeZone, locked? }) -> Array<SettingsRow>
+// `effective` is effectiveSettings' answer; `changes` is changesFor's, which gives a row
+// `changed: { at, undo: true }` while its latest change can still be undone; `locked` is whether
+// the project is Locked, when the caller knows it. Every row is plain data. Never throws.
+export function settingsRows({ effective, changes, now = () => new Date(), timeZone, locked } = {}) {
+  const context = { effective, changes, nowMs: instantOf(now), timeZone, locked };
   return Object.keys(PANE).map((key) => rowOf(key, context));
 }
 
@@ -304,6 +312,45 @@ export function effectiveFor({ project, now }) {
   return effectiveSettings({ project: projectViews, profile: profileViews, now });
 }
 
+// The latest confirmed change of each setting that has a home in the views, for the pane's
+// Undo: { [key]: { at, before } }, where `at` is when the change was confirmed and `before` the
+// value it replaced (null when it replaced none). A setting is read from the view of its home.
+export function changesFor({ project }) {
+  const views = { project: {}, profile: {} };
+  try {
+    const own = localViews(project, ['settings'])?.settings;
+    if (isRecord(own)) views.project = own;
+  } catch {
+    // No change can be undone.
+  }
+  try {
+    const profile = readProfileViews()?.settings;
+    if (isRecord(profile)) views.profile = profile;
+  } catch {
+    // No change can be undone.
+  }
+  const out = {};
+  for (const key of Object.keys(PANE)) {
+    if (!Object.hasOwn(SETTINGS, key)) continue;
+    const view = views[definitionOf(key).home];
+    const entry = Object.hasOwn(view, key) && isRecord(view[key]) ? view[key] : null;
+    if (entry !== null && typeof entry.confirmedAt === 'string') out[key] = { at: entry.confirmedAt, before: isRecord(entry.before) ? entry.before : null };
+  }
+  return out;
+}
+
+// What Undo would set for a setting at `nowMs`: { value, until? }, or null when its latest change
+// was confirmed UNDO_MS or more ago, or isn't known, or the setting offers no choice. A value
+// that had ended, or none before, is the catalogue's default.
+function undoOf(key, changes, nowMs) {
+  if (!isRecord(changes) || !Object.hasOwn(changes, key) || !Object.hasOwn(PANE, key) || !['levels', 'presence'].includes(PANE[key].kind)) return null;
+  const { at, before } = changes[key] ?? {};
+  const age = nowMs - Date.parse(at);
+  if (!Number.isFinite(age) || age >= UNDO_MS || age <= -UNDO_MS) return null;
+  const live = isRecord(before) && (before.until === undefined || Date.parse(before.until) > nowMs);
+  return live ? { value: structuredClone(before.value), ...(before.until === undefined ? {} : { until: before.until }) } : { value: structuredClone(SETTINGS[key].default) };
+}
+
 // The setting event the helper made, read back from the clone it kept it in.
 // It must be the setting that was pressed: the key, the value and the end time all equal, so an
 // answer naming some other event signs nothing.
@@ -314,22 +361,28 @@ function eventOf(home, project, id, data) {
     && e.data?.key === data.key && e.data.value === data.value && e.data.until === data.until) ?? null;
 }
 
-// pressSetting({ project, key, choice, client, now, timeZone, budget })
+// pressSetting({ project, key, choice, client, now, timeZone, budget, changes, stopState })
 //   -> Promise<{ made, says }>
+// `choice` is a choice's id, or `undo`, which sets the value in force before the row's latest
+// change while that change is under UNDO_MS old (`changes` is changesFor's answer, read from the
+// views when not given).
 // `made` is true once the setting is written and its confirmation signed. A setting written but
 // not confirmed is not in force, and the press says it waits for the director's Confirm. Records
 // nothing for a choice that isn't offered or that the catalogue refuses. Never throws.
-export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace() } = {}) {
+export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace(), changes, stopState = defaultStopState } = {}) {
   try {
-    return await press({ project, key, choice, client, now, timeZone, budget });
+    return await press({ project, key, choice, client, now, timeZone, budget, changes, stopState });
   } catch {
     return no(SAYS.failed);
   }
 }
 
-async function press({ project, key, choice, client, now, timeZone, budget }) {
+async function press({ project, key, choice, client, now, timeZone, budget, changes, stopState }) {
   const clock = typeof now === 'function' ? now : () => new Date(now);
-  const picked = choiceOf(key, choice, { now: clock, timeZone });
+  if (stopState().on) return no(SAYS.stopOn);
+  const undoing = choice === 'undo';
+  const picked = undoing ? undoOf(key, changes ?? changesFor({ project }), instantOf(clock)) : choiceOf(key, choice, { now: clock, timeZone });
+  if (picked === null && undoing) return no(SAYS.nothingToUndo);
   if (picked === null) {
     // The evening edge passes while a row is open: say which choice has gone, and why.
     const past = key === 'presence' && choice === 'away-evening' && Number.isFinite(instantOf(clock));

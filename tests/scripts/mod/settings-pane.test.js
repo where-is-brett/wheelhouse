@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { settingsRows, choiceOf, pressSetting, ADVANCED } from '../../../scripts/mod/settings-pane.js';
+import { settingsRows, choiceOf, pressSetting, changesFor, ADVANCED } from '../../../scripts/mod/settings-pane.js';
 import { handle, lineOf } from '../../../scripts/mod/bridge.js';
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
 import { SETTINGS } from '../../../scripts/settings/catalogue.js';
@@ -12,6 +12,7 @@ import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { stateDir, profileDir } from '../../../scripts/lib/paths.js';
+import { UNDO_MS } from '../../../scripts/lib/mod-numbers.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { withHome } from '../../helpers/homes.js';
 
@@ -364,7 +365,7 @@ test('budget offers no other level while budget allocation is in the backlog', (
 test('under STOP a choice records nothing and says when it can', () => withKey(async () => {
   const client = fake({ stop: true });
   for (const [key, choice] of [['pace', '2'], ['presence', 'away-hours'], ['briefing', 'short']]) {
-    assert.deepEqual(await press(client, key, choice), { made: false, says: 'Settings change once STOP is lifted' });
+    assert.deepEqual(await press(client, key, choice), { made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
   }
   // The helper refused every write; nothing was signed, kept or recorded.
   assert.equal(client.calls.record.length + client.calls.profileRecord.length, 0);
@@ -373,7 +374,7 @@ test('under STOP a choice records nothing and says when it can', () => withKey(a
   assert.deepEqual(listEvents(profileDir(), { report: () => {} }), []);
   // With the real STOP file too: the helper's refusal is the word on it.
   setStop({ by: 'mod' });
-  assert.equal((await press(fake({ stop: true }), 'pace', '1')).says, 'Settings change once STOP is lifted');
+  assert.equal((await press(fake({ stop: true }), 'pace', '1')).says, 'Settings can\'t change while STOP is on. Lift STOP first.');
 }));
 
 test('a helper that is down or refuses leaves the setting as it was', () => withKey(async () => {
@@ -408,8 +409,8 @@ test('setting is refused for any origin but pane', () => withKey(async () => {
   assert.equal(calls.length, 1);
   assert.deepEqual([calls[0].project, calls[0].key, calls[0].choice, calls[0].client, calls[0].timeZone], [P, 'pace', '2', client, SYDNEY]);
   assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ projectOf: () => null })), { ok: false, says: 'This isn\'t a Wheelhouse project' });
-  const refused = async () => ({ made: false, says: 'Settings change once STOP is lifted' });
-  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ pressSetting: refused })), { ok: false, says: 'Settings change once STOP is lifted' });
+  const refused = async () => ({ made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
+  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ pressSetting: refused })), { ok: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
 
   // Through the real code: the origin gates the press and the press records.
   assert.deepEqual(await handle({ ...request, origin: 'composer' }, { now: () => new Date('2026-10-19T05:00:00.000Z'), projectOf: () => ({ project: P }), client }), { ok: false, says: 'Only a press in the pane counts as one' });
@@ -492,6 +493,71 @@ test('a write that times out is said apart from one that was refused', () => wit
   assert.equal((await press(throwing, 'pace', '2')).says, late);
   // Refusals are said as refusals.
   assert.equal((await press(fake({ down: true }), 'pace', '2')).says, 'That setting couldn\'t be changed now: the helper didn\'t take it');
-  assert.equal((await press(fake({ stop: true }), 'pace', '2')).says, 'Settings change once STOP is lifted');
+  assert.equal((await press(fake({ stop: true }), 'pace', '2')).says, 'Settings can\'t change while STOP is on. Lift STOP first.');
   assert.deepEqual(pendingFiles(), []);
+}));
+
+// The views as the helper leaves them, for the project's clone.
+function syncViews(now) {
+  const views = buildViews(listEvents(stateDir(P), { report: () => {} }), readEnrolled(), { now });
+  const folder = path.join(stateDir(P), '..', 'views');
+  fs.mkdirSync(folder, { recursive: true });
+  for (const [name, value] of Object.entries(views)) fs.writeFileSync(path.join(folder, `${name}.json`), JSON.stringify(value));
+}
+
+test('undo within a minute sets the value before, signed and confirmed', () => withKey(async () => {
+  assert.equal(UNDO_MS, 60000);
+  // Pace 3 is the default; the press sets 2 and its confirmation lands a minute later in the fake,
+  // so the clock of the press is what counts.
+  const first = fake();
+  assert.equal((await press(first, 'pace', '1')).made, true);
+  const second = fake({ from: '2026-10-19T05:02:00.000Z' });
+  assert.equal((await press(second, 'pace', '2', { now: at('2026-10-19T05:02:00.000Z') })).made, true);
+  syncViews(at('2026-10-19T05:02:30.000Z'));
+  const soon = at('2026-10-19T05:02:40.000Z');
+  const changes = changesFor({ project: P });
+  assert.equal(changes.pace.before.value, 1);
+  const row = rowOf(settingsRows({ effective: effectiveSettings({ project: JSON.parse(fs.readFileSync(path.join(stateDir(P), '..', 'views', 'settings.json'), 'utf8')), now: soon }), changes, now: soon, timeZone: SYDNEY }), 'pace');
+  assert.deepEqual(row.changed, { at: changes.pace.at, undo: true });
+
+  const client = fake({ from: '2026-10-19T05:02:40.000Z' });
+  const said = await press(client, 'pace', 'undo', { now: soon });
+  assert.deepEqual(said, { made: true, says: 'Pace is now 1, for this project' });
+  assert.deepEqual(client.calls.order, ['write', 'record']);
+  assert.deepEqual(client.calls.write, [{ project: P, kind: 'setting', data: { key: 'pace', value: 1 } }]);
+  const latest = listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'setting').pop();
+  assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
+  assert.deepEqual(client.calls.record[0].event.data, { confirms: latest.id, confirmsHash: eventHash(latest) });
+}));
+
+test('undo after a minute, or with nothing changed, records nothing', () => withKey(async () => {
+  const first = fake();
+  await press(first, 'pace', '1');
+  syncViews(at('2026-10-19T05:00:30.000Z'));
+  const nothing = { made: false, says: 'There\'s nothing to undo now' };
+  const client = fake();
+  // Confirmed a minute earlier or more: the row offers no Undo.
+  for (const when of ['2026-10-19T05:02:00.000Z', '2026-10-19T06:00:00.000Z']) {
+    const now = at(when);
+    assert.deepEqual(await press(client, 'pace', 'undo', { now }), nothing);
+    const changes = changesFor({ project: P });
+    assert.equal(rowOf(settingsRows({ effective: effectiveSettings({ now }), changes, now, timeZone: SYDNEY }), 'pace').changed, undefined);
+  }
+  // A setting never changed, and one that offers no choice.
+  assert.deepEqual(await press(client, 'briefing', 'undo', { now: at('2026-10-19T05:00:30.000Z') }), nothing);
+  assert.deepEqual(await press(client, 'budget', 'undo'), nothing);
+  assert.equal(nothingSent(client), 0);
+  assert.deepEqual(pendingFiles(), []);
+}));
+
+test('undo under STOP records nothing and says Settings can\'t change while STOP is on', () => withKey(async () => {
+  const first = fake();
+  await press(first, 'pace', '1');
+  syncViews(at('2026-10-19T05:00:30.000Z'));
+  setStop({ by: 'mod' });
+  const client = fake({ stop: true });
+  const now = at('2026-10-19T05:00:40.000Z');
+  assert.deepEqual(await press(client, 'pace', 'undo', { now }), { made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
+  assert.deepEqual(await press(client, 'pace', '2', { now }), { made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
+  assert.equal(nothingSent(client), 0);
 }));

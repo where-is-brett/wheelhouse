@@ -408,6 +408,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         entry.computer = e.computer;
         entry.confirmedOn = signedOn(last);
         entry.line = typeof line === 'string' ? line : null;
+        // When that confirmation was made, or null for a setting counted without one.
+        entry.confirmedAt = typeof last?.at === 'string' ? last.at : null;
       }
       out[e.data.key] = entry;
     }

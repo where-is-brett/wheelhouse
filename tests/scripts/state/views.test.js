@@ -485,11 +485,11 @@ test('an accepted setting keeps its until and the accepted value it replaced', a
     const s4 = ev('setting', 7, { key: 'quiet', value: 'never confirmed' });
     const v1 = build([s1, conf(2, s1)]);
     assert.deepEqual(v1.settings.quiet, {
-      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, confirmedOn: s1.computer, line: null,
+      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, confirmedOn: s1.computer, line: null, confirmedAt: T(2),
     });
     const v2 = build([s1, conf(2, s1), s2, conf(4, s2)]);
     assert.deepEqual(v2.settings.quiet, {
-      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, confirmedOn: s2.computer, line: null,
+      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, confirmedOn: s2.computer, line: null, confirmedAt: T(4),
     });
     const v3 = build([s1, conf(2, s1), s2, conf(4, s2), s3, conf(6, s3), s4]);
     assert.deepEqual(v3.settings.quiet.before, { value: false });
@@ -521,7 +521,7 @@ test('a known:* setting of false, accepted with no confirmation, carries no sign
   await withHome(() => {
     const s1 = ev('setting', 1, { key: 'known:branch', value: false });
     assert.deepEqual(build([s1]).settings['known:branch'], {
-      key: 'known:branch', id: s1.id, at: s1.at, value: false, before: null, computer: s1.computer, confirmedOn: null, line: null,
+      key: 'known:branch', id: s1.id, at: s1.at, value: false, before: null, computer: s1.computer, confirmedOn: null, line: null, confirmedAt: null,
     });
   });
 });
