@@ -166,7 +166,10 @@ function patternNamesEnv(pattern, fold) {
 }
 
 const SHELL_FLAG = /^-[A-Za-z]*c$|^\/[ck]$/i;
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'powershell', 'cmd']);
+const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ksh93', 'mksh', 'ash', 'yash', 'csh', 'tcsh', 'fish']);
+const SHELLS = new Set([...POSIX_SHELLS, 'pwsh', 'powershell', 'cmd']);
+// A POSIX shell's options that take the next word as their value.
+const SHELL_VALUES = new Set(['--init-file', '--rcfile', '-o', '-O', '+o', '+O']);
 const OPTION = /^-|^\/[A-Za-z]$/;
 // git's global options that take the next word as their value.
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path']);
@@ -201,12 +204,14 @@ function gitPushes(args) {
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DURATION = /^\d+(\.\d+)?[smhd]?$/;
-const WRAPPERS = new Set(['command', 'builtin', 'exec', 'nohup', 'time', 'nice', 'sudo', 'doas', 'timeout', 'stdbuf', 'setsid', 'env', 'then', 'do', 'else', 'if', 'elif', 'while', 'until', '!', '{', '}']);
+const WRAPPERS = new Set(['command', 'builtin', 'exec', 'nohup', 'time', 'nice', 'sudo', 'doas', 'timeout', 'stdbuf', 'setsid', 'env', 'busybox',
+  'caffeinate', 'arch', 'chroot', 'flock', 'xcrun', 'unbuffer', 'then', 'do', 'else', 'if', 'elif', 'while', 'until', '!', '{', '}']);
+// The wrappers that take plain words before the command: chroot's folder, flock's file.
+const WRAPPER_WORDS = { chroot: 1, flock: 1 };
 // The options of a wrapper that take the next word as their value.
 const WRAPPER_VALUES = {
   sudo: ['-u', '-g', '-C', '-h', '-p', '-r', '-t', '-U'], timeout: ['-s', '-k'], exec: ['-a'], env: ['-u', '-C'], nice: ['-n'], stdbuf: ['-i', '-o', '-e'],
 };
-const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
 const RUNNERS = new Set(['xargs', 'parallel', 'watch']);
 const RUNNER_FLAGS = new Set(['-exec', '-execdir', '-ok', '-okdir']);
 const MOVERS = new Set(['cd', 'pushd', 'chdir', 'set-location', 'sl', 'push-location']);
@@ -214,16 +219,22 @@ const PWSH_VALUE_OPTIONS = new Set(['executionpolicy', 'ep', 'workingdirectory',
 
 // The index of a segment's command word: past assignments, options (and the
 // values of a wrapper's options), durations and wrappers such as env, sudo and
-// timeout, and the `function NAME` of a definition. `command -v x`, which only
-// looks a name up, has none. It is seg.length when there is none.
+// timeout (with chroot's folder and flock's file), and the `function NAME` of a
+// definition. `command -v x`, which only looks a name up, has none. It is
+// seg.length when there is none.
 function commandAt(seg, names) {
   let wrapper = null;
+  let words = 0;
   for (let i = 0; i < seg.length; i += 1) {
     if (OPTION.test(seg[i])) {
       if (wrapper !== null && (WRAPPER_VALUES[wrapper] ?? []).includes(seg[i])) i += 1;
       continue;
     }
     if (ASSIGNMENT.test(seg[i]) || DURATION.test(seg[i])) continue;
+    if (words > 0) {
+      words -= 1;
+      continue;
+    }
     if (names[i] === 'function') {
       i += 1; // and the function's name
       continue;
@@ -231,6 +242,7 @@ function commandAt(seg, names) {
     if (WRAPPERS.has(names[i])) {
       if (names[i] === 'command' && /^-[A-Za-z]*[vV]/.test(seg[i + 1] ?? '')) return seg.length;
       wrapper = names[i];
+      words = WRAPPER_WORDS[wrapper] ?? 0;
       continue;
     }
     return i;
@@ -238,29 +250,60 @@ function commandAt(seg, names) {
   return seg.length;
 }
 
-// A file name that reads the command's input, as a pipe into a shell does.
+// A file name that reads the command's input, as a pipe into a shell does, and
+// the folders that hold devices and the system's own files (`/dev/./stdin`).
 const INPUT_FILE = /^(-|\/dev\/stdin|\/dev\/fd\/\d+|\/proc\/self\/fd\/\d+)$/;
+const DEVICES = /^\/(dev|proc)(\/|$)/;
 
 // Whether a script that a shell, `source` or a path runs stops the command. The
 // file is never opened: only the command line and whether anything is at the
-// path are looked at. It is refused when another word of the command has the
-// same last part (`named`: the command writes, copies, downloads or chmods it),
-// when it reads the command's input, or when its name is empty or made at run
-// time. It is also refused when it is in none of the folders the command might
-// be in (it can only come into being during the command), or is relative and
-// the folder can't be told; a command word run by its path is held to that only
-// when it starts with ./, ../ or / (or a drive on Windows), since a line such as
-// `scripts/x.js: tidy` in a commit body reads as a command too.
+// path are looked at. It is refused when another word of the command names it
+// (`named`), when it reads the command's input or lies in /dev or /proc, or when
+// its name is empty or made at run time. It is also refused when it is in none
+// of the folders the command might be in (it can only come into being during
+// the command). A relative one is not held to that after a cd to a folder that
+// can't be told, and a command word run by its path only when it starts with
+// ./, ../ or / (or a drive on Windows), since a line such as `scripts/x.js: tidy`
+// in a commit body reads as a command too.
 function scriptRefused(file, ctx, named, byPath = false) {
   let name = expandHome(file, ctx.home, ctx.windows);
-  if (named || INPUT_FILE.test(name) || name === '' || /[$`]/.test(name)) return true;
-  if (byPath && !/^\.{0,2}[\\/]/.test(file) && !(ctx.windows && /^[A-Za-z]:[\\/]/.test(file))) return false;
-  if (name.startsWith('~')) return true;
+  if (named || name === '' || /[$`]/.test(name)) return true;
   if (ctx.windows && /^\/[A-Za-z]\//.test(name)) name = `${name[1].toUpperCase()}:${name.slice(2)}`;
   const absolute = path.isAbsolute(name) || /^[A-Za-z]:[\\/]/.test(name);
-  if (!absolute && ctx.dirs === null) return true;
-  return !(absolute ? [name] : ctx.dirs.map((d) => path.resolve(d, name))).some((c) => fs.existsSync(c));
+  const candidates = absolute ? [path.resolve(name)] : (ctx.dirs ?? []).map((d) => path.resolve(d, name));
+  if (INPUT_FILE.test(name) || [path.posix.normalize(name), ...candidates].some((c) => DEVICES.test(c))) return true;
+  if (byPath && !/^\.{0,2}[\\/]/.test(file) && !(ctx.windows && /^[A-Za-z]:[\\/]/.test(file))) return false;
+  if (name.startsWith('~')) return true;
+  if (!absolute && ctx.dirs === null) return false;
+  return !candidates.some((c) => fs.existsSync(c));
 }
+
+// The index of a POSIX shell's script word, past its options and their values, or -1.
+function shellScriptAt(seg, k) {
+  for (let j = k + 1; j < seg.length; j += 1) {
+    if (SHELL_VALUES.has(seg[j])) j += 1;
+    else if (!OPTION.test(seg[j]) && !seg[j].startsWith('+')) return j;
+  }
+  return -1;
+}
+
+const PWSH_COMMAND = /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i;
+
+// The index of PowerShell's script word, -File's value or its first plain word
+// (seg.length when -File is last), or -1 when it has none or runs a -Command.
+function pwshScriptAt(seg, k, windows) {
+  if (seg.slice(k + 1).some((w) => PWSH_COMMAND.test(w) || encodedFlag(w, windows))) return -1;
+  for (let j = k + 1; j < seg.length; j += 1) {
+    if (/^-(file|f)$/i.test(seg[j])) return j + 1;
+    if (!OPTION.test(seg[j])) return j;
+    if (PWSH_VALUE_OPTIONS.has(seg[j].replace(/^(--?|\/)/, '').toLowerCase())) j += 1;
+  }
+  return -1;
+}
+
+// PowerShell's common parameters that take a value, which iex may carry.
+const COMMON_VALUES = new Set(['erroraction', 'ea', 'warningaction', 'wa', 'informationaction', 'infa', 'errorvariable', 'ev', 'warningvariable', 'wv',
+  'informationvariable', 'iv', 'outvariable', 'ov', 'outbuffer', 'ob', 'pipelinevariable', 'pv']);
 
 // The folders a command might be in after a cd, pushd or Set-Location: the ones
 // it was in, and the target in each where that is a folder. A shell that stays
@@ -299,77 +342,32 @@ function bashRefused(command, ctx, depth = 0) {
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
   const again = (text) => bashRefused(text, inContext(dirs), depth + 1);
   const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
-  const counts = new Map();
-  for (const w of segs.flat()) counts.set(fold(lastPart(w)), (counts.get(fold(lastPart(w))) ?? 0) + 1);
-  const commandRefused = (seg) => {
-    const segNames = seg.map(nameOf);
-    const k = commandAt(seg, segNames);
-    if (k >= seg.length) return false;
-    const name = segNames[k];
-    const lname = name.toLowerCase();
-    const args = seg.slice(k + 1);
-    // Code made at run time: an empty word, or an unquoted $( that leaves a lone $.
-    if (seg[k] === '' || seg[k].endsWith('$')) return true;
-    const script = (file, byPath) => scriptRefused(file, inContext(dirs), (counts.get(fold(lastPart(file))) ?? 0) > 1, byPath);
-    // A runner starts the command in its words: a shell named there, `{}` as the
-    // command, or a script named by its path is held as a command word would be.
-    // A parallel with no command (before any :::) reads its commands from its input.
-    const runner = RUNNERS.has(name) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
-    if (runner >= 0) {
-      if (segNames.slice(runner + 1).some((n) => SHELLS.has(n))) return true;
-      if (RUNNER_FLAGS.has(seg[runner]) && seg[runner + 1] === '{}') return true;
-      const started = seg.slice(runner + 1).find((w) => /[\\/]/.test(w));
-      if (started !== undefined && script(started, true)) return true;
-      if (name === 'parallel' && runner === k) {
-        const end = args.findIndex((w) => /^:::/.test(w));
-        if (!(end < 0 ? args : args.slice(0, end)).some((w) => !OPTION.test(w) && !DURATION.test(w))) return true;
-      }
+  // The words of a command that are scripts it runs, as [index, run by its path].
+  const scriptsRun = (seg, names, k) => {
+    const found = [];
+    const runner = RUNNERS.has(names[k]) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
+    const started = runner < 0 ? -1 : seg.findIndex((w, j) => j > runner && /[\\/]/.test(w));
+    if (started >= 0) found.push([started, true]);
+    let j = -1;
+    if (POSIX_SHELLS.has(names[k])) {
+      if (!seg.slice(k + 1).some((w) => SHELL_FLAG.test(w))) j = shellScriptAt(seg, k);
+    } else if (PWSH.has(names[k])) {
+      j = pwshScriptAt(seg, k, windows);
+    } else if (names[k] === 'cmd') {
+      const c = seg.findIndex((w, i) => i > k && /^\/[ck]$/i.test(w));
+      if (c >= 0 && /\.(bat|cmd)$/i.test(seg[c + 1] ?? '')) j = c + 1;
+    } else if (names[k] === 'source' || seg[k] === '.') {
+      j = k + 1;
+    } else if (/[\\/]/.test(seg[k])) {
+      found.push([k, true]);
     }
-    if (POSIX_SHELLS.has(name)) {
-      const flag = args.findIndex((w) => SHELL_FLAG.test(w));
-      if (flag >= 0) {
-        if (flag === args.length - 1) return true;
-      } else {
-        const file = args.find((w) => !OPTION.test(w));
-        if (args.includes('-') || args.includes('-s') || file === undefined || script(file)) return true;
-      }
-    } else if (PWSH.has(name)) {
-      if (args.length === 0 || args.includes('-')) return true;
-      const f = args.findIndex((w) => /^-(file|f)$/i.test(w));
-      const commanded = args.some((w) => /^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(w) || encodedFlag(w, windows));
-      if (f >= 0) {
-        if (f === args.length - 1 || script(args[f + 1])) return true;
-      } else if (!commanded) {
-        // PowerShell takes its first plain word for -File.
-        for (let j = 0; j < args.length; j += 1) {
-          if (OPTION.test(args[j])) {
-            if (PWSH_VALUE_OPTIONS.has(args[j].replace(/^(--?|\/)/, '').toLowerCase())) j += 1;
-          } else {
-            if (script(args[j])) return true;
-            break;
-          }
-        }
-      }
-    } else if (lname === 'iex' || lname === 'invoke-expression') {
-      if (args.length === 0 || args.some((w) => !OPTION.test(w) && again(w))) return true;
-    } else if (name === 'cmd') {
-      if (args.length === 0) return true;
-      const c = args.findIndex((w) => /^\/[ck]$/i.test(w));
-      if (c >= 0 && /\.(bat|cmd)$/i.test(args[c + 1] ?? '') && script(args[c + 1])) return true;
-    } else if (name === 'eval') {
-      if (args.every((w) => w === '')) return true;
-    } else if (name === 'source' || seg[k] === '.') {
-      // With no file, it reads a redirect or a process substitution.
-      if (args.length === 0 || script(args[0])) return true;
-    } else if (MOVERS.has(lname)) {
-      dirs = movedDirs(dirs, args.find((w) => !OPTION.test(w)), ctx);
-    } else if (/[\\/]/.test(seg[k]) && script(seg[k], true)) {
-      return true;
-    }
-    return false;
+    if (j >= 0 && j < seg.length) found.push([j, false]);
+    return found;
   };
   // A redirect's first word is its file. The words after it are held both as a
-  // command of their own and as part of the command before it.
+  // command of their own and as part of the command before it. Each word is
+  // kept with its place, so a script is named only by another word.
+  const checks = [];
   let pending = null;
   for (const [index, seg] of segs.entries()) {
     const names = seg.map(nameOf);
@@ -399,15 +397,85 @@ function bashRefused(command, ctx, depth = 0) {
         }
       }
     }
+    const places = seg.map((_, i) => `${index} ${i}`);
     if (operators[index] !== '<' && operators[index] !== '>') {
-      if (pending !== null && commandRefused(pending)) return true;
-      pending = [...seg];
+      pending = { words: [...seg], places };
+      checks.push(pending);
     } else {
-      if (commandRefused(seg.slice(1))) return true;
-      pending = [...(pending ?? []), ...seg.slice(1)];
+      checks.push({ words: seg.slice(1), places: places.slice(1) });
+      if (pending === null) checks.push(pending = { words: [], places: [] });
+      pending.words.push(...seg.slice(1));
+      pending.places.push(...places.slice(1));
     }
   }
-  return pending !== null && commandRefused(pending);
+  // A script is named when a word elsewhere has its last part, leaving out the
+  // scripts the command runs and the words of a test (`test`, `[`, `[[`).
+  const unnamed = new Set();
+  for (const { words, places } of checks) {
+    const names = words.map(nameOf);
+    const k = commandAt(words, names);
+    if (k >= words.length) continue;
+    if (['test', '[', '[['].includes(names[k])) places.forEach((p) => unnamed.add(p));
+    for (const [j] of scriptsRun(words, names, k)) unnamed.add(places[j]);
+  }
+  const counts = new Map();
+  for (const [index, seg] of segs.entries()) {
+    for (const [i, w] of seg.entries()) {
+      if (!unnamed.has(`${index} ${i}`)) counts.set(fold(lastPart(w)), (counts.get(fold(lastPart(w))) ?? 0) + 1);
+    }
+  }
+  const commandRefused = (seg) => {
+    const segNames = seg.map(nameOf);
+    const k = commandAt(seg, segNames);
+    // sudo -s and sudo -i with no command start a shell that reads the input.
+    if (k >= seg.length) return segNames.some((n, i) => ['sudo', 'doas'].includes(n) && seg.slice(i + 1).some((w) => ['-s', '-i', '--shell', '--login'].includes(w)));
+    const name = segNames[k];
+    const lname = name.toLowerCase();
+    const args = seg.slice(k + 1);
+    // Code made at run time: an empty word, or an unquoted $( that leaves a lone $.
+    if (seg[k] === '' || seg[k].endsWith('$')) return true;
+    // A runner starts the command in its words: a shell named there, or `{}` as
+    // the command. A parallel with no command (before any :::) reads its commands
+    // from its input.
+    const runner = RUNNERS.has(name) ? k : seg.findIndex((w) => RUNNER_FLAGS.has(w));
+    if (runner >= 0) {
+      if (segNames.slice(runner + 1).some((n) => SHELLS.has(n))) return true;
+      if (RUNNER_FLAGS.has(seg[runner]) && seg[runner + 1] === '{}') return true;
+      if (name === 'parallel' && runner === k) {
+        const end = args.findIndex((w) => /^:::/.test(w));
+        if (!(end < 0 ? args : args.slice(0, end)).some((w) => !OPTION.test(w) && !DURATION.test(w))) return true;
+      }
+    }
+    if (POSIX_SHELLS.has(name)) {
+      const flag = args.findIndex((w) => SHELL_FLAG.test(w));
+      if (flag >= 0 ? flag === args.length - 1 : args.includes('-') || args.includes('-s') || shellScriptAt(seg, k) < 0) return true;
+    } else if (PWSH.has(name)) {
+      // With only options, PowerShell reads its commands from its input.
+      const j = pwshScriptAt(seg, k, windows);
+      const commanded = args.some((w) => PWSH_COMMAND.test(w) || encodedFlag(w, windows));
+      if (args.includes('-') || (!commanded && (j < 0 || j >= seg.length))) return true;
+    } else if (lname === 'iex' || lname === 'invoke-expression') {
+      // With only options it runs its input.
+      const plain = [];
+      for (let j = 0; j < args.length; j += 1) {
+        if (!OPTION.test(args[j])) plain.push(args[j]);
+        else if (COMMON_VALUES.has(args[j].replace(/^(--?|\/)/, '').toLowerCase())) j += 1;
+      }
+      if (plain.length === 0 || plain.some((w) => again(w))) return true;
+    } else if (name === 'cmd') {
+      if (args.length === 0) return true;
+    } else if (name === 'eval') {
+      if (args.every((w) => w === '')) return true;
+    } else if (name === 'source' || seg[k] === '.') {
+      // With no file, it reads a redirect or a process substitution.
+      if (args.length === 0) return true;
+    } else if (MOVERS.has(lname)) {
+      dirs = movedDirs(dirs, args.find((w) => !OPTION.test(w)), ctx);
+    }
+    const named = (file) => (counts.get(fold(lastPart(file))) ?? 0) > 0;
+    return scriptsRun(seg, segNames, k).some(([j, byPath]) => scriptRefused(seg[j], inContext(dirs), named(seg[j]), byPath));
+  };
+  return checks.some(({ words }) => commandRefused(words));
 }
 
 // The servers the project allows, or null when the configuration cannot be read.

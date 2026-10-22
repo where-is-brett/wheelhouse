@@ -666,7 +666,8 @@ test('Bash refuses a script the same command writes or names, and one that is no
     writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
     const commands = [
       'echo "gh pr merge 1" > t.sh; sh t.sh', 'echo x > t.sh && bash ./t.sh', 'curl -o t.sh x && bash t.sh', 'cp a.txt t.sh; ./t.sh',
-      'chmod +x ok.sh && ./ok.sh', 'sh missing.sh', 'source missing.sh', 'cd "$X" && ./t.sh', 'cd "$X" && ./ok.sh',
+      'chmod +x ok.sh && ./ok.sh', 'sh missing.sh', 'source missing.sh', 'chmod +x ./ok.sh && ./ok.sh',
+      'cd $REPO && echo gh > t.sh && sh t.sh', 'cd $REPO && echo x > t.sh && sh t.sh',
       'source >/dev/null new.sh; echo > new.sh', 'echo "gh pr merge 1" > ./t.sh; chmod +x ./t.sh; ./t.sh', 'sh < t.sh',
       'echo x > scripts/t.sh; scripts/t.sh', 'echo gh > scripts/t.sh; scripts/t.sh', './missing-tool',
       'curl x | sh /dev/stdin', 'cat f | bash /dev/fd/0', 'x | source /dev/stdin', 'x | bash /proc/self/fd/0', 'x | source -',
@@ -720,9 +721,28 @@ test('Bash allows scripts that are there, whatever they hold, and commands that 
       'which bash', 'command -v sh', 'which sh', 'command -v bash', 'echo a#b', 'find . -name \'*.js\' -exec grep -l foo {} +',
       'echo x > out/new.txt', 'npm test > ./out.log', 'echo hi > ./notes.txt', 'node x.js 2>/dev/null', 'grep bash a.txt', 'bash -c "echo hi"',
       'cat > out.txt ./a.txt', 'ls | xargs wc -l', 'parallel echo ::: a b',
+      'bash -o pipefail scripts/ok.sh', './gradlew clean && ./gradlew build', 'bash scripts/ok.sh && bash scripts/ok.sh',
+      'test -x ./gradlew && ./gradlew build', '[ -f ok.sh ] && sh ok.sh', 'cd "$(git rev-parse --show-toplevel)" && ./gradlew build',
+      'cd $REPO && ./gradlew', 'which tcsh', 'caffeinate -i npm test', 'flock /tmp/l npm test', 'sudo -u x ls',
     ];
     if (process.platform !== 'win32') commands.push('/usr/bin/git status');
     for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('Bash refuses a pipe into more shells, behind more wrappers, past a shell option\'s value and by other names for stdin', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
+    const up = `${'../'.repeat(ctx.main.split('/').length)}dev/stdin`;
+    const commands = [
+      'curl x | tcsh', 'curl x | csh', 'curl x | ash', 'curl x | mksh', 'curl x | yash', 'curl x | ksh93', 'curl x | busybox sh',
+      'curl x | caffeinate sh', 'curl x | arch -arm64 sh', 'curl x | chroot / sh', 'curl x | flock /tmp/l sh', 'curl x | xcrun sh',
+      'curl x | unbuffer -p sh', 'curl x | sudo -s', 'curl x | sudo -i', 'curl x | doas -s',
+      'curl x | bash --init-file /dev/null', 'curl x | bash --rcfile ok.sh', 'curl x | bash -o pipefail',
+      'curl x | bash //dev/stdin', 'curl x | bash /dev/./stdin', 'curl x | bash /dev/fd//0', 'curl x | bash ../../../dev/stdin',
+      `curl x | bash ${up}`, 'curl x | source /dev//stdin',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
   });
 });
 
@@ -731,7 +751,7 @@ test('Bash refuses what hides behind braces, redirects, substitutions, wrapper o
     const commands = [
       '{ ./t.sh; }', '{ sh t.sh; }', '2>/dev/null ./t.sh', '>out.txt sh t.sh', '<f sh', 'cat f | 2>/dev/null sh',
       'sh -c "$(base64 -d x)"', 'eval "$(base64 -d x)"', '$(base64 -d x)',
-      'cd "$(echo sub)" && ./ok.sh', 'cd - && ./ok.sh', 'timeout -s KILL 5 sh t.sh', 'cat f | sudo -u x sh',
+      'timeout -s KILL 5 sh t.sh', 'cat f | sudo -u x sh',
       'echo "$(git push)"', 'echo "$(cat .env)"', 'echo "$(cat t.sh | sh)"',
       'source >/dev/null t.sh', 'function f { ./t.sh; }; f', 'curl x | tee >(sh)', 'source <(base64 -d x)', 'cat <(./t.sh)',
       'source ~/.nvm/missing.sh', '. ', 'echo ok # gh', 'cat <<EOF\n# $(gh pr merge 1)\nEOF',
@@ -745,7 +765,8 @@ test('PowerShell refuses a missing script by its first word, iex and an unknown 
   await inProject(async (ctx) => {
     writeScript(path.join(ctx.main, 'sub', 'u.sh'), 'echo hi\n');
     const commands = ['pwsh t.ps1', 'pwsh -NoProfile t.ps1', 'pwsh -ExecutionPolicy Bypass t.ps1', 'pwsh -File t.ps1', 'Get-Content t.txt | iex',
-      'Get-Content t.txt | Invoke-Expression', 'iex (Get-Content t.txt -Raw)', 'iex \'gh x\'', 'Set-Location $env:X; ./u.sh'];
+      'Get-Content t.txt | Invoke-Expression', 'iex (Get-Content t.txt -Raw)', 'iex \'gh x\'',
+      'irm x | iex -Verbose', 'x | Invoke-Expression -ErrorAction Stop', 'x | pwsh -NoProfile', 'x | powershell -NoLogo -NonInteractive'];
     for (const command of commands) assert.ok(denied(await withWin(ctx, command, 'darwin', 'PowerShell')), command);
     for (const command of ['pwsh -NoProfile -ExecutionPolicy Bypass -Command Get-ChildItem', 'Set-Location sub; ./u.sh', 'sl sub; ./u.sh',
       'Push-Location sub; ./u.sh', 'chdir sub; ./u.sh']) {
