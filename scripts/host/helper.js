@@ -388,6 +388,9 @@ function isPartialClone(dir) {
   return configs.some((text) => /promisor|partialclone|\[\s*include/i.test(text));
 }
 
+// A repository's git settings that the look refused (or could not read): its text is the route's refusal.
+export class LookRefusal extends Error {}
+
 export const PUSH_REFUSALS = {
   plain: 'only a plain branch name may be pushed',
   force: 'a force-push is refused',
@@ -913,14 +916,26 @@ export async function startHelper({
   // repository not made yet has no config to hold anything).
   async function lookOnce(ctx, dir, marker = null) {
     if (marker !== null && !fs.existsSync(path.join(dir, marker))) return;
-    const looked = ctx.looked ?? new Map();
+    const { looked } = ctx;
+    if (!(looked instanceof Map)) throw new Error('the request has no record of the repositories it has looked at');
     let key = path.resolve(dir);
     try { key = fs.realpathSync.native(dir); } catch { /* the look says what is wrong */ }
-    if (!looked.has(key)) looked.set(key, refuseUnlistedSettings({ run, cwd: dir }));
+    if (!looked.has(key)) looked.set(key, refuseUnlistedSettings({ run, cwd: dir }).catch((error) => {
+      throw new LookRefusal(error instanceof Error ? error.message : 'the repository\'s git settings could not be read');
+    }));
     await looked.get(key);
   }
   const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git');
   const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD');
+  // Whether the mirror's look refused in this request: then nothing more runs git there.
+  async function mirrorRefused(ctx, project) {
+    try {
+      await lookAtMirror(ctx, project);
+      return false;
+    } catch {
+      return true;
+    }
+  }
   const lookAtLock = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'lock'), '.git');
 
   // The lock clone is used by pushes and merges alike: one git call at a time.
@@ -962,8 +977,9 @@ export async function startHelper({
   // The default branch's copy (BASE_REF) stays, so the next fetch asks only for what is new;
   // the refs made per request (incoming, each pull request's head, any other) are dropped
   // after each push and merge. Called inside the project's mirror queue.
-  async function dropRequestRefs(project) {
+  async function dropRequestRefs(project, ctx) {
     try {
+      if (await mirrorRefused(ctx, project)) return;
       const mirror = path.join(stateDir(project), '..', 'mirror.git');
       if (!fs.existsSync(path.join(mirror, 'HEAD'))) return;
       const listed = await unkeyed('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror });
@@ -975,9 +991,10 @@ export async function startHelper({
 
   // git tidies the objects itself when enough have built up. It runs after the answer is
   // written, queued behind it on the same key, so the next request waits for it.
-  function tidyAfterAnswer(project) {
+  function tidyAfterAnswer(project, ctx) {
     oneAtATime(`mirror:${project}`, async () => {
       try {
+        if (await mirrorRefused(ctx, project)) return;
         const mirror = path.join(stateDir(project), '..', 'mirror.git');
         if (!fs.existsSync(path.join(mirror, 'HEAD'))) return;
         await unkeyed('git', ['-c', 'gc.autoDetach=false', 'gc', '--auto', '--quiet'], { cwd: mirror });
@@ -1007,8 +1024,8 @@ export async function startHelper({
       try {
         return await pushToHost(args, ctx);
       } finally {
-        await dropRequestRefs(args.project);
-        tidyAfterAnswer(args.project);
+        await dropRequestRefs(args.project, ctx);
+        tidyAfterAnswer(args.project, ctx);
       }
     });
   }
@@ -1168,8 +1185,8 @@ export async function startHelper({
     try {
       return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch, ctx })));
     } finally {
-      await oneAtATime(`mirror:${project}`, () => dropRequestRefs(project));
-      tidyAfterAnswer(project);
+      await oneAtATime(`mirror:${project}`, () => dropRequestRefs(project, ctx));
+      tidyAfterAnswer(project, ctx);
     }
   }
 
@@ -2023,8 +2040,8 @@ export async function startHelper({
       return await mergeAnswer(body, ctx);
     } finally {
       if (typeof body?.project === 'string') {
-        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
-        tidyAfterAnswer(body.project);
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project, ctx));
+        tidyAfterAnswer(body.project, ctx);
       }
     }
   }
@@ -2032,6 +2049,7 @@ export async function startHelper({
   // Pulls the project's state clone, and pushes what it holds that the host lacks, as /state/sync
   // does. Whether the pull went through.
   async function stateFresh(project, ctx) {
+    await lookAtState(ctx, project); // a refusal ends the request, never a quiet "not fresh"
     try {
       return await oneAtATime(`state:${project}`, async () => (
         (await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })).pulled === true
@@ -2044,6 +2062,9 @@ export async function startHelper({
   async function mergeAnswer(body, ctx) {
     const { project, number } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    // The state clone and the mirror are looked at before any git runs in either; a refusal answers here.
+    await lookAtState(ctx, project);
+    await lookAtMirror(ctx, project);
     const adapter = await ctx.adapter();
     const pr = await adapter.prState(number);
     if (pr?.state !== 'open') {
@@ -2056,7 +2077,8 @@ export async function startHelper({
     let restoreCheck = { matched: false };
     try {
       restoreCheck = await isRestoreMerge({ project, number, pr }, ctx);
-    } catch {
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
       restoreCheck = { matched: RESTORE_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : ''), ok: false, why: 'it could not be checked' };
     }
     const restore = restoreCheck.ok === true;
@@ -2070,7 +2092,8 @@ export async function startHelper({
       const defaultBranch = await defaultBranchOf(project, adapter);
       changes = await readChanges({ project, number, headSha, defaultBranch }, ctx);
       classified = classifyChange({ paths: changes.paths, config: changes.config });
-    } catch {
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
       readable = false;
     }
     // A pins-only Wheelhouse release needs the review but not the director's approval: it lowers
@@ -2079,7 +2102,8 @@ export async function startHelper({
     if (readable && !restore) {
       try {
         releaseCheck = await isPinsOnlyRelease({ pr, changes }, ctx);
-      } catch {
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
         releaseCheck = { matched: true, ok: false, why: 'it could not be checked' };
       }
     }
@@ -2366,7 +2390,8 @@ export async function startHelper({
         const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
         const changes = await readChanges({ project, number, headSha: pr.headSha, defaultBranch }, ctx);
         ci = touchesCi(changes.paths, changes.config);
-      } catch {
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
         ci = true; // unreadable: counted as a CI change
       }
     }
@@ -2675,15 +2700,15 @@ export async function startHelper({
       try {
         return await doTestMerge(body, ctx);
       } finally {
-        tidyAfterAnswer(body.project);
+        tidyAfterAnswer(body.project, ctx);
       }
     },
     '/pr/update-branch': (body, ctx) => oneAtATime(`merge:${body.project}`, async () => {
       try {
         return await doUpdateBranch(body, ctx);
       } finally {
-        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
-        tidyAfterAnswer(body.project);
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project, ctx));
+        tidyAfterAnswer(body.project, ctx);
       }
     }),
     // Read-only, so STOP lets it through.
@@ -2691,8 +2716,8 @@ export async function startHelper({
       try {
         return await doCarried(body, ctx);
       } finally {
-        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project));
-        tidyAfterAnswer(body.project);
+        await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project, ctx));
+        tidyAfterAnswer(body.project, ctx);
       }
     },
     // Read-only, so STOP lets it through.
@@ -2702,7 +2727,7 @@ export async function startHelper({
       try {
         return await doConfig(body, ctx);
       } finally {
-        tidyAfterAnswer(body.project);
+        tidyAfterAnswer(body.project, ctx);
       }
     },
     // The block a pull request from this session would be stamped with (ruling R147), for its

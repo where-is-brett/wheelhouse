@@ -1265,3 +1265,43 @@ test('only the copy into the mirror may reach a local path', async () => {
     });
   } finally { p.cleanup(); }
 });
+
+test('after a refused look, no more git runs in that repository: the mirror\'s tidy-up and the state clone\'s sync stay away', async () => {
+  const p = await project();
+  const dir = await folderWith();
+  const calls = [];
+  try {
+    await as(p.home, async () => {
+      writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      const mirror = path.join(stateDir('o__p'), '..', 'mirror.git');
+      const adapter = fakeAdapter();
+      await withHelper(adapter, async (client) => {
+        assert.equal((await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'makes the mirror' } })).pushed, true);
+        // A refused push in the mirror: the leftover per-request ref stays, and only the look ran there.
+        await run('git', ['update-ref', 'refs/wheelhouse/leftover', 'HEAD'], { cwd: mirror }).catch(() => {});
+        const head = await g(stateDir('o__p'), 'rev-parse', 'HEAD');
+        await run('git', ['update-ref', 'refs/wheelhouse/leftover', head], { cwd: mirror });
+        await run('git', ['config', 'core.fsmonitor', 'true'], { cwd: mirror });
+        calls.length = 0;
+        const refused = await client.push({ project: 'o__p', dir, refspec: 'feature' });
+        assert.equal(refused.ok, false);
+        assert.match(refused.refused, /core\.fsmonitor/);
+        assert.match(await run('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror }).then((r) => r.stdout), /refs\/wheelhouse\/leftover/);
+        const inMirror = calls.filter((c) => c.cwd && fs.realpathSync.native(c.cwd) === fs.realpathSync.native(mirror));
+        assert.ok(inMirror.length > 0 && lookCalls(inMirror).length === inMirror.length, inMirror.map((c) => c.args.join(' ')).join(' | '));
+        await run('git', ['config', '--unset-all', 'core.fsmonitor'], { cwd: mirror });
+
+        // A merge with a planted key in the state clone: refused with the line, and no sync ran there.
+        const stateGitDir = path.join(stateDir('o__p'), '.git');
+        await g(stateDir('o__p'), 'config', 'core.fsmonitor', 'true');
+        fs.rmSync(path.join(stateGitDir, 'FETCH_HEAD'), { force: true });
+        reviewAndApproval();
+        const merged = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(merged.ok, false);
+        assert.match(merged.refused, /core\.fsmonitor/);
+        assert.deepEqual(adapter.merges, []);
+        assert.equal(fs.existsSync(path.join(stateGitDir, 'FETCH_HEAD')), false, 'no fetch or pull ran in the state clone');
+      }, { run: recorder(calls) });
+    });
+  } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
