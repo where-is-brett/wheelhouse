@@ -8,7 +8,7 @@
 //   - the source of every module file (hooks/register.ts and everything under hooks/mod/) is
 //     read for every member of `$` it touches, so nothing the validator doesn't list slips
 //     past, and for the one `$.process.run` (the bridge's, in hooks/mod/ask.ts) and for where
-//     the pane's origin is named;
+//     the pane's origin is named, and that the drawing kit hands each press only to a Button;
 //   - the bridge's static import graph is followed, so nothing it loads can write Claude
 //     Code's settings.
 import fs from 'node:fs';
@@ -424,7 +424,8 @@ function namedFunctions(code) {
 const PANE_FILES = ['cards.tsx', 'settings.tsx'];
 // A press is passed as a Button's onPress, an Input's onSubmit, a Select's onSelect, or as the last
 // argument of the drawing kit's button functions (hooks/mod/calm.tsx), and only as an arrow that calls it on a click: a press called
-// while drawing, or in any other argument, would send as the pane draws.
+// while drawing, or in any other argument, would send as the pane draws. kitPresses checks the kit
+// hands on what it is given only as a Button's onPress.
 const ARROW = '(?:async\\s*)?\\(\\)\\s*=>\\s*$';
 // A box's Enter hands the arrow the words typed, and a pick hands it the value picked, so an
 // `onSubmit` or `onSelect` arrow takes that one parameter (a plain name, typed string or not) and
@@ -462,6 +463,27 @@ export function paneOrigin(sources) {
     }
   }
   return problems.length === 0 ? { ok: true } : { ok: false, why: [...new Set(problems)].join('; ') };
+}
+
+// kitPresses(sources) -> { ok, why? }: the drawing kit (hooks/mod/calm.tsx) takes each press as a
+// parameter typed `() => …` and only hands it to a Button as `onPress={…}`, so ON_PRESS's trust in
+// its button functions holds: a press the kit called, or passed on any other way, would send as the
+// pane draws.
+const KIT = 'hooks/mod/calm.tsx';
+export function kitPresses(sources) {
+  const problems = [];
+  for (const [file, text] of entriesOf(sources)) {
+    if (file !== KIT) continue;
+    const code = codeOf(text);
+    const names = [...new Set([...code.matchAll(/([A-Za-z_$][\w$]*)\s*:\s*\(\s*\)\s*=>/g)].map((m) => m[1]))];
+    for (const name of names) {
+      const word = name.replaceAll('$', '\\$');
+      const rest = code.replace(new RegExp(`(?<![\\w$])${word}\\s*:\\s*\\(\\s*\\)\\s*=>`, 'g'), '')
+        .replace(new RegExp(`(?<![\\w$])onPress\\s*=\\s*\\{\\s*${word}\\s*\\}`, 'g'), '');
+      if (new RegExp(`(?<![\\w$])${word}(?![\\w$])`).test(rest)) problems.push(`${name} in ${file} is used other than handed to a Button as onPress`);
+    }
+  }
+  return problems.length === 0 ? { ok: true } : { ok: false, why: problems.join('; ') };
 }
 
 const NEVER_REACHED = (file) => file === 'scripts/protection/locked.js' || file.startsWith('scripts/setup/');
@@ -638,7 +660,7 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
     }
     if (/(?<![\w$])\$\s*(?:\?\.)?\s*\[/.test(code)) problems.push(`The mod's source reads a member of $ by a computed name, which the checks can't follow (in ${file})`);
   }
-  for (const check of [bridgeArgv(sources), paneOrigin(sources)]) if (!check.ok) problems.push(check.why);
+  for (const check of [bridgeArgv(sources), paneOrigin(sources), kitPresses(sources)]) if (!check.ok) problems.push(check.why);
   return { hooks, calls, problems };
 }
 

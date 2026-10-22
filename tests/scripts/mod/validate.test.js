@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  checkMod, membersIn, moduleFiles, readMod, bridgeArgv, paneOrigin, bridgeImports,
+  checkMod, membersIn, moduleFiles, readMod, bridgeArgv, paneOrigin, kitPresses, bridgeImports,
   HOOKS, CALLS, FORBIDDEN_HOOKS, FORBIDDEN_CALLS, matchesForbidden,
 } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
@@ -206,6 +206,29 @@ test('a second $.process.run, or one running anything but the bridge, fails', ()
   // checkMod carries the same problem.
   const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, 'hooks/mod/more.ts': `$.process.run(${ARGV})` } });
   assert.match(result.problems.join('\n'), /exactly one/);
+});
+
+test('the drawing kit hands each press to a Button\'s onPress and never calls it while drawing', () => {
+  const kit = (body) => ({ 'hooks/mod/calm.tsx': `export function filled(t: Table, key: string, label: string, onPress: () => unknown) {\n  ${body}\n}` });
+  assert.deepEqual(kitPresses(kit('return <t.Button key={key} label={label} variant="primary" onPress={onPress} />')), { ok: true });
+  assert.deepEqual(kitPresses(repoSources()), { ok: true });
+  assert.deepEqual(kitPresses(SOURCES), { ok: true }, 'no kit, nothing to check');
+  for (const body of [
+    'onPress()\n  return <t.Button key={key} label={label} onPress={onPress} />',
+    'return <t.Button key={key} label={label} onPress={onPress()} />',
+    'return <t.Button key={key} label={label} onPress={() => onPress()} onFocus={onPress} />',
+    'void onPress?.()\n  return null',
+    'const p = onPress\n  return <t.Button key={key} label={label} onPress={p} />',
+  ]) {
+    const got = kitPresses(kit(body));
+    assert.equal(got.ok, false, body);
+    assert.match(got.why, /calm\.tsx/);
+  }
+  // A press by another name is read the same way.
+  assert.equal(kitPresses({ 'hooks/mod/calm.tsx': 'export function stop(t: Table, press: () => unknown) { press(); return null }' }).ok, false);
+  // checkMod carries it.
+  const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, ...kit('onPress()') } });
+  assert.match(result.problems.join('\n'), /calm\.tsx/);
 });
 
 test('the pane origin outside a press handler fails', () => {
