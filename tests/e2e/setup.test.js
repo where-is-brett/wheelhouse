@@ -198,13 +198,14 @@ test('a new product: every step\'s card, its click, and a green board at the end
     for (const { n } of SETUP_STEPS) assert.match((await a.cliTry('plan', String(n))).refused, /is already done/, `step ${n}`);
     assert.deepEqual(await a.act(() => readJournal().runs.map((r) => r.id)), [run.id]);
 
-    // On the host: the product's private repository, setup's one commit of its three files on main,
+    // On the host: the product's private repository, setup's one commit of its three files and the
+    // .gitignore (which had no .env lines) on main,
     // the state branch, the profile with this computer's key, protection on, and the trial pull
     // request closed with its branch gone.
     const product = host.url({ repo: REPO });
     const tip = await g(product, 'rev-parse', 'main');
     assert.equal(await g(product, 'log', '-1', '--format=%s', tip), COMMIT_MESSAGE);
-    assert.deepEqual((await g(product, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip)).split('\n').sort(), [...SETUP_FILES].sort());
+    assert.deepEqual((await g(product, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip)).split('\n').sort(), [...SETUP_FILES, '.gitignore'].sort());
     assert.notEqual(await lsRemote(product, `refs/heads/${STATE_BRANCH}`), '');
     assert.equal(await lsRemote(product, `refs/heads/${HEALTH_BRANCH}`), '');
     assert.ok(host.protected.has(REPO));
@@ -609,7 +610,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     // and in the user settings the director's own retention, kept, with setup's other keys gone, and
     // the `env` setup made for them (ruling R138).
     const folder = 'Projects/Café Menu/';
-    const checkout = (p) => p === `${folder}.git` || p.startsWith(`${folder}.git/`) || ['README.md', 'CLAUDE.md', '.claude/wheelhouse.json', '.claude/settings.json'].includes(p.slice(folder.length));
+    const checkout = (p) => p === `${folder}.git` || p.startsWith(`${folder}.git/`) || ['README.md', 'CLAUDE.md', '.gitignore', '.claude/wheelhouse.json', '.claude/settings.json'].includes(p.slice(folder.length));
     // Anything under Claude Code's plugins folder is Claude Code's own: its record and copies of the
     // kits it installed for the project, which the director removes in Desktop with the plugin.
     const kits = (p) => p === 'claude config/plugins' || p.startsWith('claude config/plugins/');
