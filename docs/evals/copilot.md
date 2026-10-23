@@ -22,7 +22,7 @@ Two choices made in building them:
 
 ## How to run it
 
-On the Mac, with Copilot CLI signed in. The real helper should not be running while it runs.
+On the Mac, with Copilot CLI signed in. There the stand-in helper answers on a socket in the scratch home, so the real helper may keep running; on Windows the stand-in takes the real helper's pipe, so the real helper must not be running.
 
 1. Optionally, sign a Copilot home in for evaluations alone: `COPILOT_HOME=<a new folder> copilot login`, then name it in the shell with `export WHEELHOUSE_EVAL_COPILOT_SIGN_IN=<that folder>`. Without it, the sessions take the sign-in keys from your own Copilot home's `config.json`, and nothing else of it: no session ever runs from `~/.copilot` itself, and nothing is written there.
 2. The four: `npm run eval -- --agent copilot 38 39 40 41 --variant with`.
@@ -42,7 +42,10 @@ Each trial's record is in `~/.wheelhouse-evals/<date>/`, as Claude Code's are, w
 
 ## The safety subset
 
-The version check (`scripts/agents/copilot/versions.js`, ruling P8-20) runs the safety subset before a new Copilot version is used: scenarios 6 and 38 to 41, in their `with` variant, one trial each, as `node scripts/eval/run.js 6 38 39 40 41 --variant with --agent copilot` in a process of its own (`safetySubset` in `adapters/copilot/sessions.js`), so through this runner, with the records in `~/.wheelhouse-evals/` like any other run. It passes only when that command exits 0, which it does only when every one ran and passed; anything else holds Copilot work with one card. It runs only once the background sessions are switched on (`BACKGROUND_SESSIONS_READY`, ruling P8-1), which they are not yet. Until 6 has a Copilot set-up of its own (it uses the front desk's Claude set-up and needs its model named), the subset fails, and a new version holds Copilot work, failing closed.
+The version check (`scripts/agents/copilot/versions.js`, ruling P8-20) runs the safety subset before a new Copilot version is used: scenarios 6 and 38 to 41, in their `with` variant, one trial each, as `node scripts/eval/run.js 6 38 39 40 41 --variant with --agent copilot` in a process of its own (`safetySubset` in `adapters/copilot/sessions.js`), so through this runner, with the records in `~/.wheelhouse-evals/` like any other run. It passes only when that command exits 0 and the run record it names holds a passing `with` trial of each of the five: a scenario the run left out (one marked for another agent, or with no `with` variant) fails it, whatever the exit code; anything else holds Copilot work with one card. It runs only once the background sessions are switched on (`BACKGROUND_SESSIONS_READY`, ruling P8-1), which they are not yet. Two things to settle before the switch goes on:
+
+- **On Windows** the stand-in helper takes the helper's own named pipe, which the real helper holds whenever it runs. The version check runs with the real helper running, so there the scenarios' set-ups can't start and the subset fails closed: a new Copilot version holds Copilot work on Windows until this is changed.
+- **A subset that times out** (two hours) ends only its `node scripts/eval/run.js` process. On macOS the `copilot` sessions that process started are not ended with it, and may run on, up to their own 20 minutes each, spending premium requests. The verdict still fails closed. Until 6 has a Copilot set-up of its own (it uses the front desk's Claude set-up and needs its model named), the subset fails, and a new version holds Copilot work, failing closed.
 
 ## Which scenarios the run covers
 

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TRIALS_AGAIN } from '../lib/measure-numbers.js';
+import { agentOfConfig } from '../agents/names.js';
 
 export const REPO = fileURLToPath(new URL('../../', import.meta.url));
 export const EVAL_ROOT = path.join(REPO, 'tests', 'eval');
@@ -56,6 +57,20 @@ export function coveredScenarios({ dir = E2E_DIR } = {}) {
   return found.map(({ id, test, file }) => ({ id, test, file }));
 }
 
+// The agent a run that names none runs on: the one a project with no agent named runs on.
+export const DEFAULT_AGENT = agentOfConfig(null);
+
+// The agents a scenario file declares it runs on (its module's `agents: ['…']`), read from its text so
+// the file need not be loaded, or null when it declares none (it runs on every agent). run.js checks
+// it against the module whenever it loads one.
+export function declaredAgents(file) {
+  const found = /^\s*agents:\s*\[([^\]]*)\]/m.exec(fs.readFileSync(file, 'utf8'));
+  return found === null ? null : [...found[1].matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1]);
+}
+
+// Whether a scenario declaring `agents` (declaredAgents) runs on `agent`.
+export const runsOnAgent = (agents, agent) => agents === null || agents.includes(agent);
+
 // Every scenario file in the suites under `root`, by number: { number, suite, file }.
 function writtenScenarios(root) {
   const found = [];
@@ -68,7 +83,7 @@ function writtenScenarios(root) {
   for (const suite of suites) {
     for (const name of fs.readdirSync(path.join(root, suite)).sort()) {
       const match = SCENARIO_FILE.exec(name);
-      if (match) found.push({ number: Number(match[1]), suite, file: name });
+      if (match) found.push({ number: Number(match[1]), suite, file: name, agents: declaredAgents(path.join(root, suite, name)) });
     }
   }
   return found;
@@ -228,9 +243,13 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     byId.get(run.id).push(run);
   }
   const rows = [...byId.entries()].map(([id, scenarioRuns]) => rowFor(id, scenarioRuns));
-  // The scenarios that don't run on the run's agent (run.js, `agents`) are no rows of its report.
-  const leftOut = new Set(Array.isArray(record?.leftOut) ? record.leftOut : []);
-  const written = writtenScenarios(root).filter((scenario) => !leftOut.has(scenario.number));
+  // The scenarios that don't run on the run's agent (`agents`) are no rows of its report; those that
+  // name it are among the designed set it must account for.
+  const agent = typeof record?.agent === 'string' ? record.agent : DEFAULT_AGENT;
+  const all = writtenScenarios(root);
+  const written = all.filter((scenario) => runsOnAgent(scenario.agents, agent));
+  const named = typeof record?.agent === 'string' ? all.filter((scenario) => scenario.agents?.includes(agent)).map((scenario) => scenario.number) : [];
+  designed = [...new Set([...designed, ...named])];
   for (const scenario of written) {
     if (!rows.some((row) => row.id === scenario.number)) rows.push(notRun(scenario.number, scenario.file, scenario.suite, 'not in this run'));
   }

@@ -692,16 +692,44 @@ export const SUBSET = Object.freeze([6, 38, 39, 40, 41]);
 const EVAL_COMMAND = path.join(PLUGIN_ROOT, 'scripts', 'eval', 'run.js');
 const SUBSET_MS = 2 * 60 * 60 * 1000;
 
+// The run record the evaluation's command names in its output (`  run record: <file>`), read whole, or null.
+function runRecordOf(stdout) {
+  const named = /^\s*run record: (.+?)\s*$/m.exec(String(stdout ?? ''));
+  if (named === null) return null;
+  try {
+    const record = JSON.parse(fs.readFileSync(named[1], 'utf8'));
+    return record !== null && typeof record === 'object' && !Array.isArray(record) ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether the run record shows the subset passed: a finished run on Copilot holding, for every scenario of SUBSET, at
+// least one `with` trial, every one of them passed and handled. A scenario the run left out (its `agents`, a missing
+// variant), or that didn't finish, fails it, whatever the command's exit code said.
+export function subsetPassed(record) {
+  if (record === null || typeof record !== 'object' || record.agent !== 'copilot' || typeof record.finished !== 'string') return false;
+  const runs = Array.isArray(record.runs) ? record.runs : [];
+  return SUBSET.every((id) => {
+    const trials = runs.filter((r) => r?.id === id && r.variant === 'with' && r.notRun === undefined);
+    return trials.length > 0 && trials.every((r) => r.pass === true && r.handled !== false);
+  });
+}
+
 // The safety subset as shipped (Part 8 Task 3): `npm run eval`'s command run in a process of its own,
 // `node scripts/eval/run.js 6 38 39 40 41 --variant with --agent copilot`, whose sessions go through the Copilot
-// adapter's evaluation runner. It passes only when that command exits 0, which it does only when
-// every trial ran and passed; a throw fails it. Started as a program, never imported, so nothing that loads this part
-// loads the evaluation's code (rulings F102 and the bridge's import checks). It runs only from `prepare`, which
-// refuses while the sessions aren't switched on (ruling P8-1). `run`, `node` and `timeoutMs` are for tests.
+// adapter's evaluation runner. It passes only when the command exits 0 and its run record shows a passing `with`
+// trial of each scenario of SUBSET (subsetPassed); the exit code alone never passes it, and a throw or a time-out fails
+// it. Started as a program, never imported, so nothing that loads this part loads the evaluation's code (rulings F102
+// and the bridge's import checks). It runs only from `prepare`, which refuses while the sessions aren't switched on
+// (ruling P8-1). A time-out ends the `node` process only: off Windows the copilot sessions it started are not ended
+// with it and may run on, up to their own 20 minutes each (scripts/lib/run.js; to settle before the switch goes on).
+// `run`, `node` and `timeoutMs` are for tests.
 export async function safetySubset({ versions = null, run = realRun, node = process.execPath, timeoutMs = SUBSET_MS } = {}) {
   try {
     const result = await run(node, [EVAL_COMMAND, ...SUBSET.map(String), '--variant', 'with', '--agent', 'copilot'], { cwd: PLUGIN_ROOT, input: '', timeoutMs });
-    return { ok: result?.code === 0 && result?.timedOut !== true, versions, code: result?.code ?? null };
+    const ran = result?.code === 0 && result?.timedOut !== true;
+    return { ok: ran && subsetPassed(runRecordOf(result?.stdout)), versions, code: result?.code ?? null };
   } catch {
     return { ok: false, versions, code: null };
   }

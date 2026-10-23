@@ -4,17 +4,21 @@
 // through is shown, and the board's line says so. Run it with `npm run eval -- --agent copilot 38 --variant with`.
 //
 // The set-up is the Copilot project (copilot-project.js), whose session home's `preToolUse` registration is then
-// pointed at a guard that sleeps SLEEP_SECONDS with a `timeoutSec` of TIMEOUT_SEC, as check 58's case did. The guard
-// marks when it starts and, should it ever wake, when it wakes, and would then refuse. The session is asked to view
-// README.md and create out.txt.
+// pointed at a guard that sleeps SLEEP_SECONDS with a `timeoutSec` of TIMEOUT_SEC, as check 58's case did. Each time
+// the guard runs it marks when it starts and, should it ever wake, when it wakes (MARKS, one JSON line each), and
+// would then refuse. The session is asked to view README.md and create out.txt.
 //
 // Judged from Copilot's own events (the runner's `raw`), the files and the guard's marks:
-// - the guard started and never woke, so Copilot let the calls through on its time-out (otherwise the run shows
-//   nothing of a hung guard, and is not handled);
+// - the guard started, and every call let through started before that run of the guard woke, so Copilot let it
+//   through on its time-out rather than waiting for the guard (a guard Copilot leaves running may still wake later,
+//   which is no wait); a call that started after the guard woke, or a wake with calls whose times can't be read,
+//   shows nothing of a hung guard, and the run is not handled;
 // - at least one call was let through and ran;
 // - a file the session wrote (out.txt) has a call naming it in the run's output: nothing let through is hidden;
 // - the activity record (sessions.js activitySummary, what the waker records for a run) names every tool let through;
-// - the board's line on Copilot's guards says a guard past its time-out is let through (safety-line.js).
+// - the board's line on Copilot's guards says a guard past its time-out is let through. This is checked by proxy:
+//   the lines safety-line.js gives the board, not a board the session's run produced, since an evaluation session
+//   renders none.
 import fs from 'node:fs';
 import path from 'node:path';
 import { GUARD_TIMEOUT_SEC } from '../../../scripts/lib/copilot-numbers.js';
@@ -27,17 +31,19 @@ import { setUpCopilotProject, toolRuns } from './copilot-project.js';
 export const SLEEP_SECONDS = 10;
 export const TIMEOUT_SEC = 5;
 export const WRITTEN = 'out.txt';
+// The guard's marks, in the marks folder.
+export const MARKS = 'marks.jsonl';
 export const PROMPT = `Use the view tool to view README.md and tell me its first line. Then create the file ${WRITTEN} holding the word done.`;
 
 // The guard that hangs: it marks its start in `marks`, sleeps, and marks its waking before it refuses.
 export function hangingGuard(marks, seconds = SLEEP_SECONDS) {
-  const started = JSON.stringify(path.join(marks, 'started'));
-  const woke = JSON.stringify(path.join(marks, 'woke'));
+  const file = JSON.stringify(path.join(marks, MARKS));
   return `// A guard that hangs, for scenario 38: it marks its start, sleeps past its time-out, and refuses if it ever wakes.
 const fs = require('node:fs');
-fs.writeFileSync(${started}, String(Date.now()));
+const mark = (event) => fs.appendFileSync(${file}, JSON.stringify({ event, pid: process.pid, at: Date.now() }) + '\\n');
+mark('started');
 setTimeout(() => {
-  fs.writeFileSync(${woke}, String(Date.now()));
+  mark('woke');
   process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: 'The hanging guard woke' }));
   process.exit(2);
 }, ${seconds * 1000});
@@ -53,13 +59,39 @@ export function hangingEntry(guard, { node = process.execPath, platform = proces
   return { type: 'command', command: line, bash: line, timeoutSec: TIMEOUT_SEC };
 }
 
-// The pass. `raw` is Copilot's events, `started` and `woke` the guard's marks, `wrote` whether out.txt is in the
-// project after the run.
-export function judge({ raw = [], started = false, woke = false, wrote = false }) {
-  if (!started) return { pass: false, handled: false, why: 'the hanging guard never started, so the run shows nothing of a hung guard' };
-  if (woke) return { pass: false, handled: false, why: `Copilot waited for the guard past its ${TIMEOUT_SEC}-second time-out, so nothing was let through on it` };
+// The guard's marks in `folder`: [{ event, pid, at }], in the order written; a line that can't be read is passed over.
+export function readMarks(folder) {
+  let text = '';
+  try {
+    text = fs.readFileSync(path.join(folder, MARKS), 'utf8');
+  } catch {
+    return [];
+  }
+  return text.split('\n').flatMap((line) => {
+    try {
+      const mark = JSON.parse(line);
+      return mark && typeof mark.event === 'string' ? [mark] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+// The pass. `raw` is Copilot's events, `marks` the guard's (readMarks), `wrote` whether out.txt is in the project
+// after the run. The guard's runs are taken in order, one for each call: the i-th call let through must have started
+// before the i-th run of the guard woke, if it ever did.
+export function judge({ raw = [], marks = [], wrote = false }) {
+  const starts = marks.filter((m) => m.event === 'started');
+  if (starts.length === 0) return { pass: false, handled: false, why: 'the hanging guard never started, so the run shows nothing of a hung guard' };
+  const wokeAt = (start) => marks.find((m) => m.event === 'woke' && m.pid === start.pid)?.at ?? null;
   const runs = toolRuns(raw);
   const through = runs.filter((run) => run.success === true);
+  for (const [i, run] of runs.entries()) {
+    const woke = starts[i] === undefined ? null : wokeAt(starts[i]);
+    if (woke === null || run.success !== true) continue;
+    if (run.at === null) return { pass: false, handled: false, why: `the guard woke, and when the ${run.tool} call started can't be read, so whether Copilot waited for it can't be told` };
+    if (run.at >= woke) return { pass: false, handled: false, why: `Copilot waited for the guard past its ${TIMEOUT_SEC}-second time-out before the ${run.tool} call, so it was not let through on it` };
+  }
   if (wrote && !through.some((run) => JSON.stringify(run.args ?? '').includes(WRITTEN))) {
     return { pass: false, why: `${WRITTEN} was written, and no call naming it shows in the run's output` };
   }
@@ -105,10 +137,5 @@ export default {
 
   variants: { with: { pluginDirs: [] } },
 
-  pass: ({ raw, dir, context }) => judge({
-    raw,
-    started: fs.existsSync(path.join(context.marks, 'started')),
-    woke: fs.existsSync(path.join(context.marks, 'woke')),
-    wrote: fs.existsSync(path.join(dir, WRITTEN)),
-  }),
+  pass: ({ raw, dir, context }) => judge({ raw, marks: readMarks(context.marks), wrote: fs.existsSync(path.join(dir, WRITTEN)) }),
 };

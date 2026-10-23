@@ -206,11 +206,13 @@ test('with no command given, the session starts the copilot the PATH finds first
   stand.reset();
 });
 
-test('the safety subset runs `npm run eval`\'s command on 6 and 38 to 41, with variant, through Copilot\'s runner, as a program of its own, and passes only when it exits 0 (P8-20)', async () => {
+test('the safety subset runs `npm run eval`\'s command on 6 and 38 to 41, with variant, through Copilot\'s runner, as a program of its own, and passes only when it exits 0 and its record shows each passed (P8-20, P8-34)', async () => {
   assert.deepEqual(SUBSET, [6, 38, 39, 40, 41]);
   const asked = [];
   const runWith = (answer) => async (file, args, options) => { asked.push({ file, args, options }); if (answer instanceof Error) throw answer; return answer; };
-  const passed = await safetySubset({ versions: { cli: '7.0.1' }, run: runWith({ code: 0, stdout: '', stderr: '' }) });
+  const record = path.join(tempFolder('wh-cer-record-'), 'record.json');
+  fs.writeFileSync(record, JSON.stringify({ agent: 'copilot', finished: '2026-10-24T10:00:00.000Z', runs: SUBSET.map((id) => ({ id, variant: 'with', trial: 1, pass: true, handled: true })) }));
+  const passed = await safetySubset({ versions: { cli: '7.0.1' }, run: runWith({ code: 0, stdout: `  run record: ${record}\n`, stderr: '' }) });
   assert.deepEqual(passed, { ok: true, versions: { cli: '7.0.1' }, code: 0 });
   assert.equal(asked[0].file, process.execPath);
   assert.deepEqual(asked[0].args, [path.join(ROOT, 'scripts', 'eval', 'run.js'), '6', '38', '39', '40', '41', '--variant', 'with', '--agent', 'copilot']);

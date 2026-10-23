@@ -1,7 +1,12 @@
 {
   "_source": "written by hand from docs/checks/58-hook-input.md (the sleep case), with the apply_patch call taken out of the output while out.txt was still written",
-  "started": true,
-  "woke": false,
+  "marks": [
+    {
+      "event": "started",
+      "pid": 4100,
+      "at": 1792832400000
+    }
+  ],
   "wrote": true,
   "events": [
     {
@@ -13,7 +18,8 @@
           "path": "README.md"
         },
         "turnId": "0"
-      }
+      },
+      "timestamp": "2026-10-24T09:00:05.200Z"
     },
     {
       "type": "tool.execution_complete",
@@ -24,7 +30,8 @@
         "result": {
           "content": "# The bakery\n"
         }
-      }
+      },
+      "timestamp": "2026-10-24T09:00:08.200Z"
     },
     {
       "type": "assistant.message",
@@ -32,7 +39,8 @@
         "content": "The first line is \"# The bakery\". I created out.txt.",
         "toolRequests": [],
         "turnId": "1"
-      }
+      },
+      "timestamp": "2026-10-24T09:00:11.200Z"
     },
     {
       "type": "result",
@@ -40,7 +48,8 @@
       "exitCode": 0,
       "usage": {
         "premiumRequests": 1
-      }
+      },
+      "timestamp": "2026-10-24T09:00:14.200Z"
     }
   ]
 }

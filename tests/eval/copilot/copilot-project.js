@@ -106,15 +106,16 @@ export function writtenEvents(context) {
   return (context?.helper?.events() ?? []).filter((e) => !seeded.has(e.id));
 }
 
-// Each tool call in Copilot's events, in order, with how it ended: { tool, args, success, error } (success null when
-// it never ended). A start is paired with the first unended start of the same call id, so ids used twice still pair.
+// Each tool call in Copilot's events, in order, with how it ended: { tool, args, at, success, error } (`at` the start
+// event's time in milliseconds, or null when it carries none; success null when it never ended). A start is paired with the first unended start of the same call id, so ids used twice still pair.
 export function toolRuns(raw) {
   const runs = [];
   const open = [];
   for (const event of Array.isArray(raw) ? raw : []) {
     const data = event?.data ?? {};
     if (event?.type === 'tool.execution_start') {
-      const run = { id: data.toolCallId ?? null, tool: typeof data.toolName === 'string' ? data.toolName : null, args: data.arguments, success: null, error: null };
+      const at = Date.parse(event.timestamp);
+      const run = { id: data.toolCallId ?? null, tool: typeof data.toolName === 'string' ? data.toolName : null, args: data.arguments, at: Number.isFinite(at) ? at : null, success: null, error: null };
       runs.push(run);
       open.push(run);
     } else if (event?.type === 'tool.execution_complete') {
