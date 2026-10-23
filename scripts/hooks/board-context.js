@@ -53,6 +53,7 @@ import { glossaryOf, knownConcepts, plainWords } from '../frontdesk/glossary.js'
 import { isBriefingLine } from '../lib/release-line.js';
 import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
+import { cardsLineFor } from '../agents/card-words.js';
 import { existingCard } from '../cards/visit.js';
 import { gateAsksDue, holdsDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
@@ -87,7 +88,8 @@ const COMMAND = /^\/wheelhouse:(board|briefing|settings|sources)(?:[ \t]+(.*))?$
 // The line for a session whose first prompt made it the foreman, which the session start, seeing no
 // prompt yet, named the front desk.
 export const FOREMAN_LINE = 'This session is the foreman, not the front desk. Follow wheelhouse:foreman and set wheelhouse:front-desk aside.';
-// The line that tells the front desk to ask the cards waiting, after the briefing.
+// The line that tells the front desk to ask the cards waiting, after the briefing, in Claude Code's words; an
+// agent with words of its own gets its line from scripts/agents/card-words.js (ruling P5-54).
 export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
 // The mod's own commands, whose answer starts no turn.
@@ -377,7 +379,7 @@ export async function decide(input, deps = {}) {
   try {
     const {
       dir, now = () => new Date(), env = process.env, client, load = loadBoardInputs, waitMs = WAIT_MS + helperGrace(), learnWaitMs = LEARN_WAIT_MS + helperGrace(),
-      briefingModel = realBriefingModel, markRaised: raiseMarked = realMarkRaised, writeVia = 'self',
+      briefingModel = realBriefingModel, markRaised: raiseMarked = realMarkRaised, writeVia = 'self', agent,
     } = deps;
     const writes = writeVia === 'self';
     const markSeenHere = writes ? markSeen : () => {};
@@ -410,7 +412,9 @@ export async function decide(input, deps = {}) {
       await within(() => learn({ project, cwd: input.cwd, client, at, boardAsks: visits.boardAsks }), learnWaitMs);
     }
     const count = attempt(() => cardsToAsk(project, at), 0);
-    const cards = count > 0 ? cardsLine(count) : null;
+    const cards = count > 0
+      ? (attempt(() => cardsLineFor(agent, { count, lean: found.lean === true, stop: stopState().on })) ?? cardsLine(count))
+      : null;
     const reserve = cards === null ? 0 : cards.length + 2;
     const built = want
       ? await within(() => build(want, { project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel, reserve }), waitMs)

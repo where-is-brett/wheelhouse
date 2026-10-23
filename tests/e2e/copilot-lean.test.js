@@ -186,6 +186,9 @@ test('a Lean project with the helper, from the session start to the helper stopp
     // STOP by the word: set through the helper as the director's, then a write refused and reading carrying on.
     const word = await entry('userPromptSubmitted', prompt(c.folder, 'stop'));
     assert.ok(word.body.additionalContext.startsWith(STOP_CONTEXT), word.text);
+    // In Copilot's words (ruling P5-54): Lift STOP is the Lean command's window step, never Claude Code's tool.
+    assert.doesNotMatch(word.body.additionalContext, /AskUserQuestion|cli\.js cards/);
+    assert.match(word.body.additionalContext, /the Lean command's `confirm lift-stop`/);
     assert.deepEqual([stopState().on, stopState().by], [true, 'prompt']);
     const stopped = await entry('preToolUse', patch);
     assert.deepEqual([stopped.body, stopped.code], [deny(DENIED), 2]);
