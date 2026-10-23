@@ -45,14 +45,14 @@ import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
-import { controlFileInput, controlFilesDue, gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
 import { CARD } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, ID } from '../state/card-lines.js';
+import { answerLine, ID, keepControlLine } from '../state/card-lines.js';
 import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
@@ -278,15 +278,19 @@ function holdCard(hold, words) {
 
 // A control-file record's card, naming the work by its title or its id, and the first paths, or
 // only how many when they make the card too long or can't stand in it. When none composes, the
-// first refusal is the one given.
-function controlFileCard(record, views, words) {
-  const work = record.data.work;
+// first refusal is the one given. The finding's sentence and its Keep line stay as written, out of
+// the glossary's reach like the work id: the watcher keeps the files only on a Confirm whose card
+// said them word for word (ruling P7-34).
+export function controlFileCard(record, views, words) {
+  const { work, why, hash } = record.data;
   const title = flat(views.work?.[work]?.work?.data?.title);
+  const keeps = why !== 'too-many';
   let refusal = null;
   for (const name of [...new Set([title || work, work])]) {
     for (const short of [false, true]) {
       try {
-        return composePlain(controlFileInput(record, name, { short }), words);
+        const kept = keeps ? [controlFilesNamed(record.data, { short }), keepControlLine(work, hash)] : [];
+        return composePlain(controlFileInput(record, name, { short }), { ...words, protect: [...words.protect, ...kept] });
       } catch (error) {
         refusal ??= error;
       }

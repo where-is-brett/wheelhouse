@@ -244,7 +244,7 @@ export const versionOf = (text) => /\b(\d+\.\d+\.\d+)\b/.exec(String(text ?? '')
 // Everything it made is removed before it returns. `stopped()` is read before each program it runs (the version,
 // each listing, the session): under STOP no further one starts, and it gives `{ stopped: true }`. After the session
 // the folder and the home are looked at again before its answer is taken. `copilot` is the program as resolveCommand finds it; through a
-// .cmd shim the review is not started, since its prompt carries the diff, which cmd.exe can't be given whole.
+// .cmd shim the review is not started, since its prompt, with the project's rules and the brief, can be longer than a cmd.exe line.
 export async function runSession({ folder, prompt, stopped = () => false, env = process.env, platform = process.platform, copilot = null, run = realRun, signedInFrom = copilotHome(), tmp = os.tmpdir(), timeoutMs = SESSION_MS }) {
   const refused = (why) => ({ clean: false, reasons: [why], answer: null, firstLine: null });
   const halted = { clean: false, reasons: ['STOP is on'], answer: null, firstLine: null, stopped: true };
@@ -254,7 +254,7 @@ export async function runSession({ folder, prompt, stopped = () => false, env = 
   } catch {
     return refused("Copilot CLI isn't on this computer's PATH");
   }
-  if (resolved.kind === 'cmd') return refused("Copilot's review can't be started through a .cmd program: its prompt carries the diff, which cmd.exe can't be given whole");
+  if (resolved.kind === 'cmd') return refused("Copilot's review can't be started through a .cmd program: its prompt, with the project's rules and the brief, can be longer than cmd.exe takes on one line");
   if (typeof prompt !== 'string' || prompt === '' || prompt.startsWith('-')) return refused("the review's prompt can't be passed to Copilot");
 
   const nonce = crypto.randomBytes(16).toString('hex');

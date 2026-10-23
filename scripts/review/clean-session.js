@@ -19,6 +19,10 @@ export const MOST_FILE_BYTES = 1024 * 1024;
 export const MOST_DIFF_BYTES = 2 * 1024 * 1024;
 // The diff's own name in the folder.
 export const DIFF_FILE = 'change.diff';
+// The most bytes the reviewer's prompt may take. It is passed to the session as one command-line argument, so it is
+// held well below the system's limit on one (macOS takes about 1 MB for every argument and the environment together,
+// Linux 128 KB for one argument): the diff is in the folder, never in the prompt (ruling P7-34).
+export const MOST_PROMPT_BYTES = 100 * 1024;
 // The names that steer an agent wherever they are, in any case.
 const STEERING_NAMES = ['agents.md', 'claude.md', 'gemini.md'];
 // The names that steer an agent from a folder above the review's (a repository's own folder, its steering folders
@@ -132,7 +136,7 @@ export async function reviewFolder({ sha, files, diff, read, tmp = os.tmpdir() }
     fs.writeFileSync(path.join(folder, DIFF_FILE), diff, { flag: 'wx' });
     const steering = scanFolder(folder);
     if (steering.length > 0) throw new NoCleanReview(`the review's folder holds files that steer an agent: ${steering.join(', ')}`);
-    const above = steeringAbove(folder);
+    const above = steeringAbove(folder, tmp);
     if (above.length > 0) throw new NoCleanReview(`a folder above the review's holds a repository or files that steer an agent: ${above.join(', ')}`);
     return { folder, copied: copied.sort(), diffOnly: diffOnly.sort(), remove };
   } catch (error) {
@@ -143,11 +147,12 @@ export async function reviewFolder({ sha, files, diff, read, tmp = os.tmpdir() }
 
 const listed = (paths) => (paths.length === 0 ? ['  (none)'] : paths.map((p) => `  ${p}`));
 
-// The reviewer's prompt (ruling P7-16): the pull request and its full head commit; what is in the folder and what is
-// only in the diff; the feature's recorded brief; the project's rules (`rules`, `[{ path, text }]`, read from the
-// default branch's commit, never the pull request's); CI's state on the head; and the diff itself. It asks for the
-// WHEELHOUSE REPORT block naming that pull request and commit.
-export function reviewPrompt({ number, sha, brief = null, diff, rules = [], ci = null, copied = [], diffOnly = [] }) {
+// The reviewer's prompt (ruling P7-16): the pull request and its full head commit; what is in the folder, with the
+// diff as `change.diff` there, and what is only in the diff; the feature's recorded brief; the project's rules
+// (`rules`, `[{ path, text }]`, read from the default branch's commit, never the pull request's); and CI's state on
+// the head. The diff itself is not in the prompt (ruling P7-34). It asks for the WHEELHOUSE REPORT block naming that
+// pull request and commit.
+export function reviewPrompt({ number, sha, brief = null, rules = [], ci = null, copied = [], diffOnly = [] }) {
   const ciState = typeof ci?.state === 'string' && ci.state !== '' ? ci.state : 'not known';
   const ruleLines = rules.length === 0
     ? ['No rules file (CLAUDE.md or AGENTS.md) is on the default branch.']
@@ -157,7 +162,7 @@ export function reviewPrompt({ number, sha, brief = null, diff, rules = [], ci =
     '',
     'The working folder holds only these files of the change, as they are at that commit:',
     ...listed(copied),
-    `and ${DIFF_FILE}, the whole change as a git diff, which is also below. Nothing else of the project is in the folder, and there is no git: you read the files and the diff, and nothing else.`,
+    `and ${DIFF_FILE}, the whole change as a git diff: read it there. Nothing else of the project is in the folder, and there is no git: you read the files and the diff, and nothing else.`,
     '',
     'These changed paths are in the diff only, not in the folder (deleted, links, too large, or files that steer an agent):',
     ...listed(diffOnly),
@@ -171,9 +176,6 @@ export function reviewPrompt({ number, sha, brief = null, diff, rules = [], ci =
     ...ruleLines,
     '',
     `CI on ${sha}: ${ciState}.`,
-    '',
-    'The diff:',
-    diff.trimEnd(),
     '',
     `End your last message with the WHEELHOUSE REPORT block, with \`pr: ${number}\` and \`commit: ${sha}\`.`,
   ].join('\n');
@@ -211,10 +213,13 @@ export async function runReview({ number, sha, review, withChange, brief = null,
   let made = null;
   try {
     const gathered = await withChange(async ({ files, read, diff, rules }) => ({
-      built: await reviewFolder({ sha, files, diff, read, tmp }), diff, rules,
+      built: await reviewFolder({ sha, files, diff, read, tmp }), rules,
     }));
     made = gathered.built;
-    const prompt = reviewPrompt({ number, sha, brief, diff: gathered.diff, rules: gathered.rules ?? [], ci, copied: made.copied, diffOnly: made.diffOnly });
+    const prompt = reviewPrompt({ number, sha, brief, rules: gathered.rules ?? [], ci, copied: made.copied, diffOnly: made.diffOnly });
+    if (Buffer.byteLength(prompt) > MOST_PROMPT_BYTES) {
+      throw new NoCleanReview(`the reviewer's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the reviewer`);
+    }
     if (stopped()) return STOPPED;
     const session = await review.session({ folder: made.folder, prompt, stopped });
     if (session?.stopped === true || stopped()) return STOPPED;

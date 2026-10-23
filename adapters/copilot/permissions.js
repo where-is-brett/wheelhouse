@@ -6,7 +6,8 @@
 //
 // What the rules hold, and what they can't say:
 // - Copilot's rule kinds are `shell(..)`, `write(..)`, `url(..)` and a tool's or MCP server's name (check 61). A deny
-//   beats every allow, so every level passes the same denies, Unattended too.
+//   beats every allow. Every level passes the same write and tool denies, Unattended too; the shell denies are
+//   passed where the level's allows could reach them, all of them where the shell is allowed whole (ruling P7-30).
 // - Shell rules match the whole command: no chained form check 61 tried (`&&`, `$( )`, `sh -c`) got past
 //   `shell(<runner>:*)`, so Guarded and Ask use prefix rules with the runner and the guard behind them. The evidence
 //   is one model with `echo` as the runner, so the guard stays in place.
@@ -19,7 +20,7 @@
 //   until the Windows sitting (S2) has tried one (check 61's note).
 // - A rule list is not a read barrier: a read-only command (`ls`) ran with no rule (check 61). Copilot has no read
 //   kind, so credentialRules()' read denials have no form here: reads stay with the tool guard and, from Part 9, the
-//   sandbox (spec 6.6 point 4). The denies below are writes only.
+//   sandbox (spec 6.6 point 4). The denies below are writes, shell commands and tools, never reads.
 // - The file tools are held to the worktree by the session's working folder and `--disallow-temp-dir` (sessions.js):
 //   only the read side was shown to hold, through a link too (check 61). Writes through a link are untried, so the
 //   path rules are not relied on to hold writes; the guard checks the real path.

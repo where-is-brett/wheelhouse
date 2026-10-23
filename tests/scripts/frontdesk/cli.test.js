@@ -28,6 +28,7 @@ import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { answerInput } from '../../../scripts/cards/compose.js';
+import { controlFilesNamed } from '../../../scripts/cards/build-loop.js';
 import { plainWords, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
@@ -577,6 +578,22 @@ test('a feature whose agent files hold its wakes gets one Keep card naming the f
     const views = buildViews([EXPORT, held, ...helper.writes().filter((w) => w.kind === 'card').map((w) => makeEvent({ kind: 'card', data: w.data, now: () => T(5) })), lift], readEnrolled(), { now: () => NOW });
     assert.deepEqual(views.controlFiles, []);
     assert.deepEqual(views.waiting.filter((c) => c.data?.event === held.id), []);
+  });
+});
+
+test('a Keep card says the watcher\'s finding as written, whatever the glossary would put for its words', async () => {
+  await inHome(async () => {
+    const data = { work: 'add-export', why: 'changed', paths: ['.github/hooks/off.json'], hash: DOC, at: T(3).toISOString() };
+    const held = makeEvent({ kind: 'control-file', data, now: () => T(3) });
+    const agent = makeEvent({ kind: 'glossary', data: { term: 'agent', plain: 'an AI helper that does the work', phrase: 'AI helper', plural: 'AI helpers' }, now: () => T(1) });
+    const helper = fakeHelper({ events: [EXPORT, agent, held] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    const [card] = cardWrites(helper);
+    assert.equal(card.kind, 'keep-control-files');
+    assert.ok(card.question.includes(controlFilesNamed(data)), card.question);
+    assert.equal(setLineOf(card.question), keepControlLine('add-export', DOC));
+    assert.deepEqual(cardProblems(card.question), []);
   });
 });
 

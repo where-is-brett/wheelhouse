@@ -15,7 +15,9 @@ import {
 import { makeWaker, sessionFile, writeWake } from '../../../scripts/watcher/waker.js';
 import { raiseRecord } from '../../../scripts/watcher/main.js';
 import { main as act } from '../../../scripts/foreman/act.js';
-import { controlFileInput, controlFilesDue } from '../../../scripts/cards/build-loop.js';
+import { controlFileInput, controlFilesDue, controlFilesNamed } from '../../../scripts/cards/build-loop.js';
+import { controlFileCard } from '../../../scripts/frontdesk/cli.js';
+import { glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { cardsDue } from '../../../scripts/hooks/board-context.js';
@@ -25,7 +27,7 @@ import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { CONTROL_PATHS, eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { keepControlLine } from '../../../scripts/state/card-lines.js';
+import { keepControlLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { AGENT_CONTROL } from '../../../scripts/lib/agent-control.js';
 import { earned } from '../../../scripts/hooks/prompt-record.js';
 import { buildViews } from '../../../scripts/state/views.js';
@@ -409,6 +411,35 @@ test('a signed Confirm on the Keep card keeps the files as found, and the next w
   assert.equal(h.fake.calls.length, 1, 'woken');
   assert.deepEqual(checkControlFiles(P, WORK, dir), { ok: true }, 'the files as found are the record now');
   assert.deepEqual(h.raised.map((r) => r.kind), ['control-file', 'control-file-lift']);
+}));
+
+// A glossary that would put "agent" and "feature" in other words wherever the composer lets it.
+const REWORDING = glossaryOf({
+  agent: { data: { term: 'agent', plain: 'an AI helper that does the work', phrase: 'AI helper', plural: 'AI helpers' } },
+  feature: { data: { term: 'feature', plain: 'a piece of the product', phrase: 'piece of the product', plural: 'pieces of the product' } },
+});
+
+test('a glossary that rewords the finding leaves its sentence as written, and a signed Confirm still keeps the files', () => withHome(async () => {
+  enrolHere();
+  const dir = worktree();
+  writeBaseline(P, WORK, dir, { now: () => new Date(T0 - MIN) });
+  const h = waker(dir);
+  put(dir, '.github/hooks/project.json', '{"hooks":{"x":1}}\n');
+  await wake(h, 'g2');
+  assert.equal(h.fake.calls.length, 0);
+  const record = makeEvent({ kind: 'control-file', data: h.raised[0].data, now: () => new Date(T0 + 1000) });
+  putInState(record);
+  const words = { glossary: REWORDING, explanations: 'plain', known: [], protect: [] };
+  const { card } = controlFileCard(record, {}, words);
+  assert.ok(card.question.includes(controlFilesNamed(record.data)), card.question);
+  // The glossary does reach the rest of the card.
+  assert.ok(card.question.includes('AI helper'), card.question);
+  assert.equal(setLineOf(card.question), keepControlLine(WORK, record.data.hash));
+  await keepClick(card.question);
+  h.move(2 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 1, 'woken');
+  assert.deepEqual(checkControlFiles(P, WORK, dir), { ok: true });
 }));
 
 test('an unsigned Confirm, a stale finding\'s Confirm or a plain lift keeps nothing', () => withHome(async () => {
