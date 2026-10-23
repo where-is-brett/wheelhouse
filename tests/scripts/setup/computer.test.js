@@ -97,7 +97,9 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\)`));
     // Ruling R64: the card says what a shorter retention costs.
     assert.match(text, new RegExp(`transcripts kept ${RETENTION_DAYS} days \\(now 7\\); older ones are removed, and uninstall can't bring them back`));
-    assert.match(text, /uninstall puts each setting back, but not removed transcripts/);
+    // The option that goes ahead says what uninstall puts back, and the card's options show it.
+    const goesAhead = composeCard({ ...planned.card, kind: 'setup', target: { step: 6, hash: planHash(planned.changes) } }).question.options[0].description;
+    assert.match(goesAhead, /uninstall puts each setting back, but not removed transcripts/);
     assert.match(text, /These are Claude Code's own settings on this computer/);
     assert.match(text, /stable channel at version 2\.1\.100 or later/);
     assert.match(text, /Wheelhouse never updates itself/);

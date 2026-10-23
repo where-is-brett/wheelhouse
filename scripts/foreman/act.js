@@ -138,6 +138,7 @@ import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { CARD } from '../lib/front-desk.js';
+import { TO_KNOW_MORE } from '../lib/calm-words.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram } from '../lib/run.js';
@@ -744,22 +745,23 @@ function localDay(at) {
   return Number.isNaN(when.getTime()) ? null : `${when.getFullYear()}-${when.getMonth() + 1}-${when.getDate()}`;
 }
 
-// The Unattended card's question: the five parts, each with its words on its label's own line
-// as the composer writes them (the card-check hook refuses a card otherwise), the design's words
-// on the risk as they are, and the line that a Turn on (dangerous) click confirms the setting
-// event `settingId` by. Where Use Guarded is offered, `guarded` is the setting event proposing
-// Guarded, and its confirm line and that line's reply code line follow (ruling 22): a Use Guarded
-// click confirms that event, and the card check asks a card with a set line for its code.
+// The Unattended card's question: its plain lines as the composer writes a question's (the
+// question, the design's words on the risk as they are, why it is the director's, what happens
+// meanwhile), each on a line of its own, then the line that a Turn on (dangerous) click confirms the
+// setting event `settingId` by, then the line that says more is there for the asking. Where Use
+// Guarded is offered, `guarded` is the setting event proposing Guarded, and its confirm line and
+// that line's reply code line follow (ruling 22): a Use Guarded click confirms that event, and the
+// card check asks a card with a set line for its code. What each option says, and which is
+// recommended, are in the options' descriptions.
 function unattendedQuestion(card, settingId, computer, guarded) {
-  const named = (name) => card.options.find((o) => o.name === name);
   const offersGuarded = guarded !== null && card.options.some((o) => o.name === 'guarded');
   return [
-    `What this is: ${card.what} ${card.risk}`,
-    `Why it's coming to you: ${card.why}`,
-    `Options: ${card.options.map((o) => `${o.label}: ${o.says.replace(/[.!?]+$/, '')}`).join('; ')}`,
-    `My recommendation: ${named(card.recommend).label}`,
-    `While you decide: ${card.meanwhile}`,
+    card.what,
+    card.risk,
+    card.why,
+    card.meanwhile,
     unattendedBuildsLine(settingId, computer),
+    TO_KNOW_MORE,
     ...(offersGuarded ? [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))] : []),
   ].join('\n');
 }

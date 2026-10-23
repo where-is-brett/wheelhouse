@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ask, answer, report, openPr, pull, push, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
+import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -200,7 +201,7 @@ test('ask refuses a question the director\'s card could not carry, in the compos
   const asked = (extra) => ['--what', 'Which provider?', '--why', 'It decides what users see', ...extra, '--level', '3'];
   for (const [name, argv, why] of [
     ['five options', asked([...options(['A', 'B', 'C', 'D', 'E']), '--recommend', 'A']), /at most 4/],
-    ['a put-off label', asked([...options(['A', 'Not now']), '--recommend', 'A']), /Not now/],
+    ...PUT_OFF.map((label) => [`the put-off label ${label}`, asked([...options(['A', label]), '--recommend', 'A']), new RegExp(label.replace('?', '\\?'))]),
     ['words past the card\'s length', ['--what', 'w'.repeat(1200), '--why', 'y', ...options(['A', 'B']), '--recommend', 'A', '--level', '3'], /1200 characters/],
   ]) {
     await assert.rejects(ask({ worktree: tree, argv }), (e) => e instanceof CliError && why.test(e.message) && /can't be put to the director as a card/.test(e.message), name);

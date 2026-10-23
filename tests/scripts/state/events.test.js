@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
+import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -499,6 +500,7 @@ test('each new action needs its own fields and refuses others', async () => {
     for (const bad of [
       { ...a['approve-work'], lane: 'huge' }, { ...a['approve-work'], shownFirst: 'yes' }, { ...a['approve-work'], hash: 'zz' }, { ...a['approve-work'], work: 'Bad Id' },
       { ...a.answer, questionId: 'nope' }, { ...a.answer, questionHash: 'zz' }, { ...a.answer, label: 'Explain more' }, { ...a.answer, label: 'Not now' },
+      { ...a.answer, label: 'Why?' }, { ...a.answer, label: 'Suggest a change…' }, { ...a.answer, label: 'Show me' },
       { ...a.amend, hash: H.slice(0, 11) }, { ...a['lift-incident'], incident: '' }, { ...a['incident-fix'], pr: 0 }, { ...a['incident-fix'], pr: '3' },
     ]) assert.throws(() => makeEvent({ kind: 'action', data: bad }), /action event/, JSON.stringify(bad));
   });
@@ -521,6 +523,11 @@ test('a card event needs its kind, options and level', async () => {
     make({ ...CARD_DATA, recommend: 'Approve' });
     // The words on each button, one for each option, so the card can be asked again as composed.
     make({ ...CARD_DATA, descriptions: ['Approve it.', 'Wait.', 'Say it plainer.', 'Show it.'] });
+    // The card's parts, and the id of the card a revised proposal replaces.
+    const parts = { kind: 'approval', ask: 'Put it live?', what: 'A change.', why: 'It is yours.', meanwhile: 'Nothing is released.', options: [] };
+    make({ ...CARD_DATA, parts, revises: 'e-old' });
+    for (const bad of [{ ...parts, ask: '' }, { ...parts, options: 'x' }, 'text', [], null]) assert.throws(() => make({ ...CARD_DATA, parts: bad }), /card event.*parts/);
+    assert.throws(() => make({ ...CARD_DATA, revises: 7 }), /card event.*revises/);
     for (const kind of ['approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'question']) {
       make({ ...CARD_DATA, kind });
     }
@@ -641,5 +648,19 @@ test('an uninstall action names the project and the full hash of the list, and c
       ['another hash in its line', { ...good, question: 'Remove Wheelhouse from wh cafe menu Zoë as listed, cdcdcdcdcdcd' }],
       ['a field of another action', { ...good, runId: 'run-0123456789' }],
     ]) assert.throws(() => makeEvent({ kind: 'action', data, now: at(1) }), /action event/, why);
+  });
+});
+
+test('a card answer labelled Why?, Suggest a change… or Show me is not an answer', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const setupAnswer = { action: 'setup-answer', runId: 'run-0123456789', step: 4, questionId: 'live-data', question: 'Live data?', label: 'No live data', text: null };
+    for (const base of [ACTION_SHAPES.answer, setupAnswer]) {
+      assert.doesNotThrow(() => makeEvent({ kind: 'action', data: base, now: at(1) }), `${base.action} with its own label`);
+      for (const label of PUT_OFF) {
+        assert.throws(() => makeEvent({ kind: 'action', data: { ...base, label }, now: at(1) }), /not an answer/, `${base.action} labelled ${label}`);
+      }
+    }
   });
 });

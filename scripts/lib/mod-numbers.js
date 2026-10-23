@@ -24,6 +24,8 @@ export const CARD_HASH_CHARS = 12;
 export const PANE_LINES = 5;
 // How many ticks a pane may go unanswered before it says it is out of date.
 export const STALE_TICKS = 3;
+// How long after a setting's change was confirmed the pane still offers Undo on its row.
+export const UNDO_MS = 60000;
 // The words every prompt the mod submits starts with.
 export const LEADS = Object.freeze({ pane: 'Wheelhouse pane:', courier: 'Wheelhouse courier:' });
 // A message from a Wheelhouse session starts with this.

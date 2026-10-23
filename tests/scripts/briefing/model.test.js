@@ -6,6 +6,7 @@ import { briefingModel } from '../../../scripts/briefing/model.js';
 import { briefingParts } from '../../../scripts/briefing/text.js';
 import { markRaised } from '../../../scripts/usage/figures.js';
 import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
+import { verdict } from '../../../scripts/lib/calm-words.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -90,7 +91,7 @@ test('only what changed since the last briefing is in it', () => {
     'Pull request #15 is waiting on fixes: its review found problems',
   ]);
   // What waits is shown whenever it waits, not only when it is new.
-  assert.deepEqual(since.waiting, ['Choose the sign-up colour']);
+  assert.deepEqual(since.waiting, [{ title: 'Choose the sign-up colour' }]);
 
   const all = briefingModel({ model, usage: usageWith(), sources: null, since: null, now: NOW, wasRaised: never });
   assert.deepEqual(all.changed, ['Sign-up works on phones', 'Prices show in dollars']);
@@ -211,10 +212,13 @@ test('unconfirmed changes and what waits come straight from the board model', ()
   const b = briefingModel({ model, usage: null, sources: null, since: at(15), now: NOW, wasRaised: never });
   // The briefing's heading says they aren't confirmed, so the lines don't say it again.
   assert.deepEqual(b.first, ['A ruling: Never email on Sundays']);
-  assert.deepEqual(b.waiting, ['Choose the sign-up colour', 'Approve the plan']);
+  assert.deepEqual(b.waiting, [{ title: 'Choose the sign-up colour' }, { title: 'Approve the plan' }]);
   // Nothing in it throws, whatever it is given.
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {
-    assert.deepEqual(briefingModel(odd), { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 });
+    assert.deepEqual(briefingModel(odd), {
+      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false,
+      plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
+    });
   }
 });
 
@@ -335,3 +339,56 @@ test('a due Unattended line comes ahead of unusual use and a due delegation revi
     WINDOWS_LINE,
   ]);
 }));
+
+test('the verdict is the pane\'s sentence: what waits and what is broken, STOP not counted', () => {
+  const waiting = [{ n: 1, what: 'A', since: at(10) }, { n: 2, what: 'B', since: at(11) }];
+  const said = (health) => briefingModel({ model: board({ waiting, health }), usage: null, now: NOW, wasRaised: never }).verdict;
+  assert.equal(said([]), verdict({ waiting: 2, broken: 0 }));
+  assert.equal(said([]), 'Two things need you. Nothing is broken.');
+  assert.equal(said([{ level: 'stop', text: 'STOP is on, since 18 October 2026' }]), 'Two things need you. Nothing is broken.');
+  assert.equal(said([{ level: 'stop', text: 'Incident i1 is open, so nothing merges: x', incident: 'i1' }, { level: 'watch', text: 'Something to watch' }]),
+    verdict({ waiting: 2, broken: 1 }));
+});
+
+test('it says when the last briefing was and how long ago, in the director\'s time', () => {
+  const said = (since, now = NOW) => briefingModel({ model: board(), usage: null, since, now, timeZone: 'UTC', wasRaised: never }).since;
+  assert.equal(said('2026-10-19T07:10:00.000Z'), 'Since 07:10, about 5 hours');
+  assert.equal(said('2026-10-19T11:30:00.000Z'), 'Since 11:30, about 30 minutes');
+  assert.equal(said('2026-10-19T11:59:30.000Z'), 'Since 11:59, about a minute');
+  assert.equal(said('2026-10-19T11:00:00.000Z'), 'Since 11:00, about an hour');
+  assert.equal(said('2026-10-15T09:10:00.000Z'), 'Since 09:10, about 4 days');
+  assert.equal(briefingModel({ model: board(), since: '2026-10-19T07:10:00.000Z', now: NOW, timeZone: 'Australia/Sydney', wasRaised: never }).since, 'Since 18:10, about 5 hours');
+  // No last briefing, one that can't be read or is after now, or a clock that can't be read: nothing to say.
+  for (const odd of [null, 'yesterday', at(25), 42]) assert.equal(said(odd), '');
+  assert.equal(said('2026-10-19T07:10:00.000Z', 'not a time'), '');
+});
+
+test('a waiting card keeps its line, its recommendation and its optional minutes, and the new ones are counted', () => {
+  const model = board({
+    waiting: [
+      { n: 1, what: 'Which photo goes on the home page?', since: at(10), line: 'It sets the first thing visitors see.', recommendation: 'The cafe photo, because it is yours.', optional: 3 },
+      { n: 2, what: 'Approve the plan', since: at(16) },
+      { n: 3, what: 'Rename the menu', since: at(17) },
+    ],
+    changed: [{ what: 'Sign-up works on phones', at: at(18) }, { what: 'Prices show in dollars', at: at(10) }],
+  });
+  const b = briefingModel({ model, usage: null, sources: null, since: at(15), now: NOW, wasRaised: never });
+  assert.deepEqual(b.waiting, [
+    { title: 'Which photo goes on the home page?', line: 'It sets the first thing visitors see.', recommendation: 'The cafe photo, because it is yours.', optional: 3 },
+    { title: 'Approve the plan' },
+    { title: 'Rename the menu' },
+  ]);
+  assert.deepEqual(b.plus, { waiting: 2, changed: 1 });
+  // With no last briefing nothing is counted as new.
+  assert.deepEqual(briefingModel({ model, usage: null, sources: null, since: null, now: NOW, wasRaised: never }).plus, { waiting: 0, changed: 0 });
+});
+
+test('usage is on track while the week\'s figures are known, none is unusual and the allowance isn\'t spent', () => {
+  const on = (usage) => briefingModel({ model: board(), usage, now: NOW, wasRaised: never }).onTrack;
+  const known = { tokens: 1200000, usd: 84, share: 34 };
+  assert.equal(on(usageWith({ week: known })), true);
+  assert.equal(on(usageWith()), false);
+  assert.equal(on(null), false);
+  assert.equal(on(usageWith({ week: { tokens: 10, usd: 1, share: 100 } })), false);
+  assert.equal(on(usageWith({ week: known, unusual: [{ id: 'session:a', kind: 'session', tokens: 3000000, median: 400000, unit: 'tokens', cause: 'a long review' }] })), false);
+});

@@ -6,12 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  checkMod, membersIn, moduleFiles, readMod, bridgeArgv, paneOrigin, bridgeImports,
+  checkMod, membersIn, moduleFiles, readMod, bridgeArgv, paneOrigin, kitPresses, bridgeImports,
   HOOKS, CALLS, FORBIDDEN_HOOKS, FORBIDDEN_CALLS, matchesForbidden,
 } from '../../../scripts/mod/validate.js';
 import { SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
-import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD } from '../../../scripts/lib/mod-numbers.js';
+import * as calmWords from '../../../scripts/lib/calm-words.js';
+import { PANE_ID, TICK_MS, STALE_TICKS, WATCH_BRIDGE_MS, LEADS, MESSAGE_LEAD, UNDO_MS } from '../../../scripts/lib/mod-numbers.js';
 import { BRIDGE_MS } from '../../../scripts/mod/bridge.js';
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 
@@ -207,13 +208,36 @@ test('a second $.process.run, or one running anything but the bridge, fails', ()
   assert.match(result.problems.join('\n'), /exactly one/);
 });
 
+test('the drawing kit hands each press to a Button\'s onPress and never calls it while drawing', () => {
+  const kit = (body) => ({ 'hooks/mod/calm.tsx': `export function filled(t: Table, key: string, label: string, onPress: () => unknown) {\n  ${body}\n}` });
+  assert.deepEqual(kitPresses(kit('return <t.Button key={key} label={label} variant="primary" onPress={onPress} />')), { ok: true });
+  assert.deepEqual(kitPresses(repoSources()), { ok: true });
+  assert.deepEqual(kitPresses(SOURCES), { ok: true }, 'no kit, nothing to check');
+  for (const body of [
+    'onPress()\n  return <t.Button key={key} label={label} onPress={onPress} />',
+    'return <t.Button key={key} label={label} onPress={onPress()} />',
+    'return <t.Button key={key} label={label} onPress={() => onPress()} onFocus={onPress} />',
+    'void onPress?.()\n  return null',
+    'const p = onPress\n  return <t.Button key={key} label={label} onPress={p} />',
+  ]) {
+    const got = kitPresses(kit(body));
+    assert.equal(got.ok, false, body);
+    assert.match(got.why, /calm\.tsx/);
+  }
+  // A press by another name is read the same way.
+  assert.equal(kitPresses({ 'hooks/mod/calm.tsx': 'export function stop(t: Table, press: () => unknown) { press(); return null }' }).ok, false);
+  // checkMod carries it.
+  const result = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, `./register.ts calls: ${CALLS.join(', ')}`]), sources: { ...SOURCES, ...kit('onPress()') } });
+  assert.match(result.problems.join('\n'), /calm\.tsx/);
+});
+
 test('the pane origin outside a press handler fails', () => {
   const good = `
     // origin: 'pane' is only ever a press
     async function pressApprove($, card) { await ask($, { cmd: 'reply', origin: 'pane', card }) }
     const pressLift = async ($) => { await ask($, { origin: "pane" }) }
     export const Card = ({ $, card }) => <Button onPress={() => pressApprove($, card)} />
-    export const Lift = ({ $ }) => <Button onPress={pressLift} />`;
+    export const Lift = ({ $ }) => <Button onPress={() => pressLift($)} />`;
   assert.deepEqual(paneOrigin({ 'hooks/mod/cards.tsx': good, 'hooks/mod/settings.tsx': good }), { ok: true });
   assert.deepEqual(paneOrigin(SOURCES), { ok: true });
   assert.deepEqual(paneOrigin(repoSources()), { ok: true });
@@ -234,6 +258,52 @@ test('the pane origin outside a press handler fails', () => {
   assert.match(called.why, /pressApprove/);
   const unused = paneOrigin({ 'hooks/mod/settings.tsx': "const pressOnly = async ($) => { await ask($, { origin: 'pane' }) }\nexport const x = 1" });
   assert.equal(unused.ok, true);
+  // A press is accepted only as an arrow that calls it on a click, to onPress or as the last
+  // argument of the kit's button functions; called while drawing, or in another argument, it fails.
+  const press = `${good}\nasync function pressStop($, after) { await ask($, { origin: 'pane' }) }\n`;
+  for (const use of [
+    "const a = <Button onPress={() => pressStop($, after)} />",
+    "const a = <Button onPress={async () => pressStop($, after)} />",
+    "const a = filled(t, 'k', 'Label', () => pressStop($, after))",
+    "const a = outlined(t, key, 'Label', async () => pressStop($, after))",
+    "const a = small(t, 'k', 'Label', () => pressStop($, after))",
+    "const a = stopButton(t, () => pressStop($, after))",
+    "const a = <Input onSubmit={(v) => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={async (words) => pressStop($, after, words)} />",
+    "const a = <Input onSubmit={(v: string) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={(v) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={async (value) => pressStop($, after, value)} />",
+    "const a = <Select onSelect={(v: string) => pressStop($, after, v)} />",
+  ]) {
+    assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, true, use);
+  }
+  for (const use of [
+    "const a = <Button onPress={pressStop($, after)} />",
+    "const a = <Button onPress={pressStop} />",
+    "const a = filled(t, 'k', 'L', pressStop($, after))",
+    "const a = filled(t, pressStop($, after), 'L', noop)",
+    "const a = [small(t, 'a', 'b', noop), pressStop($, after)]",
+    "const a = filled(t, 'k', pressStop($, after), () => noop())",
+    "const a = stopButton(t, pressStop($, after))",
+    "const a = <Input onSubmit={pressStop} />",
+    "const a = <Input onSubmit={pressStop($, after)} />",
+    "const a = <Input onSubmit={v => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={(v, w) => pressStop($, after, v)} />",
+    "const a = <Input onSubmit={() => pressStop($, after)} />",
+    "const a = <Input onInput={(v) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={pressStop} />",
+    "const a = <Select onSelect={pressStop($, after)} />",
+    "const a = <Select onSelect={v => pressStop($, after, v)} />",
+    "const a = <Select onSelect={(v, w) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={() => pressStop($, after)} />",
+    "const a = <Select onChange={(v) => pressStop($, after, v)} />",
+    "const a = <Select onSelect={(v = pressStop($, after)) => v} />",
+    "const a = <Input onSubmit={(v = pressStop($, after)) => v} />",
+    "const a = <Button onPress={(v) => pressStop($, after, v)} />",
+    "const a = filled(t, 'k', 'L', (v) => pressStop($, after, v))",
+  ]) {
+    assert.equal(paneOrigin({ 'hooks/mod/cards.tsx': `${press}${use}` }).ok, false, use);
+  }
   const calledInHandler = paneOrigin({ 'hooks/mod/cards.tsx': `${good}\nasync function pressTwo($) { await pressApprove($, 1) }` });
   assert.equal(calledInHandler.ok, false);
 });
@@ -357,16 +427,37 @@ test('the mod reads a reply code from the code alphabet', () => {
 test('the mod\'s numbers are the scripts\' numbers, named once in hooks/mod/numbers.ts', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'mod', 'numbers.ts'), 'utf8');
   const written = Object.fromEntries([...source.matchAll(/^export const ([A-Z_]+) = (.*)$/gm)].map((m) => [m[1], m[2]]));
-  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'MESSAGE_LEAD', 'PANE_ID', 'PANE_LEAD', 'STALE_TICKS', 'TICK_ASK_MS', 'TICK_MS', 'WATCH_BRIDGE_MS']);
+  assert.deepEqual(Object.keys(written).sort(), ['ASK_MS', 'BRIDGE_MS', 'FOREMAN_LEAD', 'HIDE_WHY', 'MESSAGE_LEAD', 'NOTHING_NEEDS_YOU', 'NOT_HANDED', 'NOT_HERE', 'NOT_RECORDED', 'ONLY_YOU_LIFT', 'PANE_ID', 'PANE_LEAD', 'RECORDING', 'SENT_TO_FRONT_DESK', 'SETTING_UP', 'SHOW_ME', 'STALE_TICKS', 'STOP_HALTS', 'SUGGEST', 'TICK_ASK_MS', 'TICK_MS', 'UNDO_MS', 'WATCH_BRIDGE_MS', 'WHAT_CHANGED', 'WHAT_WOULD_YOU_CHANGE', 'WHY']);
   const value = (name) => JSON.parse(written[name].replaceAll("'", '"'));
   assert.equal(value('PANE_ID'), PANE_ID);
   assert.equal(value('TICK_MS'), TICK_MS);
   assert.equal(value('STALE_TICKS'), STALE_TICKS);
   assert.equal(value('BRIDGE_MS'), BRIDGE_MS);
   assert.equal(value('WATCH_BRIDGE_MS'), WATCH_BRIDGE_MS);
+  assert.equal(value('UNDO_MS'), UNDO_MS);
   assert.equal(value('PANE_LEAD'), LEADS.pane);
   assert.equal(value('FOREMAN_LEAD'), FOREMAN_PROMPT_LEAD);
   assert.equal(written.MESSAGE_LEAD, String(MESSAGE_LEAD));
+  // The Calm set words are scripts/lib/calm-words.js's, written as the mod says them (a quoted
+  // string may hold an escaped apostrophe, so each is read as the string it is).
+  const word = (name) => new Function(`return ${written[name]}`)();
+  for (const name of ['STOP_HALTS', 'ONLY_YOU_LIFT', 'NOTHING_NEEDS_YOU', 'RECORDING', 'NOT_HERE', 'SETTING_UP', 'WHY', 'HIDE_WHY', 'SHOW_ME', 'WHAT_CHANGED', 'NOT_HANDED', 'NOT_RECORDED', 'SUGGEST', 'WHAT_WOULD_YOU_CHANGE', 'SENT_TO_FRONT_DESK']) {
+    assert.equal(word(name), calmWords[name], name);
+  }
+  const staleLine = /^export const staleLine = (.*)$/m.exec(source);
+  assert.ok(staleLine, 'hooks/mod/numbers.ts names staleLine on one line');
+  const modStale = new Function(`return ${staleLine[1].replace(/\(failedAt: string, shownAt: string\)/, '(failedAt, shownAt)')}`)();
+  for (const [failed, shown] of [['14:05', '14:02'], ['09:01', '08:59']]) {
+    assert.equal(modStale(failed, shown), calmWords.staleLine(failed, shown));
+  }
+  const suggested = /^export const suggestedAt = (.*)$/m.exec(source);
+  assert.ok(suggested, 'hooks/mod/numbers.ts names suggestedAt on one line');
+  const modSuggested = new Function(`return ${suggested[1].replace(/\(hhmm: string\)/, '(hhmm)')}`)();
+  for (const hhmm of ['14:10', '09:01']) assert.equal(modSuggested(hhmm), calmWords.suggestedAt(hhmm));
+  const typeYour = /^export const typeYourChange = (.*)$/m.exec(source);
+  assert.ok(typeYour, 'hooks/mod/numbers.ts names typeYourChange on one line');
+  const modTypeYour = new Function(`return ${typeYour[1].replace(/\(n: number \| string\)/, '(n)')}`)();
+  for (const n of [1, 12, 'card-3']) assert.equal(modTypeYour(n), calmWords.typeYourChange(n));
   // The waits are the bridge's limits and the time node takes to start (ruling 26).
   assert.equal(written.ASK_MS, 'BRIDGE_MS + 1500');
   assert.equal(written.TICK_ASK_MS, 'WATCH_BRIDGE_MS + 5000');

@@ -33,10 +33,10 @@ import { pendingDir } from '../../scripts/hooks/pending.js';
 import { main as frontDesk } from '../../scripts/frontdesk/cli.js';
 import { SAYS, SETUP_ROLE } from '../../scripts/mod/bridge.js';
 import { SAYS as PRESS_SAYS } from '../../scripts/mod/press.js';
+import { SENT_TO_FRONT_DESK, SETTINGS_UNDER_STOP } from '../../scripts/lib/calm-words.js';
 import { readPaneStatus, hashOf } from '../../scripts/mod/status.js';
 import { courierFile } from '../../scripts/mod/courier.js';
 import { watchFile } from '../../scripts/mod/watch.js';
-import { FIRST_LINE } from '../../scripts/mod/digest.js';
 import { readSeen } from '../../scripts/briefing/seen.js';
 import { repliedDir } from '../../scripts/mod/reply.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
@@ -51,7 +51,7 @@ import { SETUP_STEPS } from '../../scripts/lib/setup-run.js';
 import { stopState } from '../../scripts/lib/stop.js';
 import { startRun, markStep, addChanges, newId } from '../../scripts/setup/journal.js';
 import { composeCard } from '../../scripts/cards/compose.js';
-import { replyCode, setLineOf } from '../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, setLineOf } from '../../scripts/state/card-lines.js';
 import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey, verify, readEnrolled } from '../../scripts/state/signing.js';
 import { readCursor, writeCursor } from '../../scripts/watcher/core.js';
@@ -296,9 +296,15 @@ test('a tick draws a waiting approval card; Approve from the pane lets the gate 
   assert.equal(drawn.kind, 'approval');
   assert.equal(drawn.text, card.question.question, 'the card\'s text, exactly as written');
   assert.equal(drawn.hash, hashOf(card.question.question));
-  assert.deepEqual(drawn.buttons, [{ label: 'Approve', does: 'record' }, { label: 'Not now', does: 'record' }, { label: 'Explain more', does: 'turn' }, { label: 'Show me', does: 'turn' }]);
+  assert.deepEqual(drawn.buttons, [
+    { label: 'Approve', does: 'record', shape: 'filled' },
+    { label: 'Suggest a change…', does: 'suggest', shape: 'outlined' },
+    { label: 'Not now', does: 'record', shape: 'small', corner: true },
+    { label: 'Why?', does: 'why', shape: 'small' },
+    { label: 'Show me', does: 'turn', shape: 'small' },
+  ]);
 
-  assert.deepEqual(await press(c, drawn, 'Approve'), { ok: true, says: 'Recorded: Approve on card 1' });
+  assert.deepEqual(await press(c, drawn, 'Approve'), { ok: true, says: 'Approved.' });
   const approvals = eventsOf('approval');
   assert.equal(approvals.length, 1);
   assert.deepEqual([approvals[0].data.pr, approvals[0].data.commit], [PR, c.head]);
@@ -362,7 +368,7 @@ test('Pace 2 from the settings pane is in force at once, confirmed, and shown on
   assert.equal(before.current, '3');
   assert.equal(before.from, 'the default');
 
-  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Pace is now 2, for this project' });
+  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Builders at once is now 2, for this project' });
   const after = await paceRow();
   assert.equal(after.current, '2');
   assert.equal(after.from, 'this project');
@@ -379,7 +385,7 @@ test('Pace 2 from the settings pane is in force at once, confirmed, and shown on
   // The board's settings show it, in force, with no confirm left waiting.
   const shown = await prompt(c, '/wheelhouse:settings');
   assert.ok(shown.startsWith(`${HEADINGS.settings}\n\n`), shown);
-  assert.match(shown, /^Pace \(builders at once\): 2 \(this project\)$/m);
+  assert.match(shown, /^Builders at once: 2 \(this project\)$/m);
   const board = await prompt(c, '/wheelhouse:board');
   assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
   assert.doesNotMatch(board, /not yet confirmed by you|Changed without your confirmation/, 'the board has nothing of it waiting for a confirm');
@@ -422,7 +428,8 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   assert.ok(wake.startsWith(`${LEADS.courier} 1 new card (1). `), wake);
   // Claude's notification is asked for before the cards, so the phone hears while the director is away.
   const ask = wake.slice(`${LEADS.courier} 1 new card (1). `.length);
-  assert.ok(ask.indexOf('notification') >= 0 && ask.indexOf('notification') < ask.indexOf('cards'), ask);
+  assert.ok(ask.indexOf('notification') >= 0 && ask.indexOf('notification') < ask.indexOf('ask any new cards'), ask);
+  assert.equal(ask, 'Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 1. Then ask any new cards now, once.');
   // Once.
   assert.equal((await tick(c)).submit, undefined);
 
@@ -433,7 +440,7 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
 
   // The director steps away until the evening.
   const presence = await choose(c, 'presence', 'away-evening');
-  assert.deepEqual(presence, { ok: true, says: 'Presence is now away until 18:00, for all your projects' });
+  assert.deepEqual(presence, { ok: true, says: 'Away until 18:00. Undo in the pane for a minute.' });
   const second = await waitingCard(c, 'Which colour goes on the sign-in button?');
   // When the front desk's session last ticked, by courier.json, which only a courier that ran moves on.
   const tickedAt = () => JSON.parse(fs.readFileSync(file, 'utf8')).sessions.find((s) => s.id === 'sess-front')?.at;
@@ -444,8 +451,8 @@ test('a new card wakes the front desk once; away until 18:00 holds a card that b
   assert.equal(held.submit, undefined, 'a card that blocks nothing waits while the director is away');
 
   // Back: the card held wakes then, and the one already sent doesn't.
-  assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Presence is now here, for all your projects' });
-  assert.deepEqual((await tick(c)).submit, [`${LEADS.courier} 1 new card (2). ${ask}`]);
+  assert.deepEqual(await choose(c, 'presence', 'here'), { ok: true, says: 'Here. Undo in the pane for a minute.' });
+  assert.deepEqual((await tick(c)).submit, [`${LEADS.courier} 1 new card (2). ${ask.replace('card 1.', 'card 2.')}`]);
   assert.equal(eventsOf('confirmation', profileDir()).length, 2, 'each presence chosen is confirmed');
 }));
 
@@ -454,7 +461,7 @@ test('a STOP wake the mod couldn\'t hand on is undone, and the next tick wakes f
   // STOP from the pane, as the director pressed it after Esc left the session interrupted.
   assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
   const woke = await tick(c);
-  assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, then ask any new cards now, once.`]);
+  assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, titled "Wheelhouse · STOP is on", saying: Every builder has halted. Open Claude to see why. Then ask any new cards now, once.`]);
   assert.deepEqual(woke.woken, [`stop:${stopState().at}`]);
   const { lastWakeAt } = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
   assert.equal(lastWakeAt, woke.wokeAt);
@@ -481,8 +488,9 @@ test('/digest gives the briefing, and a prompt within the next two hours brings 
 
   const digest = await bridge(c, { cmd: 'digest', origin: 'composer', cwd: c.folder });
   assert.equal(digest.ok, true);
-  assert.ok(digest.text.startsWith(`${FIRST_LINE}\n\n`), digest.text);
-  assert.match(digest.text, /^Waiting on you:\n1\. Which photo goes on the home page\?$/m);
+  // It opens with the verdict, the pane's sentence.
+  assert.ok(digest.text.startsWith('One thing needs you. Nothing is broken.\n\n'), digest.text);
+  assert.match(digest.text, /^Waiting on you \(\+1\):\n1\. Which photo goes on the home page\?$/m);
   // The briefing is marked given; the director's last message is not a command's to move.
   const given = readSeen(PROJECT);
   assert.equal(given.promptAt, seen.promptAt);
@@ -547,7 +555,7 @@ test('the bridge run where the signing key cannot be read signs nothing for a pr
   // The card still waits, with its buttons.
   const again = drawnCard(await tick(c), card.id);
   assert.deepEqual(again.buttons.map((b) => b.label), drawn.buttons.map((b) => b.label));
-  assert.deepEqual(await press(c, again, 'Approve'), { ok: true, says: 'Recorded: Approve on card 1' });
+  assert.deepEqual(await press(c, again, 'Approve'), { ok: true, says: 'Approved.' });
   assert.equal(eventsOf('approval').length, 1);
 }));
 
@@ -580,4 +588,147 @@ test('a tick in a project still being set up answers setup, draws nothing and wa
   assert.deepEqual(readPaneStatus(PROJECT), after.pane);
   // The front desk's first tick is its opening: the card is the visit's to ask, not a wake.
   assert.equal(after.submit, undefined);
+}));
+
+// Every file under `dir`, with its text, so a test can look for words that must be nowhere.
+function textsUnder(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return textsUnder(full);
+    return entry.isFile() ? [fs.readFileSync(full, 'utf8')] : [];
+  });
+}
+
+// A commit on top of pull request 7's head on the host, as when the build amends the change. Resolves with the new head.
+async function commitOnPullRequest(c, files) {
+  const work = tempFolder('wh-pr-more-');
+  await g(work, 'init', '-q', '-b', 'main');
+  await g(work, 'fetch', '-q', c.remote.url, `refs/pull/${PR}/head`);
+  await g(work, 'reset', '-q', '--hard', 'FETCH_HEAD');
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(work, name)), { recursive: true });
+    fs.writeFileSync(path.join(work, name), text);
+  }
+  await g(work, 'add', '-A');
+  await g(work, 'commit', '-q', '-m', 'Make the heading bigger');
+  await g(work, 'push', '-q', c.remote.url, `HEAD:refs/pull/${PR}/head`);
+  return g(work, 'rev-parse', 'HEAD');
+}
+
+test('Why? notes quietly; a suggestion on an approval hands the words on, signs nothing and stores nothing; a revised approval at a new head is the one Approve signs', { skip: SKIP }, () => onComputer({}, async (c) => {
+  const card = await approvalCard(c);
+  const drawn = drawnCard(await tick(c), card.id);
+  const code = replyCode(setLineOf(card.question.question));
+
+  // The pane draws the card's parts word for word.
+  assert.equal(drawn.parts.ask, `Put pull request #${PR} live?`);
+  assert.equal(drawn.parts.what, 'Proposed change #7 adds the sign-in page.');
+  assert.equal(drawn.parts.recommendation, 'Approve, because the checks passed and the change is small.');
+  assert.equal(drawn.parts.line, approvalLine(PR, c.head));
+  assert.equal(drawn.parts.code, code);
+  assert.equal(drawn.parts.meanwhile, APPROVAL.meanwhile);
+  assert.equal(drawn.steered, null);
+  assert.equal(drawn.revised, false);
+  // The card is shown in the chat and put off, so its reply code is live.
+  await click(c, card.question, 'Not now');
+  assert.equal(eventsOf('shown').length, 1);
+
+  // Why? answers quietly: no words, no prompt, the card still waiting.
+  assert.deepEqual(await bridge(c, { cmd: 'why', origin: 'pane', cwd: c.folder, card: drawn.id, hash: drawn.hash }), { ok: true });
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Not now', 'Why?']);
+  assert.deepEqual(eventsOf('approval'), []);
+  assert.equal(drawnCard(await tick(c), card.id).id, card.id, 'still waiting');
+
+  // A suggestion carrying the card's own reply code and an approving word is words, not an answer.
+  const words = `${code} approve it now, and make the heading bigger zq-suggestion-marker`;
+  const sent = await bridge(c, { cmd: 'suggest', origin: 'pane', cwd: c.folder, card: drawn.id, hash: drawn.hash, words });
+  assert.equal(sent.ok, true);
+  assert.equal(sent.says, SENT_TO_FRONT_DESK);
+  assert.equal(sent.submit.length, 1);
+  assert.ok(sent.submit[0].startsWith(`${LEADS.pane} the director suggested a change on card ${drawn.n} (${card.id}): `), sent.submit[0]);
+  assert.ok(sent.submit[0].includes('zq-suggestion-marker'), 'the prompt carries the words');
+  assert.deepEqual(eventsOf('approval'), [], 'the words signed nothing');
+  assert.deepEqual(eventsOf('card-answer').map((e) => e.data.label), ['Not now', 'Why?', 'Suggest a change…']);
+  assert.deepEqual(kept(), []);
+  // The words are in no file anywhere in the Wheelhouse home.
+  for (const text of textsUnder(wheelhouseHome())) assert.equal(text.includes('zq-suggestion-marker'), false);
+  // The prompt handed on, sent back as a reply, is no answer.
+  const replied = await bridge(c, { cmd: 'reply', origin: 'bridge', text: sent.submit[0], cwd: c.folder });
+  assert.equal(replied.ok, false, JSON.stringify(replied));
+  assert.deepEqual(eventsOf('approval'), []);
+  assert.deepEqual(kept(), []);
+  // The pane draws the card as steered.
+  const steeredCard = drawnCard(await tick(c), card.id);
+  assert.equal(typeof steeredCard.steered, 'string');
+  // The card is steered and still waits for its revision.
+  const waiting = (await c.client.state.views({ project: PROJECT })).views.waiting.find((w) => w.id === card.id);
+  assert.equal(typeof waiting.steered, 'string', 'the card is marked steered');
+
+  // The revision at the same head is refused, with the old card still waiting.
+  const revision = { ...APPROVAL, target: { pr: PR }, revises: card.id, changed: 'The heading is bigger.' };
+  let error = '';
+  const refused = await frontDesk(['card'], { cwd: c.folder, client: c.client, input: JSON.stringify(revision), out: () => {}, err: (t) => { error += t; } });
+  assert.notEqual(refused, 0);
+  assert.match(error, /a revised approval needs the change committed first/);
+  assert.equal(drawnCard(await tick(c), card.id).id, card.id);
+
+  // The change is committed: the pull request's head moves on the host.
+  const head2 = await commitOnPullRequest(c, { 'src/sign-in.js': 'export const signIn = true;\nexport const heading = 2;\n' });
+  assert.notEqual(head2, c.head);
+  c.host.prState = async () => ({ headSha: head2, mergeable: 'mergeable', state: 'open', body: BODY });
+  const revised = await composed(c, revision);
+  assert.notEqual(revised.id, card.id);
+  const after = await tick(c);
+  assert.equal(drawnCard(after, card.id), undefined, 'the old card is closed');
+  const drawnRevised = drawnCard(after, revised.id);
+  assert.equal(drawnRevised.kind, 'approval');
+  assert.equal(drawnRevised.revised, true);
+  assert.deepEqual(drawnRevised.buttons[0], { label: 'Approve', does: 'record', shape: 'filled' });
+  assert.equal(drawnRevised.parts.line, approvalLine(PR, head2));
+  assert.equal(after.pane.cards.filter((x) => x.kind === 'approval').length, 1);
+  const newCode = replyCode(setLineOf(revised.question.question));
+  assert.notEqual(newCode, code, 'the revised card is for the new head');
+
+  // The old card answers nothing: not its pane press, and not its reply code.
+  assert.equal((await press(c, drawn, 'Approve')).ok, false);
+  const old = await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code} approve`, cwd: c.folder });
+  assert.deepEqual(old, { ok: false, says: 'That card\'s answer can\'t be recorded now' });
+  assert.deepEqual(eventsOf('approval'), []);
+
+  // Approve on the revised card signs the revised card's own commit.
+  assert.deepEqual(await press(c, drawnRevised, 'Approve'), { ok: true, says: 'Approved.' });
+  const approvals = eventsOf('approval');
+  assert.equal(approvals.length, 1);
+  assert.deepEqual([approvals[0].data.pr, approvals[0].data.commit], [PR, head2]);
+  assert.equal(signedBy(approvals[0]), true);
+  assert.deepEqual(kept(), []);
+}));
+
+test('a pick in the settings pane is undone within a minute; Undo under STOP is refused and records nothing', { skip: SKIP }, () => onComputer({}, async (c) => {
+  const paceRow = async () => (await bridge(c, { cmd: 'settings', cwd: c.folder })).rows.find((r) => r.key === 'pace');
+  assert.equal((await paceRow()).current, '3');
+
+  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Builders at once is now 2, for this project' });
+  const picked = await paceRow();
+  assert.equal(picked.current, '2');
+  assert.equal(picked.changed?.undo, true, 'the row offers Undo');
+
+  // Undo within the minute puts back the value before.
+  const undone = await choose(c, 'pace', 'undo');
+  assert.equal(undone.ok, true, JSON.stringify(undone));
+  assert.equal((await paceRow()).current, '3');
+  assert.deepEqual(eventsOf('setting').map((e) => e.data.value), [2, 3]);
+  assert.equal(eventsOf('confirmation').length, 2, 'the pick and its undo are each confirmed');
+
+  // A second pick, then STOP: Undo is refused and nothing more is recorded.
+  assert.equal((await choose(c, 'pace', '1')).ok, true);
+  assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
+  const settings = eventsOf('setting').length;
+  const confirmations = eventsOf('confirmation').length;
+  assert.deepEqual(await choose(c, 'pace', 'undo'), { ok: false, says: SETTINGS_UNDER_STOP });
+  assert.equal(eventsOf('setting').length, settings);
+  assert.equal(eventsOf('confirmation').length, confirmations);
+  assert.deepEqual(kept(), []);
+  assert.equal((await paceRow()).current, '1', 'the value stays as picked');
 }));

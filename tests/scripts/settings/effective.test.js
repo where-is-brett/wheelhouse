@@ -71,10 +71,10 @@ test('settingsText says where each value comes from', () => {
   const line = (word) => lines.find((l) => l.toLowerCase().includes(word));
   assert.match(line('autonomy'), /cautious/);
   assert.match(line('autonomy'), /this project/);
-  assert.match(line('presence'), /away/);
-  assert.match(line('presence'), /until 18 October 2026, 18:00 UTC/);
-  assert.match(line('presence'), /yours/);
-  assert.match(line('pace'), /the default/);
+  assert.match(line('availability'), /away/);
+  assert.match(line('availability'), /until 18 October 2026, 18:00 UTC/);
+  assert.match(line('availability'), /yours/);
+  assert.match(line('builders at once'), /the default/);
   assert.match(line('notifications'), /claude, ntfy/);
   assert.match(line('notifications'), /22:00/);
   assert.match(line('git'), /yours/);
@@ -109,12 +109,12 @@ test('known set to false counts at once and is not listed as unconfirmed; known 
 });
 
 test('settingWords names a setting and its value in plain words, on one line', () => {
-  assert.equal(settingWords('boardTab', 'build'), 'Board tab shown first: build');
+  assert.equal(settingWords('boardTab', 'build'), 'Board opens on: build');
   assert.equal(settingWords('known:pull-request', true), 'Knows "pull request": yes');
   assert.equal(settingWords('known:ci', false), 'Knows "ci": no');
   assert.equal(settingWords('explanations', 'plain'), 'Explanations: plain');
-  assert.equal(settingWords('presence', 'away', SIX_PM), 'Presence: away, until 18 October 2026, 18:00 UTC');
-  assert.equal(settingWords('pace', 2), 'Pace (builders at once): 2');
+  assert.equal(settingWords('presence', 'away', SIX_PM), 'Availability: away, until 18 October 2026, 18:00 UTC');
+  assert.equal(settingWords('pace', 2), 'Builders at once: 2');
   // The settings list says each the same way.
   assert.match(settingsText(effectiveSettings({ project: {}, profile: view(entry('known:pull-request', true)), now: NOON })), /^Knows "pull request": yes \(yours\)$/m);
 });

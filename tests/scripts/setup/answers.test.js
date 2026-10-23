@@ -94,8 +94,8 @@ test('a question card is recorded as asked and an exact answer is kept, signed, 
     assert.equal(asked.ask.id, 'host');
     const { card } = asked.ask;
     assert.equal(card.header, 'Question');
-    assert.deepEqual(card.options.map((o) => o.label), ['GitHub', 'GitLab', 'Explain more']);
-    assert.ok(card.question.startsWith('What this is: Setup step 3 needs to know'), card.question);
+    assert.deepEqual(card.options.map((o) => o.label), ['GitHub', 'GitLab']);
+    assert.ok(card.question.startsWith('Setup step 3 needs to know'), card.question);
     assert.ok(!/Reply code:|Set up step/.test(card.question), card.question);
     // Recorded as asked for this run; the step's shown time is the Go-ahead card's, so none yet.
     const run = findRun(folder);
@@ -122,7 +122,7 @@ test('a question card is recorded as asked and an exact answer is kept, signed, 
   });
 });
 
-test('an answer on a reworded card, another run\'s card, or Explain more is not kept', async () => {
+test('an answer on a reworded card, another run\'s card, or Suggest a change… is not kept', async () => {
   await withSetup(async ({ client, home, folder, other }) => {
     setWorld(home, { ask: { 3: [HOST], 4: [{ id: 'name', options: ['Keep it'], typed: true }] } });
     const { card } = (await client.setup.plan({ folder, step: 3 })).ask;
@@ -135,8 +135,8 @@ test('an answer on a reworded card, another run\'s card, or Explain more is not 
     ];
     for (const shown of reworded) await choose(folder, shown, 'GitHub');
     // A put-off is never an answer, even on a card that takes typed answers.
-    await choose(folder, card, 'Explain more');
-    await choose(folder, typed, 'Explain more');
+    await choose(folder, card, 'Suggest a change…');
+    await choose(folder, typed, 'Suggest a change…');
     await choose(folder, typed, 'Not now');
     // The card asked for this folder, answered in a session in another product's folder, which
     // has a run of its own.
@@ -323,7 +323,9 @@ test('a wait is passed to the playbook', async () => {
     };
     assert.deepEqual(await run(['plan', '9']), { step: 9, title: 'Phone notifications', wait: 2 * MINUTE, why: 'the push test waits two minutes' });
     const asked = await client.setup.plan({ folder, step: 3 });
-    assert.deepEqual(await run(['plan', '3']), { step: 3, title: 'The host and the connection', ask: asked.ask });
+    assert.deepEqual(await run(['plan', '3']), { step: 3, title: 'The host and the connection', progress: asked.progress, ask: asked.ask });
+    // A step that asks heads itself with its place, its time, what it is and what has happened.
+    assert.deepEqual(asked.progress, ['Step 3 of 10 · about 2 minutes', 'Connecting to your code host', 'Setup has just started.']);
     setWorld(home, { settle: [4] });
     assert.deepEqual(await run(['plan', '4']), { step: 4, title: 'Three questions', done: true });
   });

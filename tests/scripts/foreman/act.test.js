@@ -837,11 +837,12 @@ test('question offers the Unattended card on a feature\'s third build-command qu
   assert.deepEqual(rest, { header: 'Unattended', kind: 'question', level: 3, line: null, code: null });
   assert.doesNotThrow(() => makeEvent({ kind: 'card', data: card.data, now: () => new Date(T0) }));
   const shown = card.data.question;
-  for (const said of [words.what, words.why, words.risk, ...words.options.map((o) => `${o.label}: ${o.says.replace(/\.$/, '')}`), 'My recommendation: Keep asking']) {
-    assert.ok(shown.includes(said), said);
+  for (const said of [words.what, words.why, words.risk, words.meanwhile, 'To know more, just ask.']) {
+    assert.ok(shown.split('\n').includes(said), said);
   }
+  assert.ok(card.data.descriptions[0].startsWith('Recommended: '), 'the recommendation is on the option');
   assert.ok(!shown.includes('Use Guarded'));
-  assert.equal(shown.split('\n').at(-1), unattendedBuildsLine(setting.id, computer), 'the line names the setting event written');
+  assert.deepEqual(shown.split('\n').slice(-2), [unattendedBuildsLine(setting.id, computer), 'To know more, just ask.'], 'the line names the setting event written');
   // A Turn on (dangerous) click on this card confirms that setting event, for this computer alone.
   const click = await earned({ project: P, question: shown, label: 'Turn on (dangerous)' });
   assert.equal(click?.made?.kind, 'confirmation');
@@ -869,7 +870,7 @@ test('the Unattended card passes the card check and fits the card, with and with
     assert.deepEqual(data.options, words.options.map((o) => o.label));
     assert.equal(data.question.split('\n').includes(unattendedBuildsLine(setting.id, computer)), true, name);
     // No reply code answers it, so it says a click is needed.
-    assert.ok(data.question.includes('While you decide: Builders keep asking; answer by a click only.'), name);
+    assert.ok(data.question.split('\n').includes('Builders keep asking; answer by a click only.'), name);
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data, now: () => new Date(T0) }));
     // A Turn on (dangerous) click on it still confirms the Unattended setting event, with its line.
     const click = await earned({ project: P, question: data.question, label: 'Turn on (dangerous)' });
@@ -886,7 +887,7 @@ test('the Unattended card passes the card check and fits the card, with and with
     assert.equal(words.recommend, 'guarded');
     assert.match(use.says, /network/);
     assert.match(use.says, readsHeld ? /keys folder shut/ : /keys folder open/);
-    assert.ok(data.question.includes(`Use Guarded: ${use.says.replace(/\.$/, '')}`), name);
+    assert.equal(data.descriptions[2], `Recommended: ${use.says}`, name);
     assert.deepEqual(data.question.split('\n').slice(-2), [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))]);
     const used = await earned({ project: P, question: data.question, label: 'Use Guarded' });
     assert.equal(used?.made?.kind, 'confirmation', name);
@@ -902,8 +903,8 @@ test('an Unattended card past the card\'s length, or in a form the card check re
   const long = unattendedCardData({ ...words, what: `${words.what} ${'More words. '.repeat(120)}` }, setting.id, computer);
   assert.match(unattendedCardFault(long), new RegExp(`would pass ${CARD.chars} characters \\(it is ${long.question.length}\\)`));
   const blank = unattendedCardData({ ...words, meanwhile: '' }, setting.id, computer);
-  assert.match(unattendedCardFault(blank), /^the card has nothing after "While you decide:"/);
-  assert.match(unattendedCardFault({}), /^the card lacks its "What this is:" part/);
+  assert.match(unattendedCardFault(blank), /^the card has an empty line/);
+  assert.match(unattendedCardFault({}), /^the card lacks its "To know more, just ask\." line/);
 }));
 
 test('question writes no Unattended card that would pass the card\'s length, and says so', () => withHome(async () => {
@@ -942,7 +943,6 @@ test('question offers Use Guarded where this computer\'s self-test passed, propo
   const words = UNATTENDED_CARD({ guardedReady: true, readsHeld: false });
   assert.deepEqual(card.data.options, ['Keep asking', 'Turn on (dangerous)', 'Use Guarded']);
   assert.equal(card.data.descriptions[2], `Recommended: ${words.options[2].says}`);
-  assert.ok(card.data.question.includes('My recommendation: Use Guarded'));
   assert.deepEqual(cardProblems(card.data.question), []);
   const lines = card.data.question.split('\n');
   assert.ok(lines.includes(unattendedBuildsLine(unattended.id, computer)));
@@ -1031,7 +1031,7 @@ test('an offer whose card wasn\'t written is finished on the next run, with the 
   assert.equal(again.out, `Question q-mine-3 is recorded already.\n${OFFERED}\n`);
   assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'card']);
   const [setting, card] = fake.writes.slice(3);
-  assert.equal(card.data.question.split('\n').at(-1), unattendedBuildsLine(setting.id, computer));
+  assert.equal(card.data.question.split('\n').at(-2), unattendedBuildsLine(setting.id, computer));
   assert.equal((await act(['question', 'mine', 'q-mine-3'], { client: fake.client, ...onWindows })).out, 'Question q-mine-3 is recorded already.\n');
   assert.equal(fake.writes.length, 5);
 }));

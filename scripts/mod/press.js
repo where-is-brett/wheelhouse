@@ -2,8 +2,11 @@
 // A press on a card in the pane, which the bridge hands here for the origin `pane` only. It
 // records what a click on the same button of the same card would: a deciding button earns the
 // signed record the click earns, through the prompt record's own code, and then the plain card
-// answer; Not now writes the card answer alone; Explain more, Show me and a question card's own
-// options write the card answer and hand the front desk one short prompt naming the card.
+// answer; Not now and Keep as is write the card answer alone (Keep as is also hands the front
+// desk one short prompt naming the card, and its answer decides the card); Explain more, Show me
+// and a question card's own options write the card answer and hand the front desk one short
+// prompt naming the card. Why? and Suggest a change… have their own commands, whyCard and
+// suggestCard below, and a press naming either is refused.
 //
 // The card is found in the waiting view built from the state clone, as the reply code finds its
 // card, so a record the helper took a moment ago has already closed it. A press names its card
@@ -15,10 +18,18 @@
 // prompt names the card by its number and its id, since a choice closes its card before the
 // front desk reads the prompt and the numbers move.
 //
+// Why? writes its card answer quietly and hands nothing on. Suggest a change… writes its card
+// answer, which holds no words, and hands the front desk one prompt carrying the director's words
+// folded to one line and cut at SUGGEST_CHARS; the words are never signed, kept in pending/ or
+// stored, and are never read as a reply code, since only the prompt carries them. The card is
+// claimed while the answer is written, and let go again, so a suggestion and a press at once
+// can't both write.
+//
 // Under STOP the helper refuses /state/write and takes /state/record. So a deciding press still
 // signs and sends its record, which closes the card on its own; no card answer is written or
 // kept, so Not now notes nothing, and Explain more, Show me and a question card's options still
-// give their prompt, since reading and explaining carry on.
+// give their prompt, since reading and explaining carry on; so does Suggest a change…, with no
+// answer written.
 //
 // Two presses record nothing, whatever the card offers, as a reply code records nothing for them
 // (reply.js): turning on or confirming a Windows build-commands setting (Turn on (dangerous), Use
@@ -28,13 +39,14 @@
 // step goes ahead only by the director's click on the very card setup showed.
 import fs from 'node:fs';
 import path from 'node:path';
-import { earned, keepEarned, sendKept } from '../hooks/prompt-record.js';
+import { earned, keepEarned, sendKept, SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { keep, taken, withinBudget, pendingDir, BUDGET_MS } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
-import { PUT_OFF } from '../lib/front-desk.js';
+import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
+import { SUGGEST, WHY, SENT_TO_FRONT_DESK, CHANGED_WHILE_READING, WRITE_FIRST, decidedToast } from '../lib/calm-words.js';
 import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf, isSetupCard } from './buttons.js';
@@ -44,6 +56,8 @@ import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsE
 const NOT_NOW = 'Not now';
 // Longer than any option a card offers.
 const LABEL_CHARS = 80;
+// The most characters of the director's words a suggestion hands on.
+const SUGGEST_CHARS = 500;
 // An event id, as a marker's file name.
 const MARKER = /^[A-Za-z0-9-]{1,64}$/;
 
@@ -62,6 +76,7 @@ export const SAYS = {
   buildsByClick: 'That setting is set only by a click on its own card when the front desk asks it, so nothing was recorded',
   setupByClick: 'A setup step goes ahead only by a click on its own card when setup asks it, so nothing was recorded',
   elsewhere: ALLOWED_ELSEWHERE,
+  noWords: WRITE_FIRST,
 };
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -83,7 +98,7 @@ const release = (files) => {
 };
 
 // Whether a label answers the card, as the waiting view decides it: one of its options, other
-// than Not now, Explain more and Show me.
+// than Not now, Explain more, Show me, Why? and Suggest a change….
 const decides = (data, label) => !PUT_OFF.includes(label) && (!Array.isArray(data.options) || data.options.includes(label));
 
 // Whether a plain answer kept in pending/, not yet taken by the helper, answers the card: a
@@ -159,6 +174,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const question = cardTextOf(data);
   if (typeof hash !== 'string' || hash !== hashOf(question)) return no(SAYS.changed);
   if (typeof label !== 'string' || label === '' || label.length > LABEL_CHARS || /[\p{Cc}\p{Cf}]/u.test(label)) return no(SAYS.notOffered);
+  if (label === WHY || label === SUGGEST) return no(SAYS.notOffered);
   if (CLICK_ONLY_LABELS.includes(label) || (label === 'Confirm' && confirmsBuilds(project, question))) return no(SAYS.buildsByClick);
   if (isSetupCard(data)) return no(SAYS.setupByClick);
   const button = cardButtons(data).buttons.find((b) => b.label === label);
@@ -177,8 +193,9 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
 
-  if (label !== NOT_NOW && button.does === 'record') {
-    return signed({ project, question, label, what, markers, shownAt: entry.at, api, left, now, liftStop, stopState });
+  // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
+  if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
+    return signed({ project, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, left, now, liftStop, stopState });
   }
 
   const prompt = [promptOf(kindOf(data), label, n, card)];
@@ -206,7 +223,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
 // which closes the card on its own. Under STOP the plain answer is left out.
 // The card's own time goes to earned as `shownAt`, as a reply's does: the pane drew the card
 // then, so a Lift STOP card from before this STOP began can't lift it.
-async function signed({ project, question, label, what, markers, shownAt, api, left, now, liftStop, stopState }) {
+async function signed({ project, question, label, what, meanwhile, markers, shownAt, api, left, now, liftStop, stopState }) {
   const held = [];
   for (const id of markers) {
     const file = claim(project, id);
@@ -255,5 +272,71 @@ async function signed({ project, question, label, what, markers, shownAt, api, l
     // Kept in pending/ for the next session start to send.
   }
   if (!stopState().on) await writeAnswer(project, api, left, question, label, now);
-  return { made: true, says: kept(`Recorded: ${what}`, sent) };
+  return { made: true, says: kept(SIGNED_LABELS.includes(label) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent) };
+}
+
+// The waiting card a Why? or Suggest a change… names, when the pane drew it as it is now and
+// still offers `label`, else null: { card, data, question, views, events }.
+function waitingCard(project, card, hash, label, now) {
+  if (typeof card !== 'string' || !MARKER.test(card) || typeof hash !== 'string') return null;
+  let views;
+  let events;
+  try {
+    ({ views, events } = viewsNow(project, now));
+  } catch {
+    return null;
+  }
+  const entry = (Array.isArray(views.waiting) ? views.waiting : []).find((w) => w?.id === card);
+  if (!isRecord(entry?.data)) return null;
+  const { data } = entry;
+  const question = cardTextOf(data);
+  if (hash !== hashOf(question) || isSetupCard(data) || !cardButtons(data).buttons.some((b) => b.label === label)) return null;
+  const shownId = shownIdOf(views.shown, question);
+  const markers = shownId === null ? [card] : [card, shownId];
+  if (answeredInPending(project, question) || decidedInPending(project, data, question) || markers.some((id) => claimed(project, id))) return null;
+  return { card, data, question, views, events };
+}
+
+// whyCard({ project, card, hash, client, now, stopState, budget }) -> Promise<{ made }>
+// Notes Why? on a waiting card the pane drew as it is now, quietly: the answer is written (kept
+// in pending/ when the helper doesn't take it) and nothing is handed on. A card that changed, and
+// STOP, note nothing. Never throws.
+export async function whyCard({ project, card, hash, client, now = () => new Date(), stopState = defaultStopState, budget = BUDGET_MS + helperGrace() } = {}) {
+  try {
+    const found = waitingCard(project, card, hash, WHY, now);
+    if (found === null || stopState().on) return { made: false };
+    const api = client ?? helperClient({ timeout: budget });
+    const written = await writeAnswer(project, api, withinBudget(Date.now() + budget), found.question, WHY, now);
+    return { made: written !== null };
+  } catch {
+    return { made: false };
+  }
+}
+
+// The director's words on one line, cut at SUGGEST_CHARS; '' when there are none.
+const foldedWords = (words) => (typeof words === 'string' ? Array.from(words.replace(/[\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ').trim()).slice(0, SUGGEST_CHARS).join('').trim() : '');
+
+// suggestCard({ project, card, hash, words, client, now, stopState, budget })
+//   -> Promise<{ made, says, submit? }>
+// Refuses empty words, and a card that changed or closed (nothing is handed on). Otherwise the
+// answer labelled Suggest a change… is written (not under STOP) and the one prompt naming the
+// card by its number and id, with the words, is handed back. Never throws.
+export async function suggestCard({ project, card, hash, words, client, now = () => new Date(), stopState = defaultStopState, budget = BUDGET_MS + helperGrace() } = {}) {
+  try {
+    const text = foldedWords(words);
+    if (text === '') return no(SAYS.noWords);
+    const found = waitingCard(project, card, hash, SUGGEST, now);
+    if (found === null) return no(CHANGED_WHILE_READING);
+    const marker = claim(project, card);
+    if (!marker) return no(CHANGED_WHILE_READING);
+    try {
+      if (!stopState().on) await writeAnswer(project, client ?? helperClient({ timeout: budget }), withinBudget(Date.now() + budget), found.question, SUGGEST, now);
+    } finally {
+      release([marker]);
+    }
+    const n = numberedWaiting(found.views, found.events).find((item) => item.card === card)?.n;
+    return { made: true, says: SENT_TO_FRONT_DESK, submit: [`${LEADS.pane} the director suggested a change on card ${n} (${card}): ${text}`] };
+  } catch {
+    return no(SAYS.failed);
+  }
 }

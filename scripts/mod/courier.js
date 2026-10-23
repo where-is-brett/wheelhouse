@@ -13,6 +13,7 @@ import { stateDir } from '../lib/paths.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { COURIER_GAP_MS, LEADS, REMIND_MS, STALE_TICKS, TICK_MS } from '../lib/mod-numbers.js';
 import { hashOf } from './status.js';
+import { NOTIFICATION_TITLE, NOTIFICATION_TITLE_STOP, STOP_NOTIFICATION, waitingOnYou } from '../lib/calm-words.js';
 
 // How many sent ids courier.json keeps, beside every one still among the current items.
 export const SENT_KEPT = 500;
@@ -23,12 +24,14 @@ export const SESSIONS_KEPT = 20;
 const BUSY = 'The courier is busy in another session';
 // A courier.json larger than this reads as nothing sent.
 const FILE_BYTES = 1024 * 1024;
-// The notification first: in Desktop the cards wait for the director's answer, so a notification
-// sent after them would reach the phone only once the director had answered.
-const ASK = 'Send Claude\'s notification in one line, then ask any new cards now, once.';
+// The notification first, in its exact words and title: in Desktop the cards wait for the
+// director's answer, so a notification sent after them would reach the phone only once the
+// director had answered.
+const SEND = (title, saying) => `Send Claude's notification in one line, titled "${title}", saying: ${saying}`;
+const ASK = 'Then ask any new cards now, once.';
 // A reminder's ask: the cards it names weren't asked at their wake (its notification wasn't sent),
 // so they are asked now, whatever the notification answers this time.
-const REMIND_ASK = (cards) => `Send Claude's notification in one line, then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
+const REMIND_ASK = (cards) => `Then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
 
@@ -184,6 +187,20 @@ function whatOf(items) {
   return parts.join('; ');
 }
 
+// What the notification says, counts and card numbers only: STOP's own words when STOP wakes,
+// otherwise the cards waiting on the director, then any incident, health line or finished feature.
+function sayingOf(items) {
+  const count = (kind) => items.filter((i) => i.kind === kind).length;
+  if (count('stop') > 0) return STOP_NOTIFICATION;
+  const cards = [...new Set([...numbersOf(items, 'card'), ...numbersOf(items, 'remind')])].sort((a, b) => a - b);
+  const parts = [];
+  if (cards.length > 0) parts.push(waitingOnYou(cards));
+  if (count('incident') > 0) parts.push(`${plural(count('incident'), 'incident', 'incidents')} open.`);
+  if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level.`);
+  if (count('finished') > 0) parts.push(`${plural(count('finished'), 'feature', 'features')} finished.`);
+  return parts.join(' ');
+}
+
 const NOTHING = Object.freeze({ submit: null, sent: [] });
 
 // courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, sent, at? }.
@@ -259,7 +276,8 @@ export async function courierWake({ project, session, items, presence, quiet, id
     mark(waking, stamp, { by: session, before: kept.lastWakeAt });
     const reminding = waking.some((i) => i.kind === 'remind');
     const ask = reminding ? REMIND_ASK([...numbersOf(waking, 'card'), ...numbersOf(waking, 'remind')].length) : ASK;
-    return { submit: `${LEADS.courier} ${whatOf(waking)}. ${ask}`, sent: waking.map((i) => i.id), at: stamp };
+    const title = stopped || waking.some((i) => i.kind === 'stop') ? NOTIFICATION_TITLE_STOP : NOTIFICATION_TITLE;
+    return { submit: `${LEADS.courier} ${whatOf(waking)}. ${SEND(title, sayingOf(waking))} ${ask}`, sent: waking.map((i) => i.id), at: stamp };
   } finally {
     release();
   }
