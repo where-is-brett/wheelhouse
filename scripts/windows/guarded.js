@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { plainControlNames } from '../lib/agent-control.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -41,7 +42,19 @@ export const EXIT = Object.freeze({ usage: 2, notLow: 3, fetches: 4, git: 4, not
 
 // What stays at the normal level in a worktree labelled low (low.js, labelWorktree), so a build
 // can't plant a hook or a setting there: folders, labelled with inheritance, and files.
-export const KEPT_NORMAL = Object.freeze({ folders: Object.freeze(['.claude', '.vscode']), files: Object.freeze(['.git', '.mcp.json']) });
+//
+// Beside the settings and the connectors' file, the plain names among the files that steer an agent
+// (agent-control.js, plainControlNames) are kept too: the folders and files at the worktree's top
+// that have no glob in their name. The names with a glob (AGENTS.md in any folder) are not here, nor
+// are those below .github (hooks, skills, agents and the rest): their folder, .github, is also
+// where the workflows are, and a build that must write there is left at the low level, so a low
+// build could move .github away with them in it. The merge gate and the tool guard hold those.
+const UNIQUE = (list) => Object.freeze([...new Set(list)]);
+const CONTROL_NAMES = plainControlNames();
+export const KEPT_NORMAL = Object.freeze({
+  folders: UNIQUE(['.claude', '.vscode', ...CONTROL_NAMES.folders]),
+  files: UNIQUE(['.git', '.mcp.json', ...CONTROL_NAMES.files]),
+});
 
 const LOW_LABEL = 'S-1-16-4096';
 

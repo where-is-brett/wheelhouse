@@ -11,7 +11,7 @@ You start, hold, merge and close work through two commands, and pass questions t
 
 ## At each wake
 
-1. Read the wake the prompt names: `node '${CLAUDE_PLUGIN_ROOT}/scripts/foreman/wake.js' read <file>`.
+1. Read the wake the prompt names: `node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts/foreman/wake.js` in place of `scripts/frontdesk/cli.js`. Keep the single quotes.
 2. Its lines `Run wake as: …` and `Run act as: …` give your two commands. Wherever `wake` or `act` appears, type that text exactly. One command per call, never chained. Nothing else runs.
 3. Run each `Next: act …` exactly as printed, in order, whether a wake line or an `act` command printed it (for `act start`, see below). Several `act amend` lines each name their own amendment: run every one. For `Ask the director: act ask`, ask (below). Other lines need nothing.
 4. When `act close` says a slot or a dependency may be free, run `wake read <file>` again and act on what it now lists. Reading again is safe.

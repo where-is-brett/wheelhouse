@@ -31,7 +31,9 @@ const COMMAND = frontDeskCommand('/plugin', { platform: 'linux' });
 const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 // The baseline's command (scripts/measures/cli.js), which the playbook names beside the front desk's.
 const MEASURES = COMMAND.replace('/scripts/frontdesk/cli.js', '/scripts/measures/cli.js');
-const MEASURES_LINE = /measures\/cli\.js"? [a-z]+/g;
+const MEASURES_LINE = /<the measures command> [a-z]+/g;
+// The playbook names the command in general words; the session start's command line is the path (tests/skills/tool-names.test.js).
+const WHEELHOUSE_COMMAND = '<the Wheelhouse command>';
 
 function frontOf(text, file) {
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
@@ -46,7 +48,7 @@ function frontOf(text, file) {
 
 // The commands a text names as cli.js's, by their first word: `node "<root>/…/cli.js" <word>` and `cli.js <word>`.
 // The baseline's command is left out: it is scripts/measures/cli.js's, pinned on its own below.
-const commandWords = (text) => [...text.replaceAll(ROOT_VARIABLE, '/plugin').replace(MEASURES_LINE, '').matchAll(/cli\.js"? ([a-z]+)/g)].map((m) => m[1]);
+const commandWords = (text) => [...text.replaceAll(ROOT_VARIABLE, '/plugin').replace(MEASURES_LINE, '').matchAll(/(?:cli\.js"?|<the Wheelhouse command>) ([a-z]+)/g)].map((m) => m[1]);
 
 // The subcommands cli.js lists in its own refusal.
 async function subcommands() {
@@ -92,14 +94,12 @@ test('every command is cli.js exactly as its allow rule matches it', () => {
   assert.ok(allow.includes(`Bash(${COMMAND}:*)`), allow.join(', '));
   // Beside it, the one file the front desk writes its input to without a scratchpad, and no other.
   assert.deepEqual(allow.filter((rule) => rule.startsWith('Edit(')), [`Edit(/${FRONT_DESK_INPUT})`]);
+  // The playbooks name it in general words, and the session start's command line gives it as the allow rule matches it.
   for (const [file, text] of [[PLAYBOOK, playbook], [INTAKE, intake]]) {
-    const nodes = [...text.matchAll(/node "[^"]*"/g)].map((m) => m[0].replaceAll(ROOT_VARIABLE, '/plugin'));
-    assert.ok(nodes.length > 0, `${file} names the command`);
-    for (const command of nodes) {
-      if (file === PLAYBOOK && command === MEASURES) continue;
-      assert.equal(command, COMMAND, file);
-    }
+    assert.ok(text.includes('the Wheelhouse command the session start named'), `${file} names the command`);
+    assert.doesNotMatch(text, /node "/, file);
   }
+  assert.ok(playbook.includes(WHEELHOUSE_COMMAND));
 });
 
 test('the playbook and the intake name only commands, views, record kinds and card kinds the command takes', async () => {
@@ -120,11 +120,10 @@ test('the playbook and the intake name only commands, views, record kinds and ca
 
 test('each example input in the playbook is accepted as written, the approval with its head commit looked up', async () => {
   // The JSON, then the command reading it from the file in the scratchpad (ruling F81).
-  const blocks = [...playbook.matchAll(/```\n(\{[^\n]*\})\n```\n\n```\nnode "([^"]*)" ([^\n<]*?) < "<your scratchpad>\/front-desk\.json"\n```/g)];
+  const blocks = [...playbook.matchAll(/```\n(\{[^\n]*\})\n```\n\n```\n<the Wheelhouse command> ([^\n<]*?) < "<your scratchpad>\/front-desk\.json"\n```/g)];
   assert.ok(blocks.length >= 2, 'a record and a card are shown');
   const seen = [];
-  for (const [, input, command, args] of blocks) {
-    assert.equal(`node "${command.replaceAll(ROOT_VARIABLE, '/plugin')}"`, COMMAND);
+  for (const [, input, args] of blocks) {
     const h = helper();
     let out = '';
     let err = '';
@@ -151,7 +150,7 @@ test('the playbook gives JSON input from a file in the scratchpad, written with 
   assert.match(rule, /with the Write tool to `front-desk\.json` in your scratchpad folder/);
   assert.match(rule, /outside the project, so nothing reaches git/);
   assert.match(intake, /JSON input from a file in your scratchpad folder/);
-  const commands = [...playbook.matchAll(/^node "[^"]*" (?:card|record [a-z]+)\b.*$/gm)].map((m) => m[0]);
+  const commands = [...playbook.matchAll(/^<the Wheelhouse command> (?:card|record [a-z]+)\b.*$/gm)].map((m) => m[0]);
   assert.ok(commands.length >= 3);
   for (const line of commands) assert.ok(line.endsWith(' < "<your scratchpad>/front-desk.json"') || line.endsWith(` < "${FRONT_DESK_INPUT}"`), line);
   // With no scratchpad named, the one file in the project the local settings let it write (F85).
@@ -165,9 +164,9 @@ test('the playbook gives JSON input from a file in the scratchpad, written with 
 });
 
 test('the playbook\'s similar, with the request\'s words as arguments, runs, and runs under STOP', async () => {
-  const [, line, rest] = /```\n(node "[^"]*" similar ([^\n]+))\n```/.exec(playbook) ?? [];
+  const [, line, rest] = /```\n(<the Wheelhouse command> similar ([^\n]+))\n```/.exec(playbook) ?? [];
   assert.ok(line, 'the playbook shows similar with the request\'s words');
-  const command = line.replaceAll(ROOT_VARIABLE, '/plugin');
+  const command = line.replace(WHEELHOUSE_COMMAND, COMMAND);
   assert.ok(command.startsWith(`${COMMAND} similar `));
   const argv = ['similar', ...words(rest, false)];
   let out = '';
@@ -248,7 +247,7 @@ test('the front desk quotes a ruling in force where it applies it, gives a card 
   assert.match(playbook, /\*\*A ruling in force\*\*[^\n]*quote it, in its own words, where you apply it/);
   // Scenario 10: a card is never in the session's own words (design 5.3).
   // Only when the tool can't be loaded: a Desktop session whose AskUserQuestion is deferred loads it (ruling F93).
-  assert.match(playbook, /When `AskUserQuestion` can't be loaded \(ToolSearch finds none\), put each card in your reply as it was printed, word for word with its set line; never in your own words\./);
+  assert.match(playbook, /When your clickable-question tool can't be loaded \(your tool-search tool, if you have one, finds none\), put each card in your reply as it was printed, word for word with its set line; never in your own words\./);
   // Scenario 7: a visible change with a choice in it has choices to make (design 7.2); no example mirrors the scenario (ruling F93).
   assert.match(intake, /A change users would see that leaves a choice to make is the small lane at least, never quick\./);
 });
@@ -265,9 +264,12 @@ test('a musing ends on the one line as it stands, brainstorming sizes a change, 
 });
 
 test('the playbook records the private note\'s figures only by the baseline command, which takes its example as written', async () => {
-  const [, line, rest] = /```\n(node "[^"]*" baseline ([^\n]+))\n```/.exec(playbook) ?? [];
+  const [, line, rest] = /```\n(<the measures command> baseline ([^\n]+))\n```/.exec(playbook) ?? [];
   assert.ok(line, 'the playbook shows the baseline command');
-  assert.ok(line.replaceAll(ROOT_VARIABLE, '/plugin').startsWith(`${MEASURES} baseline `));
+  assert.ok(line.replace('<the measures command>', MEASURES).startsWith(`${MEASURES} baseline `));
+  // The measures command is named from the session start's command, with its script swapped.
+  assert.match(playbook, /`<the measures command>` is the Wheelhouse command the session start named, with `scripts\/measures\/cli\.js` in place of `scripts\/frontdesk\/cli\.js`\./);
+  assert.equal(frontDeskCommand('/plugin', { platform: 'linux' }).replace('scripts/frontdesk/cli.js', 'scripts/measures/cli.js'), MEASURES);
   const asked = [];
   const client = { measures: { baseline: async (body) => { asked.push(body); return { ok: true, hash: 'a'.repeat(64), card: { question: 'q' } }; } } };
   let out = '';
@@ -285,7 +287,7 @@ test('the playbook records the private note\'s figures only by the baseline comm
 test('under a courier\'s wake with no AskUserQuestion, the cards are said to be on the board, not put in the reply (merge review of 63d5ceb)', () => {
   const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
   assert.ok(courier, 'the courier\'s rule');
-  assert.match(courier, /When `AskUserQuestion` can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the board\./);
+  assert.match(courier, /When your clickable-question tool can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the board\./);
 });
 
 test('a courier\'s card wake whose notification wasn\'t sent asks nothing, and its reminder asks the cards whatever the notification answers (ruling 68)', () => {
@@ -325,7 +327,7 @@ test('a press of Why? finds the pressed card by its id in views waiting, asks it
   assert.ok(press.indexOf('`views waiting`') < press.indexOf('`again <its number now>`'), 'views waiting before again');
   assert.ok(press.indexOf('`again <its number now>`') < press.indexOf('`explain <term>`'), 'again before explain');
   // The one sentence, with the AskUserQuestion call, and nothing else in front of the director.
-  assert.match(press, /one sentence to the director, at most 30 words, in the message with the `AskUserQuestion` call, before it/);
+  assert.match(press, /one sentence to the director, at most 30 words, in the same message as your call to your clickable-question tool, before it/);
   assert.match(press, /Only that one sentence: Claude shows longer text before a card only as a summary\./);
   assert.match(press, /^  - \*\*"pressed Why\? on card n \(id\)"\*\* \(only a card that failed the check sends it\): write no text until the one sentence below, not even a note to yourself\./);
   assert.match(press, /Never a card's id\./);
@@ -351,7 +353,7 @@ test('a press of Show me and a choice in the pane find the card by its id in vie
   assert.match(show, /First `views waiting`: the card with the prompt's id is the pressed one, and its number there is the one to use, since the numbers move as cards close; that it moved is not news for the director\./);
   assert.match(show, /When no card has that id, it no longer waits: say so in one line and ask nothing\./);
   // The preview is the pull request's the card names, never the card's own number.
-  assert.match(show, /Then `preview` with the number of the pull request that card names, never the card's number, and its address as a link, alone; when there is none, as Cards says\. Then `again <its number now>`, and `AskUserQuestion` with what it gave, alone\./);
+  assert.match(show, /Then `preview` with the number of the pull request that card names, never the card's number, and its address as a link, alone; when there is none, as Cards says\. Then `again <its number now>`, and call your clickable-question tool with what it gave, alone\./);
   assert.match(show, /Never a card's id\./);
   assert.ok(show.indexOf('`views waiting`') < show.indexOf('`again <its number now>`'), 'views waiting before again');
   assert.doesNotMatch(show, /`again <n>`|Show me for card n/);

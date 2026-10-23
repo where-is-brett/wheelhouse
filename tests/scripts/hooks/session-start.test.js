@@ -9,7 +9,7 @@ import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
-  decide, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+  decide, toolSheetLines, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
   TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
 } from '../../../scripts/hooks/session-start.js';
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
@@ -77,6 +77,10 @@ const run = (f, extra = {}, input = {}) => decide(
   { pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', projectOf: () => ({ project: P }), stopState: () => ({ on: false }), pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, guardedSelfTest: async () => null, startLowNodeCopy: () => true, ...extra },
 );
 const text = (out) => out?.hookSpecificOutput?.additionalContext ?? '';
+// The context without the tool sheet and the command line (tests/skills/tool-names.test.js pins those),
+// for the tests that pin the other lines of a short reload exactly.
+const SHEET_LINES = new Set(toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: 'darwin' }));
+const withoutSheet = (out) => text(out).split('\n').filter((l) => !SHEET_LINES.has(l) && !l.startsWith('The Wheelhouse command is ')).join('\n');
 const call = (cwd, tool) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {} });
 
 test('a helper that answers is not started again', async () => {
@@ -1073,7 +1077,7 @@ test('a fresh computer gets a signing key and enrols it once', async () => {
     const keyFile = path.join(keysDir(), 'signing.pem');
     const key = fs.readFileSync(keyFile, 'utf8');
     assert.deepEqual(readEnrolled().map((e) => e.computer), [computerId()]);
-    assert.equal(text(out), 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(out), 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.');
     // The first click can be signed and checked.
     const signed = makeEvent({ kind: 'action', data: { action: 'lift-stop', question: 'q', label: 'Lift STOP' } });
     assert.equal(verify(signed, readEnrolled()), true);
@@ -1119,7 +1123,7 @@ test('in a folder being set up, a journal that can\'t be read gives setup\'s lin
       const f = fake();
       f.client.health = async () => ({ ok: true });
       const out = await setupStart(f, folder);
-      assert.equal(text(out), JOURNAL_UNREADABLE, journal);
+      assert.equal(withoutSheet(out), JOURNAL_UNREADABLE, journal);
     }
   });
 });
@@ -1138,15 +1142,15 @@ test('the next session start resumes at the first unfinished step', async () => 
     const f = fake();
     const out = await setupStart(f, folder);
     assert.equal(f.calls.spawn.length, 1, 'the helper is started as in a project');
-    assert.equal(text(out), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(out), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
     // From a folder inside it too, and once step 2 is done the next is step 4: step 3 is not repeated.
     markStep(run.id, 2, 'doneAt', { now: at(6) });
     fs.mkdirSync(path.join(folder, 'web'));
     const later = await setupStart(fake(), path.join(folder, 'web'));
-    assert.equal(text(later), 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(later), 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.');
     // STOP and a helper that could not start are said first.
     const stopped = await setupStart(fake({ startsUp: false }), folder, { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' }) });
-    assert.deepEqual(text(stopped).split('\n'), [
+    assert.deepEqual(withoutSheet(stopped).split('\n'), [
       'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       NO_HELPER,
       'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.',
@@ -1192,6 +1196,22 @@ test('the guards act in a folder being set up', async () => {
   });
 });
 
+// The setup playbook runs the Wheelhouse command, so a folder being set up, and one Wheelhouse was removed
+// from (whose director may set it up again), are told the tool sheet and where the command is.
+test('a folder being set up, and one Wheelhouse was removed from, are given the tool sheet and the command line', async () => {
+  await withHome(async () => {
+    const sheet = toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: process.platform });
+    const folder = fs.realpathSync.native(tempFolder('wh-sheet-setup '));
+    const T = Date.parse('2026-10-20T03:00:00.000Z');
+    const run = startRun({ folder, now: () => new Date(T) });
+    const part = text(await setupStart(fake(), folder)).split('\n');
+    assert.deepEqual(part, [...sheet, 'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.']);
+    for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    closeRun(run.id, { at: () => new Date(T + 3600000), by: 'uninstall' });
+    assert.deepEqual(text(await setupStart(fake(), folder)).split('\n'), [REMOVED, ...sheet]);
+  });
+});
+
 test('a folder whose setup run uninstall closed reads as removed, not as being set up, and the guards leave it (ruling R89)', async () => {
   await withHome(async (home) => {
     const managed = path.join(home, 'managed');
@@ -1207,15 +1227,15 @@ test('a folder whose setup run uninstall closed reads as removed, not as being s
       assert.equal(removedFrom(cwd)?.run?.id, run.id, cwd);
       const f = fake();
       const out = await setupStart(f, cwd);
-      assert.equal(text(out), REMOVED, cwd);
-      assert.notEqual(text(out), NOT_SET_UP);
+      assert.equal(withoutSheet(out), REMOVED, cwd);
+      assert.notEqual(withoutSheet(out), NOT_SET_UP);
       assert.equal(f.calls.spawn.length, 0, 'no helper is started for a folder Wheelhouse was removed from');
     }
     // A new folder made inside it, whose own settings switch the plugin on, is a folder of its own
     // to set up: only the removed folder itself reads as removed.
     const inner = pluginOn(path.join(folder, 'new shop'));
     assert.deepEqual(beingSetUp(inner), { folder: inner, run: null, journal: true });
-    assert.equal(text(await setupStart(fake(), inner)), NOT_SET_UP);
+    assert.equal(withoutSheet(await setupStart(fake(), inner)), NOT_SET_UP);
     assert.equal(PLUGIN_KEY, 'wheelhouse@wheelhouse', 'the key setup\'s step 1 switches on');
     assert.ok(REMOVED.includes(REMOVE_PLUGIN) && REMOVE_PLUGIN.includes(PLUGIN_KEY), REMOVED);
     assert.match(REMOVED, /^Wheelhouse was removed from this folder\./);
@@ -1231,7 +1251,7 @@ test('a folder whose setup run uninstall closed reads as removed, not as being s
     // A folder nothing was ever set up in, with the plugin on, still reads as not set up yet.
     const fresh = pluginOn(fs.realpathSync.native(tempFolder('wh-fresh-again ')));
     assert.equal(removedFrom(fresh), null);
-    assert.equal(text(await setupStart(fake(), fresh)), NOT_SET_UP);
+    assert.equal(withoutSheet(await setupStart(fake(), fresh)), NOT_SET_UP);
   });
 });
 
@@ -1246,7 +1266,7 @@ test('a folder set up again after uninstall reads as being set up by the newer r
     markStep(again.id, 1, 'doneAt', { now: () => new Date(T + 7260000) });
     assert.equal(beingSetUp(folder)?.run?.id, again.id);
     assert.equal(removedFrom(folder), null);
-    assert.equal(text(await setupStart(fake(), folder)), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(await setupStart(fake(), folder)), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
     // Uninstalled again, it reads as removed again.
     closeRun(again.id, { at: () => new Date(T + 9000000), by: 'uninstall' });
     assert.equal(beingSetUp(folder), null);
@@ -1371,7 +1391,7 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
     const short = await decide({ cwd: fresh, session_id: 'w2' }, {
       pluginRoot: PLUGIN_ROOT, client: g.client, spawn: g.spawn, projectOf: () => null, pause: async () => {}, startWaitMs: 200, ...windows,
     });
-    assert.deepEqual(text(short).split('\n'), [
+    assert.deepEqual(withoutSheet(short).split('\n'), [
       'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.',
     ]);

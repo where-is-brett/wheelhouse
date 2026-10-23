@@ -14,6 +14,7 @@ import { FOREMAN_SKILL, foremanCommands, foremanTools } from '../../scripts/fore
 import { main as wakeMain } from '../../scripts/foreman/wake.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
 import { PROMPTS } from '../../scripts/watcher/waker.js';
+import { frontDeskCommand } from '../../scripts/protection/settings.js';
 import { BUILD_QUESTION_LABELS } from '../../scripts/protection/windows-builds.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -84,12 +85,15 @@ test('the foreman skill is named foreman and is used on the wake line and the lo
 });
 
 test('the skill types only its first command itself, exactly as the allow rules match it, and copies the rest from the wake (R96)', () => {
-  const commands = [...raw.matchAll(/`(node '[^`']*')/g)].map((m) => m[1]);
   const expected = foremanCommands('/plugin', { platform: 'linux' });
-  assert.deepEqual(commands.map((c) => c.replaceAll(ROOT_VARIABLE, '/plugin')), [expected.wake]);
-  assert.match(body, new RegExp(`\`${commands[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} read <file>\``));
-  // Its one allowed tool is that command, as a rule the same substitution fills in.
-  assert.equal(front['allowed-tools'], `Bash(${commands[0]}:*)`);
+  // The body names it in general words: the Wheelhouse command the session start named, its script replaced
+  // and its quotes single, which is the command exactly as the allow rules match it.
+  assert.deepEqual([...body.matchAll(/`(node '[^`']*')/g)].map((m) => m[1]), ['node \'<path>\'']);
+  assert.match(body, /`node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts\/foreman\/wake\.js` in place of `scripts\/frontdesk\/cli\.js`\. Keep the single quotes\./);
+  assert.equal(frontDeskCommand('/plugin', { platform: 'linux' }).replace('scripts/frontdesk/cli.js', 'scripts/foreman/wake.js').replaceAll('"', '\''), expected.wake);
+  // Its one allowed tool is that command, as a rule Claude Code's own substitution of the plugin's folder fills in
+  // (front matter is Claude Code's packaging, so it keeps the variable).
+  assert.equal(front['allowed-tools'].replaceAll(ROOT_VARIABLE, '/plugin'), `Bash(${expected.wake}:*)`);
   // act's path is never written here: it is copied from the wake's own line.
   assert.doesNotMatch(raw, /scripts\/foreman\/act\.js/);
   assert.match(body, /`Run wake as: …`/);

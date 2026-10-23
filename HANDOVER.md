@@ -233,5 +233,6 @@ The director is a product owner, not a developer. They want their product built 
      - **Check 42 at the Mac** (`docs/checks/42-calm-desktop.md`): a run sheet of about 15 minutes for how Desktop draws Calm. Each question has its fallback built, so nothing waits on it.
      - **The real runs of scenario 36.** It is now three legs (the pane's Suggest a change… on the approval card, Show me, and the chat's typed why); its counted runs are of the old press, so a rerun is due.
      - **Check 42's Windows run** waits for check 41's Windows sitting.
-     - **Nothing has been pushed.** The branch stays local until the director says.
-10. **Backlog:** budget allocation (section 9.1), which the director asked for once usage could be read. The director put it in the backlog on 18 October 2026.
+     - **Merging:** the director said yes on 23 October 2026; main merges it.
+10. **The Copilot build** (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`): Part 3 (the adapter seam, with Claude Code as its first adapter) is in on branch `claude/copilot-part-3`; the full test suite and mod-check pass, and the counted evaluation scenarios ran again with no failure caused by the seam (`docs/evals/adapter-seam.md`).
+11. **Backlog:** budget allocation (section 9.1), which the director asked for once usage could be read. The director put it in the backlog on 18 October 2026.

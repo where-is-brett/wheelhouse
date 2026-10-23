@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { USAGE } from '../../scripts/setup/cli.js';
 import { NODE_LINE, INSTALL_LINE } from '../../scripts/setup/tools.js';
-import { setupCommand, allowRule, localSettings } from '../../scripts/protection/settings.js';
+import { setupCommand, frontDeskCommand, allowRule, localSettings } from '../../scripts/protection/settings.js';
 import { PUSH_TEST_STEP } from '../../scripts/lib/setup-run.js';
 import { PUSH_TEST_TEXT, READY } from '../../scripts/setup/notify.js';
 import { LEAVE_YOURS } from '../../scripts/setup/project-files.js';
@@ -84,14 +84,18 @@ test('the playbook knows each session-start line it acts on, as the session star
 test('every command is cli.js exactly as its allow rule matches it, or step 10\'s trials', () => {
   const allow = localSettings({ address: '/h/helper.sock', pluginRoot: '/plugin', platform: 'linux' }).permissions.allow;
   assert.ok(allow.includes(allowRule(COMMAND)), allow.join(', '));
-  for (const [file, text] of [[PLAYBOOK, playbook], [COMMAND_FILE, command]]) {
-    const nodes = [...text.matchAll(/node "[^"]*"/g)].map((m) => m[0].replaceAll(ROOT_VARIABLE, '/plugin'));
-    assert.ok(nodes.includes(COMMAND), `${file} names the command`);
-    for (const named of nodes) assert.ok(named === COMMAND || (file === PLAYBOOK && named === TRIALS), `${file}: ${named}`);
-  }
+  // The command file is Claude Code's packaging and names the command as the allow rule matches it; the playbook
+  // names it in general words, and the session start's command line (tests/skills/tool-names.test.js) gives it.
+  const nodes = [...command.matchAll(/node "[^"]*"/g)].map((m) => m[0].replaceAll(ROOT_VARIABLE, '/plugin'));
+  assert.ok(nodes.includes(COMMAND), `${COMMAND_FILE} names the command`);
+  for (const named of nodes) assert.equal(named, COMMAND, COMMAND_FILE);
+  assert.doesNotMatch(playbook, /node "/);
+  assert.match(playbook, /The Wheelhouse command the session start named, with `scripts\/setup\/cli\.js` in place of `scripts\/frontdesk\/cli\.js`/);
+  assert.equal(frontDeskCommand('/plugin', { platform: 'linux' }).replace('scripts/frontdesk/cli.js', 'scripts/setup/cli.js'), COMMAND);
   // The trials as health.js says the session runs them, with the pull request and project health names.
   assert.ok(fs.existsSync(path.join(ROOT, 'scripts', 'health', 'trials.js')));
-  assert.ok(playbook.replaceAll(ROOT_VARIABLE, '/plugin').includes(`${TRIALS} --pr <pr> --project <project>`));
+  assert.ok(playbook.includes('The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.'));
+  assert.equal(frontDeskCommand('/plugin', { platform: 'linux' }).replace('scripts/frontdesk/cli.js', 'scripts/health/trials.js'), TRIALS);
   assert.match(playbook, /`trials\.pr` and `trials\.project`/);
 });
 
