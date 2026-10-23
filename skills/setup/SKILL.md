@@ -66,6 +66,7 @@ Its Go-ahead card comes first, like any step. After the click, wait until `statu
 2. The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.
 3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused.
 4. Show the director `lines` (the last is the verdict) and the `board`, as they are. Green: setup is finished; give the `briefing`, as it is. Not green: tell them plainly what failed and what to do (the lines say), and offer to carry on later.
+5. When `health` gave a `card`, ask `card.question` exactly as given, right after the briefing, as a question of its own. On its answer, do as `wheelhouse:front-desk` says under "Work under way at setup's end".
 
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
 

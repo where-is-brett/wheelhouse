@@ -44,7 +44,7 @@ import { loadBoardInputs } from '../board/inputs.js';
 import { renderBoard, unlinked } from '../board/render.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
 import { briefingParts } from '../briefing/text.js';
-import { readSeen, readSurveyAt, markSeen, readVisits } from '../briefing/seen.js';
+import { readSeen, readSurveyAt, readSurveyAgainAt, markSeen, readVisits } from '../briefing/seen.js';
 import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveSettings, settingsText } from '../settings/effective.js';
 import { KNOWN, SETTINGS } from '../settings/catalogue.js';
@@ -58,6 +58,8 @@ import { gateAsksDue, holdsDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
+import { cardOutcomes } from '../state/views.js';
+import { UNDER_WAY_TOPIC, LEAVE_FOR_NOW } from '../survey/words.js';
 import { readEnrolled } from '../state/signing.js';
 import { helperClient } from '../host/helper-client.js';
 import { readProject } from '../lib/projects.js';
@@ -258,14 +260,14 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 // order of what goes first: the most words that keep to the limit in plain words, found by halving.
 // What is marked as shown is what that cut kept.
 // `settings` are the settings in force, `weeklySince` the last briefing that showed the weekly
-// lines and `review` the delegation review's { due, days } (reviewOf). `survey`, `surveyAt`, `host`
-// and `leaveOut` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
+// lines and `review` the delegation review's { due, days } (reviewOf). `survey`, `surveyAt`, `host`,
+// `leaveOut` and `carrying` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
 // is the id of the survey whose lines the text showed whole (none when it was cut). Throws when it
 // can't be built.
 export function briefingIn({
-  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut,
+  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying,
 }) {
-  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut });
+  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying });
   const length = settings?.briefing?.value;
   const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
   const words = wordsOf(project, settings, model);
@@ -351,7 +353,7 @@ export function reviewOf(project, settings, at) {
 }
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
-async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve, survey, surveyAt }) {
+async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve, survey, surveyAt, leaveOut }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS + helperGrace() });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
@@ -359,7 +361,7 @@ async function build(want, { project, cwd, at, client, load, command, since, wee
   if (want === 'briefing') {
     const review = reviewOf(project, settings, at);
     const host = attempt(() => readProject(project)?.host ?? null, null);
-    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host });
+    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut });
     return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise, weeklyShown: given.weeklyShown, surveyShown: given.surveyShown };
   }
   let body;
@@ -393,6 +395,20 @@ async function surveyOf({ project, cwd, client }) {
   } catch {
     return survey;
   }
+}
+
+// How long after the director's Leave it for now on setup's carry-on card the work in flight is
+// offered once more (ruling A9).
+export const OFFER_AGAIN_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Whether this briefing offers the work in flight once more (ruling A9): a week or more after the
+// director's Leave it for now on setup's carry-on card, and only until a briefing has offered it
+// (seen.json's surveyAgainAt). Its answer is a plain card-answer, so the project's events say it.
+function offerAgainDue(project, at) {
+  if (readSurveyAgainAt(project) !== null) return false;
+  const events = listEvents(stateDir(project), { report: () => {} });
+  const left = cardOutcomes(events, readEnrolled()).find((o) => o.card.data?.topic === UNDER_WAY_TOPIC && o.decided?.label === LEAVE_FOR_NOW);
+  return left !== undefined && at.getTime() - Date.parse(left.decided.at) >= OFFER_AGAIN_MS;
 }
 
 // decide(input, deps) -> the context to add, or undefined.
@@ -433,9 +449,12 @@ export async function decide(input, deps = {}) {
     const cards = count > 0 ? cardsLine(count) : null;
     const reserve = cards === null ? 0 : cards.length + 2;
     const survey = want === 'briefing' ? (await within(() => surveyOf({ project, cwd: input.cwd, client }), learnWaitMs)) ?? attempt(() => localViews(project, ['survey'])?.survey ?? null, null) : null;
+    // Offered once more, the survey's line about work in flight is said again, alone.
+    const again = want === 'briefing' && attempt(() => offerAgainDue(project, at), false);
     const built = want
       ? await within(() => build(want, {
-        project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel, reserve, survey, surveyAt: readSurveyAt(project),
+        project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel, reserve, survey,
+        surveyAt: again ? null : readSurveyAt(project), ...(again ? { leaveOut: ['instructions', 'missed'] } : {}),
       }), waitMs)
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
@@ -443,7 +462,7 @@ export async function decide(input, deps = {}) {
     if (!command || command.name === 'briefing') attempt(() => markSeen(project, { promptAt: at }));
     if (built && want === 'briefing') {
       // The weekly lines count as given only when the text showed them, and so does the survey.
-      attempt(() => markSeen(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}), ...(built.surveyShown ? { surveyAt: built.surveyShown } : {}) }));
+      attempt(() => markSeen(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}), ...(built.surveyShown ? { surveyAt: built.surveyShown } : {}), ...(again && built.surveyShown ? { surveyAgainAt: at } : {}) }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
     const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');

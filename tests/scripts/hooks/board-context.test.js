@@ -10,7 +10,8 @@ import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLi
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { readSeen, readSurveyAt, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
+import { readSeen, readSurveyAt, readSurveyAgainAt, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
+import { carryOnCard, LEAVE_FOR_NOW, CARRY_ON } from '../../../scripts/survey/words.js';
 import { wasRaised } from '../../../scripts/usage/figures.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { profileDir, profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -961,5 +962,39 @@ test('a survey the host could not be reached for says so when it still cannot be
     putSurvey({ ...surveyData({ hostReached: false }), again: true }, 'survey-3');
     const never = { ...client, survey: { again: async () => { throw new Error('asked'); } } };
     assert.match(contextOf(await run(repo, 'Hello', LATER, { client: never })), /I couldn't look at GitHub/);
+  });
+});
+
+// Setup's carry-on card (ruling A9), recorded as the front desk records a card, and the director's
+// click on it, a plain card-answer quoting the question as the prompt record writes it.
+function carryOnAnswered(label, answeredAt) {
+  const { card } = composeCard(carryOnCard(IN_FLIGHT, { project: 'name', host: 'github' }));
+  store(stateDir(P), [
+    makeEvent({ kind: 'card', data: card, now: () => new Date(NOW) }),
+    makeEvent({ kind: 'card-answer', data: { question: card.question, label }, now: () => new Date(answeredAt) }),
+  ]);
+}
+
+test('after Leave it for now, the work in flight is offered once more, a week after the click, and then never again', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(IN_FLIGHT);
+    // The first briefing left out the line about work in flight, the card asking in its place.
+    markSeen(P, { surveyAt: 'survey-1', briefedAt: NOW });
+    carryOnAnswered(LEAVE_FOR_NOW, '2026-10-19T12:05:00.000Z');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-10-25T12:00:00.000Z')) ?? '', /under way/);
+    assert.equal(readSurveyAgainAt(P), null);
+    assert.match(contextOf(await run(repo, 'Hello', '2026-10-26T13:00:00.000Z')), FOUND);
+    assert.equal(readSurveyAgainAt(P), '2026-10-26T13:00:00.000Z');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-11-03T13:00:00.000Z')) ?? '', /under way/);
+  });
+});
+
+test('after Carry on with it, the work in flight is not offered again', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(IN_FLIGHT);
+    markSeen(P, { surveyAt: 'survey-1', briefedAt: NOW });
+    carryOnAnswered(CARRY_ON, '2026-10-19T12:05:00.000Z');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-10-27T13:00:00.000Z')) ?? '', /under way/);
+    assert.equal(readSurveyAgainAt(P), null);
   });
 });

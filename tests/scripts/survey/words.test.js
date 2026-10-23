@@ -3,7 +3,8 @@
 // words, the host named as it is, nothing said of a part that is empty.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { briefingLines } from '../../../scripts/survey/words.js';
+import { briefingLines, carryOnCard, trustingLine } from '../../../scripts/survey/words.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
 
 const item = (name) => ({ name, head: 'a'.repeat(40), commits: 1, subject: 'Work', at: '2026-10-24T09:00:00+11:00' });
 const request = (number) => ({ number, title: `Change ${number}`, draft: false });
@@ -103,4 +104,62 @@ test('lines can be left out by name, so a caller says one of them itself', () =>
   assert.match(briefingLines(found, { host: 'github', leave: ['instructions'] })[0], /^Already under way here/);
   assert.deepEqual(briefingLines(found, { host: 'github', leave: ['inFlight', 'instructions'] }), []);
   assert.deepEqual(briefingLines(survey({ hostReached: false }), { host: 'github', leave: ['missed'] }), []);
+});
+
+// ---- The card at setup's end, and the line at Trusting (ruling A9) ----
+
+test('the carry-on card holds the design\'s words, with the project\'s name and the host filled in', () => {
+  const found = survey({ requests: [request(1), request(2)], local: [item('a'), item('b'), item('c')] });
+  const input = carryOnCard(found, { project: 'tide-tables', host: 'github' });
+  assert.equal(input.kind, 'question');
+  assert.equal(input.level, 3);
+  assert.equal(input.topic, 'under-way');
+  const { question, card } = composeCard(input);
+  assert.deepEqual(question.question.split('\n'), [
+    'Wheelhouse found work already under way in tide-tables: 2 changes waiting to be merged on GitHub, and 3 pieces of unfinished work on this computer. Shall I carry them on?',
+    'Each piece would go through the usual intake: a short brief of its own, built on from where it stands, and checked by the reviewer before anything is merged. The original work is never changed.',
+    'Nothing is touched while you decide.',
+    'To know more, just ask.',
+  ]);
+  assert.deepEqual(question.options, [
+    { label: 'Carry on with it', description: 'Recommended: Each piece gets its own brief and joins the queue, and you see each brief as usual, because the original work stays as it is and nothing is merged without a review.' },
+    { label: 'Leave it for now', description: 'It stays exactly as it is. I\'ll offer it once more in a briefing a week from now, or whenever you ask.' },
+  ]);
+  assert.equal(card.line, null, 'a product question: its click is a plain card-answer');
+  assert.equal(card.topic, 'under-way');
+});
+
+test('the carry-on card counts as the briefing does: one is "it", a list cut short is "at least", GitLab named as it is', () => {
+  const one = composeCard(carryOnCard(survey({ requests: [request(9)] }), { project: 'shop', host: 'gitlab' })).question.question.split('\n')[0];
+  assert.equal(one, 'Wheelhouse found work already under way in shop: 1 change waiting to be merged on GitLab. Shall I carry it on?');
+  const cut = carryOnCard(survey({ local: Array.from({ length: 200 }, (_, i) => item(`w${i}`)), more: { pushed: false, local: true } }), { project: 'shop', host: 'github' });
+  assert.match(cut.what, /in shop: at least 200 pieces of unfinished work on this computer\. Shall I carry them on\?$/);
+  const alone = carryOnCard(survey({ pushed: [item('p')], local: [item('l')] }), { project: 'shop', host: null });
+  assert.match(alone.what, /in shop: 2 pieces of unfinished work on this computer\. Shall I carry them on\?$/);
+});
+
+test('no work in flight, no card and no Trusting line', () => {
+  const quiet = survey({ instructions: { files: FILES, sections: [] }, scheduled: 2, secrets: 1 });
+  for (const host of ['github', 'gitlab', null]) {
+    assert.equal(carryOnCard(quiet, { project: 'shop', host }), null);
+    assert.equal(trustingLine(quiet, { host }), null);
+  }
+  // In git alone, a request can't be found, so it is no work in flight.
+  assert.equal(carryOnCard(survey({ requests: [request(1)] }), { project: 'shop', host: null }), null);
+});
+
+test('at Trusting, the line says Wheelhouse is carrying the work on, in place of the offer', () => {
+  const found = survey({ requests: [request(1), request(2)], local: [item('a'), item('b'), item('c')] });
+  assert.equal(trustingLine(found, { host: 'github' }),
+    'Already under way here: 2 changes waiting to be merged on GitHub, and 3 pieces of unfinished work on this computer. I\'m carrying them on, one brief each; say stop if you\'d rather I didn\'t.');
+  assert.equal(trustingLine(survey({ local: [item('a')] }), { host: 'github' }),
+    'Already under way here: 1 piece of unfinished work on this computer. I\'m carrying it on; say stop if you\'d rather I didn\'t.');
+  assert.deepEqual(briefingLines(found, { host: 'github', carrying: true }), [trustingLine(found, { host: 'github' })]);
+});
+
+test('neither the card nor the Trusting line holds the git words', () => {
+  const found = survey({ requests: [request(1)], pushed: [item('p')], local: [item('l')] });
+  const { question } = composeCard(carryOnCard(found, { project: 'shop', host: 'github' }));
+  const text = [question.question, ...question.options.map((o) => o.description), trustingLine(found, { host: 'github' })].join('\n');
+  assert.doesNotMatch(text, /commit|branch|worktree/i);
 });

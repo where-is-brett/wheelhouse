@@ -129,6 +129,11 @@ test('health hands the trial lines to the helper, as they are, and gives back th
     assert.match(refused.err, /^[^\n]+\n$/);
   }
   assert.deepEqual(bad.calls, []);
+  // Once green, the first briefing and the carry-on card (ruling A9) come back as the helper gives them.
+  const card = { question: { question: 'Shall I carry them on?', header: 'Question', options: [], multiSelect: false }, id: 'e1' };
+  const green = { ok: true, green: true, lines: ['Passed: x.'], board: 'The board.', trials: { pr: 12, project: 'o__r' }, started: 'Started.', briefing: 'The briefing.', card };
+  const finished = await run(['health', ...lines], { client: fakeClient({ health: green }) });
+  assert.deepEqual(JSON.parse(finished.out).card, card);
 });
 
 test('a wrong form, a step out of range, a short hash or a refusal is one line on standard error', async () => {

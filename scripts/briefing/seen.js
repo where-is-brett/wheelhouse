@@ -3,8 +3,10 @@
 // the last briefing they were given, and `weeklyAt`, the last briefing that showed them the lines
 // it repeats once a week (Unattended build commands on Windows); and their visits: `visitAt`, when
 // the latest visit began, `surveyAt`, the id of the survey the last briefing that mentioned it
-// mentioned, and `boardAsks`, the last BOARD_ASKS board commands as { at, tab, visit }
-// (`tab` the command's word or null, `visit` the visitAt it was asked in), which learning reads.
+// mentioned, `surveyAgainAt`, when a briefing offered the work in flight once more after the
+// director's Leave it for now on setup's carry-on card (ruling A9), and `boardAsks`, the last
+// BOARD_ASKS board commands as { at, tab, visit } (`tab` the command's word or null, `visit` the
+// visitAt it was asked in), which learning reads.
 // Kept in projects/<project>/seen.json, beside the state clone, and written whole (a temporary file
 // in the same folder, then a rename).
 //
@@ -15,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 
-const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt'];
+const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt', 'surveyAgainAt'];
 // How many board commands are kept.
 export const BOARD_ASKS = 10;
 const TABS = ['director', 'build'];
@@ -85,6 +87,11 @@ export function readSurveyAt(project) {
   return readKept(project).surveyAt;
 }
 
+// readSurveyAgainAt(project) -> when a briefing offered the work in flight once more, or null.
+export function readSurveyAgainAt(project) {
+  return readKept(project).surveyAgainAt;
+}
+
 // readVisits(project, { now }) -> { visitAt, boardAsks }: when the latest visit began, or null,
 // and the board commands kept, oldest first, leaving out any asked after now.
 export function readVisits(project, { now } = {}) {
@@ -93,7 +100,7 @@ export function readVisits(project, { now } = {}) {
   return { visitAt: notAhead(kept.visitAt, limit), boardAsks: kept.boardAsks.filter((a) => notAhead(a.at, limit) !== null) };
 }
 
-// markSeen(project, { promptAt, briefedAt, weeklyAt, visitAt, surveyAt, boardAsk }): writes the times given,
+// markSeen(project, { promptAt, briefedAt, weeklyAt, visitAt, surveyAgainAt, surveyAt, boardAsk }): writes the times given,
 // keeping the others as they were, and adds `boardAsk` ({ at, tab, visit }) to the board commands,
 // keeping the last BOARD_ASKS. A value that isn't a time (or, for surveyAt, an id), or a board command that isn't one, is not written.
 export function markSeen(project, times = {}) {

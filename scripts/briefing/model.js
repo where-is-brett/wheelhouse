@@ -22,7 +22,8 @@
 // What the survey found when setup finished (design section 15) is mentioned once: `found` holds its
 // lines when the latest survey is not the one `surveyAt` names, and `foundId` is that survey's id,
 // which the caller records (surveyAt in seen.json) only when the text showed every line. A survey
-// with nothing to say, or none, leaves both empty.
+// with nothing to say, or none, leaves both empty. At Autonomy Trusting (`carrying`), its line about
+// work in flight says Wheelhouse is carrying it on (ruling A9).
 import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../board/model.js';
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
@@ -220,7 +221,7 @@ function waitingEntry(w) {
   return entry;
 }
 
-// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review, survey, surveyAt, host, leaveOut }) -> Briefing.
+// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review, survey, surveyAt, host, leaveOut, carrying }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing, `weeklySince` the time of the last briefing that showed the weekly lines.
 // `wasRaised(id)` says whether an unusual item was raised already (the usage store's by default).
@@ -228,7 +229,7 @@ function waitingEntry(w) {
 // the delegation review is due, and the days between reviews, as the caller worked it out from the state.
 // `survey` is the latest survey as the views give it ({ id, data }), `surveyAt` the id of the one a
 // briefing last mentioned, `host` the project's ('github', 'gitlab' or null) and `leaveOut` the
-// survey's lines (see briefingLines) the caller says itself.
+// survey's lines (see briefingLines) the caller says itself; `carrying` is briefingLines' own.
 export function briefingModel(options) {
   try {
     return build(isRecord(options) ? options : {});
@@ -238,14 +239,14 @@ export function briefingModel(options) {
 }
 
 // The survey's lines, and its id, when it is one not mentioned yet and has something to say.
-function foundLines(survey, surveyAt, host, leaveOut) {
+function foundLines(survey, surveyAt, host, leaveOut, carrying) {
   const none = { found: [], id: null };
   if (!isRecord(survey) || !isRecord(survey.data) || typeof survey.id !== 'string' || survey.id === surveyAt) return none;
-  const found = lines(briefingLines(survey.data, { host, leave: list(leaveOut) }));
+  const found = lines(briefingLines(survey.data, { host, leave: list(leaveOut), carrying: carrying === true }));
   return found.length > 0 ? { found, id: survey.id } : none;
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [] }) {
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -257,7 +258,7 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
 
   // The heading says these aren't confirmed, so each line's own saying of it goes.
   briefing.first = part(() => lines(list(director.first)).map((line) => line.replace(UNCONFIRMED, '')), []);
-  const said = part(() => foundLines(survey, surveyAt, host, leaveOut), { found: [], id: null });
+  const said = part(() => foundLines(survey, surveyAt, host, leaveOut, carrying), { found: [], id: null });
   briefing.found = said.found;
   briefing.foundId = said.id;
   briefing.waiting = part(() => records(director.waiting).map(waitingEntry), []);

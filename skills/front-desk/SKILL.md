@@ -83,6 +83,13 @@ Work from `carry-on`, `archive` or `restore` always gets an `approve-work` card,
 
 When they say yes to archiving another agent setup's instructions, run `archive`; to put them back, `restore`. Each prints the `id`, the `from` and the files it moves (`moved`). Write a short brief naming them, `record work` in the `quick` lane with `visible: true`, that `id` and `from`, then ask its `approve-work` card (lane `quick`, the hash, `shownFirst: true`) in the design's archive card words: `what` "Work <id>: move the other agent setup's instructions into an archive folder: AGENTS.md, .cursorrules and 3 more files go into .wheelhouse-archive/ in the project, where no agent reads them." (the files `moved` names), `why` "Mine already come first where they differ; archiving means agents see one set of instructions. Nothing is lost: one click puts them back, and so does removing Wheelhouse.", `meanwhile` "Nothing changes meanwhile.", Approve saying "The files move as a change of their own, checked before it goes in." because "agents then see one set of instructions", and Not now saying "They stay where they are, and mine keep coming first." For `restore`, `what` is "Work <id>: put the other agent setup's instructions back where they were: …", and Not now says they stay in the archive.
 
+## Work under way at setup's end
+
+At Autonomy Cautious and Balanced, setup ends with a card asking whether to carry on the work already under way in the project (`views survey` lists it). Its click records itself.
+
+- **Carry on with it**, or at Trusting, where the first briefing says "I'm carrying them on" and there is no card: one brief each. For each request, run `carry-on <n>` with its number, then `wheelhouse:intake` with what it prints. For each piece of unfinished work that is no request, `wheelhouse:intake`, with the brief written from what you can read of it: its name, the words of its last change and the files it touches. "Stop", in any words, leaves the rest as it is.
+- **Leave it for now:** nothing; it stays exactly as it is. A briefing a week later offers it once more; until then, take it on only when the director asks.
+
 ## The baseline from the private note
 
 When the director gives the first version's figures from their private note (what it cost, how many pull requests it merged, from and to which days, and how the note counted them), they go to one command and nowhere else: `<the measures command>` is the Wheelhouse command the session start named, with `scripts/measures/cli.js` in place of `scripts/frontdesk/cli.js`.
