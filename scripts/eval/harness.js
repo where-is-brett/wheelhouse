@@ -634,6 +634,12 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       const kept = saveRecord({ home, date, scenario, variant, trial, record: stopped });
       return { pass: false, why, file: kept.file, trial: kept.trial, handled: false, usage: spent, line: describeRun({ id: scenarioName(scenario), variant, pass: false, why, usage: spent }) };
     }
+    // The session's model: the one its set-up names for the role it plays (the front desk's, design
+    // section 8), else the scenario's own. A set-up that names a role's model as null found none in
+    // the environment: no session starts, since one on the command line's default would be judged on
+    // a model nobody chose, and that default moves.
+    if (context.model === null) throw new Error(`This scenario needs its model named: set ${context.modelVariable ?? 'the model\'s variable'} in the shell for the run`);
+    const model = context.model ?? scenario.model;
     const prompts = Array.isArray(scenario.prompts) ? scenario.prompts : [scenario.prompt];
     const turns = [];
     let resume = null;
@@ -647,7 +653,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         prompt,
         pluginDirs: [...scenario.variants[variant].pluginDirs, ...(context.pluginDirs ?? [])],
         permissionMode: scenario.permissionMode ?? 'acceptEdits',
-        model: scenario.model,
+        model,
         maxTurns: scenario.maxTurns ?? 30,
         ...(context.env ? { env: context.env } : {}),
         ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
@@ -731,6 +737,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       exitCode: session.exitCode,
       usage: total,
       mainSessionUsage: sum(usageOf),
+      ...(model ? { model } : {}),
       models: [...new Set(turns.flatMap((t) => modelsUsed(t.events)))],
       subagents: subagents(session.events),
       finalText: finalText(turns.at(-1)?.events ?? []),
