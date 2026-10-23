@@ -4,7 +4,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wheelhouse fits around whatever project it finds (design section 15, "Fitting around a project already under way", rulings A1 to A8, approved by the director on 24 October 2026): a read-only survey when setup finishes, mentioned once in the first briefing; work in flight left as it is and carried on only through the intake; other instructions left in place under Wheelhouse's own, archived only on a click; rules followed as they are, with no cards at setup.
+**Goal:** Wheelhouse fits around whatever project it finds (design section 15, "Fitting around a project already under way", rulings A1 to A9, approved by the director on 24 October 2026, A9 added the same day): a read-only survey when setup finishes, mentioned once in the first briefing; work in flight left as it is and carried on only through the intake; other instructions left in place under Wheelhouse's own, archived only on a click; rules followed as they are, with no cards at setup.
 
 **Architecture:** A read-only survey (`scripts/survey/look.js`) runs in the helper when setup finishes and is recorded as a `survey` event in the project's state; the briefing reads it and mentions it once (`scripts/survey/words.js`, `scripts/briefing/`). Carrying a change on, or archiving another setup's instructions, starts work from a ready-made commit: the helper puts the commit into the project's folder under `refs/wheelhouse/from/<work>` (`scripts/survey/ready.js`, helper routes `/survey/*`), the work event names it (`from`), and the foreman starts the feature from it on `feature/<work>`, so the change's own line of work is never pushed to. Step 5 only reads the rules.
 
@@ -110,6 +110,16 @@
 - [ ] **Step 1:** Failing tests: shown once, then not again; a briefing cut short leaves it due; Review Focus 1 and 2; `views survey`.
 - [ ] **Step 2:** Run: fail. **Step 3:** Implement. **Step 4:** Run `node --test tests/scripts/briefing/ tests/scripts/frontdesk/`: pass.
 - [ ] **Step 5:** Commit "Mention what the survey found in the first briefing, once".
+
+### Task 4b: The carry-on card at setup's end (A9)
+
+**Files:** Modify `scripts/survey/words.js` (`carryOnCard`, `trustingLine`), `scripts/setup/health.js` (`finishSetup`), `scripts/setup/cli.js` (`health`'s answer gains `card`), `skills/setup/SKILL.md` (ask it after the briefing), `skills/front-desk/SKILL.md` (what each answer, and Trusting, starts); Test `tests/scripts/survey/words.test.js`, `tests/scripts/setup/health.test.js`, `tests/scripts/setup/cli.test.js`
+
+**Interfaces:**
+- Consumes: Tasks 2 to 4; the `autonomy` setting (`scripts/settings/catalogue.js`, levels `cautious`, `balanced`, `trusting`, default `balanced`).
+- Produces: `carryOnCard(survey, { project, host }) -> CardInput` (kind `question`, level 3, the design's A9 words, options `Carry on with it` (recommended) and `Leave it for now`, topic `under-way`); `trustingLine(survey, { host }) -> string`. At Cautious and Balanced, with work in flight (`requests`, `pushed` or `local` non-empty), `finishSetup` records the card in state as the front desk records a card (`card` event, then asked) and gives it as `{ started, briefing, card }`, the in-flight line left out of the briefing's `found`; at Trusting the briefing's `found` uses `trustingLine`. The front-desk skill: on Carry on with it (or at Trusting), run `carry-on` and the intake for each piece, one brief each; on Leave it for now, nothing, and the front desk offers it once more in a briefing a week later (`seen.surveyAgainAt`).
+
+- [ ] **Steps:** failing tests for the card's exact words at each level and none without work in flight; implement; run `node --test tests/scripts/survey/ tests/scripts/setup/`; commit "Ask before carrying work under way on, at setup's end".
 
 ### Task 5: Step 5 only reads the rules
 
