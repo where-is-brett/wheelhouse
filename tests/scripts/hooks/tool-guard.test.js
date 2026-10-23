@@ -923,3 +923,50 @@ test('reading those files is still allowed', async () => {
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
+
+import { segments, segmentsWithOperators } from '../../../scripts/hooks/shell-words.js';
+
+test('segments reads quotes and substitutions nested inside each other', () => {
+  assert.deepEqual(segments('echo "$(cat "a b")"', false).flat(), ['echo', '', 'cat', 'a b']);
+  assert.deepEqual(segments('echo "a \\" b"', false), [['echo', 'a " b']]);
+  assert.deepEqual(segments("echo 'it'\\''s'", false), [['echo', "it's"]]);
+  assert.deepEqual(segments('echo "${HOME}/x" "${y:-"a b"}"', false), [['echo', '${HOME}/x', '${y:-a b}']]);
+  assert.deepEqual(segments('echo "$(echo ")"; gh pr list)"', false).flat().slice(0, 2), ['echo', '']);
+  const found = segmentsWithOperators('echo "$(echo "$(gh x)")"', false);
+  assert.ok(found.segments.some((s) => s[0] === 'gh'));
+  assert.equal(found.segments.length, found.operators.length);
+  assert.deepEqual(segments('git commit -m "$(cat <<\'EOF\'\nSay "why" here\nEOF\n)"', false).flat().includes('why'), true);
+});
+
+test('segments gives null for anything it cannot read with confidence', () => {
+  const unreadable = [
+    'echo "$(gh', 'echo "$(cat "a)"', 'echo $(echo "x)', 'echo )', 'echo a) b', '(echo a))', 'echo `gh', 'echo "`gh',
+    'echo "x', "echo 'x", 'echo $(gh', 'echo "${x', 'echo "${x:-\'y\'}"', 'echo "${x:-\\}}"',
+    'echo "`echo \\"gh\\"`"', 'echo `echo \\`gh\\``', 'echo `echo "`gh`"`', 'echo `echo $(echo `gh`)`',
+    'echo "$(case x in a) gh ;; esac)"', "echo $'x'", 'echo $"x"', 'echo "$(echo $\'x\')"',
+    `${'$(echo '.repeat(40)}x${')'.repeat(40)}`, `echo ${'"$(echo '.repeat(33)}x${')"'.repeat(33)}`,
+  ];
+  for (const command of unreadable) assert.equal(segments(command, false), null, command);
+  assert.equal(segmentsWithOperators('echo )', false), null);
+  const ok = `echo ${'"$(echo '.repeat(8)}x${')"'.repeat(8)}`;
+  assert.notEqual(segments(ok, false), null);
+});
+
+test('Bash reads nested quotes inside substitutions, and refuses what hides in them', async () => {
+  await inProject(async (ctx) => {
+    const allowed = [
+      'echo "$(cat "a b")"', 'echo "a \\" b"', 'echo "a \\"gh\\" b"', "echo 'it'\\''s'", 'echo "$(echo "x")"',
+      'echo "${HOME}/x"', 'echo "${x:-"y z"}"', 'echo "$(echo "$(echo "a b")")"', 'echo "a `echo b` c"',
+      'git commit -m "$(cat <<\'EOF\'\nTidy the guard\n\nSay "why" here\nEOF\n)"',
+    ];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+    const refused = [
+      'echo "$(echo "x" ; gh pr list)"', 'echo "$(cat ".env")"', 'echo "$(printf ")"; gh pr list)"',
+      'echo "$(echo "$(gh pr list)")"', 'echo "`gh pr list`"', 'echo "$(echo `gh x`)"', 'echo "`echo \\"gh\\"`"',
+      'echo "a \\" $(gh x) \\" b"', 'echo "$(gh', 'echo "$(cat "a)"', 'echo $(echo "x)', 'echo )', 'echo `gh',
+      'echo "${x:-"$(gh x)"}"', 'echo "$(echo \'a)\'; gh x)"', 'echo "$(case x in a) gh ;; esac)"',
+      `echo ${'"$(echo '.repeat(33)}x${')"'.repeat(33)}`, 'echo "$(echo "x"; git push)"', '(echo a))',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
