@@ -11,20 +11,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { holdsDue, holdInput } from '../../../scripts/cards/build-loop.js';
-import { KITS_HOLD } from '../../../scripts/agents/copilot/kits.js';
+import { KITS_HOLD, KITS_LIFTS } from '../../../scripts/agents/copilot/kits.js';
 import {
-  VERSION_HOLD, copilotModels, copilotVersionCheck, readVersions, seenFile, versionsFile,
+  VERSION_HOLD, VERSION_LIFTS, copilotModels, copilotVersionCheck, readVersions, seenFile, versionWhy, versionsFile,
 } from '../../../scripts/agents/copilot/versions.js';
 import { AGENT_PINS } from '../../../scripts/agents/pins.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { renderBoard } from '../../../scripts/board/render.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { COPILOT_VERSION } from '../../../scripts/lib/copilot-numbers.js';
-import { computerId } from '../../../scripts/lib/paths.js';
-import { agentHoldFile, isHeld, recordLift } from '../../../scripts/lineage/check.js';
+import { computerId, stateDir, usageDir } from '../../../scripts/lib/paths.js';
+import { agentHoldFile, holdAgentWork, isHeld, recordLift } from '../../../scripts/lineage/check.js';
+import { decide as lineageHold, HELD } from '../../../scripts/hooks/lineage-hold.js';
+import { briefingModel } from '../../../scripts/briefing/model.js';
+import { recordAllowance } from '../../../scripts/usage/store.js';
 import { buildManifest, readManifest } from '../../../scripts/lineage/manifest.js';
 import { parseProvenance, provenanceBlock, provenanceMatches, sessionProvenance, WHY } from '../../../scripts/lineage/provenance.js';
-import { makeEvent } from '../../../scripts/state/events.js';
+import { HOLD_WHY_CHARS, eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { usageFigures } from '../../../scripts/usage/figures.js';
 import { writeBaseline } from '../../../scripts/watcher/control-files.js';
@@ -52,6 +55,29 @@ function signedIn() {
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ loggedInUsers: [{ host: 'https://github.com', login: 'someone' }] }));
   return dir;
 }
+
+// The project's record and its main checkout, whose configuration says this computer runs it on `agent`.
+async function projectOn(agent = 'copilot') {
+  const checkout = await project();
+  onAgent(checkout, agent);
+  return checkout;
+}
+function onAgent(checkout, agent) {
+  fs.mkdirSync(path.join(checkout, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.claude', 'wheelhouse.json'), JSON.stringify(projectConfig({ agents: { [computerId()]: agent } })));
+}
+
+// A record raised, put in the state as the helper would write it.
+function putInState(record) {
+  const event = makeEvent({ ...record, now: () => new Date(T0) });
+  const file = path.join(stateDir(P), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event)}\n`);
+  return event;
+}
+
+// The events in the project's state.
+const listState = () => listEvents(stateDir(P), { report: () => {} });
 
 // The add-on's record of the versions, in the test's home.
 function addOnRecord(home, versions) {
@@ -112,7 +138,7 @@ test('the routing table\'s Copilot column is read only in its own shape, and set
   const read = (over) => readConfig(JSON.stringify({ ...base, ...over }));
   assert.deepEqual(read({ agentRouting: { copilot: { builder: 'model-a', foreman: null } } }).agentRouting, { copilot: { builder: 'model-a', foreman: null } });
   assert.equal(read({}).agentRouting, undefined, 'no column is made up');
-  for (const bad of [[], { copilot: [] }, { other: { builder: 'model-a' } }, { copilot: { painter: 'model-a' } }, { copilot: { builder: '-x' } }, { copilot: { builder: 3 } }]) {
+  for (const bad of [[], { copilot: [] }, { 'claude-code': { builder: 'model-a' } }, { other: { builder: 'model-a' } }, { copilot: { painter: 'model-a' } }, { copilot: { builder: '-x' } }, { copilot: { builder: 3 } }]) {
     assert.throws(() => read({ agentRouting: bad }), undefined, JSON.stringify(bad));
   }
   // Claude Code's own column is as it was.
@@ -160,7 +186,7 @@ test('provenance names the versions', () => withHome(async (home) => {
 }));
 
 test('a version change runs the subset once', () => withHome(async (home) => {
-  await project();
+  await projectOn();
   const subset = passing();
   const part = partWith({ subset });
   addOnRecord(home, V1);
@@ -182,25 +208,27 @@ test('a version change runs the subset once', () => withHome(async (home) => {
   // The check itself: no change passes without running anything; a throw fails.
   const never = async () => { throw new Error('not run'); };
   assert.deepEqual(await copilotVersionCheck({ versions: V1, last: V1, runSubset: never }), { changed: false, ok: true, why: null });
+  // A CLI version that couldn't be read is a change every time (review Minor 1).
+  const unread = { vscode: null, runtime: null, cli: null };
+  assert.equal((await copilotVersionCheck({ versions: unread, last: unread, runSubset: async () => ({ ok: true }) })).changed, true);
+  // The hold's words stay within what the record may carry (review Minor 6).
+  const long = `7.0.2-${'x'.repeat(60)}`;
+  assert.ok(versionWhy({ vscode: long, runtime: long, cli: long }).length <= HOLD_WHY_CHARS);
+  assert.doesNotThrow(() => makeEvent({ kind: 'lineage-hold', data: { at: new Date(T0).toISOString(), mismatches: [{ upstream: 'copilot', path: 'cli' }], why: versionWhy({ vscode: long, runtime: long, cli: long }), lifts: VERSION_LIFTS }, now: () => new Date(T0) }));
   const failed = await copilotVersionCheck({ versions: V2, last: V1, runSubset: never });
   assert.equal(failed.ok, false);
   assert.match(failed.why, /Copilot CLI 7\.0\.2 .*hasn't passed Wheelhouse's safety checks/);
 }));
 
-test('a failing subset holds Copilot work and raises one card', () => withHome(async (home) => {
-  const checkout = await project();
-  const dir = makeWorktree(checkout, WORK);
-  writeBaseline(P, WORK, dir);
-  addOnRecord(home, V2);
-  const subset = subsetOf(false);
-  const raised = [];
-  const started = [];
-  const waker = makeWaker({
+// A waker for the Copilot project whose sessions part is `part`: every start is a stand-in kept in `started`, and
+// every record raised is kept in `raised` and put in the state, as the helper would write it.
+function copilotWaker({ part, dir, raised, started }) {
+  return makeWaker({
     shape: 1,
     project: P,
     config: readConfig(JSON.stringify(projectConfig({ agents: { [computerId()]: 'copilot' } }))),
-    sessions: partWith({ subset }),
-    run: (...args) => { started.push(args); return { pid: 100, exited: new Promise(() => {}) }; },
+    sessions: part,
+    run: (...args) => { started.push(args); return { pid: 100 + started.length, exited: new Promise(() => {}) }; },
     alive: () => false,
     startTimeOf: async () => null,
     now: () => new Date(T0),
@@ -208,11 +236,22 @@ test('a failing subset holds Copilot work and raises one card', () => withHome(a
     baseEnv: { PATH: process.env.PATH ?? '', HOME: '/Users/someone' },
     foremanTools: ['Bash(node:*)'],
     print: () => {},
-    raise: async (record) => { raised.push(record); },
+    raise: async (record) => { raised.push(record); putInState(record); },
     onError: () => {},
     windowsBuilds: () => ({ level: 'ask', grants: [], guardedCommand: null }),
     locate: () => dir,
   });
+}
+
+test('a failing subset holds Copilot work and raises one card', () => withHome(async (home) => {
+  const checkout = await projectOn();
+  const dir = makeWorktree(checkout, WORK);
+  writeBaseline(P, WORK, dir);
+  addOnRecord(home, V2);
+  const subset = subsetOf(false);
+  const raised = [];
+  const started = [];
+  const waker = copilotWaker({ part: partWith({ subset }), dir, raised, started });
   for (let n = 0; n < 3; n += 1) await assert.rejects(waker.startFeature({ work: WORK, worktree: dir }), /hasn't passed Wheelhouse's safety checks/);
   assert.equal(started.length, 0, 'no session started');
   assert.equal(subset.calls.length, 1, 'the failed subset is not run again before the watcher starts again');
@@ -221,14 +260,16 @@ test('a failing subset holds Copilot work and raises one card', () => withHome(a
   assert.equal(isHeld(P), true);
   assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), true);
 
-  // One lineage-hold record, naming the version, for one card.
+  // One lineage-hold record, naming the version and what lifts it, for one card.
   const holds = raised.filter((r) => r.kind === 'lineage-hold');
   assert.equal(holds.length, 1);
   assert.match(holds[0].data.why, /Copilot CLI 7\.0\.2/);
-  const event = makeEvent({ ...holds[0], now: () => new Date(T0) });
-  const views = buildViews([event], []);
+  assert.equal(holds[0].data.lifts, VERSION_LIFTS);
+  const views = buildViews(listState(), []);
   assert.equal(holdsDue(views).length, 1);
-  assert.match(holdInput(holdsDue(views)[0]).what, /^Copilot CLI 7\.0\.2 .*hasn't passed Wheelhouse's safety checks, so Copilot work is held\. Edits and commands are held in this project until it passes\.$/);
+  const card = holdInput(holdsDue(views)[0]);
+  assert.match(card.what, /^Copilot CLI 7\.0\.2 .*hasn't passed Wheelhouse's safety checks, so Copilot work is held\. Edits and commands are held in this project until it passes\.$/);
+  assert.equal(card.why, VERSION_LIFTS);
 
   // A tick (the session start's or the mod's) lifts no hold while the agent's hold file stands.
   const lifted = [];
@@ -236,18 +277,52 @@ test('a failing subset holds Copilot work and raises one card', () => withHome(a
   assert.equal(await recordLift({ project: P, views, computer: computerId(), now: () => new Date(T0), client }), false);
   assert.deepEqual(lifted, []);
 
-  // A later version that passes lifts the hold, and the next tick closes its card.
+  // A later version that passes lifts the hold, and the waker records the lift itself, so its card closes on a
+  // computer with no Claude Code tick (ruling P8-32).
   addOnRecord(home, { ...V2, cli: '7.0.3' });
-  await sessionsPart({
-    ready: true, kits: { manifest: { upstreams: [] } }, home: { signedInFrom: signedIn(), node: process.execPath, root: ROOT },
-    versions: { run: async () => { throw new Error('no'); }, runSubset: passing() },
-  }).prepare({ project: P, target: 'foreman' });
+  const again = copilotWaker({ part: partWith(), dir, raised, started });
+  await again.startFeature({ work: WORK, worktree: dir });
+  assert.equal(started.length, 1, 'the start goes on');
   assert.equal(isHeld(P), false);
-  assert.equal(await recordLift({ project: P, views, computer: computerId(), now: () => new Date(T0), client }), true);
+  const lifts = raised.filter((r) => r.kind === 'lineage-lift');
+  assert.equal(lifts.length, 1);
+  assert.deepEqual(lifts[0].data.holds, [holdsDue(views)[0].id]);
+  assert.deepEqual(buildViews(listState(), []).lineageHolds, []);
+}));
+
+test('an agent\'s hold counts only while the project runs on that agent, and Claude Code\'s lift clears it (P8-32)', () => withHome(async () => {
+  const checkout = await projectOn('copilot');
+  holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], why: versionWhy(V2), lifts: VERSION_LIFTS, now: () => new Date(T0) });
+  const hold = putInState({ kind: 'lineage-hold', data: { at: new Date(T0).toISOString(), mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], why: versionWhy(V2), lifts: VERSION_LIFTS } });
+  assert.equal(isHeld(P), true);
+
+  // The hook says what holds the work and what lifts it.
+  const input = { cwd: checkout, tool_name: 'Write', tool_input: {} };
+  const denied = await lineageHold(input, { projectOf: () => ({ project: P }) });
+  const reason = denied.hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /^Wheelhouse is holding edits and commands: Copilot CLI 7\.0\.2 .*so Copilot work is held\. No click here lifts the hold: .*runs on Claude Code on this computer again\.$/);
+  assert.notEqual(reason, HELD);
+
+  // The project goes back to Claude Code here: the hold no longer counts, and Claude Code's lift removes its file and
+  // closes its card.
+  onAgent(checkout, 'claude-code');
+  assert.equal(isHeld(P), false);
+  assert.equal(await lineageHold(input, { projectOf: () => ({ project: P }) }), undefined);
+  const lifted = [];
+  const client = { state: { write: async (body) => { lifted.push(body); return { ok: true }; } } };
+  assert.equal(await recordLift({ project: P, views: buildViews(listState(), []), computer: computerId(), now: () => new Date(T0), client }), true);
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), false);
+  assert.deepEqual(lifted.map((b) => [b.kind, b.data.holds]), [['lineage-lift', [hold.id]]]);
+
+  // A configuration that can't be read holds, failing closed.
+  onAgent(checkout, 'copilot');
+  holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], now: () => new Date(T0) });
+  fs.writeFileSync(path.join(checkout, '.claude', 'wheelhouse.json'), '{ not json');
+  assert.equal(isHeld(P), true);
 }));
 
 test('a kit that differs writes the project\'s kit hold, so no tick lifts its card early', () => withHome(async () => {
-  await project();
+  await projectOn();
   const upstream = { name: 'kit-a', plugin: 'kit-a', repo: 'https://example.invalid/kit-a.git', ref: 'v1', sha: 'a'.repeat(40), folders: [{ path: 'skills/one', hash: '0'.repeat(64) }], files: [] };
   const fetchTo = async (_, into) => {
     fs.mkdirSync(path.join(into, 'skills', 'one'), { recursive: true });
@@ -257,6 +332,8 @@ test('a kit that differs writes the project\'s kit hold, so no tick lifts its ca
   const error = await part.prepare({ project: P, target: 'foreman' }).then(() => null, (e) => e);
   assert.match(error.message, /don't match Wheelhouse's manifest/);
   assert.equal(error.records.length, 1);
+  assert.equal(error.records[0].data.lifts, KITS_LIFTS, 'the card says what lifts the kit hold');
+  assert.doesNotThrow(() => makeEvent({ ...error.records[0], now: () => new Date(T0) }));
   assert.equal(fs.existsSync(agentHoldFile(P, KITS_HOLD)), true);
   assert.equal(isHeld(P), true);
   // Once the record is in the state, a later refusal raises it no more.
@@ -288,11 +365,40 @@ test('usage reads credits when the output has them and says so when it doesn\'t'
   assert.equal(figures.missing.length, 1);
   assert.match(figures.missing[0], /this session's use, summed over the sessions Wheelhouse started/);
   assert.equal(typeof figures.words.note, 'string');
+  // A run's count of premium requests and the usage file's premium cost are kept apart (review Minor 9).
+  const kept = fs.readFileSync(path.join(usageDir(), 'records', `${at.slice(0, 10)}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(kept.map((r) => [r.session, r.premiumRequests, r.premiumCost]), [['sess-a', 1, 2], ['sess-b', null, null]]);
 
   // A project with no such runs reads as it always has.
   const other = usageFigures({ project: 'o__other', now: () => new Date(T0 + 60_000) });
   assert.equal(Object.hasOwn(other.byPart.foreman, 'credits'), false);
   assert.equal(Object.hasOwn(other, 'words'), false);
+}));
+
+test('a project on Copilot shows no share or allowance window, though Claude\'s allowance is readable here (P8-32)', () => withHome(async () => {
+  await projectOn();
+  // The Claude account's allowance, as the mod reads it, with a window that resets in two days.
+  const resetsAt = new Date(T0 + 2 * 86_400_000).toISOString();
+  recordAllowance({ windows: [{ kind: 'seven_day', percentUsed: 41, resetsAt }], at: new Date(T0).toISOString(), now: new Date(T0) });
+  const now = () => new Date(T0 + 60_000);
+
+  const claude = usageFigures({ project: P, now });
+  assert.equal(claude.week.share, 41, 'Claude Code\'s projects read it as before');
+  assert.equal(claude.week.to, resetsAt);
+
+  const figures = usageFigures({ project: P, now, agent: 'copilot' });
+  assert.deepEqual([figures.week.share, figures.week.shareAt], [null, null]);
+  assert.equal(figures.week.to, now().toISOString(), 'the last seven days, not the allowance\'s window');
+  assert.equal(figures.missing.some((line) => /weekly allowance shows/.test(line)), false);
+
+  // Neither the board nor the briefing says a share of it.
+  const { model, text } = boardText(figures);
+  assert.doesNotMatch(text, /weekly allowance/);
+  assert.equal(model.director.budget.share, null);
+  const briefing = briefingModel({ model, usage: figures, sources: {}, since: null, now: () => new Date(T0) });
+  assert.doesNotMatch(JSON.stringify(briefing), /weekly allowance/);
+  // With the share, Claude Code's board says it, so the test would see one.
+  assert.match(boardText(claude).text, /41% of your weekly allowance/);
 }));
 
 test('unusual use works on credits where there are no tokens', () => withHome(async () => {

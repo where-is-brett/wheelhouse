@@ -13,6 +13,7 @@ import { isModelName } from '../../gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../lib/claude.js';
 import { wheelhouseHome } from '../../lib/paths.js';
 import { holdAgentWork, liftAgentWork, markAgentRecorded, readAgentHold } from '../../lineage/check.js';
+import { HOLD_WHY_CHARS } from '../../state/events.js';
 
 const cell = (text) => text.trim().replace(/^`+|`+$/g, '').trim();
 
@@ -123,13 +124,21 @@ export async function copilotModels({ run, env = process.env, platform = process
   }
 }
 
-const sameVersions = (a, b) => ['vscode', 'runtime', 'cli'].every((key) => (a?.[key] ?? null) === (b?.[key] ?? null));
-const named = (value) => value ?? 'a version not known';
+// Whether two readings name the same versions. A CLI version that couldn't be read is never the same as anything,
+// so it is checked again at every start (review Minor 1): a Copilot update under it would otherwise go unseen.
+const sameVersions = (a, b) => (a?.cli ?? null) !== null && ['vscode', 'runtime', 'cli'].every((key) => (a?.[key] ?? null) === (b?.[key] ?? null));
+// The most of one version a hold's words name, so they stay within the lineage hold's `why` (HOLD_WHY_CHARS).
+const NAMED_CHARS = 32;
+const named = (value) => (typeof value === 'string' ? (value.length > NAMED_CHARS ? `${value.slice(0, NAMED_CHARS)}...` : value) : 'a version not known');
 
-// The words of a version hold: which versions, and that they haven't passed.
+// The words of a version hold: which versions, and that they haven't passed. At most HOLD_WHY_CHARS.
 export function versionWhy(versions) {
-  return `Copilot CLI ${named(versions?.cli)} (VS Code ${named(versions?.vscode)}, Copilot runtime ${named(versions?.runtime)}) hasn't passed Wheelhouse's safety checks, so Copilot work is held`;
+  const words = `Copilot CLI ${named(versions?.cli)} (VS Code ${named(versions?.vscode)}, Copilot runtime ${named(versions?.runtime)}) hasn't passed Wheelhouse's safety checks, so Copilot work is held`;
+  return words.slice(0, HOLD_WHY_CHARS);
 }
+
+// What lifts a version hold, as the card and the hook say it (ruling P8-32).
+export const VERSION_LIFTS = "No click here lifts the hold: it lifts once a Copilot version passes Wheelhouse's safety checks, which the watcher tries again each time it starts, or once this project runs on Claude Code on this computer again.";
 
 // copilotVersionCheck({ versions, last, runSubset }) -> Promise<{ changed, ok, why }>
 //   Whether the versions in use (`versions`) differ from the last ones checked (`last`, null when none have been): a
@@ -159,13 +168,13 @@ export const VERSION_HOLD = 'copilot-version';
 // The versions whose subset this process has run, so a failed one isn't run again before the watcher starts again.
 const subsetRun = new Set();
 
-// checkVersions({ project, versions, runSubset, home, now }) -> Promise<void>
+// checkVersions({ project, versions, runSubset, home, now }) -> Promise<{ lifted }>
 //   Before a Copilot session starts: the version check, for `project`. Versions already checked pass. A change runs
 //   the subset (once per process for the same versions): a pass records them as checked and lifts the project's
 //   version hold; a failure writes the hold (so the project's hooks hold edits and commands, and no tick lifts its
 //   card while it stands) and refuses the start. A refusal throws an error carrying the lineage hold's record, with
 //   `why` naming the versions, until that record is in the state (the error's `raised`, which the waker calls once
-//   it is), so the hold raises one card.
+//   it is), so the hold raises one card. `lifted` says a pass removed the project's version hold, so its card can close.
 export async function checkVersions({ project, versions, runSubset = noSubsetRunner, home = wheelhouseHome(), now = () => new Date() }) {
   const last = readJson(seenFile(home));
   const held = readAgentHold(project, VERSION_HOLD);
@@ -178,13 +187,12 @@ export async function checkVersions({ project, versions, runSubset = noSubsetRun
       fs.mkdirSync(path.dirname(seenFile(home)), { recursive: true });
       fs.writeFileSync(seenFile(home), `${JSON.stringify({ vscode: versions.vscode, runtime: versions.runtime, cli: versions.cli, at: now().toISOString() }, null, 2)}\n`);
     }
-    liftAgentWork(project, VERSION_HOLD);
-    return;
+    return { lifted: liftAgentWork(project, VERSION_HOLD) };
   }
   const mismatches = [{ upstream: 'copilot', path: `cli ${named(versions?.cli)}` }];
-  const { set, recorded } = holdAgentWork({ project, name: VERSION_HOLD, mismatches, why: result.why, keep: { versions: { vscode: versions?.vscode ?? null, runtime: versions?.runtime ?? null, cli: versions?.cli ?? null } }, now });
+  const { set, recorded } = holdAgentWork({ project, name: VERSION_HOLD, agent: 'copilot', mismatches, why: result.why, lifts: VERSION_LIFTS, keep: { versions: { vscode: versions?.vscode ?? null, runtime: versions?.runtime ?? null, cli: versions?.cli ?? null } }, now });
   throw Object.assign(new Error(`${result.why}: no Copilot session is started until it passes`), {
-    records: recorded ? [] : [{ kind: 'lineage-hold', data: { at: now().toISOString(), mismatches, why: result.why } }],
+    records: recorded ? [] : [{ kind: 'lineage-hold', data: { at: now().toISOString(), mismatches, why: result.why, lifts: VERSION_LIFTS } }],
     raised: () => markAgentRecorded(project, VERSION_HOLD, set),
   });
 }

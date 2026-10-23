@@ -25,6 +25,8 @@ const ROLES = ['front-desk', 'foreman', 'feature'];
 const SESSION = /^(?!\.+$)[A-Za-z0-9._-]{1,128}$/;
 const NO_TOKENS = 'Token counts start once setup switches on usage counting on this computer';
 const NO_ALLOWANCE = 'The weekly allowance shows once the mod or the terminal has read it';
+// The agent whose allowance the mod and the terminal read.
+const CLAUDE_CODE = 'claude-code';
 const PART_WORDS = { 'front-desk': 'front desk work', foreman: 'foreman work', feature: 'feature work' };
 
 const usagePath = (...parts) => path.join(usageDir(), ...parts);
@@ -221,26 +223,16 @@ export function weeklyShare({ now } = {}) {
   return shareOf(readAllowance(), instant(now));
 }
 
-// usageFigures({ project, now, factor }): the figures described at the top of this file.
+// usageFigures({ project, now, factor, agent }): the figures described at the top of this file.
 // `project` limits the week, the parts, the features and unusual use to sessions whose session file
 // names that project (all sessions when null); the share is the account's whatever the project.
-export function usageFigures({ project = null, now, factor } = {}) {
+// `agent` is the agent the project runs on this computer: for any agent but Claude Code (ruling P8-32), and for
+// figures whose sessions an agent other than Claude Code recorded, the allowance is Claude's, not the project's, so
+// the figures carry no share, and the week is the last seven days rather than the allowance's window.
+export function usageFigures({ project = null, now, factor, agent = null } = {}) {
   const nowMs = instant(now);
   const today = dateOf(nowMs);
   const limit = typeof factor === 'number' && Number.isFinite(factor) && factor > 0 ? factor : UNUSUAL.factor;
-
-  const allowance = readAllowance();
-  const weekly = allowance?.windows.find((window) => window.kind === 'seven_day') ?? null;
-  const resetMs = weekly && typeof weekly.resetsAt === 'string' ? Date.parse(weekly.resetsAt) : NaN;
-  // The week is the allowance's own window when its reset is ahead (within a week), else the last seven days.
-  const ownWeek = Number.isFinite(resetMs) && resetMs > nowMs && resetMs <= nowMs + WEEK_MS;
-  const fromMs = ownWeek ? resetMs - WEEK_MS : nowMs - WEEK_MS;
-  const toMs = ownWeek ? resetMs : nowMs;
-  // Counts are kept a day at a time, so a day counts whole: the last seven dates ending today, or
-  // from the date the allowance's window began (that day's earlier use is counted with it).
-  const firstWeekDate = ownWeek ? dateOf(fromMs) : dateOf(nowMs - 6 * DAY_MS);
-
-  const { share, shareAt } = shareOf(allowance, nowMs);
 
   const dates = [];
   for (let back = UNUSUAL.windowDays - 1; back >= 0; back -= 1) dates.push(dateOf(nowMs - back * DAY_MS));
@@ -259,6 +251,26 @@ export function usageFigures({ project = null, now, factor } = {}) {
     }
   }
 
+  // Whether any session here reported its own use, and the agent whose use it is: the one named, else the runs'.
+  const runs = entries.some((entry) => entry.runs);
+  const runAgent = entries.find((entry) => entry.agent !== null)?.agent ?? null;
+  const usedBy = typeof agent === 'string' && agent !== '' ? agent : runAgent;
+  const otherAgent = usedBy !== null && usedBy !== CLAUDE_CODE;
+  const words = otherAgent ? usageWords(usedBy) : null;
+
+  const allowance = otherAgent ? null : readAllowance();
+  const weekly = allowance?.windows.find((window) => window.kind === 'seven_day') ?? null;
+  const resetMs = weekly && typeof weekly.resetsAt === 'string' ? Date.parse(weekly.resetsAt) : NaN;
+  // The week is the allowance's own window when its reset is ahead (within a week), else the last seven days.
+  const ownWeek = Number.isFinite(resetMs) && resetMs > nowMs && resetMs <= nowMs + WEEK_MS;
+  const fromMs = ownWeek ? resetMs - WEEK_MS : nowMs - WEEK_MS;
+  const toMs = ownWeek ? resetMs : nowMs;
+  // Counts are kept a day at a time, so a day counts whole: the last seven dates ending today, or
+  // from the date the allowance's window began (that day's earlier use is counted with it).
+  const firstWeekDate = ownWeek ? dateOf(fromMs) : dateOf(nowMs - 6 * DAY_MS);
+
+  const { share, shareAt } = shareOf(allowance, nowMs);
+
   const inWeek = (entry) => entry.date >= firstWeekDate;
   const weekTotal = sums();
   const parts = new Map();
@@ -271,9 +283,6 @@ export function usageFigures({ project = null, now, factor } = {}) {
     if (entry.meta?.role === 'feature' && entry.meta.work) bump(features, entry.meta.work, entry);
   }
 
-  // Whether any session here reported its own use, and the words of its agent.
-  const runs = entries.some((entry) => entry.runs);
-  const words = runs ? usageWords(entries.find((entry) => entry.agent !== null)?.agent) : null;
   const byPart = {};
   for (const role of ROLES) byPart[role] = figure(parts.get(role) ?? sums(), runs);
   const byFeature = Object.fromEntries([...features].map(([work, total]) => [work, figure(total, runs)]));
@@ -293,7 +302,7 @@ export function usageFigures({ project = null, now, factor } = {}) {
 
   const missing = [];
   if (words !== null) missing.push(words.allowance);
-  else {
+  else if (!otherAgent) {
     if (!telemetry) missing.push(NO_TOKENS);
     if (!allowance) missing.push(NO_ALLOWANCE);
   }

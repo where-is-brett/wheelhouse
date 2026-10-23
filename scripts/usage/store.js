@@ -18,7 +18,7 @@
 //                          recent export times, so a repeat adds nothing
 //   records/<date>.jsonl   increases: { at, session, model, type?, source?, tokens? | usd? }, and a
 //                          background session's use as its run gave it (ruling P8-21): { at, session,
-//                          role, source: 'run', agent, credits, premiumRequests, tokens? }, each figure null
+//                          role, source: 'run', agent, credits, premiumRequests, premiumCost, tokens? }, each figure null
 //                          when the run didn't give it (tokens is then counts by kind, never a sum,
 //                          so a reader of the sums above passes over it)
 //   mod/<date>.jsonl       the mod's readings of a session's running cost: { at, session, usd }, and each
@@ -299,12 +299,13 @@ const TOKEN_KINDS = ['input', 'output', 'cache_read', 'cache_write'];
 // the session's purpose recorded too (recordSession), so the week's figures place it. `credits`, `premiumRequests`
 // and each count in `tokens` are numbers or null, never 0 for a figure the run didn't give.
 // `agent` is the agent's name, by which the figures find the words for its use (scripts/agents/usage-words.js).
-export function recordRunUsage({ at, session, project, role, work, agent, credits, premiumRequests, tokens }) {
+// `premiumRequests` is the run's count of premium requests, `premiumCost` the usage file's premium request cost.
+export function recordRunUsage({ at, session, project, role, work, agent, credits, premiumRequests, premiumCost, tokens }) {
   checkSession(session);
   const time = timeOf(at);
   if (typeof agent !== 'string' || !/^[a-z0-9-]{1,64}$/.test(agent)) throw new Error("A run's use needs the agent's name");
   recordSession({ session, project, role, work, at: time });
-  const line = { at: time, session, role, source: 'run', agent, credits: figureOrNull(credits), premiumRequests: figureOrNull(premiumRequests) };
+  const line = { at: time, session, role, source: 'run', agent, credits: figureOrNull(credits), premiumRequests: figureOrNull(premiumRequests), premiumCost: figureOrNull(premiumCost) };
   if (tokens !== null && typeof tokens === 'object' && !Array.isArray(tokens)) {
     line.tokens = Object.fromEntries(TOKEN_KINDS.map((kind) => [kind, figureOrNull(tokens[kind])]));
   }

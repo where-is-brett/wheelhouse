@@ -227,8 +227,9 @@ const PLAIN_SHAPES = {
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card. An agent's starter
   // raises one too, for its own hold (rulings P8-13, P8-23), with `why` when the hold is not about kits (a new version
-  // of the agent that hasn't passed the safety checks): one line, which the card says in place of the kits.
-  'lineage-hold': { must: ['at', 'mismatches'], may: ['why'] },
+  // of the agent that hasn't passed the safety checks): one line, which the card says in place of the kits; and with
+  // `lifts`, one line saying what lifts that hold (ruling P8-32), which the card says in place of the session start's.
+  'lineage-hold': { must: ['at', 'mismatches'], may: ['why', 'lifts'] },
   // The hold file of the project is gone, so the cards of the holds it names (`holds`, their event
   // ids) are closed: recorded once for each standing hold, by a session start or the mod's tick.
   'lineage-lift': { must: ['at', 'holds'], may: [] },
@@ -259,7 +260,9 @@ export const ACTIVITY_COMMANDS = 50;
 export const REFUSAL_KINDS = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 // The most a lineage hold's `why` may be.
-const HOLD_WHY_CHARS = 300;
+export const HOLD_WHY_CHARS = 300;
+// The most its `lifts` may be.
+export const HOLD_LIFTS_CHARS = 400;
 const GATE_ASKS = ['approval', 'ci-push'];
 // The most a survey holds of each part, as scripts/survey/look.js looks at them (the host lists at
 // most 100 requests), and the longest text it keeps: of a title, subject, heading, name or time
@@ -398,6 +401,9 @@ function checkPlain(kind, data) {
     }
     if (data.why !== undefined && !(isText(data.why) && data.why.length <= HOLD_WHY_CHARS && !/[\r\n]/.test(data.why))) {
       bad(`has a why that is not one line of at most ${HOLD_WHY_CHARS} characters`);
+    }
+    if (data.lifts !== undefined && !(isText(data.lifts) && data.lifts.length <= HOLD_LIFTS_CHARS && !/[\r\n]/.test(data.lifts))) {
+      bad(`has a lifts that is not one line of at most ${HOLD_LIFTS_CHARS} characters`);
     }
   } else if (kind === 'lineage-lift') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');

@@ -135,25 +135,26 @@ export function kitSkills({ manifest = readManifest(), now = () => new Date() } 
   return skills;
 }
 
-// The agent hold a kit that differs takes.
+// The agent hold a kit that differs takes, and what lifts it, as the card and the hook say it (ruling P8-32).
 export const KITS_HOLD = 'copilot-kits';
+export const KITS_LIFTS = "Putting the pinned kits back is yours to do on this computer, so it comes to you. No click here lifts the hold: the next Copilot session the watcher starts finds the kits matching and lifts it, as does this project running on Claude Code on this computer again.";
 
-// kitsForSession({ project, manifest, fetchTo, now }) -> Promise<skills>
+// kitsForSession({ project, manifest, fetchTo, now }) -> Promise<{ skills, lifted }>
 //   Before a session of `project` starts: the kits fetched once (ensureKits) and checked (kitSkills). A match lifts
 //   the project's kit hold; a mismatch writes it and refuses the start, the error carrying the lineage hold's record
 //   until it is in the state (its `raised`, which the waker calls), so a hold raises one card. A fetch that fails
-//   refuses the start as it is, and writes no hold: nothing was found to differ.
+//   refuses the start as it is, and writes no hold: nothing was found to differ. `lifted` says a match removed the
+//   project's kit hold, so its card can close.
 export async function kitsForSession({ project, now = () => new Date(), ...kits } = {}) {
   try {
     await ensureKits({ ...kits, now });
     const skills = kitSkills({ ...kits, now });
-    liftAgentWork(project, KITS_HOLD);
-    return skills;
+    return { skills, lifted: liftAgentWork(project, KITS_HOLD) };
   } catch (error) {
     const record = Array.isArray(error?.records) ? error.records.find((r) => r?.kind === 'lineage-hold') : undefined;
     if (record === undefined) throw error;
-    const { set, recorded } = holdAgentWork({ project, name: KITS_HOLD, mismatches: record.data.mismatches, now });
-    error.records = recorded ? [] : [record];
+    const { set, recorded } = holdAgentWork({ project, name: KITS_HOLD, agent: 'copilot', mismatches: record.data.mismatches, lifts: KITS_LIFTS, now });
+    error.records = recorded ? [] : [{ ...record, data: { ...record.data, lifts: KITS_LIFTS } }];
     error.raised = () => markAgentRecorded(project, KITS_HOLD, set);
     throw error;
   }

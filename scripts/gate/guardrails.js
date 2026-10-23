@@ -106,12 +106,14 @@ function withDefaults(c) {
   };
 }
 
+// The agent whose column is `routing` itself, so `agentRouting` never holds one for it (review Minor 8).
+const COMMAND_LINE_AGENT = 'claude-code';
 // One agent's column: an object of roles, each a model or null.
 const columnOk = (column) => isObject(column) && Object.entries(column).every(([role, model]) => ROLES.includes(role) && modelOk(model));
 
 function buildLoopOk(c) {
   if (c.routing !== undefined && !(isObject(c.routing) && Object.values(c.routing).every(modelOk))) return false;
-  if (c.agentRouting !== undefined && !(isObject(c.agentRouting) && Object.entries(c.agentRouting).every(([agent, column]) => AGENTS.includes(agent) && columnOk(column)))) return false;
+  if (c.agentRouting !== undefined && !(isObject(c.agentRouting) && Object.entries(c.agentRouting).every(([agent, column]) => AGENTS.includes(agent) && agent !== COMMAND_LINE_AGENT && columnOk(column)))) return false;
   if (c.sessionMode !== undefined && !SESSION_MODES.includes(c.sessionMode)) return false;
   if (c.buildCommands !== undefined && !(Array.isArray(c.buildCommands) && c.buildCommands.every(isBuildCommand))) return false;
   if (c.watcherShape !== undefined && !WATCHER_SHAPES.includes(c.watcherShape)) return false;

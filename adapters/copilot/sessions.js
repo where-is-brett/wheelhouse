@@ -545,7 +545,9 @@ function recordRun({ project, sessionId, work, usage, model, versions, at }) {
     recordRunUsage({
       at, session: sessionId, project, role: work === undefined ? 'foreman' : 'feature', work, agent: 'copilot',
       credits: usage.totalNanoAiu === null ? null : usage.totalNanoAiu / NANO_AIU_PER_CREDIT,
-      premiumRequests: usage.totalPremiumRequestCost ?? usage.premiumRequests,
+      // The two are kept apart (review Minor 9): a count of requests from the result, and the usage file's cost.
+      premiumRequests: usage.premiumRequests,
+      premiumCost: usage.totalPremiumRequestCost,
       tokens: usage.tokens,
     });
   } catch { /* the run's use isn't counted */ }
@@ -661,15 +663,18 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, hom
     // Before every start (ruling P7-27 a): the versions in use read, and a new one checked by the safety subset before
     // any work starts on it (rulings P8-20, P8-23); the pinned kits fetched once and checked; the activity folder; and
     // the session's own home written afresh. A throw refuses the start; nothing has been run. A version that fails,
-    // or a kit that differs, holds the project's work (its agent hold) and carries the lineage hold's record.
+    // or a kit that differs, holds the project's work (its agent hold) and carries the lineage hold's record; a check
+    // that passes again lifts that hold, and says so (`lifted`).
     async prepare({ project, target }) {
       switchedOn(ready);
       const versions = await readVersions({ ...readFrom, run });
       lastVersions = versions;
-      await checkVersions({ project, versions, runSubset, ...(readFrom.home === undefined ? {} : { home: readFrom.home }) });
-      const skills = await kitsForSession({ project, ...kits });
+      const checked = await checkVersions({ project, versions, runSubset, ...(readFrom.home === undefined ? {} : { home: readFrom.home }) });
+      const { skills, lifted } = await kitsForSession({ project, ...kits });
       activityFolder(project);
       writeSessionHome({ project, target, skills, ...home });
+      // A hold of this project's that the checks just removed: the waker records its lift, so its card closes.
+      return { lifted: checked?.lifted === true || lifted === true };
     },
     afterRun: (options) => afterRun({ ...options, versions: lastVersions }),
     pruneActivity,

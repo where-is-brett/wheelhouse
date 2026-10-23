@@ -130,7 +130,10 @@ export function holdInput(hold, { short = false } = {}) {
       : unread
       ? 'Wheelhouse\'s own list of the kits it expects can\'t be read, so the installed kits can\'t be checked. Edits and commands are held in this project until they can be.'
       : `The installed kits differ from the ones Wheelhouse is pinned to: ${kitsOf(mismatches, short)}. Edits and commands are held in this project until they match.`,
-    why: 'Putting the pinned kits back is yours to do on this computer, so it comes to you. No click here lifts the hold: once they are back, the next session start finds them matching and lifts it.',
+    // An agent's own hold says what lifts it (ruling P8-32); the session start's is lifted by a matching start.
+    why: typeof hold.data.lifts === 'string' && hold.data.lifts !== ''
+      ? hold.data.lifts
+      : 'Putting the pinned kits back is yours to do on this computer, so it comes to you. No click here lifts the hold: once they are back, the next session start finds them matching and lifts it.',
     options: [
       { label: 'Show me how', says: 'I go through putting the pinned kits back, step by step.' },
       { label: 'Leave it for now', says: 'The hold stays, and nothing is edited or built until the kits match.' },

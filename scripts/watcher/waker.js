@@ -55,7 +55,8 @@
 //   - `prepare({ project, target })`, run before every start: a throw refuses
 //     the start before anything is run, the error's `records` are raised, each
 //     once, and its `raised(record)`, when it has one, is told of each once it
-//     is in the state;
+//     is in the state; a prepare that answers `{ lifted: true }` removed a hold
+//     of the project's, and its lift is recorded (liftHolds);
 //   - a call's `output`, a file the child's stdout and stderr are appended to,
 //     with `afterRun({ stdout, code, call, target, project, at })` reading what the run
 //     appended once it ends: its `{ ok, why }` settles the wakes in place of the
@@ -132,6 +133,7 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
+import { recordLift } from '../lineage/check.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
@@ -953,8 +955,9 @@ export function makeWaker({
     const adapter = sessionsOf();
     check(adapter);
     if (typeof adapter.prepare === 'function') {
+      let prepared;
       try {
-        await adapter.prepare({ project, target });
+        prepared = await adapter.prepare({ project, target });
       } catch (error) {
         for (const record of list(error?.records)) {
           const said = `${record?.kind}:${JSON.stringify(record?.data?.mismatches ?? record?.data ?? null)}`;
@@ -972,6 +975,7 @@ export function makeWaker({
         }
         throw error;
       }
+      if (prepared?.lifted === true) await liftHolds();
     }
     const call = build(adapter);
     beforeRun(call);
@@ -1015,6 +1019,19 @@ export function makeWaker({
   }
   // The records a refused prepare raised, each once for this waker.
   const raisedPrepare = new Set();
+
+  // A prepare that removed a hold of the project's (an agent's own, ruling P8-32): its lift is recorded here, through
+  // `raise`, as the session start and the mod's tick record one, so its card closes on a computer with neither. It
+  // informs: a lift that can't be recorded is kept, as recordLift keeps one, and the start goes on.
+  async function liftHolds() {
+    try {
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+      const client = { state: { write: async (body) => { await raise({ kind: body.kind, data: body.data }); return { ok: true }; } } };
+      await recordLift({ project, views, computer: computerId(), now, client });
+    } catch (error) {
+      onError(`A lifted hold's card couldn't be closed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
 
   // The foreman's start for `prompt`'s wake: its check asked right before its call is built.
   const startForeman = (cwd, prompt, gathered) => launch({
