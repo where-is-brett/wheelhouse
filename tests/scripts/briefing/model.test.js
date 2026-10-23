@@ -8,6 +8,7 @@ import { markRaised } from '../../../scripts/usage/figures.js';
 import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
 import { verdict } from '../../../scripts/lib/calm-words.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
+import { frontDeskModelLine } from '../../../scripts/lib/front-desk-model.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const at = (day, hour = 0) => new Date(Date.UTC(2026, 9, day, hour)).toISOString();
@@ -264,6 +265,15 @@ test('Unattended is repeated once each week, Monday in the director\'s time, fir
   assert.equal(withUnusual.watch[0], UNATTENDED_LINE);
   assert.match(withUnusual.watch[1], /^18 October 2026 used/);
   assert.deepEqual(withUnusual.raise, ['day:2026-10-18']);
+});
+
+test('the front desk\'s model line is weekly too, so a briefing doesn\'t repeat it at every visit (design section 8)', () => {
+  const line = frontDeskModelLine({ running: 'model-small', pinned: 'model-top' });
+  const model = board({ health: [{ level: 'watch', text: line }] });
+  const brief = (weeklySince) => briefingModel({ model, usage: null, since: null, now: NOW, wasRaised: never, timeZone: 'UTC', weeklySince });
+  assert.deepEqual(brief(at(18)).watch, [line]);
+  assert.equal(brief(at(18)).weekly, 1);
+  assert.deepEqual(brief(at(19, 1)).watch, [], 'shown this week already');
 });
 
 test('the Locked line is weekly too, and with neither line the briefing carries nothing new', () => {
