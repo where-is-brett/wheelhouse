@@ -279,7 +279,8 @@ The director is a product owner, not a developer. They want their product built 
    - **What it built:**
      - *The survey* (`scripts/survey/`): open requests through the host adapter (GitHub and GitLab), work pushed or on this computer not yet on the main line, other instructions, scheduled jobs and secret files (counted only), and the rules found, recorded in the project's state when setup finishes. The first briefing mentions it once, in plain words; `views survey` shows it.
      - *The carry-on card* at setup's end (A9), and Trusting's line in its place.
-     - *Carrying on, archiving and putting back* (`carry-on <n>`, `archive`, `restore` in the front desk's command): each makes a ready-made change in the project's folder for the work to start from, and the foreman starts the work from it.
+     - *Carrying on, archiving and putting back* (`carry-on <n>`, `carry-on --line <name>`, `archive`, `restore` in the front desk's command): each makes a ready-made change in the project's folder for the work to start from, and the foreman starts the work from it. Unfinished work with no request is carried on by its name in `views survey`, from where it stands: fetched from the host when pushed, as it is on this computer otherwise.
+     - *Mentioned once:* the survey counts as mentioned when the carry-on card said its only line, and a survey taken again after the host was missed says only what is new since. At Trusting, setup's session starts carrying the work on when its briefing says so.
      - *Wheelhouse's instructions first:* the front desk's and the foreman's playbooks and every brief say first that Wheelhouse's instructions win where another setup's differ.
      - *Uninstall* puts archived instructions back.
      - *Step 5* only reads the rules: **its Confirm-all cards are gone from setup.** A rule becomes a confirmed ruling when it first matters to a decision, through the intake.
