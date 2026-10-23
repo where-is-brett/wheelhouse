@@ -250,9 +250,10 @@ const PWSH = new Set(['pwsh', 'powershell']);
 // A coding agent started from an agent's shell (ruling P8-9): its program by name (NESTED_REFUSED), and its package
 // behind a package manager (NESTED_PACKAGES), whichever agent the session is. The names come from the adapters.
 const NESTED = 'Wheelhouse does not let an agent start another coding agent from its shell. Do the work in this session, or say what needs another agent instead';
-// The package managers that fetch or run a package's program: npx, npm exec, pnpm dlx, bunx and their kin. Any word
-// after one that names an agent's program or package is refused, whatever the subcommand.
-const PACKAGE_MANAGERS = new Set(['npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx']);
+// The package runners (npx, pnpx, bunx), and the package managers with the subcommands that run a package or its
+// program (npm exec, pnpm dlx, yarn dlx and kin): the package they run is the first plain word after, or --package's.
+const PACKAGE_RUNNERS = new Set(['npx', 'pnpx', 'bunx']);
+const PACKAGE_RUNS = { npm: ['exec', 'x'], pnpm: ['dlx', 'exec'], yarn: ['dlx', 'exec'], bun: ['x'] };
 // The commands that start a program named in their words, besides the runners: PowerShell's Start-Process and
 // cmd's start.
 const STARTERS = new Set(['start-process', 'saps', 'start']);
@@ -537,9 +538,11 @@ function bashRefused(command, ctx, depth = 0) {
     const command = after[c].toLowerCase().replace(/\$.*$/s, '');
     return command === '' || command === '{}' || KEYCHAIN_READS.some((read) => read.startsWith(command));
   };
-  // An agent's program as a command (by its last part, with .exe, .cmd, .bat or .ps1 taken off, or named with a
-  // variable), behind wrappers, started by a runner or a starter, or named after a package manager, as a program or
-  // as its package (with a version, or as --package's value).
+  // An agent's program as the command a segment runs (ruling P8-31): by its last part, with .exe, .cmd, .bat or .ps1
+  // taken off, or named with a variable; behind the wrappers commandAt reads; as the command a runner or a starter
+  // runs; or as the package npx, npm exec, pnpm dlx, pnpx, bunx or yarn dlx runs (with any version). An argument to
+  // any other command is never refused for naming one. A command word made at run time, in backticks or $( ), is
+  // held as a host tool's is: a line with a substitution and any word naming an agent's program is refused.
   const agentName = (w) => fold(lastPart(w)).replace(/\.(exe|cmd|bat|ps1)$/i, '').toLowerCase();
   const isAgent = (w) => NESTED_REFUSED.some((n) => agentName(w) === n || agentName(w).startsWith(`${n}$`));
   const isPackage = (w) => {
@@ -547,21 +550,52 @@ function bashRefused(command, ctx, depth = 0) {
     return NESTED_PACKAGES.some((p) => v === p || v.startsWith(`${p}@`));
   };
   const agentVariable = segs.some((seg) => seg.some((w) => ASSIGNMENT.test(w) && isAgent(w.slice(w.indexOf('=') + 1))));
+  const madeAtRunTime = /`|\$\(/.test(command) && segs.some((seg) => seg.some((w) => isAgent(w) || isAgent(w.slice(w.indexOf('=') + 1))));
+  // Whether the command at `k` of `words` starts an agent: its program, or its package through a package runner.
+  const runsAgent = (words, k) => {
+    if (isAgent(words[k]) || (agentVariable && words[k].startsWith('$'))) return true;
+    const manager = agentName(words[k]);
+    let rest = words.slice(k + 1);
+    if (Object.hasOwn(PACKAGE_RUNS, manager)) {
+      const sub = rest.findIndex((w) => !OPTION.test(w));
+      if (sub < 0 || !PACKAGE_RUNS[manager].includes(rest[sub].toLowerCase())) return false;
+      rest = rest.slice(sub + 1);
+    } else if (!PACKAGE_RUNNERS.has(manager)) {
+      return false;
+    }
+    for (let i = 0; i < rest.length; i += 1) {
+      const w = rest[i];
+      if (w === '--') continue;
+      if (/^(-p|--package)$/i.test(w)) {
+        if (isPackage(rest[i + 1] ?? '')) return true;
+        i += 1;
+      } else if (/^--package=/i.test(w)) {
+        if (isPackage(w)) return true;
+      } else if (!OPTION.test(w)) {
+        return isPackage(w) || isAgent(w);
+      }
+    }
+    return false;
+  };
   const startsNested = ({ words }) => {
     const names = words.map(nameOf);
     const k = commandAt(words, names, ctx);
     if (k >= words.length) return false;
-    const starts = (j) => isAgent(words[j]) || (agentVariable && words[j].startsWith('$'))
-      || (PACKAGE_MANAGERS.has(agentName(words[j])) && words.slice(j + 1).some((w) => isAgent(w) || isPackage(w)));
-    if (starts(k)) return true;
+    if (runsAgent(words, k)) return true;
+    // The command a runner or a starter runs: its first plain word, past the wrappers before it.
     const runner = RUNNERS.has(names[k]) || STARTERS.has(names[k].toLowerCase()) ? k : words.findIndex((w) => RUNNER_FLAGS.has(w));
-    return runner >= 0 && words.some((_, j) => j > runner && starts(j));
+    if (runner < 0) return false;
+    const started = words.findIndex((w, j) => j > runner && !OPTION.test(w) && !DURATION.test(w) && w !== '{}');
+    if (started < 0) return false;
+    const inner = words.slice(started);
+    const at = commandAt(inner, inner.map(nameOf), ctx);
+    return at < inner.length && runsAgent(inner, at);
   };
   if (checks.some(readsKeychain)) {
     ctx.state.keychain = true;
     return true;
   }
-  if (checks.some(startsNested)) {
+  if (madeAtRunTime || checks.some(startsNested)) {
     ctx.state.nested = true;
     return true;
   }

@@ -2764,6 +2764,8 @@ export async function startHelper({
       outcome = { ok: false, why: clean(error instanceof Error ? error.message : '', ctx.secrets) || 'the review could not be run' };
     }
     if (!outcome.ok) {
+      // Counted first, by the helper's own record, so a run whose note can't be written still counts (ruling P8-31).
+      try { recordFailedReview(project, headSha); } catch { /* an unwritten count leaves the record as it was */ }
       await reviewNote(project, `${NO_CLEAN_REVIEW(short)}: ${outcome.why}.`, ctx);
       return;
     }
@@ -2783,17 +2785,53 @@ export async function startHelper({
 
   // The most failed runs of the helper's review a head may have (ruling P8-14).
   const MOST_FAILED_REVIEWS = 3;
+  // The helper's own count of failed review runs by head commit (ruling P8-31): beside the project's mirror, outside
+  // the state repository, so no note the front desk or an agent writes counts, and a run counts whether or not its
+  // note was written. `{ <sha>: runs }`; null when the file is there but can't be read.
+  const failedReviewsFile = (project) => path.join(stateDir(project), '..', 'review-failures.json');
+  function readFailedReviews(project) {
+    let text;
+    try {
+      text = fs.readFileSync(failedReviewsFile(project), 'utf8');
+    } catch (error) {
+      return error?.code === 'ENOENT' ? {} : null;
+    }
+    try {
+      const read = JSON.parse(text);
+      return read !== null && typeof read === 'object' && !Array.isArray(read) ? read : null;
+    } catch {
+      return null;
+    }
+  }
+  // Adds one failed run for `headSha`, written whole. A record that can't be read is left as it is: it already
+  // refuses every review.
+  function recordFailedReview(project, headSha) {
+    const failed = readFailedReviews(project);
+    if (failed === null) return;
+    const runs = Number.isInteger(failed[headSha]) && failed[headSha] > 0 ? failed[headSha] : 0;
+    const file = failedReviewsFile(project);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(temp, `${JSON.stringify({ ...failed, [headSha]: runs + 1 }, null, 2)}\n`);
+      fs.renameSync(temp, file);
+    } catch (error) {
+      fs.rmSync(temp, { force: true });
+      throw error;
+    }
+  }
   // Why the head `headSha` of pull request `number` gets no further review from the helper (ruling P8-14), or null:
-  // a signed `review` record of it, whatever its verdict or kind, or MOST_FAILED_REVIEWS notes of failed runs (the
-  // notes reviewJob writes, which begin with NO_CLEAN_REVIEW for the head). So a commit is reviewed once, and a run
-  // that fails is tried again only up to the limit: a fix needs a new commit.
+  // a signed `review` record of it, whatever its verdict or kind, or MOST_FAILED_REVIEWS failed runs in the helper's
+  // own count (refused too when that count can't be read). So a commit is reviewed once, and a run that fails is
+  // tried again only up to the limit: a fix needs a new commit.
   function reviewSpent(project, number, headSha) {
-    const events = listEvents(stateDir(project), { report: () => {} });
-    const views = buildViews(events, readEnrolled(), { damaged: [], now });
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { damaged: [], now });
     const short = headSha.slice(0, 7);
     if (views.reviews?.[String(number)]?.[headSha] !== undefined) return `${short} has a signed review already`;
-    const failed = events.filter((e) => e.kind === 'note' && typeof e.data?.text === 'string' && e.data.text.startsWith(`${NO_CLEAN_REVIEW(short)}: `));
-    return failed.length >= MOST_FAILED_REVIEWS ? `the review of ${short} has failed ${failed.length} times` : null;
+    const failed = readFailedReviews(project);
+    if (failed === null) return "the helper's count of failed reviews can't be read";
+    const runs = Number.isInteger(failed[headSha]) ? failed[headSha] : 0;
+    return runs >= MOST_FAILED_REVIEWS ? `the review of ${short} has failed ${runs} times` : null;
   }
 
   // POST /review/run { project, number } (ruling P7-18): the helper's own reviewer, in a clean session, of the open

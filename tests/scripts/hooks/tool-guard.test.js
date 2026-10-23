@@ -1191,6 +1191,9 @@ const NESTED_FORMS = [
   'echo x | xargs copilot -p', 'find . -name a -exec copilot -p {} \;', 'watch -n 5 copilot -p x', 'parallel copilot -p ::: a b',
   'xargs npx @github/copilot', 'sh -c "copilot -p x"', 'bash -lc "cd sub && copilot -p x"', 'eval "copilot -p x"', 'echo $(copilot -p x)',
   'x && copilot -p x', 'A=copilot; $A -p x', 'copilot$X -p x', 'cmd /c copilot -p x', 'pwsh -Command "copilot -p x"',
+  // A command word made at run time, held as a host tool's is (ruling P8-31).
+  '`echo copilot` -p x', 'x=`echo copilot`; $x -p y', '$(echo copilot) -p x', 'x=$(printf copilot); $x -p y', '"$(echo copilot)" -p x',
+  'pnpx @github/copilot', 'bun x @github/copilot', 'npm exec -p @github/copilot -- copilot -p x', 'xargs sudo copilot -p', 'npx -c "copilot -p x"',
 ];
 for (const command of NESTED_FORMS) {
   test(`the tool guard refuses a nested agent: ${command}`, async () => {
@@ -1223,7 +1226,11 @@ test('words that only mention an agent pass, and Claude Code names no program of
   await inProject(async (ctx) => {
     for (const command of ['grep -rn copilot docs', 'git commit -m "Refuse copilot in the guard"', 'echo copilot', 'cat copilot.md',
       'ls node_modules/@github/copilot', 'git log --grep copilot', 'npm test', 'node --test tests/copilot-plugin.test.js',
-      'claude -p "x"', 'claude --version', 'npx @anthropic-ai/claude-code --version', 'find . -name copilot']) {
+      'claude -p "x"', 'claude --version', 'npx @anthropic-ai/claude-code --version', 'find . -name copilot',
+      // An argument to another command never counts, behind a package manager or a runner either (ruling P8-31).
+      'npm test -- adapters/copilot', 'npx vitest run src/copilot', 'yarn workspace copilot build', 'git ls-files | xargs grep copilot',
+      'npm install @github/copilot', 'pnpm --filter copilot test', 'find . -name copilot -exec ls {} \\;', 'watch -n 5 ls copilot',
+      'npx eslint copilot.js', 'bunx prettier --check adapters/copilot']) {
       assert.equal(await bash(ctx, command), undefined, command);
     }
   });

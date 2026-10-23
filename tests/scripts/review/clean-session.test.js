@@ -735,25 +735,48 @@ test('the route reviews a commit once: a head with a signed review, of any verdi
   const spent = /one review per commit: a fix needs a new commit$/;
   try {
     const short = project.head.slice(0, 7);
-    const failed = (n) => plant(project, 'note', { text: `${NO_CLEAN_REVIEW(short)}: the review session did not finish in time.` }, 1000 + n);
-    // Two failed runs, a note about another commit and a note of another kind leave the head open to a third run.
-    await failed(1);
-    await failed(2);
-    await plant(project, 'note', { text: `${NO_CLEAN_REVIEW('1234567')}: x.` }, 1003);
-    await plant(project, 'note', { text: `The clean review of ${short} passed, but its signed record could not be written.` }, 1004);
-    const third = standInReview({ answer: answerFor('CLEAN'), clean: false });
-    const { notes } = await withHelper(project, () => third.module, async (client) => {
-      assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: true, started: true });
-    });
-    assert.equal(third.seen.length, 1);
-    assert.equal(notes.filter((n) => n.data.text.startsWith(`${NO_CLEAN_REVIEW(short)}: `)).length, 3);
-    // The third failed run: no fourth.
+    // Notes count for nothing, even ones worded as the helper's (the front desk can write plain notes): only the
+    // helper's own count of failed runs does (ruling P8-31).
+    for (const n of [1, 2, 3]) await plant(project, 'note', { text: `${NO_CLEAN_REVIEW(short)}: the review session did not finish in time.` }, 1000 + n);
+    const runOnce = async () => {
+      const stand = standInReview({ answer: answerFor('CLEAN'), clean: false });
+      await withHelper(project, () => stand.module, async (client) => {
+        assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: true, started: true });
+      });
+      assert.equal(stand.seen.length, 1);
+    };
+    await runOnce();
+    await runOnce();
+    // The third failed run counts though its note can't be written (the state clone is made read-only meanwhile).
+    const state = await as(project.home, () => stateDir('o__p'));
+    const lock = (mode) => {
+      for (const entry of fs.readdirSync(state, { recursive: true, withFileTypes: true })) if (entry.isDirectory()) fs.chmodSync(path.join(entry.parentPath, entry.name), mode);
+      fs.chmodSync(state, mode);
+    };
+    lock(0o555);
+    let notesBefore;
+    try {
+      notesBefore = (await as(project.home, () => listEvents(stateDir('o__p'), { report: () => {} }))).filter((e) => e.kind === 'note').length;
+      await runOnce();
+    } finally {
+      lock(0o755);
+    }
+    const notesAfter = (await as(project.home, () => listEvents(stateDir('o__p'), { report: () => {} }))).filter((e) => e.kind === 'note').length;
+    assert.equal(notesAfter, notesBefore, 'the third run wrote no note');
+    // Three failed runs by the helper's count: no fourth.
     const fourth = standInReview({ answer: answerFor('CLEAN') });
     await withHelper(project, () => fourth.module, async (client) => {
       const answer = await client.review({ project: 'o__p', number: 7 });
       assert.equal(answer.ok, false);
       assert.match(answer.refused, new RegExp(`^the review of ${short} has failed 3 times; `));
       assert.match(answer.refused, spent);
+    });
+    assert.equal(fourth.seen.length, 0);
+    // A count that can't be read refuses too.
+    const counted = await as(project.home, () => path.join(stateDir('o__p'), '..', 'review-failures.json'));
+    fs.writeFileSync(counted, '{ not json');
+    await withHelper(project, () => fourth.module, async (client) => {
+      assert.match((await client.review({ project: 'o__p', number: 7 })).refused, /count of failed reviews can't be read; one review per commit/);
     });
     assert.equal(fourth.seen.length, 0);
   } finally {
