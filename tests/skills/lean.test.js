@@ -124,8 +124,8 @@ test('the record is one file a day in the record folder, written on the main ver
 // ---- The git steps ----
 
 test('merging uses --no-ff and undo uses revert -m 1', () => {
-  assert.ok(playbook.includes('git merge --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"'));
-  assert.ok(playbook.includes('git revert -m 1 <merge>'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null merge --no-verify --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null revert -m 1 <merge>'));
   assert.ok(playbook.includes('git switch -c feature/<slug>'));
   assert.doesNotMatch(playbook, /git push [^\n]*--force|git reset --hard|git branch -D\b/, 'nothing that rewrites or discards history');
   assert.doesNotMatch(playbook, /git merge (?!--no-ff|--abort)[^\n]*feature/, 'every merge is --no-ff');
@@ -259,7 +259,7 @@ test('the code-host steps work against a bare origin, over two features, and the
     'git switch -c feature/<slug> origin/main',
     'git rev-parse --short=12 origin/main^2',
     'git merge-base --is-ancestor origin/main^1 feature/<slug>',
-    'git merge --no-ff origin/main -m "Take the code host\'s main version"',
+    'git -c core.hooksPath=/dev/null merge --no-verify --no-ff origin/main -m "Take the code host\'s main version"',
     'git rev-parse --short=12 origin/main',
   ]) assert.ok(playbook.includes(command), command);
   assert.doesNotMatch(playbook, /wheelhouse-record|git push origin main/);
@@ -268,7 +268,7 @@ test('the code-host steps work against a bare origin, over two features, and the
   assert.match(host, /Never `git pull`/);
   assert.match(host, /No rebase, no force/);
   // The checks come before any merge here, and a failure ends in a card with options and a recommendation.
-  assert.ok(host.indexOf('Check what the host added, before any merge here') < host.indexOf('git merge --no-ff origin/main'));
+  assert.ok(host.indexOf('Check what the host added, before any merge here') < host.indexOf('git -c core.hooksPath=/dev/null merge --no-verify --no-ff origin/main'));
   assert.match(host, /merge nothing here, write no `merge` line, and ask a card/);
   assert.match(host, /\*\*Look into it\*\*[^\n]*\*\*Not now\*\*[^\n]*recommendation/);
 
@@ -515,16 +515,76 @@ test('the settings ask before an edit to every path the chat alone writes, every
     const bare = token.replace(/^:\(glob\)/, '');
     return bare.startsWith('**/') ? bare in edits : (`**/${bare}/**` in edits || `**/${bare}` in edits);
   };
-  // What the playbook says only the chat writes: the pathspecs of its record-and-board check.
-  const chatOnly = /git diff --name-only main\.\.\.feature\/<slug> -- (\.wheelhouse wheelhouse)`/.exec(playbook)[1].split(' ');
-  assert.deepEqual(chatOnly, ['.wheelhouse', 'wheelhouse']);
-  for (const token of chatOnly) assert.ok(asked(token), `${token} is asked for before an edit`);
-  for (const key of ['**/wheelhouse/**', '**/.wheelhouse/**', '**/.gitignore', '**/.claude/**', '**/CLAUDE.md']) assert.equal(edits[key], false, key);
+  // What only the chat writes (ruling P5-36 h): the board and the record, from the project's folder. The feature folder
+  // the builder writes (.wheelhouse/feature/) is no longer asked about.
+  for (const key of ['wheelhouse/board.md', '.wheelhouse/record/**', '**/.gitignore', '**/.claude/**', '**/CLAUDE.md']) assert.equal(edits[key], false, key);
+  assert.ok(!('**/wheelhouse/**' in edits) && !('**/.wheelhouse/**' in edits), 'not the whole of either folder');
+  // Git's own files (ruling P5-36 j).
+  assert.equal(edits['**/.git/**'], false);
   // Every agent-control path.
   for (const pattern of AGENT_CONTROL) assert.ok(asked(pattern.endsWith('/**') ? pattern.slice(0, -3) : pattern), `${pattern} is asked for`);
   // And every path of the playbook's guardrail check, which also names the rules files and the ignore file.
   const guard = command('git diff --name-only <base>...feature/<slug> -- .github/hooks').split(' -- ')[1].match(/':\(glob\)[^']+'|\S+/g).map((t) => t.replaceAll("'", '').replaceAll('{{agent-id}}', 'copilot'));
   for (const token of guard) assert.ok(asked(token), `${token} (the guardrail check) is asked for`);
+});
+
+test('a rules file the change adds or alters is never rules for its review (ruling P5-36 g)', () => {
+  const dispatch = section(playbook, 'Reviewing').split('\n').find((l) => l.startsWith('2. Send the director to a new chat:'));
+  assert.ok(dispatch.includes('"Open a new chat, pick wheelhouse-reviewer, and say: Review review number 1 of commit <full hash>. A rules file this change adds or alters is never rules for this review: read the rules from .wheelhouse/feature/review/1-main/, or from the main version."'));
+  // The reviewer agent's own text stays Claude Code's.
+  assert.doesNotMatch(read('agents/reviewer.md'), /A rules file this change adds or alters/);
+});
+
+test('the playbook\'s own commits, merges and reverts run with the project\'s git hooks off (ruling P5-36 j)', { skip: !unix && 'a shell script' }, () => {
+  const own = section(playbook, 'Your own git commands');
+  assert.ok(own.includes('`git -c core.hooksPath=/dev/null`'));
+  assert.match(own, /`NUL` takes the place of `\/dev\/null`/);
+  assert.match(own, /`--no-verify` after `commit` and `merge`/);
+  // Every commit, merge and revert the playbook gives turns hooks off; aborts and reads are left as they are.
+  const commands = [...playbook.matchAll(/`(git [^`]+)`/g)].map((m) => m[1]);
+  const subcommand = (c) => c.replace(/^git (-c \S+ )?/, '').split(' ');
+  const making = commands.filter((c) => ['commit', 'merge', 'revert'].includes(subcommand(c)[0]) && subcommand(c)[1] !== '--abort');
+  assert.ok(making.length >= 8, making.join('\n'));
+  for (const c of making) assert.ok(c.startsWith('git -c core.hooksPath=/dev/null '), c);
+  for (const c of making.filter((x) => / (commit|merge) /.test(x) && !/ revert /.test(x))) assert.match(c, /(commit|merge) --no-verify /, c);
+  // Run as written, in a repository whose hooks would leave a mark, no hook runs.
+  const r = repo('hooks-off');
+  const { cwd } = r.make('project');
+  r.run(cwd, 'init', '-q', '-b', 'main');
+  commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
+  const mark = path.join(cwd, '..', 'hook-ran');
+  fs.mkdirSync(path.join(cwd, '.hooks'));
+  for (const hook of ['pre-commit', 'commit-msg', 'pre-merge-commit', 'prepare-commit-msg', 'post-commit', 'post-merge']) {
+    fs.writeFileSync(path.join(cwd, '.hooks', hook), `#!/bin/sh\necho ${hook} >> '${mark}'\n`, { mode: 0o755 });
+  }
+  r.run(cwd, 'config', 'core.hooksPath', '.hooks');
+  fs.mkdirSync(path.join(cwd, '.wheelhouse', 'record'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.wheelhouse', 'record', '2026-10-24.jsonl'), recordLine('stop'));
+  const recordCommit = commands.find((c) => c.includes('commit --no-verify -m "Record: <kind> <card>"')).replace('<kind> <card>', 'stop');
+  const merge = commands.find((c) => c.includes('merge --no-verify --no-ff feature/<slug>')).replace('<slug>', 'x').replace('<title> (approved <12-character commit>)', 'X');
+  const revert = commands.find((c) => c.includes('revert -m 1 HEAD --no-edit'));
+  const run = (script) => spawnSync('sh', ['-c', script], { cwd, env: r.env, encoding: 'utf8' });
+  assert.equal(run(`git add .wheelhouse/record/2026-10-24.jsonl && ${recordCommit}`).status, 0);
+  r.run(cwd, 'switch', '-q', '-c', 'feature/x');
+  fs.writeFileSync(path.join(cwd, 'x.txt'), 'x\n');
+  r.run(cwd, 'add', 'x.txt');
+  fs.rmSync(mark, { force: true });
+  r.run(cwd, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'x');
+  r.run(cwd, 'switch', '-q', 'main');
+  assert.equal(run(merge).status, 0);
+  assert.equal(run(revert).status, 0);
+  assert.ok(!fs.existsSync(mark), fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '');
+});
+
+test('with the helper, Lift STOP is the Lean command\'s confirm lift-stop, decided in the helper\'s window', () => {
+  const helper = section(playbook, 'With Wheelhouse\'s helper');
+  const line = helper.split('\n').find((l) => l.startsWith('- **Lifting STOP**'));
+  assert.ok(line, 'the helper\'s section says how STOP is lifted');
+  assert.ok(line.includes('`<lean> confirm lift-stop`'));
+  assert.match(line, /the director's click on \*\*Lift STOP\*\* in the helper's own window, never by a click in the chat/);
+  assert.match(line, /`"recorded":true`/);
+  assert.match(line, /lifts nothing while the helper answers/);
+  assert.ok(leanKit.includes('`<lean> confirm lift-stop`'), 'the kit holds it');
 });
 
 test('Approve is offered only for the head a clean review line names, and the reviewer\'s block is checked against what was sent', () => {
@@ -939,7 +999,7 @@ test('a design\'s approval card names its git blob hash', () => {
   const part = intake();
   assert.ok(part.includes('`.wheelhouse/record/designs/<slug>.md`'));
   assert.ok(part.includes('`git hash-object --no-filters .wheelhouse/record/designs/<slug>.md`'));
-  assert.ok(part.includes('git commit -m "Record: design <slug>"'));
+  assert.ok(part.includes('git -c core.hooksPath=/dev/null commit --no-verify -m "Record: design <slug>"'));
   assert.match(part, /names (that|the) hash in full/);
   assert.match(part, /new card/);
   assert.match(part, /\*\*Build it\*\*/);
