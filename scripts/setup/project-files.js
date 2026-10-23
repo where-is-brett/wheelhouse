@@ -91,7 +91,8 @@ import { CARD } from '../lib/front-desk.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
-import { readConfig } from '../gate/guardrails.js';
+import { readConfig, isModelName } from '../gate/guardrails.js';
+import { bestModel } from './best-model.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
@@ -198,14 +199,18 @@ function sameContent(rel, a, b) {
 // command line's own default), the front desk's `pages` (none, so no approval carries over a
 // screenshot), and `liveData` from step 4's answer (ruling R31). Real users are the `phase` setting
 // in state, never a key here (ruling R38). The configuration is the same on GitHub and GitLab.
-export function starterConfig({ answers = {} } = {}) {
+export function starterConfig({ answers = {}, frontDesk = null } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
-  return { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
+  const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
+  return frontDesk ? { ...starter, routing: { ...starter.routing, frontDesk } } : starter;
 }
 
+// The front desk's model a configuration pins (design section 8), or null when it pins none.
+export const frontDeskPin = (config) => (isModelName(config?.routing?.frontDesk) ? config.routing.frontDesk : null);
+
 // The configuration a project ends up with: the one it has, with each of the starter's keys it
-// lacks added, and `liveData` as step 4's answer says. A file that isn't a configuration is refused.
+// lacks added, the starter's front desk pin where it has none, and `liveData` as step 4's answer says. A file that isn't a configuration is refused.
 function configFrom(existing, starter) {
   if (existing === null) return structuredClone(starter);
   try {
@@ -216,6 +221,8 @@ function configFrom(existing, starter) {
   const out = structuredClone(existing);
   for (const [key, value] of Object.entries(starter)) if (!Object.hasOwn(out, key)) out[key] = structuredClone(value);
   out.liveData = starter.liveData;
+  // A project set up before the front desk had a model gets the starter's pin; a pin it holds stays.
+  if (frontDeskPin(out) === null && frontDeskPin(starter) !== null && isObject(out.routing)) out.routing = { ...out.routing, frontDesk: starter.routing.frontDesk };
   return out;
 }
 
@@ -287,23 +294,24 @@ export function projectFilesChange({ folder, config, release = null, local }) {
   const targets = targetsFor({ folder, config, release });
   const settingsText = readText(at(SETTINGS));
   const configText = readText(at(CONFIG));
+  const configAfter = targets[CONFIG](configText);
   const changes = [
     ...jsonChanges(at(SETTINGS), objectIn(SETTINGS, settingsText), targets[SETTINGS](settingsText)),
-    ...jsonChanges(at(CONFIG), objectIn(CONFIG, configText), targets[CONFIG](configText)),
-    ...localFilesChange({ folder, local }),
+    ...jsonChanges(at(CONFIG), objectIn(CONFIG, configText), configAfter),
+    ...localFilesChange({ folder, local: { ...local, model: frontDeskPin(configAfter) } }),
   ];
   if (!hasSection(readText(at(CLAUDE)))) changes.push({ kind: 'file', target: at(CLAUDE), section: 'Compact instructions' });
   return changes;
 }
 
 // The changes to this computer's own .claude/settings.local.json in `folder`, merged with
-// localSettings key by key (`local` as projectFilesChange's): all a joining computer's step 7
-// writes of the project's files (ruling R78).
+// localSettings key by key (`local` as projectFilesChange's, with `model`, the front desk's pin,
+// or none): all a joining computer's step 7 writes of the project's files (ruling R78).
 export function localFilesChange({ folder, local }) {
   const file = path.join(folder, ...LOCAL.split('/'));
   const text = readText(file);
   const ownStatusLine = local.claudeHome ? directorStatusLine({ claudeHome: local.claudeHome, projectDir: folder }) : null;
-  const ours = localSettings({ address: local.address, node: local.node, pluginRoot: local.pluginRoot, platform: local.platform, ownStatusLine });
+  const ours = localSettings({ address: local.address, node: local.node, pluginRoot: local.pluginRoot, platform: local.platform, ownStatusLine, model: local.model ?? null });
   return jsonChanges(file, objectIn(LOCAL, text), mergeSettings(objectIn(LOCAL, text) ?? {}, ours));
 }
 
@@ -484,6 +492,17 @@ async function installPin({ id, folder, run, claude }) {
 
 // ---- The card ----
 
+// The card's word for a step that found no model to pin the front desk to.
+const NO_PIN = Symbol('no front desk model');
+
+// The front desk's pin when the changes start this computer's front desk on it, else null.
+function frontDeskOf(changes, pin) {
+  if (pin === null) return null;
+  const local = changes.filter((c) => typeof c.target === 'string' && c.target.endsWith('settings.local.json'));
+  const sets = (c) => (c.kind === 'json-key' && c.key.length === 1 && c.key[0] === 'model') || (c.kind === 'file' && c.line === undefined && objectIn(LOCAL, c.after)?.model === pin);
+  return local.some(sets) ? pin : null;
+}
+
 const pinName = (target) => PIN_NAMES[target.split('@')[0]] ?? target.split('@')[0];
 const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
@@ -492,7 +511,7 @@ const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0
 // shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
 // that nothing is committed and protection stays as it is, and names each shared file in
 // `differ`, which differs from what is committed and is left as it is.
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [] }) {
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], frontDesk = null }) {
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
   const shared = files.filter((c) => !c.target.endsWith('settings.local.json'));
   const excluded = changes.some((c) => c.line === EXCLUDE_LINE);
@@ -505,6 +524,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (files.length > shared.length) parts.push(`this computer's settings into .claude/settings.local.json, which stays here${excluded ? `${ours ? '; it and .wheelhouse/' : ','} kept out of git` : ''}`);
   else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
+  if (frontDesk === NO_PIN) parts.push('the front desk\'s model is left as it is: Claude Code didn\'t say which is its most capable');
+  else if (frontDesk) parts.push(`the front desk runs on ${frontDesk}, the most capable model`);
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
   if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
@@ -578,13 +599,15 @@ function sayFit(parts) {
 // GitLab's API with the director's sign-in; `claude` finds Claude Code's command line (lib/claude.js:
 // on Windows its .exe or .cmd on the path); `manifest`, `claudeHome` and `locate` are the lineage
 // check's; `switchOn` and `protectionStatus` are protection's; `address`, `node` and `pluginRoot`
-// are what the local settings name. All are for tests.
+// are what the local settings name; `best` gives what Claude Code's alias for its most capable model
+// stands for, or null (setup/best-model.js). All are for tests.
 export function projectFilesStep({
   run = realRun, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
   gitlab = ({ run: r, baseUrl }) => directorGitlabApi({ run: r, baseUrl }), claude = () => resolveClaude(),
   manifest = () => readManifest(), claudeHome = () => defaultClaudeHome(), locate = locateInstalled,
   switchOn = switchOnAsDirector, protectionStatus = realProtectionStatus,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
+  best = () => bestModel({ run, claude }),
 } = {}) {
   const gitFor = async ({ host, platform, folder, remoteUrl, base }) => {
     const located = await findGit({ platform, run });
@@ -635,15 +658,16 @@ export function projectFilesStep({
     for (const rel of SETUP_FILES) if (!sameContent(rel, readText(at(rel)), await headText(git, rel))) differ.push(rel);
     const home = claudeHome();
     const release = wheelhouseRelease({ folder, claudeHome: home });
+    const pin = frontDeskPin(objectIn(CONFIG, committed));
     const changes = [
-      ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home } }),
+      ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home, model: pin } }),
       ...(await computerParts(git, folder)),
     ];
     if (changes.length === 0) {
       if (differ.length > 0) ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place; ${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}.`);
       return { settled: { record: { nothing: true, ...(differ.length > 0 ? { differ } : {}) } } };
     }
-    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ }), director: 'One click' };
+    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ, frontDesk: frontDeskOf(changes, pin) }), director: 'One click' };
   };
 
   return {
@@ -685,7 +709,10 @@ export function projectFilesStep({
         }
       }
 
-      const config = starterConfig({ answers: ctx.answers });
+      // The front desk's model (design section 8): the pin the configuration holds, else what Claude
+      // Code's alias for its most capable model stands for now, asked only while there is no pin.
+      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await best();
+      const config = starterConfig({ answers: ctx.answers, frontDesk: pin });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
       const targets = targetsFor({ folder, config, release });
@@ -725,7 +752,7 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: [...SETUP_FILES], ...(yours.length > 0 ? { yours } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head });
       changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release }), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin) }), director: 'One click' };
     },
 
     async apply(ctx, changes) {

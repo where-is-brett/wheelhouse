@@ -76,6 +76,19 @@ test('a session is never started in bypass mode, a feature never in auto mode, a
   assert.deepEqual(sessions.featureStartCall({ ...base, sessionId: 'x' }).args, ['-p', 'go', '--session-id', 'x', '--permission-mode', 'acceptEdits']);
 });
 
+test('the foreman, which works in the front desk\'s folder, always names its model, so it never takes the front desk\'s', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  for (const long of [false, true]) {
+    const named = sessions.foremanCall({ config: { routing: { foreman: 'model-a', frontDesk: 'model-top' } }, prompt: 'x', claude, long, settings: long ? '/s.json' : null });
+    assert.equal(named.args[named.args.indexOf('--model') + 1], 'model-a');
+    const unnamed = sessions.foremanCall({ config: { routing: { frontDesk: 'model-top' } }, prompt: 'x', claude, long, settings: long ? '/s.json' : null });
+    assert.equal(unnamed.args[unnamed.args.indexOf('--model') + 1], 'default', 'the command line\'s own default, by its alias');
+  }
+  // A feature session works in its own worktree, which the front desk's model never reaches: unchanged.
+  const feature = sessions.featureStartCall({ config: { routing: { frontDesk: 'model-top' } }, prompt: 'x', claude, sessionId: 's' });
+  assert.ok(!feature.args.includes('--model'));
+});
+
 test('the foreman gets its role in its environment and a feature does not, whatever spelling the host used', () => {
   const env = { PATH: '/bin', wheelhouse_role: 'front-desk', CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/c' };
   const claude = { kind: 'direct', file: 'claude' };

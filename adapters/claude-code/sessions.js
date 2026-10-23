@@ -26,6 +26,9 @@ export function featureModeOf(config) {
   return mode;
 }
 
+// Claude Code's alias for the command line's own default model.
+export const DEFAULT_MODEL = 'default';
+
 // The role's model from the routing table, or null for the command line's own default.
 function modelOf(config, role) {
   const model = config?.routing?.[role] ?? null;
@@ -48,7 +51,9 @@ export function sessionEnv(env) {
 export function foremanCall({
   config, pluginRoot = PLUGIN_ROOT, prompt, platform = process.platform, env = process.env, claude = null, tools = null, settings = null, long = false,
 }) {
-  const model = modelOf(config, 'foreman');
+  // The foreman works in the project's main folder, whose local settings start the front desk on its
+  // own model (design section 8), so it always names one: its role's, or the command line's default.
+  const model = modelOf(config, 'foreman') ?? DEFAULT_MODEL;
   const given = tools ?? (long ? foremanTools(pluginRoot, { platform }) : []);
   const args = [
     ...(settings === null ? [] : ['--settings', settings]),

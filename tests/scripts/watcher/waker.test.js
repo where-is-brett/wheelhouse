@@ -145,10 +145,11 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   assert.equal(call.env.WHEELHOUSE_ROLE, 'foreman');
   assert.equal(call.env.PATH, '/bin');
 
-  // With no model named, the command line's own default applies.
+  // With no model named, the command line's own default applies, named by its alias, so the front
+  // desk's model in the main folder's local settings never reaches the foreman.
   const other = fakeRun();
   await waker(other, { config: config({ routing: {} }) }).wakeForeman(writeWake(P, bundle('e2')));
-  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits']);
+  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'default']);
 }));
 
 test('the foreman\'s tools, when given, are passed with --allowedTools', () => withHome(async () => {
