@@ -16,6 +16,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { FOREMAN_RUNNER, SIGN_IN_NAMES, foremanEnv, foremanRequestRefusal } from '../../../scripts/host/foreman-run.js';
 import { sessionEnv } from '../../../scripts/watcher/waker.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -215,7 +216,23 @@ test('a feature session\'s push names its worktree, and the helper places the pr
   } finally { p.remote.cleanup(); }
 });
 
-test('a push from a folder sends only the branch that folder is on, as a pull brings in only its own', async () => {
+test('the foreman\'s start has the host\'s default branch fetched into the mirror with the key, for its child to copy with none', async () => {
+  const p = await project();
+  try {
+    const other = await elsewhereOn(p, 'main');
+    const ahead = await commitIn(other, 'NEW.md', 'Merged since.\n', 'Merged since');
+    await g(other, 'push', '-q', 'origin', 'main');
+    await withHelper(p.home, async (client) => {
+      assert.deepEqual(await client.fetchBase({ project: P }), { ok: true, branch: 'main', sha: ahead });
+      const mirror = path.join(stateDir(P), '..', 'mirror.git');
+      assert.equal(await g(mirror, 'rev-parse', 'refs/wheelhouse/base'), ahead);
+      // It names a project, and asks nothing of a folder.
+      assert.equal((await client.fetchBase({ project: 'not a project' })).ok, false);
+    });
+  } finally { p.remote.cleanup(); }
+});
+
+test('a feature session\'s push, placed by its folder, sends only the branch that folder is on, as a pull brings in only its own', async () => {
   const p = await project();
   try {
     // Two worktrees share one repository, so each one's git holds the other's branch too.
@@ -230,8 +247,10 @@ test('a push from a folder sends only the branch that folder is on, as a pull br
       }
       const listed = await g(p.remote.url, 'branch', '--list', 'feature/search');
       assert.equal(listed, '', 'nothing reached the host');
-      // The main checkout is on the default branch, so no branch is pushed from it either.
+      // The main checkout is on the default branch, so no branch is pushed from it either; nor does
+      // a caller's own word that the push was not placed by its folder count.
       assert.equal((await client.push({ cwd: p.checkout, dir: p.checkout, refspec: 'feature/search' })).refused, PUSH_REFUSALS.notOwn);
+      assert.equal((await client.push({ cwd: mine, dir: mine, refspec: 'feature/search', byFolder: false })).refused, PUSH_REFUSALS.notOwn);
       assert.deepEqual(await client.push({ cwd: theirs, dir: theirs, refspec: 'feature/search' }), { ok: true });
     });
   } finally { p.remote.cleanup(); }

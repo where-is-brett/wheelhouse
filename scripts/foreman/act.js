@@ -140,13 +140,11 @@ import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.j
 import { CARD } from '../lib/front-desk.js';
 import { TO_KNOW_MORE } from '../lib/calm-words.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { computerId, wheelhouseHome } from '../lib/paths.js';
+import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram } from '../lib/run.js';
-import { LookRefusal, directorSignIn, safeGit } from '../lib/safe-git.js';
+import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { sameRemote } from '../state/git.js';
-import { companyGitEnv, gitlabBaseOf } from '../host/company-ca.js';
-import { batchSshCommand, reachOfOrigin } from '../install/survey.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
 } from '../protection/windows-builds.js';
@@ -168,6 +166,8 @@ const CONFIG_BYTES = 1024 * 1024;
 // What each `feature` event carries forward from the one before.
 const CARRIED = Object.freeze(['worktree', 'branch', 'session', 'plan', 'files', 'slice']);
 const BASE_REF = /^refs\/remotes\/origin\/[A-Za-z0-9._/-]+$/;
+// Where the helper keeps the host's default branch in the project's mirror (scripts/host/helper.js).
+const MIRROR_BASE = 'refs/wheelhouse/base';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const refuse = (message) => { throw new ForemanError(message); };
@@ -366,44 +366,55 @@ function checkRepoConfig(checkout) {
 }
 
 // Brings the main checkout's copy of the default branch (`base`, refs/remotes/origin/<name>) up to
-// date before a worktree is made from it, through the fenced route. Only that one branch is fetched,
-// from the address setup recorded, never from the one origin names (ruling R111), and only when
-// origin is that address, so the copy stays origin's. An https address signs in as the director
-// (with the company's certificate for a company GitLab), as the survey's fetch does; ssh runs with
-// BatchMode on. A fetch that fails, or an origin that isn't the recorded address, leaves the copy
-// fetched last and says so: the gate brings a branch up to date before it merges. A look that
-// refuses the repository's settings refuses the start, as it does for every other call here.
+// date before a worktree is made from it. No key or sign-in is used in the checkout, whose git
+// settings an agent can change between the look and git's own read: the helper fetches the host's
+// default branch into the project's mirror with its key (/base/fetch), and this copies it from
+// the mirror, a local path, through the fenced route with no credential. Only while origin is the
+// address setup recorded (ruling R111), so the copy stays origin's, and only when the host's
+// default branch is the one origin/HEAD names. Anything else leaves the copy fetched last and says
+// so: the gate brings a branch up to date before it merges. A look that refuses the repository's
+// settings refuses the start, as it does for every other call here.
 async function fetchBase(ctx, git, checkout, base) {
   const name = base.slice('refs/remotes/origin/'.length);
+  const behind = (why) => ctx.say(`origin/${name} wasn't brought up to date: ${why}, so the worktree starts from the copy fetched last.`);
   const record = readProject(ctx.project);
   const origin = await git(['remote', 'get-url', 'origin']);
-  const url = typeof record?.remoteUrl === 'string' ? record.remoteUrl : null;
-  if (origin.code !== 0 || url === null || !sameRemote(String(origin.stdout ?? '').trim(), url)) {
-    ctx.say(`origin/${name} wasn't brought up to date: the main checkout's origin isn't the address setup recorded, so the worktree starts from the copy fetched last.`);
+  if (origin.code !== 0 || typeof record?.remoteUrl !== 'string' || !sameRemote(String(origin.stdout ?? '').trim(), record.remoteUrl)) {
+    behind("the main checkout's origin isn't the address setup recorded");
     return;
   }
-  const reach = reachOfOrigin(url, { platform: ctx.platform });
-  const signIn = reach === 'ssh' ? { GIT_SSH_COMMAND: batchSshCommand() }
-    : reach === 'https' ? companyGitEnv(directorSignIn(record.host, { platform: ctx.platform }), { host: record.host, base: gitlabBaseOf(record) ?? undefined })
-      : {};
-  const fenced = safeGit({
-    run: ctx.run, cwd: checkout, reach, look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
-  });
-  let fetched;
+  let answer;
   try {
-    fetched = await fenced(['fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', url, `+refs/heads/${name}:${base}`], {
-      env: { ...signIn, GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
+    answer = await ctx.client.fetchBase({ project: ctx.project });
+  } catch {
+    answer = null;
+  }
+  if (answer?.ok !== true) {
+    behind(`the helper couldn't fetch it from the host (${refusal(answer)})`);
+    return;
+  }
+  if (answer.branch !== name) {
+    behind(`the host's default branch is ${oneLine(String(answer.branch), 80)}, not ${name}`);
+    return;
+  }
+  const mirror = path.join(stateDir(ctx.project), '..', 'mirror.git');
+  const fenced = safeGit({
+    run: ctx.run, cwd: checkout, reach: 'local', look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
+  });
+  let copied;
+  try {
+    copied = await fenced(['fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', mirror, `+${MIRROR_BASE}:${base}`], {
+      env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
     });
   } catch (e) {
     if (e instanceof LookRefusal) refuse(e.message);
-    fetched = { code: 1, stderr: e instanceof Error ? e.message : '' };
+    copied = { code: 1, stderr: e instanceof Error ? e.message : '' };
   }
-  if (fetched.code === 0) {
-    ctx.say(`Brought origin/${name} up to date.`);
+  if (copied.code !== 0) {
+    behind(`copying it from the helper's mirror failed (${copied.timedOut ? 'it took too long' : oneLine(copied.stderr || copied.stdout || 'git gave no reason', 160)})`);
     return;
   }
-  const why = fetched.timedOut ? 'it took too long' : oneLine(fetched.stderr || fetched.stdout || 'git gave no reason', 160);
-  ctx.say(`origin/${name} couldn't be brought up to date from the host, so the worktree starts from the copy fetched last (${why}).`);
+  ctx.say(`Brought origin/${name} up to date.`);
 }
 
 // The worktree on a branch made now from the default branch, in the main
