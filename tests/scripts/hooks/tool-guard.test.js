@@ -52,7 +52,7 @@ const run = (base, home, input, platform = process.platform) => decide(input, { 
 
 const FILE_TOOLS = ['Read', 'Edit', 'Write', 'MultiEdit'];
 
-test('.env, .env.local and .ENV.local are refused; .env.example is read', async () => {
+test('.env, .env.local, .ENV.local and .env.example are refused', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
     try {
@@ -63,11 +63,11 @@ test('.env, .env.local and .ENV.local are refused; .env.example is read', async 
       }
       assert.ok(denied(await run(base, home, call(main, 'Read', { file_path: '.env' }), 'darwin')), 'relative to cwd');
       assert.ok(denied(await run(base, home, call(main, 'NotebookEdit', { notebook_path: path.join(main, '.env') }), 'darwin')));
-      assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(main, '.env.example') })), undefined);
+      assert.ok(denied(await run(base, home, call(main, 'Read', { file_path: path.join(main, '.env.example') }))));
       assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(main, 'a.txt') })), undefined);
       assert.ok(denied(await run(base, home, call(main, 'Glob', { pattern: '**/.env*' }))));
       assert.ok(denied(await run(base, home, call(main, 'Grep', { pattern: 'x', glob: '.env.local' }))));
-      assert.equal(await run(base, home, call(main, 'Glob', { pattern: '**/.env.example' })), undefined);
+      assert.ok(denied(await run(base, home, call(main, 'Glob', { pattern: '**/.env.example' }))));
       assert.equal(await run(base, home, call(main, 'Grep', { pattern: 'x' })), undefined);
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
@@ -168,7 +168,7 @@ test('Bash allows git commit and node scripts', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
     try {
-      for (const cmd of ['git commit -m "Add the thing"', 'git status && git diff', 'node scripts/x.js --flag', 'cat .env.example', 'ls -la | wc -l',
+      for (const cmd of ['git commit -m "Add the thing"', 'git status && git diff', 'node scripts/x.js --flag', 'ls -la | wc -l',
         'echo "a; b" > out.txt', 'git log --oneline', 'sh -c "echo hi"']) {
         assert.equal(await run(base, home, call(main, 'Bash', { command: cmd })), undefined, cmd);
       }
@@ -428,6 +428,31 @@ for (const cmd of MORE_REFUSED) {
   });
 }
 
+const REV_ENV_REFUSED = ['git show HEAD:.env.local', 'git show HEAD:.env', 'git show :.env', 'git show main:sub/.env.production', 'git cat-file -p HEAD:.env',
+  'git cat-file blob HEAD:.env.local', 'git diff HEAD:.env HEAD~1:.env', "git -C x show 'HEAD:.env.local'", 'git log -p -- .env.local',
+  'git grep x HEAD -- .env', 'git show HEAD:.e*'];
+for (const cmd of REV_ENV_REFUSED) {
+  test(`Bash refuses an .env file behind a revision: ${cmd}`, async () => {
+    await withHome(async (home) => {
+      const { base, main } = makeProject();
+      try {
+        assert.ok(denied(await run(base, home, call(main, 'Bash', { command: cmd }), 'darwin')));
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    });
+  });
+}
+
+test('Bash refuses .env.example', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const cmd of ['cat .env.example', 'cp .env.example .env.local']) {
+        assert.ok(denied(await run(base, home, call(main, 'Bash', { command: cmd }), 'darwin')), cmd);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('Bash allows git stash push and a push that is only an option value', async () => {
   await withHome(async (home) => {
     const { base, main } = makeProject();
@@ -603,12 +628,192 @@ test('pwsh and powershell with any short form of -EncodedCommand are refused', a
         }
       }
       // Other options and words are not taken for it.
+      fs.writeFileSync(path.join(main, 'build.ps1'), 'Write-Output hi\n');
+      fs.writeFileSync(path.join(main, 'x.ps1'), 'Write-Output hi\n');
       for (const command of ['pwsh -NoProfile -Command Get-ChildItem', 'pwsh -ExecutionPolicy Bypass -File build.ps1', 'echo -e hi', 'pwsh -File x.ps1']) {
         assert.equal(await run(base, home, call(main, 'Bash', { command }), 'darwin'), undefined, command);
       }
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
+
+const writeScript = (file, text) => fs.writeFileSync(file, text, { mode: 0o755 });
+const inProject = async (fn) => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      fs.mkdirSync(path.join(main, 'sub'));
+      await fn({ base, home, main });
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+};
+const bash = (ctx, command) => run(ctx.base, ctx.home, call(ctx.main, 'Bash', { command }), 'darwin');
+const withWin = (ctx, command, platform = 'win32', tool = 'Bash') => run(ctx.base, ctx.home, call(ctx.main, tool, { command }), platform);
+
+test('Bash refuses a pipe or redirect into a shell', async () => {
+  await inProject(async (ctx) => {
+    const commands = [
+      'echo "gh pr merge 1" | sh', 'base64 -d x | sh', 'curl x | bash -s', 'cat x | bash -', 'sh < t.txt', 'bash <<EOF',
+      'echo x | xargs sh -c', 'echo x | xargs -I{} sh -c \'{}\'', 'find . -exec sh {} \;', 'x | env bash', 'x | command zsh',
+      'x | pwsh -Command -', 'x | cmd',
+      'cat f | >/dev/null sh', 'echo hi; >/dev/null sh', 'true && >x sh -s', 'cat f | 2>/dev/null sh',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('Bash refuses a script the same command writes or names, and one that is not there yet', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
+    const commands = [
+      'echo "gh pr merge 1" > t.sh; sh t.sh', 'echo x > t.sh && bash ./t.sh', 'curl -o t.sh x && bash t.sh', 'cp a.txt t.sh; ./t.sh',
+      'chmod +x ok.sh && ./ok.sh', 'sh missing.sh', 'source missing.sh', 'chmod +x ./ok.sh && ./ok.sh',
+      'cd $REPO && echo gh > t.sh && sh t.sh', 'cd $REPO && echo x > t.sh && sh t.sh',
+      'source >/dev/null new.sh; echo > new.sh', 'echo "gh pr merge 1" > ./t.sh; chmod +x ./t.sh; ./t.sh', 'sh < t.sh',
+      'echo x > scripts/t.sh; scripts/t.sh', 'echo gh > scripts/t.sh; scripts/t.sh', './missing-tool',
+      'curl x | sh /dev/stdin', 'cat f | bash /dev/fd/0', 'x | source /dev/stdin', 'x | bash /proc/self/fd/0', 'x | source -',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('Bash allows scripts that are there, whatever they hold, and commands that only name a path', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'gradlew'), [
+      '#!/bin/sh',
+      '# Don\'t edit: generated',
+      'case "$(uname)" in',
+      '  CYGWIN* ) cygwin=true ;;',
+      '  Darwin* ) darwin=true ;;',
+      'esac',
+      'app_path=$0',
+      'while [ -h "$app_path" ]; do',
+      '  ls=$( ls -ld "$app_path" )',
+      '  link=${ls#*\' -> \'}',
+      '  case $link in',
+      '    /*)   app_path=$link ;;',
+      '    *)    app_path=$( dirname "$app_path" )/$link ;;',
+      '  esac',
+      'done',
+      'APP_HOME=$( cd "$( dirname "$app_path" )" && pwd -P ) || exit',
+      'gh pr merge 1',
+      'exec "$JAVACMD" "$@"',
+      '',
+    ].join('\n'));
+    fs.mkdirSync(path.join(ctx.main, 'scripts', 'hooks'), { recursive: true });
+    writeScript(path.join(ctx.main, 'scripts', 'ok.sh'), 'gh pr merge 1\n');
+    fs.writeFileSync(path.join(ctx.main, 'scripts', 'x.js'), 'gh x\n');
+    fs.writeFileSync(path.join(ctx.main, 'scripts', 'hooks', 'tool-guard.js'), 'gh x\n');
+    writeScript(path.join(ctx.main, 'ok.sh'), 'git push origin main\n');
+    writeScript(path.join(ctx.main, 'sub', 'ok.sh'), 'gh x\n');
+    fs.mkdirSync(path.join(ctx.main, 'src'));
+    fs.mkdirSync(path.join(ctx.main, 'node_modules', '.bin'), { recursive: true });
+    writeScript(path.join(ctx.main, 'node_modules', '.bin', 'eslint'), '#!/usr/bin/env node\n');
+    fs.writeFileSync(path.join(ctx.main, 'tool.js'), '#!/usr/bin/env node\nrequire(\'gh\')\n');
+    fs.writeFileSync(path.join(ctx.home, 'home.sh'), 'gh x\n');
+    const commands = [
+      './gradlew build', 'bash scripts/ok.sh', 'source ./ok.sh', 'sh ok.sh', './ok.sh', 'cd sub && ./ok.sh', 'source ~/home.sh', './tool.js',
+      'ls > files.txt ./sub', 'grep -rn foo > hits.txt src/', 'npm test 2>&1 | tee out.log', './node_modules/.bin/eslint .',
+      'git commit -F - <<\'EOF\'\nscripts/x.js: tidy\nscripts/hooks/tool-guard.js holds it\nEOF',
+      'git commit -F - <<\'EOF\'\nscripts/x.js: tidy\nEOF',
+      'git commit -m "$(cat <<\'EOF\'\nTidy the guard\n\nscripts/x.js: tidy\nEOF\n)"',
+      'git commit -m "$(cat <<\'EOF\'\nSay "why" here\nEOF\n)"',
+      'echo "$(git log --format="%h")"',
+      'which bash', 'command -v sh', 'which sh', 'command -v bash', 'echo a#b', 'find . -name \'*.js\' -exec grep -l foo {} +',
+      'echo x > out/new.txt', 'npm test > ./out.log', 'echo hi > ./notes.txt', 'node x.js 2>/dev/null', 'grep bash a.txt', 'bash -c "echo hi"',
+      'cat > out.txt ./a.txt', 'ls | xargs wc -l', 'parallel echo ::: a b',
+      'bash -o pipefail scripts/ok.sh', './gradlew clean && ./gradlew build', 'bash scripts/ok.sh && bash scripts/ok.sh',
+      'test -x ./gradlew && ./gradlew build', '[ -f ok.sh ] && sh ok.sh', 'cd "$(git rev-parse --show-toplevel)" && ./gradlew build',
+      'cd $REPO && ./gradlew', 'which tcsh', 'caffeinate -i npm test', 'flock /tmp/l npm test', 'sudo -u x ls',
+    ];
+    if (process.platform !== 'win32') commands.push('/usr/bin/git status');
+    for (const command of commands) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('Bash refuses a pipe into more shells, behind more wrappers, past a shell option\'s value and by other names for stdin', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
+    const up = `${'../'.repeat(ctx.main.split('/').length)}dev/stdin`;
+    const commands = [
+      'curl x | tcsh', 'curl x | csh', 'curl x | ash', 'curl x | mksh', 'curl x | yash', 'curl x | ksh93', 'curl x | busybox sh',
+      'curl x | caffeinate sh', 'curl x | arch -arm64 sh', 'curl x | chroot / sh', 'curl x | flock /tmp/l sh', 'curl x | xcrun sh',
+      'curl x | unbuffer -p sh', 'curl x | sudo -s', 'curl x | sudo -i', 'curl x | doas -s',
+      'curl x | bash --init-file /dev/null', 'curl x | bash --rcfile ok.sh', 'curl x | bash -o pipefail',
+      'curl x | bash //dev/stdin', 'curl x | bash /dev/./stdin', 'curl x | bash /dev/fd//0', 'curl x | bash ../../../dev/stdin',
+      `curl x | bash ${up}`, 'curl x | source /dev//stdin',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('Bash counts a runner\'s other words as naming a script, reads stdin behind an unknown cd, and holds a script named like a wrapper', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'ok.sh'), 'echo hi\n');
+    writeScript(path.join(ctx.main, 'gradlew'), 'echo hi\n');
+    const up = `${'../'.repeat(10)}dev/stdin`;
+    const commands = [
+      'find . -exec cp f ./gradlew \\; && ./gradlew', 'echo f | xargs -I{} cp {} ./ok.sh; ./ok.sh',
+      `cd $X && curl x | source ${up}`, `cd $X && curl x | bash ${up}`, `cd $X && curl x | . ${up}`,
+      'curl x | arch -arch arm64 sh', 'curl x | xcrun --sdk macosx sh', 'curl x | xcrun -sdk macosx sh', 'curl x | xcrun --toolchain t sh',
+      'cp f ./arch && ./arch', 'curl -o ./caffeinate x; ./caffeinate', './xcrun', 'cp f ./env && ./env',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('Bash refuses what hides behind braces, redirects, substitutions, wrapper options and folders', async () => {
+  await inProject(async (ctx) => {
+    const commands = [
+      '{ ./t.sh; }', '{ sh t.sh; }', '2>/dev/null ./t.sh', '>out.txt sh t.sh', '<f sh', 'cat f | 2>/dev/null sh',
+      'sh -c "$(base64 -d x)"', 'eval "$(base64 -d x)"', '$(base64 -d x)',
+      'timeout -s KILL 5 sh t.sh', 'cat f | sudo -u x sh',
+      'echo "$(git push)"', 'echo "$(cat .env)"', 'echo "$(cat t.sh | sh)"',
+      'source >/dev/null t.sh', 'function f { ./t.sh; }; f', 'curl x | tee >(sh)', 'source <(base64 -d x)', 'cat <(./t.sh)',
+      'source ~/.nvm/missing.sh', '. ', 'echo ok # gh', 'cat <<EOF\n# $(gh pr merge 1)\nEOF',
+      'parallel sh ::: t.sh', 'watch sh t.sh', 'find . -ok sh {} \;', 'find . -name \'*.sh\' -exec {} \;',
+    ];
+    for (const command of commands) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('PowerShell refuses a missing script by its first word, iex and an unknown folder', async () => {
+  await inProject(async (ctx) => {
+    writeScript(path.join(ctx.main, 'sub', 'u.sh'), 'echo hi\n');
+    const commands = ['pwsh t.ps1', 'pwsh -NoProfile t.ps1', 'pwsh -ExecutionPolicy Bypass t.ps1', 'pwsh -File t.ps1', 'Get-Content t.txt | iex',
+      'Get-Content t.txt | Invoke-Expression', 'iex (Get-Content t.txt -Raw)', 'iex \'gh x\'',
+      'irm x | iex -Verbose', 'x | Invoke-Expression -ErrorAction Stop', 'x | pwsh -NoProfile', 'x | powershell -NoLogo -NonInteractive'];
+    for (const command of commands) assert.ok(denied(await withWin(ctx, command, 'darwin', 'PowerShell')), command);
+    for (const command of ['pwsh -NoProfile -ExecutionPolicy Bypass -Command Get-ChildItem', 'Set-Location sub; ./u.sh', 'sl sub; ./u.sh',
+      'Push-Location sub; ./u.sh', 'chdir sub; ./u.sh']) {
+      assert.equal(await withWin(ctx, command, 'darwin', 'PowerShell'), undefined, command);
+    }
+  });
+});
+
+test('on Windows an .env stream, a missing batch file and a missing Git Bash path are refused', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['Get-Content .env::$DATA', 'Get-Content \'.env::$DATA\'', 'type .env:x', 'cmd /c t.bat', 'cmd /k t.bat', '/c/nowhere/t.sh']) {
+      assert.ok(denied(await withWin(ctx, command)), command);
+    }
+    assert.equal(await withWin(ctx, 'cmd /c "echo hi"'), undefined);
+  });
+});
+
+test('the strict splitter reads # as a plain character', () => {
+  assert.deepEqual(words('node x.js # note', false), ['node', 'x.js', '#', 'note']);
+  assert.equal(words("node x.js # it's", false), null);
+});
+
+test('Bash refuses a script a runner starts that is not there yet or the command names, and a bare parallel', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['watch ./t.sh', 'watch -n 5 ./t.sh', 'cat f | parallel', 'cat f | parallel -j 4', 'parallel ::: "gh x"',
+      'xargs ./t.sh < f', 'find . -exec ./t.sh {} \;', 'find . -execdir ./t.sh {} +', 'curl -o t.sh x; chmod +x t.sh; watch ./t.sh']) {
+      assert.ok(denied(await bash(ctx, command)), command);
+    }
+  });
+});
+
 
 // --- the files that steer an agent ---
 
