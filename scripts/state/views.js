@@ -521,6 +521,10 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   for (const code of clashing) delete shown[code];
   const clashes = clashing.map((code) => `a shown code held by two different questions: ${code}`);
 
+  // The latest survey of what the project already held (design section 15, ruling A1), or null.
+  const lastSurvey = sorted.filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object' && !Array.isArray(e.data)).at(-1);
+  const survey = lastSurvey ? { id: lastSurvey.id, at: lastSurvey.at, data: lastSurvey.data } : null;
+
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
@@ -544,6 +548,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     keptAsIs,
     gateAsks,
     lineageHolds,
+    survey,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,

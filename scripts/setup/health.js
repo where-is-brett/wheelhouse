@@ -70,6 +70,7 @@ import { HEALTH_STEP } from '../lib/setup-run.js';
 import { directorGitEnv, directorGitlabApi, STOPPED, launchedIn } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
+import { takeSurvey, recordSurvey } from '../survey/take.js';
 
 export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
@@ -679,15 +680,22 @@ export function removeTrialLeftover(folder) {
   }
 }
 
-// The last thing setup does, once the board is green and shown (ruling R44): the foreman started,
-// as start.js starts it, and the front desk's first briefing. { started, briefing }: `started` a
+// The last thing setup does, once the board is green and shown (ruling R44): the survey of what
+// the project already holds, recorded in its state (design section 15, ruling A1; plan ruling P1:
+// after the run's records are copied there, before the first briefing), the foreman started, as
+// start.js starts it, and the front desk's first briefing. { started, briefing }: `started` a
 // line saying how the foreman stands; `briefing` the briefing's text, or null when it couldn't be
-// put together (the front desk gives one at the next visit). `start(project)` and `brief(project)`
-// are for tests.
+// put together (the front desk gives one at the next visit). The survey only reads, and never
+// stops setup: one that fails, or that the state refuses, is recorded as one that missed the host
+// (scripts/survey/take.js). `start(project)`, `brief(project)`, `look()` (the survey taken) and
+// `adapterFor(record)` (the host's adapter the survey asks) are for tests.
 export async function finishSetup({
   project, client = helperClient({ timeout: BRIEFING_WAIT_MS * 2 }), now = () => new Date(), spawn, load = loadBoardInputs,
-  start, brief,
+  start, brief, adapterFor, look = () => takeSurvey({ project, ...(adapterFor ? { adapter: adapterFor } : {}) }),
 } = {}) {
+  try {
+    await recordSurvey({ project, client, take: look });
+  } catch { /* recordSurvey never throws; setup finishes whatever the survey does */ }
   let started;
   try {
     started = start ? await start(project) : await startForeman(project, { client, spawn });

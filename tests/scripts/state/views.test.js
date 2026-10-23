@@ -16,7 +16,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'survey'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1200,5 +1200,17 @@ test('a revised approval card has its own set line, so an approval of the old co
     // An approval carrying the revised card's own question decides it.
     const approvedNew = ev('approval', 5, { pr: 7, commit: B.slice(0, 12), question: revised.data.question });
     assert.deepEqual(waitingIds([old, revised, late, approvedNew]), []);
+  });
+});
+
+test('the survey view is the latest survey, or null when none was taken', async () => {
+  await withHome(() => {
+    const survey = (n, hostReached) => ev('survey', n, {
+      v: 1, hostReached, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
+      instructions: { files: [], sections: [] }, scheduled: 0, secrets: n, rules: [],
+    });
+    assert.equal(build([]).survey, null);
+    const [first, second] = [survey(1, false), survey(2, true)];
+    assert.deepEqual(build([second, first]).survey, { id: second.id, at: second.at, data: second.data });
   });
 });

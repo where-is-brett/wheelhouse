@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift',
+  'lineage-hold', 'lineage-lift', 'survey',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -189,9 +189,24 @@ const PLAIN_SHAPES = {
   // The hold file of the project is gone, so the cards of the holds it names (`holds`, their event
   // ids) are closed: recorded once for each standing hold, by a session start or the mod's tick.
   'lineage-lift': { must: ['at', 'holds'], may: [] },
+  // What a project already held when setup finished (design section 15, ruling A1; plan ruling
+  // P1), as scripts/survey/look.js's surveyOf gives it, with `again: true` when it was taken again
+  // because the last one couldn't reach the host (ruling P3). Each part is checked as the survey
+  // makes it, and at most as many as it looks at.
+  survey: { must: ['v', 'hostReached', 'requests', 'pushed', 'local', 'more', 'instructions', 'scheduled', 'secrets', 'rules'], may: ['again'] },
 };
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
+// The most a survey holds of each part, as scripts/survey/look.js looks at them (the host lists at
+// most 100 requests), and the longest text it keeps of a title, subject or heading.
+export const SURVEY_MOST = { requests: 100, lines: 200, files: 200, sections: 200, rules: 500 };
+export const SURVEY_TEXT = 200;
+const SURVEY_HEAD = /^[0-9a-f]{40,64}$/;
+// Whether `x` is an object with exactly the keys named.
+const keysAre = (x, keys) => isPlain(x) && Object.keys(x).length === keys.length && keys.every((k) => Object.hasOwn(x, k));
+const count = (x) => Number.isInteger(x) && x >= 0;
+const lineNumber = (x) => Number.isInteger(x) && x >= 1;
+const shortText = (x) => typeof x === 'string' && x.length <= SURVEY_TEXT;
 
 function checkPlain(kind, data) {
   const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
@@ -313,6 +328,31 @@ function checkPlain(kind, data) {
   } else if (kind === 'lineage-lift') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     if (!Array.isArray(data.holds) || data.holds.length === 0 || !data.holds.every(isText)) bad('needs holds, the ids of the holds it lifts');
+  } else if (kind === 'survey') {
+    const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
+    if (data.v !== 1) bad('needs v to be 1');
+    if (typeof data.hostReached !== 'boolean') bad('needs hostReached to be true or false');
+    if (data.again !== undefined && data.again !== true) bad('has an again that is not true');
+    const request = (r) => keysAre(r, ['number', 'title', 'draft']) && lineNumber(r.number) && shortText(r.title) && typeof r.draft === 'boolean';
+    if (!list(data.requests, SURVEY_MOST.requests, request)) bad(`needs requests, at most ${SURVEY_MOST.requests}, each a number, a title and whether it is a draft`);
+    const item = (i) => keysAre(i, ['name', 'head', 'commits', 'subject', 'at']) && isText(i.name) && shortText(i.name)
+      && typeof i.head === 'string' && SURVEY_HEAD.test(i.head) && lineNumber(i.commits) && shortText(i.subject)
+      && typeof i.at === 'string' && (i.at === '' || !Number.isNaN(Date.parse(i.at)));
+    for (const k of ['pushed', 'local']) {
+      if (!list(data[k], SURVEY_MOST.lines, item)) bad(`needs ${k}, at most ${SURVEY_MOST.lines}, each a name, its head, its commits, a subject and when`);
+    }
+    if (!(keysAre(data.more, ['pushed', 'local']) && typeof data.more.pushed === 'boolean' && typeof data.more.local === 'boolean')) {
+      bad('needs more to say, for pushed and local, whether there were more than were looked at');
+    }
+    const ins = data.instructions;
+    const section = (x) => keysAre(x, ['heading', 'line']) && shortText(x.heading) && lineNumber(x.line);
+    if (!(keysAre(ins, ['files', 'sections']) && list(ins.files, SURVEY_MOST.files, isText) && list(ins.sections, SURVEY_MOST.sections, section))) {
+      bad('needs instructions to be the files found and the sections of CLAUDE.md, each a heading and its line');
+    }
+    if (!count(data.scheduled)) bad('needs scheduled to be a count');
+    if (!count(data.secrets)) bad('needs secrets to be a count');
+    const rule = (r) => keysAre(r, ['words', 'source']) && isText(r.words) && keysAre(r.source, ['file', 'line']) && isText(r.source.file) && lineNumber(r.source.line);
+    if (!list(data.rules, SURVEY_MOST.rules, rule)) bad('needs rules, each its words and where it was found');
   }
 }
 

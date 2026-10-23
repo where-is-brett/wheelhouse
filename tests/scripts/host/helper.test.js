@@ -15,7 +15,7 @@ import { helperAddress, stateDir, stopFile } from '../../../scripts/lib/paths.js
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
-import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -1400,4 +1400,84 @@ test('after a refused look, no more git runs in that repository: the mirror\'s t
       }, { run: recorder(calls) });
     });
   } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// --- the survey taken again (design section 15, ruling A1; plan ruling P3) ---
+
+const SURVEYED = {
+  v: 1, hostReached: false, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
+  instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [{ words: 'Use British English.', source: { file: 'CLAUDE.md', line: 2 } }],
+};
+const surveysIn = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+// A project whose folder is a repository of its own, on main, with one line of work off it.
+async function surveyedProject() {
+  const p = await project({ lock: false });
+  const dir = tempFolder('wh-survey-again ');
+  await g(dir, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'Start\n');
+  await g(dir, 'add', 'README.md');
+  await g(dir, 'commit', '-q', '-m', 'Start');
+  await g(dir, 'switch', '-q', '-c', 'prices');
+  fs.writeFileSync(path.join(dir, 'prices.txt'), 'Prices\n');
+  await g(dir, 'add', 'prices.txt');
+  await g(dir, 'commit', '-q', '-m', 'Prices');
+  await g(dir, 'switch', '-q', 'main');
+  as(p.home, () => writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } }));
+  return { ...p, dir, cleanup: () => { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); } };
+}
+
+test('/survey/again takes a survey once when the last one missed the host, and none when it didn\'t', async () => {
+  const p = await surveyedProject();
+  try {
+    let reached = false;
+    const secret = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
+    const adapter = fakeAdapter({
+      openRequests: async () => {
+        if (!reached) throw new Error('unreachable');
+        return [{ number: 7, title: `Key ${secret}`, body: '', branch: 'x', head: 'c'.repeat(40), draft: false, fork: false }];
+      },
+    });
+    await as(p.home, () => withHelper(adapter, async (client) => {
+      // No survey yet: none taken.
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
+      // The host reached: none taken.
+      await client.state.write({ project: 'o__p', kind: 'survey', data: { ...SURVEYED, hostReached: true } });
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
+      // The host missed: one taken, and only once, however it goes.
+      await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      const missedAgain = await client.survey.again({ project: 'o__p' });
+      assert.equal(missedAgain.ok, true);
+      assert.equal(missedAgain.taken, true);
+      assert.equal(missedAgain.hostReached, false);
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false }, 'taken again once only');
+      const [, , last] = surveysIn();
+      assert.equal(last.id, missedAgain.id);
+      assert.equal(last.data.again, true);
+      assert.deepEqual(last.data.local.map((i) => i.name), ['prices']);
+      assert.deepEqual(last.data.rules, SURVEYED.rules, 'the rules found at setup are kept');
+      // Missed at setup and reached when taken again: the secret in a title is left out.
+      await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      reached = true;
+      const taken = await client.survey.again({ project: 'o__p' });
+      assert.deepEqual([taken.ok, taken.taken, taken.hostReached], [true, true, true]);
+      const latest = surveysIn().at(-1);
+      assert.deepEqual(latest.data.requests, [{ number: 7, title: '', draft: false }]);
+      assert.equal(JSON.stringify(latest).includes(secret), false);
+      // The views have the latest survey.
+      assert.equal((await client.state.views({ project: 'o__p' })).views.survey.id, latest.id);
+    }));
+  } finally { p.cleanup(); }
+});
+
+test('/survey/again is refused under STOP, and takes nothing', async () => {
+  const p = await surveyedProject();
+  try {
+    await as(p.home, () => withHelper(fakeAdapter({ openRequests: async () => [] }), async (client) => {
+      await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      fs.writeFileSync(stopFile(), '');
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
+      assert.equal(surveysIn().length, 1);
+    }));
+  } finally { p.cleanup(); }
 });

@@ -121,6 +121,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     measures: {
       baseline: post('/measures/baseline'), // { usd, merges, from, to, counted } -> { ok, hash, card }: the card reading them back; or { confirm: hash } -> { ok, recorded }: only after the director's click on Record these on that card
     },
+    // The survey of what the project already holds (scripts/survey/take.js, design section 15).
+    survey: {
+      again: post('/survey/again'), // { project } -> { ok, taken, id?, hostReached? }: when the latest survey missed the host and was not itself taken again, one more is taken and recorded (plan ruling P3); reads the project only; refused under STOP, since it writes to the state
+    },
     issue: {
       create: post('/issue/create'), // { project, title, body, labels? }
       update: post('/issue/update'), // { project, number, body }

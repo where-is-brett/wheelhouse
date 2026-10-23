@@ -42,6 +42,7 @@ import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
+import { takeSurvey, shapedSurvey, missedSurvey } from '../survey/take.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
@@ -1372,6 +1373,33 @@ export async function startHelper({
     const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
+  }
+
+  // The survey taken again (design section 15, ruling A1; plan ruling P3): only when the latest
+  // survey in the state missed the host and was not itself taken again, so it is taken again once.
+  // It reads the project's folder and asks the host for its open requests, through this project's
+  // adapter, and never throws (scripts/survey/take.js); the rules found at setup are carried over.
+  // What it records is a state write like any other, so it is refused under STOP (stateRoute's
+  // write), and secret-scanned as every event is: the survey leaves out what looks like a secret
+  // first, and one the state still refuses is recorded as a survey that missed the host.
+  async function doSurveyAgain({ project }, ctx) {
+    const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const latest = listEvents(stateDir(project), { report: () => {} })
+      .filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object').sort(byOrder).at(-1);
+    if (!latest || latest.data.hostReached !== false || latest.data.again === true) return { ok: true, taken: false };
+    const data = await takeSurvey({
+      project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest.data.rules }).rules,
+    });
+    let event = makeEvent({ kind: 'survey', data: { ...data, again: true }, now });
+    let result;
+    try {
+      result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+    } catch {
+      event = makeEvent({ kind: 'survey', data: { ...missedSurvey(), again: true }, now });
+      result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+    }
+    await freshViews(() => writeViews(project, { now }));
+    return { ok: true, taken: true, id: event.id, hostReached: event.data.hostReached, pushed: result.pushed };
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -2832,6 +2860,7 @@ export async function startHelper({
       return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
     }),
     '/host/facts': hostFacts,
+    '/survey/again': stateRoute(doSurveyAgain, { write: true }),
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
