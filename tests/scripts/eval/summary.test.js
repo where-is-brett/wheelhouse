@@ -196,6 +196,19 @@ test('a round run again that stopped short never passes, and stays marked to be 
   assert.deepEqual(rowOf(first, 21).toRun, { with: TRIALS_AGAIN, without: TRIALS_AGAIN });
 });
 
+test('a scenario\'s legs come from its files: a leg that never ran fails the variant and marks it to run again', () => {
+  const root = tempFolder('eval-suites-');
+  fs.mkdirSync(path.join(root, 'main'));
+  fs.writeFileSync(path.join(root, 'main', '27-bug.js'), 'export default {\n  id: 27,\n};\n');
+  fs.writeFileSync(path.join(root, 'main', '27-front-desk.js'), "export default {\n  id: 27,\n  leg: 'route',\n};\n");
+  // A run cut short between 27's legs, then finished by hand: only the main leg is in it.
+  const summary = summarise(record([trial(27, 'with', 1, true), trial(27, 'without', 1, false)]), { root, e2eDir: noE2e(), designed: [] });
+  assert.equal(rowOf(summary, 27).with, 'fail');
+  assert.match(rowOf(summary, 27).why, /leg route did not run/);
+  assert.deepEqual(rowOf(summary, 27).again, ['with']);
+  assert.equal(summary.passed, false);
+});
+
 test('a run that did not finish never passes the gate', () => {
   const runs = [trial(20, 'with', 1, true), trial(20, 'without', 1, false)];
   assert.equal(summarise(record(runs), options()).passed, true);

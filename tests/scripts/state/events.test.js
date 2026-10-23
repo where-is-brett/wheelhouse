@@ -347,6 +347,11 @@ test('each new plain kind is accepted with its shape and refused without it', as
       assert.throws(() => makeEvent({ kind, data: null }), new RegExp(`${kind} event`));
       assert.throws(() => makeEvent({ kind, data: { ...data, extra: 1 } }), /field it should not/);
     }
+    // The refusal names the stray field and the fields the kind takes, so a session can put it right at once.
+    assert.throws(
+      () => makeEvent({ kind: 'work', data: { ...SHAPES.work, what: 'A change' } }),
+      /A work event has a field it should not: what\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent and from/,
+    );
     const w = SHAPES.work;
     for (const bad of [
       { ...w, lane: 'huge' }, { ...w, visible: 'yes' }, { ...w, dependsOn: 'login' }, { ...w, dependsOn: ['Not A Slug'] },

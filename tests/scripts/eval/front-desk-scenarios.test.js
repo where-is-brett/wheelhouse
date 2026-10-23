@@ -524,6 +524,7 @@ test('scenario 5 wants the open question put to the director in exactly one turn
     '1. **Should Christmas pre-orders close on 18 December or 20 December?** I showed you this card earlier. If you\'d like it shown again, just say so.',
     '**1. Should Christmas pre-orders close on 18 December or 20 December?** I recommend 18 December.\n\nIt\'s the card from earlier, still on your board. If you\'d like it shown again here, just say so.',
     '1. **Your decision:** close Christmas pre-orders on 18 December or 20 December.',
+    '1. Should Christmas pre-orders close on 18 December or 20 December? The choice is 18 December, 20 December, or suggest a change. 18 December is recommended.\n\nIt was asked earlier this morning and is still on the board. Say the word and I\'ll put it back up for you to answer.',
   ]) assert.ok(!asksIt(text), text);
   assert.match(judge5({ turns: turns.slice(0, 2), written: [] }).why, /did not count: 2 of 5 turns ran/);
 });

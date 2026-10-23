@@ -639,6 +639,21 @@ test('card fills a pull request\'s head and records the card once', async () => 
   });
 });
 
+test('an approve-work card for work users would see always shows it to the director before it merges (scenario 7)', async () => {
+  await inHome(async () => {
+    const work = (id, visible) => makeEvent({ kind: 'work', data: { id, title: 'Make the order button blue', lane: 'small', visible, dependsOn: [] }, now: () => T(1) });
+    const helper = fakeHelper({ events: [work('order-button-blue', true), work('order-total-sum', false)] });
+    const approve = (id) => JSON.stringify({ ...APPROVAL, kind: 'approve-work', what: `Work ${id}: a small change.`, target: { work: id, lane: 'small', hash: DOC } });
+    const seen = await run(helper, ['card'], approve('order-button-blue'));
+    assert.equal(seen.code, 0, seen.err);
+    assert.match(helper.writes().find((w) => w.kind === 'card').data.line, /, and show it to me before it merges$/);
+    // Work users won't see keeps the card as given.
+    const unseen = await run(helper, ['card'], approve('order-total-sum'));
+    assert.equal(unseen.code, 0, unseen.err);
+    assert.doesNotMatch(helper.writes().filter((w) => w.kind === 'card').at(-1).data.line, /show it to me/);
+  });
+});
+
 test('card refuses an answer card, input that is not JSON and a card the composer refuses', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
@@ -709,6 +724,26 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
     }
     assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
+  });
+});
+
+test('record work refuses the quick lane for work users would see, unless it is ready-made work carried on (scenario 7)', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const work = { id: 'order-button-blue', title: 'Make the order button blue', lane: 'quick', visible: true, dependsOn: [] };
+    const refused = await run(helper, ['record', 'work'], JSON.stringify(work));
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /Work users would see goes in the small lane at least, shown to the director first/);
+    assert.equal(helper.held.length, 0, 'nothing refused was written');
+    // Quick work users won't see, and the same work in the small lane, are written.
+    for (const data of [{ ...work, visible: false }, { ...work, lane: 'small' }]) {
+      const out = await run(helper, ['record', 'work'], JSON.stringify(data));
+      assert.equal(out.code, 0, out.err);
+    }
+    // Ready-made work (an archive of another setup's instructions) is always shown, whatever its lane.
+    const from = { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/archive-1' };
+    const archive = await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'archive-1', from }));
+    assert.equal(archive.code, 0, archive.err);
   });
 });
 
@@ -1088,7 +1123,7 @@ test('again gives the card the board numbers n, with its id, and records it as a
   });
 });
 
-test('why n notes a Why? answer for card n and prints one line', async () => {
+test('why n notes a Why? answer for card n and says the one sentence to put before the card', async () => {
   await inHome(async () => {
     const one = cardEvent(PRODUCT(1), 1);
     const two = cardEvent(PRODUCT(2), 2);
@@ -1097,7 +1132,9 @@ test('why n notes a Why? answer for card n and prints one line', async () => {
     const n = model.director.waiting.findIndex((w) => w.since === two.at) + 1;
     const out = await run(helper, ['why', String(n)]);
     assert.equal(out.code, 0, out.err);
-    assert.equal(out.out, `Noted that you asked why about card ${n}.\n`);
+    const [noted, next] = out.out.trimEnd().split('\n');
+    assert.equal(noted, `Noted that you asked why about card ${n}.`);
+    assert.match(next, new RegExp(`^Next, in one message: this one sentence, then card ${n} from \`again ${n}\` in your clickable-question tool\. "It's like .+: <what card ${n} decides, in plain words>\."$`));
     // The answer names the card's question as it was shown, as the pane's own answers do.
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY } }]);
     // It never gives the card again, and a Why? decides nothing: the card still waits.
@@ -1124,7 +1161,7 @@ test('why n keeps its answer in pending/ when the helper doesn\'t take it, and s
     writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     const kept = await run({ client: down }, ['why', '1'], undefined, { cwd: folder });
     assert.equal(kept.code, 0, kept.err);
-    assert.equal(kept.out, 'Noted that you asked why about card 1.\n');
+    assert.equal(kept.out.split('\n')[0], 'Noted that you asked why about card 1.');
     const files = fs.readdirSync(pendingDir('o__p')).filter((name) => name.endsWith('.json'));
     assert.equal(files.length, 1);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pendingDir('o__p'), files[0]), 'utf8')),

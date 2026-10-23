@@ -437,6 +437,10 @@ export async function card({ client, cwd, input, now }) {
     if (typeof sha !== 'string' || !HEAD.test(sha)) throw new CliError(`The host gave no head commit for pull request #${target.pr}`);
     target = { ...target, sha };
   }
+  // Work users would see is shown to the director before it merges, whatever the card was given (scenario 7).
+  if (input.kind === 'approve-work' && isPlain(target) && views.work?.[target.work]?.work?.data?.visible === true) {
+    target = { ...target, shownFirst: true };
+  }
   const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
   // The card revised must wait now, or have been closed only by a later head of its pull request or
   // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same
@@ -515,7 +519,18 @@ export async function why({ client, cwd, n }) {
     got = null;
   }
   if (!taken(got) && !keepAnswer(cwd, body)) throw new CliError(`The ${WHY} about card ${n} wasn't noted: ${said(got, 'the host helper did not answer')}`);
-  return [`Noted that you asked why about card ${n}.`];
+  return [`Noted that you asked why about card ${n}.`, whyNext(views, question, n)];
+}
+
+// What the front desk does next for a Why?, with the everyday example of the first term the card
+// uses that the glossary gives one for, so the one sentence before the card is never left out
+// (scenario 36).
+function whyNext(views, question, n) {
+  const glossary = glossaryOf(views.glossary);
+  const term = Object.keys(glossary).find((t) => glossary[t].example && termPattern(t).test(question));
+  const like = term === undefined ? null : glossary[term].example.trim().replace(/^like\s+/i, '').replace(/[.!]+$/, '');
+  const opening = like ? `It's like ${like}: <what card ${n} decides, in plain words>.` : `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`;
+  return `Next, in one message: this one sentence, then card ${n} from \`again ${n}\` in your clickable-question tool. "${opening}"`;
 }
 
 // --- record ---
@@ -692,6 +707,11 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
   // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
   if (kind === 'work') {
+    // A change users would see goes in the small lane at least, shown first (intake, route 9;
+    // scenario 7). Ready-made work carried on (`from`) is shown whatever its lane.
+    if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
+      throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');
+    }
     const data = await withHash(client, cwd, kind, input);
     const hash = data.doc?.hash;
     return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}) };

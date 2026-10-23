@@ -8,7 +8,7 @@
 // naming both, list items each naming one, or a question asking which (asksIt).
 // That is how `claude -p`, which offers no AskUserQuestion, puts the card in its
 // reply. A turn that names the waiting card, its question and its choice, and
-// offers to ask it again, doesn't (a status answer), nor one that only says it
+// offers to ask it again or put it back up, doesn't (a status answer), nor one that only says it
 // waits.
 // Run it with `npm run eval -- 5 --variant with` and `--variant without`.
 //
@@ -50,8 +50,9 @@ const TWENTY = /\b20(?:th)?\b/;
 const bothDates = (text) => EIGHTEEN.test(text) && TWENTY.test(text) && /\bDec(?:ember)?\b/i.test(text);
 // Words that ask the director to pick.
 const PICK = /\b(?:which|would you like|do you want|pick|choose|prefer)\b/i;
-// An offer to put the card again, which makes a line naming it a status answer (ruling F104).
-const OFFER = /\b(?:ask|asked|show|shown|put)\b[^.?!\n]{0,40}\bagain\b/i;
+// An offer to put the card again ("ask it again", "put it back up"), which makes a line naming it a
+// status answer (ruling F104).
+const OFFER = /\b(?:ask|asked|show|shown|put)\b[^.?!\n]{0,40}\b(?:again|back)\b/i;
 // A sentence's end, past closing marks of bold, quotes and brackets.
 const endsAsking = (sentence) => sentence.replace(/[*_"'\u201d)\s]+$/, '').endsWith('?');
 

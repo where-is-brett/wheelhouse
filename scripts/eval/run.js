@@ -33,7 +33,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, totalUsageOf } from './harness.js';
 import { callsOf } from './feature-project.js';
-import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, shownPath, summarise, summaryText } from './summary.js';
+import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, declaredLeg, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -72,12 +72,6 @@ function filesOfNumber(number, root, shown) {
   const suites = [...new Set(files.map((entry) => entry.suite))];
   if (suites.length > 1) throw new Error(`Scenario ${number} is in two suites: ${suites.join(', ')}`);
   return files.map((entry) => entry.file);
-}
-
-// The leg a scenario file declares (its module's `leg: '<name>'`), read from its text so the
-// file need not be loaded to be found; loadScenarios checks it against the module.
-function declaredLeg(file) {
-  return /^\s*leg:\s*['"]([a-z]+)['"]/m.exec(fs.readFileSync(file, 'utf8'))?.[1] ?? null;
 }
 
 function parseId(id) {
@@ -414,10 +408,8 @@ export async function main(argv, {
     carriedFrom = { date: last.record.date ?? null, version: last.record.version ?? null, commit: last.record.commit ?? null };
     e2e = last.record.e2e;
     for (const row of marked) {
-      const ran = carried.filter((r) => r.id === row.id);
-      const legs = new Set(ran.map((r) => r.leg ?? null));
-      const entries = (await loadEntries(row.id, { root })).filter((entry) => legs.has(entry.scenario.leg ?? null));
-      if (!entries.length) throw new Error(`Scenario ${row.id}'s legs in ${last.file} are not in its files any more`);
+      // Every leg in its files, a leg the record lacks included (a run cut short between legs).
+      const entries = await loadEntries(row.id, { root });
       for (const variant of row.again) {
         // Every leg's new trials take the same numbers, so a trial is judged across its legs.
         const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, carried)));

@@ -272,11 +272,16 @@ const lineNumber = (x) => Number.isInteger(x) && x >= 1;
 const shortText = (x) => typeof x === 'string' && x.length <= SURVEY_TEXT;
 const surveyPath = (x) => isText(x) && x.length <= SURVEY_PATH;
 
+// Names in a sentence: "a, b and c".
+const listed = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(''));
+
 function checkPlain(kind, data) {
   const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
   if (!isPlain(data)) bad('needs data');
   const { must, may } = PLAIN_SHAPES[kind];
-  if (Object.keys(data).some((k) => !must.includes(k) && !may.includes(k))) bad('has a field it should not');
+  const stray = Object.keys(data).filter((k) => !must.includes(k) && !may.includes(k));
+  // Named, with the fields the kind takes, so a session can put the record right at once (scenario 36).
+  if (stray.length) bad(`has a field it should not: ${stray.join(', ')}. It takes ${listed(must)}${may.length ? `, and may take ${listed(may)}` : ''}`);
   for (const k of must) if (data[k] === undefined) bad(`needs its ${k}`);
   const text = (k) => { if (!isText(data[k])) bad(`needs ${k} to be text`); };
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };

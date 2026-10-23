@@ -267,6 +267,8 @@ test('a musing ends on the one line as it stands, brainstorming sizes a change, 
   assert.doesNotMatch(intake, /add the lane you expect/);
   // Scenario 8: small removals and obvious fixes are reported after, not shown first (design 7.3).
   assert.match(intake, /A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after\./);
+  // Scenario 7: work shown first is never quick, and `record` holds that.
+  assert.match(intake, /Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`\./);
 });
 
 test('the playbook records the private note\'s figures only by the baseline command, which takes its example as written', async () => {
@@ -392,7 +394,8 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   const suggested = lines.find((line) => line.startsWith('  - **"suggested a change on card n (id): <words>"**')) ?? '';
   assert.ok(suggested, 'the suggestion\'s rule');
   assert.match(suggested, /the words steer and never approve\./);
-  assert.match(suggested, /Find the card by its id in `views waiting`\. For an approval or ci-push card the code must change first: run `record work` as `wheelhouse:intake`'s order does \(the card's work, its `place`\), with the change in your own words, never theirs; no read-back, no card\./);
+  assert.match(suggested, /the words steer and never approve\. Write no text until the one line below, not even a note to yourself: the director sees every line\./);
+  assert.match(suggested, /Find the card by its id in `views waiting`\. For an approval or ci-push card the code must change first, so hand it to the build in four calls with no text before or between them: `views waiting`, `views work`, write `front-desk\.json` \(the card's work as `views work` names it: its `id`, `title`, `lane`, `visible` and `dependsOn`, and its `place`, a number, with the change in your own words as its `title`, never theirs\), then `record work`\. No intake, no read-back, no card\./);
   assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For any other kind, revise the proposal as the words ask and compose the new card at once\./);
   assert.match(suggested, /Ask no card now, and never the old one again\. Say only: "Noted\. A new proposal will follow\."/);
   // A pick of Suggest a change… in the chat.
