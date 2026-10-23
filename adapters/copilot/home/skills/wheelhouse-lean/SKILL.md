@@ -168,21 +168,22 @@ Nothing
 
 One feature at a time, on its own branch, in a chat with the builder.
 
-1. **Check nothing else is building:** `git branch --no-merged main --list "feature/*"` prints nothing, and the board's "Building now" says Nothing. If a feature is in hand, say so and ask which comes first.
+1. **Check nothing is in hand:** the board's "Building now" says Nothing. `git branch --no-merged main --list "feature/*"` lists features that were set aside (Reviewing, step 4) or wait on the code host; if it lists any, say so and ask which comes first.
 2. **Not under STOP.** If STOP is on, building doesn't start.
 3. **Give the feature a short name** (the slug: lower case, hyphens, at most 40 characters), write what it must do and what done means in `.wheelhouse/feature/brief.md` (git ignores it; the builder is told never to commit it), and ask the director to confirm the brief with a card.
-4. **Make the branch from a clean main version:** `git status --short` prints nothing, then `git switch main`, then `git switch -c feature/<slug>`. Rewrite the board.
+4. **Make the branch from a clean main version:** `git status --short` prints nothing, then `git switch main`, then `git switch -c feature/<slug>`. **On a code host,** branch from the host's version instead: `git fetch origin`, then `git switch -c feature/<slug> origin/main`. The record is never in the host's version, and a feature branched from the local main version would carry it up. Rewrite the board.
 5. **Send the director to a new chat** with `wheelhouse-builder`: "Open a new chat, pick wheelhouse-builder, and say: Build the feature in .wheelhouse/feature/brief.md." The builder builds test first, commits on `feature/<slug>`, and ends with a report block.
-6. **When the director says it is built,** read the builder's report (its `status` and `commit` lines) and check: `git status --short` prints nothing, and `git log main..feature/<slug> --oneline` lists the builder's commits. If `status` isn't `done`, say what the builder said was left, in plain words, and don't go on: the feature stays in hand. The feature is now out of hand, but stay on `feature/<slug>` for the review, which reads this folder; lines wait until you have switched to the main version.
+6. **When the director says it is built,** read the builder's report (its `status` and `commit` lines) and check: `git status --short` prints nothing, and `git log main..feature/<slug> --oneline` lists the builder's commits (on a code host, `origin/main..feature/<slug>`). If `status` isn't `done`, say what the builder said was left, in plain words, and don't go on: the feature stays in hand. The feature is now out of hand, but stay on `feature/<slug>` for the review, which reads this folder; lines wait until you have switched to the main version.
 
 ## Reviewing
 
 A second look in a separate chat, with `wheelhouse-reviewer`, which can read and search and cannot change anything.
 
-1. **First check the feature leaves the record and the board alone:** `git diff --name-only main...feature/<slug> -- .wheelhouse wheelhouse` must print nothing. If it prints anything, a builder has written into the record or the board, which only you write: say so plainly ("this change touches the record, which only I write"), don't ask for a review or an approval, and send the feature back to the builder (it is in hand again). Then write the change to a file the reviewer reads, while `feature/<slug>` is checked out: `git diff main...feature/<slug>`, saved as `.wheelhouse/feature/review/1.diff` (the number is the review's; use the next number for a later one).
+1. **First check the feature leaves the record and the board alone:** `git diff --name-only main...feature/<slug> -- .wheelhouse wheelhouse` must print nothing (on a code host, `origin/main...feature/<slug>` in place of `main...feature/<slug>`, here and below). If it prints anything, a builder has written into the record or the board, which only you write: say so plainly ("this change touches the record, which only I write"), don't ask for a review or an approval, and send the feature back to the builder (it is in hand again). Then write the change to a file the reviewer reads, while `feature/<slug>` is checked out: `git diff main...feature/<slug>`, saved as `.wheelhouse/feature/review/1.diff` (the number is the review's; use the next number for a later one).
 2. Send the director to a new chat: "Open a new chat, pick wheelhouse-reviewer, and say: Review review number 1 of commit <full hash>." (`git rev-parse feature/<slug>` gives the hash.)
 3. When the reviewer's block says `verdict: CLEAN`, switch to the main version (`git switch main`), write the waiting lines and the `review` line (`choice` `clean`; `commit` is the head the reviewer read, 12 characters).
 4. When it says `FINDINGS` with the number found, **stay on `feature/<slug>`**: the feature is in hand again. Say the findings in plain words and ask a card: send them back to the builder, or **Not now**. The `review` line (`choice` `findings`) waits on the board with the others. Only a clean review gets an approval card.
+   - **Not now** sets the feature aside, which ends the hold: `git switch main`, set "Building now" to Nothing and add "Set aside: <title>, on feature/<slug>" to the board, then write the waiting lines and a `card` line (`card` `findings-<slug>`, `choice` `Not now`). The branch stays as it is; a later session can build another feature, or ask the director whether to go back to this one (`git switch feature/<slug>` puts it in hand again).
 
 ## Merging
 
@@ -193,7 +194,7 @@ A second look in a separate chat, with `wheelhouse-reviewer`, which can read and
    `git merge --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"`
 
    The 12 characters are the approved head. If git stops on a conflict, run `git merge --abort`, tell the director in one line that it didn't fit the main version yet, and send the feature back to the builder; nothing was added.
-4. **Check what was added:** `git rev-parse --short=12 HEAD^2` must be the approved 12 characters. If it isn't, run `git revert -m 1 HEAD --no-edit`, tell the director in one line that what was added wasn't what they approved and that it has been undone, and write no `merge` line.
+4. **Check what was added:** `git rev-parse --short=12 HEAD^2` must be the approved 12 characters. If it isn't, run `git revert -m 1 HEAD --no-edit`, tell the director in one line that what was added wasn't what they approved and that it has been undone, write no `merge` line, and write an `undo` line for the revert (`card` and `choice` `null`, since the director didn't click; `commit` is the revert commit).
 5. **Write the `merge` line** (the commit is `git rev-parse --short=12 HEAD`), commit the record, rewrite the board, then make the copy (below).
 6. Leave the branch; it is merged and harmless. The board's "Building now" says Nothing.
 
@@ -234,17 +235,23 @@ Steps that touch a code host don't apply at Lean. These do:
 
 ## On a code host, without Node.js
 
-Where the project's `origin` is a GitLab, the work can go up as a merge request, with git alone. After a clean review, the same check that the feature leaves the record and the board alone (Merging, step 1) and the director's **Approve**, switch to the main version, write the `approval` line, then push the feature's own copy with the host's options:
+Where the project's `origin` is a GitLab, the work can go up as a merge request, with git alone. **The record never goes to the host.** It stays on the local main version and in the copy until Wheelhouse moves up to the host. So on a code host the host's version, `origin/main`, is what a feature is branched from and measured against (Building, step 4; Reviewing, step 1), and the local main version is only where the record and the copy live. Never `git pull`: the two have different commits.
+
+After a clean review, `git fetch origin`, this check, which must print nothing, and the director's **Approve**:
+
+`git diff --name-only origin/main...feature/<slug> -- .wheelhouse wheelhouse`
+
+Then switch to the main version, write the `approval` line, and push the feature's own copy with the host's options:
 
 `git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin feature/<slug>`
 
-GitLab makes the merge request from the push. The merge itself is the host's step (its page has the merge button); tell the director where it is. The feature is not in hand while it waits there. The main version here and the host's have different record commits, so don't `git pull`. When the director says it is merged:
+GitLab makes the merge request from the push. The merge itself is the host's step (its page has the merge button); tell the director where it is. The feature is not in hand while it waits there. When the director says it is merged:
 
-1. On a clean main version: `git switch main`, then `git fetch origin`.
-2. `git merge --no-ff origin/main -m "Take the code host's main version"`. No rebase, no force. If git stops on a conflict, run `git merge --abort` and tell the director in one line.
-3. **Check what the host added:** `git rev-parse --short=12 origin/main^2` must be the approved 12 characters. If it isn't (the host squashed or rebased it), say in one line that the host's version isn't the one approved, and write no `merge` line.
-4. **Write the `merge` line.** Its commit is the host's merge commit, `git rev-parse --short=12 origin/main`, not the local merge of step 2. Commit the record.
-5. **Send the record up** to a branch of its own, never the protected main version: `git push origin main:wheelhouse-record`. Then make the copy and write the `copy` line as above.
+1. `git fetch origin`. Nothing is merged here yet.
+2. **Check what the host added, before any merge here.** Both must hold (a command that fails counts as not holding): `git rev-parse --short=12 origin/main^2` is the approved 12 characters, and `git merge-base --is-ancestor origin/main^1 feature/<slug>` succeeds (it prints nothing and exits 0), which shows the host's version hadn't moved past the one the feature was branched from.
+3. **If either fails** (the host squashed or rebased it, or merged something else, or its version moved on), merge nothing here, write no `merge` line, and ask a card: what happened in a line ("The host's version isn't the one you approved"), the options **Look into it** (a read-only look at the host's history, as in the runbook), **Not now** and **Explain more**, a recommendation (**Look into it**), and what happens meanwhile (nothing is added here; the work waits).
+4. **If both hold,** on a clean main version: `git switch main`, then `git merge --no-ff origin/main -m "Take the code host's main version"`. No rebase, no force. If git stops on a conflict, run `git merge --abort` and tell the director in one line.
+5. **Write the `merge` line.** Its commit is the host's merge commit, `git rev-parse --short=12 origin/main`, not the local merge of step 4. Commit the record, then make the copy and write the `copy` line as above. Push nothing but the copy and the feature's own copy.
 
 **The project key.** The first push may bring up git's own sign-in window. The key goes into that window once, by the director, and git remembers it. It is never typed into the chat, never put in a command, a file, the board or the record, and you never ask for it. If the director offers it in the chat, stop them: "Don't send that here. Put it in the sign-in window that opens, once."
 
