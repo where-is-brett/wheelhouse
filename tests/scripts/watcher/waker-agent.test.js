@@ -17,6 +17,7 @@ import { featurePaths } from '../../../scripts/feature/files.js';
 import { withHome } from '../../helpers/homes.js';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { P, T0, config as projectConfig, project } from '../../helpers/foreman.js';
+import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
 
 const hostStandIns = standInTools();
 after(() => hostStandIns.restore());
@@ -29,6 +30,15 @@ const waker = (over = {}) => {
     alive: () => true, startTimeOf: async () => null, now: () => new Date(T0), bootedAt: () => 0, claude: { kind: 'direct', file: 'claude' },
     baseEnv: { PATH: '/bin' }, print: () => {}, ...over,
   });
+  // A start comes straight after the foreman's start recorded the worktree's agent files, which the
+  // waker now checks before a start too (ruling P7-33): kept here when missing.
+  const start = w.startFeature;
+  w.startFeature = (args = {}) => {
+    try {
+      if (readBaseline(P, args.work, args.worktree) === null) writeBaseline(P, args.work, args.worktree);
+    } catch { /* a start the waker refuses for its own reasons */ }
+    return start(args);
+  };
   return { w, calls };
 };
 const foremanWake = () => writeWake(P, { to: 'foreman', events: [{ type: 'incident', id: 'e1', detail: {} }], digest: [], dropped: 0 }, { now: () => new Date(T0) });

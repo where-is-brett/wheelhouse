@@ -79,4 +79,4 @@ Three calls failed in the whole set, out of 203: the two `task` calls without a 
 
 ## Needs the director
 
-Nothing now.
+- **Deferred (24 October 2026): the loop's tools under a level's rules.** These runs used `--allow-all-tools`; Part 7 Task 2's rules (`adapters/copilot/permissions.js`) instead allow `task`, `skill`, `sql`, `read_agent` and `write` by name at every level, and nothing else that no rule names. The first real run of a session under those rules (check 61's note says how it runs) records here whether Copilot accepts those names, that `task` and `skill` ran, and that an `apply_patch` inside the worktree went through under `write`.

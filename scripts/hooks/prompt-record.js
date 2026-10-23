@@ -46,7 +46,7 @@ import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
-import { readEnrolled, enrol, ownKey } from '../state/signing.js';
+import { readEnrolled, enrol, ownKey, verify } from '../state/signing.js';
 import { trustedBy, keepTrustClick, fingerprint, keyHash } from '../lib/trust-clicks.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
@@ -56,7 +56,7 @@ import {
 } from '../state/card-lines.js';
 import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore,
@@ -173,6 +173,22 @@ function amendmentHash(project, work, h12) {
 
 const declared = (project, id) => held(project, 'incident').some((e) => e.data?.id === id);
 
+// The record a Confirm on a card keeping a feature's files that steer agents earns (ruling P7-31):
+// the card carries that one set line, and the state holds one finding of the watcher's for that
+// work (signed by an enrolled computer, ruling P7-33) whose full hash the line's twelve characters name. The record names the work and that hash,
+// which the watcher matches against what it finds before it keeps the files as they are.
+function keepControlOf(project, question) {
+  const lines = setLinesOf(question);
+  if (lines.length !== 1) return null;
+  const m = KEEP_CONTROL_LINE.exec(lines[0]);
+  if (!m || lines[0] !== keepControlLine(m[1], m[2])) return null;
+  const enrolled = readEnrolled();
+  const hashes = new Set(held(project, 'control-file')
+    .filter((e) => e.data?.work === m[1] && typeof e.data?.hash === 'string' && e.data.hash.startsWith(m[2]) && verify(e, enrolled))
+    .map((e) => e.data.hash));
+  return hashes.size === 1 ? { action: 'keep-control-files', work: m[1], hash: [...hashes][0] } : null;
+}
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
@@ -202,6 +218,10 @@ export async function earned({ project, question, label, client, now, left, stop
       return { made: { kind: 'approval', data: { pr, commit: head, words: 'Approve', question } } };
     }
     return null;
+  }
+  if (label === 'Confirm' && setLinesOf(question).some((line) => KEEP_CONTROL_LINE.test(line))) {
+    const kept = keepControlOf(project, question);
+    return kept ? action(kept) : null;
   }
   if (label === 'Confirm') {
     // A line may name an event in the project's state or in the director's profile; one
@@ -502,9 +522,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, setup's card of the rules found, a trust card and uninstall's card have no reply
-    // code (rulings R36, R80, R90): only the click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found, a trust card, uninstall's card and a Keep card have
+    // no reply code (rulings R36, R80, R90, P7-31): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;

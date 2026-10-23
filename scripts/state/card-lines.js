@@ -168,6 +168,14 @@ export function incidentFixLine(id, pr) {
   return `Merge pull request #${pr} as the fix for incident ${id}`;
 }
 
+// The line on the card about a feature's files that steer agents (rulings P7-13, P7-31): its
+// Confirm keeps them as they are now, the finding the line's twelve characters name, as the record
+// the watcher compares them with before each wake.
+export function keepControlLine(work, hash) {
+  return `Keep the files that steer agents in ${work}'s folder as they are, ${sha12(hash)}`;
+}
+export const KEEP_CONTROL_LINE = new RegExp(`^Keep the files that steer agents in (${ID})'s folder as they are, ([0-9a-f]{12})$`);
+
 // A reply code: four characters of CODE_ALPHABET, the first eight bytes of the SHA-256 of a set
 // line read as one number and written in base 30, so one line always has one code and the codes
 // come out evenly. A card shows it as replyCodeLine(code).
@@ -190,7 +198,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
 // setup's line for a step, its line for the rules found, the baseline card's line, the trust
-// card's line and uninstall's line.
+// card's line, uninstall's line and the line keeping a feature's files that steer agents.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -207,6 +215,7 @@ export const SET_LINES = [
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
   new RegExp(TRUST_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
+  new RegExp(KEEP_CONTROL_LINE.source, 'm'),
 ];
 
 // Every set line a question carries, in the order the patterns are listed.

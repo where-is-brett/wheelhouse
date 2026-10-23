@@ -84,6 +84,12 @@ import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { uninstallRoutes } from '../setup/uninstall.js';
 import { baselineRoutes } from '../measures/baseline.js';
 import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from '../lib/trust-clicks.js';
+import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
+import { runReview } from '../review/clean-session.js';
+import { reviewsFor } from '../agents/reviews.js';
+import { agentOfConfig } from '../agents/project-agent.js';
+import { briefHash, featurePaths } from '../feature/files.js';
+import { readCapped } from '../feature/status.js';
 
 export const STATE_BRANCH = 'wheelhouse-state';
 // The adapter's refusal of a merge by a key GitLab does not let merge (adapter.js), and what the
@@ -860,6 +866,9 @@ export async function startHelper({
   // How the helper's own window is opened (scripts/confirm/window.js): given { title, lines, options }, it resolves
   // with { choice }. By default askInWindow on this system, with the helper's `run`.
   askWindow = (card) => askInWindow({ ...card, run }),
+  // Each agent's review module, for the signed review in a clean session (scripts/agents/reviews.js): given an
+  // agent's name, its module, or null where its reviews aren't the helper's. A test may give its own.
+  reviewModules = reviewsFor,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1724,6 +1733,7 @@ export async function startHelper({
   // here too, and so are a Lean undo and Undo it, which are runbook steps (ruling P5-50).
   const ACTION_STEPS = {
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
+    'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
@@ -2557,6 +2567,208 @@ export async function startHelper({
     return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
   }
 
+  // --- the signed review in a clean session (rulings P7-14 to P7-18) ---
+
+  // The review module of the agent this computer runs for the project whose default-branch configuration is
+  // `config`: `{ module }`, the module or null (an agent whose reviews aren't the helper's), or `{ unknown: true }`
+  // when which agent runs here can't be told (the computer's id can't be read while the configuration names an
+  // agent per computer, or the name is no agent's).
+  function reviewModuleOf(config) {
+    let id;
+    try {
+      id = computerId();
+    } catch {
+      const agents = config?.agents;
+      if (agents !== null && typeof agents === 'object' && !Array.isArray(agents)) return { unknown: true };
+    }
+    try {
+      return { module: reviewModules(agentOfConfig(config, { computerId: id })) };
+    } catch {
+      return { unknown: true };
+    }
+  }
+
+  // The default branch's configuration, read by itself in the mirror, or undefined when it can't be read. A refusal
+  // of the mirror's settings ends the request, as elsewhere.
+  async function defaultConfig(project, adapter, ctx) {
+    try {
+      const defaultBranch = await defaultBranchOf(project, adapter);
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+        await defaultHistory(must, defaultBranch);
+        return baseConfig(must);
+      }));
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+      return undefined;
+    }
+  }
+
+  // The review kinds the gate counts (ruling P7-15): null, today's rule, for an agent with no review module; the
+  // module's own kinds; none where the agent can't be told or the module can't say.
+  function reviewKindsOf(config) {
+    const found = reviewModuleOf(config);
+    if (found.unknown === true) return [];
+    if (found.module === null) return null;
+    try {
+      const kinds = found.module.kinds();
+      return Array.isArray(kinds) ? kinds : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // The most of a brief the reviewer is given.
+  const BRIEF_BYTES = 64 * 1024;
+  // The feature's brief as the state records it: the brief file in the worktree of the feature whose branch is the
+  // pull request's head, taken only when its hash is the latest one the state records for that feature. Null
+  // otherwise: the reviewer is then told no brief is recorded.
+  function recordedBrief(project, headRef) {
+    if (typeof headRef !== 'string' || headRef === '') return null;
+    const found = new Map();
+    const events = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'feature').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    for (const e of events) {
+      if (typeof e.data?.work !== 'string') continue;
+      const f = found.get(e.data.work) ?? {};
+      if (typeof e.data.branch === 'string') f.branch = e.data.branch;
+      if (typeof e.data.worktree === 'string') f.worktree = e.data.worktree;
+      if (typeof e.data.brief === 'string') f.brief = e.data.brief;
+      found.set(e.data.work, f);
+    }
+    for (const f of found.values()) {
+      if (f.branch !== headRef || typeof f.worktree !== 'string' || typeof f.brief !== 'string' || !path.isAbsolute(f.worktree)) continue;
+      const text = readCapped(featurePaths(f.worktree).brief, BRIEF_BYTES);
+      if (text !== null && briefHash(text) === f.brief) return text;
+    }
+    return null;
+  }
+
+  // The rules files the reviewer is given, read from the default branch's commit in the mirror (BASE_REF), never
+  // from the pull request.
+  const RULES_FILES = ['CLAUDE.md', 'AGENTS.md'];
+  const RULES_BYTES = 256 * 1024;
+
+  // Inside one fetch of the pull request in the mirror (ruling P7-16), `build({ files, read, diff, rules })`, for
+  // runReview: each changed path's mode and size at the head (mode null when the change deletes it), a reader of a
+  // path's bytes at the head, the diff from the merge base, and the rules files from the default branch. The pull
+  // request's ref is removed after.
+  function withChange({ project, number, headSha, defaultBranch }, ctx) {
+    return (build) => oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+      const git = local(mirror);
+      const refusal = await mirrorRefusal(mirror, keyed);
+      if (refusal) throw new Error(refusal);
+      const prRef = `refs/wheelhouse/pr/${number}`;
+      const must = async (args, what, options = {}) => {
+        const answer = await git([...NO_HOOKS, ...args], options);
+        if (answer.code !== 0) throw new Error(`${what} failed`);
+        return answer.stdout;
+      };
+      try {
+        await fetchPr({ mirror, keyed, git, number, headSha, defaultBranch, project });
+        const base = (await must(['merge-base', BASE_REF, headSha], 'finding the merge base')).trim();
+        const paths = (await must(['diff', '--name-only', '-z', '--no-renames', base, headSha], 'listing the changed files')).split('\0').filter((p) => p !== '');
+        const files = [];
+        for (const file of paths) {
+          const listed = await must(['--literal-pathspecs', 'ls-tree', '-l', '-z', headSha, '--', file], 'looking for a changed file');
+          const entry = /^(\d{6}) (\w+) [0-9a-f]+ +(-|\d+)\t([^\0]*)\0/.exec(listed);
+          // Only the entry for this very path counts; any other answer is read as the path being absent at the head.
+          files.push(entry && entry[4] === file ? { path: file, mode: entry[1], size: entry[3] === '-' ? null : Number(entry[3]) } : { path: file, mode: null, size: null });
+        }
+        const read = (file) => must(['cat-file', 'blob', `${headSha}:${file}`], 'reading a changed file', { encoding: 'buffer' });
+        const diff = await must(['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', base, headSha], 'working out the diff');
+        const rules = [];
+        for (const file of RULES_FILES) {
+          const listed = await must(['ls-tree', '-l', '-z', BASE_REF, '--', file], 'looking for a rules file');
+          const entry = /^100\d{3} blob [0-9a-f]+ +(\d+)\t/.exec(listed);
+          if (entry && Number(entry[1]) <= RULES_BYTES) rules.push({ path: file, text: await must(['cat-file', 'blob', `${BASE_REF}:${file}`], 'reading a rules file') });
+        }
+        return await build({ files, read, diff, rules });
+      } finally {
+        await git([...NO_HOOKS, 'update-ref', '-d', prRef]);
+      }
+    }));
+  }
+
+  // A plain note about a review, through the state's queue. Nothing is written under STOP.
+  async function reviewNote(project, text, ctx) {
+    if (stopped()) return;
+    try {
+      await oneAtATime(`state:${project}`, async () => {
+        await ensureStateClone(project, ctx);
+        if (stopped()) return;
+        await doWrite({ project, kind: 'note', data: { text } }, ctx);
+      });
+    } catch { /* a note is not worth failing for */ }
+  }
+
+  // The review itself, in the background (ruling P7-18): the folder, the session, and the signed `review` record
+  // with `reviewKind`, written when the session ran clean, its verdict counts, the head hasn't moved and STOP is
+  // off; otherwise a plain note naming the reason.
+  async function reviewJob({ project, number, pr, defaultBranch, module }, ctx) {
+    const headSha = pr.headSha;
+    const short = headSha.slice(0, 7);
+    let outcome;
+    try {
+      const adapter = await ctx.adapter();
+      const ci = await adapter.ciState(headSha);
+      outcome = await runReview({
+        number, sha: headSha, review: module, brief: recordedBrief(project, pr.headRef), ci, stopped,
+        withChange: withChange({ project, number, headSha, defaultBranch }, ctx),
+      });
+      // A STOP raised after the route answered starts no agent, and nothing is written.
+      if (outcome.stopped === true) return;
+      if (outcome.ok) {
+        const still = await adapter.prState(number);
+        if (still?.state !== 'open' || still.headSha !== headSha) outcome = { ok: false, why: 'the head moved, or the pull request closed, while it was reviewed' };
+      }
+    } catch (error) {
+      outcome = { ok: false, why: clean(error instanceof Error ? error.message : '', ctx.secrets) || 'the review could not be run' };
+    }
+    if (!outcome.ok) {
+      await reviewNote(project, `${NO_CLEAN_REVIEW(short)}: ${outcome.why}.`, ctx);
+      return;
+    }
+    if (stopped()) return;
+    try {
+      await oneAtATime(`state:${project}`, async () => {
+        await ensureStateClone(project, ctx);
+        if (stopped()) return;
+        const event = makeEvent({ kind: 'review', data: outcome.data, now });
+        await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+        await freshViews(() => writeViews(project, { now }));
+      });
+    } catch {
+      await reviewNote(project, `The clean review of ${short} passed, but its signed record could not be written.`, ctx);
+    }
+  }
+
+  // POST /review/run { project, number } (ruling P7-18): the helper's own reviewer, in a clean session, of the open
+  // pull request's head. Refused under STOP (it starts an agent), for an agent whose reviews aren't the helper's,
+  // and while the agent's clean session isn't switched on. One review at a time per project: answered at once with
+  // `started`, or `running` when one is under way; the review finishes in the background.
+  async function doReviewRun({ project, number }, ctx) {
+    if (stopped()) return STOP_REFUSAL;
+    if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
+    const key = `review:${project}`;
+    if (queues.has(key)) return { ok: true, running: true };
+    const adapter = await ctx.adapter();
+    const pr = await adapter.prState(number);
+    if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
+    if (typeof pr.headSha !== 'string' || !/^[0-9a-f]{40}$/.test(pr.headSha)) refuse('the head commit is not known');
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const config = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+      await defaultHistory(must, defaultBranch);
+      return baseConfig(must);
+    }));
+    const found = reviewModuleOf(config);
+    if (found.unknown === true) return { ok: false, refused: "which agent this project runs on this computer can't be told, so no review is started" };
+    if (found.module === null) return { ok: false, refused: "this project's agent reviews in its own session, not the helper's" };
+    if (found.module.ready() !== true) return { ok: false, refused: "the helper's clean review session isn't switched on for this agent yet" };
+    if (stopped()) return STOP_REFUSAL;
+    if (queues.has(key)) return { ok: true, running: true };
+    oneAtATime(key, () => reviewJob({ project, number, pr, defaultBranch, module: found.module }, ctx)).catch(() => {});
+    return { ok: true, started: true };
+  }
+
   // Brings an open pull request's branch up to date with the default branch (design section 12):
   // in the mirror, `git merge-tree --write-tree` of the head and the default branch; when clean
   // and the head is behind, a merge commit of the two, pushed to the pull request's branch with
@@ -2743,6 +2955,12 @@ export async function startHelper({
     const approvalRequired = body.approvalRequired === true || touchesGuardrails || restore || shownFirst;
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
+    // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
+    // null, today's rule, unless the agent's review module names them (ruling P7-15). The configuration doesn't
+    // depend on the pull request's files, so when those couldn't be read it is read by itself; only when the
+    // default branch's configuration itself can't be read does today's rule stand (the approval is then needed
+    // anyway, since unreadable changes count as touching the guardrails).
+    const reviewKinds = reviewKindsOf(changes?.config ?? await defaultConfig(project, adapter, ctx));
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
     const decision = gateDecision({
@@ -2756,6 +2974,7 @@ export async function startHelper({
       approvalRequired,
       touchesGuardrails,
       review,
+      reviewKinds,
       approval,
       enrolled,
       upToDate,
@@ -3237,6 +3456,13 @@ export async function startHelper({
     '/pull': (body, ctx) => doPull(body, ctx),
     '/base/fetch': (body, ctx) => doFetchBase(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
+    '/review/run': async (body, ctx) => {
+      try {
+        return await doReviewRun(body, ctx);
+      } finally {
+        tidyAfterAnswer(body.project, ctx);
+      }
+    },
     '/state/clone': stateRoute(async ({ project }, ctx) => {
       await ensureStateClone(project, ctx);
       return { ok: true };

@@ -55,6 +55,10 @@ const INPUTS = {
     what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.', options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
   },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
+  'keep-control-files': {
+    ...common, kind: 'keep-control-files', recommend: 'Confirm', what: 'The export-csv feature\'s folder has a new or changed file that steers agents.',
+    options: [says('Confirm')], target: { work: 'export-csv', hash: DOC },
+  },
 };
 // The event data the state keeps for a composed card.
 const dataOf = (kind) => composeCard(INPUTS[kind]).card;
@@ -88,11 +92,11 @@ test('a card that decides something gets its deciding answer filled, Suggest a c
       assert.deepEqual(got, noButtonsFor(kind), kind);
       continue;
     }
-    // STOP is lifted or it isn't, so that card offers no Suggest a change….
+    // STOP is lifted or it isn't, and files are kept as they are or they aren't, so those cards offer no Suggest a change….
     assert.deepEqual(got, {
       buttons: [
         FILLED(DECIDING[kind]),
-        ...(kind === 'lift-stop' ? [] : [SUGGEST_BUTTON]),
+        ...(['lift-stop', 'keep-control-files'].includes(kind) ? [] : [SUGGEST_BUTTON]),
         NOT_NOW_BUTTON,
         WHY_BUTTON,
         SHOW_ME_BUTTON,
@@ -206,9 +210,9 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
     const lines = data.question.split('\n');
     const broken = [
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
-      // A setup card, a trust card and uninstall's have no reply code line to take away (rulings R36,
-      // R80, R90).
-      ...([...SETUP_KINDS, 'trust', 'uninstall'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
+      // R80, R90, P7-31).
+      ...([...SETUP_KINDS, 'trust', 'uninstall', 'keep-control-files'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.

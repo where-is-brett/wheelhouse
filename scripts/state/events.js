@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -18,9 +18,10 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'survey',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey',
 ];
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
+// `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again.
@@ -28,7 +29,7 @@ export const HELPER_ONLY_KINDS = ['survey'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main', 'undo-merge', 'undo-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -67,6 +68,9 @@ const ACTION_OWN = {
   // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
   // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
   'keep-main': ['from', 'to'],
+  // The director's Confirm on the card keeping a feature's files that steer agents as they are
+  // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
+  'keep-control-files': ['work', 'hash'],
   // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
   // is a runbook step): the merge, in full.
   'undo-merge': ['merge'],
@@ -167,6 +171,11 @@ function checkAction(data) {
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
+  } else if (data.action === 'keep-control-files') {
+    if (!isSlug(data.work)) bad('needs the work, named by a short slug');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of what the watcher found');
+    if (data.label !== 'Confirm') bad('needs the Confirm label');
+    if (setLineOf(data.question) !== keepControlLine(data.work, data.hash)) bad('carries the Keep line for its work and hash as its question\'s one set line');
   } else if (data.action === 'undo-merge') {
     if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
     if (data.label !== 'Undo') bad('needs the Undo label');
@@ -221,12 +230,31 @@ const PLAIN_SHAPES = {
   // The hold file of the project is gone, so the cards of the holds it names (`holds`, their event
   // ids) are closed: recorded once for each standing hold, by a session start or the mod's tick.
   'lineage-lift': { must: ['at', 'holds'], may: [] },
+  // What a background session did, summed from its whole output once the run ends (ruling P7-4): its session id
+  // (null when the run gave none), the role it ran as, how many times it used each tool, the commands it ran (each
+  // cut short, at most ACTIVITY_COMMANDS, a line the secret scan flags already replaced by a note naming the
+  // pattern) and its refusals, each the tool and the kind (a guard's, a rule's, no rule's, or other) with the rule
+  // when one was named. The whole output is kept in the project's activity folder on this computer, not in the state.
+  activity: { must: ['session', 'role', 'tools', 'commands', 'refusals'], may: ['work', 'usage', 'at'] },
+  // The watcher held a feature's wakes because of the files in its folder that steer agents (rulings P7-13, P7-31):
+  // the work, why (`changed`: some are new or changed since the folder was made, named in `paths`, at most
+  // CONTROL_PATHS; `no-record`: there is no record of them to compare with; `too-many`: the folder has too many files
+  // to check), when, and the full hash of what was found, which the card's Keep line names. The front desk's card.
+  'control-file': { must: ['work', 'why', 'paths', 'hash', 'at'], may: [] },
+  // The feature's agent files match their record again, so its standing control-file records are closed, with their cards.
+  'control-file-lift': { must: ['work', 'at'], may: [] },
   // What a project already held when setup finished (design section 15, ruling A1; plan ruling
   // P1), as scripts/survey/look.js's surveyOf gives it, with `again: true` when it was taken again
   // because the last one couldn't reach the host (ruling P3). Each part is checked as the survey
   // makes it, and at most as many as it looks at.
   survey: { must: ['v', 'hostReached', 'requests', 'pushed', 'local', 'more', 'instructions', 'scheduled', 'secrets', 'rules'], may: ['again'] },
 };
+// The most paths a control-file record names.
+export const CONTROL_PATHS = 50;
+export const CONTROL_WHY = Object.freeze(['changed', 'no-record', 'too-many']);
+// The most commands an activity record lists, and the kinds of refusal it names.
+export const ACTIVITY_COMMANDS = 50;
+export const REFUSAL_KINDS = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
 // The most a survey holds of each part, as scripts/survey/look.js looks at them (the host lists at
@@ -372,6 +400,28 @@ function checkPlain(kind, data) {
   } else if (kind === 'lineage-lift') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     if (!Array.isArray(data.holds) || data.holds.length === 0 || !data.holds.every(isText)) bad('needs holds, the ids of the holds it lifts');
+  } else if (kind === 'control-file' || kind === 'control-file-lift') {
+    slug('work');
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    if (kind === 'control-file') {
+      if (!CONTROL_WHY.includes(data.why)) bad(`needs why to be ${CONTROL_WHY.join(', ')}`);
+      if (!(Array.isArray(data.paths) && data.paths.length <= CONTROL_PATHS && data.paths.every(isText))) bad(`needs paths to be a list of at most ${CONTROL_PATHS} paths`);
+      if ((data.why === 'changed') !== (data.paths.length > 0)) bad('names paths when, and only when, some are new or changed');
+      if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of what was found');
+    }
+  } else if (kind === 'activity') {
+    if (data.session !== null && !isText(data.session)) bad('needs session to be the session\'s id or null');
+    text('role');
+    if (!isPlain(data.tools) || !Object.values(data.tools).every((n) => Number.isInteger(n) && n >= 0)) bad('needs tools to be a count for each tool');
+    if (!Array.isArray(data.commands) || data.commands.length > ACTIVITY_COMMANDS || !data.commands.every(isText)) {
+      bad(`needs commands to be a list of at most ${ACTIVITY_COMMANDS} commands`);
+    }
+    const refusal = (r) => isPlain(r) && isText(r.tool) && REFUSAL_KINDS.includes(r.kind)
+      && Object.keys(r).every((k) => ['tool', 'kind', 'rule'].includes(k)) && (r.rule === undefined || isText(r.rule));
+    if (!Array.isArray(data.refusals) || !data.refusals.every(refusal)) bad('needs refusals, each a tool and the kind of refusal');
+    if (data.work !== undefined) slug('work');
+    if (data.usage !== undefined && !isPlain(data.usage)) bad('has a usage that is not an object');
+    if (data.at !== undefined && (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at)))) bad('has an at that is not a time');
   } else if (kind === 'survey') {
     const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
     if (data.v !== 1) bad('needs v to be 1');

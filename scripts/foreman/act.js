@@ -153,6 +153,7 @@ import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
+import { writeBaseline } from '../watcher/control-files.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -468,6 +469,9 @@ async function checkReadyMade(ctx, work, checkout, branch, from, again) {
 // Work that starts from a ready-made change (`from`, ruling P4) has its branch made
 // from the recorded commit instead, and only while the work's ref still names that
 // commit: a change that moved after it was recorded is refused, not followed.
+// Straight after it is made, the files in it that steer agents are recorded (the baseline the
+// watcher compares with before every wake, scripts/watcher/control-files.js). A record that can't
+// be written is said, and the start goes on: with no record, the feature's wakes wait for the director.
 async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
   const git = fencedGit(ctx, checkout, 'no worktree was made');
   realFolders(checkout, ['.claude', 'worktrees']);
@@ -489,6 +493,11 @@ async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
   }
   const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, from === undefined ? base : from.sha]);
   if (made.code !== 0) refuse(`git couldn't make the worktree: ${oneLine(made.stderr || made.stdout || 'no reason given', 200)}`);
+  try {
+    writeBaseline(ctx.project, work, worktree, { now: ctx.now, platform: ctx.platform });
+  } catch (error) {
+    ctx.say(`The record of the worktree's agent files couldn't be written, so its wakes wait for the director: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
 }
 
 // The files of an ended run that the status reads, set aside when the work starts again.

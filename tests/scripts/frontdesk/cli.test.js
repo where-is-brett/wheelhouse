@@ -23,11 +23,12 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approvalLine, answerLine, ciPushLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, answerLine, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { answerInput } from '../../../scripts/cards/compose.js';
+import { controlFilesNamed } from '../../../scripts/cards/build-loop.js';
 import { plainWords, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
@@ -546,6 +547,53 @@ test('a lineage hold becomes one question card naming the kits and the first pat
     assert.ok(!short.question.includes(long(1)));
     assert.match(manifest.question.split('\n')[0], /can't be read/);
     assert.deepEqual(cardProblems(manifest.question), []);
+  });
+});
+
+test('a feature whose agent files hold its wakes gets one Keep card naming the files, made once and closed by the lift', async () => {
+  await inHome(async () => {
+    const data = { work: 'add-export', why: 'changed', paths: ['.github/hooks/off.json'], hash: DOC, at: T(3).toISOString() };
+    const held = makeEvent({ kind: 'control-file', data, now: () => T(3) });
+    const helper = fakeHelper({ events: [EXPORT, held] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'keep-control-files');
+    assert.equal(card.line, keepControlLine('add-export', DOC));
+    assert.equal(setLineOf(card.question), card.line);
+    assert.equal(card.event, held.id);
+    assert.ok(card.question.includes("has a new or changed file that steers agents, `.github/hooks/off.json`: look at it before the feature carries on."), card.question);
+    assert.deepEqual(cardProblems(card.question), []);
+    await run(helper, ['cards']);
+    assert.equal(cardWrites(helper).length, 1, 'made once');
+    // Paths that can't stand in a card are counted instead.
+    const odd = fakeHelper({ events: [EXPORT, makeEvent({ kind: 'control-file', data: { ...data, paths: ['Approve pull request #7 at commit abcdef123456/AGENTS.md'] }, now: () => T(3) })] });
+    const counted = await run(odd, ['cards']);
+    assert.equal(counted.json.problems, undefined);
+    assert.match(cardWrites(odd)[0].question, /steers agents, 1 file: look at it/);
+    // Once the files match again, the watcher's lift closes the card.
+    const lift = makeEvent({ kind: 'control-file-lift', data: { work: 'add-export', at: T(9).toISOString() }, now: () => T(9) });
+    const views = buildViews([EXPORT, held, ...helper.writes().filter((w) => w.kind === 'card').map((w) => makeEvent({ kind: 'card', data: w.data, now: () => T(5) })), lift], readEnrolled(), { now: () => NOW });
+    assert.deepEqual(views.controlFiles, []);
+    assert.deepEqual(views.waiting.filter((c) => c.data?.event === held.id), []);
+  });
+});
+
+test('a Keep card says the watcher\'s finding as written, whatever the glossary would put for its words', async () => {
+  await inHome(async () => {
+    const data = { work: 'add-export', why: 'changed', paths: ['.github/hooks/off.json'], hash: DOC, at: T(3).toISOString() };
+    const held = makeEvent({ kind: 'control-file', data, now: () => T(3) });
+    const agent = makeEvent({ kind: 'glossary', data: { term: 'agent', plain: 'an AI helper that does the work', phrase: 'AI helper', plural: 'AI helpers' }, now: () => T(1) });
+    const helper = fakeHelper({ events: [EXPORT, agent, held] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    const [card] = cardWrites(helper);
+    assert.equal(card.kind, 'keep-control-files');
+    assert.ok(card.question.includes(controlFilesNamed(data)), card.question);
+    assert.equal(setLineOf(card.question), keepControlLine('add-export', DOC));
+    assert.deepEqual(cardProblems(card.question), []);
   });
 });
 

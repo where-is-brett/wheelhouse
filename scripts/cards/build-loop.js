@@ -1,8 +1,9 @@
 // scripts/cards/build-loop.js
 // The cards the build loop's plain records call for, worked out from the views, so `cli.js cards`,
 // which makes and asks them, and the board-context hook, which counts them, agree: the click the
-// merge gate waits for (a `gate-asks` record, rulings R117 and F72) and a lineage hold (rulings
-// R146 and F71). Also the composer's input for each.
+// merge gate waits for (a `gate-asks` record, rulings R117 and F72), a lineage hold (rulings
+// R146 and F71) and a feature whose wakes the files that steer agents hold (a `control-file`
+// record, ruling P7-13). Also the composer's input for each.
 import { CLICK_MS } from '../lib/core-numbers.js';
 import { namedPaths } from '../lineage/check.js';
 import { prFinished } from '../state/views.js';
@@ -51,6 +52,12 @@ export function gateAsksDue(views, now) {
 export function holdsDue(views) {
   return (Array.isArray(views?.lineageHolds) ? views.lineageHolds : [])
     .filter((h) => isRecord(h) && typeof h.id === 'string' && h.card === null && Array.isArray(h.data?.mismatches) && h.data.mismatches.length > 0);
+}
+
+// The control-file records no card has been made for yet, from the views' `controlFiles`.
+export function controlFilesDue(views) {
+  return (Array.isArray(views?.controlFiles) ? views.controlFiles : [])
+    .filter((r) => isRecord(r) && typeof r.id === 'string' && r.card === null && typeof r.data?.work === 'string' && Array.isArray(r.data?.paths));
 }
 
 // Whether the pull request, as the host gives it ({ headSha, state }), still waits for the click: it
@@ -129,6 +136,68 @@ export function holdInput(hold, { short = false } = {}) {
     because: 'nothing in this project moves on until the kits match',
     meanwhile: 'Agents read and report; nothing is edited or built.',
     event: hold.id,
+  };
+}
+
+// The paths a control-file card names: the first three, each in backticks, then how many more.
+const SHOWN_PATHS = 3;
+function pathsOf(paths) {
+  const named = paths.slice(0, SHOWN_PATHS).map((p) => `\`${p}\``);
+  if (paths.length > SHOWN_PATHS) named.push(`${paths.length - SHOWN_PATHS} more`);
+  return named.length === 1 ? named[0] : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
+}
+
+// The sentence a Keep card opens with, saying what the watcher found (`data` a control-file
+// record's): the new or changed files, the first three by name or (`short`) only how many, or that
+// there is no record of them. The watcher keeps the files only on a Confirm whose card said this of
+// its own last finding (ruling P7-33).
+export function controlFilesNamed(data, { short = false } = {}) {
+  const { why, paths } = data;
+  if (why === 'no-record') return 'There is no record yet of this feature\'s agent files, so they can\'t be checked: look at them before the feature carries on.';
+  const one = paths.length === 1;
+  const named = short ? `${paths.length} ${one ? 'file' : 'files'}` : pathsOf(paths);
+  return `A feature's folder has ${one ? 'a new or changed file that steers' : 'new or changed files that steer'} agents, ${named}: look at ${one ? 'it' : 'them'} before the feature carries on.`;
+}
+
+// The composer's input for a control-file record's card (rulings P7-13, P7-31). For new or changed
+// files it says which, in the plan's words, and for a folder with no record kept that there is
+// none: the card's Confirm, a signed step, keeps the files as they are now, through its set line
+// naming the work and what was found (keep-control-files), and taking them out lifts the hold too.
+// For a folder with too many files to check it is a question with no set line, since nothing
+// could be kept. The feature is named by `name` (its title) and its id. `short` says only how many files.
+export function controlFileInput(record, name, { short = false } = {}) {
+  const { work, why, paths, hash } = record.data;
+  const feature = name === work ? work : `${name} (${work})`;
+  const meanwhile = 'The feature waits; other work carries on.';
+  if (why === 'too-many') {
+    return {
+      kind: 'question',
+      level: 3,
+      what: `A feature's folder has too many files to check for ones that steer agents, so the feature waits. The feature is ${feature}.`,
+      why: 'A file that steers agents could change what a session may do, so a feature\'s session is woken only once its files have been checked. No click here lifts the hold: once the folder has fewer files, the next wake goes ahead.',
+      options: [
+        { label: 'Go through them', says: 'We look at what fills the folder, and what can go.' },
+        { label: 'Leave it for now', says: 'The feature waits, and its session isn\'t woken.' },
+      ],
+      recommend: 'Go through them',
+      because: 'the feature carries on only once its files can be checked',
+      meanwhile,
+      event: record.id,
+    };
+  }
+  return {
+    kind: 'keep-control-files',
+    level: 3,
+    what: `${controlFilesNamed(record.data, { short })} The feature is ${feature}.`,
+    why: why === 'no-record'
+      ? 'A file that steers agents could change what a session may do, so a feature\'s session is woken only while those files are as they were last kept, and this folder was made before that record was kept.'
+      : 'A file that steers agents could change what a session may do, so the feature\'s session isn\'t woken until you have looked. Taking the files out lifts the hold too.',
+    options: [{ label: 'Confirm', says: 'The files are kept as they are now, and the feature\'s session is woken again.' }],
+    recommend: 'Show me',
+    because: 'the files are best looked at before they are kept',
+    meanwhile,
+    target: { work, hash },
+    event: record.id,
   };
 }
 

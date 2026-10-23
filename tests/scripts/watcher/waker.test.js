@@ -21,6 +21,7 @@ import { confirmationFor, dataHash, eventPath, makeEvent } from '../../../script
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
+import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
 
 const unix = process.platform !== 'win32';
 const P = 'o__p';
@@ -62,10 +63,13 @@ function worktree({ session = null } = {}) {
   return dir;
 }
 
-// The session id the watcher would have kept when it started the feature.
+// The session id the watcher would have kept when it started the feature, and the record of the
+// worktree's agent files the foreman's start keeps when it makes the worktree (without it, the
+// feature's wakes wait: control-files.test.js).
 function keepSession(work, dir, sessionId = SESSION) {
   fs.mkdirSync(path.dirname(sessionFile(P, work)), { recursive: true });
   fs.writeFileSync(sessionFile(P, work), JSON.stringify({ sessionId, worktree: dir, at: new Date(T0).toISOString() }));
+  writeBaseline(P, work, dir);
 }
 
 // A stand-in for starting a process: keeps each call; each process lives until
@@ -121,7 +125,21 @@ function waker(fake, over = {}) {
     ...over,
   });
   w.clock = clock;
+  // A start comes straight after the foreman's start made the worktree and recorded its agent
+  // files, which the waker now checks before a start too (ruling P7-33): kept here when missing.
+  const start = w.startFeature;
+  w.startFeature = (args = {}) => {
+    keepRecord(args);
+    return start(args);
+  };
   return w;
+}
+
+// The record of a worktree's agent files the foreman's start keeps, when there is none yet.
+function keepRecord({ work, worktree: dir } = {}) {
+  try {
+    if (readBaseline(P, work, dir) === null) writeBaseline(P, work, dir);
+  } catch { /* a start the waker refuses for its own reasons */ }
 }
 
 test('a foreman bundle starts one fresh foreman with the configured model and mode, told to read its own copy', () => withHome(async () => {
@@ -466,6 +484,7 @@ test('a feature\'s wakes folder that is a link is refused, and nothing is writte
 test('startFeature starts a session with an id of the watcher\'s own, in the worktree, with the brief\'s prompt', () => withHome(async () => {
   checkout();
   const dir = worktree();
+  writeBaseline(P, 'login-page', dir); // as the foreman's start keeps it
   const fake = fakeRun();
   const w = waker(fake, { platform: 'darwin' });
   const started = await w.startFeature({ work: 'login-page', worktree: dir, briefFile: featurePaths(dir).brief });
@@ -567,6 +586,7 @@ const allowedOf = (call) => (call.args.includes('--allowedTools') ? call.args.sl
 test('allow this time gives the rule for one run only', () => withHome(async () => {
   checkout();
   const dir = worktree();
+  writeBaseline(P, 'login-page', dir); // as the foreman's start keeps it
   const fake = fakeRun({ exits: true });
   // The answer the state gives stays the same until the director clicks again: the waker itself keeps the run grant from a second run.
   const asked = [];
@@ -742,6 +762,7 @@ test('Shape 2 prints one line per wake, naming each session\'s own copy, and sta
   checkout();
   const lines = [];
   const dir = worktree();
+  writeBaseline(P, 'login-page', dir); // as the foreman's start keeps it
   const w = waker({ run: () => { throw new Error('Shape 2 starts nothing'); }, alive: () => true }, { shape: 2, print: (line) => lines.push(line), locate: () => dir });
   const foreman = writeWake(P, bundle('e1'));
   const second = writeWake(P, bundle('e2'));
@@ -762,6 +783,7 @@ test('Shape 2 prints one line per wake, naming each session\'s own copy, and sta
 test('the waker prints Shape 2\'s lines through the printer it is given', () => withHome(async () => {
   checkout();
   const dir = worktree();
+  writeBaseline(P, 'login-page', dir); // as the foreman's start keeps it
   const lines = [];
   // The mod's bridge answers on stdout, so with a printer given nothing else may reach it.
   const write = process.stdout.write;

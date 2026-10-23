@@ -120,4 +120,21 @@ Each of the three forms (`&&`, `$( )`, `sh -c`) was refused at least once when i
 
 ## Needs the director
 
-Nothing now.
+Addendum, 24 October 2026. Part 7 Task 1 built the calls in `adapters/copilot/sessions.js`: the session's own home, its environment, the command line, and the readers of its output. They are tested with stand-ins only, and no real Copilot ran.
+
+- **Deferred, held for the director: the first real run of a session started by `adapters/copilot/sessions.js`.** It runs on the Mac, outside the sandbox, against a scratch project registered under a scratch `WHEELHOUSE_HOME` (never the real one), on Copilot CLI 1.0.101. It records here:
+  - the argv, scrubbed;
+  - the session home's listing before and after the run, which confirms the names of Copilot's own state that `writeSessionHome` keeps;
+  - the `config.json` keys kept, which fixes the sign-in allow-list (`SIGN_IN_KEYS`, taken until then from the probes' account of the file), and that the sign-in worked with the filtered file;
+  - a call the guard should refuse, refused with the guard's own message in the tool event, and the kind `refusalOf` gives it (`guard`);
+  - the session id `sessionIdOf` reads, that the usage file is there, and exit code 0;
+  - then a `--resume=<id>` run in the same home, with the same session id in its `result` event.
+
+Addendum, 24 October 2026. Part 7 Task 2 built each level's rules in `adapters/copilot/permissions.js` (`levelRules`, `levelAllowed`), which the feature calls now work out for themselves. They are tested with stand-ins only, and no real Copilot ran.
+
+- **Deferred: the first real run of a session under a level's rules.** It runs on the Mac, outside the sandbox, against the same scratch project under a scratch `WHEELHOUSE_HOME`, on Copilot CLI 1.0.101, at Ask with one granted command. It records here, and in check 63's note:
+  - whether Copilot starts without error given `--allow-tool=task`, `skill`, `sql`, `read_agent`, `write` and `url(<domain>)`, and `--deny-tool=write(<glob>)`, `write(~/<path>)`, `lsp` and `shell(copilot:*)`; any form it refuses, with its message;
+  - that a `write(.github/hooks/**)` deny refuses an `apply_patch` there, with the message and the kind `refusalOf` gives it;
+  - that `task` and `skill` ran under the rules;
+  - that the granted command ran, a command no rule allows was refused, and `ls` still ran with no rule.
+- **Deferred, held for the director: a real saved permission.** In a sitting, the director allows a command for good in an interactive Copilot session in the real `~/.copilot` (which agents never touch). It records the saved permission's file and form, and that a background session started with its own home still refuses that command.
