@@ -14,12 +14,12 @@ import { isPendingPart } from '../../../scripts/agents/contract.js';
 import { ACTIVITY_DAYS, HOOK_FILE } from '../../../scripts/lib/copilot-numbers.js';
 import { quoteForCmd, resolveClaude, resolveCommand } from '../../../scripts/lib/claude.js';
 import { scanContent, scanText } from '../../../scripts/state/secret-scan.js';
-import { makeEvent, PLAIN_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, ACTIVITY_COMMANDS, PLAIN_KINDS, REFUSAL_KINDS } from '../../../scripts/state/events.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { registration } from '../../../adapters/copilot/hooks.js';
 import copilot from '../../../adapters/copilot/index.js';
 import sessions, {
-  SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
+  MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
   featureStartCall, finalAnswer, foremanCall, pruneActivity, refusalOf, refusalsOf, sessionHome, sessionIdOf,
   sessionUsage, writeSessionHome,
 } from '../../../adapters/copilot/sessions.js';
@@ -38,7 +38,21 @@ function output(name, change = (events) => events) {
   return `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
 }
 
+// A person's Copilot home, as setup and use leave it: the sign-in and much besides.
+function personHome() {
+  const dir = tempFolder('wh-copilot-person-');
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
+    loggedInUsers: [{ host: 'https://github.com', login: 'someone' }], lastLoggedInUser: { host: 'https://github.com', login: 'someone' },
+    trustedFolders: ['/Users/a/projects'], banner: 'never', model: 'model-z',
+  }));
+  return dir;
+}
+
 const PROJECT = 'owner__app';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// A call refuses a home without Wheelhouse's hook file, so the homes the calls below use are written first, in this
+// file's own temporary Wheelhouse home.
+for (const target of ['foreman', 'feature-add-login']) writeSessionHome({ project: PROJECT, target, signedInFrom: personHome(), node: process.execPath, root: ROOT });
 const RULES = { allow: ['write', 'shell(npm test:*)', 'task'], deny: ['shell(gh:*)', 'write(**/AGENTS.md)'] };
 const COPILOT = { kind: 'direct', file: 'copilot' };
 const ROUTED = { agentRouting: { copilot: { builder: 'model-a', foreman: 'model-b' } } };
@@ -288,16 +302,6 @@ test('usage reads the file, then the checkpoint, then the result, and a missing 
   });
 });
 
-// A person's Copilot home, as setup and use leave it: the sign-in and much besides.
-function personHome() {
-  const dir = tempFolder('wh-copilot-person-');
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
-    loggedInUsers: [{ host: 'https://github.com', login: 'someone' }], lastLoggedInUser: { host: 'https://github.com', login: 'someone' },
-    trustedFolders: ['/Users/a/projects'], banner: 'never', model: 'model-z',
-  }));
-  return dir;
-}
-
 test('the own home carries hooks/wheelhouse.json', () => withHome((wheelhouse) => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   const node = process.execPath;
@@ -426,6 +430,37 @@ test('activity older than ACTIVITY_DAYS is removed', () => withHome((wheelhouse)
   assert.deepEqual(fs.readdirSync(dir).sort(), ['kept.jsonl', 'new.jsonl']);
   assert.throws(() => activityFile(PROJECT, '../x'), /id/);
 }));
+
+test('a home is signed in only after its guards are written, and a call refuses a home without them', () => withHome(() => {
+  const home = sessionHome(PROJECT, 'feature-add-login');
+  // writeRegistration throws (a root that isn't a full path): the home holds no config.json, so it can't sign in.
+  assert.throws(() => writeSessionHome({ project: PROJECT, target: 'feature-add-login', signedInFrom: personHome(), node: process.execPath, root: 'wheelhouse' }), /full path/);
+  assert.ok(fs.existsSync(home));
+  assert.ok(!fs.existsSync(path.join(home, 'config.json')));
+  // A call against a home with no hook file refuses in plain words; so does one against no home at all.
+  assert.throws(() => start(), /no Wheelhouse hook file, so its guards wouldn't run/);
+  assert.throws(() => foreman(), /no Wheelhouse hook file/);
+  writeSessionHome({ project: PROJECT, target: 'feature-add-login', signedInFrom: personHome(), node: process.execPath, root: ROOT });
+  assert.doesNotThrow(() => start());
+  fs.rmSync(path.join(home, 'hooks', HOOK_FILE));
+  assert.throws(() => resume(), /no Wheelhouse hook file/);
+  // A source with no sign-in leaves the home as it was.
+  writeSessionHome({ project: PROJECT, target: 'feature-add-login', signedInFrom: personHome(), node: process.execPath, root: ROOT });
+  fs.writeFileSync(path.join(home, 'settings.json'), '{}');
+  const before = fs.readdirSync(home).sort();
+  assert.throws(() => writeSessionHome({ project: PROJECT, target: 'feature-add-login', signedInFrom: tempFolder('wh-copilot-none-'), node: process.execPath, root: ROOT }), /isn't signed in/);
+  assert.deepEqual(fs.readdirSync(home).sort(), before);
+}));
+
+test('a prompt that starts with a dash is refused', () => {
+  for (const prompt of ['--yolo', '-p', '-']) assert.throws(() => start({ prompt }), /can't start with a dash/, prompt);
+  assert.doesNotThrow(() => start({ prompt: 'Read w.json - then act.' }));
+});
+
+test('the activity limits are the same in the adapter and in the state\'s record', () => {
+  assert.equal(MOST_COMMANDS, ACTIVITY_COMMANDS);
+  assert.deepEqual([...REFUSAL_KIND_NAMES], [...REFUSAL_KINDS]);
+});
 
 test('none of the real copilot, gh or glab ran', () => {
   assert.deepEqual(stand.calls(), []);

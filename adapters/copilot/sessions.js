@@ -24,7 +24,7 @@ import { SLUG } from '../../scripts/lib/build-loop.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { scanText } from '../../scripts/state/secret-scan.js';
-import { copilotHome, writeRegistration } from './hooks.js';
+import { copilotHome, file as hookFile, writeRegistration } from './hooks.js';
 
 // The kit's agents, copied into every session's own home (adapters/copilot/home/agents).
 const KIT_AGENTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home', 'agents');
@@ -57,9 +57,12 @@ const KEPT_VARIABLES = ['PATH', 'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 
 // never a flag that lifts every rule (ruling P7-3).
 const WIDE_FLAGS = ['--trust-folder', '--allow-all', '--yolo', '--allow-all-tools', '--allow-all-paths', '--allow-all-urls', '--add-dir'];
 
-// The most of a command an activity summary keeps, and the most commands (scripts/state/events.js holds the same).
+// The most of a command an activity summary keeps, the most commands, and the kinds of refusal it names.
+// scripts/state/events.js holds the same two (ACTIVITY_COMMANDS, REFUSAL_KINDS) without this file importing the
+// state's writer; a test holds them equal.
 const COMMAND_CHARS = 200;
-const MOST_COMMANDS = 50;
+export const MOST_COMMANDS = 50;
+export const REFUSAL_KIND_NAMES = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
 
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -102,10 +105,12 @@ export function copilotSessionEnv(env, { home, platform = process.platform } = {
   return { ...Object.fromEntries(kept), COPILOT_HOME: home };
 }
 
-// Writes the session's own home before a start (ruling P7-7), and returns its path: config.json holding the sign-in
-// keys only, from the person's Copilot home (`signedInFrom`); Wheelhouse's hook registration in hooks/wheelhouse.json
-// (the only place Wheelhouse's hooks load without trust, check 56), the only hook file there; the kit's agents, the
-// only agents there; and nothing else but Copilot's own state. A source with no sign-in refuses the start.
+// Writes the session's own home before a start (ruling P7-7), and returns its path: Wheelhouse's hook registration in
+// hooks/wheelhouse.json (the only place Wheelhouse's hooks load without trust, check 56), the only hook file there;
+// the kit's agents, the only agents there; config.json holding the sign-in keys only, from the person's Copilot home
+// (`signedInFrom`); and nothing else but Copilot's own state. config.json is written last, so a home is never signed
+// in without its guards: a write that fails part way leaves a home no session can sign in from. A source with no
+// sign-in refuses the start before anything in the home is touched.
 export function writeSessionHome({ project, target, signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform }) {
   const home = sessionHome(project, target);
   let source;
@@ -128,18 +133,19 @@ export function writeSessionHome({ project, target, signedInFrom = copilotHome()
     if (!own) fs.rmSync(path.join(home, name), { recursive: true, force: true });
   }
 
+  writeRegistration({ home, node, root, platform });
+  const agents = path.join(home, 'agents');
+  fs.mkdirSync(agents);
+  for (const name of fs.readdirSync(KIT_AGENTS).filter((n) => n.endsWith('.agent.md'))) fs.copyFileSync(path.join(KIT_AGENTS, name), path.join(agents, name));
+
   const config = path.join(home, 'config.json');
-  const temp = `${config}.${process.pid}.tmp`;
+  const temp = `${config}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
     fs.writeFileSync(temp, `${JSON.stringify(signIn, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(temp, config);
   } finally {
     fs.rmSync(temp, { force: true });
   }
-  writeRegistration({ home, node, root, platform });
-  const agents = path.join(home, 'agents');
-  fs.mkdirSync(agents);
-  for (const name of fs.readdirSync(KIT_AGENTS).filter((n) => n.endsWith('.agent.md'))) fs.copyFileSync(path.join(KIT_AGENTS, name), path.join(agents, name));
   return home;
 }
 
@@ -178,10 +184,17 @@ function rulesOf(list, what) {
 // tool no rule allows is refused at once, check 61). `copilot` is the program as resolveCommand finds it. Through a
 // .cmd shim the whole line, the prompt included, goes through quoteForCmd: Copilot was never shown to read -p's
 // prompt on stdin, so every prompt is Wheelhouse's own short text naming a file, and one quoteForCmd refuses fails
-// the start in plain words (ruling P7-5).
+// the start in plain words (ruling P7-5). The home must already hold Wheelhouse's hook file (writeSessionHome), or
+// the call refuses.
 function sessionCall({ project, target, role, config, prompt, rules = {}, resume = null, runId = crypto.randomUUID(), env = process.env, platform = process.platform, copilot = null }) {
   if (typeof prompt !== 'string' || prompt === '') throw new Error('A session needs a prompt');
+  // A prompt is never read as a flag.
+  if (prompt.startsWith('-')) throw new Error("A session's prompt can't start with a dash");
   const home = sessionHome(project, target);
+  // No session starts from a home without Wheelhouse's guards (writeSessionHome writes them first).
+  if (!fs.lstatSync(hookFile({ home }), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error("This session's Copilot home has no Wheelhouse hook file, so its guards wouldn't run: no session is started");
+  }
   const model = modelOf(config, role);
   const run = plainId(runId, 'run id');
   const activity = path.dirname(activityFile(project, run));
