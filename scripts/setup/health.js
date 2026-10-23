@@ -757,8 +757,9 @@ async function startForeman(project, { client, spawn }) {
 // hook doesn't give the same one again at once: { briefing, card }. It mentions the survey once,
 // marked as mentioned only when the text showed it (plan ruling P8). Work in flight is asked about
 // on the carry-on card at Autonomy Cautious and Balanced, so its line is left out of the briefing,
-// and at Trusting its line says Wheelhouse is carrying it on (ruling A9). A card that couldn't be
-// recorded leaves the line in, as A2 has it.
+// and at Trusting its line says Wheelhouse is carrying it on (ruling A9); the card says that line,
+// so a survey with no other is marked as mentioned all the same. A card that couldn't be recorded
+// leaves the line in, as A2 has it.
 async function firstBriefing(project, { client, now, load, survey }) {
   const at = now();
   const record = readProject(project);

@@ -925,6 +925,8 @@ test('at Cautious and Balanced, setup ends with the carry-on card, recorded as a
       assert.deepEqual(writes[1].data, { cards: [done.card.id] });
       assert.equal(done.card.id, 'e1');
       assert.doesNotMatch(done.briefing, /under way/);
+      // The card said the survey's one line, so the survey counts as mentioned.
+      assert.equal(readSurveyAt(SLUG), 'survey-1');
     });
   }
 });

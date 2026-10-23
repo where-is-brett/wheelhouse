@@ -21,8 +21,10 @@
 //
 // What the survey found when setup finished (design section 15) is mentioned once: `found` holds its
 // lines when the latest survey is not the one `surveyAt` names, and `foundId` is that survey's id,
-// which the caller records (surveyAt in seen.json) only when the text showed every line. A survey
-// with nothing to say, or none, leaves both empty. At Autonomy Trusting (`carrying`), its line about
+// which the caller records (surveyAt in seen.json) only when the text showed every line. Lines the
+// caller says itself (`leaveOut`, the carry-on card's) count as said, so a survey whose every line
+// is left out still has its id, with no lines. A survey with nothing to say, or none, leaves both
+// empty. At Autonomy Trusting (`carrying`), its line about
 // work in flight says Wheelhouse is carrying it on (ruling A9).
 import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../board/model.js';
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
@@ -238,12 +240,14 @@ export function briefingModel(options) {
   }
 }
 
-// The survey's lines, and its id, when it is one not mentioned yet and has something to say.
+// The survey's lines, and its id, when it is one not mentioned yet and has something to say, said
+// here or by the caller (the lines left out).
 function foundLines(survey, surveyAt, host, leaveOut, carrying) {
   const none = { found: [], id: null };
   if (!isRecord(survey) || !isRecord(survey.data) || typeof survey.id !== 'string' || survey.id === surveyAt) return none;
-  const found = lines(briefingLines(survey.data, { host, leave: list(leaveOut), carrying: carrying === true }));
-  return found.length > 0 ? { found, id: survey.id } : none;
+  const said = (leave) => lines(briefingLines(survey.data, { host, leave, carrying: carrying === true }));
+  if (said([]).length === 0) return none;
+  return { found: said(list(leaveOut)), id: survey.id };
 }
 
 function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false }) {

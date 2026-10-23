@@ -423,6 +423,15 @@ test('the survey is in the briefing until a briefing has shown it, and its id sa
   assert.deepEqual(brief({ survey: SURVEY(REQUESTS), host: 'github', leaveOut: ['inFlight'] }).found, []);
 });
 
+test('a survey whose every line the caller says itself still has its id, so it is marked as mentioned', () => {
+  const brief = (extra) => briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, ...extra });
+  const covered = brief({ survey: SURVEY(REQUESTS), host: 'github', leaveOut: ['inFlight'] });
+  assert.deepEqual([covered.found, covered.foundId], [[], 's-1']);
+  // One already mentioned, or with nothing to say, has none.
+  assert.equal(brief({ survey: SURVEY(REQUESTS), host: 'github', leaveOut: ['inFlight'], surveyAt: 's-1' }).foundId, null);
+  assert.equal(brief({ survey: SURVEY(), host: 'github', leaveOut: ['inFlight'] }).foundId, null);
+});
+
 test('a project with nothing in flight and no other instructions has nothing found, and no survey is as good', () => {
   const brief = (survey) => briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, survey, host: 'github' });
   for (const survey of [SURVEY(), SURVEY({ scheduled: 2, secrets: 1, rules: [{ words: 'Be kind', source: { file: 'CLAUDE.md', line: 3 } }] }), null, undefined, 'junk', { id: 's', data: null }]) {

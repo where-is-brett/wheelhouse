@@ -935,6 +935,11 @@ test('a briefing cut short leaves the survey due', async () => {
     });
     assert.equal(whole.surveyShown, 'survey-1');
     assert.match(whole.text, /Found here:\n- One line\./);
+    // A survey whose every line was said elsewhere (the carry-on card) is shown, even when the rest is cut.
+    assert.equal(briefingIn({
+      project: P, model: {}, usage: null, sources: null, settings: { briefing: { value: 'short' } }, at: new Date(NOW), room: CONTEXT_CHARS,
+      briefingModel: () => ({ ...EMPTY, found: [], foundId: 'survey-1', waiting: ['A question'] }),
+    }).surveyShown, 'survey-1');
   });
 });
 

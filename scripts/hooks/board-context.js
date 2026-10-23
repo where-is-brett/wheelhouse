@@ -262,8 +262,8 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 // `settings` are the settings in force, `weeklySince` the last briefing that showed the weekly
 // lines and `review` the delegation review's { due, days } (reviewOf). `survey`, `surveyAt`, `host`,
 // `leaveOut` and `carrying` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
-// is the id of the survey whose lines the text showed whole (none when it was cut). Throws when it
-// can't be built.
+// is the id of the survey whose lines the text showed whole (none when it was cut), or whose every
+// line the caller said itself. Throws when it can't be built.
 export function briefingIn({
   project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying,
 }) {
@@ -294,7 +294,8 @@ export function briefingIn({
   const raise = Array.isArray(briefing?.raise) ? briefing.raise.slice(0, Math.max(0, parts.shownWatch - weekly)) : [];
   const weeklyShown = weekly > 0 && parts.shownWatch >= weekly;
   const found = Array.isArray(briefing?.found) ? briefing.found.length : 0;
-  const surveyShown = typeof briefing?.foundId === 'string' && found > 0 && parts.shownFound >= found && !fitted.cut ? briefing.foundId : null;
+  // A survey with no lines here had them all said elsewhere, so a cut can't have lost them.
+  const surveyShown = typeof briefing?.foundId === 'string' && (found === 0 || (parts.shownFound >= found && !fitted.cut)) ? briefing.foundId : null;
   return { text: fitted.text, raise: fitted.cut ? [] : raise, weeklyShown: weeklyShown && !fitted.cut, surveyShown };
 }
 

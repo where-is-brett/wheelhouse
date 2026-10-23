@@ -74,18 +74,22 @@ after(() => gitConfig?.restore());
 // The host with the director's repository on it, its open pull request's line pushed under both
 // its own name and the host's pull ref; and the director's computer, whose folder is their
 // checkout of it with two worktrees and two secret files. The stand-in `gh` on the PATH answers the
-// survey's two reads from what is on the host. { host, a, shims, request, worktrees }.
-async function underWay() {
+// survey's two reads from what is on the host. { host, a, shims, request, worktrees }. With
+// `instructions: false` the project has no other agent setup.
+async function underWay({ instructions = true } = {}) {
   const clock = makeClock();
   // The stand-in `gh` is made once the request's head is known; the host reads its log through this.
   let shims = null;
   const host = standInHost({ shims: { calls: () => shims?.calls() ?? [] } });
-  await host.seed(REPO, {
-    'README.md': '# cafe-menu\n\ncafe-menu shows a small cafe\'s menu and prices online.\n',
+  const other = {
     'AGENTS.md': 'Agents: the writer drafts each page and the checker reads it over.\n',
     '.claude/skills/helper-skill/SKILL.md': '---\nname: helper-skill\ndescription: Helps write menu pages.\n---\n\nWrite menu pages plainly.\n',
     '.claude/agents/writer.md': '---\nname: writer\ndescription: Drafts pages.\n---\n\nDraft the page asked for.\n',
     '.claude/agents/checker.md': '---\nname: checker\ndescription: Reads pages over.\n---\n\nRead the page over.\n',
+  };
+  await host.seed(REPO, {
+    'README.md': '# cafe-menu\n\ncafe-menu shows a small cafe\'s menu and prices online.\n',
+    ...(instructions ? other : {}),
     '.github/workflows/nightly.yml': WORKFLOW('0 2 * * *'),
     '.github/workflows/weekly.yml': WORKFLOW('0 3 * * 1'),
   });
@@ -311,6 +315,33 @@ test('a project under way at Balanced: one survey, nothing changed, the carry-on
     assert.deepEqual((await untouched(world)).onHost, before.onHost);
     assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
     assert.deepEqual(a.refused, []);
+  } finally {
+    await a.cleanup();
+    shims.restore();
+  }
+});
+
+test('work in flight and no other setup: the carry-on card says it, and the next briefing doesn\'t say it again', { skip: SKIP }, async () => {
+  const world = await underWay({ instructions: false });
+  const { a, shims } = world;
+  try {
+    await a.start();
+    await a.sessionStart();
+    const log = await follow(a, { answer: (id) => byId(id) });
+    const { health } = log.at(-1);
+    assert.equal(health.green, true, health.lines.join('\n'));
+    const surveys = await eventsOf(a, 'survey');
+    assert.equal(surveys.length, 1);
+    assert.deepEqual(surveys[0].data.instructions.files, []);
+    // The card asks about the work in flight, the survey's only line, so the briefing leaves it out
+    // and the survey counts as mentioned.
+    assert.match(health.card.question.question, /^Wheelhouse found work already under way in cafe-menu:/);
+    assert.doesNotMatch(health.briefing ?? '', /Already under way/);
+    assert.equal(await a.act(() => readSurveyAt(SLUG)), surveys[0].id);
+    a.clock.tick(3 * 60 * 60 * 1000);
+    const later = await briefingNow(a);
+    assert.ok(later.length > 0);
+    assert.doesNotMatch(later, /Already under way/, later);
   } finally {
     await a.cleanup();
     shims.restore();
