@@ -10,7 +10,8 @@ import { decide, HEADINGS, WAIT_MS, LEARN_WAIT_MS, briefingIn, cardsDue, cardsLi
 import { FOREMAN_PROMPT_LEAD } from '../../../scripts/foreman/start.js';
 import { roleFile } from '../../../scripts/lib/role.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { readSeen, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
+import { readSeen, readSurveyAt, readSurveyAgainAt, markSeen, readVisits } from '../../../scripts/briefing/seen.js';
+import { carryOnCard, LEAVE_FOR_NOW, CARRY_ON } from '../../../scripts/survey/words.js';
 import { wasRaised } from '../../../scripts/usage/figures.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { profileDir, profileViewsDir, sourcesDir, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -885,5 +886,156 @@ test('the briefing says when the delegation review is due, worked out from the s
     assert.deepEqual(given.at(-1), { due: false, days: 7 });
     await run(repo, 'Hello', '2026-10-20T12:00:00.000Z', { briefingModel: briefing });
     assert.deepEqual(given.at(-1), { due: true, days: 7 });
+  });
+});
+
+// The survey the first briefing mentions once (design section 15, plan Task 4).
+const surveyData = (parts = {}) => ({
+  v: 1, hostReached: true, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
+  instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [], ...parts,
+});
+const putSurvey = (data, id = 'survey-1') => put(path.join(wheelhouseHome(), 'projects', P, 'views', 'survey.json'), { id, at: '2026-10-19T09:00:00.000Z', data });
+const IN_FLIGHT = surveyData({ requests: [{ number: 3, title: 'Add a map', draft: false }] });
+const FOUND = /Found here:\n- Already under way here: 1 change waiting to be \w+ on GitHub\./;
+const LATER = '2026-10-19T15:00:00.000Z';
+
+test('the survey is mentioned in the first briefing and not in the next', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(IN_FLIGHT);
+    assert.match(contextOf(await run(repo, 'Hello', NOW)), FOUND);
+    assert.equal(readSurveyAt(P), 'survey-1');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello again', LATER)), /Found here/);
+    // A survey taken later is a new one.
+    putSurvey(IN_FLIGHT, 'survey-2');
+    assert.match(contextOf(await run(repo, 'And again', '2026-10-19T19:00:00.000Z')), FOUND);
+    assert.equal(readSurveyAt(P), 'survey-2');
+  });
+});
+
+test('a project with nothing in flight and no other instructions hears nothing of the survey', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(surveyData({ scheduled: 1, secrets: 1, rules: [{ words: 'Be kind', source: { file: 'CLAUDE.md', line: 2 } }] }));
+    const text = contextOf(await run(repo, 'Hello', NOW));
+    assert.doesNotMatch(text, /Found here|under way|survey/i);
+    assert.equal(readSurveyAt(P), null);
+  });
+});
+
+test('a briefing cut short leaves the survey due', async () => {
+  await withProject(async () => {
+    const found = Array.from({ length: 3 }, (_, i) => `Found line ${i} ${'with plenty of words '.repeat(12)}`);
+    const brief = (room) => briefingIn({
+      project: P, model: {}, usage: null, sources: null, settings: { briefing: { value: 'short' } }, at: new Date(NOW), room,
+      briefingModel: () => ({ ...EMPTY, found, foundId: 'survey-1', waiting: ['A question'] }),
+    });
+    assert.equal(brief(CONTEXT_CHARS).surveyShown, null);
+    const whole = briefingIn({
+      project: P, model: {}, usage: null, sources: null, settings: {}, at: new Date(NOW), room: CONTEXT_CHARS,
+      briefingModel: () => ({ ...EMPTY, found: ['One line.'], foundId: 'survey-1' }),
+    });
+    assert.equal(whole.surveyShown, 'survey-1');
+    assert.match(whole.text, /Found here:\n- One line\./);
+    // A survey whose every line was said elsewhere (the carry-on card) is shown, even when the rest is cut.
+    assert.equal(briefingIn({
+      project: P, model: {}, usage: null, sources: null, settings: { briefing: { value: 'short' } }, at: new Date(NOW), room: CONTEXT_CHARS,
+      briefingModel: () => ({ ...EMPTY, found: [], foundId: 'survey-1', waiting: ['A question'] }),
+    }).surveyShown, 'survey-1');
+  });
+});
+
+test('a survey that missed the host is taken again once, before the briefing is built', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(surveyData({ hostReached: false }));
+    const calls = [];
+    const looked = {
+      ...client,
+      survey: { again: async (body) => { calls.push(body); return { ok: true, taken: true, id: 'survey-2', hostReached: true }; } },
+      state: { views: async () => ({ ok: true, views: { survey: { id: 'survey-2', at: NOW, data: IN_FLIGHT } } }) },
+    };
+    assert.match(contextOf(await run(repo, 'Hello', NOW, { client: looked })), FOUND);
+    assert.deepEqual(calls, [{ project: P }]);
+    assert.equal(readSurveyAt(P), 'survey-2');
+  });
+});
+
+// A survey that missed the host, recorded and mentioned (its in-flight line said on the carry-on
+// card, or at Trusting by the briefing), then taken again and finding a request as well.
+async function againAfterMentioned(repo, { trusting = false } = {}) {
+  const local = [{ name: 'menu', head: 'a'.repeat(40), commits: 1, subject: 'Start the menu', at: '' }];
+  const missed = makeEvent({ kind: 'survey', data: surveyData({ hostReached: false, local }), now: () => new Date(NOW) });
+  store(stateDir(P), [missed]);
+  putSurvey(missed.data, missed.id);
+  markSeen(P, { surveyAt: missed.id, briefedAt: NOW });
+  if (trusting) setProfile({ autonomy: 'trusting' });
+  else carryOnAnswered(CARRY_ON, '2026-10-19T12:05:00.000Z');
+  const fresh = { ...surveyData({ requests: [{ number: 3, title: 'Add a map', draft: false }], local }), again: true };
+  const looked = {
+    ...client,
+    survey: { again: async () => ({ ok: true, taken: true, id: 'survey-2', hostReached: true }) },
+    state: { views: async () => ({ ok: true, views: { survey: { id: 'survey-2', at: LATER, data: fresh } } }) },
+  };
+  return contextOf(await run(repo, 'Hello', '2026-10-19T15:00:00.000Z', { client: looked }));
+}
+
+test('a survey taken again names only what is new since the one the card asked about', async () => {
+  await withProject(async ({ repo }) => {
+    const text = await againAfterMentioned(repo);
+    assert.match(text, /Found here:\n- Already under way here: 1 change waiting to be \w+ on GitHub\. Say if you'd like me to carry it on\./);
+    assert.doesNotMatch(text, /unfinished work/);
+    assert.equal(readSurveyAt(P), 'survey-2');
+  });
+});
+
+test('at Trusting, a survey taken again says it is carrying on what is new', async () => {
+  await withProject(async ({ repo }) => {
+    const text = await againAfterMentioned(repo, { trusting: true });
+    assert.match(text, /Found here:\n- Already under way here: 1 change waiting to be \w+ on GitHub\. I'm carrying it on; say stop if you'd rather I didn't\./);
+    assert.doesNotMatch(text, /unfinished work/);
+  });
+});
+
+test('a survey the host could not be reached for says so when it still cannot be, and under STOP no new one is taken', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(surveyData({ hostReached: false }));
+    const refused = { ...client, survey: { again: async () => ({ ok: false, refused: 'STOP is on' }) } };
+    assert.match(contextOf(await run(repo, 'Hello', NOW, { client: refused })), /Found here:\n- I couldn't look at GitHub for changes waiting to be .*; I'll look again next time\./);
+    // One already taken again is not asked for again.
+    putSurvey({ ...surveyData({ hostReached: false }), again: true }, 'survey-3');
+    const never = { ...client, survey: { again: async () => { throw new Error('asked'); } } };
+    assert.match(contextOf(await run(repo, 'Hello', LATER, { client: never })), /I couldn't look at GitHub/);
+  });
+});
+
+// Setup's carry-on card (ruling A9), recorded as the front desk records a card, and the director's
+// click on it, a plain card-answer quoting the question as the prompt record writes it.
+function carryOnAnswered(label, answeredAt) {
+  const { card } = composeCard(carryOnCard(IN_FLIGHT, { project: 'name', host: 'github' }));
+  store(stateDir(P), [
+    makeEvent({ kind: 'card', data: card, now: () => new Date(NOW) }),
+    makeEvent({ kind: 'card-answer', data: { question: card.question, label }, now: () => new Date(answeredAt) }),
+  ]);
+}
+
+test('after Leave it for now, the work in flight is offered once more, a week after the click, and then never again', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(IN_FLIGHT);
+    // The first briefing left out the line about work in flight, the card asking in its place.
+    markSeen(P, { surveyAt: 'survey-1', briefedAt: NOW });
+    carryOnAnswered(LEAVE_FOR_NOW, '2026-10-19T12:05:00.000Z');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-10-25T12:00:00.000Z')) ?? '', /under way/);
+    assert.equal(readSurveyAgainAt(P), null);
+    assert.match(contextOf(await run(repo, 'Hello', '2026-10-26T13:00:00.000Z')), FOUND);
+    assert.equal(readSurveyAgainAt(P), '2026-10-26T13:00:00.000Z');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-11-03T13:00:00.000Z')) ?? '', /under way/);
+  });
+});
+
+test('after Carry on with it, the work in flight is not offered again', async () => {
+  await withProject(async ({ repo }) => {
+    putSurvey(IN_FLIGHT);
+    markSeen(P, { surveyAt: 'survey-1', briefedAt: NOW });
+    carryOnAnswered(CARRY_ON, '2026-10-19T12:05:00.000Z');
+    assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-10-27T13:00:00.000Z')) ?? '', /under way/);
+    assert.equal(readSurveyAgainAt(P), null);
   });
 });

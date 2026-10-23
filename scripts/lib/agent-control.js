@@ -15,6 +15,17 @@ export const AGENT_CONTROL = Object.freeze([
   '.vscode/**', '.codex/**', '.cursor/**', '.gemini/**', '.gitattributes',
 ]);
 
+// Where another agent setup keeps its instructions in a project, from its folder, for the survey
+// (scripts/survey/look.js, design section 15, ruling A1): a list to look in, not a shape the
+// project must have. `/**` is every file under that folder. Wheelhouse's own skills and agents come
+// from its plugin, never from the project's .claude/ folder.
+export const OTHER_SETUP_PATHS = Object.freeze([
+  '.claude/skills/**', '.claude/agents/**', 'AGENTS.md', '.cursor/rules/**', '.cursorrules',
+  '.github/copilot-instructions.md', '.windsurfrules',
+]);
+// The files of another setup the briefing names first, by the name a director is likeliest to know.
+export const OTHER_SETUP_NAMED_FIRST = Object.freeze(['AGENTS.md', '.cursorrules', '.windsurfrules', '.github/copilot-instructions.md']);
+
 // What the tool guard says when it refuses a write to one of them.
 export const CONTROL_FILE = 'That file steers an agent, so changing it is a guardrail change: ask the director';
 

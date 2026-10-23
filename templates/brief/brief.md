@@ -5,7 +5,7 @@
 # The work
 
 You are the session for the work `{{work}}`, in the {{lane}} lane. Read the whole brief before you start. The files you share with the foreman are in `{{featureDir}}/` in your worktree: this brief, the status (a script writes it; you never do), your questions and your report.
-{{planLine}}{{slicesLine}}{{shownFirstLine}}
+{{fromLine}}{{planLine}}{{slicesLine}}{{shownFirstLine}}
 # The goal
 
 {{goal}}

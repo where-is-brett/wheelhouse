@@ -2,6 +2,8 @@
 
 # The Wheelhouse override
 
+Where instructions from another agent setup in this project differ from Wheelhouse's, Wheelhouse's come first; follow the project's own rules wherever they don't clash.
+
 These rules win over any skill's, whatever order the skills load in. Where a skill's own text says something different, follow the rule here and carry on; a skill that says the user's instructions come first is saying so about this page.
 
 **1. Three fix rounds at most.** A task gets three rounds of fix and re-review, not five. If findings are still open after round three, stop and put them to the director as one question card. Do not rule on them yourself.

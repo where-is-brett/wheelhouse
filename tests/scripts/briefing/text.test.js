@@ -9,7 +9,7 @@ import { verdict } from '../../../scripts/lib/calm-words.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const wordCount = (text) => text.split(/\s+/).filter(Boolean).length;
-const empty = { first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 };
+const empty = { first: [], found: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 };
 
 test('the briefing opens with the verdict, then Since 09:10, about 5 hours', () => {
   const text = briefingText({
@@ -191,7 +191,7 @@ test('it says how many things to watch it showed, so only unusual use really sho
     assert.ok(briefing.raise.slice(0, shownWatch).length <= 2);
   }
   assert.equal(briefingParts(briefing, { words: 20 }).shownWatch < 2, true);
-  assert.deepEqual(briefingParts('x'), { text: briefingText(empty), shownWatch: 0 });
+  assert.deepEqual(briefingParts('x'), { text: briefingText(empty), shownWatch: 0, shownFound: 0 });
   assert.equal(briefingText(briefing, null), briefingText(briefing));
 });
 
@@ -224,7 +224,7 @@ test('no input passes the word limit, however long its usage line or one entry',
 test('with no state, usage or sources it still says nothing needs you', () => {
   const model = boardModel({ now: () => NOW });
   const briefing = briefingModel({ model, usage: null, sources: null, since: null, now: NOW, wasRaised: () => false });
-  assert.deepEqual(briefing, { ...empty, verdict: 'Nothing needs you. Nothing is broken.', since: '', onTrack: false, plus: { waiting: 0, changed: 0 } });
+  assert.deepEqual(briefing, { ...empty, foundId: null, verdict: 'Nothing needs you. Nothing is broken.', since: '', onTrack: false, plus: { waiting: 0, changed: 0 } });
   const text = briefingText(briefing, { words: BRIEFING_WORDS.short });
   assert.equal(text.split('\n\n')[0], 'Nothing needs you. Nothing is broken.');
   for (const odd of [undefined, null, 'x', { waiting: 'x', usage: 7 }]) assert.equal(briefingText(odd).split('\n\n')[0], 'Nothing needs you. Nothing is broken.');
@@ -284,4 +284,21 @@ test('at the standard length, a three-card state with three watch lines shows ev
   const waitingBlock = tight.split('\n\n').find((block) => block.startsWith('Waiting on you'));
   assert.ok(waitingBlock, tight);
   assert.doesNotMatch(waitingBlock, /changes what users see/);
+});
+
+test('what the survey found follows the unconfirmed changes, and is shown only when every line is', () => {
+  const lines = ['Already under way here: 2 changes waiting to be merged on GitHub. Say if you\'d like me to carry any of them on.', 'Second found line.'];
+  const given = briefingParts({ ...empty, first: ['A ruling: Never email on Sundays'], found: lines, waiting: ['A question'] });
+  assert.match(given.text, /^Not in effect until you confirm:\n- A ruling: Never email on Sundays\n\nFound here:\n- Already under way here.*\n- Second found line\.\n\nWaiting on you:/m);
+  assert.equal(given.shownFound, 2);
+  // Without any, no label and nothing shown.
+  const none = briefingParts({ ...empty, waiting: ['A question'] });
+  assert.doesNotMatch(none.text, /Found here/);
+  assert.equal(none.shownFound, 0);
+  // Cut short, it is not all shown.
+  const cut = briefingParts({ ...empty, found: lines }, { words: 22 });
+  assert.ok(cut.shownFound < 2);
+  assert.ok(wordCount(cut.text) <= 22);
+  const gone = briefingParts({ ...empty, found: lines }, { words: 1 });
+  assert.equal(gone.shownFound, 0);
 });

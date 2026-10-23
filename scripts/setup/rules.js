@@ -1,34 +1,25 @@
 // scripts/setup/rules.js
-// Step 5, Rules found (design sections 9 and 15): the rules an existing project already follows,
-// found in its CLAUDE.md, its README and its docs, each quoted with where it was found, matched
-// back to the director's own words where their past sessions in this folder hold them, and shown
-// on one card with Confirm all and Let me correct some (ruling R35).
+// Step 5, Rules found (design sections 9 and 15; plan ruling P7): the rules an existing project
+// already follows, found in its CLAUDE.md, its README, its docs and the instruction files of another
+// agent setup (AGENTS.md and the like), each quoted with where it was found and
+// matched back to the director's own words where their past sessions in this folder hold them.
 //
-// The card is a `confirm-all` ask: its line names how many rules it lists and the hash of that
-// list, and the asked record keeps the list. Confirm all is recorded by the prompt record, which
-// signs: one ruling per rule, each with its own confirmation, and the signed confirm-all action
-// (scripts/lib/setup-writes.js). Let me correct some asks about each rule on the card in turn:
-// Keep as found or typed words record that one ruling and its confirmation the same way; Leave it
-// out records nothing. Once every rule is answered the step settles (ruling R32), with no Go ahead.
-// A project with no rules found settles at once. Rules too many for one card's length go on as
-// few cards as hold them, each with its own Confirm all.
+// The step asks nothing. The rules are followed as they are: it settles at once, recording how many
+// it found and saying so, and finishSetup passes the rules themselves into the survey
+// (scripts/setup/health.js), where the intake confirms one as a ruling when it first matters.
 //
 // Every quote, from the project's files or from a transcript, goes through the secret scan before
 // it is kept: a rule holding one is left out, and a transcript's words holding one are not used.
 // The transcripts are read here, by the helper, outside the agents' sandbox, and never more than
-// TRANSCRIPT_BYTES of them, since the plan is worked out each time setup resumes.
+// TRANSCRIPT_BYTES of them.
 import fs from 'node:fs';
 import path from 'node:path';
-import { SETUP_TITLES, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL } from '../state/card-lines.js';
+import { SETUP_TITLES } from '../state/card-lines.js';
 import { scanContent } from '../state/secret-scan.js';
-import { composeCard } from '../cards/compose.js';
-import { listHash, isRule } from '../lib/setup-writes.js';
 import { hide } from '../lib/clean.js';
+import { instructionsOf } from '../survey/look.js';
 import { readJournal } from './journal.js';
-import { askedIn } from './clicks.js';
-import {
-  connectedProject, waitForProject, readmeOf, readStart, isFile, MEANWHILE,
-} from './questions.js';
+import { connectedProject, waitForProject, readmeOf, readStart, isFile } from './questions.js';
 
 // What is read: each file up to FILE_BYTES, at most DOC_FILES files under docs/, and of the
 // transcripts at most TRANSCRIPT_BYTES in all, each file's first TRANSCRIPT_FILE_BYTES.
@@ -42,9 +33,6 @@ export const PROBE_BYTES = 16 * 1024;
 export const PROBE_FILES = 2000;
 // A rule is a sentence of at most RULE_CHARS characters and at least three words.
 export const RULE_CHARS = 300;
-
-// The answers to a question about one rule (Let me correct some).
-export const RULE_LABELS = Object.freeze({ keep: 'Keep as found', leave: 'Leave it out' });
 
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
 const keyOf = (p) => {
@@ -95,11 +83,23 @@ function docsOf(folder) {
   return out;
 }
 
-// The files rules are looked for in, in order: CLAUDE.md, the README, then docs/.
+// The instruction files of another agent setup that read as text: Markdown, Cursor's .mdc, and the
+// plain .cursorrules and .windsurfrules.
+const TEXT_INSTRUCTIONS = /(?:\.(?:md|markdown|mdc)|(?:^|\/)\.(?:cursorrules|windsurfrules))$/i;
+
+// The files rules are looked for in, in order: CLAUDE.md, the README, docs/, then another agent
+// setup's instruction files. `own` marks the files that are all instruction, not prose with some.
 function ruleFiles(folder) {
   const claude = ['CLAUDE.md', path.join('.claude', 'CLAUDE.md')].map((f) => path.join(folder, f)).filter(isFile);
   const readme = readmeOf(folder);
-  return [...claude, ...(readme ? [readme] : []), ...docsOf(folder)];
+  const others = instructionsOf(folder).files.filter((f) => TEXT_INSTRUCTIONS.test(f)).map((f) => path.join(folder, ...f.split('/')));
+  const seen = new Set();
+  return [
+    ...claude.map((file) => ({ file, own: true })),
+    ...(readme ? [{ file: readme, own: false }] : []),
+    ...docsOf(folder).map((file) => ({ file, own: false })),
+    ...others.map((file) => ({ file, own: true })),
+  ].filter(({ file }) => !seen.has(file) && seen.add(file));
 }
 
 // A line of Markdown as plain words: no list marker, quote mark or emphasis. Null for a line that
@@ -128,18 +128,18 @@ function ruleLike(sentence) {
 }
 
 // findRules(folder) -> [{ words, source: { file, line } }]: every rule-like sentence in the
-// project's CLAUDE.md, README and docs/, outside code blocks, and in the README and docs outside
-// sections of steps (installing, setting up, running), with its file (from the folder, with forward
+// project's CLAUDE.md, README, docs/ and another agent setup's instruction files, outside code
+// blocks, and in the README and docs outside sections of steps (installing, setting up, running),
+// with its file (from the folder, with forward
 // slashes) and line. A sentence holding what looks like a secret is left out, any sign-in in an
 // address is hidden, as a card shows it, and a rule found twice in the same words is listed once,
 // where it was found first.
 export function findRules(folder) {
   const out = [];
   const seen = new Set();
-  for (const file of ruleFiles(folder)) {
+  for (const { file, own } of ruleFiles(folder)) {
     const text = readStart(file, FILE_BYTES);
     if (text === null) continue;
-    const claude = path.basename(file) === 'CLAUDE.md';
     let fence = null;
     let front = false;
     let steps = false;
@@ -156,7 +156,7 @@ export function findRules(folder) {
         return;
       }
       if (fence !== null) return;
-      if (/^#{1,6}\s/.test(trimmed)) steps = !claude && STEPS_HEADING.test(trimmed);
+      if (/^#{1,6}\s/.test(trimmed)) steps = !own && STEPS_HEADING.test(trimmed);
       if (steps) return;
       const line = prose(raw);
       if (line === null) return;
@@ -325,124 +325,18 @@ export function rulesOf(folder, { userHome, env, before } = {}) {
   return out;
 }
 
-const said = (rule) => `"${rule.words}" (${rule.source.file} line ${rule.source.line}, ${rule.original ? 'your words' : 'paraphrase'})`;
-
-// The input of the card of the rules found for one group of rules, without its kind's target,
-// which the engine gives (ruling R35). `more` says more cards follow.
-export function rulesCard(name, rules, { more = false } = {}) {
-  const n = rules.length;
-  const listed = rules.map((r, i) => `${i + 1}) ${said(r)}`).join('; ');
-  return {
-    kind: 'confirm-all',
-    level: 3,
-    what: `Setup step 5 found ${n} ${n === 1 ? 'rule' : 'rules'} ${name} already follows: ${listed}.${more ? ' More follow on the next card.' : ''}`,
-    why: 'They are in force already; confirmed, they become your rulings. Paraphrase: not found in your own messages.',
-    options: [
-      { label: CONFIRM_ALL_LABEL, says: 'Each goes into the rulebook as shown.' },
-      { label: CORRECT_SOME_LABEL, says: 'Keep, reword or leave out each in turn.' },
-      { label: 'Not now', says: 'Nothing is recorded yet.' },
-    ],
-    recommend: CONFIRM_ALL_LABEL,
-    because: 'the project already follows them',
-    meanwhile: 'Setup waits; nothing is recorded yet.',
-  };
-}
-
-// Whether a card of these rules can be composed.
-function fits(name, rules, more) {
-  try {
-    composeCard({ ...rulesCard(name, rules, { more }), target: { count: rules.length, hash: listHash(rules) } });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// The rules in groups, each as many, in order, as one card holds. A rule that no card can carry
-// alone (its words read as a card's own line) is left out.
-export function cardsOf(name, rules) {
-  const groups = [];
-  let group = [];
-  for (const [i, rule] of rules.entries()) {
-    const last = i === rules.length - 1;
-    if (fits(name, [...group, rule], !last)) {
-      group.push(rule);
-      continue;
-    }
-    if (group.length > 0) groups.push(group);
-    group = fits(name, [rule], !last) ? [rule] : [];
-  }
-  if (group.length > 0) groups.push(group);
-  return groups;
-}
-
-// The question about one rule, when the director chose to correct some.
-function ruleAsk(id, name, rule) {
-  return {
-    id,
-    typed: true,
-    card: {
-      level: 3,
-      what: `Setup step 5: keep this rule ${name} follows as found, type its words as they should be, or leave it out. Found in ${rule.source.file} line ${rule.source.line}, ${rule.original ? 'in your words' : 'paraphrase'}: "${rule.words}"`,
-      why: 'A rule you keep or correct goes into the rulebook as your ruling, confirmed, in the words you choose.',
-      options: [
-        { label: RULE_LABELS.keep, says: 'It goes into the rulebook, confirmed, in the words shown.' },
-        { label: RULE_LABELS.leave, says: 'It is not recorded as a rule.' },
-      ],
-      recommend: RULE_LABELS.keep,
-      because: 'the project already follows it',
-      meanwhile: MEANWHILE,
-    },
-    writes: {
-      labels: { [RULE_LABELS.keep]: [{ kind: 'ruling', data: rule }] },
-      typed: [{ kind: 'ruling', data: { source: rule.source, original: true }, typedInto: 'words' }],
-    },
-  };
-}
-
-// A rule's question id, and a group's card's: each carries its words' hash, so changed words are
-// asked about again (ruling R51).
-const groupId = (group) => `rules-${listHash(group).slice(0, 10)}`;
-const ruleId = (rule) => `rule-${listHash([rule]).slice(0, 10)}`;
-
 export function rulesStep({ env = process.env } = {}) {
   return {
     n: 5,
     title: SETUP_TITLES[5],
     async plan(ctx) {
-      const project = connectedProject(ctx.folder);
-      if (project === null) return waitForProject(5);
-      const answers = ctx.answers ?? {};
-      // The rules are found once a run (ruling R62): once a card of them has been asked, the list
-      // kept with it is the list, whatever the files and transcripts say since, so nothing confirmed
-      // is asked again. The run's own sessions, after it began, are not the director's past words.
-      const kept = askedIn(ctx.runId, 5).map((r) => r.found).find((f) => Array.isArray(f) && f.length > 0 && f.every(isRule));
+      if (connectedProject(ctx.folder) === null) return waitForProject(5);
+      // The run's own sessions, after it began, are not the director's past words.
       const startedAt = readJournal().runs.find((r) => r?.id === ctx.runId)?.startedAt;
       const before = typeof startedAt === 'string' ? startedAt : (ctx.now?.() ?? new Date()).toISOString();
-      const rules = kept ?? rulesOf(ctx.folder, { userHome: ctx.userHome, env, before });
-      const groups = rules.length === 0 ? [] : cardsOf(project.name, rules);
-      // Only the rules a card can show are counted: one no card can carry is never asked about.
-      const tally = { rules: groups.flat().length, confirmed: 0, kept: 0, corrected: 0, left: 0 };
-      for (const group of groups) {
-        const id = groupId(group);
-        const got = answers[`5.${id}`];
-        if (!got) {
-          const more = group !== groups.at(-1);
-          return { ask: { id, card: rulesCard(project.name, group, { more }), rules: group, found: rules } };
-        }
-        if (got.label === CONFIRM_ALL_LABEL) {
-          tally.confirmed += group.length;
-          continue;
-        }
-        for (const rule of group) {
-          const one = answers[`5.${ruleId(rule)}`];
-          if (!one) return { ask: { ...ruleAsk(ruleId(rule), project.name, rule), found: rules } };
-          if (typeof one.text === 'string') tally.corrected += 1;
-          else if (one.label === RULE_LABELS.keep) tally.kept += 1;
-          else tally.left += 1;
-        }
-      }
-      return { settled: { record: tally } };
+      const n = rulesOf(ctx.folder, { userHome: ctx.userHome, env, before }).length;
+      ctx.say?.(n === 0 ? 'No rules found to follow.' : `Found ${n} rules in the project; they're followed as they are.`);
+      return { settled: { record: { rules: n } } };
     },
     async apply() {
       return [];

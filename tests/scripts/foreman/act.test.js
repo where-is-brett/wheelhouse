@@ -25,6 +25,7 @@ import { words } from '../../../scripts/hooks/shell-words.js';
 import { computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { selfTestFile } from '../../../scripts/windows/low.js';
 import { setStop } from '../../../scripts/lib/stop.js';
+import { writeReadyRecord } from '../../../scripts/survey/ready-record.js';
 import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
@@ -238,6 +239,171 @@ test('start makes its branch and worktree afresh, refusing ones no recorded feat
     assert.equal(call.opts.env.GIT_ALLOW_PROTOCOL, 'https');
     assert.equal(call.opts.env.GIT_TERMINAL_PROMPT, '0');
   }
+}));
+
+// A commit off the default branch, kept only by refs/wheelhouse/from/<work>, as carrying a change on fetches it.
+// With `ready`, the helper's ready record of it too, as its carry-on route writes one.
+async function readyMade(checkout, work, name, { ready = null } = {}) {
+  await g(checkout, 'checkout', '-q', '-b', 'their-line');
+  fs.writeFileSync(path.join(checkout, name), 'Their change.\n');
+  await g(checkout, 'add', name);
+  await g(checkout, 'commit', '-q', '-m', `Add ${name}`);
+  const sha = await g(checkout, 'rev-parse', 'HEAD');
+  await g(checkout, 'checkout', '-q', 'main');
+  await g(checkout, 'branch', '-q', '-D', 'their-line');
+  const ref = `refs/wheelhouse/from/${work}`;
+  await g(checkout, 'update-ref', ref, sha);
+  if (ready !== null) writeReadyRecord(P, work, { sha, ref, request: ready.request ?? null, branch: ready.branch ?? null });
+  return { sha, ref };
+}
+
+function fromViews(from) {
+  const views = startViews();
+  views.work['add-export'].work.data.from = from;
+  return views;
+}
+
+test('start makes feature/<work> from the ready-made change the work recorded, checked through the fenced git', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const from = { ...(await readyMade(checkout, 'add-export', 'theirs.txt', { ready: { request: 7, branch: 'their-line' } })), request: 7 };
+  const gitCalls = [];
+  const run = (file, args, opts) => { gitCalls.push({ args, opts }); return runProgram(file, args, opts); };
+  const fake = fakeClient({ views: fromViews(from) });
+  const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+  assert.equal(r.code, 0, r.err);
+
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  assert.equal(branchOf(wt), 'feature/add-export');
+  assert.equal(await g(wt, 'rev-parse', 'HEAD'), from.sha);
+  assert.equal(fs.readFileSync(path.join(wt, 'theirs.txt'), 'utf8'), 'Their change.\n');
+  assert.deepEqual(parseBrief(fs.readFileSync(featurePaths(wt).brief, 'utf8')).fields.from, from);
+  // The ref was checked in the fence, and the worktree made from the commit itself, not the ref.
+  const verify = gitCalls.findIndex((c) => c.args.join(' ') === `rev-parse --verify --quiet ${from.ref}^{commit}`);
+  const add = gitCalls.findIndex((c) => c.args[0] === 'worktree');
+  assert.ok(verify >= 0 && verify < add, gitCalls.map((c) => c.args.join(' ')).join('\n'));
+  assert.equal(gitCalls[verify].opts.env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.deepEqual(gitCalls[add].args.slice(-2), [wt, from.sha]);
+  // Nothing pushed or fetched anywhere.
+  assert.ok(gitCalls.every((c) => !['push', 'fetch'].includes(c.args[0])));
+  assert.deepEqual(fake.writes.map((w) => [w.kind, w.data.step]), [['feature', 'started']]);
+}));
+
+test('start refuses work whose ready-made change moved, or is gone, since it was recorded, and makes nothing', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const from = await readyMade(checkout, 'add-export', 'theirs.txt', { ready: {} });
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  const words = /^The change this work starts from isn't there as it was recorded: ask the director$/m;
+
+  // The request's head moved on, and the ref was fetched again.
+  const moved = await readyMade(checkout, 'add-export', 'later.txt');
+  assert.notEqual(moved.sha, from.sha);
+  const fake = fakeClient({ views: fromViews(from) });
+  const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(r);
+  assert.match(r.err, words);
+
+  // The ref is gone.
+  await g(checkout, 'update-ref', '-d', from.ref);
+  const gone = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(gone);
+  assert.match(gone.err, words);
+
+  // The ref names the commit's tree rather than the commit.
+  await g(checkout, 'update-ref', from.ref, await g(checkout, 'rev-parse', `${from.sha}^{tree}`));
+  const tree = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(tree);
+  assert.match(tree.err, words);
+
+  assert.equal(fs.existsSync(wt), false);
+  await assert.rejects(g(checkout, 'rev-parse', '--verify', '--quiet', 'refs/heads/feature/add-export'));
+  assert.equal(fake.writes.length, 0);
+
+  // Back as it was recorded, it starts.
+  await g(checkout, 'update-ref', from.ref, from.sha);
+  const ok = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(await g(wt, 'rev-parse', 'HEAD'), from.sha);
+}));
+
+test('start refuses a ready-made change the helper didn\'t make ready, whatever the ref says', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  const words = /^The change this work starts from wasn't made ready by Wheelhouse: ask the director$/m;
+  // An agent made the ref itself and the work was recorded with it: no ready record.
+  const from = await readyMade(checkout, 'add-export', 'theirs.txt');
+  const fake = fakeClient({ views: fromViews(from) });
+  const none = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(none);
+  assert.match(none.err, words);
+
+  // The helper made another commit ready, or for another request.
+  for (const record of [
+    { sha: 'd'.repeat(40), ref: from.ref, request: null, branch: null },
+    { sha: from.sha, ref: from.ref, request: 8, branch: 'their-line' },
+  ]) {
+    writeReadyRecord(P, 'add-export', record);
+    const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+    refusedInOneLine(r);
+    assert.match(r.err, words, JSON.stringify(record));
+  }
+  // And a record for request 7 doesn't let work claiming none start.
+  writeReadyRecord(P, 'add-export', { sha: from.sha, ref: from.ref, request: 7, branch: 'their-line' });
+  const unclaimed = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(unclaimed);
+  assert.match(unclaimed.err, words);
+  assert.equal(fs.existsSync(wt), false);
+  assert.equal(fake.writes.length, 0);
+
+  const ready = fakeClient({ views: fromViews({ ...from, request: 7 }) });
+  assert.equal((await act(START, { client: ready.client, wakerFor: fakeWaker().wakerFor })).code, 0);
+}));
+
+test('start refuses ready-made work whose feature/<work> is the request\'s own line, or already on the host', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  const words = /^feature\/add-export is already on the host, so the work would push to someone's own line: ask the director$/m;
+  const from = { ...(await readyMade(checkout, 'add-export', 'theirs.txt', { ready: { request: 7, branch: 'feature/add-export' } })), request: 7 };
+  const fake = fakeClient({ views: fromViews(from) });
+  const own = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(own);
+  assert.match(own.err, words);
+
+  // The request's line has another name, but a feature/add-export is on the host, as last fetched.
+  writeReadyRecord(P, 'add-export', { sha: from.sha, ref: from.ref, request: 7, branch: 'their-line' });
+  await g(checkout, 'update-ref', 'refs/remotes/origin/feature/add-export', 'main');
+  const there = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(there);
+  assert.match(there.err, words);
+  assert.equal(fs.existsSync(wt), false);
+  assert.equal(fake.writes.length, 0);
+
+  await g(checkout, 'update-ref', '-d', 'refs/remotes/origin/feature/add-export');
+  assert.equal((await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor })).code, 0);
+}));
+
+test('ready-made work queued again starts only on a branch that still holds the change', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const from = await readyMade(checkout, 'add-export', 'theirs.txt', { ready: {} });
+  const fake = fakeClient({ views: fromViews(from) });
+  const waker = fakeWaker();
+  assert.equal((await act(START, { client: fake.client, wakerFor: waker.wakerFor })).code, 0);
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  fs.writeFileSync(featurePaths(wt).report, reportText('add-export', { status: 'partial' }, 'It is bigger than one step.'));
+  assert.equal((await act(['close', 'add-export'], { client: fake.client })).code, 0);
+  fake.views.work['add-export'].work.at = new Date(T0 + 3600 * 1000).toISOString();
+
+  // The session's branch lost the change (reset to the default branch, say).
+  await g(wt, 'reset', '-q', '--hard', 'main');
+  const n = fake.writes.length;
+  const lost = await act(START, { client: fake.client, wakerFor: waker.wakerFor });
+  refusedInOneLine(lost);
+  assert.match(lost.err, /^feature\/add-export doesn't hold the change this work starts from: ask the director$/m);
+  assert.equal(fake.writes.length, n);
+
+  await g(wt, 'reset', '-q', '--hard', from.sha);
+  const again = await act(START, { client: fake.client, wakerFor: waker.wakerFor });
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /queued again/);
 }));
 
 // A main checkout whose origin is a stand-in host at the address setup recorded, one commit behind

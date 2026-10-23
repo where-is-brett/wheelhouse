@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
-import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
@@ -424,6 +424,25 @@ test('a lineage-hold record says when a session start held the project, and whic
   });
 });
 
+test('work may start from a ready-made change: its full commit, its own ref and the request it carries on', async () => {
+  await withHome(() => {
+    const w = SHAPES.work;
+    const from = { sha: 'c'.repeat(40), ref: 'refs/wheelhouse/from/export-csv' };
+    assert.deepEqual(makeEvent({ kind: 'work', data: { ...w, from } }).data.from, from);
+    assert.deepEqual(makeEvent({ kind: 'work', data: { ...w, from: { ...from, request: 7 } } }).data.from, { ...from, request: 7 });
+    for (const bad of [
+      null, 'c'.repeat(40), { sha: 'c'.repeat(39), ref: from.ref }, { sha: 'C'.repeat(40), ref: from.ref }, { ref: from.ref }, { sha: from.sha },
+      { ...from, ref: 'refs/wheelhouse/from/another' }, { ...from, ref: 'refs/heads/export-csv' }, { ...from, ref: 'refs/wheelhouse/from/export-csv/x' },
+      { ...from, request: 0 }, { ...from, request: 1.5 }, { ...from, request: '7' }, { ...from, branch: 'x' },
+    ]) assert.throws(() => makeEvent({ kind: 'work', data: { ...w, from: bad } }), /work event has a from/, JSON.stringify(bad));
+    // Ready-made work is always shown to the director first, whatever its lane, so it waits for their approval.
+    for (const lane of ['quick', 'bug', 'small', 'feature']) {
+      assert.throws(() => makeEvent({ kind: 'work', data: { ...w, lane, visible: false, from } }), /ready-made change, so it must be shown to the director first/, lane);
+      assert.equal(makeEvent({ kind: 'work', data: { ...w, lane, visible: true, from } }).data.visible, true);
+    }
+  });
+});
+
 test('a work id that is not a short slug is refused', async () => {
   await withHome(() => {
     const ok = (id) => makeEvent({ kind: 'work', data: { ...SHAPES.work, id } });
@@ -674,4 +693,77 @@ test('a card answer labelled Why?, Suggest a change… or Show me is not an answ
       }
     }
   });
+});
+
+// A survey of what a project already holds (design section 15, ruling A1; plan rulings P1 and P3),
+// every part of it checked: what the survey gives, and nothing else.
+const SURVEY = {
+  v: 1,
+  hostReached: true,
+  requests: [{ number: 7, title: 'Add a request', draft: false }, { number: 9, title: '', draft: true }],
+  pushed: [{ name: 'prices', head: 'a'.repeat(40), commits: 2, subject: 'Prices', at: '2026-10-20T01:00:00+11:00' }],
+  local: [{ name: 'this folder', head: 'b'.repeat(64), commits: 1, subject: '', at: '' }],
+  more: { pushed: false, local: true },
+  instructions: { files: ['.cursorrules', 'AGENTS.md'], sections: [{ heading: 'Agents and delegation', line: 3 }] },
+  scheduled: 3,
+  secrets: 0,
+  rules: [{ words: 'Use British English.', source: { file: 'CLAUDE.md', line: 4 } }],
+};
+
+test('a survey record carries every part of the survey, each in its own shape', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('survey'), true);
+    assert.equal(PROTECTED_KINDS.includes('survey'), false);
+    // Only the helper itself records a survey: no caller writes one.
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey']);
+    assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
+    // Taken again (ruling P3), it says so.
+    assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
+    const empty = {
+      v: 1, hostReached: false, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
+      instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [],
+    };
+    assert.deepEqual(makeEvent({ kind: 'survey', data: empty }).data, empty);
+    const [request] = SURVEY.requests;
+    const [item] = SURVEY.pushed;
+    const [rule] = SURVEY.rules;
+    const long = 'x'.repeat(201);
+    for (const bad of [
+      null, { ...SURVEY, v: 2 }, { ...SURVEY, extra: 1 }, { ...SURVEY, again: false }, { ...SURVEY, hostReached: 'yes' },
+      ...['v', 'hostReached', 'requests', 'pushed', 'local', 'more', 'instructions', 'scheduled', 'secrets', 'rules']
+        .map((k) => Object.fromEntries(Object.entries(SURVEY).filter(([key]) => key !== k))),
+      { ...SURVEY, requests: {} }, { ...SURVEY, requests: [{ ...request, number: 0 }] }, { ...SURVEY, requests: [{ ...request, number: '7' }] },
+      { ...SURVEY, requests: [{ ...request, title: 7 }] }, { ...SURVEY, requests: [{ ...request, title: long }] },
+      { ...SURVEY, requests: [{ ...request, draft: 'no' }] }, { ...SURVEY, requests: [{ ...request, body: 'more' }] },
+      { ...SURVEY, requests: [{ number: 7, title: 'x' }] }, { ...SURVEY, requests: Array.from({ length: 101 }, (_, i) => ({ ...request, number: i + 1 })) },
+      { ...SURVEY, pushed: [{ ...item, name: '' }] }, { ...SURVEY, pushed: [{ ...item, head: 'abc' }] }, { ...SURVEY, local: [{ ...item, head: 'A'.repeat(40) }] },
+      { ...SURVEY, pushed: [{ ...item, commits: 0 }] }, { ...SURVEY, pushed: [{ ...item, commits: 1.5 }] }, { ...SURVEY, local: [{ ...item, subject: long }] },
+      { ...SURVEY, pushed: [{ ...item, at: 'yesterday' }] }, { ...SURVEY, local: [{ ...item, extra: 1 }] }, { ...SURVEY, local: null },
+      { ...SURVEY, pushed: Array.from({ length: 201 }, () => item) },
+      { ...SURVEY, more: { pushed: false } }, { ...SURVEY, more: { pushed: false, local: 'no' } }, { ...SURVEY, more: { pushed: false, local: false, x: true } }, { ...SURVEY, more: [] },
+      { ...SURVEY, instructions: { files: [] } }, { ...SURVEY, instructions: { files: [''], sections: [] } }, { ...SURVEY, instructions: { files: [7], sections: [] } },
+      { ...SURVEY, instructions: { files: Array.from({ length: 201 }, (_, i) => `f${i}`), sections: [] } },
+      { ...SURVEY, instructions: { files: [], sections: [{ heading: 'Agents', line: 0 }] } }, { ...SURVEY, instructions: { files: [], sections: [{ heading: long, line: 1 }] } },
+      { ...SURVEY, instructions: { files: [], sections: [{ heading: 'Agents' }] } }, { ...SURVEY, instructions: { files: [], sections: [], extra: [] } },
+      { ...SURVEY, scheduled: -1 }, { ...SURVEY, scheduled: 1.5 }, { ...SURVEY, secrets: '2' },
+      { ...SURVEY, rules: [{ ...rule, words: '' }] }, { ...SURVEY, rules: [{ ...rule, source: { file: 'CLAUDE.md' } }] },
+      { ...SURVEY, rules: [{ ...rule, source: { file: '', line: 1 } }] }, { ...SURVEY, rules: [{ ...rule, extra: 1 }] }, { ...SURVEY, rules: 'none' },
+      // Every text is kept short: a rule's words, its file, an instruction file's name and a time.
+      { ...SURVEY, rules: [{ ...rule, words: 'w'.repeat(1001) }] }, { ...SURVEY, rules: [{ ...rule, source: { file: `${'d/'.repeat(201)}x`, line: 1 } }] },
+      { ...SURVEY, instructions: { files: [`${'d/'.repeat(201)}x`], sections: [] } }, { ...SURVEY, pushed: [{ ...item, at: `${item.at}${' '.repeat(200)}` }] },
+    ]) assert.throws(() => makeEvent({ kind: 'survey', data: bad }), /survey event/, JSON.stringify(bad)?.slice(0, 200));
+  });
+});
+
+test('a survey holding a secret is refused by the state, as every event is', async () => {
+  const remote = await makeBareRemote();
+  try {
+    await withHome(async () => {
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+      const secret = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
+      const event = makeEvent({ kind: 'survey', data: { ...SURVEY, requests: [{ number: 7, title: `Key ${secret}`, draft: false }] } });
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push }), /refused because it matched: github-token/);
+      assert.deepEqual(listEvents(stateDir('o__p')), []);
+    });
+  } finally { remote.cleanup(); }
 });

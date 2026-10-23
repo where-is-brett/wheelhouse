@@ -89,7 +89,7 @@ export const endedBy = (reports, id, workEntry) => ENDED.includes(reports?.[id]?
 // Which work may take a building slot now. `work`, `features` and `reports` are the state views.
 // A slot is held by a feature that is building, or by quick or bug work that has started (it has
 // no plan, so it builds at once). Work needs the director's approval to start unless it is quick or bug
-// work that is not shown to them first. Work whose feature has closed, or whose report ended it, is
+// work that is not shown to them first and doesn't start from a ready-made change. Work whose feature has closed, or whose report ended it, is
 // out of the queue until a `work` event recorded after that queues it again (ruling R102). `now` is
 // accepted for the interface; the order never reads the clock. With `fiveHourTight` nothing starts,
 // and the newest slot-holding feature pauses.
@@ -122,7 +122,9 @@ export function nextWork({ work, features, reports, now, fiveHourTight }) {
   for (const w of candidates) {
     const id = w.key;
     const { lane, visible } = w.data;
-    const needsApproval = !STARTS_UNAPPROVED.includes(lane) || visible === true;
+    // Work from a ready-made change (`from`: a request carried on, an archive) always waits for the
+    // director's approval, whatever its lane.
+    const needsApproval = !STARTS_UNAPPROVED.includes(lane) || visible === true || w.data.from !== undefined;
     if (needsApproval && work[id].approved !== true) {
       hold.push({ work: id, why: 'unapproved' });
     } else if ((w.data.dependsOn ?? []).some((dep) => reports?.[dep]?.data?.outcome !== 'merged')) {

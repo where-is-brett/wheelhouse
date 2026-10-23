@@ -136,6 +136,20 @@ test('small and feature work never starts without an approval; quick work and bu
   assert.deepEqual(next({ work: approved }).start, ['s2', 'b-seen']);
 });
 
+test('work that starts from a ready-made change never starts without an approval, whatever its lane', () => {
+  const from = (id) => ({ sha: 'c'.repeat(40), ref: `refs/wheelhouse/from/${id}` });
+  const unapproved = (w) => ({ ...w, approved: false });
+  const work = worksOf(
+    unapproved(mkWork('carry-on-7', 'quick', 1, { from: from('carry-on-7') })), unapproved(mkWork('carry-on-8', 'bug', 2, { from: from('carry-on-8') })),
+    unapproved(mkWork('archive-instructions', 'quick', 3, { from: from('archive-instructions') })),
+  );
+  assert.deepEqual(next({ work }), {
+    ...next({ work }), start: [],
+    hold: [{ work: 'carry-on-7', why: 'unapproved' }, { work: 'carry-on-8', why: 'unapproved' }, { work: 'archive-instructions', why: 'unapproved' }],
+  });
+  assert.deepEqual(next({ work: worksOf({ ...mkWork('carry-on-9', 'quick', 1, { from: from('carry-on-9') }), approved: true }) }).start, ['carry-on-9']);
+});
+
 test('a bug that has started holds a slot as quick work does: it has no plan, so it builds at once', () => {
   const work = worksOf(
     unapprovedBug('b1', 1), unapprovedBug('b2', 2), mkWork('s1', 'small', 3), mkWork('s2', 'small', 4),

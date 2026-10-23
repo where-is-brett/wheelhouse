@@ -6,7 +6,9 @@
 // api`, the trial pull request is closed with `gh pr close`), a child process the test starts (the
 // mod's bridge, a long step's own process), and anything else that inherits this process's PATH.
 // `accept` names the calls a stand-in takes, by their first arguments (`{ gh: [['pr', 'close']] }`):
-// it notes them and exits 0. `calls()` gives what was run, one line each (`gh api repos/o/p ...`),
+// it notes them and exits 0. `answer` names calls a stand-in answers, the same way, each with what
+// it prints (`{ gh: [{ args: ['pr', 'list'], stdout: '[]' }] }`): it notes them, prints that and
+// exits 0. `calls()` gives what was run, one line each (`gh api repos/o/p ...`),
 // so a test can assert the log exactly; `reset` empties it, and `restore` puts the PATH (and, in the
 // node form, NODE_OPTIONS) back.
 // Every stand-in in one folder is found ahead of the real program only while the PATH starts with
@@ -74,14 +76,15 @@ export function preloadOption(dir, platform = process.platform) {
   return `--require "${platform === 'win32' ? file.replaceAll('\\', '/') : file}"`;
 }
 
-export function standInTools({ accept = {}, platform = process.platform, form = platform === 'win32' ? 'node' : 'script', prefix = 'wh-shims-' } = {}) {
+export function standInTools({ accept = {}, answer = {}, platform = process.platform, form = platform === 'win32' ? 'node' : 'script', prefix = 'wh-shims-' } = {}) {
   if (!['script', 'node'].includes(form)) throw new Error(`There is no stand-in form named ${form}`);
   const dir = tempFolder(prefix);
   const log = path.join(dir, 'calls.log');
   fs.writeFileSync(log, '');
-  if (form === 'script') writeScripts(dir, log, accept);
+  if (form === 'script') writeScripts(dir, log, accept, answer);
   else {
     fs.writeFileSync(path.join(dir, 'accept.json'), JSON.stringify(accept));
+    fs.writeFileSync(path.join(dir, 'answer.json'), JSON.stringify(answer));
     fs.writeFileSync(path.join(dir, 'stood-in.json'), JSON.stringify(STOOD_IN));
     fs.copyFileSync(PRELOAD, path.join(dir, 'stand-in-preload.cjs'));
     writeNodeStandIns(dir, platform);
@@ -109,15 +112,20 @@ export function standInTools({ accept = {}, platform = process.platform, form = 
   };
 }
 
-function writeScripts(dir, log, accept) {
+function writeScripts(dir, log, accept, answer) {
+  const test = (args) => args.map((arg, i) => `[ "$${i + 1}" = ${quote(arg)} ]`).join(' && ');
   for (const name of STOOD_IN) {
-    const taken = (accept[name] ?? []).map((args) => {
-      const test = args.map((arg, i) => `[ "$${i + 1}" = ${quote(arg)} ]`).join(' && ');
-      return `if ${test}; then exit 0; fi`;
+    // Each answer is kept in a file of its own beside the stand-in, and printed as it is.
+    const answered = (answer[name] ?? []).map(({ args, stdout }, i) => {
+      const file = path.join(dir, `${name}-answer-${i}.txt`);
+      fs.writeFileSync(file, stdout);
+      return `if ${test(args)}; then cat ${quote(file)}; exit 0; fi`;
     });
+    const taken = (accept[name] ?? []).map((args) => `if ${test(args)}; then exit 0; fi`);
     const script = [
       '#!/bin/sh',
       `printf '%s\\n' "${name} $*" >> ${quote(log)}`,
+      ...answered,
       ...taken,
       `echo '${name} is not run in this test' >&2`,
       'exit 1',

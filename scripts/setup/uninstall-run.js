@@ -40,6 +40,15 @@
 // left and named in what uninstall says, for the director to remove or the next uninstall to take.
 // If the close itself fails, status says first to start a new session (which makes and enrols a
 // key while the run is open) and then ask again (UNINSTALL_NEW_SESSION).
+//
+// The archive (plan rulings P5, P6). The plan read the other agent setup's archived instructions
+// from the folder's copy of the branch as last fetched; before anything is done, the branch is
+// fetched from the host and its archive read again. When it isn't the plan's (a change since this
+// folder last fetched, or one it never fetched), the folder's copy of the branch is brought up to
+// date (only its refs/remotes/origin/<branch>, by setup's fenced git) and uninstall stops, so the
+// next plan, on a new card, is the host's. The pull request's commit then moves each file back from
+// the archive by its object on the branch, so its text is as the branch holds it, and takes the
+// archive's files out of the index, all by plumbing in the scratch repository.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -73,8 +82,9 @@ import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { answersFor, askedRecord } from './clicks.js';
 import {
   uninstallPlan, readProgress, writeProgress, describe, shown, hostTarget, samePath, within, keyOf, realOr,
-  ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES,
+  ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES, ARCHIVE, ARCHIVE_MANIFEST, ARCHIVE_BACK, PLAIN_FILE, archiveAt,
 } from './uninstall.js';
+import { canonicalJson } from '../lib/canonical.js';
 
 export const TICK_MS = 5 * 1000;
 
@@ -82,6 +92,8 @@ export const TICK_MS = 5 * 1000;
 export const UNINSTALL_BRANCH = 'wheelhouse/uninstall';
 export const UNINSTALL_TITLE = 'Remove Wheelhouse';
 const UNINSTALL_BODY = 'This takes out of the project\'s files what Wheelhouse\'s setup put in: its settings, its configuration, its section of CLAUDE.md and the pinned kits. Once it is merged, Wheelhouse\'s checks no longer guard this project. Branch protection stays on.';
+// Added to the body when it puts archived instructions back.
+const ARCHIVE_BODY = ` It also moves the other agent setup's instructions out of ${ARCHIVE}/, back where they were.`;
 // Setup's own name on uninstall's commit, as on the enrolment's (scripts/setup/computers.js).
 const AUTHOR = ['-c', 'user.name=Wheelhouse setup', '-c', 'user.email=setup@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
 const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
@@ -166,6 +178,39 @@ async function putBackOnHost(git, tip, folder, entries) {
     else if (got.text !== file.text) files.set(rel, { text: got.text, changed: true });
   }
   return { files: Object.fromEntries([...files].filter(([, f]) => f.changed).map(([rel, f]) => [rel, f.text])), left };
+}
+
+// Puts the archive back in the scratch index read from the branch's tip (`found`, archiveAt's):
+// each move's plain file at its own path by its object and mode on the branch; then the archive's files
+// taken out, all of them when nothing stays in it, otherwise those moved, with its list written
+// again naming only what stays. Paths go to git NUL-separated, never quoted or read as patterns.
+async function putArchiveBack(git, found, zeros) {
+  const { view, manifest } = found;
+  // By the mode and object the card's list names (the same as the branch's, checked before), and
+  // only as a plain file: never a link or another repository.
+  for (const { from, mode, sha } of view.moves) {
+    if (!PLAIN_FILE.includes(mode)) throw new Halt(`${from} in ${ARCHIVE}/ is not a plain file, so it was not put back`);
+    await git.must(['update-index', '--add', '--cacheinfo', `${mode},${sha},${from}`], `git could not put ${from} back`);
+  }
+  const stays = view.taken.length > 0;
+  const out = stays ? view.moves.map((m) => m.to) : view.folder;
+  if (out.length > 0) await git.must(['update-index', '-z', '--index-info'], `git could not take ${ARCHIVE}/ out`, out.map((p) => `0 ${zeros}\t${p}\0`).join(''));
+  if (stays) {
+    const list = `${JSON.stringify({ ...manifest, moved: manifest.moved.filter((m) => view.taken.includes(m.from)) }, null, 2)}\n`;
+    const blob = await git.must(['hash-object', '-w', '--stdin'], `git could not write ${ARCHIVE_MANIFEST}`, list);
+    await git.must(['update-index', '--add', '--cacheinfo', `100644,${blob},${ARCHIVE_MANIFEST}`], `git could not write ${ARCHIVE_MANIFEST}`);
+  }
+}
+
+// What uninstall says of the archive once its pull request is made.
+function archiveSays(view) {
+  if (view === null) return [];
+  if (view.refused !== undefined) return [`${ARCHIVE}/ stays as it is: ${view.refused}.`];
+  return [
+    ...(view.moves.length > 0 ? [`In it too: ${ARCHIVE_BACK} (${view.moves.map((m) => m.from).join(', ')}).`] : []),
+    ...view.taken.map((from) => `Left in ${ARCHIVE}/: ${from}, as its place is taken on the project's main line.`),
+    ...view.missing.map((from) => `Not put back: ${from}, as ${ARCHIVE}/ no longer holds it.`),
+  ];
 }
 
 // The real host work, with the director's own sign-in: git in a scratch repository, the host's tool
@@ -326,6 +371,29 @@ export async function applyUninstall({
       if (error?.code !== 'ENOTEMPTY' && error?.code !== 'EEXIST') throw error;
     }
   };
+  // The branch's tip on the host, fetched into the scratch repository.
+  const fetchBase = async (g, branch) => {
+    const fetched = await g.git(['fetch', '-q', '--no-tags', record.remoteUrl, `+refs/heads/${branch}:refs/fetched/base`]);
+    if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in`);
+    return g.must(['rev-parse', '--verify', 'refs/fetched/base^{commit}'], `${branch} could not be read`);
+  };
+  // The archive the plan read, against the host's: when they differ, the folder's copy of the
+  // branch is brought up to date, best effort, and uninstall stops for a new card.
+  const sameArchive = (found, entry) => canonicalJson(found?.view ?? null) === canonicalJson(entry.archive ?? null);
+  const archiveChanged = async (branch) => {
+    try {
+      const call = setupGit({
+        run, gitPath: git.path, cwd: folder,
+        env: reaching({ GIT_NO_REPLACE_OBJECTS: '1', ...o.gitEnvFor({ host: record.host, gitPath: git.path, base: record.connection?.baseUrl }) }, record.remoteUrl),
+      });
+      await call(['fetch', '-q', '--no-tags', '--no-write-fetch-head', record.remoteUrl, `+refs/heads/${branch}:refs/remotes/origin/${branch}`]);
+    } catch { /* the next plan reads the folder's copy as it is */ }
+    halt(`the archive of the other agent setup's instructions on ${branch} on ${hostName(record.host)} isn't as this folder last saw it, so ${UNINSTALL_CHANGED}`);
+  };
+  const checkArchive = async (entry) => {
+    const same = await gitFor(record.host, record.remoteUrl, async (g) => sameArchive(await archiveAt(g.git, await fetchBase(g, entry.branch)), entry), false, record.connection?.baseUrl);
+    if (!same) await archiveChanged(entry.branch);
+  };
   try {
     if (unpushed !== undefined && !(record === null && reachedLast)) {
       // Read by ls-remote (ruling R118): no such branch on the host means the push never went up,
@@ -352,6 +420,9 @@ export async function applyUninstall({
         halt(`setup's commit is on ${branch} on ${hostName(record.host)} after all, so ${UNINSTALL_CHANGED}`);
       }
     }
+    // The archive on the host, before anything is done: the plan's, or uninstall stops here.
+    const prEntry = plan.changes.find((e) => e.put === 'pull-request');
+    if (prEntry !== undefined && record !== null) await checkArchive(prEntry);
     for (const [i, entry] of plan.changes.entries()) {
       // Past the project's files, setup's files are put back here: the commit never pushed is kept.
       if (afterFiles(entry)) keepCommit();
@@ -396,12 +467,15 @@ export async function applyUninstall({
           if (record === null) halt('the project\'s record is gone, so the pull request could not be made');
           const inPr = plan.changes.filter((c) => c.put === 'in-pull-request');
           const made = await gitFor(record.host, record.remoteUrl, async (g) => {
-            const fetched = await g.git(['fetch', '-q', '--no-tags', record.remoteUrl, `+refs/heads/${entry.branch}:refs/fetched/base`]);
-            if (fetched.code !== 0) halt(`${entry.branch} on ${hostName(record.host)} could not be read with your sign-in`);
-            const tip = await g.must(['rev-parse', '--verify', 'refs/fetched/base^{commit}'], `${entry.branch} could not be read`);
+            const tip = await fetchBase(g, entry.branch);
+            // Read again with the files: the branch may have moved since the check above.
+            const found = await archiveAt(g.git, tip);
+            if (!sameArchive(found, entry)) return { stale: true };
+            const restoring = found !== null && found.view.refused === undefined;
             const { files, left } = await putBackOnHost(g, tip, folder, inPr);
-            if (Object.keys(files).length === 0) return { tip, left, sha: null };
+            if (Object.keys(files).length === 0 && !restoring) return { tip, left, sha: null };
             await g.must(['read-tree', tip], 'git could not read the project\'s files');
+            if (restoring) await putArchiveBack(g, found, '0'.repeat(tip.length));
             for (const [rel, text] of Object.entries(files)) {
               // Taken out of the index by a mode of 0, which a repository without a working tree takes.
               if (text === null) await g.must(['update-index', '--index-info'], `git could not take out ${rel}`, `0 ${'0'.repeat(tip.length)}\t${rel}\n`);
@@ -416,6 +490,7 @@ export async function applyUninstall({
             await g.must(['push', '-q', '--no-verify', '--force', record.remoteUrl, `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
             return { tip, left, sha };
           }, true, record.connection?.baseUrl);
+          if (made.stale) await archiveChanged(entry.branch);
           for (const l of made.left) mark(l.ids, false, l.why);
           if (made.sha === null) {
             mark(entry.ids, true, `nothing of setup's is left on ${entry.branch}`);
@@ -423,9 +498,12 @@ export async function applyUninstall({
           } else {
             const baseUrl = record.connection?.baseUrl ?? GITLAB_URL;
             const pr = (await o.findOpenPr({ host: record.host, repo: record.repo, branch: UNINSTALL_BRANCH, baseUrl }))
-              ?? await (await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl })).openPr({ head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: UNINSTALL_BODY });
+              ?? await (await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl })).openPr({
+                head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: `${UNINSTALL_BODY}${entry.archive?.moves?.length > 0 ? ARCHIVE_BODY : ''}`,
+              });
             mark(entry.ids, true, `taken out by pull request ${pr.number}, for the director to merge`);
             say(`Pull request ${pr.number} takes setup's files and pins out of ${entry.branch}: merge it on ${hostName(record.host)}. Once it is merged, Wheelhouse's checks no longer guard this project; protection stays on.`);
+            for (const line of archiveSays(entry.archive ?? null)) say(line);
             await page('the pull request', pr.url);
           }
           for (const l of made.left) say(`Left in the project's files: ${l.what}, ${l.why}.`);

@@ -2,8 +2,8 @@
 // Loaded by `--require` (NODE_OPTIONS) in every Node.js process a test starts while the node form of
 // the host-tool stand-ins is in place (tests/helpers/host-stand-ins.js). When this process is a
 // stand-in, that is a hard link to Node.js named `gh`, `curl` and so on, it logs the call to
-// `calls.log` in its own folder and exits: 0 for a call the test accepted (`accept.json`), else 1
-// with a line on stderr. In any other Node.js process it does nothing.
+// `calls.log` in its own folder and exits: 0 for a call the test answered (`answer.json`), having
+// printed its answer, or accepted (`accept.json`), else 1 with a line on stderr. In any other Node.js process it does nothing.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,11 +26,21 @@ if (name !== 'node' && names().includes(name)) {
   const first = process.argv[1] === undefined ? process.execArgv : [path.relative(process.cwd(), process.argv[1])];
   const args = [...first, ...process.argv.slice(2)];
   fs.appendFileSync(path.join(folder, 'calls.log'), `${[name, ...args].join(' ')}\n`);
+  const starts = (first) => first.every((word, i) => args[i] === word);
+  let answer = {};
+  try {
+    answer = JSON.parse(fs.readFileSync(path.join(folder, 'answer.json'), 'utf8'));
+  } catch { /* nothing answered */ }
+  const answered = (answer[name] ?? []).find((a) => starts(a.args));
+  if (answered) {
+    fs.writeSync(1, answered.stdout);
+    process.exit(0);
+  }
   let accept = {};
   try {
     accept = JSON.parse(fs.readFileSync(path.join(folder, 'accept.json'), 'utf8'));
   } catch { /* nothing accepted */ }
-  const taken = (accept[name] ?? []).some((first) => first.every((word, i) => args[i] === word));
+  const taken = (accept[name] ?? []).some(starts);
   if (taken) process.exit(0);
   fs.writeSync(2, `${name} is not run in this test\n`);
   process.exit(1);

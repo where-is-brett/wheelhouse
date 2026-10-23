@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -42,6 +42,12 @@ import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
+import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
+import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
+import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
+import { reaching } from '../setup/git.js';
+import { directorGitEnv } from '../setup/host.js';
+import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
@@ -721,6 +727,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
+  '/survey/carry-on', '/survey/archive', '/survey/restore',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -846,6 +853,10 @@ export async function startHelper({
   // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
   // exits.
   onStop = (close) => close(),
+  // Who a commit the helper builds in the project's folder is by (an archive, or putting it back):
+  // the signed-in host account, as setup's own commit is (step 7's commitAuthor), given the
+  // project's record; a test may give its own.
+  authorFor = (record) => commitAuthor({ host: record.host, run, base: record.connection?.baseUrl }),
   // How the helper's own window is opened (scripts/confirm/window.js): given { title, lines, options }, it resolves
   // with { choice }. By default askInWindow on this system, with the helper's `run`.
   askWindow = (card) => askInWindow({ ...card, run }),
@@ -1454,6 +1465,7 @@ export async function startHelper({
   // refused, so no caller can name a proof the gate would read.
   async function doWrite({ project, kind, data, id }, ctx, { own = false } = {}) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
+    if (HELPER_ONLY_KINDS.includes(kind)) refuse('only the helper itself records that kind');
     if (!own && kind === 'card-answer' && data && typeof data === 'object' && CLICK_FIELDS.some((k) => Object.hasOwn(data, k))) refuse('a click\'s proof, commit, hash and words are recorded only by the helper\'s own routes');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
@@ -1475,6 +1487,187 @@ export async function startHelper({
     return written({ event, result });
   }
 
+  // The survey taken again (design section 15, ruling A1; plan ruling P3): only when the latest
+  // survey in the state missed the host and was not itself taken again, so it is taken again once.
+  // It reads the project's folder and asks the host for its open requests, through this project's
+  // adapter, within the survey's own time limit, and never throws (scripts/survey/take.js); the
+  // rules found at setup are carried over. The project's state is held only to read the latest
+  // survey and then to write, never while the survey looks, so a slow host holds nothing up. What
+  // it records is a state write like any other, so it is refused under STOP, read again just
+  // before the write, and secret-scanned as every event is: the survey leaves out what looks like
+  // a secret first, and one the state still refuses is recorded as a survey that missed the host.
+  // A survey taken meanwhile by another request is left as it is.
+  async function doSurveyAgain({ project }, ctx) {
+    const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const latestSurvey = () => listEvents(stateDir(project), { report: () => {} })
+      .filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object').sort(byOrder).at(-1);
+    if (stopped()) return STOP_REFUSAL;
+    const latest = await oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, ctx);
+      return latestSurvey();
+    });
+    if (!latest || latest.data.hostReached !== false || latest.data.again === true) return { ok: true, taken: false };
+    const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest.data.rules }).rules });
+    return oneAtATime(`state:${project}`, async () => {
+      if (stopped()) return STOP_REFUSAL;
+      if (latestSurvey()?.id !== latest.id) return { ok: true, taken: false };
+      let survey = null;
+      const got = await recordSurvey({
+        write: async (data) => {
+          if (stopped()) return STOP_REFUSAL;
+          const answer = await writeSurvey(project, data, ctx);
+          if (answer.ok) survey = data;
+          return answer;
+        },
+        take: async () => taken,
+        again: true,
+      });
+      if (!got.ok) return got;
+      return { ok: true, taken: true, id: got.id, hostReached: survey.hostReached, pushed: got.pushed };
+    });
+  }
+
+  // The helper's own writer of a survey, the one kind no caller writes (HELPER_ONLY_KINDS): made
+  // and written here, and the views written again. A refusal (the state's secret scan, say) is an
+  // answer, never a throw. Called in the state's queue, with that route's `ctx`.
+  async function writeSurvey(project, data, ctx) {
+    try {
+      const event = makeEvent({ kind: 'survey', data, now });
+      const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+      await freshViews(() => writeViews(project, { now }));
+      return written({ event, result });
+    } catch (error) {
+      return { ok: false, refused: error instanceof Error ? error.message : 'the survey could not be recorded' };
+    }
+  }
+  // finishSetup's writer: the project's own context, in the state's queue, refused under STOP.
+  async function writeSetupSurvey(project, data) {
+    try {
+      const ctx = await contextFor(checkProject(project));
+      return await stateRoute((body, c) => writeSurvey(project, data, c), { write: true })({ project }, ctx);
+    } catch (error) {
+      return { ok: false, refused: error instanceof Error ? error.message : 'the survey could not be recorded' };
+    }
+  }
+
+  // --- Ready-made changes (scripts/survey/ready.js; design section 15, A2 and A4; plan rulings P4, P5, P13) ---
+  // Carrying a request on, archiving another agent setup's instructions, and putting them back each
+  // make one change ready in the project's folder, at refs/wheelhouse/from/<work>, and write its
+  // ready record, out of every agent's reach, once the ref is in place; the front desk then records
+  // the work through the intake, and the foreman starts it only from a change this record names.
+  // They write nothing else: no other ref, no index, no working copy, nothing in the state, and they
+  // push nothing. git runs in the folder as step 7's does, with the director's own sign-in, and
+  // fetches only from the project's recorded address. One at a time per project; refused under STOP,
+  // read again once the state is in hand. The answer says the work id chosen, whose line
+  // (feature/<work>) is no request's own and not on the host, and the `from` to record.
+  const readyGit = (record) => folderGit({
+    run, folder: record.folder,
+    env: reaching({ ...directorGitEnv({ host: hostOf(record.host), base: record.connection?.baseUrl }), GIT_NO_REPLACE_OBJECTS: '1' }, record.remoteUrl),
+  });
+  const readyRoute = (fn) => (body, ctx) => oneAtATime(`ready:${body.project}`, async () => {
+    if (stopped()) return STOP_REFUSAL;
+    const views = await oneAtATime(`state:${body.project}`, async () => {
+      await ensureStateClone(body.project, ctx);
+      return writeViews(body.project, { now });
+    });
+    if (stopped()) return STOP_REFUSAL;
+    const record = recordOf(body.project);
+    if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) refuse('the project\'s folder isn\'t on this computer');
+    const git = readyGit(record);
+    // Work recorded already, under any id, or a ready record kept for it, is never chosen again.
+    const used = (id) => (views.work !== null && typeof views.work === 'object' && Object.hasOwn(views.work, id)) || fs.existsSync(readyRecordFile(body.project, id));
+    try {
+      return await fn({ ...body, views, record, git, used }, ctx);
+    } catch (error) {
+      if (error instanceof ReadyRefusal) return { ok: false, refused: error.message };
+      throw error;
+    }
+  });
+  // The ready record, written once the ref names `sha`; the ref is taken out again when it can't be.
+  async function keepReady(project, git, work, record) {
+    try {
+      writeReadyRecord(project, work, record);
+    } catch (error) {
+      await dropRef(git, work, record.sha);
+      throw error;
+    }
+  }
+
+  // An open request carried on: { number }. The answer gives what a brief is written from, the
+  // body left out when the secret scan finds anything in it. Or a piece of unfinished work with no
+  // request: { line }, its name, as the latest survey lists it (doCarryOnPiece).
+  async function doCarryOn(body, ctx) {
+    if (body.line !== undefined) return doCarryOnPiece(body, ctx);
+    const { project, number, record, git, used } = body;
+    if (!Number.isInteger(number) || number < 1) refuse('the request number must be a whole number from 1');
+    const adapter = await ctx.adapter();
+    const listed = adapter.openRequests();
+    const open = { ...adapter, openRequests: () => listed };
+    const lines = (await listed).map((r) => r?.branch).filter((b) => typeof b === 'string');
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: `carry-on-${number}`, lines, used });
+    const made = await carryOn({ git, adapter: open, remoteUrl: record.remoteUrl, number, work });
+    await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: number, branch: made.branch });
+    const { sha, ref, request, ...details } = made;
+    return { ok: true, work, from: { sha, ref, request }, ...details };
+  }
+
+  // A piece of unfinished work the latest survey lists by `line`, its name: pushed with no request,
+  // or on this computer. Named in both (the same work, pushed and gone on here, or the other way
+  // round), the one that builds on the other is carried on, else the one pushed. Its work's line,
+  // feature/<work>, is never the piece's own. The answer gives what a brief is written from: its
+  // subjects and files, those holding anything the secret scan finds left out.
+  async function doCarryOnPiece({ project, line, views, record, git, used }, ctx) {
+    if (typeof line !== 'string' || line === '' || line.length > 400 || /[\0-\x1f]/.test(line)) refuse('give the piece of work by its name, as the survey lists it');
+    const data = views.survey?.data;
+    const named = (where) => (Array.isArray(data?.[where]) ? data[where] : []).find((i) => i !== null && typeof i === 'object' && i.name === line);
+    const pushed = named('pushed');
+    const local = named('local');
+    if (pushed === undefined && local === undefined) refuse(`the latest survey lists no unfinished work named ${line}`);
+    let where = pushed === undefined ? 'local' : 'pushed';
+    if (pushed !== undefined && local !== undefined && typeof pushed.head === 'string' && typeof local.head === 'string'
+      && (await git(['merge-base', '--is-ancestor', pushed.head, local.head])).code === 0) where = 'local';
+    const piece = where === 'pushed' ? pushed : local;
+    const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: pieceWork(line), lines: [line], used });
+    const made = await carryOnPiece({
+      git, remoteUrl: record.remoteUrl, piece, where, work, base: plainBranch(defaultBranch) ? `refs/remotes/origin/${defaultBranch}` : null,
+    });
+    await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: null, branch: made.branch });
+    const { sha, ref, request: _request, ...details } = made;
+    return { ok: true, work, from: { sha, ref }, ...details };
+  }
+
+  // The default branch as it is on the host now, fetched into the work's ref, and the commit `build`
+  // makes on it put there in its place; the ref is taken out again when anything fails.
+  async function readyOnDefault({ project, record, git, used }, ctx, name, build) {
+    const author = await authorFor(record);
+    const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
+    if (!plainBranch(defaultBranch)) refuse('the host didn\'t name its main line');
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: name, used });
+    // Built on the commit fetched, never on the ref read again: an agent could point it elsewhere
+    // meanwhile, and the ref is moved on only while it still names that commit.
+    const base = await fetchInto({ git, remoteUrl: record.remoteUrl, source: `refs/heads/${defaultBranch}`, work });
+    let made;
+    try {
+      made = await build({ work, base, author });
+    } catch (error) {
+      await dropRef(git, work, base);
+      throw error;
+    }
+    await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: null, branch: null });
+    return { ok: true, work, from: { sha: made.sha, ref: made.ref }, moved: made.moved };
+  }
+
+  // Another agent setup's instructions archived: the files the latest survey found, as they are on
+  // the default branch now.
+  async function doArchive(body, ctx) {
+    const files = body.views.survey?.data?.instructions?.files;
+    if (!Array.isArray(files) || files.length === 0) refuse('the survey found no instructions of another agent setup to archive');
+    return readyOnDefault(body, ctx, 'archive-instructions', (args) => archiveCommit({ git: body.git, files, ...args }));
+  }
+
+  // The archive put back, as uninstall would put it.
+  const doRestore = (body, ctx) => readyOnDefault(body, ctx, 'restore-instructions', (args) => restoreCommit({ git: body.git, ...args }));
   // A session's mark (ruling P5-19), from a hook that only reads: a plain note naming the mark. A tool the agent
   // has that Wheelhouse doesn't know (`unknown-tool`, the board's line), a compaction, or a hook past its deadline.
   async function doSessionMark({ project, mark, data }, ctx) {
@@ -3016,7 +3209,7 @@ export async function startHelper({
   // status answer under STOP; apply is refused. Plan writes under STOP (ruling R19), but only
   // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
-  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
+  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn, writeSurvey: writeSetupSurvey });
   // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
   // Under STOP, in a project's folder the STOP guard refuses scripts/measures/cli.js, so the front
   // desk can't reach it; a request that arrives all the same may get its card, but nothing is
@@ -3206,6 +3399,10 @@ export async function startHelper({
       return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
     }),
     '/host/facts': hostFacts,
+    '/survey/again': doSurveyAgain,
+    '/survey/carry-on': readyRoute(doCarryOn),
+    '/survey/archive': readyRoute(doArchive),
+    '/survey/restore': readyRoute(doRestore),
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
