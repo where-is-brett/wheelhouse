@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { standInTools } from '../helpers/host-stand-ins.js';
 import { tempFolder } from '../helpers/homes.js';
+import copilot from '../../adapters/copilot/index.js';
 import safetyLine from '../../adapters/copilot/safety-line.js';
 import { buildHome, checkHome, gitBlobHash } from '../../scripts/agents/copilot/home.js';
 import { AGENT_CONTROL } from '../../scripts/lib/agent-control.js';
@@ -249,7 +250,10 @@ test('a clone that is not the tag asked for stops setup', { skip: !unix && 'a sh
 
 test('every sh block runs in a subshell and every PowerShell block in a script block of its own, never exit', () => {
   const marked = blocks(skill).filter((b) => /^# [a-z-]+$/.test(b.body.split('\n')[0]));
-  assert.equal(marked.length, 6, 'fetch-and-check twice, ignore-lines twice, first-commit, copy-remote');
+  assert.equal(marked.length, 8, 'fetch-and-check, ignore-lines, first-commit and copy-remote, each for sh and for PowerShell');
+  for (const marker of ['fetch-and-check', 'ignore-lines', 'first-commit', 'copy-remote']) {
+    assert.equal(marked.filter((b) => b.body.split('\n')[0] === `# ${marker}`).map((b) => b.lang).sort().join(), 'powershell,sh', `${marker} has a block for each shell`);
+  }
   for (const { lang, body } of marked) {
     const lines = body.trimEnd().split('\n');
     if (lang === 'sh') {
@@ -447,6 +451,37 @@ test('the first commit holds the three files and nothing else of the director\'s
   assert.match(git('status', '--short'), /^A {2}theirs\.txt$/m, 'their staged file is still staged');
   assert.match(git('status', '--short'), /M app\.txt$/m, 'their change is still a change');
   assert.equal(git('log', '--format=%an %ae %s', '-1'), 'Test t@example.invalid Set up Wheelhouse at Lean');
+});
+
+test('the first commit\'s files, in both shells, are the adapter\'s packaging list', () => {
+  const listed = (body) => [...body.matchAll(/'((?:\.gitignore|\.vscode\/settings\.json|\.wheelhouse\/record\/\.gitkeep))'/g)].map((m) => m[1]);
+  const fromSh = block('first-commit', 'sh').split('\n').find((l) => l.includes('for p in')).match(/for p in (.*); do/)[1].split(' ');
+  assert.deepEqual(fromSh, copilot.packaging.files(), 'the sh block commits what the adapter says setup writes');
+  assert.deepEqual(listed(block('first-commit', 'powershell')), copilot.packaging.files(), 'and so does the PowerShell block');
+});
+
+test('the PowerShell blocks for the first commit and the copy folder are script blocks that check every git call and leave the terminal alone', () => {
+  for (const marker of ['first-commit', 'copy-remote']) {
+    const body = block(marker, 'powershell');
+    const lines = body.trimEnd().split('\n');
+    assert.equal(lines[1], '& {');
+    assert.equal(lines.at(-1), '}');
+    assert.doesNotMatch(body, /\bexit\b|\bcd\b|Set-Location|~/, `${marker}: no exit, no folder change, no tilde`);
+    assert.match(body, /\bthrow\b/);
+    // Every native git call is followed by a status check, so a failure stops the block with a message, not silently.
+    const calls = lines.filter((l) => /^\s*git (add|commit|init|remote|ls-remote)\b/.test(l)).length;
+    const checks = lines.filter((l) => l.includes('$LASTEXITCODE')).length;
+    assert.ok(calls >= 2 && checks >= calls, `${marker}: ${calls} git calls, ${checks} checks`);
+  }
+  const commit = block('first-commit', 'powershell');
+  assert.match(commit, /git check-ignore -q/, 'a path the project ignores is left out, as in sh');
+  assert.match(commit, /git commit -m 'Set up Wheelhouse at Lean' -- \$Paths/, 'only the named paths are committed');
+  assert.match(commit, /\$Paths\.Count -eq 0/, 'with no path to name, nothing is committed (git commit with no paths takes the index)');
+  const copy = block('copy-remote', 'powershell');
+  assert.match(copy, /git init --bare --initial-branch=main/);
+  assert.match(copy, /git remote add wheelhouse-copy/);
+  assert.match(copy, /inside the project/);
+  assert.match(skill, /a `'` in the path is written `''`/);
 });
 
 test('the first commit works in a project with no commit yet, and leaves out a path the project ignores', { skip: !unix && 'a shell script' }, () => {

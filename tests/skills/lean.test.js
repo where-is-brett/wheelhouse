@@ -14,6 +14,7 @@ import { standInTools } from '../helpers/host-stand-ins.js';
 import { tempFolder } from '../helpers/homes.js';
 import safetyLine from '../../adapters/copilot/safety-line.js';
 import { buildHome } from '../../scripts/agents/copilot/home.js';
+import { AGENT_CONTROL } from '../../scripts/lib/agent-control.js';
 import { BOARD_FILE, LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../../scripts/lib/copilot-numbers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -365,6 +366,278 @@ test('the code-host steps work against a bare origin, over two features, and the
   assert.ok(!onOrigin().some((f) => f.startsWith('.wheelhouse/')));
 });
 
+// ---- The final review's fixes (rulings P4-30 and P4-31) ----
+
+const SETTINGS = JSON.parse(read('adapters/copilot/vscode-settings.json'));
+// The command the playbook gives between backticks, found by its beginning.
+function command(start) {
+  const found = [...playbook.matchAll(/`(git [^`\n]+)`/g)].map((m) => m[1]).filter((c) => c.startsWith(start));
+  assert.equal(found.length, 1, `one command starting "${start}", found ${found.length}`);
+  return found[0];
+}
+const sh = (cwd, env, script) => spawnSync('sh', ['-c', script], { cwd, env, encoding: 'utf8' });
+const recordLine = (kind, extra = {}) => `${JSON.stringify({ at: '2026-10-23T01:00:00Z', kind, card: null, choice: null, commit: null, proof: kind === 'review' ? 'chat-review' : 'chat-click', by: 'chat', tier: 'lean', ...extra })}\n`;
+
+test('the board chooses its block by whether the helper is installed and answering, never by Node.js alone', () => {
+  const board = section(playbook, 'The board');
+  assert.match(board, /whether Wheelhouse's own helper is installed here and answering/);
+  assert.doesNotMatch(playbook, /Node\.js may run/, 'the rule no longer keys off Node.js');
+  assert.match(board, /Having Node\.js on the computer doesn't count/);
+  assert.match(board, /not used until the helper exists/);
+  assert.match(board, /never switch a board to the third block because `node --version` printed a version/);
+  assert.ok(playbook.includes('On a Mac or Windows where Wheelhouse\'s helper is installed and answering (not used until the helper exists):'));
+  // The third block is the helper's: its guard lines are the ones safetyLine gives where Node.js runs, and it is last.
+  const blocks = [...playbook.matchAll(/^```\nTier: Lean\n([\s\S]*?)^```$/gm)].map((m) => m[1]);
+  assert.equal(blocks.length, 3);
+  assert.match(blocks[0], /No Wheelhouse guards run on this computer yet/);
+  assert.match(blocks[1], /No Wheelhouse guards run on Windows without Node\.js/);
+  assert.match(blocks[2], /STOP is enforced by Wheelhouse's guards/);
+  assert.match(playbook, /\| "Node\.js is here, so the board can show the helper's lines" \|/);
+});
+
+test('the board is a view: STOP comes from the last committed stop or lift-stop line on the main version', () => {
+  const stop = section(playbook, 'STOP');
+  assert.match(stop, /The record says, not the board/);
+  assert.match(stop, /the last one decides/);
+  assert.match(stop, /the board and the record disagree, follow the record/);
+  assert.match(section(playbook, 'The board'), /The board is a view, not state/);
+  assert.match(section(playbook, 'The board'), /follow the record/);
+  // The command, as written, in a repository: a builder's edit to the board (ignored, so not in git) and a lift-stop on a feature's branch change nothing.
+  const grep = command('git grep -h -e stop main');
+  const r = repo('stop');
+  const { cwd } = r.make('project');
+  r.run(cwd, 'init', '-b', 'main');
+  fs.writeFileSync(path.join(cwd, '.gitignore'), 'wheelhouse/\n');
+  r.run(cwd, 'add', '.gitignore');
+  r.run(cwd, 'commit', '-m', 'Start');
+  const day = (d) => path.join(cwd, LEAN_RECORD_DIR, `${d}.jsonl`);
+  fs.mkdirSync(path.join(cwd, LEAN_RECORD_DIR), { recursive: true });
+  const decide = () => {
+    const out = sh(cwd, r.env, grep).stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.kind === 'stop' || e.kind === 'lift-stop');
+    return out.length === 0 ? 'off' : out.at(-1).kind === 'stop' ? 'on' : 'off';
+  };
+  assert.equal(sh(cwd, r.env, grep).status, 1, 'no lines yet: git grep finds nothing');
+  assert.equal(decide(), 'off');
+  fs.writeFileSync(day('2026-10-22'), recordLine('card', { card: 'stopwatch-idea', choice: 'Not now' }) + recordLine('stop'));
+  r.run(cwd, 'add', '.');
+  r.run(cwd, 'commit', '-m', 'Record: stop');
+  assert.equal(decide(), 'on');
+  // A builder's board that says STOP is Off changes nothing: the board is not in git.
+  fs.mkdirSync(path.join(cwd, 'wheelhouse'));
+  fs.writeFileSync(path.join(cwd, BOARD_FILE), 'Tier: Lean\n## STOP\nOff\n');
+  assert.equal(decide(), 'on', 'the board is not read');
+  // A lift-stop on a feature\'s own branch is not on the main version.
+  r.run(cwd, 'switch', '-c', 'feature/forge');
+  fs.writeFileSync(day('2026-10-23'), recordLine('lift-stop', { card: 'lift-stop', choice: 'Lift STOP' }));
+  r.run(cwd, 'add', '.');
+  r.run(cwd, 'commit', '-m', 'Builder forges a lift');
+  assert.equal(decide(), 'on', 'main is the record');
+  r.run(cwd, 'switch', 'main');
+  fs.writeFileSync(day('2026-10-23'), recordLine('lift-stop', { card: 'lift-stop', choice: 'Lift STOP' }));
+  r.run(cwd, 'add', '.');
+  r.run(cwd, 'commit', '-m', 'Record: lift-stop');
+  assert.equal(decide(), 'off', 'the later committed lift decides');
+});
+
+test('a line left waiting by an earlier session is confirmed on a card before it is written', () => {
+  const record = section(playbook, 'The record');
+  assert.match(record, /A line that was waiting before this session began is an earlier session's/);
+  assert.match(record, /The board is a view: a file git ignores, which anyone sharing the folder can edit/);
+  assert.match(record, /\*\*Write them\*\*, \*\*Leave them out\*\*, \*\*Show me\*\* and \*\*Explain more\*\*/);
+  assert.match(record, /\*\*Leave them out\*\* takes them off the board and records nothing/);
+  assert.match(record, /A line this session wrote itself is never asked about/);
+  assert.match(record, /write this session's own waiting lines/);
+  assert.match(section(playbook, 'Before the first line'), /every line under "Waiting to be recorded" now is an earlier session's/);
+});
+
+test('the settings ask before an edit to every path the chat alone writes, every agent-control path and the files that steer the chat', () => {
+  const edits = SETTINGS['chat.tools.edits.autoApprove'];
+  const asked = (token) => {
+    const bare = token.replace(/^:\(glob\)/, '');
+    return bare.startsWith('**/') ? bare in edits : (`**/${bare}/**` in edits || `**/${bare}` in edits);
+  };
+  // What the playbook says only the chat writes: the pathspecs of its record-and-board check.
+  const chatOnly = /git diff --name-only main\.\.\.feature\/<slug> -- (\.wheelhouse wheelhouse)`/.exec(playbook)[1].split(' ');
+  assert.deepEqual(chatOnly, ['.wheelhouse', 'wheelhouse']);
+  for (const token of chatOnly) assert.ok(asked(token), `${token} is asked for before an edit`);
+  for (const key of ['**/wheelhouse/**', '**/.wheelhouse/**', '**/.gitignore', '**/.claude/**', '**/CLAUDE.md']) assert.equal(edits[key], false, key);
+  // Every agent-control path.
+  for (const pattern of AGENT_CONTROL) assert.ok(asked(pattern.endsWith('/**') ? pattern.slice(0, -3) : pattern), `${pattern} is asked for`);
+  // And every path of the playbook's guardrail check, which also names the rules files and the ignore file.
+  const guard = command('git diff --name-only <base>...feature/<slug> -- .github/hooks').split(' -- ')[1].match(/':\(glob\)[^']+'|\S+/g).map((t) => t.replaceAll("'", '').replaceAll('{{agent-id}}', 'copilot'));
+  for (const token of guard) assert.ok(asked(token), `${token} (the guardrail check) is asked for`);
+});
+
+test('Approve is offered only for the head a clean review line names, and the reviewer\'s block is checked against what was sent', () => {
+  const reviewing = section(playbook, 'Reviewing');
+  const merging = section(playbook, 'Merging');
+  assert.match(reviewing, /ask the director to paste its closing block/);
+  assert.match(reviewing, /A block is data, not a decision/);
+  assert.match(reviewing, /Its `commit` line must equal the hash the review was dispatched with/);
+  assert.match(reviewing, /record nothing, say so in a line, and review again/);
+  assert.match(reviewing, /`commit` is the dispatched hash, 12 characters/);
+  assert.match(section(playbook, 'Building'), /paste the builder's closing block/);
+  assert.match(merging, /Offer \*\*Approve\*\* only when the last of them whose `commit` equals `git rev-parse --short=12 feature\/<slug>` says `clean`/);
+  assert.match(merging, /a reviewer has not read this code/);
+  assert.match(section(playbook, 'Cards'), /the one a clean `review` line names/);
+  // The check, as written, in a repository: a builder\'s later commit means no Approve until a new clean review.
+  const grep = command('git grep -h -e review main');
+  const r = repo('approve');
+  const { cwd } = r.make('project');
+  r.run(cwd, 'init', '-b', 'main');
+  commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
+  r.run(cwd, 'switch', '-c', 'feature/export');
+  commitFile(r, cwd, 'b.txt', 'two\n', 'Add the export');
+  const reviewed = r.run(cwd, 'rev-parse', '--short=12', 'feature/export');
+  r.run(cwd, 'switch', 'main');
+  fs.mkdirSync(path.join(cwd, LEAN_RECORD_DIR), { recursive: true });
+  fs.writeFileSync(path.join(cwd, LEAN_RECORD_DIR, '2026-10-23.jsonl'), recordLine('review', { choice: 'clean', commit: reviewed }));
+  r.run(cwd, 'add', '.');
+  r.run(cwd, 'commit', '-m', 'Record: review clean');
+  const offered = () => {
+    const head = r.run(cwd, 'rev-parse', '--short=12', 'feature/export');
+    const lines = sh(cwd, r.env, grep).stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.kind === 'review' && e.commit === head);
+    return lines.length > 0 && lines.at(-1).choice === 'clean';
+  };
+  assert.equal(offered(), true, 'the head is the one a reviewer read');
+  r.run(cwd, 'switch', 'feature/export');
+  commitFile(r, cwd, 'c.txt', 'three\n', 'The builder commits again after the review');
+  r.run(cwd, 'switch', 'main');
+  assert.equal(offered(), false, 'new code: no Approve');
+  fs.appendFileSync(path.join(cwd, LEAN_RECORD_DIR, '2026-10-23.jsonl'), recordLine('review', { choice: 'findings', commit: r.run(cwd, 'rev-parse', '--short=12', 'feature/export') }));
+  r.run(cwd, 'commit', '-am', 'Record: review findings');
+  assert.equal(offered(), false, 'a review with findings is not a clean one');
+});
+
+test('a change to a file that steers the agents is said plainly on the card, and the reviewer reads the rules from the main version', () => {
+  const guard = section(playbook, 'Guardrail changes');
+  assert.match(guard, /This change alters what steers the agents or VS Code/);
+  assert.match(guard, /`guardrail-<slug>`/);
+  assert.match(guard, /The reviewer reads the project's rules from the main version, not from the feature/);
+  assert.match(guard, /`git show <base>:<path>`/);
+  assert.match(guard, /\.wheelhouse\/feature\/review\/<n>-main\/<path>/);
+  assert.match(section(playbook, 'Reviewing'), /read the project's rules from \.wheelhouse\/feature\/review\/1-main\//);
+  assert.match(section(playbook, 'Merging'), /\*\*The guardrail check\*\*/);
+  // The list is the agent-control list, path for path, in the words git takes.
+  const cmd = command('git diff --name-only <base>...feature/<slug> -- .github/hooks');
+  const tokens = cmd.split(' -- ')[1].match(/':\(glob\)[^']+'|\S+/g).map((t) => t.replaceAll("'", ''));
+  const want = AGENT_CONTROL.map((pattern) => {
+    const token = pattern.endsWith('/**') ? pattern.slice(0, -3) : pattern;
+    return (token.startsWith('**/') ? `:(glob)${token}` : token).replaceAll('copilot', '{{agent-id}}');
+  });
+  for (const w of want) assert.ok(tokens.includes(w), `the guardrail check lacks ${w}`);
+  for (const extra of ['.gitignore', '.claude', ':(glob)**/CLAUDE.md']) assert.ok(tokens.includes(extra), extra);
+  assert.ok(!/copilot/i.test(cmd), 'the source says {{agent-id}}, and the kit fills it');
+  assert.ok(leanKit.includes('.github/copilot-instructions.md') && leanKit.includes('com.github.copilot') && !leanKit.includes('{{'));
+  // The plan names the step.
+  const plan = read('docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md');
+  const task3 = plan.slice(plan.indexOf('### Task 3: Lean\'s playbook'), plan.indexOf('### Task 4: Lean\'s record'));
+  assert.match(task3, /Guardrail changes \(design section 6\.5\)/);
+  // The command, as written (the kit's words), in a repository: nothing for an ordinary feature, the file for each that steers an agent.
+  const run = (base, slug) => cmd.replace('{{agent-id}}', 'copilot').replaceAll('{{agent-id}}', 'copilot').replace('<base>', base).replace('<slug>', slug);
+  const r = repo('guardrail');
+  const { cwd } = r.make('project');
+  r.run(cwd, 'init', '-b', 'main');
+  commitFile(r, cwd, 'src/a.txt', 'one\n', 'Start');
+  const steers = ['.vscode/settings.json', 'packages/app/AGENTS.md', 'GEMINI.md', '.github/copilot-instructions.md', '.github/agents/x.agent.md', '.github/copilot/y.md',
+    '.github/hooks/z.json', '.github/mcp.json', '.gitignore', '.gitattributes', 'CLAUDE.md', '.claude/settings.json', 'plugin.json', 'com.github.copilot/c.json', '.cursor/rules/r.mdc'];
+  const quiet = ['docs/readme.md', '.github/workflows/ci.yml', 'src/vscode-notes.md', 'notes/agents.txt'];
+  r.run(cwd, 'switch', '-c', 'feature/ordinary');
+  for (const f of quiet) commitFile(r, cwd, f, 'x\n', `Add ${f}`);
+  assert.equal(sh(cwd, r.env, run('main', 'ordinary')).stdout, '', 'an ordinary feature prints nothing');
+  r.run(cwd, 'switch', '-c', 'feature/steering', 'main');
+  for (const f of steers) commitFile(r, cwd, f, 'x\n', `Add ${f}`);
+  const got = sh(cwd, r.env, run('main', 'steering'));
+  assert.equal(got.status, 0, got.stderr);
+  assert.deepEqual(got.stdout.split('\n').filter(Boolean).sort(), [...steers].sort(), 'each file that steers an agent prints');
+});
+
+test('on a code host the approved commit is what is pushed, and Undo is the host\'s step, recorded once the host has the revert', () => {
+  const host = section(playbook, 'On a code host, without Node.js');
+  assert.doesNotMatch(playbook, /remove_source_branch origin feature\/<slug>/, 'the branch as it stands is never pushed');
+  assert.match(host, /push exactly the approved commit to the host, never the branch as it stands/);
+  assert.match(host, /its first 12 characters must be the approved ones\. If they are not, the head has moved, so write nothing, push nothing and review again/);
+  assert.match(host, /\*\*Undo on a code host is the host's step\.\*\*/);
+  assert.match(host, /Write no `undo` line yet/);
+  assert.match(host, /Only when both hold, and so the host's main has the revert/);
+  assert.match(section(playbook, 'Undo'), /On a code host this is the host's step/);
+  const pushFeature = command('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>');
+  const pushUndo = command('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full revert hash>');
+
+  const r = repo('hostundo');
+  const origin = r.make('origin.git');
+  r.run(origin.cwd, 'init', '--bare', '-b', 'main');
+  r.run(origin.cwd, 'config', 'receive.advertisePushOptions', 'true');
+  const { cwd: mine } = r.make('mine');
+  r.run(mine, 'init', '-b', 'main');
+  r.run(mine, 'remote', 'add', 'origin', origin.cwd);
+  commitFile(r, mine, 'a.txt', 'one\n', 'Start');
+  r.run(mine, 'push', 'origin', 'main');
+  const { cwd: hostSide } = r.make('host-side');
+  r.run(hostSide, 'init', '-b', 'main');
+  r.run(hostSide, 'remote', 'add', 'origin', origin.cwd);
+  r.run(hostSide, 'fetch', 'origin');
+  r.run(hostSide, 'switch', '-c', 'main', 'origin/main');
+  const onOrigin = () => r.run(origin.cwd, 'ls-tree', '-r', '--name-only', 'main').split('\n');
+  const hostMerges = (branch) => {
+    r.run(hostSide, 'fetch', 'origin');
+    r.run(hostSide, 'merge', '--no-ff', `origin/${branch}`, '-m', `Merge request for ${branch}`);
+    r.run(hostSide, 'push', 'origin', 'main');
+  };
+
+  // M1: the feature is approved at one head; the builder commits again before the push; the host gets the approved commit.
+  r.run(mine, 'fetch', 'origin');
+  r.run(mine, 'switch', '-c', 'feature/export', 'origin/main');
+  commitFile(r, mine, 'b.txt', 'two\n', 'Add the export');
+  const full = r.run(mine, 'rev-parse', 'feature/export');
+  const approved = full.slice(0, 12);
+  commitFile(r, mine, 'sneak.txt', 'unreviewed\n', 'The builder commits again');
+  r.run(mine, 'switch', 'main');
+  assert.notEqual(r.run(mine, 'rev-parse', '--short=12', 'feature/export'), approved, 'the head moved after the approval, so the playbook pushes nothing');
+  const pushed = sh(mine, r.env, pushFeature.replace('<full approved hash>', full).replace('<slug>', 'export'));
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.equal(r.run(origin.cwd, 'rev-parse', 'refs/heads/feature/export'), full, 'exactly the approved commit is on the host');
+  assert.ok(!r.run(origin.cwd, 'ls-tree', '-r', '--name-only', 'feature/export').includes('sneak.txt'), 'the later commit did not go up');
+  hostMerges('feature/export');
+  r.run(mine, 'fetch', 'origin');
+  assert.equal(r.run(mine, 'rev-parse', '--short=12', 'origin/main^2'), approved);
+  r.run(mine, 'merge', '--no-ff', 'origin/main', '-m', 'Take the code host\'s main version');
+  assert.ok(onOrigin().includes('b.txt'));
+
+  // M2: the undo is a new request on the host. Until the host merges it, the host's main still has the feature.
+  const hostMerge = r.run(mine, 'rev-parse', 'origin/main');
+  r.run(mine, 'fetch', 'origin');
+  r.run(mine, 'switch', '-c', 'feature/undo-export', 'origin/main');
+  r.run(mine, 'revert', '-m', '1', hostMerge, '--no-edit');
+  const revert = r.run(mine, 'rev-parse', 'HEAD');
+  r.run(mine, 'switch', 'main');
+  const undoPush = sh(mine, r.env, pushUndo.replace('<full revert hash>', revert).replace('<slug>', 'export'));
+  assert.equal(undoPush.status, 0, undoPush.stderr);
+  assert.equal(r.run(origin.cwd, 'rev-parse', 'refs/heads/feature/undo-export'), revert);
+  assert.ok(onOrigin().includes('b.txt'), 'before the host merges the revert, the host\'s main still has the feature: no undo line yet');
+  hostMerges('feature/undo-export');
+  r.run(mine, 'fetch', 'origin');
+  assert.equal(r.run(mine, 'rev-parse', '--short=12', 'origin/main^2'), revert.slice(0, 12), 'the host added the revert');
+  assert.equal(spawnSync('git', ['merge-base', '--is-ancestor', 'origin/main^1', 'feature/undo-export'], { cwd: mine, env: r.env }).status, 0);
+  assert.ok(!onOrigin().includes('b.txt'), 'now the host\'s main has the revert: the undo line may be written');
+  r.run(mine, 'merge', '--no-ff', 'origin/main', '-m', 'Take the code host\'s main version');
+  assert.ok(!fs.existsSync(path.join(mine, 'b.txt')), 'and the local main version has it too');
+});
+
+test('Lean checks the project was set up before it acts, and points to setup when it was not', () => {
+  const before = section(playbook, 'Before the first line');
+  const first = before.split('\n').find((l) => l.startsWith('1. '));
+  assert.match(first, /Wheelhouse is set up in this project/);
+  assert.match(first, /`\.wheelhouse\/record`/);
+  assert.match(first, /`wheelhouse\/board\.md`/);
+  assert.match(first, /change nothing and say plainly: "Wheelhouse isn't set up in this project yet\./);
+  assert.match(first, /`wheelhouse:setup`/);
+  assert.match(first, /Then stop\./);
+  const text = kit.get('skills/wheelhouse-lean/SKILL.md');
+  assert.match(text, /Ask me to set up Wheelhouse \(`wheelhouse-setup`\)/, 'in the kit the skill is named as the kit names it');
+  assert.ok(kit.has('skills/wheelhouse-setup/SKILL.md'));
+});
+
 // ---- STOP ----
 
 test('STOP is said to be unenforced', () => {
@@ -380,7 +653,8 @@ test('STOP is said to be unenforced', () => {
 // ---- The project key ----
 
 test('the key is never asked for in the chat', () => {
-  assert.ok(playbook.includes('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin feature/<slug>'));
+  // The push names the approved commit's full hash, not the branch (M1); the options are the host's.
+  assert.ok(playbook.includes('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>:refs/heads/feature/<slug>'));
   const host = section(playbook, 'On a code host, without Node.js');
   assert.match(host, /never typed into the chat/i);
   assert.match(host, /sign-in window/);

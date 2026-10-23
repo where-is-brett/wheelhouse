@@ -643,6 +643,7 @@ test('every skill and agent name starts wheelhouse-', ...)
   - **STOP:** the word "stop" ends work and is recorded; nothing enforces it, and the skill says so to the director once per session.
   - **The runbook's local steps:** STOP, looking at an incident, undoing a merge, and (where the helper runs) a new signing key.
   - **On a code host, without Node.js:** `git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin feature/<slug>` on GitLab; the project key given to git's own sign-in window once, never typed into the chat.
+  - **Guardrail changes (design section 6.5):** before a review and again before the approval card, a `git diff --name-only <base>...feature/<slug>` over the agent-control paths (`scripts/lib/agent-control.js`, written out in the playbook, with `.gitignore`, `.claude` and `CLAUDE.md`); if any path prints, the approval card says plainly that the change alters what steers the agents or VS Code (card name `guardrail-<slug>`), and the reviewer reads the project's rules from the main version, not the feature.
 
 - [ ] **Step 1: Write the failing tests:** `the record line for each kind has every field`, `merging uses --no-ff and undo uses revert -m 1`, `the copy push names wheelhouse-copy`, `STOP is said to be unenforced`, `the key is never asked for in the chat`, `no Claude Code tool is named`.
 - [ ] **Step 2: Run `npm test`:** FAIL. **Step 3: Write the playbook,** then `npm run copilot-home`. **Step 4: Run `npm test`:** PASS.

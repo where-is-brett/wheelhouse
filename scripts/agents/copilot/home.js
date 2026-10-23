@@ -62,8 +62,10 @@ const PLAYBOOK_SKILLS = Object.freeze([
   { name: 'setup', source: 'adapters/copilot/skills/setup-lean/SKILL.md' },
 ]);
 // The words a source holds back for the kit to fill in, so the source stays in general words (the core never names an
-// agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js).
-const KIT_WORDS = Object.freeze({ agent: 'Copilot' });
+// agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js);
+// `{{agent-id}}` is the same word as it is written in a file's name (`.github/copilot-instructions.md`), where the playbook lists the
+// files that steer an agent.
+const KIT_WORDS = Object.freeze({ agent: 'Copilot', 'agent-id': 'copilot' });
 const AGENT_SOURCES = Object.freeze(['builder', 'reviewer', 'tester']);
 const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 

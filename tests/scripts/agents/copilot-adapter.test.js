@@ -19,7 +19,7 @@ import { TOOL_SHEETS as SESSION_START_SHEETS, toolSheetLines } from '../../../sc
 import { boardModel } from '../../../scripts/board/model.js';
 import { glossaryOf, plainWords } from '../../../scripts/frontdesk/glossary.js';
 import { frontDeskCommand } from '../../../scripts/protection/settings.js';
-import { COPILOT_VERSION, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, LEVELS, PROOFS, TIERS, BOARD_FILE } from '../../../scripts/lib/copilot-numbers.js';
+import { COPILOT_VERSION, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, LEVELS, PROOFS, TIERS, BOARD_FILE, LEAN_RECORD_DIR } from '../../../scripts/lib/copilot-numbers.js';
 import { LINE_CHARS } from '../../../scripts/lib/core-numbers.js';
 import claudeCode from '../../../adapters/claude-code/index.js';
 import copilot from '../../../adapters/copilot/index.js';
@@ -156,7 +156,10 @@ test('Copilot\'s cards bind only from outside the agent, and its packaging is wh
   assert.deepEqual(copilot.cards.binding, ['policy-hook', 'window', 'add-on', 'host']);
   for (const proof of copilot.cards.binding) assert.ok(PROOFS.includes(proof));
   for (const proof of ['chat-click', 'hook-click', 'signed-hook']) assert.ok(!copilot.cards.binding.includes(proof), `${proof} does not bind on Copilot`);
-  assert.deepEqual(copilot.packaging.files(), ['.vscode/settings.json', '.claude/wheelhouse.json', BOARD_FILE]);
+  // The first commit's list (setup-lean's block "first-commit"): the board is ignored and never committed, and no
+  // .claude/wheelhouse.json is written at Lean. The setup-lean test holds the block to this same list.
+  assert.deepEqual(copilot.packaging.files(), ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`]);
+  assert.ok(!copilot.packaging.files().includes(BOARD_FILE));
   const first = copilot.packaging.files();
   first.length = 0;
   assert.equal(copilot.packaging.files().length, 3);

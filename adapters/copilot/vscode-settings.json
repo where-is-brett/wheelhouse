@@ -24,6 +24,11 @@
     "**/.codex/**": false,
     "**/.cursor/**": false,
     "**/.gemini/**": false,
-    "**/.gitattributes": false
+    "**/.gitattributes": false,
+    "**/.gitignore": false,
+    "**/.claude/**": false,
+    "**/CLAUDE.md": false,
+    "**/wheelhouse/**": false,
+    "**/.wheelhouse/**": false
   }
 }

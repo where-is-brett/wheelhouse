@@ -4,7 +4,7 @@
 // accepts them and nothing else. It imports nothing that reaches the hook kit, so the kit can import it
 // without a cycle.
 import { pendingPart } from '../../scripts/agents/contract.js';
-import { BOARD_FILE } from '../../scripts/lib/copilot-numbers.js';
+import { LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 import identity from './identity.js';
 import safetyLine from './safety-line.js';
 import sessions from './sessions.js';
@@ -24,9 +24,9 @@ export default Object.freeze({
   // A click binds only from a policy hook outside the agent, the helper's window, the add-on's button, or the
   // person's approval on the code host's page.
   cards: Object.freeze({ binding: Object.freeze(['policy-hook', 'window', 'add-on', 'host']) }),
-  // What Lean's setup writes in a project (design section 6.4): VS Code's settings, the project's
-  // configuration (which names the agent) and the board's file. The record folder is not a file; it is made.
-  packaging: Object.freeze({ files: () => ['.vscode/settings.json', '.claude/wheelhouse.json', BOARD_FILE] }),
+  // What Lean's setup commits in a project (design section 6.4), as its first commit: the ignore lines, VS Code's
+  // settings and the record folder's placeholder, so git tracks the folder. The board is not here: git ignores it.
+  packaging: Object.freeze({ files: () => ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`] }),
   toolSheet,
   safetyLine,
   evalRunner: pendingPart('evalRunner', ['run']),

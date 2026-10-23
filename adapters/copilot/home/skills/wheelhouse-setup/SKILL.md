@@ -213,7 +213,27 @@ Nothing
 )
 ```
 
-   On Windows, run the same `git` commands, naming those paths in the same way. If git says there is nothing to commit, an earlier setup made it: go on. If git says it doesn't know who is committing, ask the director for the name and email to use (a card), and set them for this project only (`git config user.name` and `git config user.email`, without `--global`), then commit again.
+   On Windows, in PowerShell, the same:
+
+```powershell
+# first-commit
+& {
+  $Paths = @()
+  foreach ($P in '.gitignore', '.vscode/settings.json', '.wheelhouse/record/.gitkeep') {
+    if (Test-Path $P) {
+      git check-ignore -q $P
+      if ($LASTEXITCODE -ne 0) { $Paths += $P }
+    }
+  }
+  if ($Paths.Count -eq 0) { throw 'There is nothing of setup to commit' }
+  git add -- $Paths
+  if ($LASTEXITCODE -ne 0) { throw 'git add stopped' }
+  git commit -m 'Set up Wheelhouse at Lean' -- $Paths
+  if ($LASTEXITCODE -ne 0) { throw 'git commit stopped' }
+}
+```
+
+   If git says there is nothing to commit, an earlier setup made it: go on. If git says it doesn't know who is committing, ask the director for the name and email to use (a card), and set them for this project only (`git config user.name` and `git config user.email`, without `--global`), then commit again.
 
 Now say in a line what is in place: the settings, the record folder and the board.
 
@@ -236,7 +256,27 @@ Otherwise ask a card. What this is: a copy of the project's history in a folder 
 )
 ```
 
-   On Windows, the same `git` commands, with the path written as the director gave it. If the folder isn't there, can't be written to, or is inside the project, say so plainly, add no remote, and ask the card again once; on a second failure, treat it as **Not now**.
+   On Windows, in PowerShell, the same (a `'` in the path is written `''`):
+
+```powershell
+# copy-remote
+& {
+  $Folder = '<folder>'
+  if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { throw "That folder isn't there" }
+  $Inside = (Resolve-Path -LiteralPath $Folder).ProviderPath.TrimEnd('\') + '\'
+  $Project = (Resolve-Path -LiteralPath .).ProviderPath.TrimEnd('\') + '\'
+  if ($Inside.StartsWith($Project, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'That folder is inside the project' }
+  $Copy = Join-Path $Folder ((Split-Path -Leaf $Project.TrimEnd('\')) + '.git')
+  git init --bare --initial-branch=main $Copy
+  if ($LASTEXITCODE -ne 0) { throw 'git init stopped' }
+  git remote add wheelhouse-copy $Copy
+  if ($LASTEXITCODE -ne 0) { throw 'git remote add stopped' }
+  git ls-remote wheelhouse-copy
+  if ($LASTEXITCODE -ne 0) { throw 'The copy does not answer' }
+}
+```
+
+   If the folder isn't there, can't be written to, or is inside the project, say so plainly, add no remote, and ask the card again once; on a second failure, treat it as **Not now**.
 - **Not now:** carry on. Say that the copy can be set up later by asking for it, and that Lean's playbook says "No copy yet" on the board until then.
 
 When the copy is made, change The copy on the board to "Nothing copied yet, to <the folder>". Nothing is pushed now: the first push comes after the first merge (`wheelhouse-lean`, "The copy").
