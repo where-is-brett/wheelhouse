@@ -283,7 +283,7 @@ test('importClosure follows the imports and refuses one it cannot find', () => {
   assert.throws(() => importClosure(['none.js'], root), /There is no none\.js to copy/);
 });
 
-test('scenario 26 wants route 3, the amendment with its card recorded and asked, and nothing built', () => {
+test('scenario 26 wants route 3 and the read-back, the amendment with its card recorded and asked, and nothing built', () => {
   const dir = tempFolder('scenario-26-');
   const changed = DESIGN_26.text.replace('An Excel workbook (`.xlsx`), one sheet per day', 'A CSV file')
     .replace('**Approved by the director on 15 October 2026.**', '**Changed since the director\'s approval; the change card decides it.**');
@@ -312,12 +312,16 @@ test('scenario 26 wants route 3, the amendment with its card recorded and asked,
   assert.match(judge26({ reply, written: [written('amendment', { work: WORK_26, change: 'x', hash: DESIGN_26.hash })], calls: [], dir, variant: 'with' }).why, /names the design as approved, unchanged/);
   assert.match(judge26({ reply, written: [written('amendment', { work: WORK_26, change: 'x', hash: 'c'.repeat(64) })], calls: [], dir, variant: 'with' }).why, /is no document in the project/);
   // No amendment, or no route said, fails; and building fails first.
-  assert.match(judge26({ reply, written: [amendCard], calls: [], dir, variant: 'without' }).why, /no amendment recorded for orders-export \(route 3 said; it recorded an amend card\)/);
-  assert.match(judge26({ reply: 'Done.', written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /no route 3 was said/);
-  // The route in the intake's own words for question 3, "work already running", counts (ruling F89).
+  assert.match(judge26({ reply, written: [amendCard], calls: [], dir, variant: 'without' }).why, /no amendment recorded for orders-export \(route 3 and the read-back said; it recorded an amend card\)/);
+  assert.match(judge26({ reply: 'Done.', written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /no route 3 was said and no read-back given/);
+  // The route in the intake's own words for question 3, "work already running", counts (ruling F89), with the read-back.
+  const readBack = 'Doing: the export as CSV. Not doing: Excel. Done when: the button gives a CSV file.';
   for (const said of ["I've treated this as a change to work that's already running.", 'This is a change to work that is already running.']) {
-    assert.equal(judge26({ reply: said, events: stream, written: [amendment, amendCard], calls: callsOf(stream), dir, variant: 'with' }).pass, true, said);
+    assert.equal(judge26({ reply: `${said} ${readBack}`, events: stream, written: [amendment, amendCard], calls: callsOf(stream), dir, variant: 'with' }).pass, true, said);
+    // Both are wanted: the route line alone, or the read-back alone, fails (the record command prints them as one line).
+    assert.match(judge26({ reply: said, written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /route 3 was said, but no read-back given/);
   }
+  assert.match(judge26({ reply: readBack, written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /the read-back was given, but no route 3 said/);
   assert.match(judge26({ reply: 'The export is under way.', written: [amendment, amendCard], calls: [], dir, variant: 'with' }).why, /no route 3 was said/);
   const built = callsOf(events(
     ['Edit', { file_path: path.join(dir, '.claude/worktrees/orders-export/src/export-rows.js'), old_string: 'a', new_string: 'b' }],
