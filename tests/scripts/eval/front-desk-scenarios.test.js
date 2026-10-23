@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { callsOf } from '../../../scripts/eval/feature-project.js';
 import {
-  bareLabels, laneSaid, listItems, previewOffered, productWrites, promptContext, quotes, seedEvent, setUpFrontDesk, textsWritten,
+  FRONT_DESK_MODEL, bareLabels, laneSaid, listItems, previewOffered, productWrites, promptContext, quotes, seedEvent, setUpFrontDesk, textsWritten,
 } from '../../../scripts/eval/front-desk.js';
 import { runScenario, runSession, sessionIdOf } from '../../../scripts/eval/harness.js';
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
@@ -184,6 +184,28 @@ test('promptContext gives what the real board context hook gives over the same s
     assert.match(text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\./);
   }
   assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
+});
+
+test('the front desk\'s set-up names the model the environment gives the front desk, in both variants, and null when it gives none (design section 8)', async () => {
+  for (const variant of ['with', 'without']) {
+    const project = await makeScratchProject({ name: `front-desk-model-${variant}` });
+    const named = await setUpFrontDesk(project.dir, variant, { env: { [FRONT_DESK_MODEL]: 'model-desk' } });
+    try {
+      assert.equal(named.model, 'model-desk');
+      assert.equal(named.modelVariable, FRONT_DESK_MODEL);
+    } finally {
+      await named.close();
+      await project.cleanup();
+    }
+    const bare = await makeScratchProject({ name: `front-desk-no-model-${variant}` });
+    const unnamed = await setUpFrontDesk(bare.dir, variant, { env: {} });
+    try {
+      assert.equal(unnamed.model, null);
+    } finally {
+      await unnamed.close();
+      await bare.cleanup();
+    }
+  }
 });
 
 test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the reload over the state as it stands, and the board context hook\'s text', async () => {
