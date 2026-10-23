@@ -21,6 +21,10 @@ export const MOST_DIFF_BYTES = 2 * 1024 * 1024;
 export const DIFF_FILE = 'change.diff';
 // The names that steer an agent wherever they are, in any case.
 const STEERING_NAMES = ['agents.md', 'claude.md', 'gemini.md'];
+// The names that steer an agent from a folder above the review's (a repository's own folder, its steering folders
+// and files), looked for in each folder from the review's up to the system's temporary folder. A dot entry alone is
+// not refused there: the temporary folder holds other programs' own.
+const ABOVE_NAMES = ['.git', '.github', '.claude', '.agents', '.vscode', '.mcp.json', ...STEERING_NAMES];
 // The file modes git copies into the folder: a plain file and an executable one. A link (120000) or a
 // submodule (160000) is in the diff only.
 const COPIED_MODES = ['100644', '100755'];
@@ -71,12 +75,33 @@ export function scanFolder(folder) {
   return found.sort();
 }
 
+// Each folder above `folder`, up to and including the system's temporary folder, that holds a repository or a
+// file that steers an agent, as `<folder>/<name>`. Throws NoCleanReview when `folder` isn't under that folder.
+export function steeringAbove(folder, tmp = os.tmpdir()) {
+  const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+  const top = real(tmp);
+  let dir = real(path.dirname(path.resolve(folder)));
+  const inside = (p) => p === top || p.startsWith(`${top}${path.sep}`);
+  if (!inside(dir)) throw new NoCleanReview("the review's folder isn't under the system's temporary folder");
+  const found = [];
+  for (;;) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { names = []; }
+    for (const name of names) if (ABOVE_NAMES.includes(name.toLowerCase())) found.push(path.join(dir, name));
+    if (dir === top) break;
+    const up = path.dirname(dir);
+    if (up === dir || !inside(up)) break;
+    dir = up;
+  }
+  return found.sort();
+}
+
 // The review's folder (ruling P7-16): a fresh folder under the system's temporary folder holding each changed path
 // at the head, as `read(path)` gives its bytes from the mirror, and `change.diff`. `files` lists every changed path
 // with its `mode` and `size` at the head (`mode` null when the change deletes it). A deleted path, a link, a
 // submodule, a file over MOST_FILE_BYTES, a steering name and a path at the folder's own `change.diff` are not
 // copied and appear only in the diff. A path that can't be copied safely, or a diff over MOST_DIFF_BYTES, refuses
-// (NoCleanReview), as does a steering entry the scan finds after copying. Gives `{ folder, copied, diffOnly,
+// (NoCleanReview), as does a steering entry the scan finds after copying, or one in a folder above it (steeringAbove). Gives `{ folder, copied, diffOnly,
 // remove }`; on a refusal nothing is left behind.
 export async function reviewFolder({ sha, files, diff, read, tmp = os.tmpdir() }) {
   if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new NoCleanReview('the head commit is not known');
@@ -107,6 +132,8 @@ export async function reviewFolder({ sha, files, diff, read, tmp = os.tmpdir() }
     fs.writeFileSync(path.join(folder, DIFF_FILE), diff, { flag: 'wx' });
     const steering = scanFolder(folder);
     if (steering.length > 0) throw new NoCleanReview(`the review's folder holds files that steer an agent: ${steering.join(', ')}`);
+    const above = steeringAbove(folder);
+    if (above.length > 0) throw new NoCleanReview(`a folder above the review's holds a repository or files that steer an agent: ${above.join(', ')}`);
     return { folder, copied: copied.sort(), diffOnly: diffOnly.sort(), remove };
   } catch (error) {
     remove();
@@ -171,10 +198,13 @@ export function readVerdict({ answer, firstLine, number, sha }) {
 // One review (ruling P7-14). `withChange(build)` is the helper's: inside one fetch of the pull request in its
 // mirror, it calls `build({ files, read, diff, rules })`, and gives back what `build` gives. The folder is made
 // there; the session runs after, in the folder, through the agent's review module (`review.session({ folder,
-// prompt })`, which gives `{ clean, reasons, answer, firstLine }`). Gives `{ ok: true, data }`, the data of the
-// `review` record the helper signs, with the module's `reviewKind`, or `{ ok: false, why }`. The folder is removed
-// whatever happens.
-export async function runReview({ number, sha, review, withChange, brief = null, ci = null, tmp = os.tmpdir() }) {
+// prompt, stopped })`, which gives `{ clean, reasons, answer, firstLine }`). Gives `{ ok: true, data }`, the data of the
+// `review` record the helper signs, with the module's `reviewKind`, or `{ ok: false, why }`. `stopped()` says
+// whether STOP is on: read before the session starts, and handed to it to read before each program it runs, so a
+// STOP raised meanwhile starts no agent (`{ ok: false, why: 'STOP is on', stopped: true }`). After the session the
+// folder is scanned again before the verdict counts. The folder is removed whatever happens.
+export const STOPPED = Object.freeze({ ok: false, why: 'STOP is on', stopped: true });
+export async function runReview({ number, sha, review, withChange, brief = null, ci = null, tmp = os.tmpdir(), stopped = () => false }) {
   if (review === null || typeof review !== 'object' || typeof review.session !== 'function' || typeof review.reviewKind !== 'string') {
     return { ok: false, why: "this project's agent has no clean review session" };
   }
@@ -185,11 +215,15 @@ export async function runReview({ number, sha, review, withChange, brief = null,
     }));
     made = gathered.built;
     const prompt = reviewPrompt({ number, sha, brief, diff: gathered.diff, rules: gathered.rules ?? [], ci, copied: made.copied, diffOnly: made.diffOnly });
-    const session = await review.session({ folder: made.folder, prompt });
+    if (stopped()) return STOPPED;
+    const session = await review.session({ folder: made.folder, prompt, stopped });
+    if (session?.stopped === true || stopped()) return STOPPED;
     if (session?.clean !== true) {
       const reasons = Array.isArray(session?.reasons) && session.reasons.length > 0 ? session.reasons : ['the session could not be shown clean'];
       return { ok: false, why: reasons.join('; ') };
     }
+    const after = scanFolder(made.folder);
+    if (after.length > 0) return { ok: false, why: `the review's folder gained files that steer an agent while the session ran: ${after.join(', ')}` };
     const verdict = readVerdict({ answer: session.answer, firstLine: session.firstLine, number, sha });
     if (!verdict.ok) return verdict;
     return { ok: true, data: { ...verdict.data, reviewKind: review.reviewKind } };

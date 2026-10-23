@@ -12,6 +12,8 @@
 //   answer         'nonce' (default), 'no-nonce', or 'none'
 //   verdict        CLEAN (default) or FINDINGS
 //   record         a file it writes what it saw to: each call's arguments, variable names, folder and home listing
+//   plantHome      a path the session writes into the review's home while it runs
+//   plantFolder    a path the session writes into the review's folder while it runs
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,6 +72,12 @@ const report = ['WHEELHOUSE REPORT', 'role: reviewer', `pr: ${pr}`, `commit: ${c
 const answer = knobs.answer === 'none' ? null : `${knobs.answer === 'no-nonce' ? '' : `${nonceLine}\n`}Read the change in the folder.\n${report}`;
 if (answer !== null) emit({ type: 'assistant.message', data: { messageId: 'm2', phase: 'final_answer', content: answer } });
 emit({ type: 'result', sessionId: 'sid-review', exitCode: 0, usage: { premiumRequests: 1 } });
+
+for (const [root, file] of [[home, knobs.plantHome], [process.cwd(), knobs.plantFolder]]) {
+  if (!file) continue;
+  fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+  fs.writeFileSync(path.join(root, file), 'planted\n');
+}
 
 const logDir = at('--log-dir');
 if (logDir) {

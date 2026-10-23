@@ -46,7 +46,7 @@ export const SIGN_IN_KEYS = Object.freeze(['loggedInUsers', 'lastLoggedInUser', 
 // lists what Copilot writes into a home, and confirms these names (check 61 saw `session-state`, a session database,
 // `installed-plugins`, `plugin-data` and lock files).
 const WHEELHOUSE_KEEPS = ['config.json', 'hooks', 'agents'];
-const COPILOT_STATE = [/^session-state$/, /^logs?$/, /\.(db|sqlite3?)(-wal|-shm|-journal)?$/i, /\.lock$/i];
+export const COPILOT_STATE = [/^session-state$/, /^logs?$/, /\.(db|sqlite3?)(-wal|-shm|-journal)?$/i, /\.lock$/i];
 
 // The variables a session keeps from the environment it is started from (ruling P7-7). No token variable: check 61
 // signed in through the keychain, found from config.json and the real HOME (a scratch HOME breaks it), so GH_TOKEN,

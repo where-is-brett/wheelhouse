@@ -2395,6 +2395,21 @@ export async function startHelper({
     }
   }
 
+  // The default branch's configuration, read by itself in the mirror, or undefined when it can't be read. A refusal
+  // of the mirror's settings ends the request, as elsewhere.
+  async function defaultConfig(project, adapter, ctx) {
+    try {
+      const defaultBranch = await defaultBranchOf(project, adapter);
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
+        await defaultHistory(must, defaultBranch);
+        return baseConfig(must);
+      }));
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+      return undefined;
+    }
+  }
+
   // The review kinds the gate counts (ruling P7-15): null, today's rule, for an agent with no review module; the
   // module's own kinds; none where the agent can't be told or the module can't say.
   function reviewKindsOf(config) {
@@ -2460,9 +2475,10 @@ export async function startHelper({
         const paths = (await must(['diff', '--name-only', '-z', '--no-renames', base, headSha], 'listing the changed files')).split('\0').filter((p) => p !== '');
         const files = [];
         for (const file of paths) {
-          const listed = await must(['ls-tree', '-l', '-z', headSha, '--', file], 'looking for a changed file');
-          const entry = /^(\d{6}) (\w+) [0-9a-f]+ +(-|\d+)\t/.exec(listed);
-          files.push(entry ? { path: file, mode: entry[1], size: entry[3] === '-' ? null : Number(entry[3]) } : { path: file, mode: null, size: null });
+          const listed = await must(['--literal-pathspecs', 'ls-tree', '-l', '-z', headSha, '--', file], 'looking for a changed file');
+          const entry = /^(\d{6}) (\w+) [0-9a-f]+ +(-|\d+)\t([^\0]*)\0/.exec(listed);
+          // Only the entry for this very path counts; any other answer is read as the path being absent at the head.
+          files.push(entry && entry[4] === file ? { path: file, mode: entry[1], size: entry[3] === '-' ? null : Number(entry[3]) } : { path: file, mode: null, size: null });
         }
         const read = (file) => must(['cat-file', 'blob', `${headSha}:${file}`], 'reading a changed file', { encoding: 'buffer' });
         const diff = await must(['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', base, headSha], 'working out the diff');
@@ -2502,9 +2518,11 @@ export async function startHelper({
       const adapter = await ctx.adapter();
       const ci = await adapter.ciState(headSha);
       outcome = await runReview({
-        number, sha: headSha, review: module, brief: recordedBrief(project, pr.headRef), ci,
+        number, sha: headSha, review: module, brief: recordedBrief(project, pr.headRef), ci, stopped,
         withChange: withChange({ project, number, headSha, defaultBranch }, ctx),
       });
+      // A STOP raised after the route answered starts no agent, and nothing is written.
+      if (outcome.stopped === true) return;
       if (outcome.ok) {
         const still = await adapter.prState(number);
         if (still?.state !== 'open' || still.headSha !== headSha) outcome = { ok: false, why: 'the head moved, or the pull request closed, while it was reviewed' };
@@ -2745,8 +2763,11 @@ export async function startHelper({
     const holdsLock = await lockHeld(project, ctx);
     const { upToDate, review, approval } = await gateRecords({ project, number, headSha, views, adapter, compare: approvalRequired }, ctx);
     // The kinds of review that count for the agent this computer runs, from the default branch's configuration:
-    // null, today's rule, unless the agent's review module names them (ruling P7-15).
-    const reviewKinds = reviewKindsOf(changes?.config);
+    // null, today's rule, unless the agent's review module names them (ruling P7-15). The configuration doesn't
+    // depend on the pull request's files, so when those couldn't be read it is read by itself; only when the
+    // default branch's configuration itself can't be read does today's rule stand (the approval is then needed
+    // anyway, since unreadable changes count as touching the guardrails).
+    const reviewKinds = reviewKindsOf(changes?.config ?? await defaultConfig(project, adapter, ctx));
     // STOP and bypass are read last, just before the decision, so one set during the
     // fetches above is seen. The caller may only raise them.
     const decision = gateDecision({

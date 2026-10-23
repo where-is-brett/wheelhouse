@@ -30,6 +30,8 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+import { setStop } from '../../../scripts/lib/stop.js';
+import { STOPPED, steeringAbove } from '../../../scripts/review/clean-session.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
 
 // No host tool or Copilot runs: the helper's runs go through this, and the stand-ins come first on the PATH.
@@ -323,12 +325,13 @@ async function reviewProject({ base = {}, change, agent = 'copilot' }) {
   return { home, head, cleanup: () => { remote.cleanup(); fs.rmSync(work, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); } };
 }
 
-function fakeAdapter(head) {
+function fakeAdapter(head, overrides = {}) {
   return {
     defaultBranch: async () => 'main',
     prState: async () => ({ headSha: head, headRef: 'feature/x', baseRef: 'main', mergeable: 'mergeable', state: 'open', body: matchingBody() }),
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async () => ({ merged: true }),
+    ...overrides,
   };
 }
 
@@ -352,10 +355,10 @@ function standInReview({ answer, clean = true }) {
 
 // Starts the helper with `modules` as the review registry, runs `steps(client, helper)`, then closes the helper,
 // which waits for the review under way. Gives the review and note events written.
-async function withHelper(project, modules, steps) {
+async function withHelper(project, modules, steps, adapter = fakeAdapter(project.head)) {
   return as(project.home, async () => {
     const helper = await startHelper({
-      run: hostGuard, address: testAddress(project.home), adapterFor: async () => fakeAdapter(project.head), envFor: async () => ({}), now: at(5000), reviewModules: modules,
+      run: hostGuard, address: testAddress(project.home), adapterFor: async () => adapter, envFor: async () => ({}), now: at(5000), reviewModules: modules,
     });
     try {
       await steps(helperClient({ address: helper.address }));
@@ -572,4 +575,103 @@ test("the prompt carries the feature's brief only when it is the one the state r
   } finally {
     project.cleanup();
   }
+});
+
+test('a STOP raised after the route answered starts no reviewer, and nothing is written', async () => {
+  // At the core: STOP raised while the folder is built, and STOP raised inside the session, both give STOPPED.
+  let stop = false;
+  let sessions = 0;
+  const outcome = await runReview({
+    number: 7, sha: SHA, tmp: tempFolder('wh-review-tmp-'), stopped: () => stop,
+    review: { reviewKind: 'clean-session', session: async () => { sessions += 1; return { clean: true }; } },
+    withChange: (build) => { stop = true; return build({ ...changed({ 'src/a.js': 'a\n' }), diff: '+a\n', rules: [] }); },
+  });
+  assert.deepEqual(outcome, STOPPED);
+  assert.equal(sessions, 0);
+  let raised = false;
+  const inside = await runReview({
+    number: 7, sha: SHA, tmp: tempFolder('wh-review-tmp-'), stopped: () => raised,
+    review: { reviewKind: 'clean-session', session: async ({ stopped }) => { raised = true; return stopped() ? { stopped: true } : { clean: true }; } },
+    withChange: (build) => build({ ...changed({ 'src/a.js': 'a\n' }), diff: '+a\n', rules: [] }),
+  });
+  assert.deepEqual(inside, STOPPED);
+
+  // Through the helper: STOP is raised once the route has answered (here, as the job reads CI), and the stand-in
+  // session never runs; no review and no note is written.
+  const project = await reviewProject({ change: { 'src/g.js': 'g\n' } });
+  try {
+    const stand = standInReview({ answer: answerFor('CLEAN') });
+    const adapter = fakeAdapter(project.head, { ciState: async (sha) => { setStop({ by: 'helper' }); return { sha, state: 'success' }; } });
+    const { reviews, notes } = await withHelper(project, () => stand.module, async (client) => {
+      assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: true, started: true });
+    }, adapter);
+    assert.equal(stand.seen.length, 0);
+    assert.deepEqual([reviews.length, notes.length], [0, 0]);
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("on a Copilot computer the merge reads the default branch's configuration by itself when the changed files can't be read", async () => {
+  for (const [agent, reason] of [['copilot', (short) => NO_CLEAN_REVIEW(short)], ['claude-code', null]]) {
+    const project = await reviewProject({ change: { 'src/h.js': 'h\n' }, agent });
+    try {
+      // The host reports a head the mirror can't fetch, so the changed files can't be read; the review names it.
+      const reported = 'c'.repeat(40);
+      await as(project.home, () => {
+        const event = makeEvent({ kind: 'review', data: { pr: 7, commit: reported, verdict: 'CLEAN' }, now: at(1000) });
+        const file = path.join(stateDir('o__p'), eventPath(event));
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+      });
+      const adapter = fakeAdapter(reported);
+      await withHelper(project, reviewsFor, async (client) => {
+        const merged = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(merged.ok, false);
+        assert.ok(merged.reasons.includes("the changed files couldn't be read, so this needs the director's approval"), merged.refused);
+        const short = reported.slice(0, 7);
+        if (reason === null) assert.ok(!merged.reasons.some((r) => /review of/.test(r)), merged.refused);
+        else assert.ok(merged.reasons.includes(reason(short)), merged.refused);
+      }, adapter);
+    } finally {
+      project.cleanup();
+    }
+  }
+});
+
+test('a folder above the review folder that holds a repository or a steering file refuses with NO_CLEAN_REVIEW', async () => {
+  for (const name of ['AGENTS.md', '.git', '.mcp.json', '.github', 'Claude.md']) {
+    const tmp = tempFolder('wh-review-above-');
+    const parent = path.join(tmp, 'parent');
+    fs.mkdirSync(parent);
+    if (name.startsWith('.git') || name === '.github') fs.mkdirSync(path.join(tmp, name));
+    else fs.writeFileSync(path.join(tmp, name), 'x');
+    await assert.rejects(
+      reviewFolder({ sha: SHA, files: [], diff: '', read: async () => Buffer.from(''), tmp: parent }),
+      (error) => error.code === 'NO_CLEAN_REVIEW' && error.message.includes(name), name,
+    );
+    assert.deepEqual(fs.readdirSync(parent), [], name);
+  }
+  // Another program's own dot entry in the temporary folder is not refused.
+  const tmp = tempFolder('wh-review-above-');
+  fs.mkdirSync(path.join(tmp, '.com.example.cache'));
+  assert.deepEqual(steeringAbove(path.join(tmp, 'folder'), tmp), []);
+  // A folder outside the system's temporary folder refuses.
+  assert.throws(() => steeringAbove('/folder-outside/x', os.tmpdir()), (error) => error.code === 'NO_CLEAN_REVIEW');
+});
+
+test('a steering file written into the folder while the session runs means its verdict does not count', async () => {
+  const outcome = await runReview({
+    number: 7, sha: SHA, tmp: tempFolder('wh-review-tmp-'),
+    review: {
+      reviewKind: 'clean-session',
+      session: async ({ folder }) => {
+        fs.mkdirSync(path.join(folder, '.github'));
+        return { clean: true, reasons: [], answer: `${LINE}\n${report({ commit: SHA })}`, firstLine: LINE };
+      },
+    },
+    withChange: (build) => build({ ...changed({ 'src/a.js': 'a\n' }), diff: '+a\n', rules: [] }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.why, /gained files that steer an agent while the session ran: \.github/);
 });

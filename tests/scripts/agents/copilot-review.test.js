@@ -145,3 +145,30 @@ test('another Copilot version, a .cmd program or a missing sign-in refuses befor
   assert.match(unsigned.result.reasons[0], /isn't signed in/);
   assert.equal(unsigned.seen.length, 0);
 });
+
+test('a file added to the folder or the home while the session runs makes it not clean', async () => {
+  for (const [knobs, pattern] of [
+    [{ plantFolder: '.github/copilot-instructions.md' }, /folder gained files that steer an agent: \.github/],
+    [{ plantFolder: 'src/AGENTS.md' }, /folder gained files that steer an agent: src\/AGENTS\.md/],
+    [{ plantHome: 'skills/x/SKILL.md' }, /home gained what Wheelhouse didn't write: skills/],
+    [{ plantHome: 'agents/other.agent.md' }, /home gained what Wheelhouse didn't write: agents\/other\.agent\.md/],
+  ]) {
+    const { result } = await session(knobs);
+    assert.equal(result.clean, false, JSON.stringify(knobs));
+    assert.ok(result.reasons.some((r) => pattern.test(r)), `${JSON.stringify(knobs)}: ${result.reasons.join('; ')}`);
+  }
+  // Copilot's own state in the home is not an addition.
+  const { result } = await session({ plantHome: 'session-state/abc/events.jsonl' });
+  assert.deepEqual(result.reasons, []);
+});
+
+test('under STOP the session starts no further program', async () => {
+  for (const after of [0, 1, 3, 5]) {
+    let calls = 0;
+    const { result, seen } = await session({}, { stopped: () => calls++ >= after });
+    assert.equal(result.stopped, true, String(after));
+    assert.equal(result.clean, false);
+    assert.deepEqual(result.reasons, ['STOP is on']);
+    assert.equal(seen.length, after, String(after));
+  }
+});

@@ -22,7 +22,8 @@ import { resolveCommand } from '../../scripts/lib/claude.js';
 import { COPILOT_VERSION, REVIEW_SESSION_READY } from '../../scripts/lib/copilot-numbers.js';
 import { run as realRun } from '../../scripts/lib/run.js';
 import { copilotHome } from './hooks.js';
-import { copilotSessionEnv, eventsOf, finalAnswer, signInOf } from './sessions.js';
+import { scanFolder } from '../../scripts/review/clean-session.js';
+import { COPILOT_STATE, copilotSessionEnv, eventsOf, finalAnswer, signInOf } from './sessions.js';
 
 // The kit's reviewer, whose body the review's agent takes under the name check 66 proved (`reviewer`).
 const KIT_REVIEWER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home', 'agents', 'wheelhouse-reviewer.agent.md');
@@ -158,7 +159,8 @@ const sameSet = (a, b) => a.length === b.length && new Set(a).size === a.length 
 
 // The clean check (ruling P7-17; modelled on probes/66-clean-review/run.js's, with the parked minors M1 to M3): the
 // session's facts and debug log, how it was started (`args` against `expectedArgs`, whole; `environment`, the names
-// of its variables), Copilot's own listings from the same home, folder and environment, and its answer, which must
+// of its variables: both as runSession built them, a guard against the call drifting from reviewArgs, not a reading
+// of the running process), Copilot's own listings from the same home, folder and environment, and its answer, which must
 // begin with `firstLine` while the prompt doesn't hold the nonce. Gives `{ clean, reasons }`.
 export function cleanCheck({ facts, debug, args, expectedArgs, environment, listings, answer, firstLine, prompt, nonce }) {
   const reasons = [];
@@ -216,15 +218,36 @@ export function cleanCheck({ facts, debug, args, expectedArgs, environment, list
   return { clean: reasons.length === 0, reasons };
 }
 
+// What the review's home holds beyond what writeReviewHome wrote and Copilot's own state (COPILOT_STATE), and
+// anything in its agents folder but the reviewer: read after the session, so a file added while it ran is a reason.
+// A link counts as added.
+export function homeAdditions(home) {
+  const added = [];
+  let names = [];
+  try { names = fs.readdirSync(home); } catch { return ['the home is gone']; }
+  for (const name of names) {
+    const stat = fs.lstatSync(path.join(home, name));
+    if (stat.isSymbolicLink()) added.push(name);
+    else if (name === 'config.json' && stat.isFile()) continue;
+    else if (name === 'agents' && stat.isDirectory()) {
+      for (const inner of fs.readdirSync(path.join(home, 'agents'))) if (inner !== `${REVIEWER}.agent.md`) added.push(`agents/${inner}`);
+    } else if (!COPILOT_STATE.some((pattern) => pattern.test(name))) added.push(name);
+  }
+  return added.sort();
+}
+
 // The first version number Copilot gives for `--version`, or null.
 export const versionOf = (text) => /\b(\d+\.\d+\.\d+)\b/.exec(String(text ?? ''))?.[1] ?? null;
 
 // One review session in `folder` (ruling P7-17): the review's own home, Copilot's version and its four listings from
 // that home, folder and environment, the session, then the clean check. Gives `{ clean, reasons, answer, firstLine }`.
-// Everything it made is removed before it returns. `copilot` is the program as resolveCommand finds it; through a
+// Everything it made is removed before it returns. `stopped()` is read before each program it runs (the version,
+// each listing, the session): under STOP no further one starts, and it gives `{ stopped: true }`. After the session
+// the folder and the home are looked at again before its answer is taken. `copilot` is the program as resolveCommand finds it; through a
 // .cmd shim the review is not started, since its prompt carries the diff, which cmd.exe can't be given whole.
-export async function runSession({ folder, prompt, env = process.env, platform = process.platform, copilot = null, run = realRun, signedInFrom = copilotHome(), tmp = os.tmpdir(), timeoutMs = SESSION_MS }) {
+export async function runSession({ folder, prompt, stopped = () => false, env = process.env, platform = process.platform, copilot = null, run = realRun, signedInFrom = copilotHome(), tmp = os.tmpdir(), timeoutMs = SESSION_MS }) {
   const refused = (why) => ({ clean: false, reasons: [why], answer: null, firstLine: null });
+  const halted = { clean: false, reasons: ['STOP is on'], answer: null, firstLine: null, stopped: true };
   let resolved;
   try {
     resolved = copilot ?? resolveCommand({ name: 'copilot', platform, env });
@@ -247,15 +270,17 @@ export async function runSession({ folder, prompt, env = process.env, platform =
     }
     fs.mkdirSync(logDir);
     const sessionEnv = reviewEnv(env, { home, platform });
-    const call = (args, ms) => run(resolved.file, args, { cwd: folder, baseEnv: {}, env: sessionEnv, input: '', timeoutMs: ms, limit: OUTPUT_BYTES, platform });
+    const call = (args, ms) => (stopped() ? null : run(resolved.file, args, { cwd: folder, baseEnv: {}, env: sessionEnv, input: '', timeoutMs: ms, limit: OUTPUT_BYTES, platform }));
 
     const version = await call(['--version'], LISTING_MS);
+    if (version === null) return halted;
     const found = version.code === 0 ? versionOf(version.stdout) : null;
     if (found !== COPILOT_VERSION) return refused(`Copilot CLI here is ${found ?? 'of a version that could not be read'}, and the clean review was shown only on ${COPILOT_VERSION}`);
 
     const listings = {};
     for (const listing of LISTINGS) {
       const answer = await call(listing.args, LISTING_MS);
+      if (answer === null) return halted;
       let json;
       if (listing.json) {
         try { json = JSON.parse(answer.stdout); } catch { json = undefined; }
@@ -265,6 +290,7 @@ export async function runSession({ folder, prompt, env = process.env, platform =
 
     const args = reviewArgs({ prompt, logDir });
     const session = await call(args, timeoutMs);
+    if (session === null) return halted;
     if (session.timedOut || session.code !== 0) return refused(session.timedOut ? 'the review session did not finish in time' : `the review session ended with exit code ${session.code}`);
     const answer = finalAnswer(session.stdout);
     const check = cleanCheck({
@@ -279,7 +305,12 @@ export async function runSession({ folder, prompt, env = process.env, platform =
       prompt,
       nonce,
     });
-    return { clean: check.clean, reasons: check.reasons, answer, firstLine };
+    const reasons = [...check.reasons];
+    const folderNow = scanFolder(folder);
+    if (folderNow.length > 0) reasons.push(`the review's folder gained files that steer an agent: ${folderNow.join(', ')}`);
+    const homeNow = homeAdditions(home);
+    if (homeNow.length > 0) reasons.push(`the review's home gained what Wheelhouse didn't write: ${homeNow.join(', ')}`);
+    return { clean: reasons.length === 0, reasons, answer, firstLine };
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
@@ -293,7 +324,7 @@ export function makeReview({ ready = REVIEW_SESSION_READY, ...options } = {}) {
     reviewKind: REVIEW_KIND,
     ready: () => ready === true,
     kinds: () => (ready === true ? [REVIEW_KIND] : []),
-    session: ({ folder, prompt }) => runSession({ ...options, folder, prompt }),
+    session: ({ folder, prompt, stopped }) => runSession({ ...options, folder, prompt, ...(typeof stopped === 'function' ? { stopped } : {}) }),
   });
 }
 
