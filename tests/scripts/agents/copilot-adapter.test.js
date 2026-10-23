@@ -29,7 +29,7 @@ import copilotSheet from '../../../adapters/copilot/tool-sheet.js';
 import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const PENDING = ['hooks', 'settings', 'sessions', 'evalRunner'];
+const PENDING = ['settings', 'sessions', 'evalRunner'];
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -65,7 +65,7 @@ test('sessionsFor gives the very object the Copilot adapter holds', () => {
 });
 
 test('checkAdapter accepts a not-built-yet part only when the adapter lists it as pending', () => {
-  assert.deepEqual(checkAdapter({ ...copilot, pending: PENDING.filter((p) => p !== 'hooks') }), ['The hooks part is not built yet, and the adapter does not list it as pending']);
+  assert.deepEqual(checkAdapter({ ...copilot, pending: PENDING.filter((p) => p !== 'settings') }), ['The settings part is not built yet, and the adapter does not list it as pending']);
   const { pending, ...unlisted } = copilot;
   assert.equal(checkAdapter(unlisted).length, PENDING.length);
   assert.ok(checkAdapter(unlisted).every((line) => /is not built yet, and the adapter does not list it as pending$/.test(line)));
