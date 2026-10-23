@@ -581,6 +581,8 @@
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Bash(npm test:*)",
         "Bash(npm run:*)",
@@ -630,6 +632,8 @@
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Bash(npm test:*)",
         "Bash(npm run:*)",
@@ -1611,7 +1615,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits\""
+        "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model default\""
       ],
       "input": "Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
@@ -1650,7 +1654,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits\""
+        "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model default\""
       ],
       "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
@@ -2699,7 +2703,9 @@
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
-        "acceptEdits"
+        "acceptEdits",
+        "--model",
+        "default"
       ],
       "input": "",
       "verbatim": false,
@@ -2740,7 +2746,9 @@
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
-        "acceptEdits"
+        "acceptEdits",
+        "--model",
+        "default"
       ],
       "input": "",
       "verbatim": false,

@@ -84,7 +84,8 @@ export function checkFeature(config) {
 // A feature session: `lead` is the words that name which session it is. `allowed` are the allow rules
 // to pass to --allowedTools, when there are any.
 function featureCall({ lead, config, prompt, allowed = [], platform = process.platform, env = process.env, claude = null }) {
-  const model = modelOf(config, 'builder');
+  // A worktree reads the main checkout's local settings too, so, as the foreman, it names its model.
+  const model = modelOf(config, 'builder') ?? DEFAULT_MODEL;
   const args = [
     ...lead,
     '--permission-mode', featureModeOf(config),

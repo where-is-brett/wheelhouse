@@ -333,12 +333,31 @@ test('step 7 pins the front desk to what the most capable model\'s alias stands 
     assert.equal(done.ok, true, done.reason);
     assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, BEST_MODEL);
     assert.equal(w.json('.claude/settings.local.json').model, BEST_MODEL, 'the front desk\'s folder starts its sessions on it');
-    assert.equal(w.json('.claude/settings.json').model, undefined, 'never in the committed settings, which every worktree has');
+    assert.equal(w.json('.claude/settings.json').model, undefined, 'never in the committed settings, which go to the host');
     // The pin stays where it is: a later run asks nothing and changes nothing, even when the alias has moved.
     w.best = 'model-top-2';
     const again = await w.plan();
     assert.equal(w.bestAsked, 1);
     assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
+  });
+});
+
+test('the most capable model is asked once in a setup run: every later plan in the run gives the same list, whatever the alias says by then', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    const ctx = w.ctx({ runId: run.id });
+    w.best = null;
+    const first = await w.step.plan(ctx);
+    w.best = BEST_MODEL;
+    const again = await w.step.plan(ctx);
+    assert.equal(w.bestAsked, 1);
+    assert.equal(planHash(again.changes), planHash(first.changes), 'the card\'s hash still holds at the click');
+    // A new run asks again.
+    const next = startRun({ folder: w.folder, now: () => T0 });
+    const later = await w.step.plan(w.ctx({ runId: next.id }));
+    assert.equal(w.bestAsked, 2);
+    assert.deepEqual(later.changes.filter((c) => c.key?.[0] === 'model').map((c) => c.after), [BEST_MODEL]);
   });
 });
 

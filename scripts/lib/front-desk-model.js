@@ -57,5 +57,5 @@ export const FRONT_DESK_MODEL_LEAD = 'The front desk is running on ';
 // The line for a front desk running on another model than the pin, or null.
 export function frontDeskModelLine({ running, pinned } = {}) {
   if (!running || !pinned || running === pinned) return null;
-  return `${FRONT_DESK_MODEL_LEAD}${running}, not ${pinned}, the most capable model, so it may follow your rulings less closely: pick ${pinned} in Claude's model menu to switch back`;
+  return `${FRONT_DESK_MODEL_LEAD}${running}, not ${pinned}, the most capable model, so it may follow your rulings less closely: switch back to the most capable model in Claude's model menu`;
 }

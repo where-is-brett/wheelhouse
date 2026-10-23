@@ -380,8 +380,8 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
   - The table pins full model IDs, not aliases. A pin moves only after the evaluation passes on the new model (section 9.1). *Designer's call*, replacing the first draft's aliases, because an alias can move to an untested model before the evaluation runs.
   - **How the front desk gets its model** (the command centre's ruling, 24 October 2026, after scenarios 1 and 16 failed on a smaller default model: `docs/evals/front-desk.md`):
     - Setup's step 7 asks Claude Code once what its alias `best` stands for, and pins that full ID as `frontDesk` in the project's routing table. Wheelhouse's own repository names no model, only the alias.
-    - Setup writes the pin as `model` in the main folder's `.claude/settings.local.json`. That file is never committed, so the front desk's sessions start on the pin, and the feature worktrees don't.
-    - The foreman shares the main folder, so it always names its own model: its role's, or the command line's default.
+    - Setup writes the pin as `model` in the main folder's `.claude/settings.local.json`. That file is never committed, and the front desk's sessions start on the pin.
+    - The worktrees inside the folder read that file too, so the foreman's and the feature sessions' calls always name their own model: their role's, or the command line's default. A setup run asks what `best` stands for once, and every plan in the run uses that answer.
     - The pin moves only after the evaluation passes on the new model. Setup never changes a pin the table already holds.
     - The director can still pick another model in Claude's model menu, and that choice stands. The session start keeps the model the front desk runs on. While it isn't the pin, the board shows one line saying so, and the briefing gives that line once a week. It blocks nothing.
     - If Claude Code isn't signed in on the command line, or doesn't say what `best` stands for, step 7 goes on without a pin and its card says so. The next setup run tries again.

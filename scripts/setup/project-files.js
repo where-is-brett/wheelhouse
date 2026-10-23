@@ -81,7 +81,7 @@ import { SETUP_FILES } from '../../adapters/claude-code/packaging.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
-import { helperAddress } from '../lib/paths.js';
+import { helperAddress, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.js';
@@ -490,6 +490,26 @@ async function installPin({ id, folder, run, claude }) {
   if (got.code !== 0) throw new Error(`Claude Code could not install ${id} for this project${got.timedOut ? ' in time' : ''}; a fresh Go ahead tries again`);
 }
 
+// ---- The front desk's model ----
+
+// Where a setup run keeps what Claude Code said its most capable model is.
+const bestFile = () => path.join(wheelhouseHome(), 'setup', 'front-desk-model.json');
+
+// What `best()` gives, asked once in a setup run (`runId`) and kept, so every plan of the run (the
+// card's, the click's, the step's own) gives the same list and the card's hash holds. A run with no
+// id asks every time; a new run asks again, so one that found nothing tries again.
+async function bestOnce(runId, best) {
+  if (typeof runId !== 'string') return best();
+  const kept = readJson(bestFile());
+  if (kept?.runId === runId) return isModelName(kept.model) ? kept.model : null;
+  const model = await best();
+  try {
+    fs.mkdirSync(path.dirname(bestFile()), { recursive: true });
+    fs.writeFileSync(bestFile(), `${JSON.stringify({ runId, model })}\n`);
+  } catch { /* asked again at the next plan */ }
+  return model;
+}
+
 // ---- The card ----
 
 // The card's word for a step that found no model to pin the front desk to.
@@ -711,7 +731,7 @@ export function projectFilesStep({
 
       // The front desk's model (design section 8): the pin the configuration holds, else what Claude
       // Code's alias for its most capable model stands for now, asked only while there is no pin.
-      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await best();
+      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(ctx.runId, best);
       const config = starterConfig({ answers: ctx.answers, frontDesk: pin });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
