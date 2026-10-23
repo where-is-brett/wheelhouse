@@ -1547,12 +1547,58 @@ test('preview gives the address of a pull request\'s preview, or says in a sente
   assert.equal(asked.length, 3);
 });
 
+test('carry-on <n> asks the helper to make the request ready, and prints the work, the from to record and what to write the brief from', async () => {
+  const asked = [];
+  const ready = {
+    ok: true, work: 'carry-on-7', from: { sha: FULL, ref: 'refs/wheelhouse/from/carry-on-7', request: 7 },
+    branch: 'prices', fork: true, title: 'Prices page', body: 'Adds prices.', bodyWithheld: false,
+    files: [{ path: 'prices.txt', additions: 1, deletions: 0 }], commits: ['Add prices'],
+  };
+  const answers = [ready, STOP];
+  const helper = { client: { survey: { carryOn: async (body) => { asked.push(body); return answers.shift(); } } } };
+  const made = await run(helper, ['carry-on', '7']);
+  assert.equal(made.code, 0, made.err);
+  assert.deepEqual(asked, [{ cwd: CWD, number: 7 }]);
+  const { ok: _ok, ...printed } = ready;
+  assert.deepEqual(made.json, printed);
+  assert.deepEqual([await run(helper, ['carry-on', '7'])].map((r) => [r.code, r.err]), [[1, 'STOP is on\n']]);
+  for (const argv of [['carry-on'], ['carry-on', '0'], ['carry-on', '7', '8'], ['carry-on', '#7']]) {
+    const refused = await run(helper, argv);
+    assert.deepEqual([refused.code, refused.err], [1, 'Give the request\'s number: carry-on <n>\n'], argv.join(' '));
+  }
+  assert.equal(asked.length, 2);
+});
+
+test('archive and restore ask the helper to make the change ready, and print the work, the from to record and the files moved', async () => {
+  const asked = [];
+  const answer = (work) => ({ ok: true, work, from: { sha: FULL, ref: `refs/wheelhouse/from/${work}` }, moved: ['AGENTS.md', '.cursorrules'] });
+  const helper = {
+    client: {
+      survey: {
+        archive: async (body) => { asked.push(['archive', body]); return answer('archive-instructions'); },
+        restore: async (body) => { asked.push(['restore', body]); return { ok: false, refused: 'there is no archive of another agent setup\'s instructions on the main line, so nothing to put back' }; },
+      },
+    },
+  };
+  const archived = await run(helper, ['archive']);
+  assert.equal(archived.code, 0, archived.err);
+  assert.deepEqual(archived.json, { work: 'archive-instructions', from: { sha: FULL, ref: 'refs/wheelhouse/from/archive-instructions' }, moved: ['AGENTS.md', '.cursorrules'] });
+  const restored = await run(helper, ['restore']);
+  assert.deepEqual([restored.code, restored.err], [1, 'there is no archive of another agent setup\'s instructions on the main line, so nothing to put back\n']);
+  assert.deepEqual(asked, [['archive', { cwd: CWD }], ['restore', { cwd: CWD }]]);
+  for (const argv of [['archive', 'AGENTS.md'], ['restore', 'all']]) {
+    const refused = await run(helper, argv);
+    assert.deepEqual([refused.code, refused.err], [1, `${argv[0]} takes no arguments\n`]);
+  }
+  assert.equal(asked.length, 2);
+});
+
 test('an unknown command, or a helper that can\'t be reached, is one line on standard error', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1612,6 +1658,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n');
   assert.equal(done.stdout, '');
 });

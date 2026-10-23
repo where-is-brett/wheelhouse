@@ -43,6 +43,11 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
+import { ReadyRefusal, archiveCommit, carryOn, dropRef, fetchInto, folderGit, freeWork, fromRef, restoreCommit } from '../survey/ready.js';
+import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
+import { reaching } from '../setup/git.js';
+import { directorGitEnv } from '../setup/host.js';
+import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
@@ -707,7 +712,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
-const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
+const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview', '/survey/carry-on', '/survey/archive', '/survey/restore'];
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -804,6 +809,10 @@ export async function startHelper({
   // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
   // exits.
   onStop = (close) => close(),
+  // Who a commit the helper builds in the project's folder is by (an archive, or putting it back):
+  // the signed-in host account, as setup's own commit is (step 7's commitAuthor), given the
+  // project's record; a test may give its own.
+  authorFor = (record) => commitAuthor({ host: record.host, run, base: record.connection?.baseUrl }),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1438,6 +1447,94 @@ export async function startHelper({
       return { ok: false, refused: error instanceof Error ? error.message : 'the survey could not be recorded' };
     }
   }
+
+  // --- Ready-made changes (scripts/survey/ready.js; design section 15, A2 and A4; plan rulings P4, P5, P13) ---
+  // Carrying a request on, archiving another agent setup's instructions, and putting them back each
+  // make one change ready in the project's folder, at refs/wheelhouse/from/<work>, and write its
+  // ready record, out of every agent's reach, once the ref is in place; the front desk then records
+  // the work through the intake, and the foreman starts it only from a change this record names.
+  // They write nothing else: no other ref, no index, no working copy, nothing in the state, and they
+  // push nothing. git runs in the folder as step 7's does, with the director's own sign-in, and
+  // fetches only from the project's recorded address. One at a time per project; refused under STOP,
+  // read again once the state is in hand. The answer says the work id chosen, whose line
+  // (feature/<work>) is no request's own and not on the host, and the `from` to record.
+  const readyGit = (record) => folderGit({
+    run, folder: record.folder,
+    env: reaching({ ...directorGitEnv({ host: hostOf(record.host), base: record.connection?.baseUrl }), GIT_NO_REPLACE_OBJECTS: '1' }, record.remoteUrl),
+  });
+  const readyRoute = (fn) => (body, ctx) => oneAtATime(`ready:${body.project}`, async () => {
+    if (stopped()) return STOP_REFUSAL;
+    const views = await oneAtATime(`state:${body.project}`, async () => {
+      await ensureStateClone(body.project, ctx);
+      return writeViews(body.project, { now });
+    });
+    if (stopped()) return STOP_REFUSAL;
+    const record = recordOf(body.project);
+    if (typeof record.folder !== 'string' || !path.isAbsolute(record.folder) || !fs.existsSync(record.folder)) refuse('the project\'s folder isn\'t on this computer');
+    const git = readyGit(record);
+    // Work recorded already, under any id, or a ready record kept for it, is never chosen again.
+    const used = (id) => (views.work !== null && typeof views.work === 'object' && Object.hasOwn(views.work, id)) || fs.existsSync(readyRecordFile(body.project, id));
+    try {
+      return await fn({ ...body, views, record, git, used }, ctx);
+    } catch (error) {
+      if (error instanceof ReadyRefusal) return { ok: false, refused: error.message };
+      throw error;
+    }
+  });
+  // The ready record, written once the ref names `sha`; the ref is taken out again when it can't be.
+  async function keepReady(project, git, work, record) {
+    try {
+      writeReadyRecord(project, work, record);
+    } catch (error) {
+      await dropRef(git, work, record.sha);
+      throw error;
+    }
+  }
+
+  // An open request carried on: { number }. The answer gives what a brief is written from, the
+  // body left out when the secret scan finds anything in it.
+  async function doCarryOn({ project, number, record, git, used }, ctx) {
+    if (!Number.isInteger(number) || number < 1) refuse('the request number must be a whole number from 1');
+    const adapter = await ctx.adapter();
+    const listed = adapter.openRequests();
+    const open = { ...adapter, openRequests: () => listed };
+    const lines = (await listed).map((r) => r?.branch).filter((b) => typeof b === 'string');
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: `carry-on-${number}`, lines, used });
+    const made = await carryOn({ git, adapter: open, remoteUrl: record.remoteUrl, number, work });
+    await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: number, branch: made.branch });
+    const { sha, ref, request, ...details } = made;
+    return { ok: true, work, from: { sha, ref, request }, ...details };
+  }
+
+  // The default branch as it is on the host now, fetched into the work's ref, and the commit `build`
+  // makes on it put there in its place; the ref is taken out again when anything fails.
+  async function readyOnDefault({ project, record, git, used }, ctx, base, build) {
+    const author = await authorFor(record);
+    const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
+    if (!plainBranch(defaultBranch)) refuse('the host didn\'t name its main line');
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base, used });
+    await fetchInto({ git, remoteUrl: record.remoteUrl, source: `refs/heads/${defaultBranch}`, work });
+    let made;
+    try {
+      made = await build({ work, defaultRef: fromRef(work), author });
+    } catch (error) {
+      await dropRef(git, work);
+      throw error;
+    }
+    await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: null, branch: null });
+    return { ok: true, work, from: { sha: made.sha, ref: made.ref }, moved: made.moved };
+  }
+
+  // Another agent setup's instructions archived: the files the latest survey found, as they are on
+  // the default branch now.
+  async function doArchive(body, ctx) {
+    const files = body.views.survey?.data?.instructions?.files;
+    if (!Array.isArray(files) || files.length === 0) refuse('the survey found no instructions of another agent setup to archive');
+    return readyOnDefault(body, ctx, 'archive-instructions', (args) => archiveCommit({ git: body.git, files, ...args }));
+  }
+
+  // The archive put back, as uninstall would put it.
+  const doRestore = (body, ctx) => readyOnDefault(body, ctx, 'restore-instructions', (args) => restoreCommit({ git: body.git, ...args }));
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
   const TARGET_KEYS = ['v', 'id', 'at', 'computer', 'kind', 'data'];
@@ -2898,6 +2995,9 @@ export async function startHelper({
     }),
     '/host/facts': hostFacts,
     '/survey/again': doSurveyAgain,
+    '/survey/carry-on': readyRoute(doCarryOn),
+    '/survey/archive': readyRoute(doArchive),
+    '/survey/restore': readyRoute(doRestore),
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),

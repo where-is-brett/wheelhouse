@@ -453,14 +453,14 @@ export const ARCHIVE_BACK = 'the other agent setup\'s instructions, back where t
 // path's place is compared, whatever this computer is, since the project is checked out elsewhere
 // too.
 const IGNORED = /[​-‏‪-‮⁠-⁯﻿]/g;
-const blindKey = (p) => p.normalize('NFC').replace(IGNORED, '').toLowerCase();
-const underArchive = (p) => blindKey(p) === blindKey(ARCHIVE) || blindKey(p).startsWith(`${blindKey(ARCHIVE)}/`);
+export const blindKey = (p) => p.normalize('NFC').replace(IGNORED, '').toLowerCase();
+export const underArchive = (p) => blindKey(p) === blindKey(ARCHIVE) || blindKey(p).startsWith(`${blindKey(ARCHIVE)}/`);
 
 // Whether `p` is a path inside the project, as git's tree names it: relative, with `/` between
 // parts, no part empty, `.` or `..` (nor one that becomes so, or that Windows reads otherwise, by a
 // trailing dot or space), no backslash, colon or control character (so no drive, no second stream),
 // and no part that is git's own folder in any case or by its short Windows name.
-function insideProject(p) {
+export function insideProject(p) {
   if (typeof p !== 'string' || p.length === 0 || p.length > 1024 || /[\\:\0-\x1f\x7f]/.test(p)) return false;
   return p.split('/').every((part) => {
     const key = blindKey(part);
@@ -469,10 +469,10 @@ function insideProject(p) {
 }
 
 // Whether `p` is one of another agent setup's instruction files (OTHER_SETUP_PATHS), in any case.
-const otherSetupFile = (p) => OTHER_SETUP_PATHS.some((pattern) => matchGlob(pattern, p, { ignoreCase: true }));
+export const otherSetupFile = (p) => OTHER_SETUP_PATHS.some((pattern) => matchGlob(pattern, p, { ignoreCase: true }));
 
 // git's tree at `tree`, every entry with its mode, type and object: `ls-tree -z`'s records.
-function treeEntries(text) {
+export function treeEntries(text) {
   return String(text).split('\0').filter(Boolean).map((record) => {
     const tab = record.indexOf('\t');
     const [mode, type, sha] = record.slice(0, tab).split(' ');

@@ -24,6 +24,12 @@
 //                   its confirm card, as AskUserQuestion's input; then records the review as done
 //   preview <n>     the address of pull request n's preview, for "Show me", or a sentence saying
 //                   there is none
+//   carry-on <n>    makes open request n ready to carry on (design section 15, A2): the helper
+//                   fetches it into the work's own ref; prints the work id it chose, the `from` to
+//                   record the work with, and what to write its brief from
+//   archive         makes ready the change that moves another agent setup's instructions into
+//                   .wheelhouse-archive/ (A4), and `restore` the one that puts them back; each prints
+//                   the work id, the `from` and the files it moves
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project. Nothing here
 // writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
@@ -63,7 +69,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
+const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -956,6 +962,17 @@ export async function preview({ client, cwd, n }) {
   return [`Pull request #${n} has no preview to show: it isn't open, or the host has no finished preview of its latest commit.`];
 }
 
+// --- Ready-made changes ---
+
+// What the helper made ready, as it answered (scripts/survey/ready.js): the work id it chose, the
+// `from` to record the work with, and the rest. It writes no work: the intake records that.
+async function ready(ask, body, what) {
+  const got = await ask(body);
+  if (got?.ok !== true || typeof got.work !== 'string' || !isPlain(got.from)) throw new CliError(said(got, `The host helper didn't make the ${what} ready`));
+  const { ok: _ok, ...made } = got;
+  return made;
+}
+
 // --- The command line ---
 
 // Standard input as text. A terminal is refused at once, never waited on: the command is run with
@@ -1025,6 +1042,12 @@ export async function main(argv, {
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
+    } else if (command === 'carry-on') {
+      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the request\'s number: carry-on <n>');
+      json(await ready(helper.survey.carryOn, { cwd: here, number: Number(rest[0]) }, `request #${rest[0]}`));
+    } else if (command === 'archive' || command === 'restore') {
+      only(rest, 0, `${command} takes no arguments`);
+      json(await ready(helper.survey[command], { cwd: here }, command === 'archive' ? 'archive' : 'putting back'));
     } else if (command === 'views') {
       only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
       lines(await view({ client: helper, cwd: here, name: rest[0], now }));

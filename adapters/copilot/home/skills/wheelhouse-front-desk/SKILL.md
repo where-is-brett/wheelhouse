@@ -22,7 +22,7 @@ At Lean, follow wheelhouse-lean for the record, the board, building and merging.
 
 ## The command
 
-The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `why <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work` or `survey`), `explain <term>`, `review`, `preview <n>`. Type the command exactly as the session start gave it, with nothing after `<command>` but the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
+The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `why <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work` or `survey`), `explain <term>`, `review`, `preview <n>`, `carry-on <n>`, `archive`, `restore`. Type the command exactly as the session start gave it, with nothing after `<command>` but the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
 
 `card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 
@@ -76,6 +76,12 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 - **A chat pick of Suggest a change…:** Ask "What would you change?" in one line, then do as for the pane's suggestion.
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
 - **Talk it through:** one question at a time.
+
+## Carrying work on, and archiving another setup's instructions
+
+When the director asks to carry on a request the briefing named, run `carry-on <n>` with its number. It prints the work's `id`, the `from` to record it with, and the request's title, body, files and commits (`bodyWithheld`: the body looked like it held a secret, so it was left out). Write the brief from what it prints, then record the work through `wheelhouse-intake` as usual, with that `id` and `from`: the lane by the intake's size rules, and its approval card as usual.
+
+When they say yes to archiving another agent setup's instructions, run `archive`; to put them back, `restore`. Each prints the `id`, the `from` and the files it moves (`moved`). Write a short brief naming them, `record work` in the `quick` lane with `visible: true`, that `id` and `from`, then ask its `approve-work` card (lane `quick`, the hash, `shownFirst: true`) in the design's archive card words: `what` "Work <id>: move the other agent setup's instructions into an archive folder: AGENTS.md, .cursorrules and 3 more files go into .wheelhouse-archive/ in the project, where no agent reads them." (the files `moved` names), `why` "Mine already come first where they differ; archiving means agents see one set of instructions. Nothing is lost: one click puts them back, and so does removing Wheelhouse.", `meanwhile` "Nothing changes meanwhile.", Approve saying "The files move as a change of their own, checked before it goes in." because "agents then see one set of instructions", and Not now saying "They stay where they are, and mine keep coming first." For `restore`, `what` is "Work <id>: put the other agent setup's instructions back where they were: …", and Not now says they stay in the archive.
 
 ## The baseline from the private note
 
