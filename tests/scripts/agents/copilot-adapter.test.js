@@ -29,7 +29,7 @@ import copilotSheet from '../../../adapters/copilot/tool-sheet.js';
 import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const PENDING = ['hooks', 'translate', 'settings', 'sessions', 'evalRunner'];
+const PENDING = ['hooks', 'settings', 'sessions', 'evalRunner'];
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();

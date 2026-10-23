@@ -157,7 +157,12 @@ function sandboxOn(cwd) {
 // The folders a plugin command may be run from (kit.js, shared with the session start).
 export { pluginRoots };
 
-export async function decide(input, { dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform } = {}) {
+// The tools that only read, halt or notify come from `deps` (readTools, haltTools, notifyTools), so a hook entry
+// for an agent whose tools keep names of their own can add them; they default to Claude Code's.
+export async function decide(input, {
+  dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
+  readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS,
+} = {}) {
   const cwd = input.cwd;
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);
@@ -176,7 +181,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, pluginRo
   if (!stopState().on) return undefined;
   // A folder that cannot be placed is held, not waved through.
   if (!inProject && byPath !== null) return undefined;
-  if (READ_TOOLS.includes(input.tool_name) || HALT_TOOLS.includes(input.tool_name) || NOTIFY_TOOLS.includes(input.tool_name)) return undefined;
+  if (readTools.includes(input.tool_name) || haltTools.includes(input.tool_name) || notifyTools.includes(input.tool_name)) return undefined;
   if (input.tool_name === 'Bash') {
     const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;

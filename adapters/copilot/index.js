@@ -10,13 +10,14 @@ import safetyLine from './safety-line.js';
 import sessions from './sessions.js';
 import tools from './tools.js';
 import toolSheet from './tool-sheet.js';
+import translate from './translate.js';
 
 export default Object.freeze({
   identity,
-  // The parts not built yet, by the plan's part: the hook registration and the guards' translation (Part 5),
+  // The parts not built yet, by the plan's part: the hook registration (Part 5),
   // the settings writer (Part 7), the session starts above and the evaluation runner (Part 9).
   hooks: pendingPart('hooks', ['registration', 'file']),
-  translate: pendingPart('translate', ['toGuardInput', 'fromGuardAnswer']),
+  translate,
   tools,
   settings: pendingPart('settings', ['project', 'local']),
   sessions,
@@ -30,5 +31,5 @@ export default Object.freeze({
   toolSheet,
   safetyLine,
   evalRunner: pendingPart('evalRunner', ['run']),
-  pending: Object.freeze(['hooks', 'translate', 'settings', 'sessions', 'evalRunner']),
+  pending: Object.freeze(['hooks', 'settings', 'sessions', 'evalRunner']),
 });

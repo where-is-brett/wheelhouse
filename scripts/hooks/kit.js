@@ -57,8 +57,8 @@ import { readJournal, firstUnfinished, runClosed } from '../lib/setup-run.js';
 import { readSmallText, SMALL_FILE_BYTES } from '../lib/small-file.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 import { answer } from '../../adapters/claude-code/answers.js';
-import translateClaudeCode from '../../adapters/claude-code/translate.js';
 import { agentOfInput } from '../agents/of-input.js';
+import { TRANSLATORS } from '../agents/translators.js';
 
 export { managedDir, lockedProjects };
 
@@ -331,10 +331,9 @@ export function isInside(folder, file) {
   return target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
 }
 
-// The translation of each agent's hook input and answers. The adapters' registry (scripts/agents/index.js)
-// reaches the setup and evaluation code, which a hook must not load, so the kit holds each agent's
-// translation on its own. An agent with no entry here has no translation, and its input is refused.
-export const TRANSLATORS = Object.freeze({ 'claude-code': Object.freeze({ translate: translateClaudeCode }) });
+// The translation of each agent's hook input and answers (scripts/agents/translators.js, which a hook may
+// load). An agent with no entry there has no translation, and its input is refused.
+export { TRANSLATORS };
 function translators(agent) {
   if (!Object.hasOwn(TRANSLATORS, agent)) throw new Error(`The hook kit has no translation for the agent ${JSON.stringify(agent)}`);
   return TRANSLATORS[agent];
@@ -342,11 +341,21 @@ function translators(agent) {
 
 // What a guard answers when its check could not run, shaped for its event.
 // SessionStart and SessionEnd cannot refuse anything, so they stay silent.
-function failureAnswer(event) {
-  const reason = 'Wheelhouse\'s check could not run';
+function failureAnswer(event, reason = 'Wheelhouse\'s check could not run') {
   if (event === 'PreToolUse') return answer.deny(reason);
   if (['UserPromptSubmit', 'PostToolUse', 'SubagentStop', 'PreCompact'].includes(event)) return answer.block(reason);
   return null;
+}
+
+// Whether a guard's answer refuses.
+const refuses = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny' || out?.decision === 'block';
+
+// A tool the adapter doesn't know, which it translates as `{ unknownTool: name }`.
+class UnknownTool extends Error {
+  constructor(reason) {
+    super(reason);
+    this.reason = reason;
+  }
 }
 
 // Runs one hook. `decide(input, deps)` returns the JSON to print, or nothing.
@@ -354,6 +363,11 @@ function failureAnswer(event) {
 // that only informs prints nothing. In a Locked project the plugin's copy stays
 // silent once the managed copy is in place and has started the session. The managed copy guards everywhere
 // and informs only in Locked projects.
+//
+// A translation may give several inputs for one call (a patch that changes several files gives one per
+// file): each is decided in turn, and the first refusal is the answer. A translation that names a tool the
+// adapter doesn't know (`{ unknownTool: name }`) is refused by a guard in the adapter's own words, before
+// `decide` runs, and an informing hook says nothing.
 //
 // Every guard today is on PreToolUse (the STOP guard also runs at SessionEnd,
 // where nothing can be refused); the hooks on UserPromptSubmit, PostToolUse,
@@ -368,9 +382,15 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
     // The agent the input came from; input that names none is Claude Code's, as it always was.
     const agent = agentOfInput(raw) ?? 'claude-code';
     if (given === undefined) adapter = translators(agent);
-    const input = adapter.translate.toGuardInput(raw, event);
+    const translated = adapter.translate.toGuardInput(raw, event);
+    if (typeof translated?.unknownTool === 'string') {
+      const words = adapter.translate.UNKNOWN_TOOL?.(translated.unknownTool);
+      throw new UnknownTool(typeof words === 'string' ? words : undefined);
+    }
+    const inputs = Array.isArray(translated) ? translated : [translated];
     // An input the adapter cannot translate is handled as a hook that could not read its input.
-    if (input === null || input === undefined) throw new Error('The adapter could not translate the hook input');
+    if (inputs.length === 0 || inputs.some((one) => one === null || typeof one !== 'object' || Array.isArray(one))) throw new Error('The adapter could not translate the hook input');
+    const input = inputs[0];
     const managed = dir ?? managedDir();
     const isManagedCopy = isInside(managed, self);
     if (typeof input.cwd === 'string') {
@@ -385,12 +405,20 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
       // The managed copy runs everywhere as a guard, and only in Locked projects as an informer.
       if (isManagedCopy && !failClosed && !locked) return;
     }
-    const out = await decide(input, { event, dir: managed, ...deps });
+    let out;
+    for (const one of inputs) {
+      const answered = await decide(one, { event, dir: managed, ...deps });
+      if (refuses(answered)) {
+        out = answered;
+        break;
+      }
+      if (out === undefined || out === null) out = answered;
+    }
     const shaped = out === undefined || out === null ? out : adapter.translate.fromGuardAnswer(out, event);
     if (shaped !== undefined && shaped !== null) write(`${JSON.stringify(shaped)}\n`);
-  } catch {
+  } catch (error) {
     try {
-      const refusal = failClosed ? failureAnswer(event) : null;
+      const refusal = failClosed ? failureAnswer(event, error instanceof UnknownTool ? error.reason : undefined) : null;
       const shaped = refusal ? adapter.translate.fromGuardAnswer(refusal, event) : null;
       if (shaped) write(`${JSON.stringify(shaped)}\n`);
     } catch {
