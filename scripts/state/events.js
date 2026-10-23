@@ -24,7 +24,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main', 'undo-merge', 'undo-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -63,6 +63,9 @@ const ACTION_OWN = {
   // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
   // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
   'keep-main': ['from', 'to'],
+  // The director's Confirm on the card keeping a feature's files that steer agents as they are
+  // (ruling P7-31): the work, and the full hash of the watcher's finding the card's line names.
+  'keep-control-files': ['work', 'hash'],
   // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
   // is a runbook step): the merge, in full.
   'undo-merge': ['merge'],
@@ -163,6 +166,10 @@ function checkAction(data) {
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
+  } else if (data.action === 'keep-control-files') {
+    if (!isSlug(data.work)) bad('needs the work, named by a short slug');
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of what the watcher found');
+    if (data.label !== 'Confirm') bad('needs the Confirm label');
   } else if (data.action === 'undo-merge') {
     if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
     if (data.label !== 'Undo') bad('needs the Undo label');
@@ -221,15 +228,17 @@ const PLAIN_SHAPES = {
   // pattern) and its refusals, each the tool and the kind (a guard's, a rule's, no rule's, or other) with the rule
   // when one was named. The whole output is kept in the project's activity folder on this computer, not in the state.
   activity: { must: ['session', 'role', 'tools', 'commands', 'refusals'], may: ['work', 'usage', 'at'] },
-  // The watcher held a feature's wakes because a file in its folder that steers agents is new or changed since the
-  // folder was made (ruling P7-13): the work, the paths (at most CONTROL_PATHS), and when. No paths: there is no
-  // record of the folder's agent files to compare with. The front desk's card.
-  'control-file': { must: ['work', 'paths', 'at'], may: [] },
+  // The watcher held a feature's wakes because of the files in its folder that steer agents (rulings P7-13, P7-31):
+  // the work, why (`changed`: some are new or changed since the folder was made, named in `paths`, at most
+  // CONTROL_PATHS; `no-record`: there is no record of them to compare with; `too-many`: the folder has too many files
+  // to check), when, and the full hash of what was found, which the card's Keep line names. The front desk's card.
+  'control-file': { must: ['work', 'why', 'paths', 'hash', 'at'], may: [] },
   // The feature's agent files match their record again, so its standing control-file records are closed, with their cards.
   'control-file-lift': { must: ['work', 'at'], may: [] },
 };
 // The most paths a control-file record names.
 export const CONTROL_PATHS = 50;
+export const CONTROL_WHY = Object.freeze(['changed', 'no-record', 'too-many']);
 // The most commands an activity record lists, and the kinds of refusal it names.
 export const ACTIVITY_COMMANDS = 50;
 export const REFUSAL_KINDS = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
@@ -350,8 +359,11 @@ function checkPlain(kind, data) {
   } else if (kind === 'control-file' || kind === 'control-file-lift') {
     slug('work');
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
-    if (kind === 'control-file' && !(Array.isArray(data.paths) && data.paths.length <= CONTROL_PATHS && data.paths.every(isText))) {
-      bad(`needs paths to be a list of at most ${CONTROL_PATHS} paths`);
+    if (kind === 'control-file') {
+      if (!CONTROL_WHY.includes(data.why)) bad(`needs why to be ${CONTROL_WHY.join(', ')}`);
+      if (!(Array.isArray(data.paths) && data.paths.length <= CONTROL_PATHS && data.paths.every(isText))) bad(`needs paths to be a list of at most ${CONTROL_PATHS} paths`);
+      if ((data.why === 'changed') !== (data.paths.length > 0)) bad('names paths when, and only when, some are new or changed');
+      if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of what was found');
     }
   } else if (kind === 'activity') {
     if (data.session !== null && !isText(data.session)) bad('needs session to be the session\'s id or null');

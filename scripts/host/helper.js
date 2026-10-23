@@ -1540,6 +1540,7 @@ export async function startHelper({
   // here too, and so are a Lean undo and Undo it, which are runbook steps (ruling P5-50).
   const ACTION_STEPS = {
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
+    'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];

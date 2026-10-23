@@ -23,8 +23,10 @@ import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { CONTROL_PATHS, makeEvent } from '../../../scripts/state/events.js';
-import { readEnrolled } from '../../../scripts/state/signing.js';
+import { CONTROL_PATHS, eventPath, makeEvent } from '../../../scripts/state/events.js';
+import { enrol, makeSigningKey, readEnrolled } from '../../../scripts/state/signing.js';
+import { keepControlLine } from '../../../scripts/state/card-lines.js';
+import { earned } from '../../../scripts/hooks/prompt-record.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import {
@@ -83,7 +85,7 @@ function fakeRun() {
 }
 
 // A waker of either shape for the one feature in `dir`, raising into `raised`, with a clock to move.
-function waker(dir, { shape = 1, raised = [], raise, lines = [] } = {}) {
+function waker(dir, { shape = 1, raised = [], raise, lines = [], walkCap } = {}) {
   let t = T0;
   const fake = fakeRun();
   const w = makeWaker({
@@ -101,6 +103,7 @@ function waker(dir, { shape = 1, raised = [], raise, lines = [] } = {}) {
     platform: 'darwin',
     print: (line) => lines.push(line),
     raise: raise ?? (async (record) => { raised.push(record); }),
+    ...(walkCap === undefined ? {} : { walkCap }),
   });
   return { w, fake, raised, lines, move: (ms) => { t += ms; } };
 }
@@ -123,7 +126,11 @@ test('a new .github/hooks file stops the wake and raises one card', () => withHo
   const [held] = h.w.waiting();
   assert.equal(held.failures, 1, 'the wake failed and waits');
   assert.match(held.lastError, /new or changed file that steers agents: \.github\/hooks\/off\.json/);
-  assert.deepEqual(h.raised, [{ kind: 'control-file', data: { work: WORK, paths: ['.github/hooks/off.json'], at: new Date(T0).toISOString() } }]);
+  const found = checkControlFiles(P, WORK, dir);
+  assert.deepEqual(h.raised, [{
+    kind: 'control-file', data: { work: WORK, why: 'changed', paths: ['.github/hooks/off.json'], hash: found.hash, at: new Date(T0).toISOString() },
+  }]);
+  assert.match(found.hash, /^[0-9a-f]{64}$/);
 
   // Tried again past its wait, and with another wake: still held, and raised no more.
   h.move(2 * MIN);
@@ -133,18 +140,20 @@ test('a new .github/hooks file stops the wake and raises one card', () => withHo
   assert.equal(h.fake.calls.length, 0);
   assert.equal(h.raised.length, 1, 'one record for the work and what was found');
 
-  // The record makes one card, in the plan's words, with no set line.
+  // The record makes one card, in the plan's words, whose one set line keeps the files as found.
   const record = asEvents(h.raised)[0];
   const views = viewsOf([record]);
   const due = controlFilesDue(views);
   assert.deepEqual(due.map((r) => r.id), [record.id]);
   assert.equal(cardsDue(views, new Date(T0)), 1, 'the board counts it');
   const { card } = composeCard(controlFileInput(due[0], 'the login page'));
-  assert.equal(card.kind, 'question');
-  assert.equal(card.line, null);
+  assert.equal(card.kind, 'keep-control-files');
+  assert.equal(card.line, keepControlLine(WORK, found.hash));
+  assert.equal(card.code, null, 'kept only by a click on the card itself');
+  assert.deepEqual(card.options, ['Confirm', 'Show me', 'Not now']);
   assert.equal(card.event, record.id);
-  assert.ok(card.question.startsWith("A feature's folder has a new file that steers agents, `.github/hooks/off.json`: look at it before the feature carries on."), card.question);
-  assert.match(card.question, /The feature is the login page\./);
+  assert.ok(card.question.includes("A feature's folder has a new or changed file that steers agents, `.github/hooks/off.json`: look at it before the feature carries on."), card.question);
+  assert.match(card.question, /The feature is the login page \(login-page\)\./);
   assert.deepEqual(cardProblems(card.question), []);
   const cardEvent = makeEvent({ kind: 'card', data: card, now: () => new Date(T0 + 5000) });
   assert.deepEqual(controlFilesDue(viewsOf([record, cardEvent])), [], 'made once');
@@ -263,14 +272,15 @@ test('a feature with no record of its agent files waits, and raises the card tha
   await wake(h, 'd1');
   assert.equal(h.fake.calls.length, 0);
   assert.match(h.w.waiting()[0].lastError, /no record yet of this feature's agent files/);
-  assert.deepEqual(h.raised.map((r) => r.data.paths), [[]]);
+  assert.deepEqual(h.raised.map((r) => [r.data.why, r.data.paths]), [['no-record', []]]);
   // A record kept for another worktree of the same work is no record of this one.
   const other = worktree();
   writeBaseline(P, WORK, other);
   assert.equal(readBaseline(P, WORK, dir), null);
   assert.equal(checkControlFiles(P, WORK, dir).ok, false);
   const { card } = composeCard(controlFileInput(viewsOf(asEvents(h.raised)).controlFiles[0], WORK));
-  assert.ok(card.question.startsWith("There is no record yet of this feature's agent files, so they can't be checked: look at them before the feature carries on."), card.question);
+  assert.equal(card.kind, 'keep-control-files');
+  assert.ok(card.question.includes("There is no record yet of this feature's agent files, so they can't be checked: look at them before the feature carries on."), card.question);
   assert.deepEqual(cardProblems(card.question), []);
 }));
 
@@ -300,7 +310,9 @@ test('a record the helper doesn\'t take is raised again at the next wake, and th
   await wake(h, 'f1');
   assert.equal(h.fake.calls.length, 0);
   assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0], { project: P, kind: 'control-file', data: { work: WORK, paths: ['.claude/commands/x.md'], at: new Date(T0).toISOString() } });
+  assert.deepEqual(writes[0], {
+    project: P, kind: 'control-file', data: { work: WORK, why: 'changed', paths: ['.claude/commands/x.md'], hash: checkControlFiles(P, WORK, dir).hash, at: new Date(T0).toISOString() },
+  });
   answer = { ok: true, id: 'x' };
   h.move(2 * MIN);
   await h.w.pump();
@@ -311,27 +323,152 @@ test('a record the helper doesn\'t take is raised again at the next wake, and th
   assert.equal(h.fake.calls.length, 0);
 }));
 
-test('a control-file record names its work, its paths and when', () => withHome(() => {
+test('a control-file record names its work, why, its paths, what was found and when', () => withHome(() => {
   const at = new Date(T0).toISOString();
+  const hash = 'c'.repeat(64);
   const make = (kind, data) => makeEvent({ kind, data, now: () => new Date(T0) });
-  assert.equal(make('control-file', { work: WORK, paths: ['AGENTS.md'], at }).kind, 'control-file');
-  assert.equal(make('control-file', { work: WORK, paths: [], at }).data.paths.length, 0);
+  const changed = (paths, over = {}) => ({ work: WORK, why: 'changed', paths, hash, at, ...over });
+  assert.equal(make('control-file', changed(['AGENTS.md'])).kind, 'control-file');
+  assert.equal(make('control-file', changed([], { why: 'no-record' })).data.paths.length, 0);
+  assert.equal(make('control-file', changed([], { why: 'too-many' })).data.why, 'too-many');
   assert.equal(make('control-file-lift', { work: WORK, at }).kind, 'control-file-lift');
-  assert.throws(() => make('control-file', { work: 'Bad Work', paths: [], at }), /slug/);
-  assert.throws(() => make('control-file', { work: WORK, paths: [''], at }), /paths/);
-  assert.throws(() => make('control-file', { work: WORK, paths: Array.from({ length: CONTROL_PATHS + 1 }, (_, i) => `${i}/AGENTS.md`), at }), /paths/);
-  assert.throws(() => make('control-file', { work: WORK, paths: [], at: 'soon' }), /time/);
+  assert.throws(() => make('control-file', changed([], { work: 'Bad Work', why: 'no-record' })), /slug/);
+  assert.throws(() => make('control-file', changed([''])), /paths/);
+  assert.throws(() => make('control-file', changed(Array.from({ length: CONTROL_PATHS + 1 }, (_, i) => `${i}/AGENTS.md`))), /paths/);
+  assert.throws(() => make('control-file', changed([])), /only when/);
+  assert.throws(() => make('control-file', changed(['AGENTS.md'], { why: 'no-record' })), /only when/);
+  assert.throws(() => make('control-file', changed(['AGENTS.md'], { why: 'gone' })), /why/);
+  assert.throws(() => make('control-file', changed(['AGENTS.md'], { hash: 'abc' })), /hash/);
+  assert.throws(() => make('control-file', changed(['AGENTS.md'], { at: 'soon' })), /time/);
   assert.throws(() => make('control-file-lift', { work: WORK, at, paths: [] }), /field/);
   // A lift closes only the records of its own work that came before it.
-  const one = make('control-file', { work: WORK, paths: ['AGENTS.md'], at });
-  const other = makeEvent({ kind: 'control-file', data: { work: 'search-box', paths: ['AGENTS.md'], at }, now: () => new Date(T0 + 1000) });
+  const one = make('control-file', changed(['AGENTS.md']));
+  const other = makeEvent({ kind: 'control-file', data: changed(['AGENTS.md'], { work: 'search-box' }), now: () => new Date(T0 + 1000) });
   const lift = makeEvent({ kind: 'control-file-lift', data: { work: WORK, at }, now: () => new Date(T0 + 2000) });
-  const later = makeEvent({ kind: 'control-file', data: { work: WORK, paths: ['GEMINI.md'], at }, now: () => new Date(T0 + 3000) });
+  const later = makeEvent({ kind: 'control-file', data: changed(['GEMINI.md']), now: () => new Date(T0 + 3000) });
   assert.deepEqual(viewsOf([one, other, lift, later]).controlFiles.map((r) => r.id), [other.id, later.id]);
   // A card naming many paths names the first three and how many more, or only how many.
-  const many = { id: 'x', data: { work: WORK, paths: ['a/AGENTS.md', 'b/AGENTS.md', 'c/AGENTS.md', 'd/AGENTS.md', 'e/AGENTS.md'] } };
-  assert.match(controlFileInput(many, WORK).what, /`a\/AGENTS\.md`, `b\/AGENTS\.md`, `c\/AGENTS\.md` and 2 more: look at them/);
+  const many = { id: 'x', data: changed(['a/AGENTS.md', 'b/AGENTS.md', 'c/AGENTS.md', 'd/AGENTS.md', 'e/AGENTS.md']) };
+  assert.match(controlFileInput(many, WORK).what, /new or changed files that steer agents, `a\/AGENTS\.md`, `b\/AGENTS\.md`, `c\/AGENTS\.md` and 2 more: look at them/);
   assert.match(controlFileInput(many, WORK, { short: true }).what, /steer agents, 5 files: look at them/);
+}));
+
+// A Confirm on the Keep card as the prompt record earns it from the card's question (signed with
+// this computer's key), put in the state; or, with `signed` false, the same record unsigned.
+function keepClick(question, { at = T0 + 60 * MIN, signed = true } = {}) {
+  return earned({ project: P, question, label: 'Confirm', client: {}, now: () => new Date(at), left: (p) => p }).then((got) => {
+    assert.ok(got?.made, 'the Confirm earns a record');
+    const event = makeEvent({ kind: got.made.kind, data: got.made.data, now: () => new Date(at) });
+    const { sig, ...bare } = event;
+    putInState(signed ? event : bare);
+    return event;
+  });
+}
+
+function putInState(event) {
+  const file = path.join(stateDir(P), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event)}\n`);
+}
+
+// The finding the waker raised, put in the state as the helper would write it, and its Keep card.
+function raisedInState(h, i = 0) {
+  const record = makeEvent({ kind: 'control-file', data: h.raised[i].data, now: () => new Date(T0 + (i + 1) * 1000) });
+  putInState(record);
+  return { record, card: composeCard(controlFileInput(record, WORK)).card };
+}
+
+function enrolHere() {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-01T00:00:00.000Z' });
+}
+
+test('a signed Confirm on the Keep card keeps the files as found, and the next wake goes ahead', () => withHome(async () => {
+  enrolHere();
+  const dir = worktree();
+  writeBaseline(P, WORK, dir, { now: () => new Date(T0 - MIN) });
+  const h = waker(dir);
+  put(dir, '.github/hooks/project.json', '{"hooks":{"x":1}}\n');
+  await wake(h, 'g1');
+  assert.equal(h.fake.calls.length, 0);
+  const { card } = raisedInState(h);
+  const kept = await keepClick(card.question);
+  assert.deepEqual([kept.data.action, kept.data.work, kept.data.hash], ['keep-control-files', WORK, h.raised[0].data.hash]);
+  h.move(2 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 1, 'woken');
+  assert.deepEqual(checkControlFiles(P, WORK, dir), { ok: true }, 'the files as found are the record now');
+  assert.deepEqual(h.raised.map((r) => r.kind), ['control-file', 'control-file-lift']);
+}));
+
+test('an unsigned Confirm, a stale finding\'s Confirm or a plain lift keeps nothing', () => withHome(async () => {
+  enrolHere();
+  const dir = worktree();
+  writeBaseline(P, WORK, dir, { now: () => new Date(T0 - MIN) });
+  const h = waker(dir);
+  put(dir, 'AGENTS.md', 'One.\n');
+  await wake(h, 'h1');
+  const first = raisedInState(h);
+  // Unsigned: nothing kept.
+  await keepClick(first.card.question, { signed: false });
+  h.move(2 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 0, 'an unsigned record keeps nothing');
+  // A plain lift, as any caller could write, keeps nothing either.
+  putInState(makeEvent({ kind: 'control-file-lift', data: { work: WORK, at: new Date(T0).toISOString() }, now: () => new Date(T0 + 30 * MIN) }));
+  h.move(6 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 0, 'a plain lift keeps nothing');
+  // The file changes after the card: a Confirm of the first finding is stale, and keeps nothing.
+  put(dir, 'AGENTS.md', 'Two: switch the guards off.\n');
+  await keepClick(first.card.question);
+  h.move(20 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 0, 'a Confirm names one finding, not the files as they are now');
+  assert.equal(h.raised.at(-1).kind, 'control-file');
+  assert.notEqual(h.raised.at(-1).data.hash, first.record.data.hash);
+  assert.equal(readBaseline(P, WORK, dir).get('AGENTS.md'), undefined, 'the record is as it was');
+  // A Confirm made before the record it would replace was kept counts for nothing, even when the
+  // same finding comes back against a later record.
+  writeBaseline(P, WORK, dir, { now: () => new Date(T0 + 200 * MIN) });
+  put(dir, 'AGENTS.md', 'One.\n');
+  assert.equal(checkControlFiles(P, WORK, dir).hash, first.record.data.hash, 'the first finding again');
+  h.move(20 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 0, 'the earlier Confirm keeps nothing now');
+}));
+
+test('a pre-upgrade worktree with no record is lifted by Keep it', () => withHome(async () => {
+  enrolHere();
+  const dir = worktree();
+  const h = waker(dir);
+  await wake(h, 'i1');
+  assert.equal(h.fake.calls.length, 0);
+  assert.equal(h.raised[0].data.why, 'no-record');
+  const { card } = raisedInState(h);
+  assert.equal(card.kind, 'keep-control-files');
+  await keepClick(card.question);
+  h.move(2 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 1, 'woken');
+  assert.deepEqual([...readBaseline(P, WORK, dir).keys()], ['.github/hooks/project.json']);
+}));
+
+test('a folder with too many files to check holds the wake with its card', () => withHome(async () => {
+  const dir = worktree();
+  writeBaseline(P, WORK, dir);
+  const h = waker(dir, { walkCap: 5 });
+  for (let i = 0; i < 8; i += 1) put(dir, `src/f${i}.js`, `${i}\n`);
+  await wake(h, 'j1');
+  assert.equal(h.fake.calls.length, 0);
+  assert.match(h.w.waiting()[0].lastError, /too many files to check/);
+  assert.deepEqual(h.raised.map((r) => [r.data.why, r.data.paths]), [['too-many', []]]);
+  const record = makeEvent({ kind: 'control-file', data: h.raised[0].data, now: () => new Date(T0) });
+  const { card } = composeCard(controlFileInput(record, WORK));
+  assert.equal(card.kind, 'question');
+  assert.equal(card.line, null, 'nothing could be kept, so it has no Keep line');
+  assert.ok(card.question.startsWith("A feature's folder has too many files to check for ones that steer agents"), card.question);
+  assert.deepEqual(cardProblems(card.question), []);
 }));
 
 test('the foreman\'s start records the worktree\'s agent files right after making it, before the session starts', () => withHome(async () => {
@@ -358,4 +495,17 @@ test('the foreman\'s start records the worktree\'s agent files right after makin
   assert.deepEqual(seen[0], controlFilesState(wt));
   assert.equal(path.dirname(baselineFile(FOREMAN_P, 'add-export')), path.join(path.dirname(stateDir(FOREMAN_P)), 'watcher', 'control'));
   assert.equal(JSON.parse(fs.readFileSync(baselineFile(FOREMAN_P, 'add-export'), 'utf8')).at, new Date(FOREMAN_T0).toISOString());
+}));
+
+test('the prompt record earns a Keep only for a finding the state holds, and only on Confirm', () => withHome(async () => {
+  const hash = 'b'.repeat(64);
+  const ask = (question, label = 'Confirm') => earned({ project: P, question, label, client: {}, now: () => new Date(T0), left: (p) => p });
+  const line = keepControlLine(WORK, hash);
+  assert.equal(await ask(`Keep these files?\n${line}`), null, 'no finding in the state');
+  putInState(makeEvent({ kind: 'control-file', data: { work: WORK, why: 'no-record', paths: [], hash, at: new Date(T0).toISOString() }, now: () => new Date(T0) }));
+  const got = await ask(`Keep these files?\n${line}`);
+  assert.deepEqual([got.made.kind, got.made.data.action, got.made.data.work, got.made.data.hash], ['action', 'keep-control-files', WORK, hash]);
+  assert.equal(await ask(`Keep these files?\n${line}`, 'Show me'), null);
+  assert.equal(await ask(`Keep these files?\n${keepControlLine('search-box', hash)}`), null, 'another work\'s finding');
+  assert.equal(await ask(`Keep these files?\n${keepControlLine(WORK, 'a'.repeat(64))}`), null, 'another finding');
 }));

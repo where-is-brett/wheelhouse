@@ -24,10 +24,12 @@ export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
 // is never a card event in the state. A trust card asks to trust another of the director's
 // computers here (ruling R80); the session start composes it, and its click is kept on this computer.
 // Uninstall's card asks to remove Wheelhouse from a project (ruling R90); the helper composes it, and
-// its click is kept on this computer, as a setup click is.
+// its click is kept on this computer, as a setup click is. A keep-control-files card asks to keep a
+// feature's files that steer agents as they are now (ruling P7-31), so the watcher wakes it again.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
   'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall', 'question',
+  'keep-control-files',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 // Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.

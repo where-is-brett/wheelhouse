@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -39,6 +39,7 @@ export const HEADERS = Object.freeze({
   trust: 'Trust',
   uninstall: 'Uninstall',
   question: 'Question',
+  'keep-control-files': 'Agent files',
 });
 
 // The label whose click decides a kind, as the prompt record accepts it. An answer card's
@@ -58,6 +59,7 @@ export const DECIDING = Object.freeze({
   baseline: BASELINE_LABEL,
   trust: TRUST_LABEL,
   uninstall: UNINSTALL_LABEL,
+  'keep-control-files': 'Confirm',
 });
 
 // The kinds whose set line has no reply code (ruling R36): a setup step goes ahead only on the
@@ -65,7 +67,8 @@ export const DECIDING = Object.freeze({
 // is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too, and so is a
 // trust card (ruling R80): another computer is trusted only by the click on the card itself; and so
 // is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall']);
+// A keep-control-files card (ruling P7-31) is one too: the files are kept only on the click on the card itself.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). STOP is lifted or it
@@ -81,6 +84,7 @@ const OFFERED_AFTER = Object.freeze({
   baseline: Object.freeze([NOT_NOW]),
   trust: Object.freeze([NOT_NOW]),
   uninstall: Object.freeze([NOT_NOW]),
+  'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
 });
 const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
 
@@ -113,6 +117,7 @@ const ASKS = Object.freeze({
   amend: () => 'Change the approved work to this?',
   'lift-incident': () => 'End the incident?',
   'incident-fix': () => 'Merge this fix?',
+  'keep-control-files': () => 'Keep these files as they are?',
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -222,6 +227,10 @@ function lineFor(kind, target) {
     if (!isLineName(t.project) || !HEX.test(t.hash)) bad('needs the project, on one line, and the hash of the list uninstall puts back');
     return uninstallLine(t.project, t.hash);
   }
+  if (kind === 'keep-control-files') {
+    if (!slug(t.work) || !HEX.test(t.hash)) bad('needs a work id and the hash of what was found in its folder');
+    return keepControlLine(t.work, t.hash);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -252,7 +261,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   }
   let need = null; // [whether the first part names it, what it is]
   if (kind === 'incident-fix' || kind === 'lift-incident') need = [nameId(target.incident), `incident ${target.incident}`];
-  if (kind === 'approve-work' || kind === 'amend') need = [nameId(target.work), `the work ${target.work}`];
+  if (kind === 'approve-work' || kind === 'amend' || kind === 'keep-control-files') need = [nameId(target.work), `the work ${target.work}`];
   if (kind === 'runbook') need = [names(RUNBOOK_TITLES[target.step]), `the step's title, "${RUNBOOK_TITLES[target.step]}"`];
   if (kind === 'ci-push') need = [nameId(target.branch), `the branch ${target.branch}`];
   if (kind === 'confirm') need = [names(target.event.data.words), `the words being confirmed, "${target.event.data.words}"`];

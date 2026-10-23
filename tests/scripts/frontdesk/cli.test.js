@@ -23,7 +23,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approvalLine, answerLine, ciPushLine, confirmLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, answerLine, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
@@ -509,9 +509,9 @@ test('a lineage hold becomes one question card naming the kits and the first pat
   });
 });
 
-test('a feature whose agent files hold its wakes gets one question card naming the files, made once and closed by the lift', async () => {
+test('a feature whose agent files hold its wakes gets one Keep card naming the files, made once and closed by the lift', async () => {
   await inHome(async () => {
-    const data = { work: 'add-export', paths: ['.github/hooks/off.json'], at: T(3).toISOString() };
+    const data = { work: 'add-export', why: 'changed', paths: ['.github/hooks/off.json'], hash: DOC, at: T(3).toISOString() };
     const held = makeEvent({ kind: 'control-file', data, now: () => T(3) });
     const helper = fakeHelper({ events: [EXPORT, held] });
     const out = await run(helper, ['cards']);
@@ -519,10 +519,11 @@ test('a feature whose agent files hold its wakes gets one question card naming t
     assert.equal(out.json.problems, undefined);
     const [card, ...more] = cardWrites(helper);
     assert.equal(more.length, 0);
-    assert.equal(card.kind, 'question');
-    assert.equal(card.line, null);
+    assert.equal(card.kind, 'keep-control-files');
+    assert.equal(card.line, keepControlLine('add-export', DOC));
+    assert.equal(setLineOf(card.question), card.line);
     assert.equal(card.event, held.id);
-    assert.ok(card.question.includes("has a new file that steers agents, `.github/hooks/off.json`: look at it before the feature carries on."), card.question);
+    assert.ok(card.question.includes("has a new or changed file that steers agents, `.github/hooks/off.json`: look at it before the feature carries on."), card.question);
     assert.deepEqual(cardProblems(card.question), []);
     await run(helper, ['cards']);
     assert.equal(cardWrites(helper).length, 1, 'made once');

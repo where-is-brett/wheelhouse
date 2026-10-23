@@ -84,7 +84,11 @@
 // fails the wake and does not wake: `raise` is given a `control-file` record
 // once for each work and finding, for the director's card, and the wake waits
 // and is tried again. Once the files match again the wake goes, and `raise`
-// is given a `control-file-lift`, which closes the card.
+// is given a `control-file-lift`, which closes the card. The director's Keep
+// (a signed `keep-control-files` action, from a signed click on Claude Code or
+// the helper's window, naming the finding's hash, made after the record it
+// replaces) keeps the files as they were found as the new record, and the
+// wake goes; a plain record never does (ruling P7-31).
 //
 // Under STOP nothing is started, woken or printed (it is checked again right
 // before each start), and startFeature is refused. Bypass mode is refused at
@@ -95,7 +99,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DIGEST_CAP } from './core.js';
-import { checkControlFiles, markRaised, raisedHash } from './control-files.js';
+import { WALK_CAP, checkControlFiles, markRaised, raisedHash, writeBaseline } from './control-files.js';
 import { inWorktreesFolder, LOOKBACK_MS, plainWorktreePath } from './sources.js';
 import { ensureIgnored, featurePaths } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
@@ -112,7 +116,7 @@ import { lockedByPath } from '../hooks/kit.js';
 import { featureAllowRules } from '../protection/settings.js';
 import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.js';
 import { CONTROL_PATHS, listEvents } from '../state/events.js';
-import { readEnrolled } from '../state/signing.js';
+import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { guardedCommand, guardedReady, labelWorktree } from '../windows/low.js';
 
@@ -603,6 +607,7 @@ export function makeWaker({
   pluginRoot = PLUGIN_ROOT,
   onError = () => {},
   raise = async () => {},
+  walkCap = WALK_CAP,
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
@@ -870,15 +875,32 @@ export function makeWaker({
   // fail, the finding is raised once (a raise that fails is tried again at the next wake), and
   // nothing is woken. A folder that can't be read holds them too. Once the files match again, a
   // finding raised before is lifted.
+  // Whether the director kept the files as `found` found them: a verified keep-control-files action
+  // for the work naming that very finding's hash, made after the record it would replace was kept.
+  const keptByDirector = (work, found) => {
+    const enrolled = readEnrolled();
+    return listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'action' && e.data?.action === 'keep-control-files'
+      && e.data.work === work && e.data.hash === found.hash && (found.since === null || e.at > found.since) && verify(e, enrolled));
+  };
+
   async function controlHeld(work, worktree, ids) {
     let found;
     try {
-      found = checkControlFiles(project, work, worktree, { platform });
+      found = checkControlFiles(project, work, worktree, { platform, walkCap });
     } catch (error) {
       settle(ids, 'failed', `the files in its folder that steer agents can't be read: ${error instanceof Error ? error.message : 'unknown error'}`);
       return true;
     }
     const at = now().toISOString();
+    if (!found.ok && found.state !== null && keptByDirector(work, found)) {
+      try {
+        writeBaseline(project, work, worktree, { now, platform, state: found.state });
+      } catch (error) {
+        settle(ids, 'failed', `the director kept its agent files, but the record of them couldn't be written: ${error instanceof Error ? error.message : 'unknown error'}`);
+        return true;
+      }
+      found = { ok: true };
+    }
     if (found.ok) {
       if (raisedHash(project, work) !== null) {
         try {
@@ -890,12 +912,15 @@ export function makeWaker({
       }
       return false;
     }
-    settle(ids, 'failed', found.paths.length === 0
-      ? "there is no record yet of this feature's agent files"
-      : `its folder has a new or changed file that steers agents: ${found.paths.slice(0, 3).join(', ')}${found.paths.length > 3 ? ` and ${found.paths.length - 3} more` : ''}`);
+    const why = {
+      'no-record': "there is no record yet of this feature's agent files",
+      'too-many': 'its folder has too many files to check',
+      changed: `its folder has a new or changed file that steers agents: ${found.paths.slice(0, 3).join(', ')}${found.paths.length > 3 ? ` and ${found.paths.length - 3} more` : ''}`,
+    }[found.why];
+    settle(ids, 'failed', why);
     if (raisedHash(project, work) === found.hash) return true;
     try {
-      await raise({ kind: 'control-file', data: { work, paths: found.paths.slice(0, CONTROL_PATHS), at } });
+      await raise({ kind: 'control-file', data: { work, why: found.why, paths: found.paths.slice(0, CONTROL_PATHS), hash: found.hash, at } });
       markRaised(project, work, found.hash);
     } catch (error) {
       onError(`The ${work} feature's agent files hold its wakes, but the card couldn't be raised: ${error instanceof Error ? error.message : 'unknown error'}`);

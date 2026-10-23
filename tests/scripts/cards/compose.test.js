@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -67,6 +67,10 @@ const INPUTS = {
     options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
   },
   question: { ...common, recommend: 'Comma', kind: 'question', what: 'The export needs to know which separator to use.', options: OWN, target: undefined },
+  'keep-control-files': {
+    ...common, recommend: 'Confirm', kind: 'keep-control-files', what: 'The export-csv feature\'s folder has a new or changed file that steers agents.',
+    options: [says('Confirm')], target: { work: 'export-csv', hash: DOC },
+  },
 };
 const LINES = {
   approval: approvalLine(7, FULL),
@@ -85,6 +89,7 @@ const LINES = {
   trust: trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345'),
   uninstall: uninstallLine('cafe menu', DOC),
   question: null,
+  'keep-control-files': keepControlLine('export-csv', DOC),
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
 const refused = (over, pattern, kind = 'approval') => assert.throws(() => composeCard(input(kind, over)), pattern);
@@ -116,7 +121,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -179,6 +184,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     amend: 'Change the approved work to this?',
     'lift-incident': 'End the incident?',
     'incident-fix': 'Merge this fix?',
+    'keep-control-files': 'Keep these files as they are?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));

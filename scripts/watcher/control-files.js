@@ -32,6 +32,9 @@ export const WALK_CAP = 200000;
 const CHUNK = 64 * 1024;
 const SMALL_BYTES = 8 * 1024 * 1024;
 
+// The walk's refusal of a folder with more than WALK_CAP entries: the wake waits, with its card.
+export class TooManyFiles extends Error {}
+
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 function lstatOf(p) {
@@ -78,7 +81,7 @@ function hashOf(file) {
 // The files that steer agents in `worktree`, as a Map from each path (from the root, with `/`) to
 // the sha256 of its bytes, `link:<real path>:<hash>` for one reached through a link, `dangling` or
 // `special`. Read with `fs` only. Throws when the folder can't be read or holds over WALK_CAP entries.
-export function controlFilesState(worktree, { platform = process.platform } = {}) {
+export function controlFilesState(worktree, { platform = process.platform, walkCap = WALK_CAP } = {}) {
   const root = fs.realpathSync.native(worktree);
   const state = new Map();
   const walked = new Set([root]);
@@ -89,7 +92,7 @@ export function controlFilesState(worktree, { platform = process.platform } = {}
   const walk = (dir, prefix, throughLink) => {
     for (const name of fs.readdirSync(dir).sort()) {
       entries += 1;
-      if (entries > WALK_CAP) throw new Error(`the folder holds over ${WALK_CAP} entries`);
+      if (entries > walkCap) throw new TooManyFiles(`the folder holds over ${walkCap} entries`);
       const rel = prefix === '' ? name : `${prefix}/${name}`;
       if (skipped(name, rel)) continue;
       const full = path.join(dir, name);
@@ -170,22 +173,28 @@ function readSmall(file) {
   }
 }
 
-// Records the agent files of `worktree` as they are now, as the baseline of the feature `work`.
-export function writeBaseline(project, work, worktree, { now = () => new Date(), platform = process.platform } = {}) {
+// Records the agent files of `worktree` as the baseline of the feature `work`: as they are now, or
+// as `state` (a Map controlFilesState gave) says, so what is kept is what the director was shown.
+export function writeBaseline(project, work, worktree, { now = () => new Date(), platform = process.platform, state = null } = {}) {
   const file = baselineFile(project, work);
-  const files = Object.fromEntries(controlFilesState(worktree, { platform }));
+  const files = Object.fromEntries(state ?? controlFilesState(worktree, { platform }));
   controlFolder(project);
   writeWhole(file, { v: 1, worktree: path.resolve(worktree), at: now().toISOString(), files });
   return file;
 }
 
-// The feature's baseline as a Map, or null when there is none for this worktree, or it can't be read.
-export function readBaseline(project, work, worktree) {
+// The feature's baseline, { files: Map, at }, or null when there is none for this worktree, or it can't be read.
+function baselineOf(project, work, worktree) {
   const kept = readSmall(baselineFile(project, work));
-  if (!isPlain(kept) || kept.v !== 1 || !isPlain(kept.files) || typeof kept.worktree !== 'string') return null;
+  if (!isPlain(kept) || kept.v !== 1 || !isPlain(kept.files) || typeof kept.worktree !== 'string' || typeof kept.at !== 'string') return null;
   if (kept.worktree !== path.resolve(worktree)) return null;
   if (!Object.values(kept.files).every((v) => typeof v === 'string')) return null;
-  return new Map(Object.entries(kept.files));
+  return { files: new Map(Object.entries(kept.files)), at: kept.at };
+}
+
+// The feature's baseline as a Map, or null when there is none for this worktree, or it can't be read.
+export function readBaseline(project, work, worktree) {
+  return baselineOf(project, work, worktree)?.files ?? null;
 }
 
 // The paths of `state` that are new or changed since `baseline`, in order. A path that has gone
@@ -194,17 +203,31 @@ export function changedPaths(baseline, state) {
   return [...state].filter(([p, value]) => baseline.get(p) !== value).map(([p]) => p).sort();
 }
 
+const hashOfText = (text) => crypto.createHash('sha256').update(text).digest('hex');
+
 // How the feature's folder stands before a wake: { ok: true } when its agent files match the
-// baseline; otherwise { ok: false, paths, hash }, `paths` the new or changed ones (none when there
-// is no baseline), `hash` naming what was found, so the same finding is raised once.
-export function checkControlFiles(project, work, worktree, { platform = process.platform } = {}) {
-  const baseline = readBaseline(project, work, worktree);
-  const state = controlFilesState(worktree, { platform });
-  if (baseline === null) return { ok: false, paths: [], hash: crypto.createHash('sha256').update('no baseline').digest('hex') };
-  const paths = changedPaths(baseline, state);
+// baseline; otherwise { ok: false, why, paths, hash, state, since }. `why` is `changed` (the new or
+// changed `paths`), `no-record` (no baseline for this worktree) or `too-many` (over WALK_CAP
+// entries). `hash` names what was found, so the same finding is raised once and the director's
+// Keep line names it; `state` is the files as found (null for too-many), to be kept as they were
+// shown; `since` is when the baseline was kept (null without one). Throws when the folder can't be read.
+export function checkControlFiles(project, work, worktree, { platform = process.platform, walkCap = WALK_CAP } = {}) {
+  const where = path.resolve(worktree);
+  const baseline = baselineOf(project, work, worktree);
+  const since = baseline?.at ?? null;
+  let state;
+  try {
+    state = controlFilesState(worktree, { platform, walkCap });
+  } catch (error) {
+    if (!(error instanceof TooManyFiles)) throw error;
+    return { ok: false, why: 'too-many', paths: [], hash: hashOfText(`too many files\n${where}`), state: null, since };
+  }
+  if (baseline === null) {
+    return { ok: false, why: 'no-record', paths: [], hash: hashOfText(`no record\n${where}\n${JSON.stringify([...state])}`), state, since };
+  }
+  const paths = changedPaths(baseline.files, state);
   if (paths.length === 0) return { ok: true };
-  const found = paths.map((p) => [p, state.get(p)]);
-  return { ok: false, paths, hash: crypto.createHash('sha256').update(JSON.stringify(found)).digest('hex') };
+  return { ok: false, why: 'changed', paths, hash: hashOfText(JSON.stringify(paths.map((p) => [p, state.get(p)]))), state, since };
 }
 
 // The hash of the finding last raised for the feature, or null.

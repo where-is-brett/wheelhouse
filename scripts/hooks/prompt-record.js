@@ -56,7 +56,7 @@ import {
 } from '../state/card-lines.js';
 import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore,
@@ -173,6 +173,21 @@ function amendmentHash(project, work, h12) {
 
 const declared = (project, id) => held(project, 'incident').some((e) => e.data?.id === id);
 
+// The record a Confirm on a card keeping a feature's files that steer agents earns (ruling P7-31):
+// the card carries that one set line, and the state holds one finding of the watcher's for that
+// work whose full hash the line's twelve characters name. The record names the work and that hash,
+// which the watcher matches against what it finds before it keeps the files as they are.
+function keepControlOf(project, question) {
+  const lines = setLinesOf(question);
+  if (lines.length !== 1) return null;
+  const m = KEEP_CONTROL_LINE.exec(lines[0]);
+  if (!m || lines[0] !== keepControlLine(m[1], m[2])) return null;
+  const hashes = new Set(held(project, 'control-file')
+    .filter((e) => e.data?.work === m[1] && typeof e.data?.hash === 'string' && e.data.hash.startsWith(m[2]))
+    .map((e) => e.data.hash));
+  return hashes.size === 1 ? { action: 'keep-control-files', work: m[1], hash: [...hashes][0] } : null;
+}
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
@@ -202,6 +217,10 @@ export async function earned({ project, question, label, client, now, left, stop
       return { made: { kind: 'approval', data: { pr, commit: head, words: 'Approve', question } } };
     }
     return null;
+  }
+  if (label === 'Confirm' && setLinesOf(question).some((line) => KEEP_CONTROL_LINE.test(line))) {
+    const kept = keepControlOf(project, question);
+    return kept ? action(kept) : null;
   }
   if (label === 'Confirm') {
     // A line may name an event in the project's state or in the director's profile; one

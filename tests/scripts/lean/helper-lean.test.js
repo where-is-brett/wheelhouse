@@ -17,7 +17,9 @@ import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { listEvents } from '../../../scripts/state/events.js';
+import { dataHash, listEvents } from '../../../scripts/state/events.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
+import { controlFileInput } from '../../../scripts/cards/build-loop.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -243,6 +245,33 @@ test('a main version moved outside the helper is said at the session\'s start, a
     assert.equal(readLean(PROJECT).main, sneak);
     assert.equal((await c.lean(['status'])).moved, false);
     assert.equal((await c.lean(['merge', 'login', head])).ok, true);
+  } finally {
+    await c.close();
+  }
+});
+
+test('the Keep card of a feature\'s files that steer agents is confirmed in the window, as a guardrail change (ruling P7-31)', async () => {
+  const c = await computer({ choose: (card) => (card.options.includes('Confirm') ? 'Confirm' : null) });
+  try {
+    const hash = 'd'.repeat(64);
+    const data = { work: 'login', why: 'changed', paths: ['AGENTS.md'], hash, at: new Date(T0).toISOString() };
+    const raised = await c.client.state.write({ project: PROJECT, kind: 'control-file', data });
+    assert.equal(raised.ok, true, raised.refused);
+    const record = c.events().find((e) => e.kind === 'control-file');
+    const { card } = composeCard(controlFileInput(record, 'login'));
+    const made = await c.client.state.write({ project: PROJECT, kind: 'card', data: card });
+    assert.equal(made.ok, true, made.refused);
+    const held = c.events().find((e) => e.kind === 'card' && e.data.event === record.id);
+    const confirmed = await c.client.confirm({ project: PROJECT, card: held.id, hash: dataHash(held.data) });
+    assert.equal(confirmed.ok, true, confirmed.refused);
+    assert.deepEqual([confirmed.recorded, confirmed.kind, confirmed.step], [true, 'action', 'guardrail-change']);
+    assert.deepEqual(c.windows.at(-1).options, ['Confirm']);
+    const kept = c.events().find((e) => e.kind === 'action' && e.data.action === 'keep-control-files');
+    assert.deepEqual([kept.data.work, kept.data.hash, kept.data.proof], ['login', hash, 'window']);
+    assert.ok(verify(kept, readEnrolled()));
+    // A chat click on it decides nothing: Confirm is never a chat click's to give.
+    const chat = await c.client.cards.chatClick({ project: PROJECT, card: held.id, hash: 'e'.repeat(64), label: 'Confirm', proof: 'chat-click' }).catch((error) => ({ ok: false, refused: error.message }));
+    assert.equal(chat.ok, false);
   } finally {
     await c.close();
   }

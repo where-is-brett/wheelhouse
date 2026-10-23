@@ -23,7 +23,7 @@ import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepSt
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import {
-  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE,
+  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -57,6 +57,7 @@ function targetOf(line) {
   if ((m = new RegExp(`^Confirm all ([1-9][0-9]*) rules? as listed, ${SHA12}$`).exec(line))) return { kind: 'confirm-all', target: { count: Number(m[1]), hash: m[2] } };
   if ((m = TRUST_LINE.exec(line))) return { kind: 'trust', target: { computer: m[1], fingerprint: m[3] } };
   if ((m = UNINSTALL_LINE.exec(line))) return { kind: 'uninstall', target: { project: m[1], hash: m[2] } };
+  if ((m = KEEP_CONTROL_LINE.exec(line))) return { kind: 'keep-control-files', target: { work: m[1], hash: m[2] } };
   return null;
 }
 
