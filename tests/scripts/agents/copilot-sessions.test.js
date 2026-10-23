@@ -20,7 +20,7 @@ import { registration } from '../../../adapters/copilot/hooks.js';
 import copilot from '../../../adapters/copilot/index.js';
 import { levelRules } from '../../../adapters/copilot/permissions.js';
 import sessions, {
-  MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
+  CMD_LINE_MOST, MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
   featureStartCall, finalAnswer, foremanCall, pruneActivity, refusalOf, refusalsOf, sessionHome, sessionIdOf,
   sessionUsage, writeSessionHome,
 } from '../../../adapters/copilot/sessions.js';
@@ -131,7 +131,7 @@ test('each call has --no-ask-user and the level\'s rules', () => {
   assert.throws(() => foreman({ long: true }), /Copilot's foreman runs one wake at a time; its long session isn't built/);
 
   // The level's rules hold the granted command, the loop's tools and the denies.
-  for (const rule of ['--allow-tool=write', '--allow-tool=shell(npm test:*)', '--allow-tool=task', '--deny-tool=shell(gh:*)', '--deny-tool=write(**/AGENTS.md)']) {
+  for (const rule of ['--allow-tool=write', '--allow-tool=shell(npm test:*)', '--allow-tool=task', '--deny-tool=shell(copilot:*)', '--deny-tool=write(**/AGENTS.md)']) {
     assert.ok(call.args.includes(rule), rule);
   }
   // No level given: Ask with no grants, so no shell rule at all, which fails closed (a tool no rule allows is refused,
@@ -139,6 +139,9 @@ test('each call has --no-ask-user and the level\'s rules', () => {
   const bare = start({ level: undefined, rules: { allow: ['shell'], deny: [] } });
   assert.ok(!bare.args.some((arg) => arg.startsWith('--allow-tool=shell')));
   assert.equal(bare.level, 'ask');
+  // A rule that isn't one plain argument is refused (rulesOf), here through the foreman's own tools.
+  assert.throws(() => foreman({ tools: ['Bash(x\ny:*)'] }), /rule/);
+  assert.throws(() => foreman({ tools: [`Bash(${'x'.repeat(600)}:*)`] }), /rule/);
 });
 
 test('the model comes from the routing table\'s Copilot column, and none is passed when it is absent (P7-6)', () => {
@@ -170,6 +173,11 @@ test('a .cmd shim is called through quoteForCmd', () => {
   for (const prompt of ['Read 100% of it.', 'Read it!', 'say "hi"', 'C:\\a b\\']) {
     assert.throws(() => start({ copilot: shim, platform: 'win32', prompt }), /can't be started through a \.cmd program safely/, prompt);
   }
+
+  // A line longer than cmd.exe takes is refused in plain words, and nothing is started.
+  assert.throws(() => foreman({ copilot: shim, platform: 'win32', tools: [], prompt: `Read ${'w'.repeat(8200)}.json.` }), /longer than the 8191 characters a \.cmd program can be given/);
+  const fits = foreman({ copilot: shim, platform: 'win32', tools: [] });
+  assert.ok(['cmd.exe', ...fits.args].join(' ').length <= CMD_LINE_MOST);
 
   // quoteForCmd itself: `!` and a quoted argument ending in a backslash are refused, with generic words.
   assert.throws(() => quoteForCmd('wow!'), /a \.cmd program safely/);

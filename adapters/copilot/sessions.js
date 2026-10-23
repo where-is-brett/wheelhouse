@@ -55,6 +55,9 @@ const COPILOT_STATE = [/^session-state$/, /^logs?$/, /\.(db|sqlite3?)(-wal|-shm|
 // APPDATA is the Windows sitting's (S2).
 const KEPT_VARIABLES = ['PATH', 'HOME', 'USERPROFILE', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'SystemRoot', 'WHEELHOUSE_HOME'];
 
+// The longest command line cmd.exe runs; a .cmd start past it is refused before anything runs.
+export const CMD_LINE_MOST = 8191;
+
 // The flags no call ever carries, at any level: a level's "the shell allowed" is `--allow-tool=shell`, a rule,
 // never a flag that lifts every rule (ruling P7-3).
 const WIDE_FLAGS = ['--trust-folder', '--allow-all', '--yolo', '--allow-all-tools', '--allow-all-paths', '--allow-all-urls', '--add-dir'];
@@ -227,6 +230,9 @@ function sessionCall({ project, target, role, config, prompt, rules = {}, resume
       throw new Error('This Copilot session can\'t be started through a .cmd program safely: an argument holds ", %, ! or a closing backslash, which cmd.exe would change');
     }
     call = { file: 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], verbatim: true };
+    if (['cmd.exe', ...call.args].join(' ').length > CMD_LINE_MOST) {
+      throw new Error(`This Copilot session's command line is longer than the ${CMD_LINE_MOST} characters a .cmd program can be given, so it isn't started`);
+    }
   } else {
     call = { file: resolved.file, args, verbatim: false };
   }
@@ -258,7 +264,7 @@ export function foremanCall({ config, project, prompt, tools = null, env, platfo
 // not given. Throws when the worktree isn't a whole path.
 function featureRules({ config, level, grants, guardedCommand = null, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform = process.platform }) {
   const known = LEVELS.includes(level);
-  const allowed = levelAllowed({ level: known ? level : 'ask', realUsers, keysUnreadable, hostApproval, unattendedConfirmed });
+  const allowed = levelAllowed({ level: known ? level : 'ask', realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform });
   const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
   const given = (known && Array.isArray(grants) ? grants : [])
     .filter((g) => g !== null && typeof g === 'object' && Array.isArray(g.commands))
