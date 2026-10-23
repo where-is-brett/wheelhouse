@@ -23,7 +23,7 @@ Three gaps, released together:
 **Not built here, and why:**
 
 - **Files Copilot Part 3 is changing:** `scripts/hooks/*`, `scripts/protection/settings.js`, `scripts/lib/agent-control.js`, `scripts/gate/guardrails.js`, `adapters/`. None of them runs git (the sweep checked), so the git work doesn't need them. The keychain's settings change does: Task 10, after Part 3 merges.
-- **`scripts/eval/*`:** the evaluation tasks 4 and 5 session is changing it. Its five git calls run in scratch projects Wheelhouse made: Task 11, after that session merges.
+- **`scripts/eval/*`:** the evaluation tasks 4 and 5 session is changing it. Its git calls (six files) run in scratch projects Wheelhouse made: Task 11, after that session merges.
 - **`scripts/setup/tools.js`:** `git --version` reads no repository, and Copilot Part 6 is changing the file. Listed as an exception in Task 1's guard test.
 - **`scripts/lineage/upgrade.js` `land`:** the maintainer's own tool, committing in the maintainer's own checkout with the maintainer's identity and hooks, on purpose. Listed as an exception, with that reason.
 
@@ -74,7 +74,7 @@ Every git call in `scripts/` on 21 October 2026, grouped by route. "Fence" is se
 | `scripts/lineage/release.js` `reinstall` | hooks off only | Claude's installed copy of the plugin | none | 6 |
 | `scripts/lineage/upgrade.js` `land` | **Nothing**, on purpose | the maintainer's checkout | none | exception |
 | `scripts/setup/tools.js` `git --version` | **Nothing**; reads no repository | none | none | exception |
-| `scripts/eval/*` (five calls) | **Nothing** | scratch projects | none | 11 |
+| `scripts/eval/*` (six files) | **Nothing** | scratch projects | none | 11 |
 
 Everything Wheelhouse writes into its own repositories (`core.*` from `init`, `remote.origin.url` and `.fetch`, `branch.<name>.remote` and `.merge`) is already on setup's allowed list, so looking at them refuses nothing Wheelhouse made.
 
@@ -406,7 +406,7 @@ In `tests/scripts/health/trials.test.js`: `the gh trial tries only the paths it 
 
 **Safety: no** (scratch projects Wheelhouse made). **Not built in this branch.**
 
-**Files:** `scripts/eval/stand-in-helper.js`, `scripts/eval/feature-project.js`, `scripts/eval/front-desk.js`, `scripts/eval/harness.js`, `scripts/eval/run.js`, `scripts/lib/safe-git.js` (drop their rows).
+**Files:** `scripts/eval/bare-host.js`, `scripts/eval/stand-in-helper.js`, `scripts/eval/feature-project.js`, `scripts/eval/front-desk.js`, `scripts/eval/harness.js`, `scripts/eval/run.js`, `scripts/lib/safe-git.js` (drop their rows).
 
 - Each call through `safeGit({ cwd, look: 'once' })`, keeping the identity arguments; `run.js`'s `rev-parse HEAD` in this repository with `look: 'never'` and the private-words reason.
 

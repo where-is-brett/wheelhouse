@@ -1,8 +1,8 @@
 // scripts/lib/safe-git.js
 // The one route every git call of Wheelhouse takes, built on setup's fence and allowed list. The
 // allowed list lives in scripts/setup/git.js (rulings R109 to R113); it is to move into scripts/lib/
-// once Copilot Part 6 has merged, which is listed in the ledger. This file imports the fence and the
-// list and never copies them.
+// once the work changing setup's files has merged. This file imports the fence and the list and
+// never copies them.
 // Every call shuts out git's global and system config, points hooks at the null file, and allows one
 // transport: https, or https and a local path where the caller names a local remote, or https and
 // ssh where the caller asks for ssh by name. Before a call it can look at the repository's own config
@@ -216,6 +216,7 @@ export function directorSignIn(host, { platform = process.platform } = {}) {
 const later = (n) => `moves in Task ${n} of the security-gaps plan`;
 export const RAW_GIT_EXCEPTIONS = Object.freeze([
   ['scripts/lineage/upgrade.js', "land: the maintainer's own tool, committing in their checkout with their identity and hooks, on purpose"],
+  ['scripts/eval/bare-host.js', later(11)],
   ['scripts/eval/stand-in-helper.js', later(11)],
   ['scripts/eval/feature-project.js', later(11)],
   ['scripts/eval/front-desk.js', later(11)],
