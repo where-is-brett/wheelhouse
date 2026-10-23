@@ -510,7 +510,7 @@ function cardFor(changes, status, platform) {
   if (fetched.length > 0) {
     lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
   }
-  if (changes.some((c) => c.kind === 'json-key')) lines.push('one permission rule in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
+  if (changes.some((c) => c.kind === 'json-key')) lines.push('permission rules in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
   const what = `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
   return {
