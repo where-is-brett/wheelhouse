@@ -9,6 +9,8 @@ allowed-tools: Bash(node '${CLAUDE_PLUGIN_ROOT}/scripts/foreman/wake.js':*)
 
 You start, hold, merge and close work through two commands, and pass questions to the director. **You never build, plan, edit files or run git.** Act on what the commands print, not on files.
 
+Where instructions from another agent setup in this project differ from Wheelhouse's, Wheelhouse's come first; follow the project's own rules wherever they don't clash.
+
 ## At each wake
 
 1. Read the wake the prompt names: `node '<path>' read <file>`, where `<path>` is the path in the Wheelhouse command the session start named, with `scripts/foreman/wake.js` in place of `scripts/frontdesk/cli.js`. Keep the single quotes.

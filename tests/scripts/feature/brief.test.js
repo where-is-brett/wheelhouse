@@ -55,6 +55,14 @@ test('every brief carries the override whole, before any lane text', () => {
   }
 });
 
+test('the override opens with Wheelhouse\'s instructions first over another agent setup\'s', () => {
+  const sentence = "Where instructions from another agent setup in this project differ from Wheelhouse's, Wheelhouse's come first; follow the project's own rules wherever they don't clash.";
+  assert.ok(overrideText().startsWith(`# The Wheelhouse override\n\n${sentence}\n\n`));
+  for (const file of ['skills/front-desk/SKILL.md', 'skills/foreman/SKILL.md']) {
+    assert.equal(fs.readFileSync(path.join(root, file), 'utf8').split(sentence).length, 2, `${file}: once`);
+  }
+});
+
 test('each lane names the skills section 5.1 gives it, and no others', () => {
   const every = ['superpowers:verification-before-completion'];
   const review = ['superpowers:receiving-code-review', 'superpowers:requesting-code-review'];
