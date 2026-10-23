@@ -30,7 +30,7 @@ const relative = (name) => `${LEAN_RECORD_DIR}/${name}`;
 
 // Why a parsed line is not a good Lean line, or null when it is one. Ruling P4-13: all eight keys,
 // the five that are never null, and the proof each kind carries.
-function whyBad(line) {
+function whyBad(line, file) {
   if (!isPlain(line)) return 'the line is not a JSON object';
   const keys = Object.keys(line);
   const missing = LEAN_KEYS.filter((k) => !Object.hasOwn(line, k));
@@ -38,6 +38,9 @@ function whyBad(line) {
   const extra = keys.filter((k) => !LEAN_KEYS.includes(k));
   if (extra.length > 0) return `the line has ${extra.join(', ')}, which a Lean line does not`;
   if (!isTime(line.at)) return 'the time is not UTC in ISO 8601';
+  // A line belongs in the file for its own UTC day (the playbook writes it there).
+  const day = FILE_NAME.exec(String(file ?? '').split('/').pop());
+  if (day && line.at.slice(0, 10) !== `${day[1]}-${day[2]}-${day[3]}`) return 'the time is not on the day of the file';
   if (!LEAN_KINDS.includes(line.kind)) return `the kind ${typeof line.kind === 'string' ? `"${line.kind}" ` : ''}is not one Lean writes`;
   for (const k of ['card', 'choice']) if (line[k] !== null && !isText(line[k])) return `${k} is neither text nor null`;
   if (line.commit !== null && !(typeof line.commit === 'string' && COMMIT.test(line.commit))) return 'the commit is not 12 lower-case hex characters';
@@ -57,6 +60,9 @@ function whyBad(line) {
     case 'merge': return need(line.commit !== null, 'a merge names the 12-character merge commit');
     case 'undo': return need(line.commit !== null && (line.choice === null || line.choice === 'Undo'), 'an undo names the 12-character revert commit, and Undo or nothing');
     case 'copy': return need(['pushed', 'failed'].includes(line.choice) && line.commit !== null, 'a copy line names pushed or failed and the 12-character commit');
+    // "Nothing else is in the line" for stop; the click on Lift STOP, or no click at all.
+    case 'stop': return need(line.choice === null, 'a stop line has no choice');
+    case 'lift-stop': return need(line.choice === null || line.choice === 'Lift STOP', 'a lift-stop line names Lift STOP, or nothing');
     default: return null;
   }
 }
@@ -79,7 +85,7 @@ export function parseLeanRecord(text, { file = LEAN_RECORD_DIR } = {}) {
       problems.push({ file, line, text: raw, why: 'the line is not JSON' });
       return;
     }
-    const why = whyBad(parsed);
+    const why = whyBad(parsed, file);
     if (why) problems.push({ file, line, text: raw, why });
     else entries.push({ ...parsed, file, line });
   });
@@ -134,7 +140,9 @@ function sentence(e) {
       ? `Lean: ${card} was undone at ${e.commit} with no click behind it.`
       : `Lean: the director chose to undo ${card}, undone at ${e.commit}, by a click in the chat, not proven.`;
     case 'stop': return 'Lean: the director said stop. Nothing at Lean enforces it.';
-    case 'lift-stop': return 'Lean: the director lifted STOP, by a click in the chat, not proven.';
+    case 'lift-stop': return e.choice === null
+      ? 'Lean: STOP was lifted with no click behind it.'
+      : 'Lean: the director lifted STOP, by a click in the chat, not proven.';
     case 'copy': return e.choice === 'pushed' ? `Lean: the copy was updated to ${e.commit}.` : `Lean: the copy was not updated at ${e.commit}.`;
     default: return '';
   }
@@ -178,7 +186,7 @@ function dataOf(e) {
 // project of its own, because it is kept in that project's state, so moveUp writes them there.
 export function leanToEvents(entries, { project } = {}) { // eslint-disable-line no-unused-vars
   return entries.map((entry) => {
-    const why = whyBad(Object.fromEntries(LEAN_KEYS.map((k) => [k, entry?.[k]])));
+    const why = whyBad(Object.fromEntries(LEAN_KEYS.map((k) => [k, entry?.[k]])), entry?.file);
     if (why) throw new Error(`A Lean entry cannot become an event: ${why}`);
     const kind = stateKind(entry.kind);
     if (PROTECTED_KINDS.includes(kind)) throw new Error('A Lean entry is never a signed kind');

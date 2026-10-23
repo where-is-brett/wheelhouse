@@ -100,6 +100,20 @@ test('an undo with no choice is not a click, and its event says so', () => {
   });
 });
 
+test('a lift-stop with no choice is not a click, and its event says so', () => {
+  withStandIns(() => {
+    const [none, clicked] = leanToEvents(entriesOf({ ...LINES['lift-stop'], choice: null }, LINES['lift-stop']), { project: 'owner-name' });
+    assert.equal(none.data.clicked, false);
+    assert.match(none.data.text, /no click behind it/);
+    assert.doesNotMatch(none.data.text, /by a click/);
+    assert.equal(clicked.data.clicked, true);
+    assert.match(clicked.data.text, /by a click in the chat/);
+    // The entry check holds as well for an entry not read through the parser.
+    assert.throws(() => leanToEvents([{ ...LINES['lift-stop'], choice: 'Not now' }], { project: 'owner-name' }), /cannot become an event/);
+    assert.throws(() => leanToEvents([{ ...LINES.card, file: FILE, at: '2026-10-24T00:00:00Z' }], { project: 'owner-name' }), /day of the file/);
+  });
+});
+
 test('a broken line is a problem, not lost', () => {
   const good = LINES.approval;
   const broken = [
@@ -126,6 +140,10 @@ test('a broken line is a problem, not lost', () => {
     [{ ...LINES.copy, choice: null }, /copy line names/],
     [{ ...LINES.card, choice: null }, /card line names/],
     [{ ...LINES.undo, choice: 'Redo' }, /undo names/],
+    [{ ...LINES.stop, choice: 'Stop' }, /a stop line has no choice/],
+    [{ ...LINES['lift-stop'], choice: 'Not now' }, /lift-stop line names Lift STOP, or nothing/],
+    [{ ...LINES['lift-stop'], choice: 'Approve' }, /lift-stop line names/],
+    [{ ...LINES.card, at: '2026-10-22T23:59:59Z' }, /not on the day of the file/],
   ];
   const lines = [LINES.card, ...broken.map(([l]) => l), LINES.merge];
   const { entries, problems } = parseLeanRecord(text(...lines), { file: FILE });
@@ -154,7 +172,7 @@ test('readLeanRecord reads every day oldest first and names what it cannot read'
   assert.deepEqual(readLeanRecord(folder), { entries: [], problems: [] });
   const dir = path.join(folder, '.wheelhouse', 'record');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, '2026-10-24.jsonl'), text(LINES.stop, 'broken'));
+  fs.writeFileSync(path.join(dir, '2026-10-24.jsonl'), text({ ...LINES.stop, at: '2026-10-24T00:30:00Z' }, 'broken'));
   fs.writeFileSync(path.join(dir, '2026-10-23.jsonl'), text(LINES.card, LINES.approval));
   fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello');
   fs.writeFileSync(path.join(dir, '2026-13-40.jsonl'), '');
