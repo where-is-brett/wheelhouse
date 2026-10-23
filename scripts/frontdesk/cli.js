@@ -13,7 +13,8 @@
 //   why <n>         notes that the director asked why about the card the board numbers n, and
 //                   prints one line; it never gives the card again: explain, then run `again <n>`
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
-//                   for a work event's document and an amendment, it works out the hash and prints it
+//                   for a work event's document and an amendment, it works out the hash and prints it;
+//                   an amendment needs its read-back, and prints the route line and the read-back to say
 //   similar [words] the open work, ideas and rejections that share words with a request: its
 //                   words as the arguments, or its text on standard input
 //   views <name>    one view as short lines: rulebook, waiting, ideas, glossary, settings, levels or
@@ -591,6 +592,22 @@ function isOpen(views, id) {
   return !closed && !endedBy(views.reports, id, entry.work);
 }
 
+// The line a front desk says for an amendment, from its read-back: the route (intake, step 4) and
+// the read-back (route 3), in one, so neither is left out (scenario 26). Each part is one line; an
+// amendment without them is refused before anything is written.
+function readBackLine(readBack) {
+  // Each part as a sentence: its own closing mark kept, else one full stop.
+  const part = (value) => {
+    const text = typeof value === 'string' && !BREAK.test(value) ? value.trim().replace(/\.+$/, '').trim() : '';
+    if (text === '') return null;
+    return /[?!]$/.test(text) ? text : `${text}.`;
+  };
+  const parts = isPlain(readBack) ? [part(readBack.doing), part(readBack.notDoing), part(readBack.doneWhen)] : [null];
+  if (parts.includes(null)) throw new CliError('Read the change back first: give readBack as { doing, notDoing, doneWhen }, each one line in the director\'s terms');
+  const [doing, notDoing, doneWhen] = parts;
+  return `I've treated this as a change to work already running; say if it's something else. Doing: ${doing} Not doing: ${notDoing} Done when: ${doneWhen}`;
+}
+
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
   if (kind === 'work' && isPlain(input.doc) && typeof input.doc.path === 'string') {
@@ -608,7 +625,7 @@ async function withHash(client, cwd, kind, input) {
 }
 
 // Records one event and resolves with { id, pushed }, with `hash` for a work event's document or an
-// amendment, and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
+// amendment, `say` for an amendment (its route line and read-back), and for a ruling or a setting its confirm card, recorded too, as { question, id }. A setting the catalogue refuses is refused here, before
 // the helper is asked; the director's own settings go to their profile, and a concept set to false
 // needs no card (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
@@ -634,10 +651,17 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
   }
   // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
-  if (kind === 'work' || kind === 'amendment') {
+  if (kind === 'work') {
     const data = await withHash(client, cwd, kind, input);
-    const hash = kind === 'work' ? data.doc?.hash : data.hash;
+    const hash = data.doc?.hash;
     return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}) };
+  }
+  if (kind === 'amendment') {
+    // The read-back is said, not stored: the event is the amendment as the foreman applies it.
+    const { readBack, ...rest } = input;
+    const say = readBackLine(readBack);
+    const data = await withHash(client, cwd, kind, rest);
+    return { ...answered(await write(client, cwd, kind, data)), hash: data.hash, say };
   }
   if (kind !== 'ruling') return answered(await write(client, cwd, kind, input));
 

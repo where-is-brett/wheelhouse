@@ -226,7 +226,7 @@ test('the intake writes a changed approved document in place and marks it as cha
   assert.ok(rule.includes('"Changed since the director\'s approval; the change card decides it."'), 'the timeless line');
   assert.doesNotMatch(rule, /waits for/);
   assert.match(rule, /stays in git at the hash the approval names/);
-  assert.match(rule, /`cli\.js record amendment` \(the work and the change; it works out the changed document's hash and prints it\)/);
+  assert.match(rule, /`cli\.js record amendment` \(the work, the change and `readBack`[^)]*works out the changed document's hash and prints it/);
   assert.match(rule, /`amend` card/);
   // Nothing holds a build for an amendment waiting for its click (ruling F84).
   assert.match(rule, /its meanwhile says the build keeps to the approved design until the click/);
@@ -239,7 +239,13 @@ test('the intake reads running work back before anything else, in the read-back\
   // The read-back comes first, word for word, ahead of the changed document and the card.
   assert.match(rule, /First, before you write or record anything for it, read it back in one line, in these words: "Doing: X\. Not doing: Y\. Done when: Z\."/);
   assert.match(rule, /A before and after list, or the route in other words, is not the read-back/);
-  assert.match(intake, /\n\| "[^"\n]*read-back[^"\n]*" \| Read it back first: "Doing: X\. Not doing: Y\. Done when: Z\." \|\n/);
+  assert.match(intake, /\n\| "[^"\n]*read-back[^"\n]*" \| Read it back first: "Doing: X\. Not doing: Y\. Done when: Z\." \|\n/);});
+
+test('the intake gives an amendment its read-back through the record command, and says the line it prints first (scenario 26)', () => {
+  const rule = intake.split('\n').find((line) => line.includes('**A change to what an approved brief or design builds')) ?? '';
+  // The command refuses an amendment without the read-back, and prints the route line and the read-back as one.
+  assert.match(rule, /`cli\.js record amendment` \(the work, the change and `readBack`: `doing`, `notDoing` and `doneWhen`, each one line; it refuses an amendment without them, works out the changed document's hash and prints it, and prints `say`\)/);
+  assert.match(rule, /Put `say` first in your reply, word for word: it is the route line and the read-back/);
 });
 
 test('the front desk quotes a ruling in force where it applies it, gives a card as printed when it can\'t load AskUserQuestion, and the intake puts a visible change with a choice in the small lane (scenarios 1, 7 and 10)', () => {
