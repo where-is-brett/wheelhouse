@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { computerId, helperAddress, profileDir, stateDir, wheelhouseHome } from '../lib/paths.js';
-import { stopState, setStop } from '../lib/stop.js';
+import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { gateDecision } from '../gate/conditions.js';
@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -48,7 +48,10 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
-import { SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { SIGNED_LABELS, earned } from '../hooks/prompt-record.js';
+import { askInWindow, NOT_NOW } from '../confirm/window.js';
+import { composeCard } from '../cards/compose.js';
+import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
@@ -62,7 +65,7 @@ import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
-import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
 import { CLICK_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
@@ -710,11 +713,11 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
-const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click'];
+const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm'];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
 // its local state repository, before any connection is made. Every other route refuses it.
-const LEAN_ROUTES = ['/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/session/mark', '/cards/chat-click'];
+const LEAN_ROUTES = ['/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/session/mark', '/cards/chat-click', '/confirm'];
 const isLean = (project) => readProject(project) === null && readLean(project) !== null;
 
 // The marks a session sends (ruling P5-19), each with its fields and what each must be.
@@ -825,6 +828,9 @@ export async function startHelper({
   // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
   // exits.
   onStop = (close) => close(),
+  // How the helper's own window is opened (scripts/confirm/window.js): given { title, lines, options }, it resolves
+  // with { choice }. By default askInWindow on this system, with the helper's `run`.
+  askWindow = (card) => askInWindow({ ...card, run }),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1445,6 +1451,96 @@ export async function startHelper({
     if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), proof };
     return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
+  }
+
+  // --- the helper's own window (design section 6.3, ruling P5-23) ---
+
+  // The step a signed record decides, when it is one the window confirms, else null: Lift STOP, a runbook step or
+  // a CI push (an action), Unattended (the confirmation of a level or setting proposing it), or an approval, which
+  // is how a guardrail change and a real-user merge are decided.
+  const ACTION_STEPS = { 'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push' };
+  // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
+  const LIFT_STOP_NAME = 'lift-stop';
+  function windowStep(project, made) {
+    if (made.kind === 'approval') return 'approval';
+    if (made.kind === 'action') return Object.hasOwn(ACTION_STEPS, made.data?.action) ? ACTION_STEPS[made.data.action] : null;
+    if (made.kind !== 'confirmation') return null;
+    const target = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === made.data?.confirms);
+    return ['level', 'setting'].includes(target?.kind) && target.data?.value === 'unattended' ? 'unattended' : null;
+  }
+
+  // What a click on `label` in the window would record for `card`: the signed record the same click earns in a
+  // hook that signs (prompt-record.js's earned, from the card's own question in the state), when it decides a
+  // step the window confirms; else null. A pull request's head is read through this helper's own route.
+  async function windowEarned(project, card, label, ctx) {
+    const question = card.data?.question;
+    if (typeof question !== 'string' || PUT_OFF.includes(label)) return null;
+    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
+    let got;
+    try {
+      got = await earned({ project, question, label, client, now, left: (p) => p, shownAt: card.at });
+    } catch {
+      return null;
+    }
+    if (!got?.made || got.profile) return null;
+    const step = windowStep(project, got.made);
+    return step === null ? null : { made: got.made, step, lift: got.lift === true };
+  }
+
+  // The card the request names, as the state holds it: there once, still waiting, its data hashing to `hash` (what
+  // the caller was shown), with the options a click in the window would decide it by. Refuses otherwise. The Lift
+  // STOP card is never in the state (the front desk composes it on each visit, since under STOP nothing is written:
+  // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown now.
+  async function windowCard({ project, card, hash }, ctx) {
+    let event;
+    if (card === LIFT_STOP_NAME) {
+      if (!stopped()) refuse('STOP is not on, so there is nothing to lift');
+      event = { at: now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
+    } else {
+      const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
+      if (found.length !== 1) refuse('that card is not in this project\'s state');
+      [event] = found;
+      if (dataHash(event.data) !== hash) refuse('that card is not the one shown: its hash differs');
+      const { waiting } = await writeViews(project, { now });
+      if (!(waiting ?? []).some((w) => w.id === card)) refuse('that card no longer waits for a click');
+    }
+    const options = (Array.isArray(event.data?.options) ? event.data.options : []).filter((o) => typeof o === 'string');
+    const deciding = [];
+    for (const label of options) {
+      const got = await windowEarned(project, event, label, ctx);
+      if (got) deciding.push({ label, ...got });
+    }
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push or an approval');
+    return { event, deciding };
+  }
+
+  // POST /confirm { project | cwd, card, hash }: the card is looked up in the state (the caller's own text is never
+  // shown), or is `lift-stop`, with no hash, for the Lift STOP card the helper composes itself; the window shows its words with its deciding options and Not now, and a deciding click is signed here,
+  // with proof `window`, as the record the step already has: an approval, a confirmation or an action. The card is
+  // looked at again after the click, so a card decided or changed meanwhile records nothing. A confirmed Lift STOP
+  // lifts STOP: the window is the one place a click lifts it on an agent whose hooks only read. Not now, or no click
+  // before the window closes, records nothing. Signed records are taken under STOP, as /state/record's are.
+  async function doConfirm({ project, card, hash }, ctx) {
+    if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
+    if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
+    const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
+    const shown = await look();
+    const lines = String(shown.event.data.question).split(/\r?\n/);
+    const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
+    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label) });
+    const picked = shown.deciding.find((d) => d.label === choice);
+    if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
+    return stateRoute(async () => {
+      const again = await windowCard({ project, card, hash }, ctx);
+      const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
+      if (!still) refuse('that card changed while the window was open, so nothing was recorded');
+      const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
+      const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+      await freshViews(() => writeViews(project, { now }));
+      if (still.lift) liftStop();
+      if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
+      return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true };
+    })({ project, card, hash }, ctx);
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -2761,6 +2857,8 @@ export async function startHelper({
     '/state/write': stateRoute(doWrite, { write: true }),
     '/session/mark': stateRoute(doSessionMark, { write: true }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
+    // One window at a time on this computer: a second request waits for the first window to close.
+    '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),
     '/state/record': signedIn(stateRoute(doRecord)),
     // A Lean project's state has no remote, so there is nothing to pull or push.
     '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
@@ -2960,7 +3058,7 @@ export async function startHelper({
       return send(res, 400, { ok: false, refused: 'the request must be a JSON object' });
     }
     if (url.pathname === '/stop/set') {
-      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it. `by: 'prompt'` records that
+      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but /confirm, on the director's click in the helper's own window. `by: 'prompt'` records that
       // the director's STOP word set it, from a hook that only reads (ruling P5-18); anything else is the helper.
       try {
         setStop({ by: body.by === 'prompt' ? 'prompt' : 'helper', now });

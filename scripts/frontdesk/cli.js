@@ -66,8 +66,9 @@ const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views',
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
-// prompt record from its set line, and only while STOP is on (ruling F25).
-const LIFT_STOP_CARD = Object.freeze({
+// prompt record from its set line, and only while STOP is on (ruling F25). The helper's own window composes
+// the same card for a Lift STOP confirmed there (scripts/host/helper.js, /confirm).
+export const LIFT_STOP_CARD = Object.freeze({
   kind: 'lift-stop',
   level: 3,
   what: 'STOP is on: every agent has halted, and nothing is written, pushed or merged.',

@@ -51,6 +51,10 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     cards: {
       chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed
     },
+    // { project | cwd, card, hash } -> { ok, recorded, choice, id?, kind?, step? }: the card, by its id in the state and the
+    // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof
+    // `window`. One window at a time on this computer, so this may wait for a click: give the client a long timeout.
+    confirm: post('/confirm'),
     push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
     pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
     foreman: {

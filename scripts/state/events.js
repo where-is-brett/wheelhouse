@@ -61,7 +61,10 @@ const ACTION_OWN = {
   // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
   uninstall: ['project', 'hash'],
 };
-const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
+// Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
+// window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
+// here, may name one too; the gate and the audit report judge what it names.
+const ACTION_KEYS = ['action', 'question', 'label', 'proof', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
 const NOT_AN_ANSWER = PUT_OFF;
 
@@ -78,9 +81,10 @@ function checkAction(data) {
   // A setup answer typed in has no label: its own check below asks for one of the two.
   const labelled = typeof data.label === 'string' || (data.action === 'setup-answer' && data.label === null);
   if (typeof data.question !== 'string' || !labelled) bad('needs the question and the label');
+  if (data.proof !== undefined && !isText(data.proof)) bad('has a proof that is not text');
   // A field that belongs to another action is refused here, before the action's own checks.
   const own = ACTION_OWN[data.action];
-  if (Object.keys(data).some((k) => !['action', 'question', 'label'].includes(k) && !own.includes(k))) {
+  if (Object.keys(data).some((k) => !['action', 'question', 'label', 'proof'].includes(k) && !own.includes(k))) {
     // The runbook's older message about a branch stays what it was.
     if (!(data.action === 'runbook' && data.branch !== undefined)) bad('carries a field that belongs to another action');
   }
