@@ -7,7 +7,7 @@
 //   Config = { v: 1, criticalAreas: [{ name, paths: [glob], checks: [glob] }],
 //              ciFiles: [glob], mcpServers: [string], webDomains: [string],
 //              runbook?: { contain?: { describe: string, command: [string] } },
-//              routing?: { foreman, builder, reviewer, reviewerCritical, tester, mechanical },
+//              routing?: { frontDesk, foreman, builder, reviewer, reviewerCritical, tester, mechanical },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
 //              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
 //              glabFrom?: string }
@@ -16,7 +16,10 @@
 // The build loop's keys (build-loop design, section 11; main design, section 8),
 // filled in by readConfig when left out:
 //   - routing: each role's model name, or null for the command line's own
-//     default (the default for every role, so no model is ever named here).
+//     default (the default for every role, so Wheelhouse names no model). Setup
+//     pins `frontDesk` in the project's own table to the full name Claude Code's
+//     alias for its most capable model stands for (setup/best-model.js), and the
+//     pin moves only after the evaluation passes on a new model (design section 8).
 //     A name may not start with `-`, so it can never read as a flag. Other
 //     roles in the table are kept.
 //   - sessionMode: the explicit permission mode sessions start in, default
@@ -53,7 +56,7 @@ const strings = (x) => Array.isArray(x) && x.every((s) => typeof s === 'string')
 // A glob with an empty segment (a leading, trailing or doubled `/`) would never match.
 const globs = (x) => strings(x) && x.every((s) => s !== '' && s.split('/').every((seg) => seg !== ''));
 
-export const ROLES = Object.freeze(['foreman', 'builder', 'reviewer', 'reviewerCritical', 'tester', 'mechanical']);
+export const ROLES = Object.freeze(['frontDesk', 'foreman', 'builder', 'reviewer', 'reviewerCritical', 'tester', 'mechanical']);
 // Claude Code's permission modes, less bypass.
 export const SESSION_MODES = Object.freeze(['acceptEdits', 'auto', 'default', 'dontAsk', 'plan']);
 export const DEFAULT_SESSION_MODE = 'acceptEdits';

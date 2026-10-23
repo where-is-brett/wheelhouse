@@ -313,8 +313,12 @@ export function allowRule(command) {
 // folders too. Beside the front desk's, writing the one file the front desk gives that command its
 // input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), by the
 // project-relative form, and nothing else in the project.
-export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
+export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform, model = null }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
+  // The front desk's model, pinned in the routing table (design section 8). This file is never
+  // committed; the worktrees inside the folder read it too, so the foreman's and the feature
+  // sessions' calls always name their own model (adapters/claude-code/sessions.js).
+  if (model) settings.model = model;
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }

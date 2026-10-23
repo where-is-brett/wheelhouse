@@ -37,6 +37,7 @@ import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { phonePushResult } from '../lib/setup-run.js';
 import { readSeen } from '../briefing/seen.js';
+import { readFrontDeskModel } from '../lib/front-desk-model.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -169,6 +170,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     screens: offline ? null : attempt(() => readScreens({ folder: record.folder, ...(findBrowser ? { findBrowser } : {}) })),
     // Offline, the setup journal isn't read: the glance shows no push test.
     phonePush: offline ? null : attempt(() => phonePushResult()),
+    // The model the front desk last ran on here and the one the main folder's configuration pins.
+    frontDeskModel: offline ? null : attempt(() => readFrontDeskModel({ project, folder: record.folder })),
   }));
 
   // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.

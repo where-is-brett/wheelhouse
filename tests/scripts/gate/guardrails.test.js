@@ -42,7 +42,7 @@ test('a critical area\'s check file is a guardrail; a file in the area only name
 });
 
 // What readConfig fills in for each build-loop key a configuration leaves out.
-const ROUTING_NONE = { foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
+const ROUTING_NONE = { frontDesk: null, foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
 const DEFAULTS = {
   routing: ROUTING_NONE, sessionMode: 'acceptEdits', buildCommands: ['npm test', 'npm run', 'node'], watcherShape: 1,
   hotFiles: ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**'], flagFiles: [],

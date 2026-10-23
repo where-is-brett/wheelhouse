@@ -56,6 +56,8 @@ const GITLAB_USER = { username: 'a-director', id: 77, name: 'A Director' };
 // The product's own .gitignore, as most hold it: .env files already kept out of git.
 const COVERED = '.env\n.env.*\n';
 const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
+// What Claude Code's alias for its most capable model stands for here: a stand-in name.
+const BEST_MODEL = 'model-top-1';
 
 // ---- The world: a product on a stand-in host, connected as step 3 leaves it ----
 
@@ -113,7 +115,7 @@ function kits(root) {
 async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
 } = {}) {
-  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o) };
+  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, bestAsked: 0 };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -207,6 +209,7 @@ async function world({
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
+    best: async () => { w.bestAsked += 1; return w.best; },
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
   w.ctx = (extra = {}) => ({ folder: w.folder, step: 7, now: () => T0, platform: 'darwin', userHome: w.user, answers: w.answers, ...extra });
@@ -310,6 +313,107 @@ test('the configuration has every plan\'s keys with their defaults', () => {
     assert.equal(Object.hasOwn(config, 'realUsers'), false);
   }
   assert.throws(() => starterConfig({ answers: {}, host: 'github' }), /live data/);
+});
+
+test('the starter configuration pins the front desk\'s model when setup was given one, and reads back as written (design section 8)', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const config = starterConfig({ answers, frontDesk: BEST_MODEL });
+  assert.ok(ROLES.includes('frontDesk'));
+  assert.equal(config.routing.frontDesk, BEST_MODEL);
+  assert.ok(Object.entries(config.routing).every(([role, m]) => role === 'frontDesk' || m === null), 'no other role is named');
+  assert.deepEqual(readConfig(JSON.stringify(config)), config);
+  assert.equal(starterConfig({ answers }).routing.frontDesk, null);
+});
+
+test('step 7 pins the front desk to what the most capable model\'s alias stands for, in the configuration and this computer\'s settings, and says so on its card', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    assert.equal(w.bestAsked, 1);
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}, the most capable model`));
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, BEST_MODEL);
+    assert.equal(w.json('.claude/settings.local.json').model, BEST_MODEL, 'the front desk\'s folder starts its sessions on it');
+    assert.equal(w.json('.claude/settings.json').model, undefined, 'never in the committed settings, which go to the host');
+    // The pin stays where it is: a later run asks nothing and changes nothing, even when the alias has moved.
+    w.best = 'model-top-2';
+    const again = await w.plan();
+    assert.equal(w.bestAsked, 1);
+    assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
+  });
+});
+
+test('the most capable model is asked once in a setup run: every later plan in the run gives the same list, whatever the alias says by then', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    const ctx = w.ctx({ runId: run.id });
+    w.best = null;
+    const first = await w.step.plan(ctx);
+    w.best = BEST_MODEL;
+    const again = await w.step.plan(ctx);
+    assert.equal(w.bestAsked, 1);
+    assert.equal(planHash(again.changes), planHash(first.changes), 'the card\'s hash still holds at the click');
+    // A new run asks again.
+    const next = startRun({ folder: w.folder, now: () => T0 });
+    const later = await w.step.plan(w.ctx({ runId: next.id }));
+    assert.equal(w.bestAsked, 2);
+    assert.deepEqual(later.changes.filter((c) => c.key?.[0] === 'model').map((c) => c.after), [BEST_MODEL]);
+  });
+});
+
+test('a project set up before the front desk had a model gets one at its next setup, and a pin already made is kept', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.best = null;
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, null);
+    assert.equal(w.json('.claude/settings.local.json').model, undefined);
+    w.best = BEST_MODEL;
+    const later = await w.plan();
+    const keys = later.changes.filter((c) => c.kind === 'json-key').map((c) => `${path.basename(c.target)} ${c.key.join('.')} ${c.after}`);
+    assert.deepEqual(keys, [`wheelhouse.json routing.frontDesk ${BEST_MODEL}`, `settings.local.json model ${BEST_MODEL}`]);
+    // A pin moved by hand, or by the pin mover, is never put back by setup.
+    const config = path.join(w.folder, '.claude', 'wheelhouse.json');
+    fs.writeFileSync(config, `${JSON.stringify({ ...w.json('.claude/wheelhouse.json'), routing: { ...w.json('.claude/wheelhouse.json').routing, frontDesk: 'model-chosen' } }, null, 2)}\n`);
+    const asked = w.bestAsked;
+    const kept = projectFilesChange({
+      folder: w.folder, config: starterConfig({ answers: w.answers, frontDesk: BEST_MODEL }), release: { ref: REF },
+      local: { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin' },
+    });
+    assert.ok(!kept.some((c) => c.target === config), 'the configuration keeps its own pin');
+    assert.deepEqual(kept.filter((c) => c.key?.[0] === 'model').map((c) => c.after), ['model-chosen'], 'and this computer follows it');
+    assert.equal(w.bestAsked, asked);
+  });
+});
+
+test('when Claude Code can\'t say what its most capable model is, step 7 goes on without a pin and says so', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.best = null;
+    const planned = await w.plan();
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /the front desk's model is left as it is: Claude Code didn't say which is its most capable/);
+    assert.ok(!planned.changes.some((c) => c.key?.[0] === 'model'));
+  });
+});
+
+test('a joining computer starts the front desk on the model the committed configuration pins', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    const run = await secondComputer(w);
+    w.best = 'model-elsewhere';
+    const planned = await w.step.plan(w.ctx({ runId: run.id }));
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/settings.local.json').model, BEST_MODEL);
+    assert.equal(w.bestAsked, 1, 'only the first computer asked');
+  });
 });
 
 test('the setup commit holds exactly the three files, and goes up before protection is on', async () => {
