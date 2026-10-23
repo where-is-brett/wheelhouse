@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift',
+  'lineage-hold', 'lineage-lift', 'activity',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -215,7 +215,16 @@ const PLAIN_SHAPES = {
   // The hold file of the project is gone, so the cards of the holds it names (`holds`, their event
   // ids) are closed: recorded once for each standing hold, by a session start or the mod's tick.
   'lineage-lift': { must: ['at', 'holds'], may: [] },
+  // What a background session did, summed from its whole output once the run ends (ruling P7-4): its session id
+  // (null when the run gave none), the role it ran as, how many times it used each tool, the commands it ran (each
+  // cut short, at most ACTIVITY_COMMANDS, a line the secret scan flags already replaced by a note naming the
+  // pattern) and its refusals, each the tool and the kind (a guard's, a rule's, no rule's, or other) with the rule
+  // when one was named. The whole output is kept in the project's activity folder on this computer, not in the state.
+  activity: { must: ['session', 'role', 'tools', 'commands', 'refusals'], may: ['work', 'usage', 'at'] },
 };
+// The most commands an activity record lists, and the kinds of refusal it names.
+export const ACTIVITY_COMMANDS = 50;
+export const REFUSAL_KINDS = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
 
@@ -330,6 +339,19 @@ function checkPlain(kind, data) {
   } else if (kind === 'lineage-lift') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     if (!Array.isArray(data.holds) || data.holds.length === 0 || !data.holds.every(isText)) bad('needs holds, the ids of the holds it lifts');
+  } else if (kind === 'activity') {
+    if (data.session !== null && !isText(data.session)) bad('needs session to be the session\'s id or null');
+    text('role');
+    if (!isPlain(data.tools) || !Object.values(data.tools).every((n) => Number.isInteger(n) && n >= 0)) bad('needs tools to be a count for each tool');
+    if (!Array.isArray(data.commands) || data.commands.length > ACTIVITY_COMMANDS || !data.commands.every(isText)) {
+      bad(`needs commands to be a list of at most ${ACTIVITY_COMMANDS} commands`);
+    }
+    const refusal = (r) => isPlain(r) && isText(r.tool) && REFUSAL_KINDS.includes(r.kind)
+      && Object.keys(r).every((k) => ['tool', 'kind', 'rule'].includes(k)) && (r.rule === undefined || isText(r.rule));
+    if (!Array.isArray(data.refusals) || !data.refusals.every(refusal)) bad('needs refusals, each a tool and the kind of refusal');
+    if (data.work !== undefined) slug('work');
+    if (data.usage !== undefined && !isPlain(data.usage)) bad('has a usage that is not an object');
+    if (data.at !== undefined && (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at)))) bad('has an at that is not a time');
   }
 }
 

@@ -1,0 +1,57 @@
+{
+  "_source": "written by hand from docs/checks/69-guards-without-node.md (guard-deny) and docs/checks/58-hook-input.md",
+  "events": [
+    {
+      "type": "tool.execution_start",
+      "data": {
+        "toolCallId": "<ID>",
+        "toolName": "view",
+        "arguments": {
+          "path": "<WORKTREE>/README.md"
+        },
+        "turnId": "0"
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "tool.execution_complete",
+      "data": {
+        "toolCallId": "<ID>",
+        "interactionId": "<ID>",
+        "turnId": "0",
+        "success": false,
+        "error": {
+          "message": "Denied by preToolUse hook: The answer server said deny.",
+          "code": "denied"
+        }
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "assistant.message",
+      "data": {
+        "messageId": "<ID>",
+        "content": "The view was refused by a hook. Done.",
+        "toolRequests": [],
+        "turnId": "1",
+        "phase": "final_answer"
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "result",
+      "timestamp": "<TIME>",
+      "sessionId": "<ID>",
+      "exitCode": 0,
+      "usage": {
+        "premiumRequests": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "_source": "written by hand from docs/checks/58-hook-input.md (exit 2)",
+  "events": [
+    {
+      "type": "tool.execution_start",
+      "data": {
+        "toolCallId": "<ID>",
+        "toolName": "apply_patch",
+        "arguments": {
+          "input": "<PATCH>"
+        },
+        "turnId": "0"
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "tool.execution_complete",
+      "data": {
+        "toolCallId": "<ID>",
+        "interactionId": "<ID>",
+        "turnId": "0",
+        "success": false,
+        "error": {
+          "message": "Denied by preToolUse hook: hook exited with code 2",
+          "code": "denied"
+        }
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "assistant.message",
+      "data": {
+        "messageId": "<ID>",
+        "content": "The edit was refused by a hook. Done.",
+        "toolRequests": [],
+        "turnId": "1",
+        "phase": "final_answer"
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "result",
+      "timestamp": "<TIME>",
+      "sessionId": "<ID>",
+      "exitCode": 0,
+      "usage": {
+        "premiumRequests": 1
+      }
+    }
+  ]
+}

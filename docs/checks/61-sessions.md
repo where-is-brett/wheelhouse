@@ -120,4 +120,12 @@ Each of the three forms (`&&`, `$( )`, `sh -c`) was refused at least once when i
 
 ## Needs the director
 
-Nothing now.
+Addendum, 24 October 2026. Part 7 Task 1 built the calls in `adapters/copilot/sessions.js`: the session's own home, its environment, the command line, and the readers of its output. They are tested with stand-ins only, and no real Copilot ran.
+
+- **Deferred, held for the director: the first real run of a session started by `adapters/copilot/sessions.js`.** It runs on the Mac, outside the sandbox, against a scratch project registered under a scratch `WHEELHOUSE_HOME` (never the real one), on Copilot CLI 1.0.101. It records here:
+  - the argv, scrubbed;
+  - the session home's listing before and after the run, which confirms the names of Copilot's own state that `writeSessionHome` keeps;
+  - the `config.json` keys kept, which fixes the sign-in allow-list (`SIGN_IN_KEYS`, taken until then from the probes' account of the file), and that the sign-in worked with the filtered file;
+  - a call the guard should refuse, refused with the guard's own message in the tool event, and the kind `refusalOf` gives it (`guard`);
+  - the session id `sessionIdOf` reads, that the usage file is there, and exit code 0;
+  - then a `--resume=<id>` run in the same home, with the same session id in its `result` event.
