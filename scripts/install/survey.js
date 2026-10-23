@@ -377,33 +377,51 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
   return { behind, dirty, onDefault, prs, worktrees };
 }
 
-// The repository an origin address names, as `-R` takes it: `[HOST/]OWNER/NAME` (GitLab: the whole group
-// path). The host is written only for a self-managed address; a path on this computer names no host.
-export function repositoryOf(originUrl, host) {
+// What `-R` takes: an optional host, then owner and name (GitLab: group, subgroups, name).
+const REPOSITORY = /^([a-z0-9.-]+(:[0-9]+)?\/)?[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)+$/;
+
+// The repository an origin address names: `{ hostname, repo }` (`hostname` null for a path on this computer;
+// `repo` is `[HOST/]OWNER/NAME`, the host written only when it is not the tool's own public host), or null
+// when the address names none or holds anything `-R` should not be given.
+export function originRepository(originUrl, host) {
   const text = String(originUrl ?? '').trim().replaceAll('\\', '/');
-  let where = null;
+  let hostname = null;
   let rest = text;
   const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:]+)(?::\d+)?(\/.*)?$/.exec(text);
+  if (text.includes('://') && url === null) return null;
   const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
-  if (url && !/^file:/i.test(text)) { where = url[1].toLowerCase(); rest = url[2] ?? ''; } else if (scp) { where = scp[1].toLowerCase(); rest = scp[2]; }
+  if (url && !/^file:/i.test(text)) { hostname = url[1].toLowerCase(); rest = url[2] ?? ''; } else if (scp) { hostname = scp[1].toLowerCase(); rest = scp[2]; }
   const parts = rest.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
-  const named = host === 'gitlab' && where !== null ? parts : parts.slice(-2);
+  const named = host === 'gitlab' && hostname !== null ? parts : parts.slice(-2);
   if (named.length < 2) return null;
-  const own = where === null || where === 'github.com' || where === 'gitlab.com';
-  return `${own ? '' : `${where}/`}${named.join('/')}`;
+  const own = hostname === null || hostname === (host === 'gitlab' ? 'gitlab.com' : 'github.com');
+  const repo = `${own ? '' : `${hostname}/`}${named.join('/')}`;
+  return REPOSITORY.test(repo) ? { hostname: own ? null : hostname, repo } : null;
 }
+export const repositoryOf = (originUrl, host) => originRepository(originUrl, host)?.repo ?? null;
+
+// Variables that would send the director's own token to the host an origin address names.
+const TOKEN_VARIABLES = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GITLAB_HOST'];
+const withoutTokens = () => ({ ...Object.fromEntries(TOKEN_VARIABLES.map((n) => [n, undefined])), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' });
 
 async function openRequests({ originUrl, host, run }) {
-  const repo = repositoryOf(originUrl, host);
-  if (repo === null) throw new Error('the origin address does not name a repository, so its open requests could not be listed');
+  const named = originRepository(originUrl, host);
+  if (named === null) throw new Error('the origin address does not name a repository, so its open requests could not be listed');
+  const tool = host === 'gitlab' ? 'glab' : 'gh';
   const [file, args] = host === 'gitlab'
-    ? ['glab', ['mr', 'list', '-R', repo, '--output', 'json', '--per-page', '100']]
-    : ['gh', ['pr', 'list', '-R', repo, '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
+    ? [tool, ['mr', 'list', `--repo=${named.repo}`, '--output', 'json', '--per-page', '100']]
+    : [tool, ['pr', 'list', `--repo=${named.repo}`, '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
   // Run outside the project: gh and glab run git themselves, and would read the project's own config.
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
   let result;
   try {
-    result = await run(file, args, { cwd: outside, env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }, timeoutMs: GIT_WAIT_MS });
+    // A host other than the tool's own public one is named only when the director is signed in to it.
+    // The token variables are cleared, so a planted origin cannot make the tool send them anywhere.
+    if (named.hostname !== null) {
+      const auth = await run(tool, ['auth', 'status', '--hostname', named.hostname], { cwd: outside, env: withoutTokens(), timeoutMs: GIT_WAIT_MS });
+      if (auth.code !== 0) throw new Error(`${tool} is not signed in to ${named.hostname}, so the open ${host === 'gitlab' ? 'merge' : 'pull'} requests were not listed`);
+    }
+    result = await run(file, args, { cwd: outside, env: withoutTokens(), timeoutMs: GIT_WAIT_MS });
   } finally {
     fs.rmSync(outside, { recursive: true, force: true });
   }

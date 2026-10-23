@@ -580,7 +580,7 @@ function ghCallsIn(root) {
         if (/(?<!\$)\{(?:owner|repo|branch)\}|:owner\b|:repo\b/.test(arrayText)) named = false;
       } else {
         // `repo view|create|clone <name>` carries its repository as a positional.
-        named = /'--repo'|'-R'|\.\.\.R\b/.test(arrayText) || (first === 'repo' && /^\[\s*'repo'\s*,\s*'(?:view|create|clone)'\s*,\s*[A-Za-z_$]/.test(arrayText));
+        named = /'--repo'|'-R'|[`'"]--repo=|\.\.\.R\b/.test(arrayText) || (first === 'repo' && /^\[\s*'repo'\s*,\s*'(?:view|create|clone)'\s*,\s*[A-Za-z_$]/.test(arrayText));
       }
       found.push({ file: rel, line, call: arrayText.replace(/\s+/g, ' ').slice(0, 90), named });
     }
@@ -740,7 +740,7 @@ test('survey: fsmonitor, sshCommand, pager and a submodule\'s planted filter run
   for (const [name, m] of Object.entries(marks)) assert.equal(ran(m), false, name);
 });
 
-test('survey: the open-request list names its repository with -R and runs outside the project', async () => {
+test('survey: the open-request list names its repository with --repo= and runs outside the project', async () => {
   assert.equal(repositoryOf('https://github.com/o/p.git', 'github'), 'o/p');
   assert.equal(repositoryOf('git@github.com:o/p.git', 'github'), 'o/p');
   assert.equal(repositoryOf('https://gitlab.com/g/s/p.git', 'gitlab'), 'g/s/p');
@@ -748,6 +748,10 @@ test('survey: the open-request list names its repository with -R and runs outsid
   assert.equal(repositoryOf('https://ghe.corp.example/o/p', 'github'), 'ghe.corp.example/o/p');
   assert.equal(repositoryOf('/srv/x/p.git', 'github'), 'x/p');
   assert.equal(repositoryOf('p', 'github'), null);
+  // Addresses that are not repositories, or that hold what an option would take, name none.
+  for (const bad of ['https://[::1]/o/p', 'user:a/b@host', '-oProxyCommand=x:a/b', 'https://-oProxyCommand=x/o/p', 'ext::sh -c x', 'https://h/o/p q', 'https://h/o/$(x)']) assert.equal(repositoryOf(bad, 'github'), null, bad);
+  // A path that reads like an option's value is only ever the value of the one --repo= argument.
+  assert.equal(repositoryOf('evil/x', 'github'), 'evil/x');
   const { dir } = await projectWithOrigin();
   const calls = [];
   await surveyProject({
@@ -759,9 +763,55 @@ test('survey: the open-request list names its repository with -R and runs outsid
     },
   });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].args[calls[0].args.indexOf('-R') + 1], repositoryOf(path.join(dir, '..', 'origin.git'), 'github'));
+  assert.equal(calls[0].args.filter((a) => a.startsWith('--repo=')).length, 1);
+  assert.ok(calls[0].args.includes(`--repo=${repositoryOf(path.join(dir, '..', 'origin.git'), 'github')}`));
+  assert.equal(calls[0].args.includes('-R'), false);
   assert.equal(path.resolve(calls[0].cwd).startsWith(fs.realpathSync.native(dir)), false);
   assert.equal(fs.existsSync(calls[0].cwd), false, 'the scratch folder is removed');
+});
+
+async function surveyWith(origin, host, ghLike, env = {}) {
+  const { dir } = await projectWithOrigin();
+  await must(['remote', 'set-url', 'origin', origin], dir);
+  const calls = [];
+  const survey = () => surveyProject({
+    folder: dir, manifest: { upstreams: [] }, host, claudeHome: tempFolder('wh-claude-'),
+    run: async (file, args, options) => {
+      if (file === 'gh' || file === 'glab') { calls.push({ file, args, env: options.env, cwd: options.cwd }); return ghLike(file, args); }
+      // The fetch from a made-up address cannot succeed; the survey only needs the remote to read.
+      if (file === 'git' && args.includes('fetch')) return { code: 0, stdout: '', stderr: '' };
+      return run(file, args, options);
+    },
+  });
+  return { survey, calls, dir };
+}
+
+test('survey: a planted foreign host is named only when the director is signed in to it, and the token variables are cleared', async () => {
+  // Refused: auth status fails, so no list call is made and the survey says so.
+  const refusing = await surveyWith('https://evil.example/o/p.git', 'github', (file, args) => (args[0] === 'auth' ? { code: 1, stdout: '', stderr: 'not logged in' } : { code: 0, stdout: '[]', stderr: '' }));
+  await assert.rejects(refusing.survey(), /not signed in to evil\.example/);
+  assert.deepEqual(refusing.calls.map((c) => c.args.slice(0, 2).join(' ')), ['auth status']);
+  assert.deepEqual(refusing.calls[0].args.slice(2), ['--hostname', 'evil.example']);
+  // Signed in: auth status first, then the list, both with the token variables cleared and outside the project.
+  const signed = await surveyWith('https://ghe.corp.example/o/p.git', 'github', () => ({ code: 0, stdout: '[]', stderr: '' }));
+  await signed.survey();
+  assert.deepEqual(signed.calls.map((c) => c.args[0]), ['auth', 'pr']);
+  assert.ok(signed.calls[1].args.includes('--repo=ghe.corp.example/o/p'));
+  for (const call of signed.calls) {
+    for (const name of ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GITLAB_HOST']) {
+      assert.ok(name in call.env && call.env[name] === undefined, `${name} is cleared`);
+    }
+    assert.equal(call.cwd.startsWith(signed.dir), false);
+  }
+  // glab likewise.
+  const lab = await surveyWith('git@git.corp.example:g/s/p.git', 'gitlab', () => ({ code: 0, stdout: '[]', stderr: '' }));
+  await lab.survey();
+  assert.deepEqual(lab.calls.map((c) => c.args[0]), ['auth', 'mr']);
+  assert.ok(lab.calls[1].args.includes('--repo=git.corp.example/g/s/p'));
+  // The tool's own host needs no auth check.
+  const own = await surveyWith('https://github.com/o/p.git', 'github', () => ({ code: 0, stdout: '[]', stderr: '' }));
+  await own.survey();
+  assert.deepEqual(own.calls.map((c) => c.args[0]), ['pr']);
 });
 
 // --- Test 12: built-ins only ---
@@ -781,6 +831,8 @@ test('12: scan - every git subcommand the routes run is a built-in, so an alias 
       // Only words that read as a git subcommand: the scan also sees other programs' argument lists.
       if (!/^[a-z][a-z-]*$/.test(sub)) continue;
       count += 1;
+      // The survey's `gh auth status` / `glab auth status` is a host tool's command line, not git's.
+      if (rel === 'scripts/install/survey.js' && sub === 'auth') continue;
       if (!builtins.has(sub)) offenders.push(`${rel}: ${sub}`);
     }
   }
