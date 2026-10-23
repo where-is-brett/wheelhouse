@@ -83,6 +83,12 @@ const EVENTS = Object.freeze({
 // Top-level keys whose Claude Code name is not the plain snake_case of Copilot's (check 60's subagentStop).
 const KEY_MAP = Object.freeze({ toolResult: 'tool_response', response: 'last_assistant_message' });
 
+// The keys the translation sets itself: the tool and its input from `toolName` and `toolArgs`, the event from
+// the entry, and no permission mode, which Copilot's input never carries (check 58).
+const OWNED_KEYS = Object.freeze(['hook_event_name', 'tool_name', 'tool_input', 'permission_mode']);
+// The events about a tool call, in Claude Code's spelling.
+const TOOL_EVENTS = Object.freeze(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
+
 const snake = (key) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -148,15 +154,18 @@ function mcpName(name) {
 // patch with no path.
 export function toGuardInput(raw, event) {
   if (!isObject(raw) || typeof raw.cwd !== 'string' || raw.cwd === '') return null;
-  const base = { hook_event_name: Object.hasOwn(EVENTS, event) ? EVENTS[event] : event };
+  const hookEvent = Object.hasOwn(EVENTS, event) ? EVENTS[event] : event;
+  const base = { hook_event_name: hookEvent };
   for (const [key, value] of Object.entries(raw)) {
     if (key === 'toolName' || key === 'toolArgs') continue;
     const target = Object.hasOwn(KEY_MAP, key) ? KEY_MAP[key] : snake(key);
-    // The event's name is the entry's to say, and a key the payload already spelt in snake_case keeps its value.
-    if (target === 'hook_event_name' || Object.hasOwn(base, target)) continue;
+    // The keys the translation owns are never taken from the payload, under any spelling, and a key the payload
+    // already spelt in snake_case keeps its value.
+    if (OWNED_KEYS.includes(target) || Object.hasOwn(base, target)) continue;
     base[target] = value;
   }
-  if (!Object.hasOwn(raw, 'toolName')) return base;
+  // A tool event names its tool in `toolName`; one that doesn't is not read, so a guard refuses it.
+  if (!Object.hasOwn(raw, 'toolName')) return TOOL_EVENTS.includes(hookEvent) ? null : base;
   const name = raw.toolName;
   if (typeof name !== 'string' || name === '') return null;
   if (UNSETTLED.includes(name)) return { unknownTool: name };
