@@ -73,7 +73,8 @@ function allowRules(plugin) {
     for (const at of new Set([plugin, realOr(plugin)])) {
       allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
       const command = frontDeskCommand(at);
-      if (command !== null) allow.push(`Bash(${command}:*)`, `Edit(/${FRONT_DESK_INPUT})`);
+      const flagged = frontDeskCommand(at, { noSystemCa: true });
+      if (command !== null) allow.push(`Bash(${command}:*)`, `Bash(${flagged}:*)`, `Edit(/${FRONT_DESK_INPUT})`);
     }
   }
   try {

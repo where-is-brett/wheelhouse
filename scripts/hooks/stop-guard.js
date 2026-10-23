@@ -46,7 +46,10 @@ const ODD_SPACE = /[^\S \t]/u;
 const QUIET = /(?<!\\) +2>\/dev\/null *$/;
 const QUIET_WINDOWS = /(?<!\\) +2>(?:\/dev\/null|[Nn][Uu][Ll]) *$/;
 
-// The words after the script when `command` is `node <pluginRoot>/<script> …` with no shell
+// The one word allowed between `node` and the script (NO_SYSTEM_CA in scripts/protection/settings.js, which a hook can't load).
+const NO_SYSTEM_CA = '--no-use-system-ca';
+
+// The words after the script when `command` is `node [--no-use-system-ca] <pluginRoot>/<script> …` with no shell
 // syntax but one trailing QUIET, and the script in a real plugin root; null for anything else.
 export function scriptArguments(command, pluginRoots, platform, script) {
   if (typeof command !== 'string') return null;
@@ -55,6 +58,8 @@ export function scriptArguments(command, pluginRoots, platform, script) {
   if (CONTROL.test(bare) || ODD_SPACE.test(bare)) return null;
   const parts = words(bare, windows);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
+  if (parts[1] === NO_SYSTEM_CA) parts.splice(1, 1);
+  if (parts.length < 2) return null;
   const fold = (p) => {
     const slashed = windows ? p.replaceAll('\\', '/') : p;
     return windows || platform === 'darwin' ? slashed.toLowerCase() : slashed;

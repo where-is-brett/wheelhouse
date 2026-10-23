@@ -1581,3 +1581,9 @@ test('a startup still writes the hold', async () => {
     }
   });
 });
+
+test('the Wheelhouse command line carries the flag that turns the system certificate store off, when this Node.js knows it', () => {
+  const command = (flags) => toolSheetLines('claude-code', { pluginRoot: '/plugin/root', platform: 'darwin', allowedFlags: flags }).find((l) => l.startsWith('The Wheelhouse command is '));
+  assert.equal(command(new Set(['--use-system-ca'])), 'The Wheelhouse command is node --no-use-system-ca "/plugin/root/scripts/frontdesk/cli.js"');
+  assert.equal(command(new Set(['--inspect'])), 'The Wheelhouse command is node "/plugin/root/scripts/frontdesk/cli.js"');
+});

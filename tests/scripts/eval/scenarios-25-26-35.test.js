@@ -2,6 +2,7 @@
 // The front desk scenarios' set-up pieces and judgements: the stand-in helper's state, the scratch
 // plugin that holds the real front desk, the readers, and the judgements of scenarios 25, 26, 35
 // and 27's route leg, on made-up streams and events.
+import { knowsNoSystemCa } from '../../../scripts/protection/settings.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -140,7 +141,7 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
     assert.equal(context.appendSystemPrompt, undefined, 'no line in the system prompt stands in for the playbook');
     // The front desk's line, then the tool sheet and the command line, as the real session start gives a Claude Code front desk.
     const given = [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n');
-    assert.ok(given.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+    assert.ok(given.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.ok(fs.existsSync(path.join(plugin, 'scripts', 'frontdesk', 'cli.js')), 'the command names a file the scratch plugin holds');
     assert.equal(context.reload, given);
     const hooks = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8'));

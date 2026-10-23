@@ -70,7 +70,7 @@ import { composeCard } from '../cards/compose.js';
 import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 import { agentOfInput } from '../agents/of-input.js';
 import claudeCodeSheet from '../../adapters/claude-code/tool-sheet.js';
-import { frontDeskCommand } from '../protection/settings.js';
+import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 
@@ -117,10 +117,11 @@ export const TOOL_SHEETS = Object.freeze({ 'claude-code': claudeCodeSheet });
 
 // The lines that tell a session its agent's tools and where the Wheelhouse command is: the agent's
 // tool sheet, then the command line (the front desk's command, which the playbooks' other scripts
-// are named from). The command line is left out when the plugin's folder can't be typed as a command.
-export function toolSheetLines(agent, { pluginRoot, platform = process.platform } = {}) {
+// are named from). The command line carries --no-use-system-ca when this Node.js knows it, so the sandbox's certificate
+// lines don't fill the output. It is left out when the plugin's folder can't be typed as a command.
+export function toolSheetLines(agent, { pluginRoot, platform = process.platform, allowedFlags = process.allowedNodeEnvironmentFlags } = {}) {
   const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
-  const command = frontDeskCommand(pluginRoot, { platform });
+  const command = frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
   return lines;
 }
