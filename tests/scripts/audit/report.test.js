@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { auditReport, renderAudit, GAP_KINDS, main } from '../../../scripts/audit/report.js';
 import { makeEvent } from '../../../scripts/state/events.js';
+import { leanToEvents } from '../../../scripts/state/lean-record.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { HOST_UNREACHABLE } from '../../../scripts/host/company-ca.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -319,6 +320,35 @@ test('a Lean entry does not cover a change that has records of its own at the me
     const r = await report([mark, approval(4, D)], stub({ requests: [merged(4, D)] }));
     assert.deepEqual(r.gaps, []);
     assert.equal(r.rows[0].lean, false);
+  });
+});
+
+test('events made from Lean\'s own record lines list as Lean\'s approvals and reviews, labelled and never counted', async () => {
+  await withHome(async () => {
+    const line = { card: null, choice: null, commit: C.slice(0, 12), proof: 'chat-click', by: 'chat', tier: 'lean' };
+    // leanToEvents turns an approval and a review into notes that carry Lean's kind in data.lean; moveUp writes them with
+    // the change they are about, so the pull request is added here as it will be there.
+    const made = leanToEvents([
+      { ...line, at: '2026-10-10T00:10:00Z', kind: 'review', choice: 'clean', proof: 'chat-review' },
+      { ...line, at: '2026-10-10T00:20:00Z', kind: 'approval', card: 'merge-thing', choice: 'Approve' },
+    ], { project: 'owner-name' });
+    assert.deepEqual(made.map((e) => [e.kind, e.data.lean]), [['note', 'review'], ['note', 'approval']]);
+    const events = made.map((e) => ({ ...e, data: { ...e.data, pr: 9 } }));
+    const r = await report(events, stub({ requests: [merged(9, D)] }));
+    // Listed as Lean's, but they carry no signature to check: the change still lacks every real record.
+    assert.deepEqual(kinds(r), ['no-approval']);
+    const row = r.rows[0];
+    assert.equal(row.lean, true);
+    assert.equal(row.approvals.length, 0, 'never counted');
+    assert.equal(row.reviews.length, 0, 'never counted');
+    assert.deepEqual(row.leanApprovals.map((a) => a.commit), [C.slice(0, 12)]);
+    assert.deepEqual(row.leanReviews.map((x) => [x.commit, x.verdict]), [[C.slice(0, 12), 'clean']]);
+    assert.deepEqual(r.lean.map((e) => e.kind), ['review', 'approval'], 'the entries Lean kept are named by Lean\'s kind, not "note"');
+    const text = renderAudit(r);
+    assert.match(text, /Lean's approval \(not counted\)/);
+    assert.match(text, /Lean's review \(not counted\)/);
+    assert.match(text, /- approval for #9 at 2026-10-10T00:20:00/);
+    assert.doesNotMatch(text, /- note\b/);
   });
 });
 

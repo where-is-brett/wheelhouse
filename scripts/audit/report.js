@@ -69,6 +69,9 @@ function plainReason(error, doing) {
 }
 
 const isLean = (event) => event?.tier === 'lean' || event?.data?.tier === 'lean';
+// Lean's kind for one of its entries: leanToEvents (scripts/state/lean-record.js) keeps an approval, a review and
+// the like as a `note`, with the Lean kind in `data.lean`; a card or a merge keeps its own state kind.
+const leanKind = (event) => event?.data?.lean ?? event?.kind;
 const when = (event) => (typeof event?.at === 'string' ? event.at : null);
 
 // The proof a counted approval carries, or null when the record is not one that counts: a signed
@@ -124,7 +127,7 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
   for (const e of all) {
     const pr = e.data.pr;
     if (isLean(e)) {
-      if (e.kind !== 'confirmation') leanEntries.push({ id: e.id ?? null, kind: e.kind, at: when(e), pr: isPr(pr) ? pr : null });
+      if (e.kind !== 'confirmation') leanEntries.push({ id: e.id ?? null, kind: leanKind(e), at: when(e), pr: isPr(pr) ? pr : null });
       if (isPr(pr)) slot(pr).lean.push(e);
       continue;
     }
@@ -182,8 +185,8 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
     // Lean's entries for this change are shown and labelled, and never counted: they carry no signature
     // that could be checked, so a change the host lists keeps every check whatever Lean kept.
     const lean = s.lean.length > 0 && approvals.length === 0 && reviews.length === 0;
-    const leanApprovals = s.lean.filter((e) => e.kind === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e) }));
-    const leanReviews = s.lean.filter((e) => e.kind === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? null }));
+    const leanApprovals = s.lean.filter((e) => leanKind(e) === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e) }));
+    const leanReviews = s.lean.filter((e) => leanKind(e) === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? e.data.choice ?? null }));
 
     // The level the computer ran at: the change's own record, else the latest one before the merge.
     const own = s.levels.sort((a, b) => (when(a) < when(b) ? -1 : 1)).at(-1);
@@ -281,8 +284,8 @@ export async function auditReport({ events, host, since, now, enrolled = null, d
       number: pr, title: typeof latestClaim?.data?.work === 'string' ? latestClaim.data.work : '', url: null, mergedAt: when(latestClaim) ?? null, mergedBy: null,
       commit: null, onHost: false, lean: true,
       approvals: [], reviews: [],
-      leanApprovals: s.lean.filter((e) => e.kind === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e) })),
-      leanReviews: s.lean.filter((e) => e.kind === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? null })),
+      leanApprovals: s.lean.filter((e) => leanKind(e) === 'approval').map((e) => ({ commit: e.data.commit ?? null, at: when(e) })),
+      leanReviews: s.lean.filter((e) => leanKind(e) === 'review').map((e) => ({ commit: e.data.commit ?? null, at: when(e), verdict: e.data.verdict ?? e.data.choice ?? null })),
       ci: null, level: null, allowances: [], versions: versionsOf(s.lean.filter((e) => e.kind === 'report')), unverified: { approvals: 0, reviews: 0 },
     });
   }
