@@ -10,7 +10,7 @@ import { COPILOT_VERSION } from '../../scripts/lib/copilot-numbers.js';
 // PATH variable may be spelt Path.
 function find({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
   const windows = platform === 'win32';
-  const join = windows ? path.win32.join : path.join;
+  const join = windows ? path.win32.join : path.posix.join;
   const key = Object.keys(env).find((name) => (windows ? name.toLowerCase() === 'path' : name === 'PATH'));
   const folders = String(key ? env[key] : '').split(windows ? ';' : ':').map((f) => f.trim().replace(/^"|"$/g, '')).filter(Boolean);
   const names = windows ? ['copilot.exe', 'copilot.cmd'] : ['copilot'];

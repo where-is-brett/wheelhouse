@@ -95,11 +95,16 @@ test('Copilot\'s identity names it, gives the tested floor and finds the program
   assert.equal(identity.label, 'Copilot');
   assert.equal(identity.floor, COPILOT_VERSION);
   assert.equal(copilot.identity, identity);
-  // The stand-in first on the PATH is found; finding it starts nothing.
-  assert.deepEqual(identity.find({ platform: process.platform === 'win32' ? 'linux' : process.platform, env: process.env }), { found: true, version: null });
+  // The stand-in's folder, as the only folder on the PATH, is found; finding it starts nothing. The env is built
+  // for the call alone, so the test runs the same on every system (a stand-in is a shell script, which shadows
+  // nothing on Windows, so there the file is named through `exists`).
+  const standIn = path.posix.join('/stand-ins', 'copilot');
+  assert.deepEqual(identity.find({ platform: 'linux', env: { PATH: '/stand-ins:/elsewhere' }, exists: (file) => file === standIn }), { found: true, version: null });
+  assert.deepEqual(identity.find({ platform: 'linux', env: { PATH: '/elsewhere' }, exists: (file) => file === standIn }), { found: false, version: null });
+  if (process.platform !== 'win32') assert.deepEqual(identity.find({ platform: process.platform, env: { PATH: stand.dir } }), { found: true, version: null });
   assert.deepEqual(stand.calls(), []);
-  assert.deepEqual(identity.find({ platform: 'linux', env: { PATH: tempFolder('wh-empty-') } }), { found: false, version: null });
-  assert.deepEqual(identity.find({ platform: 'linux', env: {} }), { found: false, version: null });
+  assert.deepEqual(identity.find({ platform: 'linux', env: { PATH: '/empty' }, exists: () => false }), { found: false, version: null });
+  assert.deepEqual(identity.find({ platform: 'linux', env: {}, exists: () => true }), { found: false, version: null });
 });
 
 test('on Windows the program is copilot.exe or copilot.cmd on the PATH, whichever case the Path variable is spelt in', () => {
@@ -118,11 +123,18 @@ test('the tools part names Copilot\'s tools from the union of checks 58, 63 and 
   assert.equal(copilot.tools, tools);
   for (const name of ['view', 'glob', 'rg']) assert.ok(tools.read.includes(name), name);
   // Reading, in the sense Claude Code's list means it.
-  for (const name of ['web_fetch', 'ask_user', 'sql', 'read_agent']) assert.ok(tools.read.includes(name), name);
+  for (const name of ['web_fetch', 'ask_user', 'read_agent']) assert.ok(tools.read.includes(name), name);
   assert.equal(tools.ask, 'ask_user');
   assert.deepEqual([...tools.shell], ['bash', 'powershell']);
   assert.deepEqual([...tools.notify], []);
   assert.deepEqual([...tools.halt], ['stop_bash']);
+});
+
+test('sql takes any statement and was seen to write, so it cannot pass STOP or the lineage hold', () => {
+  assert.ok(!tools.read.includes('sql'));
+  assert.ok(!tools.halt.includes('sql'));
+  assert.ok(!tools.notify.includes('sql'));
+  assert.ok(tools.other.includes('sql'));
 });
 
 test('every tool seen in checks 58, 63 and 66 has a place, and none that changes or runs things can pass STOP', () => {
@@ -202,7 +214,7 @@ test('at Lean with nothing added the line says approvals are not proven and STOP
   assert.equal(out[1], 'Approvals are clicks in the chat, recorded as not proven');
   assert.ok(out.includes('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
   assert.ok(out.includes('Copilot\'s command prompts aren\'t a control'));
-  assert.ok(out.includes('Tests and reviews aren\'t independent'));
+  assert.ok(out.includes('Tests and second looks at a change aren\'t independent of the agent that built it'));
   assert.ok(out.includes('Not for projects with real users'));
   assert.ok(out.includes('A command you allow can change anything Wheelhouse keeps, history and record included'));
   // Nothing was added, so no guard runs and none can time out.
@@ -241,7 +253,7 @@ test('at Lean with Node.js or the add-on, approvals and STOP are no longer the b
   assert.ok(addOn.includes('STOP is enforced by the add-on, which also cancels the chat\'s running request'));
   // The things Lean never holds are said whatever is added.
   for (const out of [node, addOn]) {
-    for (const line of ['Copilot\'s command prompts aren\'t a control', 'Tests and reviews aren\'t independent', 'Not for projects with real users']) assert.ok(out.includes(line), line);
+    for (const line of ['Copilot\'s command prompts aren\'t a control', 'Tests and second looks at a change aren\'t independent of the agent that built it', 'Not for projects with real users']) assert.ok(out.includes(line), line);
   }
 });
 
@@ -249,7 +261,7 @@ test('at Lean with Node.js or the add-on, approvals and STOP are no longer the b
 const ITEMS = {
   1: /^Without Copilot's sandbox, /,
   2: /^Your sign-ins and Wheelhouse's keys stay on this computer/,
-  3: /^The gate, the reviews and the activity record run on this computer/,
+  3: /^The approval check, the second looks at changes and the activity record run on this computer/,
   4: /^Copilot's permission rules are rules, not a fence/,
   5: /^At Standard, Wheelhouse's hooks run beside the agent/,
   6: /network/,
@@ -315,8 +327,12 @@ test('every safety line passes plainWords and is one line', () => {
     assert.ok(line.length <= LINE_CHARS, `${line.length} characters: ${line}`);
     assert.doesNotMatch(line, /\.$/, 'a line is a phrase with no full stop');
     // Plain words: any glossary term in it is explained in place, never left bare under a Terms line.
-    const out = plainWords(line, glossary, { explanations: 'plain' });
-    assert.doesNotMatch(out.text, /\n|Terms:/, line);
+    // The director knows Wheelhouse's own names (STOP, Standard, Locked); with those known, no line is rewritten
+    // and none carries a Terms footer, so what the director reads is what the adapter says.
+    const out = plainWords(line, glossary, { explanations: 'plain', known: ['STOP', 'Standard', 'Locked'] });
+    assert.equal(out.text, line);
+    // Without them, a name is explained in place and the line is still one line.
+    assert.doesNotMatch(plainWords(line, glossary, { explanations: 'plain' }).text, /\n|Terms:/, line);
   }
 });
 

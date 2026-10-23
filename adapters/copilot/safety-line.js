@@ -50,7 +50,7 @@ function lean(options) {
   lines.push(
     'A command you allow can change anything Wheelhouse keeps, history and record included',
     'Copilot\'s command prompts aren\'t a control',
-    'Tests and reviews aren\'t independent',
+    'Tests and second looks at a change aren\'t independent of the agent that built it',
     'Not for projects with real users',
   );
   return lines;
@@ -62,7 +62,7 @@ function upper({ level, sandbox, platform, phoneStop }) {
   return [
     ...(sandboxOn ? [] : [WITHOUT_SANDBOX[level]]),
     'Your sign-ins and Wheelhouse\'s keys stay on this computer, and the code host\'s controls hold only while no agent reaches them',
-    'The gate, the reviews and the activity record run on this computer, and hold only while build commands can\'t reach your level',
+    'The approval check, the second looks at changes and the activity record run on this computer, and hold only while build commands can\'t reach your level',
     RULES_NOT_FENCE,
     'At Standard, Wheelhouse\'s hooks run beside the agent, so no hook holds a secret an agent can\'t read',
     networkLine(platform),
