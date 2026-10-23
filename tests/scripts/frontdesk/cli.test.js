@@ -1132,15 +1132,58 @@ test('why n notes a Why? answer for card n and says the one sentence to put befo
     const n = model.director.waiting.findIndex((w) => w.since === two.at) + 1;
     const out = await run(helper, ['why', String(n)]);
     assert.equal(out.code, 0, out.err);
-    const [noted, next] = out.out.trimEnd().split('\n');
+    const [noted, how, sentence] = out.out.trimEnd().split('\n');
     assert.equal(noted, `Noted that you asked why about card ${n}.`);
-    assert.match(next, new RegExp(`^Next, in one message: this one sentence, then card ${n} from \`again ${n}\` in your clickable-question tool\. "It's like .+: <what card ${n} decides, in plain words>\."$`));
+    // A card with no glossary term that has an example: the sentence's form, for the front desk to fill.
+    assert.equal(how, `Say one sentence and nothing else, then card ${n} from \`again ${n}\` in your clickable-question tool, in the same message:`);
+    assert.equal(sentence, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`);
     // The answer names the card's question as it was shown, as the pane's own answers do.
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY } }]);
     // It never gives the card again, and a Why? decides nothing: the card still waits.
     assert.deepEqual(helper.views().waiting.map((c) => [c.id, c.asked?.label]).sort(), [[one.id, undefined], [two.id, WHY]].sort());
     for (const bad of [['why', '9'], ['why', '0'], ['why', 'x'], ['why'], ['why', '1', '2']]) {
       assert.equal((await run(helper, bad)).code, 1, bad.join(' '));
+    }
+    assert.equal(helper.writes().length, 1);
+  });
+});
+
+test('why n on a card that uses a glossary term gives the whole sentence, with the term\'s everyday example (scenario 36)', async () => {
+  await inHome(async () => {
+    const approval = cardEvent({ ...APPROVAL, what: 'Pull request #7 changes the wording on the sign-in page, and merges it.', target: { pr: 7, sha: FULL } }, 1);
+    const helper = fakeHelper({ events: [approval] });
+    const out = await run(helper, ['why', '1']);
+    assert.equal(out.code, 0, out.err);
+    const [, how, sentence] = out.out.trimEnd().split('\n');
+    assert.equal(how, 'Say this one sentence, word for word, and nothing else, then card 1 from `again 1` in your clickable-question tool, in the same message:');
+    assert.match(sentence, /^It's like [a-z].+: card 1 asks "Put pull request #7 live\?"$/);
+  });
+});
+
+test('suggest hands a suggested change on an approval card to the build as one work record, and gives the one line to say (scenario 36)', async () => {
+  await inHome(async () => {
+    const approval = cardEvent({ ...APPROVAL, target: { pr: 7, sha: FULL } }, 2);
+    const question = cardEvent(PRODUCT(1), 3);
+    const work = makeEvent({ kind: 'work', data: { id: 'sign-in-words', title: 'New wording on the sign-in page', lane: 'small', visible: true, dependsOn: [], place: 3 }, now: () => T(1) });
+    const helper = fakeHelper({ events: [work, approval, question] });
+    const out = await run(helper, ['suggest', approval.id, 'sign-in-words', 'The sign-in page says Welcome back instead of Sign in']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.say, 'Noted. A new proposal will follow.');
+    // The work as it was, its title the change in the front desk's words: nothing else is written.
+    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } }]);
+
+    // Refused, with nothing written: a card that doesn't wait, one that isn't an approval or a CI
+    // push, work that isn't open, and a change missing or on two lines.
+    for (const [args, why] of [
+      [['suggest', 'c'.repeat(8), 'sign-in-words', 'A change'], /no longer waits/],
+      [['suggest', question.id, 'sign-in-words', 'A change'], /is a question card: revise the proposal and compose its new card with `card`/],
+      [['suggest', approval.id, 'no-such-work', 'A change'], /no-such-work isn't open work: the open work is sign-in-words/],
+      [['suggest', approval.id, 'sign-in-words'], /suggest <card id> <work id> <the change in your own words>/],
+      [['suggest', approval.id, 'sign-in-words', 'Two\nlines'], /one line/],
+    ]) {
+      const refused = await run(helper, args);
+      assert.equal(refused.code, 1, args.join(' '));
+      assert.match(refused.err, why);
     }
     assert.equal(helper.writes().length, 1);
   });
@@ -1699,7 +1742,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1759,6 +1802,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore\n');
   assert.equal(done.stdout, '');
 });

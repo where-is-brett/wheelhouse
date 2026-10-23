@@ -381,11 +381,11 @@ test('a press of Show me and a choice in the pane find the card by its id in vie
 
 test('the playbooks point at Why? and Suggest a change…, and none offers Explain more as an option (Task 19)', () => {
   const lines = playbook.split('\n');
-  // Asked why: `why <n>`, the plain words, an everyday example, then the card again; a failed `why` stops nothing.
+  // Asked why: `why <n>` prints the one sentence, with an everyday example, said word for word with the card again; a failed `why` stops nothing (scenario 36).
   const asked = lines.find((line) => line.startsWith('- **Asked why**')) ?? '';
   assert.ok(asked, 'the Asked why line');
-  assert.match(asked, /^- \*\*Asked why\*\* about a card: run `why <n>`, give the plain words \(`explain <term>`\) and an everyday example, then as for a press of Why\?, from `again <n>`\./);
-  assert.match(asked, /If `why` fails, go on explaining anyway: the Why\? is for learning only\./);
+  assert.match(asked, /^- \*\*Asked why\*\* about a card: run `why <n>`, which prints the one sentence to say before the card\. Say it word for word, with no other text before or after it \(when it gives only the sentence's form, fill it from `explain <term>`'s example\), in the same message as your call to your clickable-question tool with what `again <n>` gave\./);
+  assert.match(asked, /If `why` fails, go on explaining anyway, in that one sentence: the Why\? is for learning only\./);
   // The pane's suggestion steers and never approves.
   const press = lines.find((line) => line.startsWith('  - **"pressed Why? on card n (id)"**')) ?? '';
   assert.match(press, /\(only a card that failed the check sends it\)/);
@@ -395,9 +395,8 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   assert.ok(suggested, 'the suggestion\'s rule');
   assert.match(suggested, /the words steer and never approve\./);
   assert.match(suggested, /the words steer and never approve\. Write no text until the one line below, not even a note to yourself: the director sees every line\./);
-  assert.match(suggested, /Find the card by its id in `views waiting`\. For an approval or ci-push card the code must change first, so hand it to the build in four calls with no text before or between them: `views waiting`, `views work`, write `front-desk\.json` \(the card's work as `views work` names it: its `id`, `title`, `lane`, `visible` and `dependsOn`, and its `place`, a number, with the change in your own words as its `title`, never theirs\), then `record work`\. No intake, no read-back, no card\./);
-  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For any other kind, revise the proposal as the words ask and compose the new card at once\./);
-  assert.match(suggested, /Ask no card now, and never the old one again\. Say only: "Noted\. A new proposal will follow\."/);
+  assert.match(suggested, /For an approval or ci-push card the code must change first: run `views work` to find the card's work, then `suggest <the card's id> <the work's id> <the change in your own words, never theirs>`, which hands it to the build\. Say its `say` word for word, and nothing else; when it says the card no longer waits, say that in one line instead\. No intake, no read-back, no card\./);
+  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For any other kind, find the card by its id in `views waiting`, revise the proposal as the words ask and compose the new card at once, then say only: "Noted\. A new proposal will follow\." Ask no card now, and never the old one again\./);
   // A pick of Suggest a change… in the chat.
   const pick = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';
   assert.match(pick, /Ask "What would you change\?" in one line, then do as for the pane's suggestion\./);
