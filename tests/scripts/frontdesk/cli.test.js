@@ -637,7 +637,7 @@ test('record amendment takes the read-back, refuses without it, and prints the r
     // Without the read-back, or with a part missing, empty or on two lines, nothing is written.
     const bad = [
       undefined, 'Doing: CSV', {}, { ...READ_BACK, doing: '' }, { ...READ_BACK, notDoing: undefined },
-      { ...READ_BACK, doneWhen: 'Two\nlines' }, { ...READ_BACK, doing: 7 },
+      { ...READ_BACK, doneWhen: 'Two\nlines' }, { ...READ_BACK, doing: 7 }, { ...READ_BACK, notDoing: ' . ' },
     ];
     for (const readBack of bad) {
       const refused = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, ...(readBack === undefined ? {} : { readBack }) }));
@@ -652,6 +652,9 @@ test('record amendment takes the read-back, refuses without it, and prints the r
     assert.deepEqual(helper.held.at(-1).data, amendment, 'the read-back is said, not stored');
     assert.equal(out.json.say, "I've treated this as a change to work already running; say if it's something else. "
       + 'Doing: The export as one CSV file. Not doing: An Excel option. Done when: The button gives a CSV file that opens in Numbers.');
+    // A part that ends in its own mark keeps it, with no full stop after it.
+    const asked = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, notDoing: 'Excel, for now!' } }));
+    assert.match(asked.json.say, /Not doing: Excel, for now! Done when:/);
   });
 });
 

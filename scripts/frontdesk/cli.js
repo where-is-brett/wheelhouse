@@ -596,11 +596,16 @@ function isOpen(views, id) {
 // the read-back (route 3), in one, so neither is left out (scenario 26). Each part is one line; an
 // amendment without them is refused before anything is written.
 function readBackLine(readBack) {
-  const part = (value) => (typeof value === 'string' && value.trim() !== '' && !BREAK.test(value) ? value.trim().replace(/\.+$/, '') : null);
+  // Each part as a sentence: its own closing mark kept, else one full stop.
+  const part = (value) => {
+    const text = typeof value === 'string' && !BREAK.test(value) ? value.trim().replace(/\.+$/, '').trim() : '';
+    if (text === '') return null;
+    return /[?!]$/.test(text) ? text : `${text}.`;
+  };
   const parts = isPlain(readBack) ? [part(readBack.doing), part(readBack.notDoing), part(readBack.doneWhen)] : [null];
   if (parts.includes(null)) throw new CliError('Read the change back first: give readBack as { doing, notDoing, doneWhen }, each one line in the director\'s terms');
   const [doing, notDoing, doneWhen] = parts;
-  return `I've treated this as a change to work already running; say if it's something else. Doing: ${doing}. Not doing: ${notDoing}. Done when: ${doneWhen}.`;
+  return `I've treated this as a change to work already running; say if it's something else. Doing: ${doing} Not doing: ${notDoing} Done when: ${doneWhen}`;
 }
 
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
