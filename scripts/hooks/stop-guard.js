@@ -10,23 +10,24 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import fs from 'node:fs';
-import { answer, runAndExit, projectOf, registeredByPath, worktreeRoot, lockedByPath, isInside, managedDir, beingSetUp } from './kit.js';
+import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, beingSetUp } from './kit.js';
 import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
 import { stopState } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import tools from '../../adapters/claude-code/tools.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
-export const READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'TodoWrite', 'ToolSearch'];
+export const READ_TOOLS = tools.read;
 // They only halt work that is already running.
-export const HALT_TOOLS = ['TaskStop', 'KillShell'];
+export const HALT_TOOLS = tools.halt;
 // Claude Code's own notification, so the courier's wake for STOP can still reach the director's
 // phone. It only tells them. It is kept out of READ_TOOLS, so the lineage hold still holds it.
-export const NOTIFY_TOOLS = ['PushNotification'];
+export const NOTIFY_TOOLS = tools.notify;
 export const SANDBOX_NEEDED = 'Locked needs the sandbox on in this project\'s settings';
 export const DENIED = 'STOP is on: only reading, reporting and the runbook carry on';
 
@@ -148,21 +149,8 @@ function sandboxOn(cwd) {
   return (read('settings.local.json') ?? read('settings.json')) === true;
 }
 
-// The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
-// the folders a plugin command may be run from.
-export function pluginRoots(dir, self, pluginRoot) {
-  const roots = [pluginRoot];
-  try {
-    const managed = dir ?? managedDir();
-    if (isInside(managed, self)) {
-      const recorded = JSON.parse(fs.readFileSync(path.join(managed, 'wheelhouse', 'installed.json'), 'utf8')).pluginRoot;
-      if (typeof recorded === 'string' && path.isAbsolute(recorded)) roots.push(recorded);
-    }
-  } catch {
-    // No record: only the copy's own folder counts.
-  }
-  return roots;
-}
+// The folders a plugin command may be run from (kit.js, shared with the session start).
+export { pluginRoots };
 
 export async function decide(input, { dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform } = {}) {
   const cwd = input.cwd;

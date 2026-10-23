@@ -42,6 +42,12 @@
 // host Claude Code session sets (scripts/lib/claude.js) and less
 // WHEELHOUSE_ROLE; the foreman alone gets WHEELHOUSE_ROLE=foreman.
 //
+// The command lines above, and the environments, are built by the adapter of
+// the agent the project runs on this computer (adapters/claude-code/sessions.js
+// for Claude Code, found by scripts/agents/project-agent.js); the waker gives it
+// the prompt, the foreman's tools or the feature's allow rules, and runs what it
+// is given. The allow rules stay here: they follow the build-command levels.
+//
 // The wake files. The record of each wake is written under the watcher's
 // folder, projects/<p>/watcher/wakes/, which no session can read or write.
 // What a session is told to read is a copy of it in a folder of its own: the
@@ -84,14 +90,14 @@ import { DIGEST_CAP } from './core.js';
 import { inWorktreesFolder, LOOKBACK_MS, plainWorktreePath } from './sources.js';
 import { ensureIgnored, featurePaths } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
-import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../gate/guardrails.js';
 import { SLUG } from '../lib/build-loop.js';
-import { invocation, resolveClaude, withoutHostVariables } from '../lib/claude.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
+import { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../adapters/claude-code/sessions.js';
+import { sessionsOfProject } from '../agents/project-agent.js';
 import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { featureAllowRules } from '../protection/settings.js';
@@ -123,7 +129,9 @@ export const PROMPTS = Object.freeze({
   start: 'Read .wheelhouse/feature/brief.md and follow it.',
 });
 
-export const ROLE_VARIABLE = 'WHEELHOUSE_ROLE';
+// The role variable, the modes and the session environment are the adapter's (they come with how it starts a
+// session); they stay exported here for the callers that have always taken them from the waker.
+export { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf };
 const MINUTE = 60 * 1000;
 // The longest a session's process counts as running.
 export const MAX_RUN_MS = Object.freeze({ foreman: 60 * MINUTE, feature: 8 * 60 * MINUTE });
@@ -452,37 +460,6 @@ function pruneFolder(dir, keep, nowMs) {
   }
 }
 
-// --- What sessions start with ---
-
-// The explicit permission mode sessions start in: the configuration's, or
-// `acceptEdits`. Bypass mode, and any mode not known, are refused.
-export function sessionModeOf(config) {
-  const mode = config?.sessionMode ?? DEFAULT_SESSION_MODE;
-  if (mode === 'bypassPermissions') throw new Error('Wheelhouse never starts a session in bypass mode');
-  if (!SESSION_MODES.includes(mode)) throw new Error(`This isn't a permission mode Wheelhouse starts sessions in: ${JSON.stringify(mode)}`);
-  return mode;
-}
-
-// A feature session's mode: as sessionModeOf, and never `auto`, on any system.
-export function featureModeOf(config) {
-  const mode = sessionModeOf(config);
-  if (mode === 'auto') throw new Error('A feature session is never started in auto mode');
-  return mode;
-}
-
-// The role's model from the routing table, or null for the command line's own default.
-function modelOf(config, role) {
-  const model = config?.routing?.[role] ?? null;
-  if (model !== null && !isModelName(model)) throw new Error(`The ${role}'s model can't be passed to claude`);
-  return model;
-}
-
-// The environment a started session gets: the host session's variables and
-// every spelling of WHEELHOUSE_ROLE taken out.
-export function sessionEnv(env) {
-  return Object.fromEntries(Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE));
-}
-
 // Whether `worktree` is a feature worktree of the project: a full path, a real
 // folder (not a link) strictly inside the main checkout's .claude/worktrees/,
 // with a real feature folder.
@@ -611,6 +588,7 @@ export function makeWaker({
   windowsBuilds = null,
   labelGuarded = null,
   claude = null,
+  sessions = null,
   baseEnv = process.env,
   platform = process.platform,
   pluginRoot = PLUGIN_ROOT,
@@ -755,11 +733,15 @@ export function makeWaker({
     }
   }
 
-  // Starts claude for `target`, recording it as starting first and as running
-  // after. Resolves with the pid; the exit code settles `entries`.
-  async function launch({ target, cwd, prompt, args, env, file, entries = [] }) {
-    const resolved = claude ?? resolveClaude({ env: baseEnv });
-    const call = invocation(resolved, [], args, prompt);
+  // The sessions part of the adapter for the agent this computer runs for the project (the `agents` map of the
+  // configuration from the default branch, which the mode and the models come from too; Claude Code when it
+  // names none), unless one was given.
+  const sessionsOf = () => sessions ?? sessionsOfProject(config);
+
+  // Starts the session `call` describes (the adapter's { file, args, env, input, verbatim }) for `target`,
+  // recording it as starting first and as running after. Resolves with the pid; the exit code settles `entries`.
+  async function launch({ target, cwd, call, file, entries = [] }) {
+    const { env } = call;
     watcherFolder(project, 'running');
     const file0 = runningFile(project, target);
     const at = now().toISOString();
@@ -788,14 +770,10 @@ export function makeWaker({
     return started.pid;
   }
 
-  const foremanArgs = () => {
-    const model = modelOf(config, 'foreman');
-    return [
-      '--permission-mode', sessionModeOf(config),
-      ...(model ? ['--model', model] : []),
-      ...(foremanTools.length > 0 ? ['--allowedTools', ...foremanTools] : []),
-    ];
-  };
+  // The call that starts a fresh foreman to read `prompt`'s wake.
+  const foremanCall = (prompt) => sessionsOf().foremanCall({
+    config, prompt, tools: foremanTools, env: baseEnv, claude,
+  });
   // What windowsBuilds answers for `work`, or Ask with no grants when it can't answer.
   const windowsAnswer = (work) => {
     let answer;
@@ -813,12 +791,12 @@ export function makeWaker({
   // Labels the worktree for the low runner: by default with Windows' own icacls, the common
   // folder being the main checkout's .git.
   const label = labelGuarded ?? ((worktree) => labelWorktree(worktree, { run: runProgram, commonDir: path.join(checkoutOf(), '.git') }));
-  // The feature session's arguments for `work` in `worktree`, and the Allow this time grants they
+  // The feature session's allow rules for `work` in `worktree`, and the Allow this time grants they
   // give, which are recorded as used before the run starts (Windows only). The record is read
   // again here, so a grant goes to one run whatever windowsBuilds answers. At Guarded the worktree
   // is labelled first; if it can't be, the run gets the Ask rules (failing closed) and says so.
-  const featureArgs = async (work, worktree) => {
-    const model = modelOf(config, 'builder');
+  const featureRules = async (work, worktree) => {
+    sessionsOf().checkFeature(config); // before anything is labelled or recorded
     let allowed;
     let runs = [];
     if (platform === 'win32') {
@@ -843,12 +821,7 @@ export function makeWaker({
     } else {
       allowed = featureAllowRules(config, { platform });
     }
-    const args = [
-      '--permission-mode', featureModeOf(config),
-      ...(model ? ['--model', model] : []),
-      ...(allowed.length > 0 ? ['--allowedTools', ...allowed] : []),
-    ];
-    return { args, recordUsed: () => recordGrantsUsed(project, runs) };
+    return { allowed, recordUsed: () => recordGrantsUsed(project, runs) };
   };
 
   const checkoutOf = () => {
@@ -981,17 +954,21 @@ export function makeWaker({
         let pid;
         if (work === undefined) {
           pid = await launch({
-            target, cwd, prompt: PROMPTS.foreman(copy, wakeCommand), args: foremanArgs(), env: { ...sessionEnv(baseEnv), [ROLE_VARIABLE]: 'foreman' }, file: gathered.entry.file, entries: [gathered.entry.id],
+            target, cwd, call: foremanCall(PROMPTS.foreman(copy, wakeCommand)), file: gathered.entry.file, entries: [gathered.entry.id],
           });
         } else {
-          const feature = await featureArgs(work, cwd);
+          const feature = await featureRules(work, cwd);
+          // Built before the grants are recorded as used, so a call that can't be built uses none up.
+          const call = sessionsOf().featureResumeCall({
+            config, sessionId: session, prompt: PROMPTS.feature(copy), allowed: feature.allowed, env: baseEnv, claude,
+          });
           if (stopped()) {
             settle([gathered.entry.id], 'again');
             return delivered;
           }
           feature.recordUsed();
           pid = await launch({
-            target, cwd, prompt: PROMPTS.feature(copy), args: ['--resume', session, ...feature.args], env: sessionEnv(baseEnv), file: gathered.entry.file, entries: [gathered.entry.id],
+            target, cwd, call, file: gathered.entry.file, entries: [gathered.entry.id],
           });
         }
         delivered.push({ to: work === undefined ? 'foreman' : 'feature', work, file: copy, pid });
@@ -1041,11 +1018,14 @@ export function makeWaker({
         watcherFolder(project, 'sessions');
         writeJsonFile(sessionFile(project, work), { sessionId, worktree, at: now().toISOString() });
         if (stopped()) throw new Error('STOP is on: no session is started');
-        const feature = await featureArgs(work, worktree);
+        const feature = await featureRules(work, worktree);
+        const call = sessionsOf().featureStartCall({
+          config, sessionId, prompt: PROMPTS.start, allowed: feature.allowed, env: baseEnv, claude,
+        });
         if (stopped()) throw new Error('STOP is on: no session is started');
         feature.recordUsed();
         const pid = await launch({
-          target, cwd: worktree, prompt: PROMPTS.start, args: ['--session-id', sessionId, ...feature.args], env: sessionEnv(baseEnv), file: brief,
+          target, cwd: worktree, call, file: brief,
         });
         return { pid, sessionId };
       });

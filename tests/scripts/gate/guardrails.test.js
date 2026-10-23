@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyChange, readConfig, GUARDRAILS, CI_FILES } from '../../../scripts/gate/guardrails.js';
+import { AGENT_CONTROL } from '../../../scripts/lib/agent-control.js';
 
 const empty = readConfig(null);
 
@@ -16,7 +17,7 @@ test('CLAUDE.md in any folder, .mcp.json, workflows and GitLab CI files touch th
   const paths = ['CLAUDE.md', 'docs/CLAUDE.md', '.mcp.json', '.github/workflows/ci.yml', '.github/actions/x/action.yml', '.gitlab-ci.yml', '.gitlab/ci/a.yml'];
   assert.deepEqual(classifyChange({ paths, config: empty }).guardrailPaths, paths);
   assert.equal(classifyChange({ paths: ['docs/CLAUDE.md.bak', 'src/.mcp.json'], config: empty }).touchesGuardrails, false);
-  assert.deepEqual(GUARDRAILS, ['.claude/**', '**/CLAUDE.md', '.mcp.json']);
+  assert.deepEqual(GUARDRAILS, ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL]);
   assert.deepEqual(CI_FILES, ['.github/workflows/**', '.github/actions/**', '.gitlab-ci.yml', '.gitlab/**']);
 });
 
@@ -159,4 +160,17 @@ test('readConfig: pages are at most twenty plain paths on the preview, and any o
     '/', null, {}, [1], [''], ['pricing'], ['//evil.example'], ['/a b'], ['/a\\b'], ['/../secret'], ['/a/%2e%2e/b'],
     ['https://evil.example/'], [...twenty, '/one-more'],
   ]) assert.throws(() => readConfig(JSON.stringify({ ...base, pages })), { message }, JSON.stringify(pages));
+});
+
+test('a pull request touching .github/hooks/x.json or a nested AGENTS.md is a guardrail change', () => {
+  const paths = ['.github/hooks/x.json', 'docs/deep/AGENTS.md', 'AGENTS.md', 'sub/GEMINI.md', '.vscode/tasks.json', '.codex/config.toml', '.cursor/rules/a.mdc',
+    '.gemini/settings.json', '.agents/skills/a/SKILL.md', '.github/copilot-instructions.md', '.github/skills/a/SKILL.md', '.github/mcp.json',
+    'plugin.json', '.plugin/x', 'com.github.copilot/a', '.gitattributes'];
+  const answer = classifyChange({ paths: [...paths, 'src/a.js'], config: empty });
+  assert.equal(answer.touchesGuardrails, true);
+  assert.deepEqual(answer.guardrailPaths, paths);
+  // Names that only look like them are not.
+  assert.deepEqual(classifyChange({ paths: ['src/AGENTS.md.bak', 'docs/MYAGENTS.md', 'src/.vscode-notes.md', 'sub/plugin.json', '.github/ISSUE_TEMPLATE/a.md'], config: empty }).guardrailPaths, []);
+  // Case is ignored here as it is for the other guardrails.
+  assert.equal(classifyChange({ paths: ['.GitHub/Hooks/x.json'], config: empty }).touchesGuardrails, true);
 });

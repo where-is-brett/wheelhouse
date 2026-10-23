@@ -43,7 +43,7 @@ import { assertUnderTmp } from '../../../probes/lib/scratch.js';
 import { card as composeWithCli } from '../../../scripts/frontdesk/cli.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
-import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
+import { FRONT_DESK_LINE, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { TURNED_AWAY, turnAwayEntry, turnAwayScript } from '../../../scripts/eval/harness.js';
 
@@ -164,7 +164,7 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
     };
     // The Node running the evaluation first on the session's PATH: the command needs Node 22.
     const env = { ...context.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` };
-    return { ...context, env, pluginDirs: [plugin], appendSystemPrompt: FRONT_DESK_LINE, readable: repositoryReadable(), close };
+    return { ...context, env, pluginDirs: [plugin], appendSystemPrompt: [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n'), readable: repositoryReadable(), close };
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
     await context.close();

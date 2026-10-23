@@ -258,7 +258,7 @@ test('a scenario written in a suite but left out of the run is a row not run', (
   fs.writeFileSync(path.join(root, 'main', '06-merge-under-pressure.js'), 'export default {};\n');
   const summary = summarise(record([trial(20, 'with', 1, true), trial(20, 'without', 1, false)]), { root, e2eDir: noE2e(), designed: [] });
   assert.deepEqual(rowOf(summary, 6), {
-    id: 6, title: '06-merge-under-pressure.js', suite: 'main', with: 'not run', without: 'not run',
+    id: 6, title: '06-merge-under-pressure.js', suite: 'main', notRun: { with: null, without: null }, with: 'not run', without: 'not run',
     trials: { with: 0, without: 0 }, passes: { with: 0, without: 0 }, first: { with: null, without: null }, toRun: { with: 0, without: 0 },
     tokens: { input: 0, output: 0 }, why: 'not in this run', again: [], safety: false,
   });
@@ -270,4 +270,50 @@ test('the end-to-end tests that cover scenarios are found by their comments', ()
   const ids = [...new Set(coveredScenarios().map((entry) => entry.id))];
   assert.deepEqual(ids, [5, 11, 12, 14, 17, 19, 26, 28, 29, 30, 31, 32]);
   for (const entry of coveredScenarios()) assert.match(entry.file, /^tests\/e2e\/(safety|build-loop|front-desk)\.test\.js$/);
+});
+
+// A trial a Windows run recorded as not run (ruling E30).
+const skipped = (id, variant, number) => ({
+  ...trial(id, variant, number, false, { safety: true, why: 'not run (no sandbox, check 10)' }),
+  notRun: 'no sandbox, check 10',
+});
+
+test('a scenario recorded not run for want of a sandbox reads not run, is never a failure or run again, and keeps the gate shut', () => {
+  const summary = summarise(record([
+    trial(20, 'with', 1, true), trial(20, 'without', 1, false),
+    skipped(15, 'with', 1), skipped(15, 'without', 1),
+  ]), options());
+  const row = rowOf(summary, 15);
+  assert.equal(row.with, 'not run');
+  assert.equal(row.without, 'not run');
+  assert.deepEqual(row.again, []);
+  assert.deepEqual(row.toRun, { with: 0, without: 0 });
+  assert.equal(row.safety, true);
+  assert.equal(summary.passed, false);
+  const text = summaryText(summary);
+  assert.match(text, /\| 15 \| Scenario 15 \| main \| not run \(no sandbox, check 10\) \| not run \(no sandbox, check 10\) \|/);
+  assert.match(text, /1 scenario was not run \(15\)/);
+  assert.doesNotMatch(text, /scenarios? fails? with Wheelhouse/);
+  assert.match(text, /Not run on this computer \(no sandbox, check 10\): 15/);
+});
+
+test('every other scenario passing does not open the gate while a sandbox scenario is not run', () => {
+  const summary = summarise(record([
+    trial(20, 'with', 1, true), trial(20, 'without', 1, false),
+    skipped(18, 'with', 1), skipped(18, 'without', 1),
+  ]), options());
+  assert.equal(summary.passed, false);
+  assert.equal(rowOf(summary, 20).with, 'pass');
+});
+
+test('a sandbox failure is a failed run that was not handled, so a safety scenario may be run again', () => {
+  const summary = summarise(record([
+    trial(15, 'with', 1, false, { safety: true, handled: false, why: 'no sandbox: the probe session did not run the command' }),
+    trial(15, 'without', 1, false, { safety: true, handled: false, why: 'no sandbox: the probe session did not run the command' }),
+  ]), options());
+  const row = rowOf(summary, 15);
+  assert.equal(row.with, 'fail');
+  assert.deepEqual(row.again, ['with']);
+  assert.match(row.why, /no sandbox/);
+  assert.equal(summaryText(summary).includes('not run (no sandbox'), false);
 });

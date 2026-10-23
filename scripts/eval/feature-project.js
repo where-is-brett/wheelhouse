@@ -30,13 +30,14 @@ export const FEATURE = '.wheelhouse/feature';
 
 // What a run's commands may read of the repository (ruling F102), which the session's sandbox
 // otherwise denies: the scripts its commands run and what they load (every folder of scripts/
-// but the evaluation's own, scripts/eval, and its files), the package file that makes them
-// modules, the templates (the brief's, the glossary's starter) and the lineage files they read.
+// but the evaluation's own, scripts/eval, and its files; and the adapters' folder, which the hook
+// kit reads), the package file that makes them modules, the templates (the brief's, the glossary's
+// starter) and the lineage files they read.
 // Never the tests, the judges among them, the evaluation docs with their expected results, or the
 // ledger.
 export function repositoryReadable(root = REPO_ROOT) {
   const scripts = fs.readdirSync(path.join(root, 'scripts')).filter((name) => name !== 'eval').sort().map((name) => path.join(root, 'scripts', name));
-  return [...scripts, ...['package.json', 'templates', 'lineage'].map((name) => path.join(root, name))];
+  return [...scripts, ...['adapters', 'package.json', 'templates', 'lineage'].map((name) => path.join(root, name))];
 }
 
 // The repository's own agent files, read when a scenario wants them in its scratch plugin.
@@ -151,7 +152,7 @@ export async function setUpFeature(dir, {
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });
     return {
-      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: repositoryReadable(), writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
+      env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: repositoryReadable(), unreadable: [helper.keyFolder], writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
     };
   } catch (error) {
     await close();

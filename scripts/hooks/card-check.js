@@ -13,6 +13,7 @@
 // would have its answer dropped. In a project's folder, or one being set up, any other card holding
 // the figures waiting for the click is refused too, saying to leave them out; elsewhere no record of
 // an answer is written, so that is let be. A card merely headed Baseline is not refused.
+import tools from '../../adapters/claude-code/tools.js';
 import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { PART_LABELS, whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
@@ -111,7 +112,7 @@ function baselineFaults(questions, now, { figures = true } = {}) {
 }
 
 export async function decide(input, { projectOf: find = projectOf, dir, now = () => new Date() } = {}) {
-  if (input.tool_name !== 'AskUserQuestion') return undefined;
+  if (input.tool_name !== tools.ask) return undefined;
   const questions = input.tool_input?.questions;
   if (!Array.isArray(questions)) return undefined;
   const inProject = Boolean(find(input.cwd, { dir }));
