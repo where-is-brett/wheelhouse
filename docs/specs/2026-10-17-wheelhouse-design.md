@@ -997,8 +997,9 @@ The step order is the build's: the setup commit goes up before protection is swi
   > Move the other agent setup's instructions into an archive folder: AGENTS.md, .cursorrules and 3 more files go into .wheelhouse-archive/ in the project, where no agent reads them.
   > Mine already come first where they differ; archiving means agents see one set of instructions. Nothing is lost: one click puts them back, and so does removing Wheelhouse.
   > Nothing changes meanwhile.
-  > - **Archive them** (recommended, because agents then see one set of instructions): the files move as a change of their own, checked before it goes in.
-  > - **Leave them:** they stay where they are, and mine keep coming first.
+  > - **Approve** (recommended, because agents then see one set of instructions): the files move as a change of their own, checked before it goes in.
+  > - **Not now:** they stay where they are, and mine keep coming first.
+  It is the usual approval card for a change (ruling P14 of the plan), so its buttons are the approval card's own. Putting them back is the same card, saying "Put the other agent setup's instructions back where they were: …".
 - **A5. Scheduled jobs and secret files** are as they are today: jobs keep running, and a change to them needs the director's click, as any change to CI files does (section 12); secret files stay out of agents' reach and out of git (step 7, section 12.6). The first briefing mentions neither unless something about them needs the director.
 - **A6. The briefing's words** stay plain: no "commit", "branch" or "worktree", and the host named as it is ("on GitHub", "on GitLab"; "on this computer" in git alone). Each finding is mentioned once; the director's answer, or none, ends it.
 - **A7. Later, not now:** the setup redesign that folds setup's cards into one consent card (from what the director's own first setup shows), and a mode for a project in git alone, with no host. The survey's wording already allows for both.
