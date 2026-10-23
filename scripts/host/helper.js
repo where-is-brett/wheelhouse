@@ -727,6 +727,8 @@ const SESSION_MARKS = Object.freeze({
 });
 // The longest card name or label a chat click carries.
 const CHAT_TEXT_CHARS = 500;
+// The fields of a card-answer that only the helper's click routes write.
+const CLICK_FIELDS = ['proof', 'commit', 'hash'];
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -1392,8 +1394,12 @@ export async function startHelper({
   // made here too, unless the caller made it (the foreman's act command does,
   // to record the id as handled before the event exists, ruling R86): then it
   // must be shaped as a random UUID and not one the state holds already.
-  async function doWrite({ project, kind, data, id }, ctx) {
+  // A card-answer naming a proof, a commit or a card's hash is a click record only the helper's own routes make
+  // (/cards/chat-click): `own` is theirs. From /state/write, which anyone who reaches the helper may call, it is
+  // refused, so no caller can name a proof the gate would read.
+  async function doWrite({ project, kind, data, id }, ctx, { own = false } = {}) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
+    if (!own && kind === 'card-answer' && data && typeof data === 'object' && CLICK_FIELDS.some((k) => Object.hasOwn(data, k))) refuse('a click\'s proof, commit and hash are recorded only by the helper\'s own routes');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
@@ -1426,18 +1432,19 @@ export async function startHelper({
 
   // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
   // decides a signed step is taken only on a card a chat click may decide: a merge card, or a guardrail card at
-  // Lean; never one of the confirmed steps, which need the window.
+  // Lean; never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
   async function doChatClick({ project, card, hash, label, proof, commit }, ctx) {
     if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
     if (typeof card !== 'string' || card === '' || card.length > CHAT_TEXT_CHARS) refuse('the card must be named');
     if (typeof label !== 'string' || label === '' || label.length > CHAT_TEXT_CHARS) refuse('the click must name the option chosen');
     if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) refuse('the card\'s hash must be its sha256, in lower case');
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
-    if (CONFIRMED_STEPS.includes(card) && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
+    const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
+    if (confirmed && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
     const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
     if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), proof };
-    return doWrite({ project, kind: 'card-answer', data }, ctx);
+    return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;

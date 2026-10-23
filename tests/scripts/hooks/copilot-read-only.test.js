@@ -22,7 +22,8 @@ import { registerLean } from '../../../scripts/lean/project.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop, NO_HELPER_STOP } from '../../../scripts/lib/stop.js';
 import { keysDir, bypassDir, computerId } from '../../../scripts/lib/paths.js';
-import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { approvalLine } from '../../../scripts/state/card-lines.js';
 import { HELPER_PROBE_MS, C6_PASSED } from '../../../scripts/lib/copilot-numbers.js';
 
 const COPILOT_ENV = { COPILOT_CLI_BINARY_VERSION: '1.0.101' };
@@ -270,6 +271,31 @@ test('Claude Code hooks still sign and write as before', async () => {
     await hookMain(stopGuard, { failClosed: true, event: 'PreToolUse' },
       io({ hook_event_name: 'PreToolUse', session_id: 's2', cwd: folder, tool_name: 'Read', tool_input: {}, permission_mode: 'bypassPermissions' }));
     assert.equal(fs.existsSync(path.join(bypassDir(), 's2')), true, 'the bypass marker is written as before');
+    // A signed click: Approve on a card naming the pull request and its head, through Claude Code's prompt
+    // record, is signed with this computer's key and verifies, and the plain answer goes beside it.
+    const head = 'abcdef1234567890abcdef1234567890abcdef12';
+    const question = `${approvalLine(7, head)}? It changes the sign-in.`;
+    const sent = { write: [], record: [] };
+    const client = {
+      prState: async () => ({ ok: true, result: { headSha: head, state: 'open' } }),
+      state: { write: async (b) => { sent.write.push(b); return { ok: true }; }, record: async (b) => { sent.record.push(b); return { ok: true }; } },
+      profile: { record: async () => ({ ok: true }) },
+    };
+    await hookMain(promptRecord, { failClosed: false, event: 'PostToolUse' }, {
+      ...io({
+        hook_event_name: 'PostToolUse', session_id: 's2', cwd: folder, tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question, options: [{ label: 'Approve' }, { label: 'Not now' }] }], answers: { [question]: 'Approve' } },
+        tool_response: { answers: { [question]: 'Approve' } },
+      }),
+      deps: { client, now: () => new Date('2026-10-23T02:00:00.000Z') },
+    });
+    assert.equal(sent.record.length, 1);
+    const [{ event: approval }] = sent.record;
+    assert.equal(approval.kind, 'approval');
+    assert.deepEqual([approval.data.pr, approval.data.commit], [7, head]);
+    assert.ok(approval.sig, 'signed');
+    assert.equal(verify(approval, readEnrolled()), true, 'and it verifies against this computer\'s enrolled key');
+    assert.deepEqual(sent.write.map((w) => [w.kind, w.data]), [['card-answer', { question, label: 'Approve' }]]);
     // STOP on, a Claude Code write is refused in STOP's words, never the helper's.
     setStop({ by: 'helper' });
     try {

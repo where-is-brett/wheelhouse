@@ -33,16 +33,18 @@ const REAL_USER_PROOFS = ['host', 'add-on', 'window'];
 const NEEDS_WORDS = { host: 'the director\'s approval on the code host', 'add-on': 'the director\'s click on the add-on\'s button', window: 'the director\'s click in Wheelhouse\'s window' };
 
 // An unsigned approval (ruling P5-21): a card-answer labelled Approve naming the head commit, or the carried
-// form, whose proof is one the caller takes. A click in the chat counts only where the project has no real users.
+// form, whose proof is a chat click the caller takes, on a project with no real users. Only the chat proofs
+// count unsigned (ruling P5-48): the helper alone writes a card-answer naming a proof, but an unsigned record
+// proves nothing more than a chat click, so a window's, the add-on's or the host's proof counts only signed.
 function clickApproves(entry, headSha, proofs, realUsers) {
   const carried = entry?.carried === true;
   const record = carried ? entry.record : entry;
   const proof = record?.data?.proof;
-  return record?.kind === 'card-answer'
+  return !realUsers
+    && record?.kind === 'card-answer'
     && record.data?.label === 'Approve'
     && (carried || record.data?.commit === headSha)
-    && typeof proof === 'string' && proof !== SIGNED_PROOF && proofs.includes(proof)
-    && !(realUsers && CHAT_PROOFS.includes(proof));
+    && CHAT_PROOFS.includes(proof) && proofs.includes(proof);
 }
 
 // Whether the approval given counts, and, when it doesn't on a project with real users, the proof it needs.
@@ -92,8 +94,8 @@ function incidentReason(incident) {
 //
 // `approvalProofs` (ruling P5-21) names the proofs an approval may carry, ['signed-hook'] when not given, which is
 // today's rule: only a signed approval counts. With 'chat-click' or 'hook-click' among them, an unsigned
-// card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a 'window',
-// 'add-on' or 'host' proof counts, and the answer's `needs` names which one the merge needs.
+// card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
+// approval naming a 'window', 'add-on' or 'host' proof counts, and the answer's `needs` names which one.
 export function gateDecision(input) {
   const i = input && typeof input === 'object' ? input : {};
   const headSha = typeof i.headSha === 'string' ? i.headSha : '';

@@ -125,6 +125,8 @@ test('a chat click is recorded unsigned with its proof', async () => {
       [{ ...click, proof: undefined }, /recorded as chat-click/],
       [{ ...click, card: 'lift-stop', label: 'Lift STOP', commit: undefined }, /confirmed outside the chat/],
       [{ ...click, card: 'ci-push', label: 'Push it', commit: undefined }, /confirmed outside the chat/],
+      [{ ...click, card: 'guardrail-change-tool-guard', label: 'Change it', commit: undefined }, /confirmed outside the chat/],
+      [{ ...click, card: 'lift-stop-now', label: 'Lift STOP', commit: undefined }, /confirmed outside the chat/],
       [{ ...click, card: 'release-notes', label: 'Approve' }, /can't decide that card/],
       [{ ...click, hash: 'abc' }, /sha256/],
       [{ ...click, commit: 'abc123' }, /in full/],
@@ -136,7 +138,15 @@ test('a chat click is recorded unsigned with its proof', async () => {
       assert.equal(refused.ok, false, JSON.stringify(body));
       assert.match(refused.refused, why, JSON.stringify(body));
     }
+    // /state/write, which anyone who reaches the helper may call, can't name a click's proof, commit or hash
+    // (ruling P5-48), so it can't make what the gate reads as a click; a plain answer still goes through it.
+    for (const data of [{ question: 'merge-login', label: 'Approve', commit: HEAD, proof: 'window' }, { question: 'merge-login', label: 'Approve', proof: 'chat-click' }, { question: 'x', label: 'Approve', hash: HASH }, { question: 'x', label: 'Approve', commit: HEAD }]) {
+      const forged = await c.client.state.write({ project: PROJECT, kind: 'card-answer', data });
+      assert.equal(forged.ok, false, JSON.stringify(data));
+      assert.match(forged.refused, /only by the helper's own routes/);
+    }
     assert.equal(c.events().length, count);
+    assert.equal((await c.client.state.write({ project: PROJECT, kind: 'card-answer', data: { question: 'Pick a colour?', label: 'Blue' } })).ok, true);
     // The event shape takes a click's fields and no others.
     assert.throws(() => makeEvent({ kind: 'card-answer', data: { label: 'Approve', signedBy: 'me' } }), /a field it should not/);
     assert.throws(() => makeEvent({ kind: 'card-answer', data: { question: 'x' } }), /needs its label/);
@@ -197,9 +207,18 @@ test('the gate refuses a real-user merge on a chat click and names what it needs
     assert.equal(gateDecision({ ...base, approval: chat, approvalProofs: ['chat-click', 'window', 'add-on'], realUsers: true }).needs, 'add-on');
     assert.equal(gateDecision({ ...base, approval: chat, approvalProofs: ['chat-click', 'host'], realUsers: true }).needs, 'host');
     assert.equal(gateDecision({ ...base, approval: chat, approvalProofs: ['chat-click'], realUsers: true }).needs, 'window');
-    // A window's or the add-on's proof counts with real users; a click on another commit, or a Not now, never does.
-    assert.equal(gateDecision({ ...base, approval: click({ proof: 'window' }), approvalProofs: ['chat-click', 'window'], realUsers: true }).allow, true);
-    assert.equal(gateDecision({ ...base, approval: click({ proof: 'add-on' }), approvalProofs: ['add-on'], realUsers: true }).allow, true);
+    // A window's or the add-on's proof counts with real users only when it is signed (ruling P5-48): an unsigned
+    // record naming one counts for nothing, real users or not. A click on another commit, or a Not now, never does.
+    const signedBy = (proof) => makeEvent({ kind: 'approval', data: { pr: 7, commit: HEAD, proof } });
+    assert.equal(gateDecision({ ...base, approval: signedBy('window'), approvalProofs: ['chat-click', 'window'], realUsers: true }).allow, true);
+    assert.equal(gateDecision({ ...base, approval: signedBy('add-on'), approvalProofs: ['add-on'], realUsers: true }).allow, true);
+    assert.equal(gateDecision({ ...base, approval: signedBy('chat-click'), approvalProofs: ['chat-click', 'window'], realUsers: true }).needs, 'window');
+    for (const proof of ['window', 'add-on', 'host']) {
+      for (const realUsers of [true, false]) {
+        const forged = gateDecision({ ...base, approval: click({ proof }), approvalProofs: ['chat-click', 'window', 'add-on', 'host'], realUsers });
+        assert.equal(forged.allow, false, `${proof}, real users ${realUsers}`);
+      }
+    }
     assert.equal(gateDecision({ ...base, approval: click({ proof: 'chat-click', commit: 'b'.repeat(40) }), approvalProofs: ['chat-click'] }).allow, false);
     assert.equal(gateDecision({ ...base, approval: click({ proof: 'chat-click', label: 'Not now' }), approvalProofs: ['chat-click'] }).allow, false);
     assert.equal(gateDecision({ ...base, approval: click({ proof: 'hook-click' }), approvalProofs: ['chat-click'] }).allow, false, 'a proof not taken');
