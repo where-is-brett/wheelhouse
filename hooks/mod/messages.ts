@@ -5,7 +5,8 @@
 // tick, so the pane shows what changed; the message itself never reaches the bridge. Before any
 // tick has answered, and in every other role, every message passes on as it came. A message led
 // by the foreman's lead is never traffic (ruling 34): an app-started foreman learns its role from
-// its first prompt, which comes after a first tick that answered as the front desk's.
+// its first prompt, which comes after a first tick that answered as the front desk's. The same
+// reading past the app's reminders finds the director's own typed words (ownWords).
 import type { EngineInterface } from 'claude-code'
 import { FOREMAN_LEAD, MESSAGE_LEAD } from './numbers'
 import { isFrontDesk, tick } from './pane'
@@ -27,6 +28,20 @@ const WRAPPER = new RegExp([
   String.raw`(?:Another Claude session sent a message:\n)?`,
   String.raw`(?:<cross-session-message(?: [a-z-]+="[^"\n]*")*>\n)?`,
 ].join(''))
+
+// The same reminder blocks alone, as scripts/lib/own-words.js reads them (kept in step by
+// tests/scripts/mod/validate.test.js).
+const BLOCKS = /^(?:<system-reminder>\n(?:(?:(?!<\/system-reminder>)[\s\S])*\n)?<\/system-reminder>(?:\n|$)\n*)*/
+
+// The director's own words: the text after any leading reminder blocks the app put before the
+// typed line, or null when what is left still holds a reminder tag, which is not their words.
+// With no leading block, the text as it came. It never says who typed: only the origin does.
+export function ownWords(text: string): string | null {
+  const lead = BLOCKS.exec(text)?.[0] ?? ''
+  if (lead === '') return text
+  const rest = text.slice(lead.length)
+  return /<\/?system-reminder>/.test(rest) ? null : rest
+}
 
 // The message's own first line: the text's first line, or the first after the app's wrapper.
 function firstLine(text: string): string {

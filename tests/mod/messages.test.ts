@@ -6,6 +6,7 @@
 // instead, that every other message passes on as it came, that each prompt a tick's answer holds
 // is handed on once and in order, and that /digest answers with the bridge's text.
 import { test, expect, mock } from 'claude-code/testing'
+import { ownWords } from '../../hooks/mod/messages'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
@@ -820,4 +821,30 @@ test('/digest answers with the bridge\'s briefing', async ($, on) => {
       expect(seen.commands).toHaveLength(0)
     }
   }
+})
+
+// The same table as tests/scripts/lib/own-words.test.js, run against the mod's copy.
+test('ownWords reads past whole leading reminder blocks and nothing else', () => {
+  const B = '<system-reminder>\nLinked sessions now: x\n</system-reminder>'
+  const cases: [string, string | null][] = [
+    ['stop', 'stop'],
+    ['  K7QD Approve ', '  K7QD Approve '],
+    ['', ''],
+    [`${B}\n\nstop`, 'stop'],
+    [`${B}\nstop`, 'stop'],
+    [`${B}\n\n\n\nstop`, 'stop'],
+    [`${B}\n\n${B}\n\nstop`, 'stop'],
+    [`${B}\n${B}\nstop`, 'stop'],
+    [B, ''],
+    [`${B}\n\n`, ''],
+    ['<system-reminder>\n</system-reminder>\nstop', 'stop'],
+    [`${B}\n\nstop\n<system-reminder>\nmore\n</system-reminder>`, null],
+    [`${B}\nT8E3 Confirm\n<system-reminder>\nmore\n</system-reminder>\n\nhello`, null],
+    [`${B}\n\nstop </system-reminder>`, null],
+    [`${B}\n\n<system-reminder>`, null],
+    [`hello\n${B}`, `hello\n${B}`],
+    ['<system-reminder> inline </system-reminder>\nstop', '<system-reminder> inline </system-reminder>\nstop'],
+    ['<system-reminder>\nunclosed\nstop', '<system-reminder>\nunclosed\nstop'],
+  ]
+  for (const [text, want] of cases) expect(ownWords(text)).toBe(want)
 })

@@ -19,13 +19,15 @@
 //                    /digest answers with the bridge's briefing
 //   ui.render        draws the pane, with each card's buttons, STOP or Lift STOP and the settings
 //                    view (hooks/mod/cards.tsx, hooks/mod/settings.tsx)
+// A typed reply or "stop" is read past any reminder blocks the app puts before it (ownWords),
+// and the bridge is sent what follows them.
 // A message counts as the director's only when it came from the prompt (`composer`) or the
 // phone (`bridge`); every other origin never reaches the bridge. A press counts as the
 // director's under the origin `pane`, which only a button's press handler sends.
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
 import { ask, send, FAILED, type Answer } from './mod/ask'
 import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'
-import { keepOut, KEPT_OUT } from './mod/messages'
+import { keepOut, KEPT_OUT, ownWords } from './mod/messages'
 
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
@@ -80,11 +82,15 @@ function codedReply(text: string): boolean {
 function requestFor(e: PromptSubmitInput): { request: Record<string, unknown>, quiet: boolean } | null {
   const origin = e.origin.kind
   if (!DIRECTOR.includes(origin) || e.isMeta || e.command) return null
-  const text = e.text.trim()
+  // The app's reminder blocks before the typed line are read past; a remainder that still holds
+  // a reminder tag is not the director's own words.
+  const own = ownWords(e.text)
+  if (own === null) return null
+  const text = own.trim()
   // A typed "stop" is the stop-word hook's; only a phoned one is sent.
   if (STOP.test(text)) return origin === 'bridge' ? { request: { cmd: 'stop', origin }, quiet: false } : null
-  if (REPLY.test(text)) return { request: { cmd: 'reply', origin, text: e.text }, quiet: false }
-  if (codedReply(text)) return { request: { cmd: 'reply', origin, text: e.text }, quiet: true }
+  if (REPLY.test(text)) return { request: { cmd: 'reply', origin, text: own }, quiet: false }
+  if (codedReply(text)) return { request: { cmd: 'reply', origin, text: own }, quiet: true }
   return null
 }
 

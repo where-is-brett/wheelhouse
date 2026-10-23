@@ -309,6 +309,26 @@ test('under STOP, a worktree whose .git file was rewritten is still held by its 
   });
 });
 
+test('"stop" after the app\'s reminder block sets STOP; a block alone, or a tag left after it, does not', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      const d = { event: 'UserPromptSubmit', dir: path.join(base, 'managed') };
+      const block = '<system-reminder>\nLinked sessions now: x\n</system-reminder>';
+      for (const prompt of [`${block}\n\nstop`, `${block}\nStop.`, `${block}\n\n${block}\n\nstop`]) {
+        liftStop();
+        assert.ok(await word({ cwd: main, prompt }, d), prompt);
+        assert.equal(stopState().on, true, prompt);
+      }
+      liftStop();
+      for (const prompt of [block, `${block}\n\n`, `${block}\nstop\n<system-reminder>\nmore\n</system-reminder>\n\nhello`, `${block}\n\nstop </system-reminder>`]) {
+        assert.equal(await word({ cwd: main, prompt }, d), undefined, prompt);
+        assert.equal(stopState().on, false, prompt);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 test('stop, Stop., /stop and STOP! set STOP; "stop the build after this" does not', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();

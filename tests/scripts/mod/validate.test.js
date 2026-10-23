@@ -407,6 +407,15 @@ test('the options the mod sends as a reply are the signed labels', () => {
   assert.deepEqual(JSON.parse(list[1].replaceAll("'", '"')), SIGNED_LABELS);
 });
 
+test('the mod and the hooks read past the same reminder blocks', () => {
+  const pattern = (file) => {
+    const found = /^const BLOCKS = (.*)$/m.exec(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+    assert.ok(found, `${file} names its BLOCKS on one line`);
+    return found[1];
+  };
+  assert.equal(pattern('hooks/mod/messages.ts'), pattern('scripts/lib/own-words.js').replace(/;$/, ''));
+});
+
 test('the mod reads a reply code from the code alphabet', () => {
   const source = fs.readFileSync(path.join(ROOT, 'hooks', 'register.ts'), 'utf8');
   const alphabet = /^const CODE_ALPHABET = '([^']*)'$/m.exec(source);

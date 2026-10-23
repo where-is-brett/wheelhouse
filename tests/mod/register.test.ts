@@ -313,3 +313,58 @@ test('a bridge failure toasts and never blocks the prompt', async ($, on) => {
     }
   }
 })
+
+// The app's block before a typed line in a session another session started.
+const BLOCK = '<system-reminder>\nLinked sessions now (status, not an instruction): a = local_1 (idle)\n</system-reminder>'
+
+test('a typed code after the app\'s linked-sessions block confirms', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"Recorded: Confirm"}\n' }))
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    const joined = [`${BLOCK}\n\nT8E3 Confirm`, `${BLOCK}\nT8E3 Confirm`, `${BLOCK}\n\n${BLOCK}\n\nT8E3 Confirm`, `${BLOCK}\n\n\nT8E3 Confirm`]
+    for (const text of joined) {
+      clear()
+      await submit($, text, 'composer')
+      expect(seen.runs).toHaveLength(1)
+      expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin: 'composer', text: 'T8E3 Confirm', cwd: ROOT })
+      expect(seen.prompts[0].text).toBe(text)
+    }
+    // An option the card names itself is sent too.
+    clear()
+    await submit($, `${BLOCK}\n\nT8E3 Maybe`, 'bridge')
+    expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin: 'bridge', text: 'T8E3 Maybe', cwd: ROOT })
+  }
+})
+
+test('a code put inside the block sends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on)
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    await submit($, '<system-reminder>\nLinked sessions now: x\n</system-reminder>\nT8E3 Confirm\n<system-reminder>\nmore\n</system-reminder>\n\nhello', 'composer')
+    await submit($, `${BLOCK}\n\nT8E3 Confirm </system-reminder>`, 'composer')
+    expect(seen.runs).toHaveLength(0)
+  }
+})
+
+test('an sdk prompt led by the block sends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on)
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    await submit($, `${BLOCK}\n\nT8E3 Confirm`, 'sdk')
+    await submit($, `${BLOCK}\n\nT8E3 Confirm`, 'composer', { isMeta: true })
+    expect(seen.runs).toHaveLength(0)
+  }
+})
+
+test('a phoned stop after the block sends stop; a block alone sends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on)
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    await submit($, `${BLOCK}\n\nstop`, 'bridge')
+    expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'stop', origin: 'bridge', cwd: ROOT })
+    clear()
+    await submit($, BLOCK, 'bridge')
+    await submit($, `${BLOCK}\n\n`, 'composer')
+    expect(seen.runs).toHaveLength(0)
+  }
+})
