@@ -76,6 +76,7 @@ import { TOOL_SHEETS } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
+import { MAIN_MOVED } from '../lean/store.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -541,6 +542,12 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   let views = null;
   if (!up) notes.push(NO_HELPER_STOP);
   else {
+    // A Lean project's main version, compared by the helper with the one it last moved (ruling P5-27 f): a move
+    // made outside it is said here, and the helper raises the card that asks the director.
+    if (found.lean === true && typeof api.lean?.status === 'function') {
+      const status = await left(api.lean.status({ project }));
+      if (status?.ok === true && status.moved === true) notes.push(MAIN_MOVED);
+    }
     const got = await left(api.state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
   }

@@ -24,7 +24,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -60,6 +60,9 @@ const ACTION_OWN = {
   // the list uninstall puts back. Its question is the card's set line alone. It is kept in
   // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
   uninstall: ['project', 'hash'],
+  // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
+  // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
+  'keep-main': ['from', 'to'],
 };
 // Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
 // window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
@@ -151,6 +154,9 @@ function checkAction(data) {
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list its card showed');
     if (data.label !== UNINSTALL_LABEL) bad(`needs the ${UNINSTALL_LABEL} label`);
     if (data.question !== uninstallLine(data.project, data.hash)) bad('carries only uninstall\'s card\'s set line as its question');
+  } else if (data.action === 'keep-main') {
+    if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
+    if (data.label !== 'Keep it') bad('needs the Keep it label');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }
@@ -179,7 +185,8 @@ const PLAIN_SHAPES = {
   // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
   // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
   // `label` must be there but may be null: a Lean line with no choice has none. Every writer gives one.
-  'card-answer': { must: ['label'], may: ['question', 'card', 'hash', 'commit', 'proof', 'tier', 'by', 'clicked', 'source'] },
+  // Suggest a change… at Lean (ruling P5-27 k) carries the director's own words as `text`.
+  'card-answer': { must: ['label'], may: ['question', 'card', 'hash', 'commit', 'proof', 'tier', 'by', 'clicked', 'source', 'text'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.

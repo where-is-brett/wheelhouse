@@ -729,8 +729,11 @@ test('the playbook speaks in plain words to the director and names the options o
   for (const option of ['Approve', 'Show me', 'Not now', 'Why?']) assert.ok(cards.includes(`**${option}**`), option);
   assert.ok(!playbook.includes('Explain more'), 'Explain more is not offered');
   assert.ok(cards.includes(TO_KNOW_MORE), 'the last line a card ends with');
-  // Ruling P4-38: Lean cannot carry a suggested change safely yet, so no card offers one.
-  assert.ok(!playbook.replace(/Lean offers no \*\*Suggest a change…\*\* on any card/, '').includes('Suggest a change'), 'no card at Lean offers Suggest a change…');
+  // Ruling P4-38: without the helper Lean cannot carry a suggested change safely, so no card offers one; with the
+  // helper answering, its own section offers it (ruling P5-27 k), and nowhere else does.
+  const withoutHelper = playbook.replace(section(playbook, 'With Wheelhouse\'s helper'), '');
+  assert.ok(!withoutHelper.replace(/Lean offers no \*\*Suggest a change…\*\* on any card/, '').replace(/With the helper answering, approval and merge cards offer it/, '').includes('Suggest a change'), 'no card at Lean offers Suggest a change… without the helper');
+  assert.match(section(playbook, 'With Wheelhouse\'s helper'), /\*\*Suggest a change…\*\* is offered on approval and merge cards while the helper answers/);
   assert.match(cards, /Lean offers no \*\*Suggest a change…\*\* on any card/);
   assert.match(cards, /\*\*Why\?\*\* is for learning only: it is never an answer, never an approval, and it writes no `card` or `approval` line/);
   assert.match(cards, /12 characters/);

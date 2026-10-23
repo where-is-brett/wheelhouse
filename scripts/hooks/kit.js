@@ -114,7 +114,13 @@ export function findRepoRoot(cwd) {
       // Only a main .git folder counts: a worktree of a submodule or of a bare
       // repository has no main working folder to name.
       const mainGit = path.resolve(gitdir, common);
-      return path.basename(mainGit) === '.git' ? path.dirname(mainGit) : null;
+      if (path.basename(mainGit) === '.git') return path.dirname(mainGit);
+      // A Lean project's folder is a worktree of its store, a bare repository in Wheelhouse's home (scripts/lean/
+      // store.js): the folder itself is the project's, when it is the folder the Lean record names and the pointer
+      // leads into that project's own store.
+      const lean = projectForFolder(realPath(dir));
+      const ownStore = lean?.lean === true ? path.join(wheelhouseHome(), 'projects', lean.project, 'git') : null;
+      return ownStore !== null && sameFolder(lean.record.folder, dir) && sameFolder(ownStore, mainGit) ? dir : null;
     }
     const up = path.dirname(dir);
     if (up === dir) return null;

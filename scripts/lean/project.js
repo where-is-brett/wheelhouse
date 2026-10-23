@@ -9,7 +9,12 @@
 //     test: string | null,      the command that tests the product, once one is set
 //     identity: { name, email } | null, who a merge or an undo is committed as
 //     registeredAt: string,     when it was registered, UTC ISO 8601
+//     main?: string | null,     the main version's commit as the helper last moved it (ruling P5-27), once the
+//                               project's git is in the store (scripts/lean/store.js)
+//     realUsers?: boolean,      whether the product has real users, so a chat click never approves a merge
 //   }
+//
+// `main` and `realUsers` are optional: a record without them reads as it did, with neither carried.
 //
 // readProject stays strict (scripts/lib/projects.js), so every caller that needs a host finds no
 // record and refuses. projectForFolder reads this record too, so the hooks place a Lean folder.
@@ -34,6 +39,8 @@ const fullPath = (x) => typeof x === 'string' && path.isAbsolute(x);
 const textOrNull = (x) => x === null || (typeof x === 'string' && x !== '');
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
+const FULL_COMMIT = /^[0-9a-f]{40}$/;
+
 // Each field the record holds, in the order it is written, and what it must be. A later task adds
 // its own row here.
 const FIELDS = [
@@ -43,6 +50,11 @@ const FIELDS = [
   ['test', textOrNull],
   ['identity', (x) => x === null || (isPlain(x) && typeof x.name === 'string' && x.name !== '' && typeof x.email === 'string' && x.email !== '')],
   ['registeredAt', (x) => typeof x === 'string' && TIME.test(x) && !Number.isNaN(Date.parse(x))],
+];
+// Fields a record may leave out, each carried only when it is there (Task 5's store).
+const OPTIONAL = [
+  ['main', (x) => x === null || (typeof x === 'string' && FULL_COMMIT.test(x))],
+  ['realUsers', (x) => typeof x === 'boolean'],
 ];
 
 // stateDir refuses a name that is not a folder name.
@@ -57,6 +69,11 @@ function checked(record) {
     const value = name === 'identity' && isPlain(record.identity) ? { name: record.identity.name, email: record.identity.email } : record[name];
     if (!good(value)) return null;
     kept[name] = value;
+  }
+  for (const [name, good] of OPTIONAL) {
+    if (record[name] === undefined) continue;
+    if (!good(record[name])) return null;
+    kept[name] = record[name];
   }
   return kept;
 }
@@ -101,6 +118,14 @@ function writeLean(project, record) {
     throw error;
   }
   return kept;
+}
+
+// Changes the project's record: `changes` holds the fields to set, and the record is written whole again. Throws
+// when there is no record, or when the record with the changes is not whole.
+export function updateLean(project, changes) {
+  const held = readLean(project);
+  if (held === null) throw new Error('This project is not registered as a Lean project');
+  return writeLean(project, { ...held, ...changes });
 }
 
 const realOrNull = (p) => {
