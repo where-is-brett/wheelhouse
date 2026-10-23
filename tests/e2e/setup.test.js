@@ -54,6 +54,13 @@ waitLongerOnTheHelper();
 const SKIP = process.platform === 'win32' ? 'the session start and setup\'s ending find the helper at the user\'s own named pipe on Windows' : false;
 
 const REPO = 'a-director/Cafe-Menu';
+// The survey's calls when setup finishes (design section 15, ruling A1): it only reads, asking the
+// host for the default branch and the open pull requests. The stand-in `gh` refuses both, so the
+// survey records that it couldn't reach the host.
+const SURVEY_CALLS = [
+  `gh repo view ${REPO} --json defaultBranchRef`,
+  `gh pr list --repo ${REPO} --state open --json number,title,body,headRefName,headRefOid,isDraft,isCrossRepository --limit 100`,
+];
 const SLUG = 'a-director__Cafe-Menu';
 
 // Programs run by name are stand-ins for the whole file (tests/helpers/setup-e2e.js, shimTools), and
@@ -220,9 +227,11 @@ test('a new product: every step\'s card, its click, and a green board at the end
     assert.equal(a.world.checkPins({ folder: a.folder }), 'match');
 
     // Nothing else was run: no installer, no launchctl, no browser, and of the host's tool by name
-    // only the trial pull request's close.
+    // only the trial pull request's close and the survey's two reads.
     assert.deepEqual(a.refused, []);
-    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`]);
+    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
+    const surveys = await a.act(() => listEvents(stateDir(SLUG)).filter((e) => e.kind === 'survey'));
+    assert.deepEqual(surveys.map((e) => [e.data.hostReached, e.data.again]), [[false, undefined]]);
   } finally {
     await a.cleanup();
   }
@@ -528,7 +537,7 @@ test('a second computer joins, and its records count on the first only after Tru
     // Trusted, it is offered no more.
     assert.ok(!(await a.sessionStart()).some((l) => l.startsWith(TRUST_ASK)));
     assert.deepEqual([...a.refused, ...b.refused], []);
-    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`]);
+    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
   } finally {
     await b.cleanup();
     await a.cleanup();
@@ -624,7 +633,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     assert.equal(fs.readFileSync(path.join(a.folder, '.git', 'info', 'exclude'), 'utf8').includes('.wheelhouse'), false, 'no .wheelhouse/ folder, so its line went too (ruling R131)');
 
     assert.deepEqual(a.refused, []);
-    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`]);
+    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
   } finally {
     await a.cleanup();
   }
