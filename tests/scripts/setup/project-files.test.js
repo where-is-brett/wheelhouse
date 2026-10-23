@@ -21,10 +21,10 @@ import { fileURLToPath } from 'node:url';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
-import { LIVE_DATA } from '../../../scripts/setup/questions.js';
+import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
-import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand } from '../../../scripts/protection/settings.js';
+import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile } from '../../../scripts/host/company-ca.js';
@@ -944,6 +944,48 @@ test('the card lists every part on GitLab with a long branch and release, and st
   const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
   assert.ok(long.length <= 1200);
   assert.match(long, /never updates itself/);
+});
+
+test('the card says nothing of the keychain: its denial is a quiet default', () => {
+  const changes = [{ kind: 'json-key', target: '/p/.claude/settings.json', key: ['a'], after: 1 }, { kind: 'host', action: 'protect' }];
+  const text = composeCard({ ...projectFilesCard({ changes, host: 'github', branch: 'main', release: null }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  assert.doesNotMatch(text, /keychain/i);
+});
+
+test('only the director\'s Yes on step 4\'s Apple apps question opens the keychain; a true in the working copy is set back', () => {
+  const folder = tempFolder('wh-keychain-');
+  const answers = (apple) => ({ '4.live-data': { label: LIVE_DATA.no, text: null }, ...(apple ? { '4.apple-apps': { label: apple, text: null } } : {}) });
+  const local = { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin', claudeHome: tempFolder('wh-claude-') };
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const write = (rel, value) => fs.writeFileSync(path.join(folder, '.claude', rel), `${JSON.stringify(value, null, 2)}\n`);
+  const plain = starterConfig({ answers: answers(null), host: 'github' });
+  const edits = (apple) => projectFilesChange({ folder, config: starterConfig({ answers: answers(apple), host: 'github' }), release: null, local });
+  const settingsEdits = (list) => list.filter((c) => c.target.endsWith('settings.json') && !c.target.endsWith('local.json'));
+  const configEdits = (list) => list.filter((c) => c.target.endsWith('wheelhouse.json'));
+  assert.equal(starterConfig({ answers: answers(SIGNS_APPS.yes), host: 'github' }).signsApps, true);
+  assert.equal(Object.hasOwn(starterConfig({ answers: answers(SIGNS_APPS.no), host: 'github' }), 'signsApps'), false);
+
+  // The director said Yes, with the entries there from an earlier setup: the edits take them out.
+  write('wheelhouse.json', plain);
+  write('settings.json', projectSettings(plain));
+  const lifting = settingsEdits(edits(SIGNS_APPS.yes));
+  assert.ok(!JSON.stringify(lifting).includes('Library/Keychains'));
+  assert.ok(lifting.some((c) => c.key.join('.') === 'permissions.deny'));
+  assert.ok(lifting.some((c) => c.key.join('.') === 'sandbox.credentials.files'));
+
+  // An agent wrote signsApps: true into the working copy, and the director gave no Yes: the
+  // keychain stays shut and the configuration is set back to false.
+  write('wheelhouse.json', { ...plain, signsApps: true });
+  write('settings.json', projectSettings(plain));
+  const planted = edits(SIGNS_APPS.no);
+  assert.deepEqual(settingsEdits(planted), []);
+  assert.ok(configEdits(planted).some((c) => c.key?.join('.') === 'signsApps' && c.after === false));
+  assert.deepEqual(settingsEdits(edits(null)), []);
+
+  // Settings that lack the entries, and no Yes: the edits put them in.
+  write('wheelhouse.json', plain);
+  write('settings.json', projectSettings({ ...plain, signsApps: true }));
+  assert.ok(JSON.stringify(settingsEdits(edits(null))).includes(KEYCHAINS));
 });
 
 test('step 7 is setup\'s own step 7, after the host and the questions, run in its own process', () => {

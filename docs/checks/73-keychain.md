@@ -63,3 +63,7 @@ Check 52's `credential-manager-low` line is not yet recorded.
 A Mac sitting of about 5 minutes, with the agent running it. Nothing to type except agreeing to `--consent`: it makes and removes a throwaway keychain and briefly changes, then restores, the keychain search list. The run sheet is `probes/73-keychain/run.md`. The Windows line comes with the Windows sitting for check 52.
 
 The Mac half is done (23 October 2026). Task 10 can add the denial of `~/Library/Keychains` to the sandbox settings, weighing `codesign` and iOS signing, which read the same files. The Windows line still comes with check 52's sitting.
+
+## Built
+
+24 October 2026, on branch `feature/security-pass-66a50a`: each project's settings deny `~/Library/Keychains` through `sandbox.credentials.files` and the Read tool's deny rules (`scripts/protection/settings.js`), as a quiet default with no card. Setup's step 4 asks whether builds sign Apple apps only for a project that looks like an iPhone or Mac app, and only that Yes writes `"signsApps": true`; later the switch moves by a reviewed pull request with the director's approval. Locked's computer-wide file leaves it to each project. The tool guard's refusal of a plain `security find-generic-password` command line, Task 10's other part, is not built yet.

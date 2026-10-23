@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
@@ -71,6 +71,47 @@ test('the sandbox is on, with no unsandboxed retry, and the network list from th
   assert.deepEqual(s.sandbox.filesystem.denyWrite.slice(0, 2), ['~/.wheelhouse', '~/.claude']);
   assert.equal(s.autoCompactWindow, 300000);
   assert.equal(s.sandbox.network.allowUnixSockets, undefined);
+});
+
+test('the keychain files are shut to sandboxed commands and the Read tool, so a build can\'t read the director\'s sign-ins (check 73)', () => {
+  assert.equal(KEYCHAINS, '~/Library/Keychains');
+  const s = projectSettings(config);
+  assert.deepEqual(s.sandbox.credentials.files, [{ path: '~/Library/Keychains', mode: 'deny' }]);
+  assert.ok(s.permissions.deny.includes('Read(~/Library/Keychains)'));
+  assert.ok(s.permissions.deny.includes('Read(~/Library/Keychains/**)'));
+});
+
+test('the host tools\' token variables are taken out of sandboxed commands\' environment, whatever the project signs', () => {
+  assert.deepEqual([...HOST_TOKENS], ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN']);
+  for (const c of [config, { ...config, signsApps: true }]) {
+    assert.deepEqual(projectSettings(c).sandbox.credentials.envVars, HOST_TOKENS.map((name) => ({ name, mode: 'deny' })));
+  }
+});
+
+test('a project whose configuration says it signs apps leaves the keychain open, and nothing else changes', () => {
+  const shut = projectSettings(config);
+  const open = projectSettings({ ...config, signsApps: true });
+  assert.ok(!strings(open).some((x) => x.includes('Library/Keychains')));
+  assert.deepEqual(open.sandbox.credentials.files, []);
+  assert.deepEqual(withoutKeychainDenial(shut), open);
+});
+
+test('only signsApps: true opens the keychain; any other value keeps it shut', () => {
+  for (const signsApps of [false, 'true', 'yes', 1, null, {}, []]) {
+    assert.deepEqual(projectSettings({ ...config, signsApps }).sandbox.credentials.files, [{ path: KEYCHAINS, mode: 'deny' }], JSON.stringify(signsApps));
+  }
+});
+
+test('withoutKeychainDenial takes out only the keychain entries, from settings merged with the director\'s own, and changes nothing given', () => {
+  const merged = mergeSettings({ permissions: { deny: ['Bash(rm:*)'] }, sandbox: { credentials: { files: [{ path: '~/.mine', mode: 'deny' }] } } }, projectSettings(config));
+  const before = JSON.stringify(merged);
+  const lifted = withoutKeychainDenial(merged);
+  assert.equal(JSON.stringify(merged), before);
+  assert.deepEqual(lifted.sandbox.credentials.files, [{ path: '~/.mine', mode: 'deny' }]);
+  assert.ok(lifted.permissions.deny.includes('Bash(rm:*)'));
+  assert.ok(!strings(lifted).some((x) => x.includes('Library/Keychains')));
+  assert.deepEqual(lifted.sandbox.credentials.envVars, merged.sandbox.credentials.envVars);
+  assert.deepEqual(withoutKeychainDenial({}), {});
 });
 
 test('the local settings allow only the helper\'s socket', () => {

@@ -10,8 +10,13 @@
 //              routing?: { frontDesk, foreman, builder, reviewer, reviewerCritical, tester, mechanical },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
 //              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
-//              glabFrom?: string }
+//              glabFrom?: string, signsApps?: boolean }
 // Other keys are kept and ignored.
+//
+// `signsApps: true` says the project's builds sign Mac or iOS apps, which needs the keychain, so
+// the project's settings leave it open (scripts/protection/settings.js, check 73). Left out or
+// false, the keychain stays shut. The file is a guardrail, so the switch moves only by a reviewed
+// pull request with the director's approval.
 //
 // The build loop's keys (build-loop design, section 11; main design, section 8),
 // filled in by readConfig when left out:
@@ -117,6 +122,7 @@ function shapeOk(c) {
       && contain.command.length > 0 && contain.command[0] !== '')) return false;
   }
   if (c.pages !== undefined && !(Array.isArray(c.pages) && c.pages.length <= MOST_PAGES && c.pages.every(isPage))) return false;
+  if (c.signsApps !== undefined && typeof c.signsApps !== 'boolean') return false;
   return buildLoopOk(c);
 }
 

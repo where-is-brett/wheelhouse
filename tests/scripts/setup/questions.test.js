@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { questionsStep, readmeDescription, LIVE_DATA, PRODUCT, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
+import { questionsStep, readmeDescription, signsAppleApps, LIVE_DATA, PRODUCT, SIGNS_APPS, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
 import { REAL_USERS, LEVELS } from '../../../scripts/setup/host.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
@@ -18,7 +18,8 @@ import { eventHash, makeEvent } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
-import { withProject, T0 } from '../../helpers/setup-answers.js';
+import { withProject, T0, lay } from '../../helpers/setup-answers.js';
+import { tempFolder } from '../../helpers/homes.js';
 
 const README = '# Café Menu\n\n![badge](x.svg)\n\nCafé Menu lets a small café put its menu online, for its regulars to read on their phones. It is built with care.\n';
 
@@ -216,4 +217,50 @@ test('the README\'s words are offered as the card shows them, with any sign-in i
     const got = await answer(asked.ask.card, PRODUCT.readme);
     assert.equal(got[0].body.data.plain, 'Café Menu is served from https://[hidden]@menu.example.com for its regulars.');
   }, { files: { 'README.md': '# Café Menu\n\nCafé Menu is served from https://tok3nvalue@menu.example.com for its regulars.\n' } });
+});
+
+test('a project looks like it signs Apple apps by an Xcode project or workspace, fastlane, or codesign in its build scripts', () => {
+  const looks = (files) => {
+    const folder = tempFolder('wh-apple-');
+    lay(folder, files);
+    return signsAppleApps(folder);
+  };
+  assert.equal(looks({ 'README.md': README }), false);
+  assert.equal(looks({ 'package.json': '{"scripts":{"test":"node --test"}}' }), false);
+  assert.equal(looks({ 'ios/Cafe.xcodeproj/project.pbxproj': '' }), true);
+  assert.equal(looks({ 'Cafe.xcworkspace/contents.xcworkspacedata': '' }), true);
+  assert.equal(looks({ 'fastlane/Fastfile': 'lane :beta do\nend\n' }), true);
+  assert.equal(looks({ 'Fastfile': '' }), true);
+  assert.equal(looks({ 'package.json': '{"scripts":{"sign":"codesign --sign X build/App.app"}}' }), true);
+  assert.equal(looks({ 'Makefile': 'sign:\n\tcodesign -s X App.app\n' }), true);
+  // Not inside folders a build fills or another package brings.
+  assert.equal(looks({ 'node_modules/x/X.xcodeproj/project.pbxproj': '' }), false);
+  assert.equal(looks({ '.git/X.xcodeproj/project.pbxproj': '' }), false);
+});
+
+test('step 4 asks whether the project signs Apple apps only when it looks like it does, after live data, and the step settles with the answer', async () => {
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.no });
+    const product = await plan(4);
+    await answer(product.ask.card, PRODUCT.readme);
+    const live = await plan(4);
+    await answer(live.ask.card, LIVE_DATA.no);
+    const apple = await plan(4);
+    assert.equal(apple.ask.id, 'apple-apps');
+    assert.deepEqual(apple.ask.card.options.map((o) => o.label), [SIGNS_APPS.no, SIGNS_APPS.yes]);
+    assert.match(apple.ask.card.question, /sign/i);
+    assert.doesNotMatch(apple.ask.card.question, /keychain/i, 'plain words: no jargon on the card');
+    await answer(apple.ask.card, SIGNS_APPS.yes);
+    const done = await plan(4);
+    assert.deepEqual(done, { ok: true, done: true });
+  }, { files: { 'README.md': README, 'Cafe.xcodeproj/project.pbxproj': '' } });
+});
+
+test('a project that doesn\'t look like it signs Apple apps is never asked', async () => {
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.no });
+    await answer((await plan(4)).ask.card, PRODUCT.readme);
+    await answer((await plan(4)).ask.card, LIVE_DATA.no);
+    assert.deepEqual(await plan(4), { ok: true, done: true });
+  }, { files: { 'README.md': README } });
 });
