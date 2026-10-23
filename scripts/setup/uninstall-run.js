@@ -50,6 +50,7 @@ import { readProject, registeredProjects } from '../lib/projects.js';
 import { runClosed } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
 import { stopState } from '../lib/stop.js';
+import { removeLoginStart } from '../lib/login-start.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { profileRemote } from '../profile/store.js';
@@ -535,6 +536,11 @@ export async function applyUninstall({
         case 'remove-plugin':
           say(`${entry.line}.`);
           break;
+        case 'remove-login-start': {
+          const got = await removeLoginStart({ run, platform });
+          say(got.removed ? 'What starts Wheelhouse\'s helper when you sign in is removed.' : `What starts Wheelhouse's helper when you sign in is not removed: ${got.why}.`);
+          break;
+        }
         default:
           halt(`uninstall's list holds a change it can't make (${entry.put})`);
       }

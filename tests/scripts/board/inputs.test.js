@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { HELPER_WAIT_MS } from '../../../scripts/lib/core-numbers.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { registerLean, updateLean } from '../../../scripts/lean/project.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
@@ -355,5 +356,40 @@ test('a shorter waitMs is how long a helper that never answers is waited for', a
       assert.equal(found.project, P);
       assert.match(texts(found).join('\n'), /helper/i);
     }
+  });
+});
+
+// Ruling P5-31 (carry-overs b and c): a Lean project's board carries its agent's Lean lines, the helper's block
+// only while the helper answers, and the line for a tool the agent has that Wheelhouse doesn't know (Review
+// Focus 1). A project on a code host gets no agent line until Part 6 places its tier.
+test('a Lean project\'s board has its agent\'s Lean lines and says when an agent update waits on Wheelhouse', async () => {
+  const home = shortHome();
+  await as(home, async () => {
+    const folder = path.join(home, 'shop');
+    fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
+    registerLean({ project: 'shop', folder, now: () => NOW });
+    updateLean('shop', { agent: 'copilot', helper: true });
+    put(path.join(stateDir('shop'), 'events', '2026', 'u1.json'), {
+      v: 1, id: 'u1', at: '2026-10-19T11:00:00.000Z', computer: 'c1', kind: 'note', data: { mark: 'unknown-tool', name: 'apply_patch_v2' },
+    });
+    const up = texts(await loadBoardInputs({ cwd: folder, client: fakeClient({ health: { ok: true } }), now: () => NOW }));
+    assert.ok(up.includes('Copilot: Nothing is held off this computer except the copy in your folder'), up.join('\n'));
+    assert.ok(up.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'), up.join('\n'));
+    assert.ok(up.includes('Copilot has a tool Wheelhouse doesn\'t know yet, `apply_patch_v2`: it is refused until Wheelhouse is updated'), up.join('\n'));
+    // The helper not answering: the lines of a computer with no guard, though Node.js runs here.
+    const down = texts(await loadBoardInputs({ cwd: folder, client: fakeClient({ health: { ok: false } }), now: () => NOW }));
+    assert.ok(down.includes('Approvals are clicks in the chat, recorded as not proven'), down.join('\n'));
+    assert.ok(!down.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'));
+    // A Lean record that names no agent gives no agent line.
+    updateLean('shop', { helper: true, agent: undefined });
+    const none = texts(await loadBoardInputs({ cwd: folder, client: fakeClient(), now: () => NOW }));
+    assert.ok(!none.some((t) => /^Copilot/.test(t)), none.join('\n'));
+  });
+  // A project on a code host: no agent line.
+  const home2 = shortHome();
+  await as(home2, async () => {
+    const repo = register(home2);
+    const lines = texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), now: () => NOW }));
+    assert.ok(!lines.some((t) => /^Copilot|Nothing is held off/.test(t)), lines.join('\n'));
   });
 });

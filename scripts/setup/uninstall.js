@@ -99,6 +99,8 @@
 //       'remove' { target }                  a file, or a folder whole, of Wheelhouse's own
 //       'remove-empty' { target }            a folder of Wheelhouse's own, only once it is empty
 //       'remove-plugin' { line }             the line the director follows in Claude Desktop
+//       'remove-login-start' { kind, target } the sign-in start the helper's install made, while it holds
+//                                            what was written (scripts/lib/login-start.js)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -109,6 +111,7 @@ import { run as realRun } from '../lib/run.js';
 import { wheelhouseHome, keysDir, profileDir, projectsDir, computerId } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
+import { loginStartRecord } from '../lib/login-start.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, writeWhole } from '../lib/setup-clicks.js';
@@ -685,6 +688,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (last && !items.some((i) => i.entry.put === 'delete-key') && exists(path.join(keysDir(), 'github-app.json'))) add('keys', -1, { put: 'delete-key', key: 'github-app', before: null, ...(shared ? { shared: true } : {}) });
   if (!last && usedApp && !shared) add('keys', -1, { put: 'untick-repository', key: 'github-app', repo: own.record.repo });
   if (!last && usedApp && shared) kept(`the GitHub app's access to ${own.record.repo}`, OTHERS_USE);
+  // The sign-in start the helper's own install made (design section 8.5), on the last project, if there is one.
+  // Recorded nowhere in the journal: its record is in Wheelhouse's home (scripts/lib/login-start.js).
+  const loginStart = last ? loginStartRecord() : null;
+  if (loginStart !== null) add('computer', -1, { put: 'remove-login-start', kind: loginStart.kind, target: loginStart.path });
 
   // The project's own folder under projects/, and on the last project Wheelhouse's own folders and
   // files, recorded or not; the trusted-keys list and the signing key go last of all (rulings R123,
@@ -905,6 +912,9 @@ function entryLine(e, userHome) {
     case 'remove': return `remove ${shown(e.target, userHome)}`;
     case 'remove-empty': return `remove ${shown(e.target, userHome)} once it is empty`;
     case 'remove-plugin': return e.line;
+    case 'remove-login-start': return e.kind === 'run-entry'
+      ? 'remove the start-up entry that starts Wheelhouse\'s helper when you sign in'
+      : `remove ${shown(e.target, userHome)}, which starts Wheelhouse's helper when you sign in`;
     default: return e.put;
   }
 }

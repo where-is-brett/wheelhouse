@@ -389,9 +389,14 @@ test('the board chooses its block by whether the helper is installed and answeri
   assert.match(board, /whether Wheelhouse's own helper is installed here and answering/);
   assert.doesNotMatch(playbook, /Node\.js may run/, 'the rule no longer keys off Node.js');
   assert.match(board, /Having Node\.js on the computer doesn't count/);
-  assert.match(board, /not used until the helper exists/);
+  // Ruling P5-31: the helper exists now, and its block is used while `<lean> status` answers.
+  assert.doesNotMatch(board, /not used until the helper exists/);
+  assert.match(board, /The helper answers when `<lean> status` prints `"ok":true`/);
   assert.match(board, /never switch a board to the third block because `node --version` printed a version/);
-  assert.ok(playbook.includes('On a Mac or Windows where Wheelhouse\'s helper is installed and answering (not used until the helper exists):'));
+  assert.ok(playbook.includes('On a Mac or Windows where Wheelhouse\'s helper is installed and answering (`<lean> status` prints `"ok":true`):'));
+  // Windows where Node.js runs has the first block's guard line (safetyLine), so the first block names it.
+  assert.ok(playbook.includes('On a Mac, or on Windows where Node.js runs, with no helper answering:'));
+  assert.ok(playbook.includes('On Windows without Node.js:'));
   // The third block is the helper's: its guard lines are the ones safetyLine gives where Node.js runs, and it is last.
   const blocks = [...playbook.matchAll(/^```\nTier: Lean\n([\s\S]*?)^```$/gm)].map((m) => m[1]);
   assert.equal(blocks.length, 3);
@@ -685,7 +690,8 @@ test('every safety line safetyLine gives for Lean is in the playbook exactly, fo
   const cases = [
     { name: 'a Mac without Node.js', options: { platform: 'darwin', node: false } },
     { name: 'Windows without Node.js', options: { platform: 'win32', node: false } },
-    { name: 'a computer where Node.js may run', options: { platform: 'darwin', node: true } },
+    { name: 'a computer where the helper answers', options: { platform: 'darwin', node: true, helper: true } },
+    { name: 'Windows where Node.js runs and the helper doesn\'t answer', options: { platform: 'win32', node: true, helper: false } },
   ];
   // The source says "{{agent}}" where the line names the product, so the source stays free of its name (the kit says it).
   const inSource = (line) => line.replaceAll('Copilot', '{{agent}}');
@@ -697,8 +703,8 @@ test('every safety line safetyLine gives for Lean is in the playbook exactly, fo
       assert.ok(leanKit.includes(`- ${line}\n`), `${name}: the kit lacks "${line}"`);
     }
   }
-  // Windows with Node.js says what the Mac does.
-  assert.deepEqual(safetyLine({ tier: 'lean', platform: 'win32', node: true }), safetyLine({ tier: 'lean', platform: 'darwin', node: true }));
+  // Windows with the helper says what the Mac does.
+  assert.deepEqual(safetyLine({ tier: 'lean', platform: 'win32', node: true, helper: true }), safetyLine({ tier: 'lean', platform: 'darwin', node: true, helper: true }));
 });
 
 test('the playbook names a case for the board by what the computer allows, not by guessing', () => {

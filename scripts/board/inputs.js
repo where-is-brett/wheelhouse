@@ -37,6 +37,7 @@ import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { phonePushResult } from '../lib/setup-run.js';
 import { readSeen } from '../briefing/seen.js';
+import { readLean } from '../lean/project.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
@@ -130,7 +131,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const waitMs = Number.isInteger(asked) && asked > FACTS_MARGIN_MS && asked <= most ? asked : most;
   const found = attempt(() => (typeof cwd === 'string' && path.isAbsolute(cwd) ? projectOf(cwd) : null));
   if (!found) return { none: NOT_A_PROJECT };
-  const { project, record, locked } = found;
+  const { project, record, locked, lean } = found;
   // The time as a Date: an unreadable clock gives an invalid one, which the model names.
   const clock = () => attempt(() => new Date(typeof now === 'function' ? now() : now), new Date(NaN));
   const clockRead = !Number.isNaN(clock().getTime());
@@ -173,6 +174,13 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
 
   // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.
   const since = offline ? null : attempt(() => readSeen(project, { now: clock }).briefedAt);
-  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, now: clock, since });
+  // A Lean project's agent lines (ruling P5-31): the agent its record names, at Lean, where Node.js runs this
+  // board, with the helper's block only while the helper answers. A project on a code host gets none until its
+  // tier is placed.
+  const leanAgent = lean === true ? attempt(() => readLean(project)?.agent) : undefined;
+  const agent = typeof leanAgent === 'string'
+    ? { name: leanAgent, tier: 'lean', helper: known.helperUp === true, node: true, platform: process.platform }
+    : undefined;
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, agent, now: clock, since });
   return { project, model, usage, sources, settings };
 }

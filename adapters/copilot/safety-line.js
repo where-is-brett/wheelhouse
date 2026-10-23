@@ -22,27 +22,30 @@ function networkLine(platform) {
   return 'Nothing on this computer holds the network against a program that connects directly';
 }
 
-// What Lean says of Wheelhouse's guards: with Node.js they run as Copilot hooks (design section 6.4); without
-// it, on the Mac a shell guard can run once the kit holds one (check 69), and on Windows none is known yet.
-function leanGuards({ node, platform, shellGuard }) {
-  if (node) return { line: null, running: true };
+// What Lean says of Wheelhouse's guards (ruling P5-31): while Wheelhouse's helper answers they run as Copilot
+// hooks (design section 6.4). Without it, on the Mac a shell guard can run once the kit holds one (check 69); on
+// Windows none is known yet without Node.js, and where Node.js runs none runs until the helper does.
+function leanGuards({ helper, node, platform, shellGuard }) {
+  if (helper) return { line: null, running: true };
   if (platform === 'darwin') {
     return shellGuard
       ? { line: 'Wheelhouse\'s shell guard runs on this Mac, and refuses a command it can\'t check', running: true }
       : { line: 'No Wheelhouse guards run on this computer yet', running: false };
   }
+  if (node) return { line: 'No Wheelhouse guards run on this computer yet', running: false };
   if (platform === 'win32') return { line: 'No Wheelhouse guards run on Windows without Node.js, until a way is found', running: false };
   return { line: 'No Wheelhouse guards run on this computer without Node.js', running: false };
 }
 
+// The helper's block is chosen by `helper` alone, never by `node`: Node.js on the computer runs no guard.
 function lean(options) {
-  const { node, addOn } = options;
+  const { helper, addOn } = options;
   const guards = leanGuards(options);
   const lines = ['Nothing is held off this computer except the copy in your folder'];
-  lines.push(node || addOn
+  lines.push(helper || addOn
     ? 'Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'
     : 'Approvals are clicks in the chat, recorded as not proven');
-  if (node) lines.push('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks');
+  if (helper) lines.push('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks');
   else if (addOn) lines.push('STOP is enforced by the add-on, which also cancels the chat\'s running request');
   else lines.push('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request');
   if (guards.line !== null) lines.push(guards.line);
@@ -79,18 +82,19 @@ export function updateWaiting(name) {
   return `Copilot has a tool Wheelhouse doesn't know yet, \`${name}\`: it is refused until Wheelhouse is updated`;
 }
 
-// safetyLine({ tier, level, platform, node, addOn, sandbox, shellGuard, phoneStop }) -> string[]
+// safetyLine({ tier, level, platform, node, helper, addOn, sandbox, shellGuard, phoneStop }) -> string[]
 //   tier        'lean' (the default), 'middle' or 'full'
 //   level       at Middle and Full, the level builds run at: 'sandbox', 'guarded', 'ask' or 'unattended' (default 'ask')
 //   platform    the system, as process.platform names it
 //   node        whether Wheelhouse's own Node.js program may run here
+//   helper      whether Wheelhouse's helper is installed here and answering (at Lean, its block is chosen by this)
 //   addOn       whether the VS Code add-on is installed
 //   sandbox     whether Copilot's sandbox is in use, at a level that is not 'sandbox' itself
 //   shellGuard  whether the kit holds the Mac's shell guard (check 69; false until the kit is built with it)
 //   phoneStop   whether a route to STOP from the phone exists (check 12 finds none yet)
-export default function safetyLine({ tier = 'lean', level, platform = process.platform, node = false, addOn = false, sandbox, shellGuard = false, phoneStop = false } = {}) {
+export default function safetyLine({ tier = 'lean', level, platform = process.platform, node = false, helper = false, addOn = false, sandbox, shellGuard = false, phoneStop = false } = {}) {
   if (!TIERS.includes(tier)) throw new Error(`${JSON.stringify(tier)} is not a tier; the tiers are ${TIERS.join(', ')}`);
   if (level !== undefined && !LEVELS.includes(level)) throw new Error(`${JSON.stringify(level)} is not a level; the levels are ${LEVELS.join(', ')}`);
-  if (tier === 'lean') return lean({ node: node === true, addOn: addOn === true, platform, shellGuard: shellGuard === true });
+  if (tier === 'lean') return lean({ node: node === true, helper: helper === true, addOn: addOn === true, platform, shellGuard: shellGuard === true });
   return upper({ level: level ?? 'ask', sandbox, platform, phoneStop });
 }

@@ -246,8 +246,8 @@ test('at Lean without Node.js the guard line follows the system and whether the 
   assert.ok(lines({ tier: 'lean', platform: 'linux' }).includes('No Wheelhouse guards run on this computer without Node.js'));
 });
 
-test('at Lean with Node.js or the add-on, approvals and STOP are no longer the bare chat\'s', () => {
-  const node = lines({ tier: 'lean', platform: 'darwin', node: true });
+test('at Lean with the helper or the add-on, approvals and STOP are no longer the bare chat\'s', () => {
+  const node = lines({ tier: 'lean', platform: 'darwin', node: true, helper: true });
   assert.equal(node[0], 'Nothing is held off this computer except the copy in your folder');
   assert.ok(!node.includes('Approvals are clicks in the chat, recorded as not proven'));
   assert.ok(node.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'));
@@ -262,6 +262,25 @@ test('at Lean with Node.js or the add-on, approvals and STOP are no longer the b
   for (const out of [node, addOn]) {
     for (const line of ['Copilot\'s command prompts aren\'t a control', 'Tests and second looks at a change aren\'t independent of the agent that built it', 'Not for projects with real users']) assert.ok(out.includes(line), line);
   }
+});
+
+test('at Lean the helper\'s lines follow whether the helper answers, never whether Node.js runs (ruling P5-31)', () => {
+  const helperBlock = lines({ tier: 'lean', platform: 'darwin', node: true, helper: true });
+  assert.ok(helperBlock.includes('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks'));
+  // Node.js runs but no helper answers: the lines of a computer with no guard, on either system.
+  const macNode = lines({ tier: 'lean', platform: 'darwin', node: true, helper: false });
+  assert.deepEqual(macNode, lines({ tier: 'lean', platform: 'darwin', node: false }));
+  const winNode = lines({ tier: 'lean', platform: 'win32', node: true });
+  assert.ok(winNode.includes('No Wheelhouse guards run on this computer yet'), 'where Node.js runs, Windows waits only for the helper');
+  assert.ok(!winNode.some((line) => /without Node\.js/.test(line)));
+  assert.ok(winNode.includes('Approvals are clicks in the chat, recorded as not proven'));
+  assert.ok(winNode.includes('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
+  assert.ok(!winNode.some((line) => /time-out|seconds/.test(line)));
+  // Without Node.js the Windows line stays as it was.
+  assert.ok(lines({ tier: 'lean', platform: 'win32', node: false }).includes('No Wheelhouse guards run on Windows without Node.js, until a way is found'));
+  // The helper answering is the helper's block whatever `node` says, on Windows as on the Mac.
+  assert.deepEqual(lines({ tier: 'lean', platform: 'win32', node: true, helper: true }), helperBlock);
+  assert.deepEqual(lines({ tier: 'lean', platform: 'darwin', helper: true }), helperBlock);
 });
 
 // Spec section 6.6's ten items, by the first words each line must begin or contain.

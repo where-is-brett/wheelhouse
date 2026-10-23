@@ -12,9 +12,13 @@
 //     main?: string | null,     the main version's commit as the helper last moved it (ruling P5-27), once the
 //                               project's git is in the store (scripts/lean/store.js)
 //     realUsers?: boolean,      whether the product has real users, so a chat click never approves a merge
+//     agent?: string,           the coding agent the project runs on here, set by the helper's install
+//     helper?: boolean,         whether Wheelhouse's helper is installed for the project: true from its install,
+//                               false once its uninstall has run (the store and the state stay)
 //   }
 //
-// `main` and `realUsers` are optional: a record without them reads as it did, with neither carried.
+// `main`, `realUsers`, `agent` and `helper` are optional: a record without them reads as it did, with none
+// carried.
 //
 // readProject stays strict (scripts/lib/projects.js), so every caller that needs a host finds no
 // record and refuses. projectForFolder reads this record too, so the hooks place a Lean folder.
@@ -31,7 +35,8 @@ import { STATE_BRANCH } from '../state/clone.js';
 export const LEAN_NO_HOST = 'a Lean project has no code host';
 // What setup and uninstall answer in a folder registered as a Lean project (ruling P5-47): they read
 // a host's record, which a Lean project has not got, and would take away its only copy of the state.
-export const LEAN_FOLDER = 'This folder is registered as a Lean project, so setup and uninstall leave it alone: a Lean project is set up and removed through its own install.';
+// The folder may be the Lean project's own or one inside it, so the line says either.
+export const LEAN_FOLDER = 'This folder is a Lean project\'s, or inside one, so setup and uninstall leave it alone: a Lean project is set up and removed by the install and uninstall of Wheelhouse\'s helper.';
 
 const LEAN_FILE = 'lean.json';
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -55,6 +60,8 @@ const FIELDS = [
 const OPTIONAL = [
   ['main', (x) => x === null || (typeof x === 'string' && FULL_COMMIT.test(x))],
   ['realUsers', (x) => typeof x === 'boolean'],
+  ['agent', (x) => typeof x === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(x)],
+  ['helper', (x) => typeof x === 'boolean'],
 ];
 
 // stateDir refuses a name that is not a folder name.

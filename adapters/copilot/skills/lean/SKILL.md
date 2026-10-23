@@ -100,9 +100,9 @@ The board is `wheelhouse/board.md` in the project. Rewrite the whole file, not a
 
 **The board is a view, not state.** It is a file git ignores, so anyone sharing the folder can edit it and git will not show it. What is true is what is committed on the main version: STOP, what was reviewed, what was approved. Take no decision about STOP, a review or an approval from the board; where it disagrees with the record, say so to the director in a line and follow the record.
 
-**Its first line is the tier, and its next lines are the safety lines.** Choose the block for this computer: a Mac or Windows, and whether Wheelhouse's own helper is installed here and answering (setup found out, and the board from last time says); there is no add-on at Lean. Having Node.js on the computer doesn't count: the helper is a Wheelhouse program that setup doesn't install, and no guard runs without it. **The helper's block (the third) is not used until the helper exists, which is a later part of Wheelhouse's build;** until then, use the Mac block on a Mac and the Windows block on Windows, with or without Node.js, and never switch a board to the third block because `node --version` printed a version. Copy the lines of that block exactly, with a dash in front of each.
+**Its first line is the tier, and its next lines are the safety lines.** Choose the block for this computer: a Mac or Windows, and whether Wheelhouse's own helper is installed here and answering; there is no add-on at Lean. **The helper answers when `<lean> status` prints `"ok":true`** (With Wheelhouse's helper, below): ask it each time you rewrite the board, and use the third block only then. Having Node.js on the computer doesn't count: the helper is a Wheelhouse program of its own, installed only when the director approves it, and no guard runs without it. So never switch a board to the third block because `node --version` printed a version. With no helper answering, use the first block on a Mac, and on Windows where Node.js runs; the second on Windows without Node.js. Copy the lines of that block exactly, with a dash in front of each.
 
-On a Mac, with no helper installed (Node.js or not):
+On a Mac, or on Windows where Node.js runs, with no helper answering:
 
 ```
 Tier: Lean
@@ -116,7 +116,7 @@ Tier: Lean
 - Not for projects with real users
 ```
 
-On Windows, with no helper installed (Node.js or not):
+On Windows without Node.js:
 
 ```
 Tier: Lean
@@ -130,7 +130,7 @@ Tier: Lean
 - Not for projects with real users
 ```
 
-On a Mac or Windows where Wheelhouse's helper is installed and answering (not used until the helper exists):
+On a Mac or Windows where Wheelhouse's helper is installed and answering (`<lean> status` prints `"ok":true`):
 
 ```
 Tier: Lean
@@ -258,7 +258,10 @@ Steps that touch a code host don't apply at Lean. These do:
 
 ## With Wheelhouse's helper
 
-Where Wheelhouse's helper runs on this computer, the session's start gives a line "The Lean command is "<node>" "<root>/scripts/lean/cli.js"". Call that whole quoted pair `<lean>`. Run `<lean> status` in the project's folder. If it prints `"ok":true`, the helper answers, and **this section replaces The record, Merging, Undo and The copy above**: the helper writes the record and moves the main version, and you ask it through `<lean>`. If it prints anything else, or there is no such line, the helper isn't answering: follow the sections above as they read, and the board uses the blocks for no helper.
+Where Wheelhouse's helper is installed on this computer, the session's start gives a line "The Lean command is "<node>" "<root>/scripts/lean/cli.js"". Call that whole quoted pair `<lean>`. Run `<lean> status` in the project's folder. If it prints `"ok":true`, the helper answers, and **this section replaces The record, Merging, Undo and The copy above**: the helper writes the record and moves the main version, and you ask it through `<lean>`.
+
+- **The line is there but `status` doesn't print `"ok":true`:** the helper is installed and isn't running (on a work computer it doesn't start at sign-in). Its start command is the same pair with `scripts/agents/{{agent-id}}/start-helper.js` in place of `scripts/lean/cli.js`, and `start` after it; call it `<start> start`. Say in a line that Wheelhouse's helper isn't running and that {{agent}} will ask them to allow its start command, then run it. It prints "Wheelhouse's helper is running", or why not; then ask `status` again. Until it answers, writes, merges and new agents are refused (the guards say so) and reading carries on; never merge or move the main version yourself meanwhile, and the board uses the blocks for no helper.
+- **There is no such line:** the helper isn't installed. Follow the sections above as they read, and the board uses the blocks for no helper. If `node --version` prints v22 or later on a Mac or Windows, offer the helper once in the session, with the cards in `wheelhouse:setup` (Wheelhouse's helper, where Node.js runs); on **Not now**, don't offer it again unless the director asks.
 
 The project's git lives in Wheelhouse's own folder, and this folder is a worktree of it, so **the main version is checked out nowhere**. Never check the main version itself out here (only detached, as below), and never merge, revert or push yourself. To look at the main version, `git switch --detach main`.
 
@@ -326,4 +329,4 @@ Nothing checks the sources at Lean: the weekly check is a Wheelhouse program, an
 | "The reviewer said clean, so it's independent" | It is a second look in a chat that reads the same instructions. Say so |
 | "The board says STOP is off, or lists a line waiting, so that's so" | The board is a view anyone sharing the folder can edit. STOP comes from the record; an earlier session's waiting line is asked about on a card |
 | "The builder committed again, but the review was clean a minute ago" | Only the head a clean review line names gets an approval card. Review again |
-| "Node.js is here, so the board can show the helper's lines" | The helper is not installed. Show the lines for what runs now |
+| "Node.js is here, so the board can show the helper's lines" | Only `<lean> status` printing `"ok":true` does. Show the lines for what runs now |

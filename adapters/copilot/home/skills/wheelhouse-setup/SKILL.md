@@ -113,12 +113,13 @@ Ask the computer, once, in the project's terminal: `git --version`, `node --vers
 - **Copilot's command line** (`copilot --version`) is not needed at Lean either. Say what was found, in a line, and move on.
 - **A remote** (`origin`): note it in a line. Lean keeps everything on this computer and in the copy folder; the record never goes to the remote. The `wheelhouse-lean` skill says how work goes up to a code host as a merge request.
 
-Then say which tier this is, in one sentence: "This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat". If Node.js 22 or later runs, add one more sentence: Wheelhouse's helper can add more here (guards and a record the helper writes), and it comes in a later part of Wheelhouse's build.
+Then say which tier this is, in one sentence: "This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat". If Node.js 22 or later runs on a Mac or Windows, add one more sentence: Wheelhouse's helper can add more here (guards and a record the helper writes), and you offer it later on this page (Wheelhouse's helper, where Node.js runs).
 
-**Which board case applies.** The board's first lines say what holds on this computer, so choose by what is running now, not what could run. The helper isn't installed by this setup, so no Wheelhouse guard runs even where Node.js does. Until the helper is installed, the board shows the lines for a computer without Node.js, even where Node.js runs:
+**Which board case applies.** The board's first lines say what holds on this computer, so choose by what is running now, not what could run. No Wheelhouse guard runs until the helper is installed and answering, even where Node.js does. Until the helper is installed, the board shows the lines for a computer with no guard, even where Node.js runs:
 
-- **A Mac:** the lines for a Mac without Node.js. Its guard line is "No Wheelhouse guards run on this computer yet".
-- **Windows:** the lines for Windows without Node.js. Its guard line is "No Wheelhouse guards run on Windows without Node.js, until a way is found".
+- **A Mac:** the lines for a Mac with no helper. Its guard line is "No Wheelhouse guards run on this computer yet".
+- **Windows without Node.js:** the lines for Windows without Node.js. Its guard line is "No Wheelhouse guards run on Windows without Node.js, until a way is found".
+- **Windows where Node.js runs:** the same lines as a Mac with no helper, whose guard line is "No Wheelhouse guards run on this computer yet".
 - **Linux:** the board has no lines for it yet. Say that Wheelhouse at Lean is built for a Mac or Windows, and stop after this step with nothing more to do; the kit is in place.
 
 ## Step 4: set up the project
@@ -291,6 +292,18 @@ VS Code and Copilot's runtime update every week, and Wheelhouse can't pin them. 
 3. **There is one:** say in a line that these versions have been tested.
 4. **There isn't:** say plainly, "Your versions of VS Code and Copilot aren't tested yet: Wheelhouse hasn't run its safety scenarios on them. It still works, and the board's lines say what to rely on." At first the table has no passed rows, so this is expected. Setup doesn't stop for it.
 
+## Wheelhouse's helper, where Node.js runs
+
+Only where Step 3 found Node.js 22 or later on a Mac or Windows; otherwise leave this out and go on. Wheelhouse's helper is Wheelhouse's own program, in the release you copied: it enforces STOP and the guards as Copilot hooks, writes the record, keeps the project's git in Wheelhouse's own folder so only it moves the main version, runs the tests on the approved commit, and confirms the steps that matter most in its own window. Installing it fetches nothing: everything it needs came with the release. It changes this computer, so it is the director's call, on a card.
+
+The helper's command is `node "$HOME/.copilot/wheelhouse/<tag>/scripts/agents/copilot/start-helper.js"` (the release under `$HOME/.copilot/wheelhouse/`); call it `<start>`. Run it in the project's folder.
+
+1. **Ask two cards first.** "Is this a work computer?" (what: whether a company looks after this computer; why: a company's security software may treat a program that starts at sign-in as suspicious, so on a work computer the helper doesn't start at sign-in and runs once the director allows its start command; options **Yes, a work computer** and **No, my own**; no recommendation, it is theirs to say; meanwhile nothing changes). Then "Does the product have real users?" (why: with real users a merge is approved only in Wheelhouse's own window, never by a click in the chat; options **Yes** and **Not yet**; meanwhile nothing changes). Ask, in a line, for the command that tests the product, such as `npm test`, if it has one; none is an answer.
+2. **The plan.** Run `<start> plan --work-computer yes|no --real-users yes|no`, adding `--test '<the command>'` when there is one. It changes nothing, and prints the changes, one line each, and a last line `Hash: <hash>`.
+3. **The card.** Ask one card with those lines, as they are: what (these changes to this computer and this project), why (the helper is what makes STOP and the guards hold here), options **Approve** and **Not now**, recommend **Approve**, meanwhile (Lean as it is now: approvals are chat clicks and no guard runs).
+4. **On Approve,** run `<start> install --hash <hash>` with the same answers. That is the one command the director allows in Copilot's own prompt for it. It prints "Wheelhouse's helper is installed for <project>" and "Wheelhouse's helper is running". If it prints anything else, say it in a line; nothing more is changed. On **Not now**, carry on without it; asking for the helper later brings this back.
+5. **After it,** the board uses the helper's block once the helper answers (`wheelhouse-lean`, The board), and `wheelhouse-lean` takes over with the helper's own section. On a work computer, say plainly: "The helper doesn't start by itself here. When you open VS Code, I'll ask you to allow its start command once."
+
 ## What setup leaves behind
 
 Say it in a short list at the end, in plain words, and that "set up Wheelhouse" again is safe: each step checks first.
@@ -298,6 +311,7 @@ Say it in a short list at the end, in plain words, and that "set up Wheelhouse" 
 - In `~/.copilot/`: Wheelhouse's skills, agents and instructions (every name starts `wheelhouse`), and `wheelhouse/<tag>/`, the release it came from. Nothing outside it changed.
 - In the project: `.vscode/settings.json` (Wheelhouse's settings added, if the director approved), `.gitignore` (the three ignore lines), `.wheelhouse/record/` (empty, tracked), `wheelhouse/board.md` (not committed), and one commit, "Set up Wheelhouse at Lean".
 - The remote `wheelhouse-copy`, and a bare copy of the project in the folder the director chose, if they chose one.
+- Where the director approved Wheelhouse's helper: the hook file in `~/.copilot/hooks/`, the sign-in start (none on a work computer), and the project's git in Wheelhouse's own folder, with this folder a worktree of it. `<start> uninstall` takes the hook file and the sign-in start away again when no other project needs them, and leaves the project's history and record in place.
 
 Then point to the next step: "Tell me what you'd like built, or say 'show me the board'." From here the chat follows `wheelhouse-lean`.
 
@@ -312,4 +326,5 @@ Then point to the next step: "Tell me what you'd like built, or say 'show me the
 | "I'll stage everything for the first commit" | Only the three files named. The director's own work stays theirs. |
 | "They typed 'yes' to the folder card" | Only a click answers. Ask it again. |
 | "They gave me their password so I can push" | Stop them. It goes in git's sign-in window, once, never in the chat. |
-| "Node.js is here, so the board can show the lines for Node.js" | The helper isn't installed by this setup. Show the lines for what runs now. |
+| "Node.js is here, so the board can show the lines for Node.js" | Only the helper answering changes the lines, and only once the director approved it. Show the lines for what runs now. |
+| "The director said yes in the chat, so I'll run the install" | Only a click on **Approve** on the helper's card. Ask it. |
