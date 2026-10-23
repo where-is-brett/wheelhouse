@@ -8,6 +8,8 @@
 //
 //   node scripts/agents/copilot/home.js           prints the paths that differ from adapters/copilot/home/, exit 1 if any
 //   node scripts/agents/copilot/home.js --write   replaces adapters/copilot/home/ with what buildHome gives
+//   node scripts/agents/copilot/home.js --plugin  adds the plugin's folder to that check (adapters/copilot/plugin/)
+//   --write also writes the plugin: the same skills and agents, with the plugin's manifest and no hooks
 //   --root <folder> builds from, and writes under, another copy of the tree (the tests use it)
 //
 // The kit is plain text and byte-stable: LF line endings, paths in order, every file ending in one newline.
@@ -23,6 +25,8 @@ import { startedAsScript } from '../../lib/started-as-script.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const HOME_DIR = 'adapters/copilot/home';
+// The Copilot CLI plugin (design section 8.3, ruling P8-15): its own root, holding the kit's skills and agents and nothing else.
+export const PLUGIN_DIR = 'adapters/copilot/plugin';
 const BUILD_COMMAND = 'npm run copilot-home';
 
 // Ruling P4-9: the names Claude Code gives its tools, in backticks, become Copilot's.
@@ -325,15 +329,66 @@ export function writeHome({ root = REPO } = {}) {
   return [...built.keys()];
 }
 
+// ---- The plugin ----
+
+// The plugin as a map from relative path to text: the kit's skills and agents (the same bytes, with the path comment saying
+// where the copy sits), the manifest that names them and the MANIFEST. No hooks key and no hooks folder: Copilot would
+// load them, and the hooks are the person's own (check 56).
+export function buildPlugin({ root = REPO } = {}) {
+  const files = new Map();
+  for (const [file, text] of buildHome({ root })) {
+    if (!file.startsWith('skills/') && !file.startsWith('agents/')) continue;
+    const comment = `<!-- ${HOME_DIR}/${file} `;
+    if (!text.includes(`\n${comment}`)) throw new Error(`${file} does not carry its path comment`);
+    files.set(file, text.replace(`\n${comment}`, `\n<!-- ${PLUGIN_DIR}/${file} `));
+  }
+  let version = '0.0.0';
+  try {
+    version = JSON.parse(readSource(root, 'package.json')).version ?? version;
+  } catch { /* a copy of the tree without package.json gets the placeholder */ }
+  files.set('plugin.json', `${JSON.stringify({
+    name: 'wheelhouse',
+    version,
+    description: 'Wheelhouse\'s skills and agents for Copilot CLI. It carries no hooks.',
+    skills: 'skills/',
+    agents: 'agents/',
+  }, null, 2)}\n`);
+  files.set('MANIFEST.txt', manifestOf(files));
+  return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+}
+
+// Where the committed plugin differs from what buildPlugin gives, as repository-relative paths.
+export function checkPlugin({ root = REPO } = {}) {
+  const built = buildPlugin({ root });
+  const have = committedFiles(path.join(root, ...PLUGIN_DIR.split('/')));
+  const differ = new Set();
+  for (const [file, text] of built) if (have.get(file) !== text) differ.add(file);
+  for (const file of have.keys()) if (!built.has(file)) differ.add(file);
+  return [...differ].sort().map((file) => `${PLUGIN_DIR}/${file}`);
+}
+
+export function writePlugin({ root = REPO } = {}) {
+  const built = buildPlugin({ root });
+  const dir = path.join(root, ...PLUGIN_DIR.split('/'));
+  fs.rmSync(dir, { recursive: true, force: true });
+  for (const [file, text] of built) {
+    const target = path.join(dir, ...file.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+  }
+  return [...built.keys()];
+}
+
 function main(argv) {
   const rootAt = argv.indexOf('--root');
   const root = rootAt >= 0 ? path.resolve(argv[rootAt + 1]) : REPO;
   if (argv.includes('--write')) {
     const written = writeHome({ root });
-    process.stdout.write(`Wrote ${written.length} files to ${HOME_DIR}\n`);
+    const plugin = writePlugin({ root });
+    process.stdout.write(`Wrote ${written.length} files to ${HOME_DIR} and ${plugin.length} to ${PLUGIN_DIR}\n`);
     return 0;
   }
-  const differ = checkHome({ root });
+  const differ = [...checkHome({ root }), ...(argv.includes('--plugin') ? checkPlugin({ root }) : [])];
   if (differ.length > 0) process.stdout.write(`${differ.join('\n')}\n`);
   return differ.length > 0 ? 1 : 0;
 }
