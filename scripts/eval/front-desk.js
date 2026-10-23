@@ -226,6 +226,11 @@ function hookText({ body, views, events, seen, usage, home, plugin }) {
   return null;
 }
 
+// The environment variable naming the front desk's model for a run. The front desk runs on the most
+// capable model (design section 8), which the repository never names, so the run is given it; both
+// variants take it, so the two are told apart by Wheelhouse alone.
+export const FRONT_DESK_MODEL = 'WHEELHOUSE_EVAL_FRONT_DESK_MODEL';
+
 // Sets `dir`, the scratch project, up as the project's main checkout for the front desk, and
 // starts the stand-in helper. Options:
 //   files       the project's files, { relative: text }, committed on main
@@ -244,14 +249,11 @@ function hookText({ body, views, events, seen, usage, home, plugin }) {
 //               time of the director's last prompt, or null for none, and with Wheelhouse the
 //               board context hook's text comes on each prompt (promptContext)
 //   usage       the usage figures the briefing reads, or null
+//   env         the environment the front desk's model is read from (FRONT_DESK_MODEL)
 // Resolves with the context runScenario takes: { env, pluginDirs, appendSystemPrompt, helper,
-// seededIds, evidence, hooksGave, head, close }, with `reload`, the session start's text over the
-// seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added, in order.
-// The environment variable naming the front desk's model for a run. The front desk runs on the most
-// capable model (design section 8), which the repository never names, so the run is given it; both
-// variants take it, so the two are told apart by Wheelhouse alone.
-export const FRONT_DESK_MODEL = 'WHEELHOUSE_EVAL_FRONT_DESK_MODEL';
-
+// seededIds, evidence, hooksGave, head, close, model, modelVariable }, with `reload`, the session
+// start's text over the seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added,
+// in order. `model` is null when the environment names none, and runScenario then runs nothing.
 export async function setUpFrontDesk(dir, variant, {
   files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null, env = process.env,
 } = {}) {
