@@ -29,7 +29,8 @@ import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeWaker, sessionFile } from '../../../scripts/watcher/waker.js';
 import { run as runProgram } from '../../../scripts/lib/run.js';
-import { g } from '../../helpers/git-fixture.js';
+import { g, makeBareRemote } from '../../helpers/git-fixture.js';
+import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { withHome } from '../../helpers/homes.js';
 import {
@@ -237,6 +238,81 @@ test('start makes its branch and worktree afresh, refusing ones no recorded feat
     assert.equal(call.opts.env.GIT_ALLOW_PROTOCOL, 'https');
     assert.equal(call.opts.env.GIT_TERMINAL_PROMPT, '0');
   }
+}));
+
+// A main checkout whose origin is a stand-in host at the address setup recorded, one commit behind
+// the host's main: the commit `ahead` was pushed there from another clone.
+async function behindHost() {
+  const checkout = await project({ git: true });
+  const remote = await makeBareRemote({ repo: 'o/p' });
+  await g(checkout, 'remote', 'add', 'origin', remote.url);
+  await g(checkout, 'push', '-q', 'origin', 'main');
+  const other = fs.realpathSync.native(fs.mkdtempSync(path.join(path.dirname(remote.root), 'wh-other-')));
+  await g(other, 'clone', '-q', remote.url, '.');
+  fs.writeFileSync(path.join(other, 'NEW.md'), 'Merged since.\n');
+  await g(other, 'add', 'NEW.md');
+  await g(other, 'commit', '-q', '-m', 'Merged since');
+  await g(other, 'push', '-q', 'origin', 'main');
+  const ahead = await g(other, 'rev-parse', 'HEAD');
+  writeProject(P, { ...readProject(P), remoteUrl: remote.url });
+  return { checkout, remote, ahead, cleanup: () => { remote.cleanup(); fs.rmSync(other, { recursive: true, force: true }); } };
+}
+
+test('start brings the default branch up to date from the address setup recorded before it makes the worktree', () => withHome(async () => {
+  const p = await behindHost();
+  try {
+    const gitCalls = [];
+    const run = (file, args, opts) => { gitCalls.push({ args, opts }); return runProgram(file, args, opts); };
+    const fake = fakeClient({ views: startViews() });
+    const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+    assert.equal(r.code, 0, r.err);
+    const wt = path.join(p.checkout, '.claude', 'worktrees', 'add-export');
+    assert.equal(await g(wt, 'rev-parse', 'HEAD'), p.ahead, 'the worktree starts from the host\'s main');
+    assert.equal(await g(p.checkout, 'rev-parse', 'refs/remotes/origin/main'), p.ahead);
+    assert.match(r.out, /^Brought origin\/main up to date\.$/m);
+    // The fetch names the recorded address, never the remote, takes only the default branch, runs in
+    // the fence with the local transport its address needs, and comes before the worktree is made.
+    const fetches = gitCalls.filter((c) => c.args.includes('fetch'));
+    assert.equal(fetches.length, 1);
+    const { args, opts } = fetches[0];
+    assert.equal(args.includes('origin'), false);
+    assert.ok(args.includes(p.remote.url));
+    assert.equal(args.at(-1), '+refs/heads/main:refs/remotes/origin/main');
+    assert.equal(opts.env.GIT_ALLOW_PROTOCOL, 'https:file');
+    assert.equal(opts.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(opts.env.GIT_CONFIG_GLOBAL, NULL_FILE);
+    const order = gitCalls.map((c) => c.args.find((a) => ['fetch', 'worktree'].includes(a))).filter(Boolean);
+    assert.deepEqual(order, ['fetch', 'worktree']);
+  } finally { p.cleanup(); }
+}));
+
+test('a fetch that fails, or an origin that is not the recorded address, leaves the copy fetched last and says so', () => withHome(async () => {
+  const p = await behindHost();
+  try {
+    const before = await g(p.checkout, 'rev-parse', 'refs/remotes/origin/main');
+    // The recorded address is not there: the worktree starts from the copy fetched last.
+    writeProject(P, { ...readProject(P), remoteUrl: path.join(p.remote.root, 'gone', 'o', 'p.git') });
+    await g(p.checkout, 'remote', 'set-url', 'origin', readProject(P).remoteUrl);
+    const fake = fakeClient({ views: startViews() });
+    const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(await g(path.join(p.checkout, '.claude', 'worktrees', 'add-export'), 'rev-parse', 'HEAD'), before);
+    assert.match(r.out, /^origin\/main couldn't be brought up to date from the host, so the worktree starts from the copy fetched last/m);
+    assert.equal(r.out.split('\n').filter((l) => l.startsWith('origin/main')).length, 1);
+  } finally { p.cleanup(); }
+
+  // An origin an agent pointed elsewhere is not fetched from, by either address.
+  const q = await behindHost();
+  try {
+    const gitCalls = [];
+    const run = (file, args, opts) => { gitCalls.push(args); return runProgram(file, args, opts); };
+    await g(q.checkout, 'remote', 'set-url', 'origin', 'https://example.invalid/x/y.git');
+    const fake = fakeClient({ views: startViews() });
+    const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(gitCalls.some((a) => a.includes('fetch')), false);
+    assert.match(r.out, /^origin\/main wasn't brought up to date: the main checkout's origin isn't the address setup recorded, so the worktree starts from the copy fetched last/m);
+  } finally { q.cleanup(); }
 }));
 
 test('the foreman refuses, naming it, a worktree in a checkout whose config sets core.alternateRefsCommand or a hook, and nothing runs', () => withHome(async () => {

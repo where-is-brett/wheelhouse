@@ -110,8 +110,8 @@
 // so the two never meet. The answer still names the work (core.js's
 // workOfQuestion), so it wakes that feature's session too.
 //
-// Git runs only in the main checkout, to make the worktree, with hooks and
-// fsmonitor off. Everything read from a worktree goes through the safe
+// Git runs only in the main checkout, to bring the default branch up to date
+// and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -142,7 +142,11 @@ import { TO_KNOW_MORE } from '../lib/calm-words.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram } from '../lib/run.js';
-import { LookRefusal, safeGit } from '../lib/safe-git.js';
+import { LookRefusal, directorSignIn, safeGit } from '../lib/safe-git.js';
+import { readProject } from '../lib/projects.js';
+import { sameRemote } from '../state/git.js';
+import { companyGitEnv, gitlabBaseOf } from '../host/company-ca.js';
+import { batchSshCommand, reachOfOrigin } from '../install/survey.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
 } from '../protection/windows-builds.js';
@@ -361,6 +365,47 @@ function checkRepoConfig(checkout) {
   }
 }
 
+// Brings the main checkout's copy of the default branch (`base`, refs/remotes/origin/<name>) up to
+// date before a worktree is made from it, through the fenced route. Only that one branch is fetched,
+// from the address setup recorded, never from the one origin names (ruling R111), and only when
+// origin is that address, so the copy stays origin's. An https address signs in as the director
+// (with the company's certificate for a company GitLab), as the survey's fetch does; ssh runs with
+// BatchMode on. A fetch that fails, or an origin that isn't the recorded address, leaves the copy
+// fetched last and says so: the gate brings a branch up to date before it merges. A look that
+// refuses the repository's settings refuses the start, as it does for every other call here.
+async function fetchBase(ctx, git, checkout, base) {
+  const name = base.slice('refs/remotes/origin/'.length);
+  const record = readProject(ctx.project);
+  const origin = await git(['remote', 'get-url', 'origin']);
+  const url = typeof record?.remoteUrl === 'string' ? record.remoteUrl : null;
+  if (origin.code !== 0 || url === null || !sameRemote(String(origin.stdout ?? '').trim(), url)) {
+    ctx.say(`origin/${name} wasn't brought up to date: the main checkout's origin isn't the address setup recorded, so the worktree starts from the copy fetched last.`);
+    return;
+  }
+  const reach = reachOfOrigin(url, { platform: ctx.platform });
+  const signIn = reach === 'ssh' ? { GIT_SSH_COMMAND: batchSshCommand() }
+    : reach === 'https' ? companyGitEnv(directorSignIn(record.host, { platform: ctx.platform }), { host: record.host, base: gitlabBaseOf(record) ?? undefined })
+      : {};
+  const fenced = safeGit({
+    run: ctx.run, cwd: checkout, reach, look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
+  });
+  let fetched;
+  try {
+    fetched = await fenced(['fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', url, `+refs/heads/${name}:${base}`], {
+      env: { ...signIn, GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
+    });
+  } catch (e) {
+    if (e instanceof LookRefusal) refuse(e.message);
+    fetched = { code: 1, stderr: e instanceof Error ? e.message : '' };
+  }
+  if (fetched.code === 0) {
+    ctx.say(`Brought origin/${name} up to date.`);
+    return;
+  }
+  const why = fetched.timedOut ? 'it took too long' : oneLine(fetched.stderr || fetched.stdout || 'git gave no reason', 160);
+  ctx.say(`origin/${name} couldn't be brought up to date from the host, so the worktree starts from the copy fetched last (${why}).`);
+}
+
 // The worktree on a branch made now from the default branch, in the main
 // checkout. A feature/<work> branch or worktree folder that is there already
 // was not made by a recorded start (a recorded feature never reaches here), so
@@ -387,6 +432,7 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   if (head.code !== 0 || !BASE_REF.test(base) || base.includes('..')) {
     refuse("The main checkout doesn't name its default branch (refs/remotes/origin/HEAD), so no worktree was made");
   }
+  await fetchBase(ctx, git, checkout, base);
   const kept = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   if (kept.code === 0) refuse(`The branch ${branch} is there already, but no recorded feature made it: ask the director`);
   const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, base]);
