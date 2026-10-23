@@ -74,6 +74,9 @@ import { takeSurvey, recordSurvey } from '../survey/take.js';
 import { rulesOf } from './rules.js';
 import { carryOnCard } from '../survey/words.js';
 import { composeCard } from '../cards/compose.js';
+import { localViews } from '../hooks/session-start.js';
+import { readProfileViews } from '../profile/store.js';
+import { effectiveSettings } from '../settings/effective.js';
 
 export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
@@ -695,13 +698,13 @@ export function removeTrialLeftover(folder) {
 // stops setup: one that fails, or that the state refuses, is recorded as one that missed the host
 // (scripts/survey/take.js). Only the helper records a survey: `writeSurvey(project, data)` is its
 // own writer, which the helper hands setup's routes; with none, nothing is recorded.
-// `start(project)`, `brief(project)`, `look({ rules })` (the survey taken) and `adapterFor(record)` (the
-// host's adapter the survey asks) are for tests. The survey carries the rules step 5 found, as
+// `start(project)`, `brief(project)`, `look({ rules })` (the survey taken), `adapterFor(record)` (the
+// host's adapter the survey asks) and `autonomy(project, at)` (the Autonomy in force) are for tests. The survey carries the rules step 5 found, as
 // `{ words, source }`, in the director's own words where their sessions from before the run hold
 // them (plan ruling P7). `surveyDeadlineMs` is the survey's time limit, for tests.
 export async function finishSetup({
   project, client = helperClient({ timeout: BRIEFING_WAIT_MS * 2 }), now = () => new Date(), spawn, load = loadBoardInputs,
-  start, brief, adapterFor, userHome = os.homedir(), surveyDeadlineMs,
+  start, brief, adapterFor, userHome = os.homedir(), surveyDeadlineMs, autonomy = autonomyOf,
   look = ({ rules }) => takeSurvey({ project, rules, ...(adapterFor ? { adapter: adapterFor } : {}), ...(surveyDeadlineMs ? { deadlineMs: surveyDeadlineMs } : {}) }),
   writeSurvey = async () => ({ ok: false, refused: 'only the helper records a survey' }),
 } = {}) {
@@ -725,7 +728,7 @@ export async function finishSetup({
   let card = null;
   try {
     if (brief) briefing = await brief(project);
-    else ({ briefing, card } = await firstBriefing(project, { client, now, load, survey }));
+    else ({ briefing, card } = await firstBriefing(project, { client, now, load, survey, autonomy }));
   } catch { /* the front desk briefs at the next visit */ }
   return { started, briefing, ...(card === null ? {} : { card }) };
 }
@@ -760,8 +763,14 @@ async function startForeman(project, { client, spawn }) {
 // and at Trusting its line says Wheelhouse is carrying it on (ruling A9); the card says that line,
 // so a survey with no other is marked as mentioned all the same. A card that couldn't be recorded
 // leaves the line in, as A2 has it.
-async function firstBriefing(project, { client, now, load, survey }) {
+async function firstBriefing(project, { client, now, load, survey, autonomy }) {
   const at = now();
+  // Read on its own, so board inputs that fail to load can't ask the card at Trusting; an Autonomy
+  // that can't be read asks no card, and the briefing says the line instead.
+  let level = null;
+  try {
+    level = autonomy(project, at);
+  } catch { /* none read */ }
   const record = readProject(project);
   const folder = record?.folder;
   if (typeof folder !== 'string') return { briefing: null, card: null };
@@ -771,8 +780,8 @@ async function firstBriefing(project, { client, now, load, survey }) {
   } catch { /* no briefing now; the card is still asked */ }
   const host = record.host ?? null;
   const settings = inputs?.settings;
-  const carrying = settings?.autonomy?.value === 'trusting';
-  const card = survey === null || carrying ? null : await askCarryOn(project, { client, folder, survey, host, record });
+  const carrying = level === 'trusting';
+  const card = survey === null || carrying || (level !== 'cautious' && level !== 'balanced') ? null : await askCarryOn(project, { client, folder, survey, host, record });
   if (!inputs?.model) return { briefing: null, card };
   const seen = readSeen(project, { now: at });
   const { model, usage, sources } = inputs;
@@ -782,6 +791,18 @@ async function firstBriefing(project, { client, now, load, survey }) {
   });
   markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}), ...(given.surveyShown ? { surveyAt: given.surveyShown } : {}) });
   return { briefing: given.text, card };
+}
+
+// The Autonomy in force for the project, as the settings views on this computer give it: the
+// project's over the director's own, over the default.
+function autonomyOf(project, at) {
+  const isPlainObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const views = localViews(project, ['settings']);
+  const profile = readProfileViews();
+  const settings = effectiveSettings({
+    project: isPlainObject(views?.settings) ? views.settings : {}, profile: isPlainObject(profile?.settings) ? profile.settings : {}, now: at,
+  });
+  return settings.autonomy?.value ?? null;
 }
 
 // The carry-on card for the work in flight the survey found (ruling A9), recorded through the

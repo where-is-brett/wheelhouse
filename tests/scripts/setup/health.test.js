@@ -905,8 +905,10 @@ const boardAt = (autonomy) => async () => ({
 function writingClient(writes, answer = (body) => ({ ok: true, id: `e${writes.length}` })) {
   return { state: { write: async (body) => { writes.push(body); return answer(body); } } };
 }
-const finishWith = (survey, { autonomy, client }) => finishSetup({
-  project: SLUG, writeSurvey: async () => ({ ok: true, id: 'survey-1' }), look: async () => survey, start: async () => 'started', client, load: boardAt(autonomy), now: () => T0,
+// The Autonomy is read on its own (`autonomy`), as the settings views give it; the board inputs carry it too.
+const finishWith = (survey, { autonomy, client, load = boardAt(autonomy) }) => finishSetup({
+  project: SLUG, writeSurvey: async () => ({ ok: true, id: 'survey-1' }), look: async () => survey, start: async () => 'started', client, load, now: () => T0,
+  autonomy: () => autonomy ?? 'balanced',
 });
 const CARD_ASK = 'Wheelhouse found work already under way in Cafe-Menu: 1 change waiting to be merged on GitHub, and 2 pieces of unfinished work on this computer. Shall I carry them on?';
 // The briefing's plain words may say "merged" in other words, as the board-context hook gives it.
@@ -939,6 +941,15 @@ test('at Trusting there is no card: the briefing says the work is being carried 
     assert.deepEqual(writes, []);
     assert.match(done.briefing, TRUSTING_LINE);
     assert.equal(readSurveyAt(SLUG), 'survey-1');
+  });
+});
+
+test('at Trusting, board inputs that fail to load still ask no card', async () => {
+  await withProject(async () => {
+    const writes = [];
+    const done = await finishWith(IN_FLIGHT, { autonomy: 'trusting', client: writingClient(writes), load: async () => { throw new Error('no inputs'); } });
+    assert.equal(done.card, undefined);
+    assert.deepEqual(writes, []);
   });
 });
 
