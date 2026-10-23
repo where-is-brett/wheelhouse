@@ -360,12 +360,13 @@ function statusLines(run, steps, running) {
 // the session's trial lines, and `finish` is the last thing setup does once the board is green
 // (scripts/setup/health.js's healthCheck and finishSetup; tests give their own); `closeTrial`
 // closes the trial pull request step 10 left open (closeOpenTrial); `copy` copies a run's clicks
-// and answers into its project's state (copyRunRecords, ruling R45).
+// and answers into its project's state (copyRunRecords, ruling R45); `writeSurvey(project, data)`
+// the helper's own writer of the survey finishSetup takes (scripts/survey/take.js).
 export function setupRoutes({
   now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
-  health = healthCheck, finish = (args) => finishSetup({ ...args, now }), closeTrial = (args) => closeOpenTrial(args),
-  copy = copyRunRecords,
+  writeSurvey, health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
+  closeTrial = (args) => closeOpenTrial(args), copy = copyRunRecords,
 } = {}) {
   let loaded = null;
   const steps = () => (loaded ??= loadSteps(stepsModule).catch((error) => { loaded = null; throw error; }));
@@ -664,7 +665,7 @@ export function setupRoutes({
       try {
         await copy(run.id, run.folder);
       } catch { /* the records stay in setup's own folder; the ending goes on */ }
-      return { ...answerOf(got), ...(await finish({ project: got.project })) };
+      return { ...answerOf(got), ...(await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) })) };
     });
     healthQueue.set(found.id, turn);
     try {

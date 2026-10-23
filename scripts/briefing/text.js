@@ -1,8 +1,9 @@
 // scripts/briefing/text.js
 // The arrival briefing in words (design section 23.5): the verdict first, the same sentence as the
 // pane's, then when the last briefing was ("Since 09:10, about 5 hours"); then, in section 5.2's
-// order, anything not in effect until the director confirms it, what waits on them (numbered, each
-// with its one line and its recommendation, an optional one marked with its time), what changed
+// order, anything not in effect until the director confirms it, what the survey of the project found
+// (once), what waits on them (numbered, each with its one line and its recommendation, an optional
+// one marked with its time), what changed
 // for users, progress and what to watch, each label in sentence case and "+2" on the ones with
 // something new since the last briefing. A part with nothing in it has no label: the empty ones
 // are folded into one italic line. The foot is usage, "Ask me anything." and the full board.
@@ -53,16 +54,17 @@ function partLines(part) {
 // A part with no entries isn't shown, so it has no words.
 const partWords = (part) => (part.items.length === 0 ? 0 : partLines(part).reduce((sum, line) => sum + wordsIn(line), 0));
 
-// briefingParts(briefing, { words }) -> { text, shownWatch }: the briefing as text, within `words`
-// (the standard length when `words` isn't a positive whole number), and how many of `watch`'s
-// entries the text shows. The weekly lines, then unusual use, come first in `watch`, so the caller
+// briefingParts(briefing, { words }) -> { text, shownWatch, shownFound }: the briefing as text,
+// within `words` (the standard length when `words` isn't a positive whole number), and how many of
+// `watch`'s and `found`'s entries the text shows. The weekly lines, then unusual use, come first in
+// `watch`, so the caller
 // marks as raised only the unusual items within `shownWatch`, the items the director was really told.
 export function briefingParts(briefing, options) {
   try {
     const words = isRecord(options) ? options.words : undefined;
     return write(isRecord(briefing) ? briefing : {}, Number.isInteger(words) && words > 0 ? words : BRIEFING_WORDS.standard);
   } catch {
-    return { text: UNWORDED, shownWatch: 0 };
+    return { text: UNWORDED, shownWatch: 0, shownFound: 0 };
   }
 }
 
@@ -82,20 +84,22 @@ function write(b, limit) {
   const plus = isRecord(b.plus) ? b.plus : {};
   const parts = [
     { heading: labelled('Not in effect until you confirm'), items: first },
+    { heading: labelled('Found here'), items: entries(b.found) },
     { heading: labelled('Waiting on you', plus.waiting), items: waiting, numbered: true },
     { heading: labelled('Changed for users', plus.changed), items: entries(b.changed) },
     { heading: labelled('Progress'), items: entries(b.progress) },
     { heading: labelled('To watch'), items: entries(b.watch) },
   ].map((part) => ({ ...part, shown: part.items.length, hidden: false }));
   const watch = parts.at(-1);
+  const found = parts[1];
   // The verdict opens the briefing; without one of its own it is worked out from what waits.
   let verdict = oneLine(b.verdict) || verdictOf({ waiting: waiting.length, broken: 0 });
   let since = oneLine(b.since);
   // The parts with nothing in them (the first part, rare, is left out silently) fold into one line.
   let folded = foldedParts([
-    ...(parts[2].items.length === 0 ? ['briefingChanged'] : []),
-    ...(parts[3].items.length === 0 ? ['briefingProgress'] : []),
-    ...(parts[4].items.length === 0 ? ['briefingWatch'] : []),
+    ...(parts[3].items.length === 0 ? ['briefingChanged'] : []),
+    ...(parts[4].items.length === 0 ? ['briefingProgress'] : []),
+    ...(parts[5].items.length === 0 ? ['briefingWatch'] : []),
   ]);
   // A usage line longer than the whole briefing may be is left out.
   let usage = typeof b.usage === 'string' ? oneLine(b.usage) : '';
@@ -103,7 +107,7 @@ function write(b, limit) {
   if (wordsIn(usage) > limit) usage = '';
   let ask = `${ASK_ME_ANYTHING} ${FULL_BOARD}`;
 
-  const waitingPart = parts[1];
+  const waitingPart = parts[2];
   let detail = 0;
   const counted = parts.map(partWords);
   const framingWords = () => wordsIn(verdict) + wordsIn(since) + wordsIn(folded) + wordsIn(usage) + wordsIn(ask);
@@ -118,19 +122,19 @@ function write(b, limit) {
   while (total > limit) {
     let pick = -1;
     for (let i = 0; i < parts.length; i += 1) {
-      if (i !== 1 && parts[i].shown > 0 && (pick === -1 || parts[i].shown >= parts[pick].shown)) pick = i;
+      if (i !== 2 && parts[i].shown > 0 && (pick === -1 || parts[i].shown >= parts[pick].shown)) pick = i;
     }
     if (pick === -1) {
       if (detail < 2 && waitingPart.items.length > 0) {
         detail += 1;
         waitingPart.items = waitingAt(detail);
         const now = partWords(waitingPart);
-        total += now - counted[1];
-        counted[1] = now;
+        total += now - counted[2];
+        counted[2] = now;
         continue;
       }
       if (waitingPart.shown === 0) break;
-      pick = 1;
+      pick = 2;
     }
     parts[pick].shown -= 1;
     const now = partWords(parts[pick]);
@@ -147,7 +151,7 @@ function write(b, limit) {
     total -= wordsIn(ask);
     ask = '';
   }
-  for (const i of [4, 3, 2, 0, 1]) {
+  for (const i of [5, 4, 3, 1, 0, 2]) {
     if (total <= limit || parts[i].items.length === 0) continue;
     parts[i].hidden = true;
     total -= counted[i];
@@ -166,5 +170,6 @@ function write(b, limit) {
     // With every part gone, the board still has what was cut.
     text: text.length > 0 ? text.join('\n\n') : ASK_FOR_THE_BOARD.split(' ').slice(0, limit).join(' '),
     shownWatch: watch.hidden ? 0 : watch.shown,
+    shownFound: found.hidden ? 0 : found.shown,
   };
 }

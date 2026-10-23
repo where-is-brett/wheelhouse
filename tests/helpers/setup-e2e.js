@@ -110,9 +110,10 @@ export function shutOutGitConfig() {
 // notes its arguments in `log` and refuses (tests/helpers/host-stand-ins.js), but for `gh pr close`,
 // which it takes: the helper's own routes run `gh` by name with no stand-in of the test's to give
 // them (the trial pull request's close, scripts/setup/health.js's closeOpenTrial), so this is where
-// the host's tool is stood in for them. `calls()` gives what was run, one line each.
-export function shimTools() {
-  return standInTools({ accept: { gh: [['pr', 'close']] } });
+// the host's tool is stood in for them. `answer` gives what read calls print, as standInTools takes
+// it (the survey's list of open pull requests, say). `calls()` gives what was run, one line each.
+export function shimTools({ answer = {} } = {}) {
+  return standInTools({ accept: { gh: [['pr', 'close']] }, answer });
 }
 
 // ---- gh's official release, and a computer without gh ----

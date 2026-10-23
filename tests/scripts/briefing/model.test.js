@@ -217,7 +217,7 @@ test('unconfirmed changes and what waits come straight from the board model', ()
   // Nothing in it throws, whatever it is given.
   for (const odd of [undefined, null, {}, { model: 'x' }, { model: { director: 7, build: [], missing: 'x' }, usage: 3, sources: [] }]) {
     assert.deepEqual(briefingModel(odd), {
-      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false,
+      verdict: 'Nothing needs you. Nothing is broken.', since: '', first: [], found: [], foundId: null, waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false,
       plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
     });
   }
@@ -401,4 +401,46 @@ test('usage is on track while the week\'s figures are known, none is unusual and
   assert.equal(on(null), false);
   assert.equal(on(usageWith({ week: { tokens: 10, usd: 1, share: 100 } })), false);
   assert.equal(on(usageWith({ week: known, unusual: [{ id: 'session:a', kind: 'session', tokens: 3000000, median: 400000, unit: 'tokens', cause: 'a long review' }] })), false);
+});
+
+// The survey the briefing mentions once (design section 15, plan Task 4).
+const SURVEY = (parts = {}, id = 's-1') => ({
+  id, at: '2026-10-19T09:00:00.000Z',
+  data: { v: 1, hostReached: true, requests: [], pushed: [], local: [], instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [], ...parts },
+});
+const REQUESTS = { requests: [{ number: 3, title: 'Add a map', draft: false }] };
+
+test('the survey is in the briefing until a briefing has shown it, and its id says which', () => {
+  const brief = (extra) => briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, ...extra });
+  const fresh = brief({ survey: SURVEY(REQUESTS), host: 'github' });
+  assert.deepEqual(fresh.found, ['Already under way here: 1 change waiting to be merged on GitHub. Say if you\'d like me to carry it on.']);
+  assert.equal(fresh.foundId, 's-1');
+  // One already shown is not in the next, and a later survey is.
+  assert.deepEqual(brief({ survey: SURVEY(REQUESTS), host: 'github', surveyAt: 's-1' }).found, []);
+  assert.equal(brief({ survey: SURVEY(REQUESTS), host: 'github', surveyAt: 's-1' }).foundId, null);
+  assert.equal(brief({ survey: SURVEY(REQUESTS, 's-2'), host: 'github', surveyAt: 's-1' }).foundId, 's-2');
+  // Lines can be left out by name, for a caller that says them itself.
+  assert.deepEqual(brief({ survey: SURVEY(REQUESTS), host: 'github', leaveOut: ['inFlight'] }).found, []);
+});
+
+test('a survey whose every line the caller says itself still has its id, so it is marked as mentioned', () => {
+  const brief = (extra) => briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, ...extra });
+  const covered = brief({ survey: SURVEY(REQUESTS), host: 'github', leaveOut: ['inFlight'] });
+  assert.deepEqual([covered.found, covered.foundId], [[], 's-1']);
+  // One already mentioned, or with nothing to say, has none.
+  assert.equal(brief({ survey: SURVEY(REQUESTS), host: 'github', leaveOut: ['inFlight'], surveyAt: 's-1' }).foundId, null);
+  assert.equal(brief({ survey: SURVEY(), host: 'github', leaveOut: ['inFlight'] }).foundId, null);
+});
+
+test('a project with nothing in flight and no other instructions has nothing found, and no survey is as good', () => {
+  const brief = (survey) => briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, survey, host: 'github' });
+  for (const survey of [SURVEY(), SURVEY({ scheduled: 2, secrets: 1, rules: [{ words: 'Be kind', source: { file: 'CLAUDE.md', line: 3 } }] }), null, undefined, 'junk', { id: 's', data: null }]) {
+    const b = brief(survey);
+    assert.deepEqual([b.found, b.foundId], [[], null]);
+  }
+});
+
+test('a survey that missed the host says so in one line', () => {
+  const b = briefingModel({ model: {}, usage: null, since: null, now: NOW, wasRaised: never, survey: SURVEY({ hostReached: false }), host: 'gitlab' });
+  assert.deepEqual(b.found, ['I couldn\'t look at GitLab for changes waiting to be merged; I\'ll look again next time.']);
 });

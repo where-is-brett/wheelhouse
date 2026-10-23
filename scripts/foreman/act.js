@@ -145,6 +145,7 @@ import { run as runProgram } from '../lib/run.js';
 import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { sameRemote } from '../state/git.js';
+import { readReadyRecord } from '../survey/ready-record.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
 } from '../protection/windows-builds.js';
@@ -421,27 +422,58 @@ async function fetchBase(ctx, git, checkout, base) {
   ctx.say(`Brought origin/${name} up to date.`);
 }
 
-// The worktree on a branch made now from the default branch, in the main
-// checkout. A feature/<work> branch or worktree folder that is there already
-// was not made by a recorded start (a recorded feature never reaches here), so
-// it is refused, never reused: an agent can make branches in the shared repository.
-// Straight after it is made, the files in it that steer agents are recorded (the baseline the
-// watcher compares with before every wake, scripts/watcher/control-files.js). A record that can't
-// be written is said, and the start goes on: with no record, the feature's wakes wait for the director.
-async function makeWorktree(ctx, work, checkout, worktree, branch) {
-  // The fenced route, looking at the repository's settings before each call: a setting off the
-  // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
+// Git in the main checkout by the fenced route, looking at the repository's settings before each
+// call: a setting off the allowed list (a hook or fsmonitor an agent set, say) is refused, naming
+// it, and git runs no more. A git that fails to run is refused with `nothing` said of the outcome.
+function fencedGit(ctx, checkout, nothing) {
   const fenced = safeGit({
     run: ctx.run, cwd: checkout, look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
   });
-  const git = async (args) => {
+  return async (args) => {
     try {
       return await fenced(args, { env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1' } });
     } catch (e) {
       if (e instanceof LookRefusal) return refuse(e.message);
-      return refuse(`${oneLine(e.message, 600)}; no worktree was made: ask the director`);
+      return refuse(`${oneLine(e.message, 600)}; ${nothing}: ask the director`);
     }
   };
+}
+
+// Ready-made work (`from`, ruling P4) starts only from a change the helper made ready: its ready
+// record, kept where no agent reaches, must name the same commit, ref and request, since the ref
+// itself is one any agent can move. The session pushes feature/<work>, so that must be neither
+// the request's own line nor already on the host as last fetched, or the push would carry the
+// work onto someone's own line. Work queued again must still hold the change on its branch, so
+// its brief never claims a change the branch lacks.
+async function checkReadyMade(ctx, work, checkout, branch, from, again) {
+  const record = readReadyRecord(ctx.project, work);
+  if (record === null || record.sha !== from.sha || record.ref !== from.ref || record.request !== (from.request ?? null)) {
+    refuse("The change this work starts from wasn't made ready by Wheelhouse: ask the director");
+  }
+  const onHost = `${branch} is already on the host, so the work would push to someone's own line: ask the director`;
+  if (record.branch === branch) refuse(onHost);
+  const git = fencedGit(ctx, checkout, 'nothing was started');
+  if (again) {
+    const held = await git(['merge-base', '--is-ancestor', from.sha, `refs/heads/${branch}`]);
+    if (held.code !== 0) refuse(`${branch} doesn't hold the change this work starts from: ask the director`);
+    return;
+  }
+  const pushed = await git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
+  if (pushed.code === 0) refuse(onHost);
+}
+
+// The worktree on a branch made now from the default branch, in the main
+// checkout. A feature/<work> branch or worktree folder that is there already
+// was not made by a recorded start (a recorded feature never reaches here), so
+// it is refused, never reused: an agent can make branches in the shared repository.
+// Work that starts from a ready-made change (`from`, ruling P4) has its branch made
+// from the recorded commit instead, and only while the work's ref still names that
+// commit: a change that moved after it was recorded is refused, not followed.
+// Straight after it is made, the files in it that steer agents are recorded (the baseline the
+// watcher compares with before every wake, scripts/watcher/control-files.js). A record that can't
+// be written is said, and the start goes on: with no record, the feature's wakes wait for the director.
+async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
+  const git = fencedGit(ctx, checkout, 'no worktree was made');
   realFolders(checkout, ['.claude', 'worktrees']);
   if (lstatOf(worktree) !== null) refuse(`${worktree} is there already, but no recorded feature made it: ask the director`);
   checkRepoConfig(checkout);
@@ -453,7 +485,13 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   await fetchBase(ctx, git, checkout, base);
   const kept = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   if (kept.code === 0) refuse(`The branch ${branch} is there already, but no recorded feature made it: ask the director`);
-  const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, base]);
+  if (from !== undefined) {
+    const named = await git(['rev-parse', '--verify', '--quiet', `${from.ref}^{commit}`]);
+    if (named.code !== 0 || String(named.stdout ?? '').trim() !== from.sha) {
+      refuse("The change this work starts from isn't there as it was recorded: ask the director");
+    }
+  }
+  const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, from === undefined ? base : from.sha]);
   if (made.code !== 0) refuse(`git couldn't make the worktree: ${oneLine(made.stderr || made.stdout || 'no reason given', 200)}`);
   try {
     writeBaseline(ctx.project, work, worktree, { now: ctx.now, platform: ctx.platform });
@@ -545,6 +583,7 @@ async function start(ctx, work, rest) {
   const fields = {
     v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing, shownFirst: entry.approval?.shownFirst === true,
     ...(plan ? { plan } : {}), ...(slices ? { slices } : {}),
+    ...(entry.work.data.from === undefined ? {} : { from: entry.work.data.from }),
   };
   let text;
   try {
@@ -565,12 +604,13 @@ async function start(ctx, work, rest) {
   const checkout = checkoutOf(ctx.project);
   const worktree = path.join(checkout, '.claude', 'worktrees', work);
   const branch = `feature/${work}`;
+  if (fields.from !== undefined) await checkReadyMade(ctx, work, checkout, branch, fields.from, again);
   if (again) {
     const set = reuseWorktree(work, existing, worktree, branch);
     ctx.say(`${work} closed and was queued again: it starts afresh in its worktree ${worktree} on ${branch}${set === null ? '' : `, with what the run before left for its status set aside in ${set}`}.`);
   } else {
-    await makeWorktree(ctx, work, checkout, worktree, branch);
-    ctx.say(`Made the worktree ${worktree} on ${branch}.`);
+    await makeWorktree(ctx, work, checkout, worktree, branch, fields.from);
+    ctx.say(`Made the worktree ${worktree} on ${branch}${fields.from === undefined ? '' : `, from the ready-made change ${short(fields.from.sha)}`}.`);
   }
   try {
     ensureIgnored(worktree, { mainCheckout: checkout });

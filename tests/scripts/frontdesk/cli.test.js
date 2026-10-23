@@ -241,6 +241,46 @@ test('a level 4 question becomes a card too, with what it does to the checks or 
   });
 });
 
+test('views survey prints what the survey found as short lines, with the rules numbered by their sources', async () => {
+  await inHome(async () => {
+    const none = await run(fakeHelper(), ['views', 'survey']);
+    assert.equal(none.code, 0);
+    assert.equal(none.out, 'No survey has been taken.\n');
+    const empty = { v: 1, hostReached: true, requests: [], pushed: [], local: [], more: { pushed: false, local: false }, instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [] };
+    const bare = await run(fakeHelper({ events: [makeEvent({ kind: 'survey', data: empty, now: () => T(1) })] }), ['views', 'survey']);
+    assert.equal(bare.out, 'The survey found nothing under way, no other instructions and no rules.\n');
+    const data = {
+      ...empty,
+      requests: [{ number: 12, title: 'Add a map\nof the shop', draft: false }, { number: 15, title: 'Fix the footer', draft: true }],
+      pushed: [{ name: 'a', head: 'a'.repeat(40), commits: 1, subject: 'Work', at: '2026-10-24T09:00:00+11:00' }],
+      more: { pushed: false, local: true },
+      local: [{ name: 'b', head: 'b'.repeat(40), commits: 2, subject: 'Work', at: '2026-10-24T09:00:00+11:00' }],
+      instructions: { files: ['AGENTS.md', '.cursorrules'], sections: [{ heading: 'Other', line: 4 }] },
+      rules: [{ words: 'Never email on Sundays', source: { file: 'CLAUDE.md', line: 12 } }, { words: 'Use plain words', source: { file: 'AGENTS.md', line: 3 } }],
+    };
+    const full = await run(fakeHelper({ events: [makeEvent({ kind: 'survey', data: { ...empty, hostReached: false }, now: () => T(1) }), makeEvent({ kind: 'survey', data, now: () => T(2) })] }), ['views', 'survey']);
+    assert.equal(full.out, [
+      'Changes waiting to be merged: 2',
+      '- number 12: Add a map of the shop',
+      '- number 15: Fix the footer (a draft)',
+      'Unfinished work pushed: 1',
+      '- a: Work (1 change saved)',
+      'Unfinished work on this computer: at least 1',
+      '- b: Work (2 changes saved)',
+      'Another agent setup\'s files: AGENTS.md, .cursorrules',
+      'Parts of CLAUDE.md: 1',
+      'Rules found: 2',
+      '1. Never email on Sundays (CLAUDE.md, line 12)',
+      '2. Use plain words (AGENTS.md, line 3)',
+      '',
+    ].join('\n'));
+    // A host that couldn't be looked at is the first line.
+    const missed = await run(fakeHelper({ events: [makeEvent({ kind: 'survey', data: { ...empty, hostReached: false }, now: () => T(1) })] }), ['views', 'survey']);
+    assert.match(missed.out, /^The host could not be looked at\./);
+    assert.doesNotMatch(full.out + missed.out, /commit|branch|worktree/i);
+  });
+});
+
 test('every line break in a view\'s text is put on one line', async () => {
   await inHome(async () => {
     const glossary = makeEvent({ kind: 'glossary', data: { term: 'deploy', plain: 'one\ntwo\r\nthree\u2028four', example: 'a\rb' }, now: () => T(1) });
@@ -1540,12 +1580,72 @@ test('preview gives the address of a pull request\'s preview, or says in a sente
   assert.equal(asked.length, 3);
 });
 
+test('carry-on <n> asks the helper to make the request ready, and prints the work, the from to record and what to write the brief from', async () => {
+  const asked = [];
+  const ready = {
+    ok: true, work: 'carry-on-7', from: { sha: FULL, ref: 'refs/wheelhouse/from/carry-on-7', request: 7 },
+    branch: 'prices', fork: true, title: 'Prices page', body: 'Adds prices.', bodyWithheld: false,
+    files: [{ path: 'prices.txt', additions: 1, deletions: 0 }], commits: ['Add prices'],
+  };
+  const answers = [ready, STOP];
+  const helper = { client: { survey: { carryOn: async (body) => { asked.push(body); return answers.shift(); } } } };
+  const made = await run(helper, ['carry-on', '7']);
+  assert.equal(made.code, 0, made.err);
+  assert.deepEqual(asked, [{ cwd: CWD, number: 7 }]);
+  const { ok: _ok, ...printed } = ready;
+  assert.deepEqual(made.json, printed);
+  assert.deepEqual([await run(helper, ['carry-on', '7'])].map((r) => [r.code, r.err]), [[1, 'STOP is on\n']]);
+  for (const argv of [['carry-on'], ['carry-on', '0'], ['carry-on', '7', '8'], ['carry-on', '#7'], ['carry-on', '--line'], ['carry-on', '--line', ''], ['carry-on', 'menu']]) {
+    const refused = await run(helper, argv);
+    assert.deepEqual([refused.code, refused.err], [1, 'Give the request\'s number or the piece of work\'s name: carry-on <n>, or carry-on --line <name>\n'], argv.join(' '));
+  }
+  assert.equal(asked.length, 2);
+});
+
+test('carry-on --line <name> asks the helper to make that piece of work ready, by its name', async () => {
+  const asked = [];
+  const ready = {
+    ok: true, work: 'carry-on-menu', from: { sha: FULL, ref: 'refs/wheelhouse/from/carry-on-menu' },
+    branch: 'menu', where: 'local', moved: false, commits: ['Start the menu'], files: [{ path: 'menu.md', additions: 3, deletions: 0 }],
+  };
+  const helper = { client: { survey: { carryOn: async (body) => { asked.push(body); return ready; } } } };
+  const made = await run(helper, ['carry-on', '--line', 'menu']);
+  assert.equal(made.code, 0, made.err);
+  assert.deepEqual(asked, [{ cwd: CWD, line: 'menu' }]);
+  const { ok: _ok, ...printed } = ready;
+  assert.deepEqual(made.json, printed);
+});
+
+test('archive and restore ask the helper to make the change ready, and print the work, the from to record and the files moved', async () => {
+  const asked = [];
+  const answer = (work) => ({ ok: true, work, from: { sha: FULL, ref: `refs/wheelhouse/from/${work}` }, moved: ['AGENTS.md', '.cursorrules'] });
+  const helper = {
+    client: {
+      survey: {
+        archive: async (body) => { asked.push(['archive', body]); return answer('archive-instructions'); },
+        restore: async (body) => { asked.push(['restore', body]); return { ok: false, refused: 'there is no archive of another agent setup\'s instructions on the main line, so nothing to put back' }; },
+      },
+    },
+  };
+  const archived = await run(helper, ['archive']);
+  assert.equal(archived.code, 0, archived.err);
+  assert.deepEqual(archived.json, { work: 'archive-instructions', from: { sha: FULL, ref: 'refs/wheelhouse/from/archive-instructions' }, moved: ['AGENTS.md', '.cursorrules'] });
+  const restored = await run(helper, ['restore']);
+  assert.deepEqual([restored.code, restored.err], [1, 'there is no archive of another agent setup\'s instructions on the main line, so nothing to put back\n']);
+  assert.deepEqual(asked, [['archive', { cwd: CWD }], ['restore', { cwd: CWD }]]);
+  for (const argv of [['archive', 'AGENTS.md'], ['restore', 'all']]) {
+    const refused = await run(helper, argv);
+    assert.deepEqual([refused.code, refused.err], [1, `${argv[0]} takes no arguments\n`]);
+  }
+  assert.equal(asked.length, 2);
+});
+
 test('an unknown command, or a helper that can\'t be reached, is one line on standard error', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1605,6 +1705,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n');
   assert.equal(done.stdout, '');
 });

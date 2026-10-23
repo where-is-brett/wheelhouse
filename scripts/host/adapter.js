@@ -83,6 +83,9 @@ const httpsOnly = publicHttps;
 // What the history calls say on a host whose history they do not read yet.
 export const HISTORY_GITLAB_ONLY = 'The audit report reads the history of a GitLab host; for GitHub it is not available in this version';
 
+const MOST_REQUESTS = 100;
+const MOST_COMMITS = 50;
+
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
 // 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
@@ -103,6 +106,11 @@ function wholeNumber(n) {
 }
 function commit(sha) {
   if (typeof sha !== 'string' || !SHA.test(sha)) throw new Error('The commit must be a full commit ID');
+  return sha;
+}
+// A request's head as the host gave it: a full 40-character commit ID.
+function requestHead(sha) {
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('The head of a request must be a full commit ID');
   return sha;
 }
 // An ISO 8601 time, as a UTC ISO string.
@@ -236,6 +244,19 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
       last: earlier(last),
       now: new Date(when(now, 'time now')),
     }),
+    // The open pull or merge requests, sorted by number, at most 100. Each head must be a full
+    // commit ID, since the survey and the start of carried-on work name commits by it.
+    openRequests: async () => {
+      const requests = await c.openRequests();
+      return requests.map((r) => ({ ...r, head: requestHead(r.head) })).sort((x, y) => x.number - y.number).slice(0, MOST_REQUESTS);
+    },
+    // A request's changed files and its commit subjects (oldest first, at most 50 each).
+    requestDetails: async (number) => {
+      const details = await c.requestDetails(wholeNumber(number));
+      return { files: details.files.slice(0, MOST_REQUESTS * 50), commits: details.commits.slice(0, MOST_COMMITS) };
+    },
+    // Where the host keeps a request's head: a request from someone's own copy is fetched by it.
+    pullRef: (number) => c.pullRef(wholeNumber(number)),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({
         title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),

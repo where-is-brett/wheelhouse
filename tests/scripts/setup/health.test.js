@@ -26,13 +26,14 @@ import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { TRIAL_MARKER } from '../../../scripts/health/trials.js';
 import { STOPPED } from '../../../scripts/setup/host.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { readSurveyAt } from '../../../scripts/briefing/seen.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile } from '../../../scripts/host/company-ca.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { withProject, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
+import { withProject, lay, transcript, typed, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
 // The session's seven trial lines, every one as expected.
 const GREEN_LINES = Object.entries(SESSION_CHECKS).map(([name, c]) => `${name}: ${c.expected} / ${c.expected}`);
@@ -602,9 +603,9 @@ test('with the real board, STOP on the computer holds it', async () => {
 
 // `copied` takes each copy of the run's records into the project's state (ruling R45); `copy`
 // stands in for that copy when given.
-function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = [], closes = [], copied = [], copy } = {}) {
+function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = [], closes = [], copied = [], copy, writeSurvey } = {}) {
   return setupRoutes({
-    now: () => T0, userHome: user, stopped,
+    now: () => T0, userHome: user, stopped, writeSurvey,
     health: (args) => healthCheck({ ...args, load }),
     finish: async (args) => { finished.push(args); return { started: 'The foreman\'s watcher is started.', briefing: 'The briefing.' }; },
     closeTrial: closer(closes),
@@ -757,12 +758,83 @@ test('the health route takes only trial lines, and removes only a trial\'s own l
   });
 });
 
+// A survey with nothing in it, as one taken where nothing is under way.
+const EMPTY_SURVEY = {
+  v: 1, hostReached: true, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
+  instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [],
+};
+// The helper's own survey writer, noting each survey as { project, kind, data }.
+const writesTo = (writes, answer = { ok: true, id: 'e1' }) => async (project, data) => {
+  const args = { project, kind: 'survey', data };
+  writes.push(args);
+  return typeof answer === 'function' ? answer(args) : answer;
+};
+
 test('finishSetup starts the foreman and gives the briefing, and says plainly when it can\'t', async () => {
-  const done = await finishSetup({ project: SLUG, start: async () => 'started', brief: async () => 'The first briefing.' });
+  const done = await finishSetup({ project: SLUG, writeSurvey: writesTo([]), look: async () => EMPTY_SURVEY, start: async () => 'started', brief: async () => 'The first briefing.' });
   assert.deepEqual(done, { started: 'started', briefing: 'The first briefing.' });
-  const failed = await finishSetup({ project: SLUG, start: async () => { throw new Error('no'); }, brief: async () => { throw new Error('no'); } });
+  const failed = await finishSetup({ project: SLUG, writeSurvey: writesTo([]), look: async () => EMPTY_SURVEY, start: async () => { throw new Error('no'); }, brief: async () => { throw new Error('no'); } });
   assert.match(failed.started, /next session start/);
   assert.equal(failed.briefing, null);
+});
+
+test('finishing setup records exactly one survey, before the first briefing (plan ruling P1)', async () => {
+  const order = [];
+  const writes = [];
+  const writeSurvey = writesTo(writes, (args) => { order.push(`write ${args.kind}`); return { ok: true, id: 'e1' }; });
+  const found = { ...EMPTY_SURVEY, local: [{ name: 'prices', head: 'a'.repeat(40), commits: 1, subject: 'Prices', at: '' }] };
+  const done = await finishSetup({
+    project: SLUG, writeSurvey, look: async () => { order.push('look'); return found; },
+    start: async () => { order.push('start'); return 'started'; }, brief: async () => { order.push('brief'); return 'The first briefing.'; },
+  });
+  assert.deepEqual(done, { started: 'started', briefing: 'The first briefing.' });
+  assert.deepEqual(writes, [{ project: SLUG, kind: 'survey', data: found }]);
+  assert.deepEqual(order, ['look', 'write survey', 'start', 'brief']);
+});
+
+test('a survey that fails, or that the state refuses, never stops setup finishing: it is recorded as one that missed the host', async () => {
+  const missed = { ...EMPTY_SURVEY, hostReached: false };
+  const writes = [];
+  const thrown = await finishSetup({ project: SLUG, writeSurvey: writesTo(writes), look: async () => { throw new Error('the host could not be reached'); }, start: async () => 'started', brief: async () => 'B.' });
+  assert.deepEqual(thrown, { started: 'started', briefing: 'B.' });
+  assert.deepEqual(writes.splice(0).map((w) => w.data), [missed]);
+  // A survey the state refuses (its secret scan, say) is written again as one that missed.
+  const refusedOnce = (args) => (args.data.hostReached ? { ok: false, refused: 'the event file was refused because it matched: github-token' } : { ok: true, id: 'e2' });
+  const refused = await finishSetup({ project: SLUG, writeSurvey: writesTo(writes, refusedOnce), look: async () => EMPTY_SURVEY, start: async () => 'started', brief: async () => 'B.' });
+  assert.deepEqual(refused, { started: 'started', briefing: 'B.' });
+  assert.deepEqual(writes.splice(0).map((w) => w.data.hostReached), [true, false]);
+  // A helper that can't be asked at all.
+  const gone = await finishSetup({ project: SLUG, writeSurvey: async () => { throw new Error('gone'); }, look: async () => EMPTY_SURVEY, start: async () => 'started', brief: async () => 'B.' });
+  assert.deepEqual(gone, { started: 'started', briefing: 'B.' });
+});
+
+test('finishSetup\'s own survey reads the project\'s folder and asks the host through the adapter it is given', async () => {
+  await withProject(async ({ folder }) => {
+    const writes = [];
+    const asked = [];
+    const adapterFor = async (record) => { asked.push(record.repo); return { defaultBranch: async () => 'main', openRequests: async () => { throw new Error('unreachable'); } }; };
+    await finishSetup({ project: SLUG, writeSurvey: writesTo(writes), adapterFor, start: async () => 'started', brief: async () => 'B.' });
+    assert.deepEqual(asked, [REPO]);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].data.hostReached, false, 'a host that can\'t be reached is said so');
+  });
+});
+
+test('finishSetup puts the rules found into the survey, as the run\'s past words give them, each as words and source', async () => {
+  await withProject(async ({ folder, config }) => {
+    lay(folder, { 'CLAUDE.md': '- Never push straight to main.\n- Keep commits small.\n', 'AGENTS.md': 'Always write tests.\n' });
+    transcript(config, 'past', 'a', [typed(folder, 'And keep commits small, thanks!', '2026-10-19T00:00:00.000Z')]);
+    // Said after the run began, in the run's own session: not past words.
+    transcript(config, 'setup', 'b', [typed(folder, 'Please never push straight to main!', '2026-10-20T03:05:00.000Z')]);
+    startRun({ folder, now: () => T0 });
+    const writes = [];
+    await finishSetup({ project: SLUG, writeSurvey: writesTo(writes), look: async ({ rules }) => ({ ...EMPTY_SURVEY, rules }), start: async () => 'started', brief: async () => 'B.' });
+    assert.deepEqual(writes[0].data.rules, [
+      { words: 'Never push straight to main.', source: { file: 'CLAUDE.md', line: 1 } },
+      { words: 'And keep commits small, thanks!', source: { file: 'CLAUDE.md', line: 2 } },
+      { words: 'Always write tests.', source: { file: 'AGENTS.md', line: 1 } },
+    ]);
+  });
 });
 
 // The smallest configuration readConfig takes.
@@ -777,15 +849,127 @@ test('finishSetup starts Shape 1\'s watcher by start.js\'s own start, and gives 
       config: async () => ({ ok: true, config: CONFIG }),
       health: async () => ({ ok: true }), lock: { read: async () => ({ ok: true, result: null }) }, host: { facts: async () => ({ ok: true, protection: 'on', ci: 'present' }) },
     };
-    const done = await finishSetup({ project: SLUG, client, spawn, now: () => T0 });
+    const done = await finishSetup({ project: SLUG, client, spawn, now: () => T0, look: async () => EMPTY_SURVEY });
     assert.equal(spawned.length, 1);
     assert.ok(spawned[0].args[0].endsWith(path.join('scripts', 'watcher', 'main.js')));
     assert.deepEqual(spawned[0].args.slice(1), [SLUG]);
     assert.match(done.started, /watcher is started/);
     assert.equal(typeof done.briefing, 'string');
     assert.ok(done.briefing.length > 0);
-    const shape2 = await finishSetup({ project: SLUG, client: { ...client, config: async () => ({ ok: true, config: { ...CONFIG, watcherShape: 2 } }) }, spawn, now: () => T0 });
+    const shape2 = await finishSetup({ project: SLUG, client: { ...client, config: async () => ({ ok: true, config: { ...CONFIG, watcherShape: 2 } }) }, spawn, now: () => T0, look: async () => EMPTY_SURVEY });
     assert.equal(spawned.length, 1, 'Shape 2\'s foreman is a terminal session the helper can\'t open');
     assert.match(shape2.started, /terminal/);
+  });
+});
+
+test('setup\'s ending hands finishSetup the helper\'s own survey writer', async () => {
+  await withProject(async ({ folder, user }) => {
+    runWith(folder, { checks: GREEN_CHECKS });
+    const finished = [];
+    const writeSurvey = async () => ({ ok: true });
+    const route = routesFor(user, { finished, writeSurvey })['/setup/health'];
+    assert.equal((await route({ folder, lines: GREEN_LINES })).green, true);
+    assert.deepEqual(finished, [{ project: SLUG, writeSurvey }]);
+  });
+});
+
+test('a host that never answers doesn\'t stop setup finishing: the survey gives up at its deadline as one that missed the host', async () => {
+  await withProject(async () => {
+    const writes = [];
+    const never = new Promise(() => {});
+    const began = Date.now();
+    const done = await finishSetup({
+      project: SLUG, writeSurvey: writesTo(writes), adapterFor: async () => ({ defaultBranch: () => never, openRequests: () => never }),
+      surveyDeadlineMs: 300, start: async () => 'started', brief: async () => 'B.',
+    });
+    assert.deepEqual(done, { started: 'started', briefing: 'B.' });
+    assert.ok(Date.now() - began < 5000);
+    assert.deepEqual(writes.map((w) => w.data.hostReached), [false]);
+  });
+});
+
+// ---- The first briefing mentions the survey, and the carry-on card (ruling A9) ----
+
+// A survey that found work in flight: one request on GitHub and two pieces of work on this computer.
+const IN_FLIGHT = {
+  ...EMPTY_SURVEY,
+  requests: [{ number: 4, title: 'Add prices', draft: false }],
+  local: ['prices', 'menu'].map((name) => ({ name, head: 'a'.repeat(40), commits: 1, subject: 'Work', at: '' })),
+};
+// Board inputs with the Autonomy in force, as loadBoardInputs gives the settings.
+const boardAt = (autonomy) => async () => ({
+  project: SLUG, model: { project: SLUG, builtAt: T0.toISOString(), director: { health: [] }, build: {}, missing: [] },
+  settings: autonomy === undefined ? {} : { autonomy: { value: autonomy, from: 'project' } },
+});
+// A client that records each write as the helper's /state/write would, giving each an id.
+function writingClient(writes, answer = (body) => ({ ok: true, id: `e${writes.length}` })) {
+  return { state: { write: async (body) => { writes.push(body); return answer(body); } } };
+}
+// The Autonomy is read on its own (`autonomy`), as the settings views give it; the board inputs carry it too.
+const finishWith = (survey, { autonomy, client, load = boardAt(autonomy) }) => finishSetup({
+  project: SLUG, writeSurvey: async () => ({ ok: true, id: 'survey-1' }), look: async () => survey, start: async () => 'started', client, load, now: () => T0,
+  autonomy: () => autonomy ?? 'balanced',
+});
+const CARD_ASK = 'Wheelhouse found work already under way in Cafe-Menu: 1 change waiting to be merged on GitHub, and 2 pieces of unfinished work on this computer. Shall I carry them on?';
+// The briefing's plain words may say "merged" in other words, as the board-context hook gives it.
+const TRUSTING_LINE = /Already under way here: 1 change waiting to be \w+ on GitHub, and 2 pieces of unfinished work on this computer\. I'm carrying them on, one brief each; say stop if you'd rather I didn't\./;
+
+test('at Cautious and Balanced, setup ends with the carry-on card, recorded as a front-desk card and asked, and the briefing leaves out its line', async () => {
+  for (const autonomy of ['cautious', 'balanced', undefined]) {
+    await withProject(async ({ folder }) => {
+      const writes = [];
+      const done = await finishWith(IN_FLIGHT, { autonomy, client: writingClient(writes) });
+      assert.equal(done.card.question.question.split('\n')[0], CARD_ASK);
+      assert.deepEqual(done.card.question.options.map((o) => o.label), ['Carry on with it', 'Leave it for now']);
+      assert.deepEqual(writes.map((w) => [w.cwd, w.kind]), [[folder, 'card'], [folder, 'asked']]);
+      assert.equal(writes[0].data.topic, 'under-way');
+      assert.equal(writes[0].data.question, done.card.question.question, 'the click\'s plain answer quotes the question the card holds');
+      assert.deepEqual(writes[1].data, { cards: [done.card.id] });
+      assert.equal(done.card.id, 'e1');
+      assert.doesNotMatch(done.briefing, /under way/);
+      // The card said the survey's one line, so the survey counts as mentioned.
+      assert.equal(readSurveyAt(SLUG), 'survey-1');
+    });
+  }
+});
+
+test('at Trusting there is no card: the briefing says the work is being carried on', async () => {
+  await withProject(async () => {
+    const writes = [];
+    const done = await finishWith(IN_FLIGHT, { autonomy: 'trusting', client: writingClient(writes) });
+    assert.equal(done.card, undefined);
+    assert.deepEqual(writes, []);
+    assert.match(done.briefing, TRUSTING_LINE);
+    assert.equal(readSurveyAt(SLUG), 'survey-1');
+  });
+});
+
+test('at Trusting, board inputs that fail to load still ask no card', async () => {
+  await withProject(async () => {
+    const writes = [];
+    const done = await finishWith(IN_FLIGHT, { autonomy: 'trusting', client: writingClient(writes), load: async () => { throw new Error('no inputs'); } });
+    assert.equal(done.card, undefined);
+    assert.deepEqual(writes, []);
+  });
+});
+
+test('no work in flight, no card; the survey\'s other lines are still in the first briefing, and marked as mentioned', async () => {
+  await withProject(async () => {
+    const writes = [];
+    const other = { ...EMPTY_SURVEY, instructions: { files: ['AGENTS.md'], sections: [] } };
+    const done = await finishWith(other, { autonomy: 'balanced', client: writingClient(writes) });
+    assert.equal(done.card, undefined);
+    assert.deepEqual(writes, []);
+    assert.match(done.briefing, /This project also has instructions for another agent setup \(AGENTS\.md\)/);
+    assert.equal(readSurveyAt(SLUG), 'survey-1');
+  });
+});
+
+test('a card the helper won\'t record leaves the line in the first briefing, as A2 has it, marked as mentioned', async () => {
+  await withProject(async () => {
+    const done = await finishWith(IN_FLIGHT, { autonomy: 'balanced', client: writingClient([], () => ({ ok: false, refused: 'no' })) });
+    assert.equal(done.card, undefined);
+    assert.match(done.briefing, /Already under way here: 1 change waiting to be \w+ on GitHub, and 2 pieces of unfinished work on this computer\. Say if you'd like me to carry any of them on\./);
+    assert.equal(readSurveyAt(SLUG), 'survey-1');
   });
 });

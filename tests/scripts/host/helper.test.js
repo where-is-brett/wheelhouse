@@ -15,9 +15,10 @@ import { helperAddress, stateDir, stopFile } from '../../../scripts/lib/paths.js
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { cloneState } from '../../../scripts/state/clone.js';
-import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
+import { readReadyRecord } from '../../../scripts/survey/ready-record.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
@@ -1400,4 +1401,264 @@ test('after a refused look, no more git runs in that repository: the mirror\'s t
       }, { run: recorder(calls) });
     });
   } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// --- the survey taken again (design section 15, ruling A1; plan ruling P3) ---
+
+const SURVEYED = {
+  v: 1, hostReached: false, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
+  instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [{ words: 'Use British English.', source: { file: 'CLAUDE.md', line: 2 } }],
+};
+// A survey the helper recorded earlier, put into the state's folder as its file.
+let seeded = 0;
+function seedSurvey(data) {
+  seeded += 1;
+  const event = makeEvent({ kind: 'survey', data, now: () => new Date(Date.now() + seeded) });
+  const file = path.join(stateDir('o__p'), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+}
+const surveysIn = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+// A project whose folder is a repository of its own, on main, with one line of work off it.
+async function surveyedProject() {
+  const p = await project({ lock: false });
+  const dir = tempFolder('wh-survey-again ');
+  await g(dir, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'Start\n');
+  await g(dir, 'add', 'README.md');
+  await g(dir, 'commit', '-q', '-m', 'Start');
+  await g(dir, 'switch', '-q', '-c', 'prices');
+  fs.writeFileSync(path.join(dir, 'prices.txt'), 'Prices\n');
+  await g(dir, 'add', 'prices.txt');
+  await g(dir, 'commit', '-q', '-m', 'Prices');
+  await g(dir, 'switch', '-q', 'main');
+  as(p.home, () => writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } }));
+  return { ...p, dir, cleanup: () => { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); } };
+}
+
+test('/survey/again takes a survey once when the last one missed the host, and none when it didn\'t', async () => {
+  const p = await surveyedProject();
+  try {
+    let reached = false;
+    const secret = ['gh', 'p_', 'a1B2'.repeat(10)].join('');
+    const adapter = fakeAdapter({
+      openRequests: async () => {
+        if (!reached) throw new Error('unreachable');
+        return [{ number: 7, title: `Key ${secret}`, body: '', branch: 'x', head: 'c'.repeat(40), draft: false, fork: false }];
+      },
+    });
+    await as(p.home, () => withHelper(adapter, async (client) => {
+      // No caller writes a survey: only the helper records one.
+      const forged = await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      assert.equal(forged.ok, false);
+      assert.match(forged.refused, /only the helper/);
+      assert.equal(surveysIn().length, 0);
+      // No survey yet: none taken.
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
+      // The host reached: none taken.
+      seedSurvey({ ...SURVEYED, hostReached: true });
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
+      // The host missed: one taken, and only once, however it goes.
+      seedSurvey(SURVEYED);
+      const missedAgain = await client.survey.again({ project: 'o__p' });
+      assert.equal(missedAgain.ok, true);
+      assert.equal(missedAgain.taken, true);
+      assert.equal(missedAgain.hostReached, false);
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false }, 'taken again once only');
+      const [, , last] = surveysIn();
+      assert.equal(last.id, missedAgain.id);
+      assert.equal(last.data.again, true);
+      assert.deepEqual(last.data.local.map((i) => i.name), ['prices']);
+      assert.deepEqual(last.data.rules, SURVEYED.rules, 'the rules found at setup are kept');
+      // Missed at setup and reached when taken again: the secret in a title is left out.
+      seedSurvey(SURVEYED);
+      reached = true;
+      const taken = await client.survey.again({ project: 'o__p' });
+      assert.deepEqual([taken.ok, taken.taken, taken.hostReached], [true, true, true]);
+      const latest = surveysIn().at(-1);
+      assert.deepEqual(latest.data.requests, [{ number: 7, title: '', draft: false }]);
+      assert.equal(JSON.stringify(latest).includes(secret), false);
+      // The views have the latest survey.
+      assert.equal((await client.state.views({ project: 'o__p' })).views.survey.id, latest.id);
+    }));
+  } finally { p.cleanup(); }
+});
+
+test('/survey/again is refused under STOP, and takes nothing', async () => {
+  const p = await surveyedProject();
+  try {
+    await as(p.home, () => withHelper(fakeAdapter({ openRequests: async () => [] }), async (client) => {
+      seedSurvey(SURVEYED);
+      fs.writeFileSync(stopFile(), '');
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
+      assert.equal(surveysIn().length, 1);
+    }));
+  } finally { p.cleanup(); }
+});
+
+test('/survey/again holds the project\'s state only to write: other state requests go on while it looks, and STOP set meanwhile refuses the write', async () => {
+  const p = await surveyedProject();
+  try {
+    let asked;
+    const askedNow = new Promise((resolve) => { asked = resolve; });
+    let answer;
+    const answered = new Promise((resolve) => { answer = resolve; });
+    const adapter = fakeAdapter({ openRequests: async () => { asked(); await answered; return []; } });
+    await as(p.home, () => withHelper(adapter, async (client) => {
+      seedSurvey(SURVEYED);
+      const again = client.survey.again({ project: 'o__p' });
+      await askedNow;
+      // While the survey waits on the host, the state answers.
+      assert.equal((await client.state.views({ project: 'o__p' })).ok, true);
+      // STOP set while it looks: nothing is written.
+      fs.writeFileSync(stopFile(), '');
+      answer();
+      assert.deepEqual(await again, { ok: false, refused: 'STOP is on' });
+      assert.equal(surveysIn().length, 1);
+    }));
+  } finally { p.cleanup(); }
+});
+
+// --- ready-made changes: carrying a request on, archiving and restoring (design section 15, A2 and A4; plan rulings P4, P5, P13) ---
+
+const AUTHOR = { name: 'Dana Director', email: '1+dana@users.noreply.github.com' };
+const authorFor = async () => AUTHOR;
+
+// A project whose folder is a clone of its remote, on main with AGENTS.md, and a seed folder that
+// makes commits on the remote; the folder holds a change of the director's own, staged.
+async function readyProject() {
+  const p = await project({ lock: false });
+  const seed = tempFolder('wh-ready-seed-');
+  await g(seed, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(seed, 'README.md'), 'Start\n');
+  fs.writeFileSync(path.join(seed, 'AGENTS.md'), 'Agents\n');
+  await g(seed, 'add', '-A');
+  await g(seed, 'commit', '-q', '-m', 'Start');
+  await g(seed, 'push', '-q', p.remote.url, 'main');
+  const dir = tempFolder('wh-ready-folder ');
+  await g(dir, 'clone', '-q', '--branch', 'main', p.remote.url, '.');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'Staged\n');
+  await g(dir, 'add', 'notes.txt');
+  as(p.home, () => writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } }));
+  // A commit on the remote at `ref` alone, as a request from someone's own copy is.
+  const requestAt = async (ref, file) => {
+    await g(seed, 'switch', '-q', '--detach', 'main');
+    fs.writeFileSync(path.join(seed, file), `${file}\n`);
+    await g(seed, 'add', file);
+    await g(seed, 'commit', '-q', '-m', `Add ${file}`);
+    const sha = await g(seed, 'rev-parse', 'HEAD');
+    await g(seed, 'push', '-q', '-f', p.remote.url, `HEAD:${ref}`);
+    await g(seed, 'switch', '-q', 'main');
+    return sha;
+  };
+  const folderState = async () => [await g(dir, 'status', '--porcelain'), await g(dir, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/remotes', 'refs/tags')];
+  return {
+    ...p, dir, seed, requestAt, folderState,
+    cleanup: () => { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(seed, { recursive: true, force: true }); },
+  };
+}
+
+test('/survey/carry-on makes an open request ready at the work\'s ref, on a line that is no request\'s own, and writes its ready record', async () => {
+  const p = await readyProject();
+  try {
+    const head = await p.requestAt('refs/pull/7/head', 'prices.txt');
+    const adapter = fakeAdapter({
+      openRequests: async () => [
+        { number: 7, title: 'Prices', body: 'Adds the prices page.', branch: 'prices', head, draft: false, fork: true },
+        { number: 8, title: 'Other', body: '', branch: 'feature/carry-on-7', head: 'd'.repeat(40), draft: false, fork: false },
+      ],
+      requestDetails: async () => ({ files: [{ path: 'prices.txt', additions: 1, deletions: 0 }], commits: ['Add prices.txt'] }),
+      pullRef: (n) => `refs/pull/${n}/head`,
+    });
+    await as(p.home, () => withHelper(adapter, async (client) => {
+      const before = await p.folderState();
+      const made = await client.survey.carryOn({ cwd: p.dir, number: 7 });
+      assert.deepEqual(made, {
+        ok: true, work: 'carry-on-7-2', from: { sha: head, ref: 'refs/wheelhouse/from/carry-on-7-2', request: 7 },
+        branch: 'prices', fork: true, title: 'Prices', body: 'Adds the prices page.', bodyWithheld: false,
+        files: [{ path: 'prices.txt', additions: 1, deletions: 0 }], commits: ['Add prices.txt'],
+      });
+      assert.deepEqual(readReadyRecord('o__p', 'carry-on-7-2'), { sha: head, ref: 'refs/wheelhouse/from/carry-on-7-2', request: 7, branch: 'prices' });
+      assert.equal(await g(p.dir, 'rev-parse', 'refs/wheelhouse/from/carry-on-7-2'), head);
+      assert.deepEqual(await p.folderState(), before, 'nothing else in the folder moved');
+      // Carried on again: another id, since that one has its ready record.
+      assert.equal((await client.survey.carryOn({ project: 'o__p', number: 7 })).work, 'carry-on-7-3');
+      // Only an open request.
+      const closed = await client.survey.carryOn({ project: 'o__p', number: 9 });
+      assert.deepEqual(closed, { ok: false, refused: '#9 isn\'t open on the host, so there is nothing to carry on' });
+      assert.equal(await g(p.dir, 'for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'), 'refs/wheelhouse/from/carry-on-7-2\nrefs/wheelhouse/from/carry-on-7-3');
+      // Nothing is pushed: the remote has no new line.
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /feature|carry-on/);
+      // Refused under STOP, making nothing ready.
+      fs.writeFileSync(stopFile(), '');
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', number: 7 }), { ok: false, refused: 'STOP is on' });
+      assert.equal(readReadyRecord('o__p', 'carry-on-7-4'), null);
+    }, { authorFor }));
+  } finally { p.cleanup(); }
+});
+
+test('/survey/carry-on with a line makes a piece the survey lists ready, from where it stands, on a line that is never the piece\'s own', async () => {
+  const p = await readyProject();
+  try {
+    // A piece pushed with no request, and one on this computer only.
+    const pushed = await p.requestAt('refs/heads/feature/carry-on-photos', 'photos.txt');
+    await g(p.dir, 'fetch', '-q', 'origin');
+    await g(p.dir, 'branch', 'hours', 'origin/main');
+    await g(p.dir, 'update-ref', 'refs/heads/hours', pushed);
+    const item = (name, head) => ({ name, head, commits: 1, subject: 'Add photos.txt', at: '' });
+    await as(p.home, () => withHelper(fakeAdapter(), async (client) => {
+      seedSurvey({ ...SURVEYED, hostReached: true, pushed: [item('feature/carry-on-photos', pushed)], local: [item('hours', pushed)] });
+      const before = await p.folderState();
+      const made = await client.survey.carryOn({ cwd: p.dir, line: 'feature/carry-on-photos' });
+      assert.deepEqual(made, {
+        ok: true, work: 'carry-on-feature-carry-on-photos', from: { sha: pushed, ref: 'refs/wheelhouse/from/carry-on-feature-carry-on-photos' },
+        branch: 'feature/carry-on-photos', where: 'pushed', moved: false, commits: ['Add photos.txt'], files: [{ path: 'photos.txt', additions: 1, deletions: 0 }],
+      });
+      assert.deepEqual(readReadyRecord('o__p', made.work), { ...made.from, request: null, branch: 'feature/carry-on-photos' });
+      const local = await client.survey.carryOn({ project: 'o__p', line: 'hours' });
+      assert.deepEqual([local.ok, local.work, local.where, local.from.sha], [true, 'carry-on-hours', 'local', pushed]);
+      assert.deepEqual(readReadyRecord('o__p', 'carry-on-hours'), { ...local.from, request: null, branch: 'hours' });
+      assert.deepEqual(await p.folderState(), before, 'nothing else in the folder moved');
+      // Only a piece the latest survey lists.
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'main' }), { ok: false, refused: 'the latest survey lists no unfinished work named main' });
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /carry-on-feature|carry-on-hours/);
+      fs.writeFileSync(stopFile(), '');
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'hours' }), { ok: false, refused: 'STOP is on' });
+    }, { authorFor }));
+  } finally { p.cleanup(); }
+});
+
+test('/survey/archive archives the survey\'s instruction files as they are on the default branch now, and /survey/restore puts them back', async () => {
+  const p = await readyProject();
+  try {
+    await as(p.home, () => withHelper(fakeAdapter(), async (client) => {
+      // No survey has found any: nothing to archive.
+      const none = await client.survey.archive({ project: 'o__p' });
+      assert.equal(none.ok, false);
+      assert.match(none.refused, /no instructions/);
+      seedSurvey({ ...SURVEYED, hostReached: true, instructions: { files: ['AGENTS.md', '.cursorrules'], sections: [] } });
+      const before = await p.folderState();
+      const archived = await client.survey.archive({ cwd: p.dir });
+      assert.equal(archived.ok, true, archived.refused);
+      assert.equal(archived.work, 'archive-instructions');
+      assert.deepEqual(archived.moved, ['AGENTS.md'], 'a file not on the default branch is left out');
+      assert.deepEqual(archived.from, { sha: archived.from.sha, ref: 'refs/wheelhouse/from/archive-instructions' });
+      assert.deepEqual(readReadyRecord('o__p', 'archive-instructions'), { ...archived.from, request: null, branch: null });
+      assert.equal(await g(p.dir, 'log', '-1', '--format=%an', archived.from.sha), AUTHOR.name);
+      assert.equal(await g(p.dir, 'show', `${archived.from.sha}:.wheelhouse-archive/AGENTS.md`), 'Agents');
+      assert.deepEqual(await p.folderState(), before, 'the director\'s index, working copy and lines are as they were');
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /feature|archive/);
+      // Once it is merged, putting it back.
+      await g(p.dir, 'push', '-q', p.remote.url, `${archived.from.sha}:refs/heads/main`);
+      const restored = await client.survey.restore({ project: 'o__p' });
+      assert.equal(restored.ok, true, restored.refused);
+      assert.deepEqual([restored.work, restored.moved], ['restore-instructions', ['AGENTS.md']]);
+      assert.equal(await g(p.dir, 'show', `${restored.from.sha}:AGENTS.md`), 'Agents');
+      assert.deepEqual(readReadyRecord('o__p', 'restore-instructions'), { ...restored.from, request: null, branch: null });
+      fs.writeFileSync(stopFile(), '');
+      assert.deepEqual(await client.survey.archive({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await client.survey.restore({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
+    }, { authorFor }));
+  } finally { p.cleanup(); }
 });

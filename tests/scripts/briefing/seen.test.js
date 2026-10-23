@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
-import { readSeen, markSeen, readVisits, seenFile, BOARD_ASKS } from '../../../scripts/briefing/seen.js';
+import { readSeen, readSurveyAt, markSeen, readVisits, seenFile, BOARD_ASKS } from '../../../scripts/briefing/seen.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const none = { promptAt: null, briefedAt: null, weeklyAt: null };
@@ -82,4 +82,20 @@ test('visits and board commands are kept beside the times, the last ten commands
   // A damaged list reads as none.
   fs.writeFileSync(seenFile('demo'), JSON.stringify({ visitAt: 'soon', boardAsks: 'many' }));
   assert.deepEqual(readVisits('demo', { now: NOW }), { visitAt: null, boardAsks: [] });
+}));
+
+test('the survey the director was last told of is kept beside the times, by its id', () => withHome(() => {
+  assert.equal(readSurveyAt('demo'), null);
+  markSeen('demo', { briefedAt: '2026-10-19T09:00:00.000Z', surveyAt: 'a1b2-c3' });
+  markSeen('demo', { weeklyAt: '2026-10-19T09:00:00.000Z' });
+  assert.equal(readSurveyAt('demo'), 'a1b2-c3');
+  // The times read as they did, with nothing added.
+  assert.deepEqual(readSeen('demo', { now: NOW }), { promptAt: null, briefedAt: '2026-10-19T09:00:00.000Z', weeklyAt: '2026-10-19T09:00:00.000Z' });
+  // A value that isn't an id is not written, and a damaged one reads as none.
+  markSeen('demo', { surveyAt: '../x y' });
+  markSeen('demo', { surveyAt: 7 });
+  assert.equal(readSurveyAt('demo'), 'a1b2-c3');
+  fs.writeFileSync(seenFile('demo'), JSON.stringify({ surveyAt: { id: 1 } }));
+  assert.equal(readSurveyAt('demo'), null);
+  assert.equal(readSurveyAt('../demo'), null);
 }));

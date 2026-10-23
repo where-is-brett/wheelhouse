@@ -61,7 +61,7 @@ import { TRIAL_MARKER, UNREACHED } from '../health/trials.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { renderBoard } from '../board/render.js';
 import { briefingIn, reviewOf } from '../hooks/board-context.js';
-import { readSeen, markSeen } from '../briefing/seen.js';
+import { readSeen, readSurveyAt, markSeen } from '../briefing/seen.js';
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { startWatcher } from '../foreman/start.js';
 import { projectConfig } from '../watcher/main.js';
@@ -70,6 +70,13 @@ import { HEALTH_STEP } from '../lib/setup-run.js';
 import { directorGitEnv, directorGitlabApi, STOPPED, launchedIn } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
+import { takeSurvey, recordSurvey } from '../survey/take.js';
+import { rulesOf } from './rules.js';
+import { carryOnCard } from '../survey/words.js';
+import { composeCard } from '../cards/compose.js';
+import { localViews } from '../hooks/session-start.js';
+import { readProfileViews } from '../profile/store.js';
+import { effectiveSettings } from '../settings/effective.js';
 
 export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
@@ -679,15 +686,38 @@ export function removeTrialLeftover(folder) {
   }
 }
 
-// The last thing setup does, once the board is green and shown (ruling R44): the foreman started,
-// as start.js starts it, and the front desk's first briefing. { started, briefing }: `started` a
+// The last thing setup does, once the board is green and shown (ruling R44): the survey of what
+// the project already holds, recorded in its state (design section 15, ruling A1; plan ruling P1:
+// after the run's records are copied there, before the first briefing), the foreman started, as
+// start.js starts it, and the front desk's first briefing. { started, briefing, card? }: `started` a
 // line saying how the foreman stands; `briefing` the briefing's text, or null when it couldn't be
-// put together (the front desk gives one at the next visit). `start(project)` and `brief(project)`
-// are for tests.
+// put together (the front desk gives one at the next visit); `card`, at Autonomy Cautious and
+// Balanced when the survey found work in flight, the card asking whether to carry it on (ruling
+// A9), recorded as the front desk records a card, as { question, id }: setup's playbook asks it
+// right after the briefing. The survey only reads, and never
+// stops setup: one that fails, or that the state refuses, is recorded as one that missed the host
+// (scripts/survey/take.js). Only the helper records a survey: `writeSurvey(project, data)` is its
+// own writer, which the helper hands setup's routes; with none, nothing is recorded.
+// `start(project)`, `brief(project)`, `look({ rules })` (the survey taken), `adapterFor(record)` (the
+// host's adapter the survey asks) and `autonomy(project, at)` (the Autonomy in force) are for tests. The survey carries the rules step 5 found, as
+// `{ words, source }`, in the director's own words where their sessions from before the run hold
+// them (plan ruling P7). `surveyDeadlineMs` is the survey's time limit, for tests.
 export async function finishSetup({
   project, client = helperClient({ timeout: BRIEFING_WAIT_MS * 2 }), now = () => new Date(), spawn, load = loadBoardInputs,
-  start, brief,
+  start, brief, adapterFor, userHome = os.homedir(), surveyDeadlineMs, autonomy = autonomyOf,
+  look = ({ rules }) => takeSurvey({ project, rules, ...(adapterFor ? { adapter: adapterFor } : {}), ...(surveyDeadlineMs ? { deadlineMs: surveyDeadlineMs } : {}) }),
+  writeSurvey = async () => ({ ok: false, refused: 'only the helper records a survey' }),
 } = {}) {
+  // The survey as recorded, { id, data }, for the first briefing to mention.
+  let survey = null;
+  const write = async (data) => {
+    const got = await writeSurvey(project, data);
+    if (got?.ok === true && typeof got.id === 'string') survey = { id: got.id, data };
+    return got;
+  };
+  try {
+    await recordSurvey({ write, take: () => look({ rules: rulesFound(project, userHome) }) });
+  } catch { /* recordSurvey never throws; setup finishes whatever the survey does */ }
   let started;
   try {
     started = start ? await start(project) : await startForeman(project, { client, spawn });
@@ -695,10 +725,25 @@ export async function finishSetup({
     started = 'The foreman couldn\'t be started now; the next session start in this project starts it.';
   }
   let briefing = null;
+  let card = null;
   try {
-    briefing = brief ? await brief(project) : await firstBriefing(project, { client, now, load });
+    if (brief) briefing = await brief(project);
+    else ({ briefing, card } = await firstBriefing(project, { client, now, load, survey, autonomy }));
   } catch { /* the front desk briefs at the next visit */ }
-  return { started, briefing };
+  return { started, briefing, ...(card === null ? {} : { card }) };
+}
+
+// The rules of the project's folder as the survey keeps them, those found before its setup run
+// began: none when they can't be read.
+function rulesFound(project, userHome) {
+  try {
+    const folder = readProject(project)?.folder;
+    if (typeof folder !== 'string') return [];
+    const before = runIn(folder)?.startedAt;
+    return rulesOf(folder, { userHome, ...(typeof before === 'string' ? { before } : {}) }).map(({ words, source }) => ({ words, source }));
+  } catch {
+    return [];
+  }
 }
 
 // start.js's own start for Shape 1, the watcher (startWatcher), which wakes a foreman when there is
@@ -712,18 +757,72 @@ async function startForeman(project, { client, spawn }) {
 }
 
 // The front desk's first briefing, as the board-context hook gives one, and kept as given so the
-// hook doesn't give the same one again at once.
-async function firstBriefing(project, { client, now, load }) {
+// hook doesn't give the same one again at once: { briefing, card }. It mentions the survey once,
+// marked as mentioned only when the text showed it (plan ruling P8). Work in flight is asked about
+// on the carry-on card at Autonomy Cautious and Balanced, so its line is left out of the briefing,
+// and at Trusting its line says Wheelhouse is carrying it on (ruling A9); the card says that line,
+// so a survey with no other is marked as mentioned all the same. A card that couldn't be recorded
+// leaves the line in, as A2 has it.
+async function firstBriefing(project, { client, now, load, survey, autonomy }) {
   const at = now();
-  const folder = readProject(project)?.folder;
-  if (typeof folder !== 'string') return null;
-  const inputs = await load({ cwd: folder, now: () => at, client, waitMs: BRIEFING_WAIT_MS });
-  if (!inputs?.model) return null;
+  // Read on its own, so board inputs that fail to load can't ask the card at Trusting; an Autonomy
+  // that can't be read asks no card, and the briefing says the line instead.
+  let level = null;
+  try {
+    level = autonomy(project, at);
+  } catch { /* none read */ }
+  const record = readProject(project);
+  const folder = record?.folder;
+  if (typeof folder !== 'string') return { briefing: null, card: null };
+  let inputs = null;
+  try {
+    inputs = await load({ cwd: folder, now: () => at, client, waitMs: BRIEFING_WAIT_MS });
+  } catch { /* no briefing now; the card is still asked */ }
+  const host = record.host ?? null;
+  const settings = inputs?.settings;
+  const carrying = level === 'trusting';
+  const card = survey === null || carrying || (level !== 'cautious' && level !== 'balanced') ? null : await askCarryOn(project, { client, folder, survey, host, record });
+  if (!inputs?.model) return { briefing: null, card };
   const seen = readSeen(project, { now: at });
-  const { model, usage, sources, settings } = inputs;
+  const { model, usage, sources } = inputs;
   const given = briefingIn({
     project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at), at, room: CONTEXT_CHARS,
+    survey, surveyAt: readSurveyAt(project), host, carrying, leaveOut: card === null ? [] : ['inFlight'],
   });
-  markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}) });
-  return given.text;
+  markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}), ...(given.surveyShown ? { surveyAt: given.surveyShown } : {}) });
+  return { briefing: given.text, card };
+}
+
+// The Autonomy in force for the project, as the settings views on this computer give it: the
+// project's over the director's own, over the default.
+function autonomyOf(project, at) {
+  const isPlainObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const views = localViews(project, ['settings']);
+  const profile = readProfileViews();
+  const settings = effectiveSettings({
+    project: isPlainObject(views?.settings) ? views.settings : {}, profile: isPlainObject(profile?.settings) ? profile.settings : {}, now: at,
+  });
+  return settings.autonomy?.value ?? null;
+}
+
+// The carry-on card for the work in flight the survey found (ruling A9), recorded through the
+// helper as the front desk records a card (`card`, then `asked`), as { question, id }; null when
+// nothing is in flight or it couldn't be recorded. The project is named as the director knows it:
+// its repository's own name.
+async function askCarryOn(project, { client, folder, survey, host, record }) {
+  try {
+    const name = typeof record.repo === 'string' ? record.repo.split('/').at(-1) : path.basename(folder);
+    const input = carryOnCard(survey.data, { project: name, host });
+    if (input === null) return null;
+    const { question, card } = composeCard(input);
+    const made = await client.state.write({ cwd: folder, kind: 'card', data: card });
+    if (made?.ok !== true || typeof made.id !== 'string') return null;
+    // A card not marked as asked is offered again at the next visit, which asks it once more: no harm.
+    try {
+      await client.state.write({ cwd: folder, kind: 'asked', data: { cards: [made.id] } });
+    } catch { /* see above */ }
+    return { question, id: made.id };
+  } catch {
+    return null;
+  }
 }

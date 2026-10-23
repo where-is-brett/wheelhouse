@@ -18,7 +18,7 @@ import { decide as sessionStart } from '../../../scripts/hooks/session-start.js'
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
-import { rulesCard as rulesInput } from '../../../scripts/setup/rules.js';
+import { rulesInput } from '../../helpers/rules-card.js';
 import { beforeTimer } from '../../helpers/until.js';
 
 const P = 'owner__name';

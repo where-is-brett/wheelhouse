@@ -18,10 +18,14 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
+// Plain kinds only the helper itself records, from what it read itself: no caller writes one
+// through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
+// helper, when setup finishes and when it is taken again.
+export const HELPER_ONLY_KINDS = ['survey'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
@@ -192,7 +196,9 @@ function questionIdOf(id) {
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
-  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent'] },
+  // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
+  // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
+  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks'] },
@@ -237,6 +243,11 @@ const PLAIN_SHAPES = {
   'control-file': { must: ['work', 'why', 'paths', 'hash', 'at'], may: [] },
   // The feature's agent files match their record again, so its standing control-file records are closed, with their cards.
   'control-file-lift': { must: ['work', 'at'], may: [] },
+  // What a project already held when setup finished (design section 15, ruling A1; plan ruling
+  // P1), as scripts/survey/look.js's surveyOf gives it, with `again: true` when it was taken again
+  // because the last one couldn't reach the host (ruling P3). Each part is checked as the survey
+  // makes it, and at most as many as it looks at.
+  survey: { must: ['v', 'hostReached', 'requests', 'pushed', 'local', 'more', 'instructions', 'scheduled', 'secrets', 'rules'], may: ['again'] },
 };
 // The most paths a control-file record names.
 export const CONTROL_PATHS = 50;
@@ -246,6 +257,20 @@ export const ACTIVITY_COMMANDS = 50;
 export const REFUSAL_KINDS = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
+// The most a survey holds of each part, as scripts/survey/look.js looks at them (the host lists at
+// most 100 requests), and the longest text it keeps: of a title, subject, heading, name or time
+// (SURVEY_TEXT), of a file's path (SURVEY_PATH) and of a rule's words (SURVEY_WORDS).
+export const SURVEY_MOST = { requests: 100, lines: 200, files: 200, sections: 200, rules: 500 };
+export const SURVEY_TEXT = 200;
+export const SURVEY_PATH = 400;
+export const SURVEY_WORDS = 1000;
+const SURVEY_HEAD = /^[0-9a-f]{40,64}$/;
+// Whether `x` is an object with exactly the keys named.
+const keysAre = (x, keys) => isPlain(x) && Object.keys(x).length === keys.length && keys.every((k) => Object.hasOwn(x, k));
+const count = (x) => Number.isInteger(x) && x >= 0;
+const lineNumber = (x) => Number.isInteger(x) && x >= 1;
+const shortText = (x) => typeof x === 'string' && x.length <= SURVEY_TEXT;
+const surveyPath = (x) => isText(x) && x.length <= SURVEY_PATH;
 
 function checkPlain(kind, data) {
   const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
@@ -268,6 +293,18 @@ function checkPlain(kind, data) {
     }
     if (data.place !== undefined && !Number.isFinite(data.place)) bad('has a place that is not a number');
     if (data.parent !== undefined) slug('parent');
+    if (data.from !== undefined) {
+      const f = data.from;
+      if (!(isPlain(f) && Object.keys(f).every((k) => ['sha', 'ref', 'request'].includes(k))
+        && typeof f.sha === 'string' && /^[0-9a-f]{40}$/.test(f.sha)
+        && f.ref === `refs/wheelhouse/from/${data.id}`
+        && (f.request === undefined || (Number.isInteger(f.request) && f.request >= 1)))) {
+        bad('has a from that is not a full commit, its refs/wheelhouse/from/<id> ref and the request it carries on');
+      }
+      // Ready-made work is always shown to the director first, so it waits for their approval
+      // whatever its lane (scripts/foreman/queue.js).
+      if (data.visible !== true) bad('starts from a ready-made change, so it must be shown to the director first (visible true)');
+    }
   } else if (kind === 'feature') {
     slug('work');
     if (!FEATURE_STEPS.includes(data.step)) bad('needs its step to be one the build loop knows');
@@ -380,6 +417,31 @@ function checkPlain(kind, data) {
     if (data.work !== undefined) slug('work');
     if (data.usage !== undefined && !isPlain(data.usage)) bad('has a usage that is not an object');
     if (data.at !== undefined && (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at)))) bad('has an at that is not a time');
+  } else if (kind === 'survey') {
+    const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
+    if (data.v !== 1) bad('needs v to be 1');
+    if (typeof data.hostReached !== 'boolean') bad('needs hostReached to be true or false');
+    if (data.again !== undefined && data.again !== true) bad('has an again that is not true');
+    const request = (r) => keysAre(r, ['number', 'title', 'draft']) && lineNumber(r.number) && shortText(r.title) && typeof r.draft === 'boolean';
+    if (!list(data.requests, SURVEY_MOST.requests, request)) bad(`needs requests, at most ${SURVEY_MOST.requests}, each a number, a title and whether it is a draft`);
+    const item = (i) => keysAre(i, ['name', 'head', 'commits', 'subject', 'at']) && isText(i.name) && shortText(i.name)
+      && typeof i.head === 'string' && SURVEY_HEAD.test(i.head) && lineNumber(i.commits) && shortText(i.subject)
+      && shortText(i.at) && (i.at === '' || !Number.isNaN(Date.parse(i.at)));
+    for (const k of ['pushed', 'local']) {
+      if (!list(data[k], SURVEY_MOST.lines, item)) bad(`needs ${k}, at most ${SURVEY_MOST.lines}, each a name, its head, its commits, a subject and when`);
+    }
+    if (!(keysAre(data.more, ['pushed', 'local']) && typeof data.more.pushed === 'boolean' && typeof data.more.local === 'boolean')) {
+      bad('needs more to say, for pushed and local, whether there were more than were looked at');
+    }
+    const ins = data.instructions;
+    const section = (x) => keysAre(x, ['heading', 'line']) && shortText(x.heading) && lineNumber(x.line);
+    if (!(keysAre(ins, ['files', 'sections']) && list(ins.files, SURVEY_MOST.files, surveyPath) && list(ins.sections, SURVEY_MOST.sections, section))) {
+      bad('needs instructions to be the files found and the sections of CLAUDE.md, each a heading and its line');
+    }
+    if (!count(data.scheduled)) bad('needs scheduled to be a count');
+    if (!count(data.secrets)) bad('needs secrets to be a count');
+    const rule = (r) => keysAre(r, ['words', 'source']) && isText(r.words) && r.words.length <= SURVEY_WORDS && keysAre(r.source, ['file', 'line']) && surveyPath(r.source.file) && lineNumber(r.source.line);
+    if (!list(data.rules, SURVEY_MOST.rules, rule)) bad('needs rules, each its words and where it was found');
   }
 }
 

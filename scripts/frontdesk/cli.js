@@ -24,6 +24,14 @@
 //                   its confirm card, as AskUserQuestion's input; then records the review as done
 //   preview <n>     the address of pull request n's preview, for "Show me", or a sentence saying
 //                   there is none
+//   carry-on <n>    makes open request n ready to carry on (design section 15, A2): the helper
+//                   fetches it into the work's own ref; prints the work id it chose, the `from` to
+//                   record the work with, and what to write its brief from. `carry-on --line <name>`
+//                   does the same for a piece of unfinished work with no request, by the name
+//                   `views survey` gives it
+//   archive         makes ready the change that moves another agent setup's instructions into
+//                   .wheelhouse-archive/ (A4), and `restore` the one that puts them back; each prints
+//                   the work id, the `from` and the files it moves
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project. Nothing here
 // writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
@@ -62,8 +70,8 @@ export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
   'work', 'amendment', 'incident', 'note',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
+const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -808,6 +816,43 @@ const titleOf = (entry, key) => flat(entry?.data?.title) || flat(entry?.data?.te
 const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
+// The survey taken when setup finished, as short lines: what it counted, the requests by number
+// and title, each piece of unfinished work by its name (for `carry-on --line`), its newest subject
+// and how many changes it holds, the other setup's files, and the rules found, numbered, each with
+// its source, so the front desk can confirm one when it first matters. A part with nothing in it
+// is left out.
+function surveyLines(survey) {
+  const data = isPlain(survey?.data) ? survey.data : null;
+  if (data === null) return ['No survey has been taken.'];
+  const list = (value) => (Array.isArray(value) ? value.filter(isPlain) : []);
+  const count = (label, n, more) => `${label}: ${more ? 'at least ' : ''}${n}`;
+  const requests = list(data.requests);
+  const pushed = list(data.pushed).length;
+  const local = list(data.local).length;
+  const files = Array.isArray(data.instructions?.files) ? data.instructions.files.filter((f) => typeof f === 'string') : [];
+  const sections = list(data.instructions?.sections).length;
+  const rules = list(data.rules);
+  const out = [];
+  if (data.hostReached === false) out.push('The host could not be looked at.');
+  if (requests.length > 0) {
+    out.push(`Changes waiting to be merged: ${requests.length}`);
+    for (const r of requests) out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}`);
+  }
+  const pieces = (items) => items.map((i) => {
+    const saved = Number.isInteger(i.commits) && i.commits > 0 ? ` (${i.commits} ${i.commits === 1 ? 'change' : 'changes'} saved)` : '';
+    return `- ${flat(i.name)}${flat(i.subject) ? `: ${flat(i.subject)}` : ''}${saved}`;
+  });
+  if (pushed > 0) out.push(count('Unfinished work pushed', pushed, data.more?.pushed === true), ...pieces(list(data.pushed)));
+  if (local > 0) out.push(count('Unfinished work on this computer', local, data.more?.local === true), ...pieces(list(data.local)));
+  if (files.length > 0) out.push(`Another agent setup's files: ${files.map(flat).join(', ')}`);
+  if (sections > 0) out.push(`Parts of CLAUDE.md: ${sections}`);
+  if (rules.length > 0) {
+    out.push(`Rules found: ${rules.length}`);
+    rules.forEach((r, i) => out.push(`${i + 1}. ${flat(r.words)} (${flat(r.source?.file)}, line ${r.source?.line})`));
+  }
+  return out.length > 0 ? out : ['The survey found nothing under way, no other instructions and no rules.'];
+}
+
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
@@ -841,6 +886,7 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
+  if (name === 'survey') return surveyLines(views.survey);
   if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now));
   // settings: the project's over the director's own, over the defaults
   const profile = await client.profile.views({});
@@ -954,6 +1000,17 @@ export async function preview({ client, cwd, n }) {
   return [`Pull request #${n} has no preview to show: it isn't open, or the host has no finished preview of its latest commit.`];
 }
 
+// --- Ready-made changes ---
+
+// What the helper made ready, as it answered (scripts/survey/ready.js): the work id it chose, the
+// `from` to record the work with, and the rest. It writes no work: the intake records that.
+async function ready(ask, body, what) {
+  const got = await ask(body);
+  if (got?.ok !== true || typeof got.work !== 'string' || !isPlain(got.from)) throw new CliError(said(got, `The host helper didn't make the ${what} ready`));
+  const { ok: _ok, ...made } = got;
+  return made;
+}
+
 // --- The command line ---
 
 // Standard input as text. A terminal is refused at once, never waited on: the command is run with
@@ -1023,6 +1080,17 @@ export async function main(argv, {
     } else if (command === 'preview') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
+    } else if (command === 'carry-on') {
+      const usage = 'Give the request\'s number or the piece of work\'s name: carry-on <n>, or carry-on --line <name>';
+      if (rest.length === 2 && rest[0] === '--line' && rest[1] !== '') {
+        json(await ready(helper.survey.carryOn, { cwd: here, line: rest[1] }, `piece of work ${rest[1]}`));
+      } else {
+        if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError(usage);
+        json(await ready(helper.survey.carryOn, { cwd: here, number: Number(rest[0]) }, `request #${rest[0]}`));
+      }
+    } else if (command === 'archive' || command === 'restore') {
+      only(rest, 0, `${command} takes no arguments`);
+      json(await ready(helper.survey[command], { cwd: here }, command === 'archive' ? 'archive' : 'putting back'));
     } else if (command === 'views') {
       only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
       lines(await view({ client: helper, cwd: here, name: rest[0], now }));
