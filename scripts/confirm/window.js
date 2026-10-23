@@ -18,10 +18,14 @@ export const NOT_NOW = 'Not now';
 export const WINDOW_MS = 5 * 60 * 1000;
 // How much longer than the window's own time limit the program is given before it is ended.
 const GRACE_MS = 5000;
+// macOS's own osascript, never one found first on the PATH: a program planted there could print a deciding
+// option with no click at all.
+export const MAC_OSASCRIPT = '/usr/bin/osascript';
 // The environment variable that carries the card to the Windows script.
 export const CARD_VARIABLE = 'WHEELHOUSE_WINDOW';
 
-// macOS: item 1 the title, item 2 the words, item 3 the seconds to wait, then the deciding options.
+// macOS: item 1 the title, item 2 the words, item 3 the seconds to wait, then the deciding options. `choose from
+// list` has no give-up of its own: `run` ends osascript a little after the wait, and that is no choice.
 export const MAC_SCRIPT = [
   'on run argv',
   'set theTitle to item 1 of argv',
@@ -117,7 +121,7 @@ export async function askInWindow({ title, lines, options, platform = process.pl
     if (platform === 'darwin') {
       const seconds = String(Math.ceil(timeoutMs / 1000));
       const script = MAC_SCRIPT.flatMap((line) => ['-e', line]);
-      answer = await run('osascript', [...script, '--', title, lines.join('\n'), seconds, ...options], { timeoutMs: timeoutMs + GRACE_MS });
+      answer = await run(MAC_OSASCRIPT, [...script, '--', title, lines.join('\n'), seconds, ...options], { timeoutMs: timeoutMs + GRACE_MS });
       if (answer.code !== 0 || answer.timedOut) return { choice: null };
       const said = String(answer.stdout).replace(/\r?\n$/, '');
       return { choice: known.includes(said) ? said : null };

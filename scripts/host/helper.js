@@ -1490,12 +1490,14 @@ export async function startHelper({
   // The card the request names, as the state holds it: there once, still waiting, its data hashing to `hash` (what
   // the caller was shown), with the options a click in the window would decide it by. Refuses otherwise. The Lift
   // STOP card is never in the state (the front desk composes it on each visit, since under STOP nothing is written:
-  // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown now.
-  async function windowCard({ project, card, hash }, ctx) {
+  // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown at `shownAt` (now,
+  // on the first look): the look after the click passes the time the window opened, so a click on a window shown
+  // during one STOP never lifts a later one (earned()'s rule).
+  async function windowCard({ project, card, hash }, ctx, { shownAt } = {}) {
     let event;
     if (card === LIFT_STOP_NAME) {
       if (!stopped()) refuse('STOP is not on, so there is nothing to lift');
-      event = { at: now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
+      event = { at: shownAt ?? now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
     } else {
       const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
       if (found.length !== 1) refuse('that card is not in this project\'s state');
@@ -1519,10 +1521,13 @@ export async function startHelper({
   // with proof `window`, as the record the step already has: an approval, a confirmation or an action. The card is
   // looked at again after the click, so a card decided or changed meanwhile records nothing. A confirmed Lift STOP
   // lifts STOP: the window is the one place a click lifts it on an agent whose hooks only read. Not now, or no click
-  // before the window closes, records nothing. Signed records are taken under STOP, as /state/record's are.
+  // before the window closes, records nothing. Under STOP only the Lift STOP card is served (ruling P5-49). A card
+  // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
+  // no longer waits.
   async function doConfirm({ project, card, hash }, ctx) {
     if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
     if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
+    if (card !== LIFT_STOP_NAME && stopped()) return STOP_REFUSAL;
     const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
     const shown = await look();
     const lines = String(shown.event.data.question).split(/\r?\n/);
@@ -1531,12 +1536,20 @@ export async function startHelper({
     const picked = shown.deciding.find((d) => d.label === choice);
     if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
     return stateRoute(async () => {
-      const again = await windowCard({ project, card, hash }, ctx);
+      if (card !== LIFT_STOP_NAME && stopped()) return STOP_REFUSAL;
+      const CHANGED = 'that card changed while the window was open, so nothing was recorded';
+      let again;
+      try {
+        again = await windowCard({ project, card, hash }, ctx, { shownAt: shown.event.at });
+      } catch {
+        refuse(CHANGED);
+      }
       const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
-      if (!still) refuse('that card changed while the window was open, so nothing was recorded');
+      if (!still) refuse(CHANGED);
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
       const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
       await freshViews(() => writeViews(project, { now }));
+      if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label } }, ctx);
       if (still.lift) liftStop();
       if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
       return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true };

@@ -43,7 +43,7 @@ export function setStop({ by, now = () => new Date() }) {
   }
 }
 
-// Turns STOP off. Only the prompt record's lift and the mod call this.
+// Turns STOP off. Only the prompt record's lift, the mod and the helper's window (a Lift STOP clicked there) call this.
 export function liftStop() {
   fs.rmSync(stopFile(), { recursive: true, force: true });
 }

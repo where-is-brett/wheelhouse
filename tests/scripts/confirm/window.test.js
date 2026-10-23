@@ -15,12 +15,15 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { registerLean } from '../../../scripts/lean/project.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { stopState } from '../../../scripts/lib/stop.js';
+import { stopState, liftStop } from '../../../scripts/lib/stop.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { cloneState } from '../../../scripts/state/clone.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { dataHash, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { confirmLine, runbookLine, LIFT_STOP } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, runbookLine, LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import {
-  askInWindow, CARD_VARIABLE, MAC_SCRIPT, NOT_NOW, WINDOWS_SCRIPT, WINDOW_MS, windowsShell,
+  askInWindow, CARD_VARIABLE, MAC_OSASCRIPT, MAC_SCRIPT, NOT_NOW, WINDOWS_SCRIPT, WINDOW_MS, windowsShell,
 } from '../../../scripts/confirm/window.js';
 
 // No real gh, glab, copilot or curl runs (P5-44): the PATH finds the stand-ins first, and the helper's own runs go
@@ -37,6 +40,8 @@ after(() => shims.restore());
 waitLongerOnTheHelper();
 
 const PROJECT = 'shop';
+const HOST_PROJECT = 'o__p';
+const HEAD = `abc1234${'0'.repeat(33)}`;
 const T0 = new Date('2026-10-23T01:00:00.000Z');
 const isWindowProgram = (file) => /^(osascript|powershell(\.exe)?)$/i.test(path.basename(String(file)));
 
@@ -63,7 +68,9 @@ test('a title with quotes, backslashes and new lines reaches osascript only as a
   assert.deepEqual(got, { choice: 'Do it' });
   assert.equal(window.calls.length, 1);
   const [{ file, args, options }] = window.calls;
-  assert.equal(file, 'osascript');
+  // macOS's own osascript, never one planted first on the PATH.
+  assert.equal(file, '/usr/bin/osascript');
+  assert.equal(file, MAC_OSASCRIPT);
   // The script is the constant one, line for line, and holds nothing of the card.
   assert.deepEqual(scriptOf(args), MAC_SCRIPT);
   assert.equal(args.indexOf('--'), MAC_SCRIPT.length * 2, 'the script\'s lines come first, then --, then the arguments');
@@ -142,14 +149,24 @@ test('the Windows script is constant and the text travels base64 in the environm
 // A computer with a home of its own, an enrolled key, a Lean project, and a helper whose window is askInWindow on
 // macOS with a stand-in `run`: each osascript call is noted in `windows` and answered by `answer`. The helper's own
 // `run` is the guard, so no host tool runs.
-async function computer(answer) {
+// With `adapter`, the project is a host project instead (`o__p` on a local bare remote), whose host is that adapter.
+async function computer(answer, { adapter } = {}) {
   const home = shortHome();
   const folder = path.join(shortHome(), 'shop');
   fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
   fs.writeFileSync(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
-  registerLean({ project: PROJECT, folder, now: () => T0 });
+  const remote = adapter ? await makeBareRemote({ repo: 'o/p' }) : null;
+  if (remote) {
+    writeProject(HOST_PROJECT, {
+      folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+    });
+    await cloneState({ env: LOCAL_PATHS, project: HOST_PROJECT, remoteUrl: remote.url });
+  } else {
+    registerLean({ project: PROJECT, folder, now: () => T0 });
+  }
+  const project = remote ? HOST_PROJECT : PROJECT;
   const own = makeSigningKey();
   enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: T0.toISOString() });
   const windows = [];
@@ -164,8 +181,8 @@ async function computer(answer) {
     run: hostGuard,
     askWindow,
     address: testAddress(home),
-    envFor: async () => { throw new Error('no connection on this computer'); },
-    adapterFor: async () => { throw new Error('no adapter on this computer'); },
+    envFor: adapter ? async () => ({}) : async () => { throw new Error('no connection on this computer'); },
+    adapterFor: adapter ? async () => adapter : async () => { throw new Error('no adapter on this computer'); },
     now: () => new Date(T0.getTime() + 1000 * (tick += 1)),
   });
   const client = helperClient({ address: helper.address });
@@ -174,15 +191,17 @@ async function computer(answer) {
     windows,
     folder: fs.realpathSync.native(folder),
     client,
-    events: () => listEvents(stateDir(PROJECT), { report: () => {} }),
+    project,
+    events: () => listEvents(stateDir(project), { report: () => {} }),
     // Writes a card through the helper, as the front desk does, and gives its id and the hash of its data.
     card: async (data) => {
-      const made = await client.state.write({ project: PROJECT, kind: 'card', data });
+      const made = await client.state.write({ project, kind: 'card', data });
       assert.equal(made.ok, true, JSON.stringify(made));
       return { card: made.id, hash: dataHash(data) };
     },
     close: async () => {
       await helper.close();
+      remote?.cleanup();
       if (before === undefined) delete process.env.WHEELHOUSE_HOME;
       else process.env.WHEELHOUSE_HOME = before;
       fs.rmSync(home, { recursive: true, force: true });
@@ -336,6 +355,85 @@ test('a second request while a window is open waits for the first', async () => 
     assert.equal(argvOf(c.windows[1].args)[1], runbookCard(2).question, 'the second window shows the second card');
     opened[1](said(NOT_NOW));
     assert.deepEqual(await two, { ok: true, choice: NOT_NOW, recorded: false });
+  } finally {
+    await c.close();
+  }
+});
+
+test('a click on a window shown during one STOP never lifts a later one', async () => {
+  let open = null;
+  const c = await computer(() => new Promise((resolve) => { open = resolve; }));
+  try {
+    assert.equal((await c.client.stop({})).ok, true);
+    const asked = c.client.confirm({ project: PROJECT, card: 'lift-stop' });
+    for (let i = 0; i < 400 && open === null; i++) await new Promise((r) => { setTimeout(r, 10); });
+    assert.ok(open, 'the window opened');
+    // While the window is open, that STOP is lifted elsewhere and a new one set, which the window never showed.
+    liftStop();
+    assert.equal((await c.client.stop({})).ok, true);
+    const before = c.events().length;
+    open(said('Lift STOP'));
+    const got = await asked;
+    assert.equal(got.ok, false);
+    assert.match(got.refused, /changed while the window was open/);
+    assert.equal(stopState().on, true, 'the later STOP stays on');
+    assert.equal(c.events().length, before, 'nothing was recorded');
+  } finally {
+    await c.close();
+  }
+});
+
+test('under STOP the window serves only the Lift STOP card', async () => {
+  let open = null;
+  const c = await computer(() => new Promise((resolve) => { open = resolve; }));
+  try {
+    const first = await c.card(runbookCard(1));
+    const second = await c.card(runbookCard(2));
+    assert.equal((await c.client.stop({})).ok, true);
+    // Refused before any window opens.
+    assert.deepEqual(await c.client.confirm({ project: PROJECT, ...first }), { ok: false, refused: 'STOP is on' });
+    assert.equal(c.windows.length, 0);
+    liftStop();
+    // STOP set while a card's window is open: the click records nothing.
+    const asked = c.client.confirm({ project: PROJECT, ...second });
+    for (let i = 0; i < 400 && open === null; i++) await new Promise((r) => { setTimeout(r, 10); });
+    assert.ok(open, 'the window opened');
+    assert.equal((await c.client.stop({})).ok, true);
+    const before = c.events().length;
+    open(said('Do it'));
+    assert.deepEqual(await asked, { ok: false, refused: 'STOP is on' });
+    assert.equal(c.events().length, before, 'nothing was recorded');
+  } finally {
+    liftStop();
+    await c.close();
+  }
+});
+
+test('a window-signed approval takes its card out of waiting, with the plain answer beside it', async () => {
+  const adapter = { defaultBranch: async () => 'main', prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }) };
+  const c = await computer(() => said('Approve'), { adapter });
+  try {
+    const card = {
+      question: `Merge the login page?\nThe review found nothing to change.\n${approvalLine(7, HEAD.slice(0, 12))}`,
+      header: 'Approve',
+      options: ['Approve', 'Show me', 'Not now'],
+      kind: 'approval',
+      level: 4,
+    };
+    const shown = await c.card(card);
+    const got = await c.client.confirm({ project: c.project, ...shown });
+    assert.equal(got.ok, true, JSON.stringify(got));
+    assert.deepEqual([got.recorded, got.kind, got.step, got.choice], [true, 'approval', 'approval', 'Approve']);
+    assert.deepEqual(argvOf(c.windows[0].args).slice(3), ['Approve'], 'Show me stays in the chat');
+    const approval = c.events().find((e) => e.id === got.id);
+    assert.deepEqual(approval.data, { pr: 7, commit: HEAD, words: 'Approve', question: card.question, proof: 'window' });
+    assert.ok(verify(approval, readEnrolled()));
+    const answers = c.events().filter((e) => e.kind === 'card-answer');
+    assert.deepEqual(answers.map((e) => e.data), [{ card: shown.card, question: card.question, label: 'Approve' }]);
+    assert.ok(!answers[0].sig, 'the answer beside it is plain');
+    const { views } = await c.client.state.views({ project: c.project });
+    assert.ok(!views.waiting.some((w) => w.id === shown.card), 'the card no longer waits');
+    assert.match((await c.client.confirm({ project: c.project, ...shown })).refused, /no longer waits/);
   } finally {
     await c.close();
   }
