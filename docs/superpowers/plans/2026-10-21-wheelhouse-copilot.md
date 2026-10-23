@@ -262,7 +262,7 @@ git commit -m "Record check 58: what Copilot gives a guard, and how its answer l
 - [ ] **Step 1: Probe:** hooks answering with a marker sentence through each documented field (`additionalContext`, and the PascalCase forms); a prompt asking the agent to repeat any marker it was given; a long session forced to compact with `/compact`; a `task` call to a custom agent named `probe-agent`.
 - [ ] **Step 2: Run (agent, Mac),** undo, write the note, run `npm test`, commit (`"Record check 60: what Copilot's other hooks can do"`).
 
-**If the answer differs:** if `userPromptSubmitted` can't add text, the STOP word's reply and the briefing come from the front desk's own skill (`wheelhouse-briefing`), as `/digest` does without the mod; Part 5 Task 3 leaves the STOP word's text to the helper's answer, which the playbook tells the front desk to read.
+**If the answer differs:** if `userPromptSubmitted` can't add text, the STOP word's reply and the briefing come from the front desk's own skill (`wheelhouse-briefing`), as `/wheelhouse-digest` does without the mod; Part 5 Task 3 leaves the STOP word's text to the helper's answer, which the playbook tells the front desk to read.
 
 ### Task 5: Check 61, sessions from a script (C8), on the Mac
 

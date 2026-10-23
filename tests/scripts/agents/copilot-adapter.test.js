@@ -18,7 +18,7 @@ import { SAFETY_LINES } from '../../../scripts/agents/safety-lines.js';
 import { TOOL_SHEETS as SESSION_START_SHEETS, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { glossaryOf, plainWords } from '../../../scripts/frontdesk/glossary.js';
-import { frontDeskCommand } from '../../../scripts/protection/settings.js';
+import { frontDeskCommand, knowsNoSystemCa } from '../../../scripts/protection/settings.js';
 import { COPILOT_VERSION, GUARD_DEADLINE_MS, GUARD_TIMEOUT_SEC, LEVELS, PROOFS, TIERS, BOARD_FILE, LEAN_RECORD_DIR } from '../../../scripts/lib/copilot-numbers.js';
 import { LINE_CHARS } from '../../../scripts/lib/core-numbers.js';
 import claudeCode from '../../../adapters/claude-code/index.js';
@@ -199,12 +199,16 @@ test('the session start holds each agent\'s sheet, the adapter\'s own', () => {
 
 test('toolSheetLines gives an unknown agent only the command line, and Copilot its sheet then the command line', () => {
   const pluginRoot = '/plugin/root';
-  const command = `The Wheelhouse command is ${frontDeskCommand(pluginRoot, { platform: 'darwin' })}`;
-  assert.deepEqual(toolSheetLines('model-x', { pluginRoot, platform: 'darwin' }), [command]);
-  assert.deepEqual(toolSheetLines(undefined, { pluginRoot, platform: 'darwin' }), [command]);
-  assert.deepEqual(toolSheetLines('copilot', { pluginRoot, platform: 'darwin' }), [...copilotSheet.split('\n'), command]);
+  // The command is built by the settings' own frontDeskCommand, with the flag the running Node.js knows or not, so the
+  // test follows the settings; allowedFlags is given in each call so the sheet and the expected line agree on it.
+  const allowedFlags = process.allowedNodeEnvironmentFlags;
+  const command = `The Wheelhouse command is ${frontDeskCommand(pluginRoot, { platform: 'darwin', noSystemCa: knowsNoSystemCa(allowedFlags) })}`;
+  const sheet = (agent, root = pluginRoot) => toolSheetLines(agent, { pluginRoot: root, platform: 'darwin', allowedFlags });
+  assert.deepEqual(sheet('model-x'), [command]);
+  assert.deepEqual(sheet(undefined), [command]);
+  assert.deepEqual(sheet('copilot'), [...copilotSheet.split('\n'), command]);
   // A plugin folder that can't be typed as a command gives the sheet alone.
-  assert.deepEqual(toolSheetLines('copilot', { pluginRoot: '/plugin/$root', platform: 'darwin' }), copilotSheet.split('\n'));
+  assert.deepEqual(sheet('copilot', '/plugin/$root'), copilotSheet.split('\n'));
 });
 
 // ---- The safety lines ----

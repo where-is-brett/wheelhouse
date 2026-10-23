@@ -16,6 +16,7 @@ import copilot from '../../adapters/copilot/index.js';
 import safetyLine from '../../adapters/copilot/safety-line.js';
 import { buildHome, checkHome, gitBlobHash } from '../../scripts/agents/copilot/home.js';
 import { AGENT_CONTROL } from '../../scripts/lib/agent-control.js';
+import { TO_KNOW_MORE } from '../../scripts/lib/calm-words.js';
 import { BOARD_FILE, LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -601,7 +602,11 @@ test('every question is a card with the five parts, asked with the clickable-que
   for (const part of [/what this is/i, /why it comes to/i, /options/i, /recommend/i, /what happens meanwhile/i]) assert.match(cards, part);
   assert.match(cards, /Only a click decides|only a click/i);
   assert.match(cards, /put the card in your reply|in your reply/i);
-  assert.match(cards, /\*\*Explain more\*\*/);
+  // Calm's card words (scripts/lib/calm-words.js): Why? is for learning only and never an answer.
+  assert.match(cards, /\*\*Why\?\*\*/);
+  assert.ok(cards.includes(TO_KNOW_MORE), 'a card\'s last line');
+  assert.match(cards, /That is for learning only: it is never an answer/);
+  assert.ok(!skill.includes('Explain more'), 'Explain more is not offered');
 });
 
 test('the chat never asks for a key or a password, and stops anyone who offers one', () => {
