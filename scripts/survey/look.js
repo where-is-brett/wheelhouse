@@ -34,8 +34,10 @@ const SECRET_NAME = /^\.env/;
 const EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template']);
 // Folders never gone into for secret files.
 const SKIPPED = new Set(['node_modules', '.git']);
-// Wheelhouse's own lines of work, never counted as the project's.
-const OWN = (name) => name === STATE_BRANCH || name === LOCK_BRANCH || name.startsWith('feature/');
+// At most this many lines are looked at in each place (on origin, here, in worktrees).
+export const LINES = 200;
+// What the main folder is called when it is on no line of its own.
+export const MAIN_FOLDER = 'this folder';
 
 const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -117,7 +119,8 @@ export function instructionsOf(folder) {
 }
 
 // The lines of a YAML file as [indent, text], with comments and blank lines left out. Read line by
-// line, with no YAML parser: enough to count, not to understand.
+// line, with no YAML parser: enough to count, not to understand. A list may sit at its key's own
+// indent (`schedule:` then `- cron:` beneath it, level with it), and is still inside that key.
 function yamlLines(file) {
   const text = isFile(file) ? readStart(file, FILE_BYTES) : null;
   if (text === null) return [];
@@ -137,7 +140,7 @@ function cronsOf(file) {
   let schedule = null;
   let count = 0;
   for (const [indent, body] of yamlLines(file)) {
-    if (schedule !== null && indent <= schedule) schedule = null;
+    if (schedule !== null && (indent < schedule || (indent === schedule && !body.startsWith('-')))) schedule = null;
     if (on !== null && indent <= on) on = null;
     if (/^(?:on|"on"|'on')\s*:\s*$/.test(body)) on = indent;
     else if (on !== null && schedule === null && /^schedule\s*:\s*$/.test(body)) schedule = indent;
@@ -164,7 +167,7 @@ function gitlabScheduledOf(file) {
       continue;
     }
     if (job === null) continue;
-    if (within !== null && indent <= within) within = null;
+    if (within !== null && (indent < within || (indent === within && !body.startsWith('-')))) within = null;
     const key = /^(rules|only)\s*:(.*)$/.exec(body);
     if (key) {
       within = indent;
@@ -213,25 +216,44 @@ async function out(git, args) {
   return got.code === 0 ? String(got.stdout ?? '') : null;
 }
 
-// The tip each ref under `prefix` names, as [name without its prefix, head].
+const SHA = /^[0-9a-f]{40,64}$/;
+
+// The refs under `prefix`, at most LINES of them, in one call: { refs: [{ name (without the
+// prefix), head, subject, at }], more } where `more` says there were others not looked at.
 async function refsOf(git, prefix) {
-  const text = await out(git, ['for-each-ref', '--format=%(refname)%00%(objectname)', prefix]);
-  return (text ?? '').split('\n').filter(Boolean).map((line) => line.split('\0'))
-    .filter(([ref, head]) => ref.startsWith(prefix) && /^[0-9a-f]{40,64}$/.test(head ?? ''))
-    .map(([ref, head]) => [ref.slice(prefix.length), head]);
+  const format = '--format=%(refname)%00%(objectname)%00%(subject)%00%(committerdate:iso-strict)';
+  const text = await out(git, ['for-each-ref', `--count=${LINES + 1}`, format, prefix]);
+  const rows = (text ?? '').split('\n').filter(Boolean);
+  const refs = rows.slice(0, LINES).map((line) => line.split('\0'))
+    .filter(([ref, head]) => ref.startsWith(prefix) && SHA.test(head ?? ''))
+    .map(([ref, head, subject = '', at = '']) => ({ name: ref.slice(prefix.length), head, subject, at }));
+  return { refs, more: rows.length > LINES };
 }
 
-// The worktrees other than the main folder that are on no line of their own: [folder name, head].
+// The worktrees on no line of their own, at most LINES of them: the main folder named "this
+// folder", every other by its folder's name. { refs: [{ name, head }], more }.
 async function detachedWorktrees(git) {
   const text = await out(git, ['worktree', 'list', '--porcelain']);
   const blocks = (text ?? '').split(/\n\n+/).map((b) => b.split('\n').filter(Boolean)).filter((b) => b.length > 0);
   const found = [];
-  for (const block of blocks.slice(1)) {
+  blocks.forEach((block, i) => {
     const where = block.find((l) => l.startsWith('worktree '))?.slice(9);
     const head = block.find((l) => l.startsWith('HEAD '))?.slice(5);
-    if (where && block.includes('detached') && !block.includes('bare') && /^[0-9a-f]{40,64}$/.test(head ?? '')) {
-      found.push([path.basename(where.replace(/[\\/]+$/, '')), head]);
+    if (where && block.includes('detached') && !block.includes('bare') && SHA.test(head ?? '')) {
+      found.push({ name: i === 0 ? MAIN_FOLDER : path.basename(where.replace(/[\\/]+$/, '')), head });
     }
+  });
+  return { refs: found.slice(0, LINES), more: found.length > LINES };
+}
+
+// The subject and date of each of `heads`, in one call, as a Map from head to { subject, at }.
+async function detailsOf(git, heads) {
+  const found = new Map();
+  if (heads.length === 0) return found;
+  const text = await out(git, ['log', '--no-walk=unsorted', '--format=%H%x00%s%x00%cI', ...heads]);
+  for (const line of (text ?? '').split('\n').filter(Boolean)) {
+    const [head, subject = '', at = ''] = line.split('\0');
+    found.set(head, { subject, at });
   }
   return found;
 }
@@ -245,62 +267,72 @@ async function baseOf(git, defaultBranch) {
   return null;
 }
 
-// An item of work in flight, or null when it holds nothing off the main line.
-async function itemOf(git, base, name, head) {
-  const counted = await out(git, ['rev-list', '--count', head, ...(base === null ? [] : [`^${base}`])]);
-  const commits = Number.parseInt(counted ?? '', 10);
-  if (!Number.isInteger(commits) || commits <= 0) return null;
-  const [subject = '', at = ''] = (await out(git, ['log', '-1', '--format=%s%x00%cI', head]) ?? '').trim().split('\0');
-  return { name, head, commits, subject, at };
-}
-
-// inFlightOf(git, { defaultBranch, requestHeads }) -> { pushed, local }, each a list of
-// `{ name, head, commits, subject, at }` sorted by name. `local` is the project's lines here
-// (refs/heads/*) and the worktrees other than the main folder on no line of their own, named by
-// their folder; `pushed` is the lines on origin as last fetched (refs/remotes/origin/*, ruling P2).
-// Each holds commits not on the default branch as last fetched. Left out: the default branch,
-// Wheelhouse's own lines, anything at a request's head, and a line here at the same place as one
-// pushed (the same work, counted once, as pushed).
-export async function inFlightOf(git, { defaultBranch, requestHeads = [] }) {
+// inFlightOf(git, { defaultBranch, requestHeads, requestBranches, own }) -> { pushed, local, more },
+// `pushed` and `local` each a list of `{ name, head, commits, subject, at }` sorted by name, and
+// `more: { pushed, local }` saying where more than LINES lines were there and only LINES looked at.
+// `local` is the project's lines here (refs/heads/*) and the worktrees on no line of their own: the
+// main folder as "this folder", every other named by its folder; `pushed` is the lines on origin as
+// last fetched (refs/remotes/origin/*, ruling P2). Each holds commits not on the default branch as
+// last fetched. Left out: the default branch; Wheelhouse's state and lock lines and the lines named
+// in `own` (its feature lines); anything at a request's head or of a request's line's name (from
+// the project itself, not someone's own copy); and a line here at the same place as one pushed
+// (the same work, counted once, as pushed). Each head is counted once, however many lines name it.
+export async function inFlightOf(git, { defaultBranch, requestHeads = [], requestBranches = [], own = [] }) {
   const base = await baseOf(git, defaultBranch);
-  const skip = new Set(requestHeads);
-  const keep = ([name]) => name !== defaultBranch && name !== 'HEAD' && !OWN(name);
-  const items = async (pairs) => {
+  const skipHeads = new Set(requestHeads);
+  const skipNames = new Set([defaultBranch, 'HEAD', STATE_BRANCH, LOCK_BRANCH, ...own, ...requestBranches]);
+  const counts = new Map();
+  const items = async (refs) => {
     const got = [];
-    for (const [name, head] of pairs.filter(keep)) {
-      if (skip.has(head)) continue;
-      const item = await itemOf(git, base, name, head);
-      if (item !== null) got.push(item);
+    for (const ref of refs) {
+      if (skipNames.has(ref.name) || skipHeads.has(ref.head)) continue;
+      if (!counts.has(ref.head)) {
+        const counted = await out(git, ['rev-list', '--count', ref.head, ...(base === null ? [] : [`^${base}`])]);
+        counts.set(ref.head, Number.parseInt(counted ?? '', 10));
+      }
+      const commits = counts.get(ref.head);
+      if (Number.isInteger(commits) && commits > 0) got.push({ name: ref.name, head: ref.head, commits, subject: ref.subject, at: ref.at });
     }
     return got.sort((a, b) => byName(a.name, b.name));
   };
-  const pushed = await items(await refsOf(git, 'refs/remotes/origin/'));
-  for (const item of pushed) skip.add(item.head);
-  const local = await items([...await refsOf(git, 'refs/heads/'), ...await detachedWorktrees(git)]);
-  return { pushed, local };
+  const remote = await refsOf(git, 'refs/remotes/origin/');
+  const pushed = await items(remote.refs);
+  for (const item of pushed) skipHeads.add(item.head);
+  const here = await refsOf(git, 'refs/heads/');
+  const loose = await detachedWorktrees(git);
+  const details = await detailsOf(git, [...new Set(loose.refs.map((r) => r.head))]);
+  const looseRefs = loose.refs.map((r) => ({ ...r, subject: '', at: '', ...details.get(r.head) }));
+  const local = await items([...here.refs, ...looseRefs]);
+  return { pushed, local, more: { pushed: remote.more, local: here.more || loose.more } };
 }
 
 // surveyOf({ folder, git, adapter, defaultBranch, rules }) -> Survey: every part of the survey.
 // The host is asked for its open requests; a host that fails, or answers in a shape not expected,
 // gives `hostReached: false` and no requests, never a throw. With no adapter (a project in git
-// alone) there is no host to reach. `rules` are the rules found (step 5), kept as given.
-export async function surveyOf({ folder, git, adapter = null, defaultBranch, rules = [] }) {
+// alone) there is no host to reach. Anything in the host's answer that isn't a request's object is
+// left out. `rules` are the rules found (step 5), kept as given; `own` names Wheelhouse's own
+// feature lines, left out of the work in flight.
+export async function surveyOf({ folder, git, adapter = null, defaultBranch, rules = [], own = [] }) {
   let hostReached = true;
   let open = [];
   if (adapter !== null) {
     try {
       const got = await adapter.openRequests();
       if (!Array.isArray(got)) throw new Error('the host did not answer with a list');
-      open = got;
+      open = got.filter((r) => r !== null && typeof r === 'object' && !Array.isArray(r));
     } catch {
       hostReached = false;
       open = [];
     }
   }
   const requests = open.map(({ number, title, draft }) => ({ number, title, draft }));
-  const { pushed, local } = await inFlightOf(git, { defaultBranch, requestHeads: open.map((r) => r.head) });
+  const { pushed, local, more } = await inFlightOf(git, {
+    defaultBranch, own,
+    requestHeads: open.map((r) => r.head).filter((h) => typeof h === 'string'),
+    requestBranches: open.filter((r) => r.fork !== true && typeof r.branch === 'string').map((r) => r.branch),
+  });
   return {
-    v: 1, hostReached, requests, pushed, local,
+    v: 1, hostReached, requests, pushed, local, more,
     instructions: instructionsOf(folder), scheduled: scheduledOf(folder), secrets: secretFilesOf(folder), rules,
   };
 }

@@ -10,29 +10,34 @@ const HERE = 'on this computer';
 // The files named first, by the name a director is likeliest to know; otherwise the first listed.
 const NAMED_FIRST = ['AGENTS.md', '.cursorrules', '.windsurfrules', '.github/copilot-instructions.md'];
 
-const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// A list the survey cut short (more than LIMIT lines, only LIMIT looked at) is said as "over LIMIT".
+const LIMIT = 200;
+
+const counted = (n, one, many, more = false) => (more ? `over ${LIMIT} ${many}` : `${n} ${n === 1 ? one : many}`);
 const changes = (n) => counted(n, 'change waiting to be merged', 'changes waiting to be merged');
-const pieces = (n) => counted(n, 'piece of unfinished work', 'pieces of unfinished work');
+const pieces = (n, more) => counted(n, 'piece of unfinished work', 'pieces of unfinished work', more);
 
 // Parts of a list in words: "a", "a, and b", "a, b, and c".
 const listed = (parts) => (parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`);
 
 // The line about work in flight, or null. Work pushed is unfinished work on the host; in git alone
-// (no host) it is on this computer, with the rest.
+// (no host) it is on this computer, with the rest. A list cut short is said as over LIMIT.
 function inFlightLine(survey, hostName) {
   const requests = survey.requests?.length ?? 0;
   const pushed = survey.pushed?.length ?? 0;
   const local = survey.local?.length ?? 0;
+  const morePushed = survey.more?.pushed === true;
+  const moreLocal = survey.more?.local === true;
   const parts = [];
   if (hostName !== null) {
     if (requests > 0) parts.push(`${changes(requests)} on ${hostName}`);
-    if (pushed > 0) parts.push(`${pieces(pushed)} on ${hostName}`);
-    if (local > 0) parts.push(`${pieces(local)} ${HERE}`);
-  } else if (pushed + local > 0) {
-    parts.push(`${pieces(pushed + local)} ${HERE}`);
+    if (pushed > 0 || morePushed) parts.push(`${pieces(pushed, morePushed)} on ${hostName}`);
+    if (local > 0 || moreLocal) parts.push(`${pieces(local, moreLocal)} ${HERE}`);
+  } else if (pushed + local > 0 || morePushed || moreLocal) {
+    parts.push(`${pieces(pushed + local, morePushed || moreLocal)} ${HERE}`);
   }
   if (parts.length === 0) return null;
-  const total = (hostName === null ? 0 : requests) + pushed + local;
+  const total = morePushed || moreLocal ? Infinity : (hostName === null ? 0 : requests) + pushed + local;
   return `Already under way here: ${listed(parts)}. Say if you'd like me to carry ${total === 1 ? 'it' : 'any of them'} on.`;
 }
 

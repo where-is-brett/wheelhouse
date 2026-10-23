@@ -39,6 +39,16 @@ test('work pushed counts as unfinished work on the host, and one of each is sing
   ]);
 });
 
+test('a list cut short at 200 is said as over 200', () => {
+  const many = Array.from({ length: 150 }, (_, i) => item(`l${i}`));
+  assert.deepEqual(briefingLines(survey({ local: many, more: { pushed: true, local: true }, pushed: [item('p')] }), { host: 'github' }), [
+    'Already under way here: over 200 pieces of unfinished work on GitHub, and over 200 pieces of unfinished work on this computer. Say if you\'d like me to carry any of them on.',
+  ]);
+  assert.deepEqual(briefingLines(survey({ local: [item('l')], more: { pushed: true, local: false } }), { host: null }), [
+    'Already under way here: over 200 pieces of unfinished work on this computer. Say if you\'d like me to carry any of them on.',
+  ]);
+});
+
 test('in git alone, everything is on this computer', () => {
   assert.deepEqual(briefingLines(survey({ pushed: [item('p')], local: [item('l'), item('m')] }), { host: null }), [
     'Already under way here: 3 pieces of unfinished work on this computer. Say if you\'d like me to carry any of them on.',
