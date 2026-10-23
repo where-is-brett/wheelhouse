@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   uninstallPlan, uninstallRoutes, planLines, readProgress, writeProgress, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP,
   UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
-  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION, ENV_STAYS,
+  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION, ENV_STAYS, ARCHIVE, ARCHIVE_UNREAD, ARCHIVE_OUTSIDE, ARCHIVE_TWICE, archiveAt,
 } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
 import {
@@ -2530,5 +2530,259 @@ test('the .wheelhouse/ line kept where it is when it came before setup\'s settin
     assert.equal(readText(exclude), `${before}${WHEELHOUSE_LINE}\n`);
     assert.equal(markOf(settingsLine.id).put, true);
     assert.equal(markOf(ownLine.id).put, false);
+  });
+});
+
+// ---- The other agent setup's instructions, put back from the archive (plan rulings P5, P6) ----
+// The archive is on the default branch as the archive's own commit leaves it: each file moved under
+// .wheelhouse-archive/ at its own path, with archived.json listing the moves and a README. The plan
+// reads it from the folder's copy of the branch as last fetched; the apply reads it again from the
+// host, and goes ahead only when the two agree.
+
+const ARCHIVED = { 'AGENTS.md': '# Agents\nWrite small changes.\n', '.claude/agents/writer.md': '# Writer\nKeep it short.\n', '.cursorrules': 'Be brief.\n' };
+const movesOf = (froms) => froms.map((from) => ({ from, to: `${ARCHIVE}/${from}` }));
+const manifestText = (moved) => `${JSON.stringify({ v: 1, moved }, null, 2)}\n`;
+const gitHere = async () => ({ ok: true, path: 'git' });
+
+// Writes the archive into a work folder and commits it, with `extra` files beside it.
+async function commitArchive(work, { manifest = manifestText(movesOf(Object.keys(ARCHIVED))), files = ARCHIVED, extra = {} } = {}) {
+  for (const [rel, text] of Object.entries(files)) writeText(path.join(work, ARCHIVE, ...rel.split('/')), text);
+  if (manifest !== null) writeText(path.join(work, ARCHIVE, 'archived.json'), manifest);
+  writeText(path.join(work, ARCHIVE, 'README.md'), '# Archive\nWhat another agent setup used here.\n');
+  for (const [rel, text] of Object.entries(extra)) writeText(path.join(work, ...rel.split('/')), text);
+  await g(work, 'add', '-A');
+  await g(work, 'commit', '-q', '-m', 'Archive the other agent setup\'s instructions');
+}
+// The archive merged on the stand-in's main.
+async function archiveOnHost(host, options) {
+  await commitArchive(host.work, options);
+  await g(host.work, 'push', '-q', host.product.url, 'main');
+}
+// The folder's copy of main, fetched from `from` as the folder last saw it.
+async function fetchToFolder(world, from) {
+  if (!fs.existsSync(path.join(world.folder, '.git', 'objects'))) await g(world.folder, 'init', '-q', '-b', 'main');
+  await g(world.folder, 'fetch', '-q', from, '+refs/heads/main:refs/remotes/origin/main');
+}
+const planHere = (world, f) => uninstallPlan({ folder: world.folder, userHome: world.userHome, platform: 'darwin', run: f.run, findGit: gitHere });
+const applyHere = async (world, f) => {
+  const got = await planHere(world, f);
+  const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+  return { got, done };
+};
+const archiveOf = (got) => got.changes.find((c) => c.put === 'pull-request')?.archive;
+
+test('uninstall\'s pull request puts the other agent setup\'s instructions back where they were and takes the archive folder out (ruling P6)', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      await archiveOnHost(host);
+      await fetchToFolder(world, host.product.url);
+      const f = fakes(world);
+      const got = await planHere(world, f);
+      assert.deepEqual(archiveOf(got), {
+        moves: movesOf(['AGENTS.md', '.claude/agents/writer.md', '.cursorrules']), taken: [], missing: [],
+        folder: ['.wheelhouse-archive/.claude/agents/writer.md', '.wheelhouse-archive/.cursorrules', '.wheelhouse-archive/AGENTS.md', '.wheelhouse-archive/README.md', '.wheelhouse-archive/archived.json'],
+      });
+      assert.match(got.card.what, /the other agent setup's instructions, back where they were/);
+      assert.doesNotMatch(got.card.what, /\b(commit|branch|worktree)\b/i);
+      const { question } = composeCard(got.card);
+      assert.ok(question.question.length <= CARD.chars);
+      assert.ok(planLines(got, world.folder, world.userHome).some((l) => /in it: the other agent setup's instructions, back where they were: AGENTS\.md/.test(l)));
+      const { done } = await applyHere(world, f);
+      assert.equal(done.ok, true, done.refused);
+      // The moved files are back at their own paths, as main holds them; the archive folder is gone.
+      assert.deepEqual(await filesOn(host.product.url, UNINSTALL_BRANCH), ['.claude/agents/writer.md', '.claude/settings.json', '.cursorrules', 'AGENTS.md', 'README.md']);
+      for (const [rel, text] of Object.entries(ARCHIVED)) assert.equal(await showOn(host.product.url, UNINSTALL_BRANCH, rel), text, rel);
+      assert.ok(done.lines.some((l) => /the other agent setup's instructions, back where they were/.test(l)));
+      assert.match(f.seen.prs[0].body, /back where they were/);
+      // The director's folder is not changed: its files are the pull request's to change.
+      assert.equal(fs.existsSync(path.join(world.folder, 'AGENTS.md')), false);
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('a moved file whose place is taken on the default branch stays in the archive, named on the card; one the archive no longer holds is left out', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      const moved = [...movesOf(Object.keys(ARCHIVED)), { from: 'gone.md', to: `${ARCHIVE}/gone.md` }];
+      // Since the archive, the project has a .cursorrules of its own again.
+      await archiveOnHost(host, { manifest: manifestText(moved), extra: { '.cursorrules': 'A new rule.\n' } });
+      await fetchToFolder(world, host.product.url);
+      const f = fakes(world);
+      const got = await planHere(world, f);
+      assert.deepEqual(archiveOf(got).moves, movesOf(['AGENTS.md', '.claude/agents/writer.md']));
+      assert.deepEqual(archiveOf(got).taken, ['.cursorrules']);
+      assert.deepEqual(archiveOf(got).missing, ['gone.md']);
+      assert.match(got.card.what, /Left in \.wheelhouse-archive\/, as its place is taken: \.cursorrules\./);
+      const { done } = await applyHere(world, f);
+      assert.equal(done.ok, true, done.refused);
+      assert.deepEqual(await filesOn(host.product.url, UNINSTALL_BRANCH), [
+        '.claude/agents/writer.md', '.claude/settings.json', '.cursorrules', '.wheelhouse-archive/.cursorrules', '.wheelhouse-archive/README.md', '.wheelhouse-archive/archived.json', 'AGENTS.md', 'README.md',
+      ]);
+      assert.equal(await showOn(host.product.url, UNINSTALL_BRANCH, '.cursorrules'), 'A new rule.\n');
+      assert.equal(await showOn(host.product.url, UNINSTALL_BRANCH, `${ARCHIVE}/.cursorrules`), ARCHIVED['.cursorrules']);
+      // The archive's list names only what stays in it, so putting it back later still works.
+      assert.deepEqual(JSON.parse(await showOn(host.product.url, UNINSTALL_BRANCH, `${ARCHIVE}/archived.json`)), { v: 1, moved: movesOf(['.cursorrules']) });
+      assert.ok(done.lines.some((l) => /\.cursorrules/.test(l) && /taken/.test(l)));
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('an archive whose list can\'t be read, names a path outside the project or outside the archive, or names one twice, is refused: nothing is moved, and why is given', async () => {
+  const work = tempFolder('wh-archive-work ');
+  await g(work, 'init', '-q', '-b', 'main');
+  writeText(path.join(work, 'README.md'), '# Project\n');
+  await g(work, 'add', '-A');
+  await g(work, 'commit', '-q', '-m', 'First');
+  const git = (args) => realRun('git', args, { cwd: work });
+  // No archive, and a ref that can't be read: nothing to put back.
+  assert.equal(await archiveAt(git, 'HEAD'), null);
+  assert.equal(await archiveAt(git, 'refs/remotes/origin/nowhere'), null);
+  const one = (from, to = `${ARCHIVE}/${from}`) => manifestText([{ from, to }]);
+  const cases = [
+    ['not JSON', '{ v: 1', ARCHIVE_UNREAD],
+    ['another version', `${JSON.stringify({ v: 2, moved: [] })}\n`, ARCHIVE_UNREAD],
+    ['no list of moves', `${JSON.stringify({ v: 1 })}\n`, ARCHIVE_UNREAD],
+    ['a move that is not a pair of paths', `${JSON.stringify({ v: 1, moved: [{ from: 'AGENTS.md' }] })}\n`, ARCHIVE_UNREAD],
+    ['a parent folder', one('../outside.md', `${ARCHIVE}/outside.md`), ARCHIVE_OUTSIDE],
+    ['a parent folder inside the path', one('docs/../../outside.md', `${ARCHIVE}/outside.md`), ARCHIVE_OUTSIDE],
+    ['an absolute path', one('/etc/hosts', `${ARCHIVE}/hosts`), ARCHIVE_OUTSIDE],
+    ['a Windows drive', one('C:/Users/x.md', `${ARCHIVE}/x.md`), ARCHIVE_OUTSIDE],
+    ['backslashes', one('docs\\..\\..\\x.md', `${ARCHIVE}/x.md`), ARCHIVE_OUTSIDE],
+    ['a dot folder', one('docs/./x.md', `${ARCHIVE}/x.md`), ARCHIVE_OUTSIDE],
+    ['git\'s own folder, in another case', one('.GIT/config', `${ARCHIVE}/config`), ARCHIVE_OUTSIDE],
+    ['git\'s own folder, with a dot Windows drops', one('docs/.git./hooks/x', `${ARCHIVE}/x`), ARCHIVE_OUTSIDE],
+    ['git\'s own folder, by its short name', one('GIT~1/config', `${ARCHIVE}/config`), ARCHIVE_OUTSIDE],
+    ['git\'s own folder, with a character macOS ignores', one('.g\u200cit/config', `${ARCHIVE}/config`), ARCHIVE_OUTSIDE],
+    ['the archive folder itself, in another case', one('.Wheelhouse-Archive/x.md', `${ARCHIVE}/x.md`), ARCHIVE_OUTSIDE],
+    ['a move from outside the archive', one('x.md', 'AGENTS.md'), ARCHIVE_OUTSIDE],
+    ['a move from the archive\'s parent', one('x.md', `${ARCHIVE}/../AGENTS.md`), ARCHIVE_OUTSIDE],
+    ['the archive\'s own list', one('x.md', `${ARCHIVE}/archived.json`), ARCHIVE_OUTSIDE],
+    ['one place twice, in another case', manifestText([{ from: 'AGENTS.md', to: `${ARCHIVE}/AGENTS.md` }, { from: 'agents.md', to: `${ARCHIVE}/agents.md` }]), ARCHIVE_TWICE],
+    ['one place inside another', manifestText([{ from: 'docs', to: `${ARCHIVE}/docs` }, { from: 'Docs/x.md', to: `${ARCHIVE}/Docs/x.md` }]), ARCHIVE_TWICE],
+    ['no list at all', null, ARCHIVE_UNREAD],
+  ];
+  for (const [what, manifest, why] of cases) {
+    await g(work, 'rm', '-r', '-q', '--ignore-unmatch', ARCHIVE);
+    await commitArchive(work, { manifest, files: { 'AGENTS.md': ARCHIVED['AGENTS.md'] } });
+    const got = await archiveAt(git, 'HEAD');
+    assert.equal(got?.view.refused, why, what);
+    assert.equal(got.view.moves, undefined, what);
+    assert.ok(got.view.folder.includes(`${ARCHIVE}/AGENTS.md`), what);
+  }
+});
+
+test('a refused archive stays as it is in uninstall\'s pull request, and the card says why', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      await archiveOnHost(host, { manifest: manifestText([{ from: '../outside.md', to: `${ARCHIVE}/AGENTS.md` }]) });
+      await fetchToFolder(world, host.product.url);
+      const f = fakes(world);
+      const got = await planHere(world, f);
+      assert.equal(archiveOf(got).refused, ARCHIVE_OUTSIDE);
+      assert.match(got.card.what, /\.wheelhouse-archive\/ stays as it is: /);
+      assert.doesNotMatch(got.card.what, /back where they were/);
+      const { done } = await applyHere(world, f);
+      assert.equal(done.ok, true, done.refused);
+      const files = await filesOn(host.product.url, UNINSTALL_BRANCH);
+      assert.ok(files.includes(`${ARCHIVE}/archived.json`) && files.includes(`${ARCHIVE}/AGENTS.md`));
+      assert.equal(files.some((p) => p === 'AGENTS.md' || p.startsWith('..')), false);
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('the list\'s hash covers the moves: an archive changed between card and click is a new card, and one this folder hasn\'t seen yet stops uninstall before anything is done', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      await archiveOnHost(host);
+      await fetchToFolder(world, host.product.url);
+      const f = fakes(world);
+      const first = await planHere(world, f);
+      // A move taken out of the archive's list on main, and fetched: the hash is another.
+      writeText(path.join(host.work, ARCHIVE, 'archived.json'), manifestText(movesOf(['AGENTS.md', '.claude/agents/writer.md'])));
+      await g(host.work, 'commit', '-q', '-am', 'Keep .cursorrules archived');
+      await g(host.work, 'push', '-q', host.product.url, 'main');
+      await fetchToFolder(world, host.product.url);
+      const second = await planHere(world, f);
+      assert.notEqual(second.hash, first.hash);
+      // Changed again on main, not fetched: the apply reads the host's, which isn't the card's.
+      writeText(path.join(host.work, 'AGENTS.md'), '# The project\'s own now\n');
+      await g(host.work, 'add', '-A');
+      await g(host.work, 'commit', '-q', '-m', 'An AGENTS.md of the project\'s own');
+      await g(host.work, 'push', '-q', host.product.url, 'main');
+      const stale = await applyUninstall({ folder: world.folder, plan: second, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+      assert.equal(stale.ok, false);
+      assert.match(stale.refused, /isn't as this folder last saw it, so the list has changed since the card/);
+      assert.deepEqual(f.seen.stops, [], 'nothing else was done');
+      assert.equal(f.seen.password, 0);
+      assert.equal(await filesOn(host.product.url, UNINSTALL_BRANCH), null);
+      // The folder's copy of main is brought up to date, so the next plan is the host's.
+      assert.equal(await g(world.folder, 'rev-parse', 'refs/remotes/origin/main'), await g(host.product.url, 'rev-parse', 'main'));
+      const { got, done } = await applyHere(world, f);
+      assert.notEqual(got.hash, second.hash);
+      assert.deepEqual(archiveOf(got).taken, ['AGENTS.md']);
+      assert.equal(done.ok, true, done.refused);
+      assert.equal(await showOn(host.product.url, UNINSTALL_BRANCH, 'AGENTS.md'), '# The project\'s own now\n');
+      assert.equal(await showOn(host.product.url, UNINSTALL_BRANCH, '.claude/agents/writer.md'), ARCHIVED['.claude/agents/writer.md']);
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('an archive this folder has never fetched stops uninstall before anything is done, and the next plan lists it', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      await archiveOnHost(host);
+      await g(world.folder, 'init', '-q', '-b', 'main');
+      const f = fakes(world);
+      const { got: first, done: stale } = await applyHere(world, f);
+      assert.equal(archiveOf(first), undefined);
+      assert.equal(stale.ok, false);
+      assert.match(stale.refused, /isn't as this folder last saw it/);
+      assert.deepEqual(f.seen.stops, []);
+      const { got, done } = await applyHere(world, f);
+      assert.equal(archiveOf(got).moves.length, 3);
+      assert.equal(done.ok, true, done.refused);
+      assert.ok((await filesOn(host.product.url, UNINSTALL_BRANCH)).includes('AGENTS.md'));
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('a shared project leaves the archive as it is, and names it', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    fullSetup(world);
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
+    const work = tempFolder('wh-shared-work ');
+    await g(work, 'init', '-q', '-b', 'main');
+    await commitArchive(work);
+    await fetchToFolder(world, work);
+    const f = fakes(world);
+    const before = snapshot(world);
+    const got = await planHere(world, f);
+    assert.equal(got.shared, true);
+    assert.equal(got.changes.some((c) => c.put === 'pull-request'), false);
+    assert.ok(got.keep.some((k) => /\.wheelhouse-archive\//.test(k.what) && /other computers/.test(k.why)));
+    assert.deepEqual(snapshot(world), before, 'the plan changed nothing');
   });
 });

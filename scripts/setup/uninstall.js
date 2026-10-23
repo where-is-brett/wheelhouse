@@ -52,6 +52,17 @@
 // kept; the folder's being there is read from the world, so its coming or going between the card
 // and the click changes the list. Without the folder, the line is put back as setup's others are.
 //
+// The other agent setup's instructions, archived (plan rulings P5, P6): when the pull request is
+// planned and the folder's copy of its branch (refs/remotes/origin/<branch>, as last fetched) holds
+// .wheelhouse-archive/archived.json, the pull request also moves each file back to where it was, its
+// text as the branch holds it, and takes the archive folder out (archiveAt, below). A move whose
+// place is taken on the branch is left in the archive, and named; the archive's list is then
+// written again with only what stays. A list that can't be read, or that names a path outside the
+// project or a move from outside the archive, is refused whole: nothing is moved, and why is named.
+// What is moved is in the pull request's entry (`archive`), so the hash covers it; the apply reads
+// the archive again from the host and goes ahead only when it is the same. On a shared project the
+// archive stays as it is, for the other computers.
+//
 // What each kind gives (R87): see the entries below. The order is binding (R89): Stop, Locked, the
 // project's files (a pull request the director merges), this computer, keys, kept, last; newest
 // first within a phase; then the trusted-keys list, this computer's id, the emptied folders, the
@@ -80,9 +91,10 @@
 //     `put` is one of:
 //       'stop' { what: foreman | watcher | receiver | helper }
 //       'leave-locked' { project }           leaveLocked, with the director's password
-//       'pull-request' { target, branch, base }   the uninstall pull request, taking out every
-//                                            'in-pull-request' entry by its change's `before`; its
-//                                            ids hold theirs too, so they are marked with it
+//       'pull-request' { target, branch, base, archive? }   the uninstall pull request, taking out
+//                                            every 'in-pull-request' entry by its change's `before`;
+//                                            its ids hold theirs too, so they are marked with it;
+//                                            `archive`, what it puts back from the archive (ArchiveView)
 //       'in-pull-request' { change }         a project file or pin, taken out by that pull request
 //       'close-pull-request' { repo, number?, branch? }, 'delete-branch' { repo, branch, sha }
 //       'reverse' { change }                 reverseChange, here (a pin with no pull request: its
@@ -127,6 +139,8 @@ import { PROFILE_REPO } from './host.js';
 import { SETUP_FILES, WHEELHOUSE_LINE, GITIGNORE, ENV_STAYS_LINES } from './project-files.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
+import { setupGit } from './git.js';
+import { toolsStatus } from './tools.js';
 
 // The phases, in the order uninstall applies them (ruling R89).
 export const PHASES = Object.freeze(['stop', 'locked', 'files', 'computer', 'keys', 'kept', 'last']);
@@ -261,7 +275,7 @@ function deleteCard({ what, why, deletes, keeps, because }) {
 // shortest names no group of what is removed either, only that the whole list is in `cli.js
 // uninstall status`. Each shorter one points there, and the playbook runs it and shows its lines
 // before asking such a card; the hash covers the whole list whichever is shown.
-function cardWhats({ name, changes, keep, asks, pullRequest }) {
+function cardWhats({ name, changes, keep, asks, pullRequest, archive }) {
   const count = (test) => changes.filter(test).length;
   // The trusted-keys list and the signing key, removed last of all, are keys on the card.
   const keyFile = (c) => c.put === 'remove' && (samePath(c.target, signingKeyFile()) || samePath(c.target, enrolledFile()));
@@ -280,6 +294,7 @@ function cardWhats({ name, changes, keep, asks, pullRequest }) {
     keys > 0 ? `delete or untick ${plural(keys, 'key')}` : null,
     removed > 0 ? `remove ${removed} of Wheelhouse's folders` : null,
   ].filter(Boolean);
+  const said = archiveSaid(archive);
   const head = `Remove Wheelhouse from ${name}: ${groups.join(', ')}.`;
   const changed = keep.filter((k) => k.why === 'changed since setup').map((k) => k.brief ?? k.what);
   // The project's .wheelhouse/ folder and its exclude line are named (ruling R131), not counted.
@@ -297,13 +312,13 @@ function cardWhats({ name, changes, keep, asks, pullRequest }) {
   };
   const counted = changed.length > 0 ? ` ${changed.length} left as you changed them: ${STATUS_FORM}.` : '';
   let fitting = changed;
-  while (fitting.length > 0 && (head + left(fitting) + note + othersLine + asksLine + transcripts).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
+  while (fitting.length > 0 && (head + said.full + left(fitting) + note + othersLine + asksLine + transcripts).length + name.length > WHAT_CHARS) fitting = fitting.slice(0, -1);
   return [
-    `${head}${left(fitting)}${note}${othersLine}${asksLine}${transcripts}`,
-    `${head}${counted}${note}${othersLine}${asksLine}${transcripts}`,
-    `${head}${counted}${shortNote}${othersLine}${asksLine}${transcripts}`,
-    `${head}${counted}${shortNote} What else stays: ${STATUS_FORM}.${transcripts}`,
-    `${head}${shortNote} What stays, and why: ${STATUS_FORM}.${transcripts}`,
+    `${head}${said.full}${left(fitting)}${note}${othersLine}${asksLine}${transcripts}`,
+    `${head}${said.full}${counted}${note}${othersLine}${asksLine}${transcripts}`,
+    `${head}${said.full}${counted}${shortNote}${othersLine}${asksLine}${transcripts}`,
+    `${head}${said.short}${counted}${shortNote} What else stays: ${STATUS_FORM}.${transcripts}`,
+    `${head}${said.short}${shortNote} What stays, and why: ${STATUS_FORM}.${transcripts}`,
     `Remove Wheelhouse from ${name}: the whole list is in ${STATUS_FORM}.${shortNote}${transcripts}`,
   ];
 }
@@ -415,10 +430,170 @@ function keepLines(group, wanted) {
   return { line: mine, kept, rest };
 }
 
+// ---- The other agent setup's instructions, archived (plan rulings P5, P6) ----
+
+// The archive folder, its list of what was moved, and the most moves that list may name.
+export const ARCHIVE = '.wheelhouse-archive';
+export const ARCHIVE_MANIFEST = `${ARCHIVE}/archived.json`;
+const ARCHIVE_MOST = 1000;
+// Why an archive is refused whole, named on the card.
+export const ARCHIVE_UNREAD = 'its list of what was moved (archived.json) could not be read';
+export const ARCHIVE_OUTSIDE = 'its list names a path outside the project, or a move from outside the archive folder';
+export const ARCHIVE_TWICE = 'its list names one place twice, or one inside another';
+// What the pull request does with it, as the card says it.
+export const ARCHIVE_BACK = 'the other agent setup\'s instructions, back where they were';
+
+// A path as a case-blind file system reads it (macOS and Windows): one form of each accented
+// letter, the characters macOS ignores in names left out, and in lower case. Used everywhere a
+// path's place is compared, whatever this computer is, since the project is checked out elsewhere
+// too.
+const IGNORED = /[​-‏‪-‮⁠-⁯﻿]/g;
+const blindKey = (p) => p.normalize('NFC').replace(IGNORED, '').toLowerCase();
+const underArchive = (p) => blindKey(p) === blindKey(ARCHIVE) || blindKey(p).startsWith(`${blindKey(ARCHIVE)}/`);
+
+// Whether `p` is a path inside the project, as git's tree names it: relative, with `/` between
+// parts, no part empty, `.` or `..` (nor one that becomes so, or that Windows reads otherwise, by a
+// trailing dot or space), no backslash, colon or control character (so no drive, no second stream),
+// and no part that is git's own folder in any case or by its short Windows name.
+function insideProject(p) {
+  if (typeof p !== 'string' || p.length === 0 || p.length > 1024 || /[\\:\0-\x1f\x7f]/.test(p)) return false;
+  return p.split('/').every((part) => {
+    const key = blindKey(part);
+    return part !== '' && !/[. ]$/.test(part) && !['', '.', '..', '.git', 'git~1'].includes(key);
+  });
+}
+
+// git's tree at `tree`, every entry with its mode, type and object: `ls-tree -z`'s records.
+function treeEntries(text) {
+  return String(text).split('\0').filter(Boolean).map((record) => {
+    const tab = record.indexOf('\t');
+    const [mode, type, sha] = record.slice(0, tab).split(' ');
+    return { mode, type, sha, path: record.slice(tab + 1) };
+  });
+}
+
+// The archive on `ref`, read by `git(args)` (run's answer), changing nothing:
+//   null                     no archive there, or `ref` can't be read;
+//   { view, entries, manifest }, where view (ArchiveView, what the list and its hash hold) is
+//     { moves: [{ from, to }], taken: [from], missing: [from], folder: [path] }: the moves to make,
+//     in the list's order; those whose place is taken on `ref` (a file there, in any case, or a
+//     file where a folder on its way would be), left in the archive; those the archive no longer
+//     holds as a file, left out; and every file in the archive folder;
+//     or { refused: why, folder } when the list can't be read or names a path it may not.
+// `entries` is the whole tree, and `manifest` the list as read.
+export async function archiveAt(git, ref) {
+  const tree = await git(['rev-parse', '--verify', '--quiet', `${ref}^{tree}`]);
+  if (tree.code !== 0) return null;
+  const listed = await git(['ls-tree', '-r', '-t', '-z', '--full-tree', String(tree.stdout).trim()]);
+  if (listed.code !== 0) return null;
+  const entries = treeEntries(listed.stdout);
+  const inside = entries.filter((e) => e.path === ARCHIVE || e.path.startsWith(`${ARCHIVE}/`));
+  if (inside.length === 0) return null;
+  const folder = inside.filter((e) => e.type !== 'tree').map((e) => e.path).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const refused = (why) => ({ view: { refused: why, folder }, entries, manifest: null });
+  const listEntry = inside.find((e) => e.path === ARCHIVE_MANIFEST && e.type === 'blob');
+  if (listEntry === undefined) return refused(ARCHIVE_UNREAD);
+  const text = await git(['cat-file', 'blob', listEntry.sha]);
+  if (text.code !== 0) return refused(ARCHIVE_UNREAD);
+  let manifest;
+  try {
+    manifest = JSON.parse(String(text.stdout));
+  } catch {
+    return refused(ARCHIVE_UNREAD);
+  }
+  const moved = manifest?.moved;
+  if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.v !== 1 || !Array.isArray(moved) || moved.length > ARCHIVE_MOST) return refused(ARCHIVE_UNREAD);
+  if (moved.some((m) => m === null || typeof m !== 'object' || typeof m.from !== 'string' || typeof m.to !== 'string')) return refused(ARCHIVE_UNREAD);
+  for (const { from, to } of moved) {
+    if (!insideProject(from) || underArchive(from)) return refused(ARCHIVE_OUTSIDE);
+    if (!insideProject(to) || !to.startsWith(`${ARCHIVE}/`) || to === ARCHIVE_MANIFEST) return refused(ARCHIVE_OUTSIDE);
+  }
+  const froms = moved.map((m) => blindKey(m.from));
+  const tos = moved.map((m) => blindKey(m.to));
+  if (new Set(froms).size < froms.length || new Set(tos).size < tos.length) return refused(ARCHIVE_TWICE);
+  if (froms.some((a) => froms.some((b) => a.startsWith(`${b}/`)))) return refused(ARCHIVE_TWICE);
+  // Every place on `ref`, case-blind, with what is there.
+  const places = new Map();
+  for (const e of entries) {
+    const key = blindKey(e.path);
+    if (!places.has(key)) places.set(key, []);
+    places.get(key).push(e);
+  }
+  const taken = (from) => {
+    if (places.has(blindKey(from))) return true;
+    const parts = from.split('/');
+    // A folder on the way is taken only by a file, or by a folder of another case.
+    return parts.slice(0, -1).some((_, i) => {
+      const on = parts.slice(0, i + 1).join('/');
+      return (places.get(blindKey(on)) ?? []).some((e) => e.type !== 'tree' || e.path !== on);
+    });
+  };
+  const files = new Map(inside.filter((e) => e.type === 'blob').map((e) => [e.path, e]));
+  const view = { moves: [], taken: [], missing: [], folder };
+  for (const m of moved) {
+    if (!files.has(m.to)) view.missing.push(m.from);
+    else if (taken(m.from)) view.taken.push(m.from);
+    else view.moves.push({ from: m.from, to: m.to });
+  }
+  return { view, entries, manifest };
+}
+
+// The archive as the folder's copy of `branch` last showed it (its ArchiveView), or null when there
+// is none, the folder holds no copy, or git can't read it; read with setup's fenced git, changing
+// nothing. The apply reads the host's and compares.
+async function archiveSeen({ real, branch, run, findGit }) {
+  const ref = `refs/remotes/origin/${branch}`;
+  if (refOf(real, ref) === null) return null;
+  try {
+    const found = await findGit();
+    if (!found?.ok || typeof found.path !== 'string') return null;
+    const git = setupGit({ run, gitPath: found.path, env: { GIT_NO_REPLACE_OBJECTS: '1' }, cwd: real });
+    return (await archiveAt(git, ref))?.view ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// The paths as the card names them: up to three, then how many more.
+function someOf(list) {
+  return list.length <= 3 ? list.join(', ') : `${list.slice(0, 3).join(', ')} and ${list.length - 3} more`;
+}
+
+// What the card says of the archive, in full and in short.
+function archiveSaid(archive) {
+  if (archive === null || archive === undefined) return { full: '', short: '' };
+  if (archive.refused !== undefined) {
+    const line = ` ${ARCHIVE}/ stays as it is: ${archive.refused}.`;
+    return { full: line, short: line };
+  }
+  const back = archive.moves.length > 0 ? ` By the pull request too: ${ARCHIVE_BACK}.` : '';
+  const one = archive.taken.length === 1;
+  const taken = archive.taken.length > 0 ? ` Left in ${ARCHIVE}/, as ${one ? 'its place is' : 'their places are'} taken: ${someOf(archive.taken)}.` : '';
+  const counted = archive.taken.length > 0 ? ` ${archive.taken.length} left in ${ARCHIVE}/: ${STATUS_FORM}.` : '';
+  return { full: `${back}${taken}`, short: `${back}${counted}` };
+}
+
+// The status lines for the archive, under its pull request.
+function archiveLines(archive) {
+  if (archive === null || archive === undefined) return [];
+  if (archive.refused !== undefined) return [`  ${ARCHIVE}/ stays as it is: ${archive.refused}`];
+  return [
+    ...(archive.moves.length > 0 ? [`  in it: ${ARCHIVE_BACK}: ${archive.moves.map((m) => m.from).join(', ')}`] : []),
+    ...archive.taken.map((from) => `  left in ${ARCHIVE}/, as its place is taken: ${from}`),
+    ...archive.missing.map((from) => `  not in ${ARCHIVE}/, so not put back: ${from}`),
+  ];
+}
+
 // What uninstall would do for the folder, worked out without changing anything: the same world
 // gives the same list and hash. `userHome` shortens paths on the card; `platform` and `run` read an
-// account variable setup set (launchctl or the Windows user variable), changing nothing.
-export async function uninstallPlan({ folder, userHome = os.homedir(), platform = process.platform, run = realRun } = {}) {
+// account variable setup set (launchctl or the Windows user variable), changing nothing, and with
+// `findGit` the archive on the folder's copy of the branch: git on the path, as the helper runs it
+// (setup put it there, and on the Mac it is past Apple's window by then), or on Windows where
+// tools.js finds Git for Windows.
+export async function uninstallPlan({
+  folder, userHome = os.homedir(), platform = process.platform, run = realRun,
+  findGit = platform === 'win32' ? async () => (await toolsStatus({ platform, run, tools: ['git'] })).git : async () => ({ ok: true, path: 'git' }),
+} = {}) {
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Uninstall needs the project\'s folder, as a full path');
   const real = realOr(folder);
   const own = projectForFolder(real);
@@ -482,6 +657,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   const commitGroup = all.find((g) => g[0].c.kind === 'host' && ['commit', 'push'].includes(newest(g).after?.action));
   let pullRequest = false;
   let committed = joining;
+  let archive = null;
   if (commitGroup !== undefined) {
     const { c, run: pushRun } = commitGroup.at(-1);
     const branch = c.after.branch;
@@ -492,9 +668,12 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
       const afterPush = runChanges.slice(runChanges.findIndex((x) => x.id === c.id) + 1).some((x) => x.step === 7 && x.kind === 'host' && x.after?.action === 'protect');
       const pushed = typeof pushRun.steps?.[7]?.doneAt === 'string' || afterPush || c.onHost !== undefined
         || refOf(real, `refs/remotes/origin/${branch}`) === c.after.sha;
+      // The archive on the branch: put back by the pull request, or left for the other computers.
+      if (pushed) archive = await archiveSeen({ real, branch, run, findGit });
       if (pushed && shared) {
         committed = true;
         kept(`setup's commit on ${branch}`, `it stays in the project's history: ${OTHERS_USE}`, idsOf(commitGroup));
+        if (archive !== null) kept(`${ARCHIVE}/, the other agent setup's instructions on ${branch}`, OTHERS_USE);
       } else if (pushed) pullRequest = true;
       else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
     } else if (refOf(real, `refs/heads/${branch}`) === commitGroup[0].c.before?.sha) settled(idsOf(commitGroup), 'the commit was never made');
@@ -686,7 +865,10 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
   if (pullRequest) {
     const c = asOne(commitGroup);
     const takes = items.filter((i) => i.entry.put === 'in-pull-request').flatMap((i) => i.entry.ids);
-    add('files', seqOf(commitGroup), { put: 'pull-request', kind: 'host', target: c.target, branch: c.after.branch, base: c.before?.sha ?? null, ids: [...idsOf(commitGroup), ...takes] });
+    add('files', seqOf(commitGroup), {
+      put: 'pull-request', kind: 'host', target: c.target, branch: c.after.branch, base: c.before?.sha ?? null, ids: [...idsOf(commitGroup), ...takes],
+      ...(archive !== null ? { archive } : {}),
+    });
   }
 
   // The app on GitHub: on the last project its keys go and its installation page is given; while
@@ -789,7 +971,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
         ? 'Once the pull request is merged, the checks no longer guard this project; protection stays on.'
         : 'The checks no longer guard this project; protection stays as it is.',
   };
-  const card = { ...base, what: fitWhat(cardWhats({ name, changes, keep, asks, pullRequest }), base, name) };
+  const card = { ...base, what: fitWhat(cardWhats({ name, changes, keep, asks, pullRequest, archive: pullRequest ? archive : null }), base, name) };
   return { project: slug, last, shared, changes, keep, asks, done, card, hash };
 }
 
@@ -927,7 +1109,7 @@ export function planLines(got, folder, userHome) {
   const name = got.card.target.project;
   return [
     `Uninstall of ${name} (${folder}), its list ${got.hash.slice(0, 12)}:`,
-    ...got.changes.map((e, i) => `${i + 1}. ${entryLine(e, userHome)}`),
+    ...got.changes.flatMap((e, i) => [`${i + 1}. ${entryLine(e, userHome)}`, ...(e.put === 'pull-request' ? archiveLines(e.archive) : [])]),
     ...got.keep.map((k) => `Stays: ${k.what}: ${k.why}`),
     ...got.asks.map((a) => `Its own card: ${a.card.what}`),
     ...(got.done.length > 0 ? [`Nothing left to put back for ${got.done.reduce((n, d) => n + d.ids.length, 0)} of setup's changes`] : []),
