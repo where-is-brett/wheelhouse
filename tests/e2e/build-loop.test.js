@@ -31,7 +31,7 @@ import { decide as sessionStart } from '../../scripts/hooks/session-start.js';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
 import { BUNDLE_MS } from '../../scripts/lib/build-loop.js';
-import { computerId, stateDir } from '../../scripts/lib/paths.js';
+import { stateDir } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
 import { run } from '../../scripts/lib/run.js';
 import { holdFile, isHeld, main as lineageCheck, MATCHED } from '../../scripts/lineage/check.js';
@@ -754,7 +754,7 @@ test('an installed Superpowers file differs: a warning, a hold, and the gate ref
     // The front desk's card is made from the one plain lineage-hold event the start recorded through the helper.
     let holds = eventsOf('lineage-hold');
     assert.equal(holds.length, 1);
-    assert.deepEqual(holds[0].data, { at: holds[0].data.at, mismatches: [{ upstream: 'superpowers', path: 'skills/brainstorming' }], computer: computerId() });
+    assert.deepEqual(holds[0].data, { at: holds[0].data.at, mismatches: [{ upstream: 'superpowers', path: 'skills/brainstorming' }] });
     assert.equal(holds[0].sig, undefined, 'a plain event');
 
     // Held: edits and commands are refused; reading, and the check command, are not.

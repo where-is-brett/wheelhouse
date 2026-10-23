@@ -183,12 +183,10 @@ const PLAIN_SHAPES = {
   // A session start held the project's edits and commands because the installed upstream skills
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card.
-  // `computer` is the computer whose hold file it was (computerId); a hold recorded without one is
-  // lifted by any lift.
-  'lineage-hold': { must: ['at', 'mismatches'], may: ['computer'] },
-  // The hold file of the project is gone on `computer`, so the hold's card is closed: recorded once for
-  // each standing hold, by a session start or the mod's tick.
-  'lineage-lift': { must: ['at', 'computer'], may: [] },
+  'lineage-hold': { must: ['at', 'mismatches'], may: [] },
+  // The hold file of the project is gone, so the cards of the holds it names (`holds`, their event
+  // ids) are closed: recorded once for each standing hold, by a session start or the mod's tick.
+  'lineage-lift': { must: ['at', 'holds'], may: [] },
 };
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
@@ -301,10 +299,9 @@ function checkPlain(kind, data) {
     if (!Array.isArray(data.mismatches) || data.mismatches.length === 0 || !data.mismatches.every(one)) {
       bad('needs mismatches, each an upstream (or null) and a path');
     }
-    if (data.computer !== undefined && !isText(data.computer)) bad('needs computer to be text');
   } else if (kind === 'lineage-lift') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
-    if (!isText(data.computer)) bad('needs computer to be text');
+    if (!Array.isArray(data.holds) || data.holds.length === 0 || !data.holds.every(isText)) bad('needs holds, the ids of the holds it lifts');
   }
 }
 

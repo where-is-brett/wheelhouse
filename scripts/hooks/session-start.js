@@ -321,7 +321,7 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
 function recordHold(project, result, now) {
   if (result.ok || result.kept !== true || result.recorded === true || typeof result.set !== 'string') return;
   try {
-    keep(project, 'write', { project, kind: 'lineage-hold', data: holdEvent(now().toISOString(), result.mismatches, computerId()) }, now);
+    keep(project, 'write', { project, kind: 'lineage-hold', data: holdEvent(now().toISOString(), result.mismatches) }, now);
     markRecorded(project, result.set);
   } catch { /* the hold stands without it */ }
 }

@@ -487,7 +487,7 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
 
 test('a tick with no hold file and an open hold records one lift; a second tick records none', () => withHome(async (home) => {
   const repo = registered(home);
-  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: computerId() }, card: null }] };
+  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), computer: computerId(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
   const client = fakeClient();
   const extra = { client, localViews: () => views };
   const lifts = () => client.calls.write.filter((w) => w.kind === 'lineage-lift');
@@ -499,19 +499,24 @@ test('a tick with no hold file and an open hold records one lift; a second tick 
   // The file is gone: one lift, kept and sent, and no more at the next tick while the views still show the hold.
   fs.rmSync(holdFile(P));
   await handle(tickOf(repo), live(extra));
-  assert.deepEqual(lifts(), [{ project: P, kind: 'lineage-lift', data: { at: NOW.toISOString(), computer: computerId() } }]);
+  assert.deepEqual(lifts(), [{ project: P, kind: 'lineage-lift', data: { at: NOW.toISOString(), holds: ['h1'] } }]);
   assert.deepEqual(pendingFiles(), []);
   await handle(tickOf(repo), live(extra));
   assert.equal(lifts().length, 1);
+  // A hold recorded since is a different hold: it is lifted by its own lift, once its file is gone.
+  const later = { lineageHolds: [{ ...views.lineageHolds[0], id: 'h3' }] };
+  await handle(tickOf(repo), live({ client, localViews: () => later }));
+  assert.equal(lifts().length, 2);
+  assert.deepEqual(lifts()[1].data.holds, ['h3']);
   // A hold of another computer is not this computer's to lift.
-  const other = { lineageHolds: [{ ...views.lineageHolds[0], data: { ...views.lineageHolds[0].data, computer: 'ffffffff' } }] };
+  const other = { lineageHolds: [{ ...views.lineageHolds[0], id: 'h2', computer: 'ffffffff' }] };
   await handle(tickOf(repo), live({ client, localViews: () => other }));
-  assert.equal(lifts().length, 1);
+  assert.equal(lifts().length, 2);
 }));
 
 test('a lift kept but not yet sent counts as recorded, and a tick whose helper is down keeps one', () => withHome(async (home) => {
   const repo = registered(home);
-  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
+  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), computer: computerId(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
   const down = fakeClient({ takes: false });
   down.state.write = async () => { throw new Error('down'); };
   await handle(tickOf(repo), live({ client: down, localViews: () => views }));

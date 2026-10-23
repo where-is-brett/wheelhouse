@@ -1031,8 +1031,8 @@ test('each lineage hold, with the card made for it', async () => {
     const hold = (n) => ev('lineage-hold', n, { at: T(n), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] });
     const [first, second] = [hold(1), hold(2)];
     assert.deepEqual(build([first, second]).lineageHolds, [
-      { id: first.id, at: first.at, data: first.data, card: null },
-      { id: second.id, at: second.at, data: second.data, card: null },
+      { id: first.id, at: first.at, computer: first.computer, data: first.data, card: null },
+      { id: second.id, at: second.at, computer: second.computer, data: second.data, card: null },
     ]);
     const card = ev('card', 3, cardData('What this is: the kits differ.', { kind: 'question', event: first.id }));
     // Answered or not, the card stands for its hold.
@@ -1041,46 +1041,37 @@ test('each lineage hold, with the card made for it', async () => {
   });
 });
 
-test('a lift closes the hold card of its computer', async () => {
+const lineageHold = (n) => ev('lineage-hold', n, { at: T(n), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] });
+const holdCard = (n, hold) => ev('card', n, cardData('What this is: the kits differ.', { kind: 'question', event: hold.id }));
+
+test('a lift closes the hold cards of the holds it names', async () => {
   await withHome(() => {
-    const hold = ev('lineage-hold', 1, { at: T(1), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: 'aaaaaaaa' });
-    const card = ev('card', 2, cardData('What this is: the kits differ.', { kind: 'question', event: hold.id }));
-    const lift = ev('lineage-lift', 3, { at: T(3), computer: 'aaaaaaaa' });
+    const hold = lineageHold(1);
+    const card = holdCard(2, hold);
     assert.deepEqual(build([hold, card]).waiting.map((c) => c.id), [card.id]);
-    const v = build([hold, card, lift]);
+    const v = build([hold, card, ev('lineage-lift', 3, { at: T(3), holds: [hold.id] })]);
     assert.deepEqual(v.waiting, []);
     assert.deepEqual(v.lineageHolds, []);
     assert.equal(v.status.waitingCount, 0);
   });
 });
 
-test('a lift on another computer leaves the card', async () => {
+test('a lift leaves the holds it does not name', async () => {
   await withHome(() => {
-    const hold = ev('lineage-hold', 1, { at: T(1), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: 'aaaaaaaa' });
-    const card = ev('card', 2, cardData('What this is: the kits differ.', { kind: 'question', event: hold.id }));
-    const v = build([hold, card, ev('lineage-lift', 3, { at: T(3), computer: 'bbbbbbbb' })]);
+    const [first, second] = [lineageHold(1), lineageHold(2)];
+    const card = holdCard(3, second);
+    const v = build([first, second, card, ev('lineage-lift', 4, { at: T(4), holds: [first.id] })]);
     assert.deepEqual(v.waiting.map((c) => c.id), [card.id]);
-    assert.deepEqual(v.lineageHolds.map((h) => h.id), [hold.id]);
+    assert.deepEqual(v.lineageHolds.map((h) => h.id), [second.id]);
   });
 });
 
-test('a hold with no computer is closed by any lift', async () => {
+test('a hold recorded after the lift stands, though the lift names an earlier hold', async () => {
   await withHome(() => {
-    const hold = ev('lineage-hold', 1, { at: T(1), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] });
-    const card = ev('card', 2, cardData('What this is: the kits differ.', { kind: 'question', event: hold.id }));
-    const v = build([hold, card, ev('lineage-lift', 3, { at: T(3), computer: 'bbbbbbbb' })]);
-    assert.deepEqual(v.waiting, []);
-    assert.deepEqual(v.lineageHolds, []);
-  });
-});
-
-test('a hold recorded after the lift stands again', async () => {
-  await withHome(() => {
-    const mismatches = [{ upstream: 'superpowers', path: 'LICENSE' }];
-    const first = ev('lineage-hold', 1, { at: T(1), mismatches, computer: 'aaaaaaaa' });
-    const lift = ev('lineage-lift', 2, { at: T(2), computer: 'aaaaaaaa' });
-    const second = ev('lineage-hold', 3, { at: T(3), mismatches, computer: 'aaaaaaaa' });
-    const card = ev('card', 4, cardData('What this is: the kits differ.', { kind: 'question', event: second.id }));
+    const first = lineageHold(1);
+    const lift = ev('lineage-lift', 2, { at: T(2), holds: [first.id] });
+    const second = lineageHold(3);
+    const card = holdCard(4, second);
     const v = build([first, lift, second, card]);
     assert.deepEqual(v.lineageHolds.map((h) => h.id), [second.id]);
     assert.deepEqual(v.waiting.map((c) => c.id), [card.id]);

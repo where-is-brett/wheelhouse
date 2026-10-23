@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { checkLineage, holdEvent, holdFile, liftEvent, liftsDue } from '../../../scripts/lineage/check.js';
+import { checkLineage, holdEvent, holdFile, holdsToLift, liftEvent, liftsDue } from '../../../scripts/lineage/check.js';
 import { lineageFixture } from '../../helpers/lineage.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
@@ -47,19 +47,19 @@ test('while setup has still to install the kits, a kit installed but differing, 
   });
 });
 
-test('a lift is due only with no hold file and a hold of this computer, or of none, in the views', () => {
-  const hold = (computer) => ({ id: 'h', at: 'x', data: { at: 'x', mismatches: [], ...(computer ? { computer } : {}) }, card: null });
-  const due = (holds, held = false) => liftsDue({ lineageHolds: holds }, { project: P, computer: 'aaaaaaaa', held });
+test('a lift is due only with no hold file and a hold event of this computer in the views', () => {
+  const hold = (computer, id = 'h') => ({ id, at: 'x', computer, data: { at: 'x', mismatches: [] }, card: null });
+  const due = (holds, held = false) => liftsDue({ lineageHolds: holds }, { computer: 'aaaaaaaa', held });
   assert.equal(due([hold('aaaaaaaa')]), true);
-  assert.equal(due([hold()]), true, 'recorded before holds named a computer');
   assert.equal(due([hold('bbbbbbbb')]), false);
+  assert.equal(due([hold(null)]), false, 'a hold with no computer is left standing');
   assert.equal(due([hold('aaaaaaaa')], true), false, 'the file stands');
   assert.equal(due([]), false);
-  assert.equal(liftsDue(null, { project: P, computer: 'aaaaaaaa', held: false }), false);
+  assert.equal(liftsDue(null, { computer: 'aaaaaaaa', held: false }), false);
+  assert.deepEqual(holdsToLift({ lineageHolds: [hold('aaaaaaaa', 'h1'), hold('bbbbbbbb', 'h2')] }, { computer: 'aaaaaaaa', held: false }), ['h1']);
 });
 
-test('the hold and lift events carry the computer', () => {
-  assert.deepEqual(holdEvent('t', [{ upstream: 's', path: 'p' }], 'aaaaaaaa'), { at: 't', mismatches: [{ upstream: 's', path: 'p' }], computer: 'aaaaaaaa' });
+test('the lift event names the holds it lifts', () => {
   assert.deepEqual(holdEvent('t', [{ path: 'p' }]), { at: 't', mismatches: [{ upstream: null, path: 'p' }] });
-  assert.deepEqual(liftEvent('t', 'aaaaaaaa'), { at: 't', computer: 'aaaaaaaa' });
+  assert.deepEqual(liftEvent('t', ['h1']), { at: 't', holds: ['h1'] });
 });

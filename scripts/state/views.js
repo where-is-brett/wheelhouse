@@ -152,13 +152,14 @@ function revisedBy(sorted) {
       && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))));
 }
 
-// The ids of the lineage holds a later lineage-lift lifted: a lift names the computer whose hold file
-// went, and lifts the holds of that computer, and those recorded with no computer.
+// The ids of the lineage holds a later lineage-lift names: a lift closes only the holds it names, so
+// a hold recorded after it was decided stands.
 function liftedHoldIds(sorted) {
-  const lifts = sorted.filter((e) => e.kind === 'lineage-lift');
-  return new Set(sorted.filter((e) => e.kind === 'lineage-hold')
-    .filter((h) => lifts.some((l) => byOrder(h, l) < 0 && (h.data?.computer === undefined || l.data?.computer === h.data.computer)))
-    .map((h) => h.id));
+  const lifted = new Set();
+  for (const l of sorted.filter((e) => e.kind === 'lineage-lift' && Array.isArray(e.data?.holds))) {
+    for (const id of l.data.holds) lifted.add(id);
+  }
+  return lifted;
 }
 
 // The lineage holds the session start recorded (ruling R146) that no lift has lifted, in order, each
@@ -167,7 +168,7 @@ function liftedHoldIds(sorted) {
 function lineageHoldsOf(sorted, lifted) {
   const cards = sorted.filter((e) => e.kind === 'card');
   return sorted.filter((e) => e.kind === 'lineage-hold' && Array.isArray(e.data?.mismatches) && !lifted.has(e.id))
-    .map((e) => ({ id: e.id, at: e.at, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null }));
+    .map((e) => ({ id: e.id, at: e.at, computer: typeof e.computer === 'string' ? e.computer : null, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null }));
 }
 
 // The events with an id no other event carries, in order, and a line for each repeated one: an id
