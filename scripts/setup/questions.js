@@ -13,6 +13,11 @@
 // ruling R31). Its card tells the director, once, that agents get test data only for now. Once both
 // are answered the step settles (ruling R32).
 //
+// A project that looks like it signs Apple apps (an Xcode project or workspace, fastlane, or
+// `codesign` in its build scripts: signsAppleApps) is asked one more plain question, whether it
+// signs them. Builds can't read the Mac's keychain unless it does, a quiet default no other project
+// hears of (the director's ruling of 24 October 2026); step 7 writes `signsApps` from the answer.
+//
 // The answers write to the project's records, which step 3 sets up, so until the folder is a
 // registered project with its records in place, the step waits rather than ask.
 import fs from 'node:fs';
@@ -25,6 +30,7 @@ import { hide } from '../lib/clean.js';
 import { REAL_USERS, LEVELS } from './host.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
+export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
 export const PRODUCT = Object.freeze({ readme: 'The README\'s words', later: 'Describe it later' });
 // How long a step whose answers write to the project's records waits for step 3 to set them up.
 export const PROJECT_WAIT_MS = 30 * 1000;
@@ -91,6 +97,41 @@ export function readmeDescription(folder) {
     return scanContent(cut).length > 0 ? null : hide(cut, []);
   }
   return null;
+}
+
+// Folders a build fills or another package brings, never looked in for signs of Apple apps.
+const NOT_THE_PROJECT = new Set(['.git', 'node_modules', 'Pods', 'build', 'dist', 'DerivedData', '.build', 'vendor']);
+const SIGNING_SCRIPTS = ['package.json', 'Makefile', 'Gemfile'];
+const SCRIPT_BYTES = 64 * 1024;
+const MOST_ENTRIES = 5000;
+
+// Whether the project in `folder` looks like it signs Apple apps: an `.xcodeproj` or `.xcworkspace`
+// folder, a `fastlane` folder or a Fastfile within three folders of the top, or `codesign` or
+// `fastlane` named in its top-level package.json, Makefile or Gemfile. Reads names and the starts of
+// those files only, and stops after MOST_ENTRIES names.
+export function signsAppleApps(folder) {
+  let seen = 0;
+  const look = (dir, depth) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const e of entries) {
+      seen += 1;
+      if (seen > MOST_ENTRIES) return false;
+      if (/\.(?:xcodeproj|xcworkspace)$/i.test(e.name) || e.name === 'Fastfile' || (e.isDirectory() && e.name === 'fastlane')) return true;
+      if (e.isDirectory() && !e.isSymbolicLink() && depth < 3 && !NOT_THE_PROJECT.has(e.name) && look(path.join(dir, e.name), depth + 1)) return true;
+    }
+    return false;
+  };
+  if (look(folder, 1)) return true;
+  return SIGNING_SCRIPTS.some((name) => {
+    const file = path.join(folder, name);
+    const text = isFile(file) ? readStart(file, SCRIPT_BYTES) : null;
+    return text !== null && /\b(?:codesign|fastlane)\b/.test(text);
+  });
 }
 
 // The registered project for the folder, with its records in place, and the product's name:
@@ -161,6 +202,25 @@ function liveDataAsk(name) {
   };
 }
 
+// The third question, only for a project that looks like it signs Apple apps: whether it does.
+function appleAppsAsk(name) {
+  return {
+    id: 'apple-apps',
+    card: {
+      level: 2,
+      what: `Setup step 4: ${name} looks like an iPhone or Mac app. Do its builds sign the app on this computer, for the App Store or TestFlight?`,
+      why: 'Signing needs the saved passwords on this Mac, which Wheelhouse otherwise keeps out of every build.',
+      options: [
+        { label: SIGNS_APPS.no, says: 'Builds can\'t reach your saved passwords. If signing is needed later, it can be changed by a reviewed change you approve.' },
+        { label: SIGNS_APPS.yes, says: 'Builds of this project may use your saved passwords to sign the app.' },
+      ],
+      recommend: SIGNS_APPS.no,
+      because: 'it keeps your saved passwords out of reach if you are not sure',
+      meanwhile: MEANWHILE,
+    },
+  };
+}
+
 export function questionsStep() {
   return {
     n: 4,
@@ -177,6 +237,8 @@ export function questionsStep() {
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];
       if (!live) return { ask: liveDataAsk(project.name) };
+      const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
+      if (apple === undefined) return { ask: appleAppsAsk(project.name) };
       return {
         settled: {
           record: {
@@ -184,6 +246,7 @@ export function questionsStep() {
             phase: realUsers ? PHASE.launched : PHASE.before,
             locked: answers['3.locked']?.label === LEVELS.locked,
             liveData: live.label === LIVE_DATA.yes,
+            ...(apple ? { signsApps: apple.label === SIGNS_APPS.yes } : {}),
           },
         },
       };

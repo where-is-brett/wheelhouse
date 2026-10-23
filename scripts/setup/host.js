@@ -533,44 +533,78 @@ function joinChoice(ctx) {
   }
 }
 
-const QUICK_SAYS = `${QUICK_LINE} Fine for personal projects; an agent could read it directly.`;
+// Quick's words where narrow is the recommendation (Windows, a Locked or launched project): its cost said plainly.
+const QUICK_SAYS = `${QUICK_LINE} For trying Wheelhouse out: if that sign-in leaked, it would open every project you have, and on Windows any agent's command could read it.`;
+// The advanced choice on the Mac's card, which leads to the narrow ways (the director's ruling of 24 October 2026).
+export const STRICTER = 'Make it stricter';
+const STRICTER_SAYS = 'A key to this one project only, instead of your whole account; recommended for teams and products with real users.';
+const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in. Agents work through Wheelhouse's helper, and on this Mac they can't read it.`;
 
 // The connection's question (Card 1's answer, design section 11), the composer's input without its
-// kind. On GitHub: the Wheelhouse app (only while it is registered), their own app (always), and
-// Quick; on GitLab, Narrow or Quick. A Locked project is never offered Quick, and on GitHub still
-// gets the card, since their own app means making a GitHub App, which the person agrees to here.
-// `where` names the repository as `owner/name on GitHub`. A launched project a computer joins is
-// never offered Quick either (`launched`, design section 11), once its state says so.
-export function connectionCard({ host, locked = false, realUsers = false, launched = false, where, appFile } = {}) {
+// kind. On a Mac, for a project that is neither Locked nor launched, Quick is the default and the
+// narrow ways sit behind STRICTER (stricterCard); the sandbox keeps agents from the sign-in there
+// (check 73). With real users STRICTER is the recommendation. Elsewhere (Windows has no sandbox), on
+// GitHub: the Wheelhouse app (only while it is registered), their own app (always), and Quick; on
+// GitLab, Narrow or Quick; a narrow way is the recommendation, with one plain line on why. A Locked
+// project is never offered Quick, and on GitHub still gets the card, since their own app means
+// making a GitHub App, which the person agrees to here. `where` names the repository as
+// `owner/name on GitHub`. A launched project a computer joins is never offered Quick either
+// (`launched`, design section 11), once its state says so.
+export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile } = {}) {
   if (!narrowOffered(host)) throw new Error('The connection is to GitHub or GitLab');
   const place = where ?? `the project on ${NAME[host]}`;
+  if (platform === 'darwin' && !locked && !launched) {
+    return {
+      level: 3,
+      what: `How should Wheelhouse's agents reach ${place}?`,
+      why: 'Agents push and open pull requests only through Wheelhouse\'s helper; this chooses whose key it holds.',
+      options: [{ label: WAYS.quick, says: quickOnMac(host) }, { label: STRICTER, says: STRICTER_SAYS }],
+      recommend: realUsers ? STRICTER : WAYS.quick,
+      because: realUsers ? 'the product has real users' : 'it needs nothing more, and you can make it stricter later',
+      meanwhile: MEANWHILE,
+    };
+  }
   const options = [];
   let recommend;
   if (host === 'github') {
     const app = wheelhouseAppOffered({ appFile });
     if (app) options.push({ label: WAYS.wheelhouse, says: 'Narrow: you type a code on GitHub and tick this project and your profile on the app\'s Install page; agents reach only those.' });
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
-    recommend = app ? WAYS.wheelhouse : (locked || realUsers || launched ? WAYS.own : WAYS.quick);
+    recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
     options.push({ label: WAYS.narrow, says: 'A GitLab project key for this project and your profile, made with your sign-in; where GitLab refuses, a token typed into your computer\'s own box.' });
-    // Narrow asks nothing more of the director where GitLab makes the key, so it is recommended.
     recommend = WAYS.narrow;
   }
-  if (!locked && !launched) options.push({ label: WAYS.quick, says: QUICK_SAYS });
+  const quick = !locked && !launched;
+  if (quick) options.push({ label: WAYS.quick, says: QUICK_SAYS });
   let noQuick = '';
   if (locked) noQuick = ' Locked needs a narrow connection, so Quick is not offered.';
   else if (launched) noQuick = ' It is launched, and a launched product needs a narrow connection, so Quick is not offered.';
+  const reach = platform === 'win32'
+    ? 'Windows has no sandbox to keep agents from your sign-in, so a key to this one project keeps the rest of your account out of reach'
+    : 'agents then reach only this project and your profile, not your whole account';
   return {
     level: 3,
     what: `How should Wheelhouse's agents reach ${place}?${noQuick}`,
     why: 'Agents push and open pull requests only through Wheelhouse\'s helper; this chooses whose key it holds.',
     options,
     recommend,
-    because: recommend === WAYS.quick
-      ? 'it needs nothing more for a personal project, and you can move to narrow later'
-      : 'agents then reach only this project and your profile, not your whole account',
+    because: quick ? `${reach}; Quick is for trying Wheelhouse out` : reach,
     meanwhile: MEANWHILE,
   };
+}
+
+// The narrow way STRICTER leads to: on GitLab its project key, on GitHub their own app while the
+// Wheelhouse app is not registered; otherwise null, and stricterCard asks which.
+export function stricterWay({ host, appFile } = {}) {
+  if (host === 'gitlab') return WAYS.narrow;
+  return wheelhouseAppOffered({ appFile }) ? null : WAYS.own;
+}
+
+// After STRICTER on GitHub with the Wheelhouse app registered: the app, or their own.
+export function stricterCard({ where, appFile } = {}) {
+  const card = connectionCard({ host: 'github', locked: true, where, appFile });
+  return { ...card, what: `Which key should Wheelhouse's helper hold for ${where ?? 'the project on GitHub'}?`, because: 'agents then reach only this project and your profile, not your whole account' };
 }
 
 // ---- Signing in ----
@@ -1479,13 +1513,24 @@ export function hostStep({
       const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo ?? product.name} on ${NAME[host]}`;
       let way = WAYS.narrow;
       if (!(host === 'gitlab' && (locked || launched))) {
-        // A joining computer can't know the phase before its state is cloned, so its card recommends
-        // a narrow way, as for real users; kept once known, so a retry is not asked again.
-        const card = connectionCard({ host, locked, realUsers: realUsers || launched || product.joining === true, launched, where, appFile });
+        // On a Mac, Quick first and the narrow ways behind Make it stricter; elsewhere a narrow way
+        // recommended. A joining computer can't know the phase before its state is cloned, so its
+        // card counts as one with real users.
+        const card = connectionCard({ host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where, appFile });
         const id = `connection-${digest(card)}`;
         const got = answer(id);
         if (got === null || !card.options.some((o) => o.label === got.label)) return { ask: { id, card } };
         way = got.label;
+        if (way === STRICTER) {
+          way = stricterWay({ host, appFile });
+          if (way === null) {
+            const stricter = stricterCard({ where, appFile });
+            const sid = `connection-stricter-${digest(stricter)}`;
+            const chosen = answer(sid);
+            if (chosen === null || !stricter.options.some((o) => o.label === chosen.label)) return { ask: { id: sid, card: stricter } };
+            way = chosen.label;
+          }
+        }
       }
       const mode = way === WAYS.quick ? 'quick' : 'narrow';
       const base = product.base ?? DEFAULT_GITLAB;
