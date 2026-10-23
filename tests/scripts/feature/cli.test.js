@@ -10,7 +10,8 @@ import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
-import { tempFolder } from '../../helpers/homes.js';
+import { tempFolder, withHome } from '../../helpers/homes.js';
+import { sandboxHolds, sandboxed } from '../../helpers/sandbox-wall.js';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'scripts', 'feature', 'cli.js');
 const real = (dir) => fs.realpathSync.native(dir);
@@ -631,3 +632,18 @@ test('a helper call carries the worktree\'s folder, found from a folder inside i
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
   }
 });
+
+test('a feature session\'s commands, run in the sandbox with no helper given, never reach into the Wheelhouse home', () => withHome(async () => {
+  const tree = feature();
+  const home = path.resolve(process.env.WHEELHOUSE_HOME);
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'computer.json'), '{}\n');
+  await sandboxHolds([home], path.join(home, 'computer.json'));
+  for (const argv of [['ask', ...ASK], ['answer', 'q-login-page-1'], ['push'], ['pull'], ['open-pr']]) {
+    const said = [];
+    // No helper listens, so each that needs it is refused in words; none is refused by the wall.
+    const code = await sandboxed([home], () => main(argv, { cwd: tree, out: (t) => said.push(t), err: (t) => said.push(t) }));
+    assert.equal(code, argv[0] === 'ask' ? 0 : 1, `${argv[0]}: ${said.join('')}`);
+    assert.doesNotMatch(said.join(''), /EPERM/, argv[0]);
+  }
+}));

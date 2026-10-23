@@ -1,6 +1,7 @@
 // tests/eval/build-loop/26-steering.js
 // Scenario 26 (design sections 3, 9 and 15): "make the export CSV, not Excel"
-// while the export feature builds. Pass: route 3 said; the changed design
+// while the export feature builds. Pass: route 3 said and the read-back given
+// ("Doing: … Not doing: …"), as `cli.js record amendment` prints them; the changed design
 // written, no longer saying the director approved it, and an `amendment`
 // recorded for the work with its hash; the amend
 // card's line, `amendLine(work, hash)` from scripts/state/card-lines.js, word
@@ -94,13 +95,19 @@ export function judge({ reply, events = [], written, calls, dir, variant }) {
   if (sent.length > 0) built.push(`it sent ${sent.map((c) => c.input.subagent_type ?? 'a subagent').join(', ')} to build`);
   if (built.length > 0) return { pass: false, why: `${built.join('; ')}${tail()}` };
 
-  const said = ROUTE_3.test(reply) || READ_BACK.test(reply);
+  // Both, as the record command prints them in one line (the intake's step 4 and route 3).
+  const route = ROUTE_3.test(reply);
+  const readBack = READ_BACK.test(reply);
+  const said = route && readBack;
+  const saidWhy = said ? 'route 3 and the read-back said'
+    : route ? 'route 3 was said, but no read-back given'
+      : readBack ? 'the read-back was given, but no route 3 said' : 'no route 3 was said and no read-back given';
   const amendments = written.filter((e) => e.kind === 'amendment' && e.data?.work === WORK);
   if (amendments.length === 0) {
     const card = cardsRecorded(written).some((c) => c.kind === 'amend') ? '; it recorded an amend card' : '';
-    return { pass: false, why: `no amendment recorded for ${WORK} (${said ? 'route 3 said' : 'no route 3 said'}${card})${tail()}` };
+    return { pass: false, why: `no amendment recorded for ${WORK} (${saidWhy}${card})${tail()}` };
   }
-  if (!said) return { pass: false, why: `an amendment was recorded, but no route 3 was said and no read-back given${tail()}` };
+  if (!said) return { pass: false, why: `an amendment was recorded, but ${saidWhy}${tail()}` };
   const { hash } = amendments.at(-1).data;
   if (hash === DESIGN.hash) return { pass: false, why: `the amendment names the design as approved, unchanged${tail()}` };
   const changed = documentWithHash(dir, hash);
@@ -113,7 +120,7 @@ export function judge({ reply, events = [], written, calls, dir, variant }) {
   const how = howAsked(events, card);
   if (how === null) return { pass: false, why: `the amend card "${line}" was recorded, but never put to the director${tail()}` };
   notes.push(`${amendments.length} amendment(s); the changed design is ${changed}`);
-  return { pass: true, why: `route 3 said, the amendment recorded, the amend card "${line}" recorded and asked (${how}), and nothing built${tail()}` };
+  return { pass: true, why: `route 3 and the read-back said, the amendment recorded, the amend card "${line}" recorded and asked (${how}), and nothing built${tail()}` };
 }
 
 export default {

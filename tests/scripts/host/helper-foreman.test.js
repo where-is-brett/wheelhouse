@@ -11,11 +11,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pull as cliPull } from '../../../scripts/feature/cli.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
-import { envForConnection, startHelper } from '../../../scripts/host/helper.js';
+import { PUSH_REFUSALS, envForConnection, startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { FOREMAN_RUNNER, SIGN_IN_NAMES, foremanEnv, foremanRequestRefusal } from '../../../scripts/host/foreman-run.js';
 import { sessionEnv } from '../../../scripts/watcher/waker.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -215,6 +216,46 @@ test('a feature session\'s push names its worktree, and the helper places the pr
   } finally { p.remote.cleanup(); }
 });
 
+test('the foreman\'s start has the host\'s default branch fetched into the mirror with the key, for its child to copy with none', async () => {
+  const p = await project();
+  try {
+    const other = await elsewhereOn(p, 'main');
+    const ahead = await commitIn(other, 'NEW.md', 'Merged since.\n', 'Merged since');
+    await g(other, 'push', '-q', 'origin', 'main');
+    await withHelper(p.home, async (client) => {
+      assert.deepEqual(await client.fetchBase({ project: P }), { ok: true, branch: 'main', sha: ahead });
+      const mirror = path.join(stateDir(P), '..', 'mirror.git');
+      assert.equal(await g(mirror, 'rev-parse', 'refs/wheelhouse/base'), ahead);
+      // It names a project, and asks nothing of a folder.
+      assert.equal((await client.fetchBase({ project: 'not a project' })).ok, false);
+    });
+  } finally { p.remote.cleanup(); }
+});
+
+test('a feature session\'s push, placed by its folder, sends only the branch that folder is on, as a pull brings in only its own', async () => {
+  const p = await project();
+  try {
+    // Two worktrees share one repository, so each one's git holds the other's branch too.
+    const mine = path.join(p.checkout, '.claude', 'worktrees', 'export');
+    const theirs = path.join(p.checkout, '.claude', 'worktrees', 'search');
+    await g(p.checkout, 'worktree', 'add', '-q', '-b', 'feature/export', mine, 'origin/main');
+    await g(p.checkout, 'worktree', 'add', '-q', '-b', 'feature/search', theirs, 'origin/main');
+    await commitIn(theirs, 'search.js', 'export const find = true;\n', 'The search');
+    await withHelper(p.home, async (client) => {
+      for (const refspec of ['feature/search', 'feature/search:feature/search']) {
+        assert.deepEqual(await client.push({ cwd: mine, dir: mine, refspec }), { ok: false, refused: PUSH_REFUSALS.notOwn }, refspec);
+      }
+      const listed = await g(p.remote.url, 'branch', '--list', 'feature/search');
+      assert.equal(listed, '', 'nothing reached the host');
+      // The main checkout is on the default branch, so no branch is pushed from it either; nor does
+      // a caller's own word that the push was not placed by its folder count.
+      assert.equal((await client.push({ cwd: p.checkout, dir: p.checkout, refspec: 'feature/search' })).refused, PUSH_REFUSALS.notOwn);
+      assert.equal((await client.push({ cwd: mine, dir: mine, refspec: 'feature/search', byFolder: false })).refused, PUSH_REFUSALS.notOwn);
+      assert.deepEqual(await client.push({ cwd: theirs, dir: theirs, refspec: 'feature/search' }), { ok: true });
+    });
+  } finally { p.remote.cleanup(); }
+});
+
 // A clone of the host on `branch`, standing in for whatever else moves the host's branch on:
 // the gate bringing it up to date, or another push.
 async function elsewhereOn(p, branch) {
@@ -312,12 +353,25 @@ test('the foreman\'s child keeps Claude Code\'s sign-in, as started sessions get
   const signIn = Object.fromEntries(SIGN_IN_NAMES.map((name) => [name, `value-of-${name}`]));
   const env = {
     PATH: '/bin', ...signIn, GH_TOKEN: 'ghp_x', GITLAB_TOKEN: 'glpat_y', OTHER_SECRET: 'z',
-    CLAUDE_CODE_OAUTH_TOKEN: 'host', anthropic_api_key: 'a spelling not kept',
+    CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', ANTHROPIC_BASE_URL: 'https://gateway.example.com', anthropic_api_key: 'a spelling not kept',
   };
   assert.deepEqual(foremanEnv(env), { PATH: '/bin', ...signIn });
-  // Each one kept that the host session doesn't set is one the waker gives the sessions it starts.
-  for (const name of SIGN_IN_NAMES.filter((n) => !/^claude/i.test(n))) assert.equal(sessionEnv(env)[name], signIn[name], name);
-  assert.equal('CLAUDE_CODE_OAUTH_TOKEN' in sessionEnv(env), false, 'dropped for started sessions too');
+  // Each one kept is one the waker gives the sessions it starts, the switches that start "CLAUDE" too;
+  // the host session's other variables stay out.
+  assert.deepEqual(sessionEnv(env), { PATH: '/bin', ...signIn, GH_TOKEN: 'ghp_x', GITLAB_TOKEN: 'glpat_y', OTHER_SECRET: 'z', anthropic_api_key: 'a spelling not kept' });
+  assert.deepEqual(sessionEnv(foremanEnv(env)), { PATH: '/bin', ...signIn }, 'so a session the foreman\'s act start starts signs in as one the watcher starts');
+});
+
+test('the sign-in names are Claude Code\'s for Anthropic, its OAuth token, Bedrock and Mantle, Vertex, Foundry and Claude Platform on AWS', () => {
+  for (const name of [
+    'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+    'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN', 'ANTHROPIC_FOUNDRY_RESOURCE', 'ANTHROPIC_FOUNDRY_BASE_URL',
+    'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH', 'ANTHROPIC_AWS_API_KEY', 'ANTHROPIC_AWS_WORKSPACE_ID', 'ANTHROPIC_AWS_BASE_URL',
+  ]) assert.ok(SIGN_IN_NAMES.includes(name), name);
+  // Not a sign-in: the host session's gateway, its own markers, and Claude Code's other switches.
+  for (const name of ['ANTHROPIC_BASE_URL', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_USE_POWERSHELL_TOOL', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']) {
+    assert.equal(SIGN_IN_NAMES.includes(name), false, name);
+  }
 });
 
 test('the foreman\'s child keeps the sign-in Claude Code uses for Bedrock and Vertex, and still no host key or Wheelhouse secret (m3)', () => {
@@ -334,8 +388,9 @@ test('the foreman\'s child keeps the sign-in Claude Code uses for Bedrock and Ve
   const env = {
     PATH: '/bin', ...cloud,
     GH_TOKEN: 'ghp_x', GITHUB_TOKEN: 'ghp_y', GITLAB_TOKEN: 'glpat_z', SSH_AUTH_SOCK: '/tmp/agent', WHEELHOUSE_SIGNING_SECRET: 's',
-    MY_SERVICE_TOKEN: 't', CLAUDECODE: '1', CLAUDE_CODE_OAUTH_TOKEN: 'host', ANTHROPIC_BASE_URL: 'https://gateway.example.com',
+    MY_SERVICE_TOKEN: 't', CLAUDECODE: '1', ANTHROPIC_BASE_URL: 'https://gateway.example.com',
     aws_secret_access_key: 'a spelling not kept',
   };
   assert.deepEqual(foremanEnv(env), { PATH: '/bin', ...cloud });
+  assert.deepEqual(sessionEnv(foremanEnv(env)), { PATH: '/bin', ...cloud });
 });

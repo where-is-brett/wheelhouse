@@ -42,7 +42,7 @@ test('a critical area\'s check file is a guardrail; a file in the area only name
 });
 
 // What readConfig fills in for each build-loop key a configuration leaves out.
-const ROUTING_NONE = { foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
+const ROUTING_NONE = { frontDesk: null, foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
 const DEFAULTS = {
   routing: ROUTING_NONE, sessionMode: 'acceptEdits', buildCommands: ['npm test', 'npm run', 'node'], watcherShape: 1,
   hotFiles: ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**'], flagFiles: [],
@@ -109,6 +109,16 @@ test('readConfig: bypass mode, a model that reads as a flag, and a command a rul
     { watcherShape: 0 }, { watcherShape: 3 }, { watcherShape: '1' }, { watcherShape: 1.5 }, { watcherShape: null },
   ];
   for (const extra of bad) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), { message }, JSON.stringify(extra));
+});
+
+test('readConfig: signsApps is true or false when given, and any other value can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify(base)).signsApps, undefined, 'left out: the keychain stays shut');
+  assert.equal(readConfig(JSON.stringify({ ...base, signsApps: true })).signsApps, true);
+  assert.equal(readConfig(JSON.stringify({ ...base, signsApps: false })).signsApps, false);
+  for (const signsApps of ['true', 1, null, [], {}]) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, signsApps })), { message: "The project's Wheelhouse configuration can't be read" }, JSON.stringify(signsApps));
+  }
 });
 
 test('classification ignores case, for every kind of pattern', () => {

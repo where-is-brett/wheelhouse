@@ -15,6 +15,7 @@ import {
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
+import { runningModel } from '../../../scripts/lib/front-desk-model.js';
 import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
 import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
@@ -830,6 +831,28 @@ test('a feature worktree and the foreman are not pointed at the front desk\'s pl
     // A foreman known from its first prompt, as the board-context hook recorded it, after a compaction.
     recordRole('s-foreman', 'foreman');
     assert.doesNotMatch(text(await run(fake(), { env: {} }, { session_id: 's-foreman' })), /front desk/);
+  });
+});
+
+test('the front desk\'s session start keeps the model it runs on; a feature\'s or the foreman\'s keeps nothing (design section 8)', async () => {
+  await withHome(async (home) => {
+    await run(fake(), { env: {} }, { model: 'model-small' });
+    assert.equal(runningModel(P).model, 'model-small');
+    await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } }, { model: 'model-foreman' });
+    assert.equal(runningModel(P).model, 'model-small', 'the foreman runs on its own model');
+    const tree = path.join(home, 'tree');
+    const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
+    fs.mkdirSync(tree, { recursive: true });
+    fs.mkdirSync(gitdir, { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+    fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    await run(fake(), { env: {} }, { cwd: tree, model: 'model-builder' });
+    assert.equal(runningModel(P).model, 'model-small', 'nor does a feature session');
+    // A session start with no model leaves what was kept.
+    await run(fake(), { env: {} });
+    assert.equal(runningModel(P).model, 'model-small');
+    await run(fake(), { env: {} }, { model: { id: 'model-top' } });
+    assert.equal(runningModel(P).model, 'model-top');
   });
 });
 

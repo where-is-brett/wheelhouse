@@ -8,6 +8,7 @@ import { healthLines, readHostFacts, readScreens, NO_CHROME_LINE, QUICK_LINE, ph
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
+import { frontDeskModelLine } from '../../../scripts/lib/front-desk-model.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { HOST_FACTS_MAX_AGE_MS } from '../../../scripts/lib/core-numbers.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
@@ -69,6 +70,15 @@ test('each health line appears in its case and in its order', () => {
   assert.deepEqual(everything.map((line) => line.level), [
     'stop', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
   ]);
+});
+
+test('a front desk on another model than the pin is one watch line; on the pin, or with either unknown, none (design section 8)', () => {
+  const line = frontDeskModelLine({ running: 'model-small', pinned: 'model-top' });
+  const lines = healthLines({ profile: true, platform: 'darwin', frontDeskModel: { running: 'model-small', pinned: 'model-top' } });
+  assert.deepEqual(lines.filter((l) => l.text === line), [{ level: 'watch', text: line }]);
+  for (const frontDeskModel of [{ running: 'model-top', pinned: 'model-top' }, { running: null, pinned: 'model-top' }, null, undefined]) {
+    assert.ok(!healthLines({ profile: true, platform: 'darwin', frontDeskModel }).some((l) => /front desk is running/.test(l.text)));
+  }
 });
 
 test('the lines come only in their own case', () => {

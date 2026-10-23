@@ -128,7 +128,7 @@ import { readJournal, heldNow } from './journal.js';
 import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { PROFILE_REPO } from './host.js';
-import { SETUP_FILES, WHEELHOUSE_LINE } from './project-files.js';
+import { SETUP_FILES, WHEELHOUSE_LINE, GITIGNORE, ENV_STAYS_LINES } from './project-files.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
 
@@ -155,6 +155,9 @@ const OTHERS_USE = 'your other computers use it, so it stays';
 // Why step 7's .wheelhouse/ exclude line stays, and the project's .wheelhouse/ folder with it
 // (ruling R131): uninstall never touches the files in that folder.
 export const FOLDER_STAYS = 'it holds the front desk\'s and the foreman\'s files, which stay with the project';
+// Why setup's .env lines stay, in the project's .gitignore and in a joining computer's own list: they
+// keep secrets out of git and cost nothing, so uninstall never takes them out.
+export const ENV_STAYS = 'they keep .env files, which hold secrets, out of git, and cost nothing, so they stay';
 export const LINE_STAYS = 'the project\'s .wheelhouse/ folder stays, with the front desk\'s and the foreman\'s files, so this line keeps it out of git';
 // The two, as the card names them, and in short when the card has no room for more.
 export const FOLDER_NOTE = '.wheelhouse/ stays, out of git: the front desk\'s and foreman\'s files.';
@@ -386,25 +389,34 @@ function walkChain(group) {
   return { listed, already, changed };
 }
 
-// The text a file holds with step 7's .wheelhouse/ line kept: as it is when it holds the line
-// already (an earlier run's step 7 added it before this link), otherwise with the line added at the
-// end, as step 7 adds it.
-function withOwnLine(text) {
-  if (typeof text === 'string' && text.split(/\r?\n/).includes(WHEELHOUSE_LINE)) return text;
-  return `${text ?? ''}${text && !text.endsWith('\n') ? '\n' : ''}${WHEELHOUSE_LINE}\n`;
+// The text a file holds with the lines uninstall keeps (`kept`, in the order setup adds them): as it
+// is when it holds them already, otherwise with each missing one added at the end, as step 7 adds it.
+function withKept(text, kept) {
+  let out = text;
+  for (const line of kept) {
+    if (typeof out === 'string' && out.split(/\r?\n/).some((l) => (line === WHEELHOUSE_LINE ? l.trim() === line : l === line))) continue;
+    const eol = typeof out === 'string' && out.includes('\r\n') ? '\r\n' : '\n';
+    out = `${out ?? ''}${out && !out.endsWith('\n') ? eol : ''}${line}${eol}`;
+  }
+  return out;
 }
 
-// Step 7's .wheelhouse/ exclude line kept (ruling R131), when a file group holds it as setup wrote
-// it and the file holds it now: { line, rest }, its own links and the others, each of those read
-// with the line kept, so putting them back takes out setup's other lines and leaves this one.
-// Otherwise null, and the group is walked as it is.
-function keepWheelhouseLine(group) {
-  const line = group.filter((e) => e.c.kind === 'file' && e.c.line === WHEELHOUSE_LINE);
+// The lines of step 7 that stay (rulings R131 for .wheelhouse/'s, and the .env lines, which stay
+// always), when a file group holds them as setup wrote them and the file holds them now:
+// { line, rest }, their own links and the others, each of those read with the lines kept, so
+// putting them back takes out setup's other lines and leaves these. Otherwise null, and the group
+// is walked as it is. `wanted`: the lines to keep.
+function keepLines(group, wanted) {
+  const line = group.filter((e) => e.c.kind === 'file' && wanted.includes(e.c.line));
   if (line.length === 0) return null;
   const now = heldNow(newest(group));
-  if (now.held !== true || !now.value.split(/\r?\n/).includes(WHEELHOUSE_LINE)) return null;
-  const rest = group.filter((e) => !line.includes(e)).map((e) => ({ ...e, c: { ...e.c, before: withOwnLine(e.c.before), after: withOwnLine(e.c.after) } }));
-  return { line, rest };
+  if (now.held !== true) return null;
+  const held = now.value.split(/\r?\n/);
+  const kept = [...new Set(line.map((e) => e.c.line))].filter((l) => held.includes(l));
+  if (kept.length === 0) return null;
+  const mine = line.filter((e) => kept.includes(e.c.line));
+  const rest = group.filter((e) => !mine.includes(e)).map((e) => ({ ...e, c: { ...e.c, before: withKept(e.c.before, kept), after: withKept(e.c.after, kept) } }));
+  return { line: mine, kept, rest };
 }
 
 // What uninstall would do for the folder, worked out without changing anything: the same world
@@ -495,7 +507,7 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
     } else if (refOf(real, `refs/heads/${branch}`) === commitGroup[0].c.before?.sha) settled(idsOf(commitGroup), 'the commit was never made');
     else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
   }
-  const sharedFile = (target) => SETUP_FILES.some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
+  const sharedFile = (target) => [...SETUP_FILES, GITIGNORE].some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
   // The project's .wheelhouse/ folder: while it is there, step 7's line keeping it out of git stays
   // (ruling R131).
   const ownFolder = path.join(real, '.wheelhouse');
@@ -533,10 +545,15 @@ export async function uninstallPlan({ folder, userHome = os.homedir(), platform 
           kept(describe(c, userHome), 'the project\'s own file, as committed: it stays', list);
           break;
         }
-        const keeping = ownFolderThere ? keepWheelhouseLine(group) : null;
+        const keeping = keepLines(group, [...ENV_STAYS_LINES, ...(ownFolderThere ? [WHEELHOUSE_LINE] : [])]);
         if (keeping !== null) {
-          kept(`${WHEELHOUSE_LINE} in ${shown(c.target, userHome)}`, LINE_STAYS, idsOf(keeping.line));
-          kept('the project\'s .wheelhouse/ folder', FOLDER_STAYS);
+          const own = keeping.kept.includes(WHEELHOUSE_LINE);
+          const env = keeping.kept.filter((l) => l !== WHEELHOUSE_LINE);
+          if (env.length > 0) kept(`${env.join(' and ')} in ${shown(c.target, userHome)}`, ENV_STAYS, idsOf(keeping.line.filter((e) => e.c.line !== WHEELHOUSE_LINE)));
+          if (own) {
+            kept(`${WHEELHOUSE_LINE} in ${shown(c.target, userHome)}`, LINE_STAYS, idsOf(keeping.line.filter((e) => e.c.line === WHEELHOUSE_LINE)));
+            kept('the project\'s .wheelhouse/ folder', FOLDER_STAYS);
+          }
           if (keeping.rest.length === 0) break;
         }
         const links = keeping?.rest ?? group;

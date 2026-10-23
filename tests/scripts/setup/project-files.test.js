@@ -12,18 +12,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  projectFilesStep, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
+  projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
   EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
-import { runApply } from '../../../scripts/setup/engine.js';
+import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
+import { fileURLToPath } from 'node:url';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
-import { LIVE_DATA } from '../../../scripts/setup/questions.js';
+import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
-import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand } from '../../../scripts/protection/settings.js';
+import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile } from '../../../scripts/host/company-ca.js';
@@ -52,7 +53,11 @@ const NODE = '/usr/local/bin/node';
 const REF = 'v1.4.0';
 const GITLAB_TOKEN = 'glpat-directors-own-token-0001';
 const GITLAB_USER = { username: 'a-director', id: 77, name: 'A Director' };
+// The product's own .gitignore, as most hold it: .env files already kept out of git.
+const COVERED = '.env\n.env.*\n';
 const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
+// What Claude Code's alias for its most capable model stands for here: a stand-in name.
+const BEST_MODEL = 'model-top-1';
 
 // ---- The world: a product on a stand-in host, connected as step 3 leaves it ----
 
@@ -104,13 +109,13 @@ function kits(root) {
 }
 
 // `defaultBranch` is what the host says; `branch` the folder's own. `claudeMissing`: no `claude`.
-// `host`: 'github' or 'gitlab'. `stepOne` and `gitignore`: as seedBare's. `ownStatusLine`: a status
+// `host`: 'github' or 'gitlab'. `stepOne` and `gitignore`: as seedBare's (`gitignore` null: the product has none). `ownStatusLine`: a status
 // line of the director's in their user settings. `w.duringInstall(plugin)` runs while each pin is
 // installed, and `w.gitFails(args)` makes a git call fail.
 async function world({
-  defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = null, ownStatusLine = null, baseUrl = null,
+  defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
 } = {}) {
-  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o) };
+  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, bestAsked: 0 };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -204,6 +209,7 @@ async function world({
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
+    best: async () => { w.bestAsked += 1; return w.best; },
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
   w.ctx = (extra = {}) => ({ folder: w.folder, step: 7, now: () => T0, platform: 'darwin', userHome: w.user, answers: w.answers, ...extra });
@@ -307,6 +313,107 @@ test('the configuration has every plan\'s keys with their defaults', () => {
     assert.equal(Object.hasOwn(config, 'realUsers'), false);
   }
   assert.throws(() => starterConfig({ answers: {}, host: 'github' }), /live data/);
+});
+
+test('the starter configuration pins the front desk\'s model when setup was given one, and reads back as written (design section 8)', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const config = starterConfig({ answers, frontDesk: BEST_MODEL });
+  assert.ok(ROLES.includes('frontDesk'));
+  assert.equal(config.routing.frontDesk, BEST_MODEL);
+  assert.ok(Object.entries(config.routing).every(([role, m]) => role === 'frontDesk' || m === null), 'no other role is named');
+  assert.deepEqual(readConfig(JSON.stringify(config)), config);
+  assert.equal(starterConfig({ answers }).routing.frontDesk, null);
+});
+
+test('step 7 pins the front desk to what the most capable model\'s alias stands for, in the configuration and this computer\'s settings, and says so on its card', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    assert.equal(w.bestAsked, 1);
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}, the most capable model`));
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, BEST_MODEL);
+    assert.equal(w.json('.claude/settings.local.json').model, BEST_MODEL, 'the front desk\'s folder starts its sessions on it');
+    assert.equal(w.json('.claude/settings.json').model, undefined, 'never in the committed settings, which go to the host');
+    // The pin stays where it is: a later run asks nothing and changes nothing, even when the alias has moved.
+    w.best = 'model-top-2';
+    const again = await w.plan();
+    assert.equal(w.bestAsked, 1);
+    assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
+  });
+});
+
+test('the most capable model is asked once in a setup run: every later plan in the run gives the same list, whatever the alias says by then', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    const ctx = w.ctx({ runId: run.id });
+    w.best = null;
+    const first = await w.step.plan(ctx);
+    w.best = BEST_MODEL;
+    const again = await w.step.plan(ctx);
+    assert.equal(w.bestAsked, 1);
+    assert.equal(planHash(again.changes), planHash(first.changes), 'the card\'s hash still holds at the click');
+    // A new run asks again.
+    const next = startRun({ folder: w.folder, now: () => T0 });
+    const later = await w.step.plan(w.ctx({ runId: next.id }));
+    assert.equal(w.bestAsked, 2);
+    assert.deepEqual(later.changes.filter((c) => c.key?.[0] === 'model').map((c) => c.after), [BEST_MODEL]);
+  });
+});
+
+test('a project set up before the front desk had a model gets one at its next setup, and a pin already made is kept', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.best = null;
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, null);
+    assert.equal(w.json('.claude/settings.local.json').model, undefined);
+    w.best = BEST_MODEL;
+    const later = await w.plan();
+    const keys = later.changes.filter((c) => c.kind === 'json-key').map((c) => `${path.basename(c.target)} ${c.key.join('.')} ${c.after}`);
+    assert.deepEqual(keys, [`wheelhouse.json routing.frontDesk ${BEST_MODEL}`, `settings.local.json model ${BEST_MODEL}`]);
+    // A pin moved by hand, or by the pin mover, is never put back by setup.
+    const config = path.join(w.folder, '.claude', 'wheelhouse.json');
+    fs.writeFileSync(config, `${JSON.stringify({ ...w.json('.claude/wheelhouse.json'), routing: { ...w.json('.claude/wheelhouse.json').routing, frontDesk: 'model-chosen' } }, null, 2)}\n`);
+    const asked = w.bestAsked;
+    const kept = projectFilesChange({
+      folder: w.folder, config: starterConfig({ answers: w.answers, frontDesk: BEST_MODEL }), release: { ref: REF },
+      local: { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin' },
+    });
+    assert.ok(!kept.some((c) => c.target === config), 'the configuration keeps its own pin');
+    assert.deepEqual(kept.filter((c) => c.key?.[0] === 'model').map((c) => c.after), ['model-chosen'], 'and this computer follows it');
+    assert.equal(w.bestAsked, asked);
+  });
+});
+
+test('when Claude Code can\'t say what its most capable model is, step 7 goes on without a pin and says so', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.best = null;
+    const planned = await w.plan();
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /the front desk's model is left as it is: Claude Code didn't say which is its most capable/);
+    assert.ok(!planned.changes.some((c) => c.key?.[0] === 'model'));
+  });
+});
+
+test('a joining computer starts the front desk on the model the committed configuration pins', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    const run = await secondComputer(w);
+    w.best = 'model-elsewhere';
+    const planned = await w.step.plan(w.ctx({ runId: run.id }));
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/settings.local.json').model, BEST_MODEL);
+    assert.equal(w.bestAsked, 1, 'only the first computer asked');
+  });
 });
 
 test('the setup commit holds exactly the three files, and goes up before protection is on', async () => {
@@ -839,6 +946,48 @@ test('the card lists every part on GitLab with a long branch and release, and st
   assert.match(long, /never updates itself/);
 });
 
+test('the card says nothing of the keychain: its denial is a quiet default', () => {
+  const changes = [{ kind: 'json-key', target: '/p/.claude/settings.json', key: ['a'], after: 1 }, { kind: 'host', action: 'protect' }];
+  const text = composeCard({ ...projectFilesCard({ changes, host: 'github', branch: 'main', release: null }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  assert.doesNotMatch(text, /keychain/i);
+});
+
+test('only the director\'s Yes on step 4\'s Apple apps question opens the keychain; a true in the working copy is set back', () => {
+  const folder = tempFolder('wh-keychain-');
+  const answers = (apple) => ({ '4.live-data': { label: LIVE_DATA.no, text: null }, ...(apple ? { '4.apple-apps': { label: apple, text: null } } : {}) });
+  const local = { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin', claudeHome: tempFolder('wh-claude-') };
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const write = (rel, value) => fs.writeFileSync(path.join(folder, '.claude', rel), `${JSON.stringify(value, null, 2)}\n`);
+  const plain = starterConfig({ answers: answers(null), host: 'github' });
+  const edits = (apple) => projectFilesChange({ folder, config: starterConfig({ answers: answers(apple), host: 'github' }), release: null, local });
+  const settingsEdits = (list) => list.filter((c) => c.target.endsWith('settings.json') && !c.target.endsWith('local.json'));
+  const configEdits = (list) => list.filter((c) => c.target.endsWith('wheelhouse.json'));
+  assert.equal(starterConfig({ answers: answers(SIGNS_APPS.yes), host: 'github' }).signsApps, true);
+  assert.equal(Object.hasOwn(starterConfig({ answers: answers(SIGNS_APPS.no), host: 'github' }), 'signsApps'), false);
+
+  // The director said Yes, with the entries there from an earlier setup: the edits take them out.
+  write('wheelhouse.json', plain);
+  write('settings.json', projectSettings(plain));
+  const lifting = settingsEdits(edits(SIGNS_APPS.yes));
+  assert.ok(!JSON.stringify(lifting).includes('Library/Keychains'));
+  assert.ok(lifting.some((c) => c.key.join('.') === 'permissions.deny'));
+  assert.ok(lifting.some((c) => c.key.join('.') === 'sandbox.credentials.files'));
+
+  // An agent wrote signsApps: true into the working copy, and the director gave no Yes: the
+  // keychain stays shut and the configuration is set back to false.
+  write('wheelhouse.json', { ...plain, signsApps: true });
+  write('settings.json', projectSettings(plain));
+  const planted = edits(SIGNS_APPS.no);
+  assert.deepEqual(settingsEdits(planted), []);
+  assert.ok(configEdits(planted).some((c) => c.key?.join('.') === 'signsApps' && c.after === false));
+  assert.deepEqual(settingsEdits(edits(null)), []);
+
+  // Settings that lack the entries, and no Yes: the edits put them in.
+  write('wheelhouse.json', plain);
+  write('settings.json', projectSettings({ ...plain, signsApps: true }));
+  assert.ok(JSON.stringify(settingsEdits(edits(null))).includes(KEYCHAINS));
+});
+
 test('step 7 is setup\'s own step 7, after the host and the questions, run in its own process', () => {
   const step = STEPS.find((s) => s.n === 7);
   assert.equal(step.long, true);
@@ -1013,5 +1162,519 @@ test('a joining computer\'s step 7 reads the committed configuration, never step
     const w = await world();
     const run = await secondComputer(w);
     await assert.rejects(w.step.plan(w.ctx({ runId: run.id })), /\.claude\/wheelhouse\.json is not in this folder's last commit/);
+  });
+});
+
+// ---- .env files kept out of git ----
+
+// The lines the plan adds to the product's own .gitignore, and to this computer's list.
+const ignoreLines = (w, changes) => changes.filter((c) => c.target === path.join(w.folder, '.gitignore')).map((c) => c.line);
+const excludeFile = (w) => path.join(w.folder, '.git', 'info', 'exclude');
+const cardText = (planned) => composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+
+test('a .gitignore that already keeps .env and .env.* out of git, by any pattern, is left alone', async () => {
+  for (const text of ['.env\n.env.*\n', '.env*\n', '*.env*\n', '**/.env*\n', '# secrets\n.env\n.env.*\n!.env.example\n']) {
+    await withHome(async () => {
+      const w = await world({ gitignore: text });
+      const planned = await w.plan();
+      assert.deepEqual(ignoreLines(w, planned.changes), [], JSON.stringify(text));
+      assert.deepEqual(planned.changes.find((c) => c.action === 'commit').files, SETUP_FILES, 'the three files only');
+      assert.doesNotMatch(cardText(planned), /\.env/);
+    });
+  }
+});
+
+test('only the missing lines are added to .gitignore, in setup\'s commit, the director\'s text kept', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n.env\n' });
+    const planned = await w.plan();
+    assert.deepEqual(ignoreLines(w, planned.changes), ['.env.*']);
+    const commit = planned.changes.find((c) => c.action === 'commit');
+    assert.deepEqual(commit.files, [...SETUP_FILES, '.gitignore']);
+    assert.match(cardText(planned), /\.env files, which hold secrets, kept out of git by \.gitignore/);
+    assert.match(cardText(planned), /the three shared files and \.gitignore go up/);
+    const tipBefore = await lsRemote(w.bare, 'main');
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(fs.readFileSync(path.join(w.folder, '.gitignore'), 'utf8'), 'node_modules\n.env\n.env.*\n');
+    const tip = await lsRemote(w.bare, 'main');
+    assert.equal(await g(w.bare, 'rev-parse', `${tip}^`), tipBefore, 'one commit');
+    const files = (await g(w.bare, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip)).split('\n').sort();
+    assert.deepEqual(files, ['.claude/settings.json', '.claude/wheelhouse.json', '.gitignore', 'CLAUDE.md']);
+    assert.equal(await g(w.bare, 'show', `${tip}:.gitignore`), 'node_modules\n.env\n.env.*');
+    // The line was recorded in the journal just before it was written, with the text before it.
+    const made = done.run.changes.filter((c) => c.target === path.join(w.folder, '.gitignore'));
+    assert.deepEqual(made.map((c) => [c.kind, c.line, c.before]), [['file', '.env.*', 'node_modules\n.env\n']]);
+    const commitChange = done.run.changes.find((c) => c.after?.action === 'commit');
+    assert.deepEqual(commitChange.after.files, [...SETUP_FILES, '.gitignore']);
+    // Asked again: covered now, and nothing to commit.
+    assert.deepEqual(ignoreLines(w, (await w.plan()).changes), []);
+  });
+});
+
+test('a product with no .gitignore gets one with both lines; a rerun adds nothing twice', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: null });
+    const planned = await w.plan();
+    assert.deepEqual(ignoreLines(w, planned.changes), ['.env', '.env.*']);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const file = path.join(w.folder, '.gitignore');
+    assert.equal(fs.readFileSync(file, 'utf8'), '.env\n.env.*\n');
+    // The same lines applied again (a rerun) change nothing.
+    const again = await w.apply(planned.changes.filter((c) => c.line !== undefined));
+    assert.equal(again.ok, true, again.reason);
+    assert.equal(fs.readFileSync(file, 'utf8'), '.env\n.env.*\n');
+    assert.equal((await g(w.bare, 'show', 'main:.gitignore')), '.env\n.env.*');
+    assert.deepEqual(ignoreLines(w, (await w.plan()).changes), []);
+  });
+});
+
+test('a rule that un-ignores .env.local does not count as covering it; the lines go after it, and a kept .env.example negation is restated', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: '.env*\n!.env.local\n!.env.example\n' });
+    const planned = await w.plan();
+    assert.deepEqual(ignoreLines(w, planned.changes), ['.env.*', '!.env.example']);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(fs.readFileSync(path.join(w.folder, '.gitignore'), 'utf8'), '.env*\n!.env.local\n!.env.example\n.env.*\n!.env.example\n');
+    assert.equal(await g(w.folder, 'check-ignore', '--no-index', '-q', '.env.local').then(() => true, () => false), true);
+    assert.equal(await g(w.folder, 'check-ignore', '--no-index', '-q', '.env.example').then(() => true, () => false), false, '.env.example stays committable');
+  });
+});
+
+test('coverage only by this computer\'s own lists (.git/info/exclude, a global ignore file) still offers .gitignore the lines', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n' });
+    fs.mkdirSync(path.dirname(excludeFile(w)), { recursive: true });
+    fs.writeFileSync(excludeFile(w), '.env\n.env.*\n');
+    assert.deepEqual(ignoreLines(w, (await w.plan()).changes), ['.env', '.env.*']);
+  });
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n' });
+    // git's default global ignore list, $XDG_CONFIG_HOME/git/ignore (the world's run points it at a scratch folder).
+    const global = path.join(path.dirname(w.noGlobal), 'git', 'ignore');
+    fs.mkdirSync(path.dirname(global), { recursive: true });
+    fs.writeFileSync(global, '.env*\n');
+    const seen = await realRun('git', ['check-ignore', '--no-index', '-v', '.env'], { cwd: w.folder, env: { GIT_CONFIG_GLOBAL: w.noGlobal, XDG_CONFIG_HOME: path.dirname(w.noGlobal) } });
+    assert.match(seen.stdout, /git\/ignore/, 'the global list does ignore it');
+    assert.deepEqual(ignoreLines(w, (await w.plan()).changes), ['.env', '.env.*']);
+  });
+});
+
+test('when git cannot answer, the lines are offered', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.gitFails = (args) => args.includes('check-ignore') && args.includes('--no-index');
+    assert.deepEqual(ignoreLines(w, (await w.plan()).changes), ['.env', '.env.*']);
+  });
+});
+
+test('a .gitignore with Windows line endings keeps them, with or without a final newline', async () => {
+  for (const text of ['node_modules\r\n.env\r\n', 'node_modules\r\n.env']) {
+    await withHome(async () => {
+      const w = await world({ gitignore: text });
+      const done = await w.apply((await w.plan()).changes);
+      assert.equal(done.ok, true, done.reason);
+      const now = fs.readFileSync(path.join(w.folder, '.gitignore'), 'utf8');
+      assert.equal(now, 'node_modules\r\n.env\r\n.env.*\r\n');
+      assert.ok(!/[^\r]\n/.test(now), 'no bare line feed');
+    });
+  }
+});
+
+test('the director\'s own uncommitted change to .gitignore is asked about, like the three files; setup\'s own lines left from an earlier run are not', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n' });
+    const file = path.join(w.folder, '.gitignore');
+    fs.appendFileSync(file, 'dist\n');
+    const asked = (await w.plan()).ask;
+    assert.ok(asked, 'asked');
+    assert.match(asked.card.what, /\.gitignore has changes of yours not yet committed/);
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    const commit = planned.changes.find((c) => c.action === 'commit');
+    assert.deepEqual(commit.yours.map((y) => y.file), ['.gitignore']);
+    assert.match(cardText(planned), /with your own changes to \.gitignore/);
+    fs.appendFileSync(file, 'build\n');
+    assert.notEqual((await w.plan()).ask.id, asked.id, 'a changed file asks again');
+    fs.writeFileSync(file, 'node_modules\ndist\n');
+    const done = await w.apply((await w.plan()).changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'show', 'main:.gitignore'), 'node_modules\ndist\n.env\n.env.*');
+  });
+  await withHome(async () => {
+    // A leftover of setup's own: the lines written (and journalled), the commit not made; no question, and the commit goes.
+    const w = await world({ gitignore: 'node_modules\n' });
+    w.gitFails = (args) => args.includes('commit');
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, false);
+    assert.equal(fs.readFileSync(path.join(w.folder, '.gitignore'), 'utf8'), 'node_modules\n.env\n.env.*\n');
+    w.gitFails = () => false;
+    const planned = await w.plan();
+    assert.ok(planned.changes, JSON.stringify(planned.ask ?? planned));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').files, [...SETUP_FILES, '.gitignore']);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'show', 'main:.gitignore'), 'node_modules\n.env\n.env.*');
+  });
+  await withHome(async () => {
+    // The same lines typed by the director are theirs: no journal record, so they are asked about.
+    const w = await world({ gitignore: 'node_modules\n' });
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), '.env\n!.env.example\n');
+    assert.match((await w.plan()).ask?.card.what ?? '', /\.gitignore has changes of yours/);
+  });
+});
+
+test('a joining computer is protected in its own .git/info/exclude, with .gitignore left alone', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    // The project as the first computer left it has a .gitignore that does not cover .env files.
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), 'node_modules\n');
+    await g(w.folder, 'commit', '-q', '-am', 'Ignore list');
+    await g(w.folder, 'push', '-q', w.bare, 'main');
+    const run = await secondComputer(w);
+    const planned = await w.step.plan(w.ctx({ runId: run.id }));
+    assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
+    assert.deepEqual(planned.changes.filter((c) => c.line !== undefined).map((c) => [path.relative(w.folder, c.target), c.line]), [
+      [path.join('.git', 'info', 'exclude'), EXCLUDE_LINE], [path.join('.git', 'info', 'exclude'), WHEELHOUSE_LINE],
+      [path.join('.git', 'info', 'exclude'), '.env'], [path.join('.git', 'info', 'exclude'), '.env.*'],
+    ]);
+    assert.match(cardText(planned), /\.env files, which hold secrets, kept out of git on this computer/);
+    assert.ok(!planned.changes.some((c) => c.kind === 'host'));
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const lines = fs.readFileSync(excludeFile(w), 'utf8').split('\n');
+    assert.ok(lines.includes('.env') && lines.includes('.env.*'));
+    assert.equal(fs.readFileSync(path.join(w.folder, '.gitignore'), 'utf8'), 'node_modules\n', '.gitignore untouched');
+    assert.equal(await g(w.folder, 'status', '--porcelain', '--', '.gitignore'), '');
+    // Asked again: the computer's own list counts there, so nothing more is offered for it.
+    const again = await w.step.plan(w.ctx({ runId: run.id }));
+    assert.ok(!again.changes?.some((c) => c.line === '.env' || c.line === '.env.*'), JSON.stringify(again.changes));
+  });
+});
+
+test('the card with every part, a long branch and a long release, stays within the composer\'s limit, on both forms', () => {
+  const folder = '/p';
+  const changes = [
+    { kind: 'json-key', target: '/p/.claude/settings.json', key: ['a'], after: 1 },
+    { kind: 'file', target: '/p/CLAUDE.md', section: 'Compact instructions' },
+    { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
+    { kind: 'file', target: '/p/.git/info/exclude', line: EXCLUDE_LINE }, { kind: 'file', target: '/p/.git/info/exclude', line: WHEELHOUSE_LINE },
+    { kind: 'file', target: `${folder}/.gitignore`, line: '.env' }, { kind: 'file', target: `${folder}/.gitignore`, line: '.env.*' },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'host', action: 'commit', files: [...SETUP_FILES, '.gitignore'], yours: [{ file: 'CLAUDE.md' }, { file: '.gitignore' }, { file: '.claude/settings.json' }] },
+    { kind: 'host', action: 'protect' },
+  ];
+  const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  assert.match(text('main', 'v1.4.0'), /\.env files, which hold secrets, kept out of git by \.gitignore/);
+  const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
+  assert.ok(long.length <= 1200);
+  assert.match(long, /\.env files/);
+  assert.match(long, /never updates itself/);
+  // The joining form.
+  const mine = [
+    { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
+    { kind: 'file', target: '/p/.git/info/exclude', line: EXCLUDE_LINE }, { kind: 'file', target: '/p/.git/info/exclude', line: WHEELHOUSE_LINE },
+    { kind: 'file', target: '/p/.git/info/exclude', line: '.env' }, { kind: 'file', target: '/p/.git/info/exclude', line: '.env.*' },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+  ];
+  const differ = ['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md'];
+  const joined = composeCard({ ...projectFilesCard({ changes: mine, host: 'gitlab', branch: null, release: { ref: `v${'9'.repeat(150)}` }, joining: true, differ: [...differ, `${'y'.repeat(300)}.md`] }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  assert.ok(joined.length <= 1200);
+  assert.match(joined, /\.env files/);
+});
+
+// ---- Probes, and what goes up ----
+
+const planFor = async (text, extra = {}) => {
+  const w = await world({ gitignore: text, ...extra });
+  return { w, planned: await w.plan() };
+};
+
+test('a rule that covers only .env.local, only the root, or only some names does not count as covering them all', async () => {
+  for (const [text, expected] of [
+    ['.env.local\n', ['.env', '.env.*']],
+    ['.env*.local\n', ['.env', '.env.*']],
+    ['*.local\n', ['.env', '.env.*']],
+    ['/.env\n/.env.*\n', ['.env', '.env.*']],
+    ['/.env*\n', ['.env', '.env.*']],
+    ['.env\n/.env.*\n', ['.env.*']],
+    ['.env.*\n', ['.env']],
+  ]) {
+    await withHome(async () => {
+      const { w, planned } = await planFor(text);
+      assert.deepEqual(ignoreLines(w, planned.changes), expected, JSON.stringify(text));
+    });
+  }
+});
+
+test('only the root .gitignore counts as cover: a nested one does not', async () => {
+  await withHome(async () => {
+    const { w, planned } = await planFor('node_modules\n', {});
+    assert.deepEqual(ignoreLines(w, planned.changes), ['.env', '.env.*']);
+    fs.mkdirSync(path.join(w.folder, 'wheelhouse-probe'), { recursive: true });
+    fs.writeFileSync(path.join(w.folder, 'wheelhouse-probe', '.gitignore'), '.env*\n');
+    assert.deepEqual(ignoreLines(w, (await w.plan()).changes), ['.env', '.env.*'], 'nested cover is not the root');
+  });
+});
+
+test('what goes up must hold the cover: a deleted, untracked or edited .gitignore is asked about, an unrelated edit is left alone', async () => {
+  await withHome(async () => {
+    // Deleted (tracked, covering at HEAD): never committed as a two-line file without the question.
+    const w = await world();
+    fs.rmSync(path.join(w.folder, '.gitignore'));
+    const asked = (await w.plan()).ask;
+    assert.match(asked?.card.what ?? '', /\.gitignore has been deleted here/);
+    w.answers[`7.${asked.id}`] = said(LEAVE_YOURS);
+    assert.equal((await w.plan()).why, leftYoursLine('.gitignore'));
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').yours.map((y) => y.file), ['.gitignore']);
+  });
+  await withHome(async () => {
+    // Untracked and covering: asked about, not trusted.
+    const w = await world({ gitignore: null });
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), '.env*\n');
+    const asked = (await w.plan()).ask;
+    assert.match(asked?.card.what ?? '', /\.gitignore has changes of yours/);
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    assert.deepEqual(ignoreLines(w, planned.changes), []);
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').files, [...SETUP_FILES, '.gitignore']);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'show', 'main:.gitignore'), '.env*');
+  });
+  await withHome(async () => {
+    // An uncommitted edit that mentions .env, with HEAD covering: asked.
+    const w = await world();
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), '.env\n.env.*\n# .env.bak too\n');
+    assert.ok((await w.plan()).ask, 'asked');
+  });
+  await withHome(async () => {
+    // An unrelated uncommitted edit with HEAD covering: left alone, not committed.
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    const planned = await w.plan();
+    assert.ok(planned.changes, JSON.stringify(planned.ask ?? planned));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').files, SETUP_FILES);
+  });
+});
+
+test('the card says when .env.example stays shared, and the longest card still fits', () => {
+  const changes = [
+    { kind: 'json-key', target: '/p/.claude/settings.json', key: ['a'], after: 1 },
+    { kind: 'file', target: '/p/CLAUDE.md', section: 'Compact instructions' },
+    { kind: 'json-key', target: '/p/.claude/settings.local.json', key: ['b'], after: 2 },
+    { kind: 'file', target: '/p/.git/info/exclude', line: EXCLUDE_LINE }, { kind: 'file', target: '/p/.git/info/exclude', line: WHEELHOUSE_LINE },
+    { kind: 'file', target: '/p/.gitignore', line: '.env' }, { kind: 'file', target: '/p/.gitignore', line: '.env.*' },
+    { kind: 'file', target: '/p/.gitignore', line: '!.env.example', restate: true },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+    { kind: 'host', action: 'commit', files: [...SETUP_FILES, '.gitignore'], yours: [{ file: 'CLAUDE.md' }, { file: '.gitignore' }, { file: '.claude/settings.json' }] },
+    { kind: 'host', action: 'protect' },
+  ];
+  const text = (branch, ref) => composeCard({ ...projectFilesCard({ changes, host: 'gitlab', branch, release: { ref } }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  assert.match(text('main', 'v1.4.0'), /\(\.env\.example stays shared\)/);
+  const long = text(`release/${'x'.repeat(200)}`, `v${'9'.repeat(150)}`);
+  assert.ok(long.length <= 1200);
+  assert.match(long, /\.env files/);
+});
+
+test('an unpushed setup commit holding .gitignore is pushed on the next Go ahead, and recorded with the files it held; one with other .gitignore changes is refused', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n' });
+    const planned = await w.plan();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'could not reach the host' } : failing(file, args, options));
+    const first = await w.apply(planned.changes);
+    assert.equal(first.ok, false);
+    w.run = failing;
+    const again = await w.plan();
+    const push = again.changes.find((c) => c.action === 'push');
+    assert.ok(push, JSON.stringify(again.changes));
+    const second = await w.apply(again.changes);
+    assert.equal(second.ok, true, second.reason);
+    const pushed = second.run.changes.find((c) => c.after?.action === 'push');
+    assert.deepEqual([...pushed.after.files].sort(), ['.claude/settings.json', '.claude/wheelhouse.json', '.gitignore', 'CLAUDE.md']);
+    assert.equal(await g(w.bare, 'show', 'main:.gitignore'), 'node_modules\n.env\n.env.*');
+  });
+  await withHome(async () => {
+    // A setup-looking commit whose .gitignore change is more than setup's lines is not setup's: refused as before.
+    const w = await world({ gitignore: 'node_modules\n' });
+    const planned = await w.plan();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'down' } : failing(file, args, options));
+    assert.equal((await w.apply(planned.changes)).ok, false);
+    w.run = failing;
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), 'node_modules\n.env\n.env.*\nsecrets.txt\n');
+    await g(w.folder, 'commit', '-q', '--amend', '--no-edit', '-a');
+    await assert.rejects(w.plan(), /commits of your own/);
+  });
+});
+
+// ---- Guard follow-ups: HEAD decides the cover, a negation on a joining computer, a deleted .gitignore, a retried push ----
+
+test('an uncommitted .gitignore over a HEAD that does not cover .env is asked about, whatever the edit says', async () => {
+  for (const text of ['.*\n', '*\n', '.e*\n', '.env*\n']) {
+    await withHome(async () => {
+      const w = await world({ gitignore: 'node_modules\n' });
+      fs.writeFileSync(path.join(w.folder, '.gitignore'), text);
+      const asked = (await w.plan()).ask;
+      assert.match(asked?.card.what ?? '', /\.gitignore has changes of yours/, JSON.stringify(text));
+    });
+  }
+});
+
+test('an uncommitted .gitignore over a HEAD that covers .env, with an unrelated edit, is left alone; a failing check of HEAD is not trusted', async () => {
+  await withHome(async () => {
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), '.*\n');
+    const planned = await w.plan();
+    assert.ok(planned.changes, JSON.stringify(planned.ask ?? planned));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').files, SETUP_FILES);
+  });
+  await withHome(async () => {
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    w.gitFails = (args) => args.includes('init');
+    assert.match((await w.plan()).ask?.card.what ?? '', /\.gitignore has changes of yours/, 'HEAD not shown to cover, so asked');
+  });
+  await withHome(async () => {
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    await w.plan();
+    assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('wh-head-')), [], 'the temporary folder is removed');
+  });
+});
+
+const ONE_STEP = fileURLToPath(new URL('../../helpers/setup-project-files-steps.js', import.meta.url));
+
+// A joining computer whose project's committed .gitignore lets .env.local in by a negation, planned through the engine's routes.
+async function negatedWorld() {
+  const w = await world();
+  const first = await w.apply((await w.plan()).changes);
+  assert.equal(first.ok, true, first.reason);
+  fs.writeFileSync(path.join(w.folder, '.gitignore'), '.env\n.env.*\n!.env.local\n');
+  await g(w.folder, 'commit', '-q', '-am', 'Let .env.local in');
+  await g(w.folder, 'push', '-q', w.bare, 'main');
+  const run = await secondComputer(w);
+  globalThis.wheelhouseProjectFilesStep = w.step;
+  const routes = setupRoutes({ now: () => T0, stepsModule: ONE_STEP, userHome: w.user, platform: 'darwin' });
+  return { w, run, plan: () => routes['/setup/plan']({ folder: w.folder, step: 7 }) };
+}
+
+test('on a joining computer, a negation in the root .gitignore gets no exclude line, and the card and the settling line say so', async () => {
+  await withHome(async () => {
+    // With changes to list: the card names it.
+    const { w, plan } = await negatedWorld();
+    fs.rmSync(excludeFile(w));
+    const planned = await plan();
+    assert.equal(planned.ok, true, JSON.stringify(planned));
+    assert.ok(planned.changes.length > 0 && !planned.changes.some((c) => c.line === '.env' || c.line === '.env.*'), 'no exclude line offered');
+    assert.match(planned.card.question, /\.gitignore lets some \.env files into git \(a line starting with !\)/);
+    assert.match(planned.card.question, /take it up on the computer that set the project up/);
+    assert.doesNotMatch(planned.card.question, /\.env files, which hold secrets, kept out of git on this computer/);
+  });
+  await withHome(async () => {
+    // Everything of this computer's in place, then a fresh run: a shared file differing and the
+    // negation are said in one line.
+    const { w, plan } = await negatedWorld();
+    const planned = await plan();
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const again = startRun({ folder: w.folder, now: () => T0 });
+    addChanges(again.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: REPO, found: true } }]);
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- A note on the laptop.\n');
+    const settled = await plan();
+    assert.equal(settled.done, true, JSON.stringify(settled));
+    assert.ok(settled.said.includes(NEGATED_LINE) && /CLAUDE\.md differs from what is committed/.test(settled.said), settled.said);
+  });
+});
+
+test('the joining card with a negation, in both sizes, stays within the composer\'s limit', () => {
+  const folder = '/p';
+  const mine = [
+    { kind: 'file', target: `${folder}/.claude/settings.local.json`, line: undefined, key: ['a'], after: 1 },
+    { kind: 'file', target: `${folder}/.git/info/exclude`, line: EXCLUDE_LINE }, { kind: 'file', target: `${folder}/.git/info/exclude`, line: '.env' },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+  ];
+  const text = (release, differ) => composeCard({ ...projectFilesCard({ changes: mine, host: 'gitlab', branch: null, release, joining: true, differ, negated: ['.env.*'] }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  const plain = text({ ref: 'v1.4.0' }, []);
+  assert.match(plain, /some \.env files, which hold secrets, kept out of git on this computer, but \.gitignore lets some/);
+  const long = text({ ref: `v${'9'.repeat(150)}` }, ['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md', `${'y'.repeat(300)}.md`]);
+  assert.ok(long.length <= 1200);
+  assert.match(long, /\.gitignore lets some \.env files in/);
+});
+
+test('a deleted .gitignore has its own question, naming what setup would put back', async () => {
+  await withHome(async () => {
+    const w = await world();
+    fs.rmSync(path.join(w.folder, '.gitignore'));
+    const asked = (await w.plan()).ask;
+    assert.match(asked.card.what, /\.gitignore has been deleted here; setup's commit, "Set up Wheelhouse", would put back one holding only the \.env lines/);
+    assert.doesNotMatch(asked.card.what, /changes of yours/);
+    assert.deepEqual(asked.card.options.map((o) => o.label), [putYoursIn('.gitignore'), LEAVE_YOURS]);
+    assert.match(asked.id, /^yours-[0-9a-f]{12}$/);
+    assert.ok(asked.card.what.length < 200 && asked.card.options.every((o) => o.says.length < 200), 'shorter than the generic question');
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').yours.map((y) => y.file), ['.gitignore']);
+  });
+});
+
+test('Put them in with a .gitignore of the director\'s, a failed push, then a retry: the commit is setup\'s own and goes up', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n' });
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    const asked = (await w.plan()).ask;
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'down' } : failing(file, args, options));
+    assert.equal((await w.apply(planned.changes)).ok, false);
+    w.run = failing;
+    const again = await w.plan();
+    const push = again.changes?.find((c) => c.action === 'push');
+    assert.ok(push, JSON.stringify(again.ask ?? again));
+    const done = await w.apply(again.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'show', 'main:.gitignore'), 'node_modules\ndist\n.env\n.env.*');
+  });
+});
+
+test('the questions about .gitignore compose as the engine composes a question, for the deleted and the changed wording', () => {
+  for (const text of [null, 'node_modules\ndist\n']) {
+    for (const isNew of [true, false]) {
+      const asked = yoursAsk({ rel: '.gitignore', text, isNew });
+      const card = composeCard({ ...asked.card, kind: 'question', suggest: false }).question;
+      assert.ok(card.question.length > 0 && card.question.length <= 1200, `${text === null ? 'deleted' : 'changed'}: ${card.question.length}`);
+      assert.match(card.question, text === null ? /has been deleted here/ : /has changes of yours/);
+    }
+  }
+});
+
+test('every .env name is probed inside a folder as well as at the root', async () => {
+  await withHome(async () => {
+    // Rules for the root only, or for some names at any depth, do not cover the lot.
+    const { w, planned } = await planFor('/.env.*\n.env\n.env.local\n');
+    assert.deepEqual(ignoreLines(w, planned.changes), ['.env.*']);
+  });
+});
+
+test('a setup commit that reorders the .gitignore\'s lines is refused when found again; one that only adds setup\'s lines is not', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: '.env*\n!.env.local\nnode_modules\n' });
+    const planned = await w.plan();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'down' } : failing(file, args, options));
+    assert.equal((await w.apply(planned.changes)).ok, false);
+    w.run = failing;
+    assert.ok((await w.plan()).changes, 'setup\'s own commit is accepted');
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), '!.env.local\n.env*\nnode_modules\n');
+    await g(w.folder, 'commit', '-q', '--amend', '--no-edit', '-a');
+    await assert.rejects(w.plan(), /commits of your own/);
   });
 });

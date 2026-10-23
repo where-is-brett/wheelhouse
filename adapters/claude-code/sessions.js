@@ -4,7 +4,7 @@
 // project's adapter for these calls; this is the Claude Code adapter's answer. It imports no module that
 // reaches the hook kit or the waker, so the waker and the registry can both load it without a cycle.
 import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../../scripts/gate/guardrails.js';
-import { invocation, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
+import { invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 
 // The variable that tells a hook the session is the foreman's.
@@ -26,6 +26,9 @@ export function featureModeOf(config) {
   return mode;
 }
 
+// Claude Code's alias for the command line's own default model.
+export const DEFAULT_MODEL = 'default';
+
 // The role's model from the routing table, or null for the command line's own default.
 function modelOf(config, role) {
   const model = config?.routing?.[role] ?? null;
@@ -34,9 +37,14 @@ function modelOf(config, role) {
 }
 
 // The environment a started session gets: the host session's variables and
-// every spelling of WHEELHOUSE_ROLE taken out.
+// every spelling of WHEELHOUSE_ROLE taken out, but for Claude Code's sign-in
+// variables (scripts/lib/claude.js), spelt exactly, so a session signs in as the
+// one that started the watcher or the foreman did: CLAUDE_CODE_USE_BEDROCK,
+// CLAUDE_CODE_OAUTH_TOKEN and the like start "CLAUDE", as the host session's do.
 export function sessionEnv(env) {
-  return Object.fromEntries(Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE));
+  const kept = Object.entries(env).filter(([name]) => isClaudeSignIn(name));
+  const rest = Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE);
+  return Object.fromEntries([...rest, ...kept]);
 }
 
 // The foreman's session. Two kinds:
@@ -48,7 +56,9 @@ export function sessionEnv(env) {
 export function foremanCall({
   config, pluginRoot = PLUGIN_ROOT, prompt, platform = process.platform, env = process.env, claude = null, tools = null, settings = null, long = false,
 }) {
-  const model = modelOf(config, 'foreman');
+  // The foreman works in the project's main folder, whose local settings start the front desk on its
+  // own model (design section 8), so it always names one: its role's, or the command line's default.
+  const model = modelOf(config, 'foreman') ?? DEFAULT_MODEL;
   const given = tools ?? (long ? foremanTools(pluginRoot, { platform }) : []);
   const args = [
     ...(settings === null ? [] : ['--settings', settings]),
@@ -79,7 +89,8 @@ export function checkFeature(config) {
 // A feature session: `lead` is the words that name which session it is. `allowed` are the allow rules
 // to pass to --allowedTools, when there are any.
 function featureCall({ lead, config, prompt, allowed = [], platform = process.platform, env = process.env, claude = null }) {
-  const model = modelOf(config, 'builder');
+  // A worktree reads the main checkout's local settings too, so, as the foreman, it names its model.
+  const model = modelOf(config, 'builder') ?? DEFAULT_MODEL;
   const args = [
     ...lead,
     '--permission-mode', featureModeOf(config),

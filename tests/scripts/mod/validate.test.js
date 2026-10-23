@@ -99,6 +99,25 @@ test('a call made inside one of the module\'s own functions is read without its 
   assert.ok(!result.problems.some((p) => /brief doesn't name/.test(p)), result.problems.join('\n'));
 });
 
+test('a calls list the validator cut short is read up to the cut, and the source holds the rest', () => {
+  // The validator cuts a long note ("$.ui.stat… [+34 chars]"); its list is sorted, so what the
+  // cut hides sorts at or after the cut item's start.
+  const sources = { ...SOURCES, 'hooks/mod/x.ts': 'export const say = ($) => { $.ui.status("a"); $.ui.toast("b") }' };
+  const cut = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, './register.ts calls: $.process.run (via ask), $.ui.stat… [+34 chars]']), sources });
+  assert.deepEqual(cut.problems, []);
+  assert.deepEqual(cut.calls, ['$.process.run', '$.ui.status', '$.ui.toast']);
+  // A member sorting before the cut is still one the validator should have listed.
+  const early = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, './register.ts calls: $.process.run (via ask), $.ui.stat… [+34 chars]']), sources: { ...sources, 'hooks/mod/y.ts': 'export const now = ($) => $.clock.now()' } });
+  assert.match(early.problems.join('\n'), /\$\.clock\.now, which claude plugin validate doesn't list/);
+  // What the cut hides is still held to the brief.
+  const unnamed = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, './register.ts calls: $.process.run (via ask), $.ui.stat… [+34 chars]']), sources: { ...sources, 'hooks/mod/y.ts': 'export const f = ($) => $.ui.focus()' } });
+  assert.match(unnamed.problems.join('\n'), /\$\.ui\.focus, which its brief doesn't name/);
+  // A cut inside an item's "(via …)": the item itself was listed whole.
+  const inVia = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}`, './register.ts calls: $.process.run (via ask), $.ui.status (via drawP… [+20 chars]']), sources });
+  assert.deepEqual(inVia.problems, []);
+  assert.deepEqual(inVia.calls, ['$.process.run', '$.ui.status', '$.ui.toast']);
+});
+
 test('a hook beyond the mod\'s, or one missing, fails', () => {
   const extra = checkMod({ report: reportWith([`./register.ts hooks: ${LISTED}, tool.call`]), sources: SOURCES });
   assert.match(extra.problems.join('\n'), /tool\.call/);

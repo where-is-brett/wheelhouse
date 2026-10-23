@@ -2,7 +2,7 @@
 
 # Check 73: the keychain inside the sandbox
 
-**Answer:** Deferred — waiting for a Mac sitting. What can be known without touching a keychain is recorded below (no project setting stops a sandboxed program running `security`); whether denying reads of the keychain files stops it is what the probe measures, and it has not been run.
+**Answer:** Yes, on the Mac. Denying `file-read*` of a keychain file's folder stops a sandboxed `security find-generic-password -w` from returning the item: the file is read in the calling process, not by the security service. Both controls read. The Windows half (check 52's `credential-manager-low`) waits for that computer.
 
 ## Question
 
@@ -10,7 +10,7 @@ Whether denying reads of `~/Library/Keychains` stops a sandboxed `security find-
 
 ## Tested on
 
-21 October 2026, on macOS 27, with `sandbox-exec` and `security help` only; no keychain was read, written or listed. The probe itself (`probes/73-keychain/run.js`) has not been run: it is for the director's sitting. Its pure helpers (the options, the search list, the profile, the result line) have tests (`tests/probes/73-keychain/run.test.js`).
+21 October 2026, on macOS 27, with `sandbox-exec` and `security help` only; no keychain was read, written or listed. The probe itself (`probes/73-keychain/run.js`) ran on 23 October 2026 in the third Mac sitting, on macOS 27.0.1 with Node.js 22.22.1. Its pure helpers (the options, the search list, the profile, the result line) have tests (`tests/probes/73-keychain/run.test.js`).
 
 ## Method
 
@@ -35,7 +35,21 @@ Measured on 21 October 2026 with `sandbox-exec` on macOS 27, without touching an
 - Claude Code's sandbox settings offer read and write denials, network lists, `credentials` (files denied, environment variables removed or masked) and `allowMachLookup` (which only adds services). None denies running a program or reaching the security service. So no project setting stops a sandboxed program running `security find-generic-password -w`.
 - `gh` and Claude Code both keep their items through `/usr/bin/security`, and `/usr/bin/security` reads those items without a prompt (check 11).
 
-The probe's three lines, and check 52's `credential-manager-low` line, are not yet recorded.
+**The probe, 23 October 2026, 12:42:57 UTC,** in the third Mac sitting. It ran on macOS 27.0.1 with Node.js 22.22.1, by the agent, with the director's yes (`node probes/73-keychain/run.js --consent`):
+
+```
+plain: read 24 characters
+deny-scratch-folder: refused (exit 44)
+deny-real-keychains: read 24 characters
+search-list: as it was
+scratch folder: removed
+```
+
+- Exit 44 is `security`'s "item could not be found": with the folder denied, it couldn't open the keychain file.
+- `security list-keychains -d user` named only the login keychain before and after.
+- The log (statuses only) is `~/.wheelhouse-probes/73-keychain/run-2026-10-23T12-42-57-792Z.jsonl`, left on the Mac.
+
+Check 52's `credential-manager-low` line is not yet recorded.
 
 ## What it means for the design
 
@@ -43,9 +57,10 @@ The probe's three lines, and check 52's `credential-manager-low` line, are not y
 - What settings can still do is deny reads of the keychain files (`~/Library/Keychains`). If `deny-scratch-folder` prints `refused` while `deny-real-keychains` reads, the denial holds and Task 10 adds it to the sandbox settings; the cost to weigh is `codesign` and iOS signing, which read the same files. If `deny-scratch-folder` reads, the security service reads the file for the caller, the denial does nothing, and the design says the keychain stays open to a sandboxed agent. If the control `deny-real-keychains` is refused, the probe's reading of the scratch file is not what it was meant to be, and the result is not used.
 - On Windows there is no sandbox (check 10), so any agent command can read the generic credentials Credential Manager holds (`gh` keeps its token as one) through `CredRead` called from PowerShell. Under Guarded, commands run at low integrity; `credential-manager-low` says whether a low process can. If it reads, Guarded's card must not claim it keeps the host sign-in from a build.
 - Task 10 changes the sandbox settings, after Copilot Part 3, from this check's answer.
+- **Built** 24 October 2026, on branch `feature/security-pass-66a50a`: each project's settings deny `~/Library/Keychains` through `sandbox.credentials.files` and the Read tool's deny rules (`scripts/protection/settings.js`), as a quiet default with no card. Setup's step 4 asks whether builds sign Apple apps only for a project that looks like an iPhone or Mac app, and only that Yes writes `"signsApps": true`; later the switch moves by a reviewed pull request with the director's approval. Locked's computer-wide file leaves it to each project. The tool guard's refusal of a plain `security find-generic-password` command line, Task 10's other part, is not built yet.
 
 ## Needs the director
 
 A Mac sitting of about 5 minutes, with the agent running it. Nothing to type except agreeing to `--consent`: it makes and removes a throwaway keychain and briefly changes, then restores, the keychain search list. The run sheet is `probes/73-keychain/run.md`. The Windows line comes with the Windows sitting for check 52.
 
-Until then the Answer stays Deferred.
+The Mac half is done (23 October 2026). Task 10 can add the denial of `~/Library/Keychains` to the sandbox settings, weighing `codesign` and iOS signing, which read the same files. The Windows line still comes with check 52's sitting.

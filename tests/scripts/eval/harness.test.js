@@ -658,6 +658,38 @@ test('runScenario passes a context from setup, and the scenario\'s extra argumen
   assert.deepEqual(written.evidence, { seen: 1 });
 });
 
+test('runScenario gives the session the model its set-up names before the scenario\'s own, and keeps it in the record', async () => {
+  const home = tempFolder('harness-home-');
+  const seen = [];
+  const scenario = (id, setupModel, own) => ({
+    id, title: 'a stand-in', setup: async () => (setupModel === undefined ? {} : { model: setupModel }), prompt: 'x', ...(own ? { model: own } : {}),
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  });
+  const runner = async (options) => { seen.push(options.model); return { events, exitCode: 0, usage: usageOf(events) }; };
+  const named = await runScenario({ scenario: scenario(91, 'model-desk', 'model-own'), variant: 'with', home, date: '2026-10-18', runner });
+  const own = await runScenario({ scenario: scenario(90, undefined, 'model-own'), variant: 'with', home, date: '2026-10-18', runner });
+  assert.deepEqual(seen, ['model-desk', 'model-own']);
+  assert.equal(JSON.parse(fs.readFileSync(named.file, 'utf8')).model, 'model-desk');
+  assert.equal(JSON.parse(fs.readFileSync(own.file, 'utf8')).model, 'model-own');
+});
+
+test('runScenario starts no session when its set-up needs a model the environment does not name, and says which variable to set', async () => {
+  const home = tempFolder('harness-home-');
+  let closed = 0;
+  let started = 0;
+  const scenario = {
+    id: 89, title: 'a stand-in', prompt: 'x',
+    setup: async () => ({ model: null, modelVariable: 'WHEELHOUSE_EVAL_SOMEONE_MODEL', close: () => { closed += 1; } }),
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  };
+  await assert.rejects(runScenario({
+    scenario, variant: 'with', home, date: '2026-10-18', runner: async () => { started += 1; return { events, exitCode: 0 }; },
+  }), /WHEELHOUSE_EVAL_SOMEONE_MODEL/);
+  assert.equal(started, 0);
+  assert.equal(closed, 1);
+  assert.ok(!fs.existsSync(path.join(home, '.wheelhouse-evals', '2026-10-18', '89-with-1.json')), 'no record for a run that never started');
+});
+
 test('runScenario closes the context even when the session fails to start', async () => {
   const home = tempFolder('harness-home-');
   let closed = 0;

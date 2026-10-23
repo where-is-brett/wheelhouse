@@ -2,7 +2,19 @@
 
 # Check 42: Calm in Desktop
 
-**Answer:** Deferred, held for the director's sitting at the Mac. Calm's pane, cards and Settings are built and proved in the test kit (`npm run mod-check`, the mod's tests and the end-to-end run); nothing below has been seen in Desktop yet. Each question has a fallback already built, so none of them holds up real use.
+**Answer:** Partly, on the Mac. The director's verdict: **Calm is good enough to start real use once three faults are put right.** Those three are the one-line Suggest box, an Undo that stays drawn after its minute, and the usage line shown twice. Desktop draws the pane, its cards, its groups and Settings as section 23 means them, in light and dark. Desktop's own buttons keep their own colours, so labels stay plain, Approve is filled with Desktop's main colour (light grey in dark mode, black in light) and STOP's label isn't red. Each of those is the fallback the design already names. Every press recorded what it should. `$.prompt.fill` works. The pane doesn't show on the phone. VoiceOver wasn't tried (the director declined it), and neither was Availability's "no value in force" row.
+
+- **What the director said:** VoiceOver doesn't matter to them. The Suggest box is "a bit weird": past a few words the text runs out of sight. They asked that real use start once the faults are fixed.
+- **Three faults before real use:**
+  - **The Suggest box is one line.** Past a few words, what the director types runs beyond its width and can't be seen.
+  - **Undo after its minute.** Undo is still drawn after the minute is up, because the pane hasn't redrawn. Pressed then, it does nothing and says nothing. Pressed inside the minute, it works.
+  - **The usage line is doubled.** "Usage this week: 1% of your weekly allowance." shows twice in Health and this week: once as a line, once dimmed.
+- **Put right on 24 October 2026** (on `main` once its pull request merges; the director sees them at their next look in Desktop):
+  - **The Suggest box is four lines tall.** A sentence or two stays in sight, and a longer text scrolls inside it. Enter still sends.
+  - **Undo leaves when its minute is up.** The pane draws the settings again at that moment, so Undo is gone without anything else redrawing it. If it is pressed late all the same, the toast says "It's too late to undo that. Undo lasts one minute." rather than "There's nothing to undo now", which stays for a setting with no change to undo.
+  - **The usage line shows once** in Health and this week: the week's share line, and the usage line only for a pane model that has no week line.
+  - Shown by the mod's tests (`npm run mod-check`) and the settings pane's tests; not yet seen in Desktop.
+- **Smaller points seen:** the Suggest box doesn't take focus when it opens (the director had to click it). In Health the "To watch" label wraps onto two lines. The foot shows Settings only, with no Board button.
 
 ## Question
 
@@ -23,7 +35,7 @@ Does Claude Desktop draw Calm (design section 23) as the design says? Section 23
 
 ## Tested on
 
-Not yet run. The test kit (the mod's own proof and tests) has drawn the pane, the cards and Settings and pressed their buttons, but it cannot show Desktop's colours, its focus or its keyboard, and cannot reach a Select's pop-up or the Enter key in the Suggest box.
+23 October 2026, 12:17 to 12:31 UTC, on macOS 27.0.1 with Claude Desktop 3.6556.2, in the third Mac sitting. The plugin was a copy of `main` at f070089, loaded as a dev mod in a scratch session started from the sitting's own session ("Wheelhouse test project", `probes/mac-sitting/`). The scratch project held six cards, including an approval with a Show me link and the launch figure "3 of 5". The director looked, pressed and sent screenshots. The agent read the pane's records (`check.mjs records`, `settings`, `observer`). Windows: not tried.
 
 ## Method
 
@@ -45,12 +57,44 @@ The agent then reads the pane's records, checks that every press made in steps 8
 
 ## Evidence
 
-Nothing seen in Desktop yet. What the test kit does show: the pane's and Settings' models are built with theme keys only (no literal colour), each pressable is one of the four shapes, and a pick raises its own press, which the mod's rule records as a signed confirmation. What the test kit cannot show is the list in the Question.
+Step by step, as the method numbers them:
+
+1. **The pane opens:** yes. It opened when the mod loaded, before `/wheelhouse` was typed. It showed a verdict ("Six things need you. Nothing is broken."), a card, the Launch and Health groups, and a foot with Settings. Nothing was cut off at the width the director used. The foot has no Board button.
+2. **Theme colour and links:** the small buttons (Why?, Not now, Next, Settings) have plain labels in Desktop's grey button, not a blue tint. "Show me ↗" is blue in both light and dark. *Fallback in force:* the outline marks a button; the link reads as a link.
+3. **The filled button:** Approve is filled with Desktop's main colour, light grey with a dark label in dark mode and black with a white label in light, never blue. It is the card's only filled button, so it stays the main one. Lift STOP, under STOP, is filled the same way.
+4. **Contrast:** dark and light are both easy to read (screenshots). With Increase contrast on, the director said "Show me" looks the same and stays readable.
+5. **Groups and the launch bar:** Launch, Health and this week, and the foot each sit in a rounded outline. Desktop draws it at full strength rather than quiet. There is no bar: Launch shows "3 of 5 blockers cleared" in words only. *Fallback in force:* the count stands alone.
+6. **Not now and STOP:** Not now sits at the right of the card's header row, level with "Approval · 1 of 6". STOP's label is plain, not red, in both modes. *Fallback in force:* STOP keeps its words and its place apart from the filled button. Under STOP the pane put a "STOP is on" box at the top with a filled Lift STOP.
+7. **VoiceOver:** not tried. The director declined it ("I dont care about voice over").
+8. **The Suggest box:** pressing Suggest a change… shows "What would you change?" with a one-line field, and Send and Cancel under it.
+   - The cursor isn't in the field: the director had to click it.
+   - Enter sent: the card's line became "You suggested a change at 23:23. A new proposal is on its way, and nothing goes live meanwhile." The front desk received "Wheelhouse pane: the director suggested a change on card 1 (id): make the button bigger". The chat shows it as a bubble, with Desktop's own words "The wheelhouse plugin sent a message:".
+   - With the field empty, Send is drawn as dim plain words (off).
+   - The press recorded one unsigned `card-answer` ("Suggest a change…").
+   - **The director's finding:** longer text runs beyond the field's width and can't be seen.
+9. **`$.prompt.fill`:** works. `/probe-fill` gave "wheelhouse-observer: probe-fill: filled" (observer log, 12:29:03).
+10. **Settings:** Settings replaces the main view, with Done and three groups (STOP, This project, You in every project). Each row is a pop-up button with a chevron, and the director didn't remark on how the menus looked.
+    - Picking Cautious in Autonomy showed "Changed just now" and Undo. It recorded a `setting` (autonomy = cautious) and a signed confirmation that verifies (12:25:41).
+    - Picking the value in force, and opening Briefing length and closing it without a pick, recorded nothing (no records 12:26 to 12:28).
+    - **Undo after its minute:** the director pressed Undo while it was still drawn, a little over a minute after the change. Nothing was recorded and Autonomy stayed Cautious. The likely cause:
+      - `justChanged` in `hooks/mod/settings.tsx` decides at draw time, and the pane hadn't redrawn since;
+      - the bridge refuses an Undo once `UNDO_MS` is past (`scripts/mod/settings-pane.js`), with no word to the director.
+    - **Undo in time:** picking Balanced (12:28:40), Undo (12:28:46, back to Cautious) and Balanced again (12:28:53) each recorded a setting and a signed confirmation that verifies.
+    - Availability's "no value in force" row wasn't tried, to save time.
+11. **The phone:** the pane doesn't show on the phone (Remote Control). *Fallback in force:* the cards and their reply codes come through the chat.
+
+Also seen: Health and this week shows "Usage this week: 1% of your weekly allowance." twice, once as a line and once dimmed under it. Its "To watch" label wraps onto two lines beside its text.
 
 ## What it means for the design
 
-Until the sitting, section 23.10 stands as written with the four added checks. Each answer that is no changes only the fallback named in the step, and each fallback is already what the pane does, so the design's section 23 changes only to say what Desktop showed.
+- **Section 23 stands, with its fallbacks in force.** Desktop keeps its own colours in its own buttons. Labels stay plain, the main button takes Desktop's main colour, groups take a full-strength outline, there is no launch bar, and STOP isn't red. Those answers need no change to the pane; section 23 changes only to say what Desktop showed.
+- **Before real use (the director's condition):**
+  - the Suggest box shows all of what the director types;
+  - Undo goes when its minute is up, or says so when pressed late;
+  - the usage line shows once.
+- **The phone has no pane.** Cards on the phone reach the director through the chat only, as check 4 already has it.
+- **Not yet seen:** the screen-reader order and Availability's "no value in force" row. Neither holds up real use.
 
 ## Needs the director
 
-Yes, a sitting at the Mac, about 15 minutes: the steps above, with the agent at the other end to set up the cards and read the records. Windows follows when the director is next at that computer, with check 41's.
+The three faults are put right (24 October 2026). What is left is a short look at the Suggest box, Undo after its minute and the Health group in Desktop, which can be folded into the first real use. Windows follows when the director is next at that computer, with check 41's.

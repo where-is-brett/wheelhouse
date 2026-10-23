@@ -225,7 +225,9 @@
         "-p",
         "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json. First run: node '/fixture/plugin/scripts/foreman/wake.js' read /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
         "--permission-mode",
-        "plan"
+        "plan",
+        "--model",
+        "default"
       ],
       "input": "",
       "verbatim": false,
@@ -266,6 +268,8 @@
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
         "plan",
+        "--model",
+        "default",
         "--allowedTools",
         "Read",
         "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
@@ -530,6 +534,8 @@
         "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json. First run: node '/fixture/plugin/scripts/foreman/wake.js' read /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Read"
       ],
@@ -575,6 +581,8 @@
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Bash(npm test:*)",
         "Bash(npm run:*)",
@@ -624,6 +632,8 @@
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Bash(npm test:*)",
         "Bash(npm run:*)",
@@ -672,6 +682,8 @@
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Read",
         "Bash(node '/plugins/wheelhouse/scripts/foreman/wake.js':*)",
@@ -1097,7 +1109,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd -p --permission-mode plan\""
+        "\"C:\\npm\\claude.cmd -p --permission-mode plan --model default\""
       ],
       "input": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
@@ -1136,7 +1148,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode plan --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode plan --model default --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1562,7 +1574,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd -p --permission-mode acceptEdits --allowedTools Read\""
+        "\"C:\\npm\\claude.cmd -p --permission-mode acceptEdits --model default --allowedTools Read\""
       ],
       "input": "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
@@ -1603,7 +1615,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits\""
+        "\"C:\\npm\\claude.cmd -p --session-id a1b2c3d4-e5f6-4789-8abc-def012345678 --permission-mode acceptEdits --model default\""
       ],
       "input": "Read .wheelhouse/feature/brief.md and follow it.",
       "verbatim": true,
@@ -1642,7 +1654,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits\""
+        "\"C:\\npm\\claude.cmd -p --resume 0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0 --permission-mode acceptEdits --model default\""
       ],
       "input": "Wheelhouse: read /fixture/main/.claude/worktrees/wt-rec/.wheelhouse/feature/wakes/2026-10-19T09-00-00-000Z.json",
       "verbatim": true,
@@ -1681,7 +1693,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model default --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -2103,7 +2115,9 @@
         "-p",
         "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
         "--permission-mode",
-        "plan"
+        "plan",
+        "--model",
+        "default"
       ],
       "input": "",
       "verbatim": false,
@@ -2144,6 +2158,8 @@
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
         "plan",
+        "--model",
+        "default",
         "--allowedTools",
         "Read",
         "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",
@@ -2641,6 +2657,8 @@
         "Wheelhouse foreman: follow wheelhouse:foreman to handle /fixture/main/.wheelhouse/foreman/wakes/2026-10-19T09-00-00-000Z.json",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Read"
       ],
@@ -2685,7 +2703,9 @@
         "--session-id",
         "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "--permission-mode",
-        "acceptEdits"
+        "acceptEdits",
+        "--model",
+        "default"
       ],
       "input": "",
       "verbatim": false,
@@ -2726,7 +2746,9 @@
         "--resume",
         "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
         "--permission-mode",
-        "acceptEdits"
+        "acceptEdits",
+        "--model",
+        "default"
       ],
       "input": "",
       "verbatim": false,
@@ -2767,6 +2789,8 @@
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
         "acceptEdits",
+        "--model",
+        "default",
         "--allowedTools",
         "Read",
         "Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)",

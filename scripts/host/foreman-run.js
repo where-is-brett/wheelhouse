@@ -36,9 +36,10 @@ const ROLE = 'WHEELHOUSE_ROLE';
 
 // Claude Code's sign-in variables (scripts/lib/claude.js), kept so a session the foreman starts
 // can sign in as a session the watcher starts can (rulings R159 and m3 of the final review):
-// to Anthropic, or through Bedrock or Vertex, with their credentials, profile, region and project.
-// Kept by name, though some name a secret and the switches start "CLAUDE". The host session's own
-// variables, such as CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_BASE_URL, are not among them, and stay out.
+// to Anthropic, with a key or the director's OAuth token, or through Bedrock, Vertex, Foundry or
+// Claude Platform on AWS, with their credentials, profile, region and project. Kept by name, though
+// some name a secret and the switches start "CLAUDE". The host session's other variables, such as
+// CLAUDECODE and ANTHROPIC_BASE_URL, are not among them, and stay out.
 export const SIGN_IN_NAMES = CLAUDE_SIGN_IN_NAMES;
 
 // The child's environment: the helper's own, less the host session's variables (as a session

@@ -72,8 +72,26 @@ test('a session is never started in bypass mode, a feature never in auto mode, a
   assert.throws(() => sessions.featureStartCall({ ...base, sessionId: 'x', config: { sessionMode: 'nonsense' } }), /isn't a permission mode/);
   assert.throws(() => sessions.foremanCall({ ...base, config: { routing: { foreman: '--dangerously-skip-permissions' } } }), /model can't be passed/);
   assert.throws(() => sessions.featureStartCall({ ...base, sessionId: 'x', config: { routing: { builder: 'a b' } } }), /model can't be passed/);
-  // With no configuration at all, the default mode is still given in words.
-  assert.deepEqual(sessions.featureStartCall({ ...base, sessionId: 'x' }).args, ['-p', 'go', '--session-id', 'x', '--permission-mode', 'acceptEdits']);
+  // With no configuration at all, the default mode and model are still given in words.
+  assert.deepEqual(sessions.featureStartCall({ ...base, sessionId: 'x' }).args, ['-p', 'go', '--session-id', 'x', '--permission-mode', 'acceptEdits', '--model', 'default']);
+});
+
+test('the foreman and feature sessions, which read the main folder\'s local settings, always name their model, so they never take the front desk\'s', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  for (const long of [false, true]) {
+    const named = sessions.foremanCall({ config: { routing: { foreman: 'model-a', frontDesk: 'model-top' } }, prompt: 'x', claude, long, settings: long ? '/s.json' : null });
+    assert.equal(named.args[named.args.indexOf('--model') + 1], 'model-a');
+    const unnamed = sessions.foremanCall({ config: { routing: { frontDesk: 'model-top' } }, prompt: 'x', claude, long, settings: long ? '/s.json' : null });
+    assert.equal(unnamed.args[unnamed.args.indexOf('--model') + 1], 'default', 'the command line\'s own default, by its alias');
+  }
+  // A feature's worktree sits inside the main folder and reads the main checkout's local settings
+  // too, so a feature session names its builder's model, or the default, the same way.
+  for (const call of [sessions.featureStartCall, sessions.featureResumeCall]) {
+    const unnamed = call({ config: { routing: { frontDesk: 'model-top' } }, prompt: 'x', claude, sessionId: 's' });
+    assert.equal(unnamed.args[unnamed.args.indexOf('--model') + 1], 'default');
+    const named = call({ config: { routing: { builder: 'model-b', frontDesk: 'model-top' } }, prompt: 'x', claude, sessionId: 's' });
+    assert.equal(named.args[named.args.indexOf('--model') + 1], 'model-b');
+  }
 });
 
 test('the foreman gets its role in its environment and a feature does not, whatever spelling the host used', () => {

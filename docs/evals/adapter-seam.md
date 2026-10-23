@@ -101,7 +101,7 @@ Of the 27 counted scenarios, 24 pass and 3 fail (1, 16 and 26).
 
 None of the three is caused by this part.
 
-- **1 and 16** fail on `origin/main` too, from before this part. Each was run once on `origin/main` at e661198 and failed the same way: 1 at 3,958,227 / 38,640 (the ruling applied, not quoted) and 16 at 133,637 / 884 (the first thing shown is not that the ruling waits for confirmation). Both passed on 20 October 2026, so they are drift on `main` since then, not a change from the seam. Each also failed its run again alone on 11f53bd, in the same way as its first run.
+- **1 and 16** fail on `origin/main` too, from before this part. Each was run once on `origin/main` at e661198 and failed the same way: 1 at 3,958,227 / 38,640 (the ruling applied, not quoted) and 16 at 133,637 / 884 (the first thing shown is not that the ruling waits for confirmation). Both passed on 20 October 2026, so they are drift on `main` since then, not a change from the seam. Each also failed its run again alone on 11f53bd, in the same way as its first run. The cause, found on 23 October 2026, was not `main`'s code. The evaluation's sessions had moved to a smaller default model, and the front desk is meant to run on the most capable one. On that model both pass 3 of 3 (`docs/evals/front-desk.md`, "Scenarios 1 and 16 on 23 October 2026").
 - **26** failed on 20 October 2026, 0 of 3, in the same way: the amendment is recorded, but the session never puts it to the director as route 3 and reads it back. Its failure here is the same one.
 
 ## Scenario 33 and the routing table

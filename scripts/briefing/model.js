@@ -22,6 +22,7 @@ import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
 import { brokenCount } from '../board/health.js';
+import { FRONT_DESK_MODEL_LEAD } from '../lib/front-desk-model.js';
 import { verdict, sinceAbout } from '../lib/calm-words.js';
 
 // Briefing = { verdict, since, first, waiting, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
@@ -41,8 +42,10 @@ const BARE_MERGE = /^(Pull request #\d+|A pull request) merged$/;
 const UNCONFIRMED = /, not yet confirmed by you$/;
 // The board model's line for event records it couldn't read.
 const DAMAGED = /^\d+ records? couldn't be read$/;
-// The health lines given once a week.
+// The health lines given once a week: the Unattended lines, and the front desk on another model than
+// its pin, which the board shows all the while.
 const WEEKLY = [UNATTENDED_LINE, LOCKED_UNATTENDED_LINE];
+const isWeekly = (text) => WEEKLY.includes(text) || text.startsWith(FRONT_DESK_MODEL_LEAD);
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Anthropic's pages the sources check reads (sources/list.js), by id, as the director knows them.
 const PAGE_NAMES = {
@@ -253,8 +256,8 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   const shown = msOf(weeklySince);
   const due = part(() => weeklyDue(Number.isFinite(nowMs) && shown > nowMs ? NaN : shown, nowMs, timeZone), true);
   const standing = part(() => lines(records(director.health).filter((l) => l.level === 'watch' || l.level === 'stop').map((l) => l.text)), []);
-  const weekly = due ? standing.filter((text) => WEEKLY.includes(text)) : [];
-  const health = standing.filter((text) => !WEEKLY.includes(text));
+  const weekly = due ? standing.filter(isWeekly) : [];
+  const health = standing.filter((text) => !isWeekly(text));
   const unusual = part(() => unusualItems(usage, typeof wasRaised === 'function' ? wasRaised : realWasRaised), []);
   const report = isRecord(sources) && (Number.isNaN(sinceMs) || msOf(sources.at) > sinceMs) ? sources : null;
   const fromSources = report ? part(() => sourceLines(report), []) : [];

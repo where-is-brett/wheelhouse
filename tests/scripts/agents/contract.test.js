@@ -26,9 +26,9 @@ test('the Claude Code adapter has every part, each of the right type', () => {
   assert.equal(claudeCode.sessions.finalAnswer('{"type":"system"}\nnot json\n{"type":"result","result":"done"}\n'), 'done');
   assert.equal(claudeCode.sessions.finalAnswer(''), null);
   const start = claudeCode.sessions.featureStartCall({ sessionId: 'abc', prompt: 'go', allowed: ['Read'], claude: { kind: 'direct', file: 'claude' } });
-  assert.deepEqual(start.args, ['-p', 'go', '--session-id', 'abc', '--permission-mode', 'acceptEdits', '--allowedTools', 'Read']);
+  assert.deepEqual(start.args, ['-p', 'go', '--session-id', 'abc', '--permission-mode', 'acceptEdits', '--model', 'default', '--allowedTools', 'Read']);
   const resume = claudeCode.sessions.featureResumeCall({ sessionId: 'abc', prompt: 'go', claude: { kind: 'direct', file: 'claude' } });
-  assert.deepEqual(resume.args, ['-p', 'go', '--resume', 'abc', '--permission-mode', 'acceptEdits']);
+  assert.deepEqual(resume.args, ['-p', 'go', '--resume', 'abc', '--permission-mode', 'acceptEdits', '--model', 'default']);
 });
 
 test('checkAdapter names a missing part in plain words', () => {

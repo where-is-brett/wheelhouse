@@ -2,7 +2,7 @@
 
 # Check 19: setup time
 
-**Answer:** Deferred — held for the director's sitting (sitting 3 in the setup plan's sittings table): setup is built and its times are recorded in its journal, and the timed run on a fresh Mac account is written out in `probes/19-setup-time/run.md`, with its script; it waits for check 37's sitting, a tag on the host and the director's time.
+**Answer:** Deferred, held for another of the director's sittings. On 23 October 2026, in the third Mac sitting, the director chose to do the timed run another day: it was nearly midnight, and a tired run wouldn't give a fair time. It still needs a tag on the host (`git ls-remote --tags https://github.com/where-is-brett/wheelhouse` printed no tags that evening), and it is check 37's first trial in Desktop. Setup is built and its times are recorded in its journal. The timed run on a fresh Mac account is written out in `probes/19-setup-time/run.md`, with its script.
 
 ## Question
 

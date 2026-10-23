@@ -34,6 +34,7 @@ function foldFor(platform) {
   return platform === 'darwin' ? (p) => p.toLowerCase() : (p) => p;
 }
 
+const UNREADABLE = 'Wheelhouse could not read this command with certainty. Write it more simply (no comments that hold quotes, backticks or backslashes, no CRLF line endings, no unclosed quotes), or put it in a file: ' + HELPER;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
 
 const MAX_LINKS = 40;
@@ -398,9 +399,15 @@ function movedDirs(dirs, to, ctx) {
 // substitution as a command, `sh -c "true; $(...)"`) is not followed.
 function bashRefused(command, ctx, depth = 0) {
   const { windows, fold } = ctx;
-  if (depth > MAX_DEPTH) return true;
+  if (depth > MAX_DEPTH) {
+    ctx.state.unreadable = true;
+    return true;
+  }
   const split = segmentsWithOperators(command, windows);
-  if (split === null) return true;
+  if (split === null) {
+    ctx.state.unreadable = true;
+    return true;
+  }
   const { segments: segs, operators } = split;
   const inContext = (dirs) => ({ ...ctx, dirs });
   let dirs = ctx.dirs === undefined ? (ctx.cwd ? [ctx.cwd] : null) : ctx.dirs;
@@ -440,6 +447,7 @@ function bashRefused(command, ctx, depth = 0) {
       const word = seg[i];
       const value = word.slice(word.indexOf('=') + 1);
       if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
+      if (/^(?:gh|glab)\$/.test(names[i]) || /^(?:gh|glab)\$/.test(nameOf(value))) return true; // a host tool named with a variable
       if (GIT_PUSHERS.has(names[i])) return true;
       if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
       for (const candidate of [word, value]) {
@@ -693,7 +701,11 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     const windows = platform === 'win32' || tool === 'PowerShell';
     const fold = foldFor(windows ? 'win32' : platform);
     const root = found?.record?.folder ?? setup?.folder ?? cwd;
-    return bashRefused(command, { windows, fold, cwd, home, root }) ? refuse('run the host tools, push, or read a .env file') : undefined;
+    // In PowerShell a backtick before a new line continues the command, as a space does.
+    const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
+    const state = { unreadable: false };
+    if (!bashRefused(text, { windows, fold, cwd, home, root, state })) return undefined;
+    return state.unreadable ? answer.deny(UNREADABLE) : refuse('run the host tools, push, or read a .env file');
   }
   // The folders a project's own files are placed from: the project's main folder and the worktree
   // the session is in.

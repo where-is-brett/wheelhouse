@@ -42,6 +42,11 @@
 //   Bash ones wherever the tool is on, and the sandbox does not run on Windows.
 // - A leading `*.` is a documented wildcard for sandbox domains; a bare `*` is
 //   too, but is not allowed here.
+// - Read on 23 October 2026 from https://code.claude.com/docs/en/sandboxing ("Protect
+//   credentials"): `sandbox.credentials.files` entries with `mode: 'deny'` deny reads inside the
+//   sandbox as `filesystem.denyRead` does; `credentials.envVars` entries with `mode: 'deny'` are
+//   unset before each sandboxed command. A repository's deny entries still apply when Locked makes
+//   the sandbox admin-required.
 // - Package-runner rules: `Bash(x:*)` needs a space after x, so a version form
 //   (`npx wrangler@3 ...`) gets its own `@*` rule.
 import fs from 'node:fs';
@@ -63,6 +68,18 @@ const PACKAGE_NAMES = ['netlify-cli', '@railway/cli'];
 const OWN_FILES = ['.claude/settings.json', '.claude/settings.local.json'];
 
 const unique = (list) => [...new Set(list)];
+
+// The macOS keychain files. The `security` command reads a keychain file in its own process, so
+// denying the folder stops a sandboxed `security find-generic-password -w` returning the director's
+// gh or Claude Code sign-in (check 73). `codesign` and iOS signing read the same files, so a project
+// whose configuration says `signsApps: true` leaves them open. Harmless on other systems, which
+// have no such folder.
+export const KEYCHAINS = '~/Library/Keychains';
+const KEYCHAIN_RULES = [`Read(${KEYCHAINS})`, `Read(${KEYCHAINS}/**)`];
+const isKeychainFile = (entry) => isObject(entry) && entry.path === KEYCHAINS;
+// The host tools' sign-in variables, unset in every sandboxed command: agents hold no host key.
+// gh reads the first two and the enterprise pair; glab reads GITLAB_TOKEN, GITLAB_ACCESS_TOKEN and OAUTH_TOKEN.
+export const HOST_TOKENS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN']);
 
 // Edit denials for the files that steer an agent (agent-control.js): the project's, from its root
 // as the settings' and hooks' are (`**/X` for X in any folder), and the home folders of every
@@ -176,10 +193,12 @@ export const ATTRIBUTION_OFF = {
 // marketplace entry carries no ref. Build commands' allow rules are not here: see featureAllowRules.
 export function projectSettings(config, { release = null } = {}) {
   const credentials = allCredentials();
+  const keychainShut = config.signsApps !== true;
   const deny = unique([
     'Read(**/.env)', 'Read(**/.env.*)',
     'Read(~/.wheelhouse/**)', 'Edit(~/.wheelhouse/**)', 'Edit(~/.claude/**)',
     ...credentialRules(),
+    ...(keychainShut ? KEYCHAIN_RULES : []),
     ...OWN_FILES.map((f) => `Edit(/${f})`), 'Edit(/.claude/hooks/**)',
     ...controlRules(),
     'Bash(gh:*)', 'Bash(glab:*)', 'Bash(git push:*)',
@@ -195,6 +214,11 @@ export function projectSettings(config, { release = null } = {}) {
         denyRead: unique(['~/.wheelhouse', ...credentials.map((c) => `~/${c}`)]),
         denyWrite: unique(['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks', ...controlWritePaths(), ...homeControlPaths().map((f) => `~/${f}`)]),
       },
+      credentials: {
+        // Always a list, empty when open, so a setup run on a project that has lifted it writes the empty list.
+        files: keychainShut ? [{ path: KEYCHAINS, mode: 'deny' }] : [],
+        envVars: HOST_TOKENS.map((name) => ({ name, mode: 'deny' })),
+      },
       network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null)]) },
     },
     ...pluginSettings(release),
@@ -203,6 +227,19 @@ export function projectSettings(config, { release = null } = {}) {
     enableAllProjectMcpServers: false,
     ...structuredClone(ATTRIBUTION_OFF),
   };
+}
+
+// The settings with the keychain left open: `settings` (a project's, perhaps merged with the
+// director's own) less the keychain's deny rules and its credentials entry, for a project whose
+// configuration says `signsApps: true`. A merge only adds, so this is how such a project's file
+// loses the entries; the credentials' file list stays, perhaps empty, since setup's key edits
+// replace a key but never remove one. Nothing else is touched, and the input is not changed.
+export function withoutKeychainDenial(settings) {
+  const copy = isObject(settings) ? structuredClone(settings) : {};
+  if (Array.isArray(copy.permissions?.deny)) copy.permissions.deny = copy.permissions.deny.filter((r) => !KEYCHAIN_RULES.includes(r));
+  const credentials = copy.sandbox?.credentials;
+  if (isObject(credentials) && Array.isArray(credentials.files)) credentials.files = credentials.files.filter((f) => !isKeychainFile(f));
+  return copy;
 }
 
 // The command that runs the status line: the Node that is running this, and the script in the
@@ -313,8 +350,12 @@ export function allowRule(command) {
 // folders too. Beside the front desk's, writing the one file the front desk gives that command its
 // input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), by the
 // project-relative form, and nothing else in the project.
-export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform }) {
+export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform, model = null }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
+  // The front desk's model, pinned in the routing table (design section 8). This file is never
+  // committed; the worktrees inside the folder read it too, so the foreman's and the feature
+  // sessions' calls always name their own model (adapters/claude-code/sessions.js).
+  if (model) settings.model = model;
   if (node && pluginRoot && !ownStatusLine) {
     settings.statusLine = { type: 'command', command: statusLineCommand({ node, pluginRoot }) };
   }

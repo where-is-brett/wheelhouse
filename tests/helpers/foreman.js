@@ -123,6 +123,7 @@ export function fakeClient({ views = emptyViews(), cfg = config(), answers = {} 
     prState: async (body) => { calls.push(['prState', body]); return answers.prState ?? { ok: true, result: { state: 'open', headSha: 'b'.repeat(40) } }; },
     updateBranch: async (body) => { calls.push(['updateBranch', body]); return answers.updateBranch ?? { ok: false, refused: 'unknown request' }; },
     merge: async (body) => { calls.push(['merge', body]); return answers.merge ?? { ok: true, merged: true, sha: 'c'.repeat(40) }; },
+    fetchBase: async (body) => { calls.push(['fetchBase', body]); return answers.fetchBase ? answers.fetchBase(body) : { ok: false, refused: 'unknown request' }; },
   };
   return { client, writes, calls, views };
 }

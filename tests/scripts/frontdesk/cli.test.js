@@ -613,13 +613,48 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
       note: { incident: 'bad-total', text: 'A rounding change reached the invoice page; the fix and a check are in.' },
     };
     for (const [kind, data] of Object.entries(records)) {
-      const out = await run(helper, ['record', kind], JSON.stringify(data));
+      const input = kind === 'amendment' ? { ...data, readBack: READ_BACK } : data;
+      const out = await run(helper, ['record', kind], JSON.stringify(input));
       assert.equal(out.code, 0, out.err);
       assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind, data });
       assert.equal(out.json.id, helper.held.at(-1).id);
     }
     assert.deepEqual(helper.held.map((e) => e.kind), ['work', 'amendment', 'incident', 'note']);
     for (const kind of ['idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal']) assert.ok(RECORD_KINDS.includes(kind), kind);
+  });
+});
+
+// The read-back an amendment needs (intake, route 3): what the change does, what it leaves, and when it is done.
+const READ_BACK = { doing: 'The export as one CSV file', notDoing: 'An Excel option', doneWhen: 'The button gives a CSV file that opens in Numbers' };
+
+test('record amendment takes the read-back, refuses without it, and prints the route line and the read-back to say (scenario 26)', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const work = { id: 'export-csv', title: 'Export a report as a spreadsheet', lane: 'feature', visible: true, dependsOn: [] };
+    await run(helper, ['record', 'work'], JSON.stringify(work));
+    const amendment = { work: 'export-csv', change: 'Make the export CSV, not Excel', hash: DOC };
+
+    // Without the read-back, or with a part missing, empty or on two lines, nothing is written.
+    const bad = [
+      undefined, 'Doing: CSV', {}, { ...READ_BACK, doing: '' }, { ...READ_BACK, notDoing: undefined },
+      { ...READ_BACK, doneWhen: 'Two\nlines' }, { ...READ_BACK, doing: 7 }, { ...READ_BACK, notDoing: ' . ' },
+    ];
+    for (const readBack of bad) {
+      const refused = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, ...(readBack === undefined ? {} : { readBack }) }));
+      assert.equal(refused.code, 1, JSON.stringify(readBack));
+      assert.match(refused.err, /Read the change back first: give readBack as \{ doing, notDoing, doneWhen \}, each one line/);
+    }
+    assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 0, 'nothing refused was written');
+
+    // With it, the event is the amendment alone, and `say` is the route line and the read-back, in one.
+    const out = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, doing: 'The export as one CSV file.' } }));
+    assert.equal(out.code, 0, out.err);
+    assert.deepEqual(helper.held.at(-1).data, amendment, 'the read-back is said, not stored');
+    assert.equal(out.json.say, "I've treated this as a change to work already running; say if it's something else. "
+      + 'Doing: The export as one CSV file. Not doing: An Excel option. Done when: The button gives a CSV file that opens in Numbers.');
+    // A part that ends in its own mark keeps it, with no full stop after it.
+    const asked = await run(helper, ['record', 'amendment'], JSON.stringify({ ...amendment, readBack: { ...READ_BACK, notDoing: 'Excel, for now!' } }));
+    assert.match(asked.json.say, /Not doing: Excel, for now! Done when:/);
   });
 });
 
@@ -664,29 +699,29 @@ test('record works out the hash of the document a work or an amendment names, an
 
     // An amendment: the changed document is the one file the work names, written in place.
     write('docs/bugs/total.md', 'The total leaves cancelled orders out, and says so.\n');
-    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out' }), at);
+    const amended = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'Say that cancelled orders are left out', readBack: READ_BACK }), at);
     assert.equal(amended.code, 0, amended.err);
     const changed = hashOf('The total leaves cancelled orders out, and says so.\n');
     assert.deepEqual(helper.held.at(-1).data, { work: 'staff-total', change: 'Say that cancelled orders are left out', hash: changed });
     assert.equal(amended.json.hash, changed);
-    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash }), at);
+    const stale = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'staff-total', change: 'x', hash, readBack: READ_BACK }), at);
     assert.equal(stale.code, 1);
     assert.match(stale.err, /is not the document's as it stands/);
     // An amendment of work that isn't open is refused, with a hash or without.
     for (const data of [{ work: 'no-such-work', change: 'x' }, { work: 'no-such-work', change: 'x', hash: DOC }]) {
-      const unknown = await run(helper, ['record', 'amendment'], JSON.stringify(data), at);
+      const unknown = await run(helper, ['record', 'amendment'], JSON.stringify({ ...data, readBack: READ_BACK }), at);
       assert.equal(unknown.code, 1);
       assert.match(unknown.err, /The work no-such-work isn't open, so there is nothing to amend/);
     }
     // Work whose feature closed, with no report ending it, isn't open either, as the queue reads it.
     await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'shut' }), at);
     helper.held.push(makeEvent({ kind: 'feature', data: { work: 'shut', step: 'closed' }, now: () => new Date('2026-10-18T01:00:00.000Z') }));
-    const shut = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'shut', change: 'x', hash: DOC }), at);
+    const shut = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'shut', change: 'x', hash: DOC, readBack: READ_BACK }), at);
     assert.equal(shut.code, 1);
     assert.match(shut.err, /The work shut isn't open/);
     // Open work that names no document needs the changed document's hash.
     await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'no-doc' }), at);
-    const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-doc', change: 'x' }), at);
+    const nameless = await run(helper, ['record', 'amendment'], JSON.stringify({ work: 'no-doc', change: 'x', readBack: READ_BACK }), at);
     assert.equal(nameless.code, 1);
     assert.match(nameless.err, /no-doc names no document/);
     assert.equal(helper.held.filter((e) => e.kind === 'amendment').length, 1, 'nothing refused was written');

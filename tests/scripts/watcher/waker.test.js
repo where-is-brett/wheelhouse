@@ -145,10 +145,11 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   assert.equal(call.env.WHEELHOUSE_ROLE, 'foreman');
   assert.equal(call.env.PATH, '/bin');
 
-  // With no model named, the command line's own default applies.
+  // With no model named, the command line's own default applies, named by its alias, so the front
+  // desk's model in the main folder's local settings never reaches the foreman.
   const other = fakeRun();
   await waker(other, { config: config({ routing: {} }) }).wakeForeman(writeWake(P, bundle('e2')));
-  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits']);
+  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'default']);
 }));
 
 test('the foreman\'s tools, when given, are passed with --allowedTools', () => withHome(async () => {
@@ -777,6 +778,22 @@ test('the waker prints Shape 2\'s lines through the printer it is given', () => 
   assert.deepEqual(lines.map((line) => line.split(' ').slice(0, 2).join(' ')), ['WAKE foreman', 'WAKE feature', 'START feature']);
   assert.equal(lines[2], `START feature login-page ${dir}`);
   assert.deepEqual(written.filter((text) => /WAKE|START/.test(text)), []);
+}));
+
+test('every session the waker starts keeps Claude Code\'s sign-in, spelt exactly, the switches that start "CLAUDE" too', () => withHome(async () => {
+  checkout();
+  const signIn = {
+    CLAUDE_CODE_OAUTH_TOKEN: 'oauth', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_SKIP_VERTEX_AUTH: '1',
+    CLAUDE_CODE_USE_FOUNDRY: '1', AWS_PROFILE: 'work', VERTEX_REGION_CLAUDE_MODEL_A: 'us-east5',
+  };
+  const host = { PATH: '/bin', ...signIn, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_code_use_bedrock: 'a spelling not kept', ANTHROPIC_BASE_URL: 'http://gateway' };
+  assert.deepEqual(sessionEnv(host), { PATH: '/bin', ...signIn });
+  const fake = fakeRun();
+  await waker(fake, { baseEnv: host }).wakeForeman(writeWake(P, bundle('e1')));
+  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', ...signIn, WHEELHOUSE_ROLE: 'foreman' });
+  const features = fakeRun();
+  await waker(features, { baseEnv: host }).startFeature({ work: 'search-box', worktree: worktree() });
+  assert.deepEqual(features.calls[0].env, { PATH: '/bin', ...signIn });
 }));
 
 test('the foreman, and only the foreman, is told it is the foreman; no session gets the host session\'s variables', () => withHome(async () => {

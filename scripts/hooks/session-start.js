@@ -78,6 +78,7 @@ import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { MAIN_MOVED } from '../lean/store.js';
+import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
 
 const SELF = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -675,6 +676,14 @@ export async function decide(input, deps = {}) {
   }
   const frontDesk = setupLine === null && deskSession;
   if (frontDesk) keepOutOfGit(found);
+  // The model the front desk's session runs on, for the board's line when it isn't the pin (design
+  // section 8). It informs, so a failure is passed over.
+  const model = deskSession ? modelOfInput(input) : null;
+  if (model !== null) {
+    try {
+      keepRunningModel(project, model, { now });
+    } catch { /* it informs */ }
+  }
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk,
     sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),

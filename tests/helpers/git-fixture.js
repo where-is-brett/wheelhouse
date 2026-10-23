@@ -10,7 +10,7 @@ export async function makeBareRemote({ repo } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-remote-'));
   const dir = repo ? path.join(root, `${repo}.git`) : path.join(root, 'remote.git');
   fs.mkdirSync(path.dirname(dir), { recursive: true });
-  const made = await run('git', ['init', '--bare', dir]);
+  const made = await run('git', ['init', '--bare', '-b', 'main', dir]);
   if (made.code !== 0) throw new Error('git init --bare failed');
   return { url: dir, root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
