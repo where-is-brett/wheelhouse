@@ -110,14 +110,9 @@ export function copilotSessionEnv(env, { home, platform = process.platform } = {
   return { ...Object.fromEntries(kept), COPILOT_HOME: home };
 }
 
-// Writes the session's own home before a start (ruling P7-7), and returns its path: Wheelhouse's hook registration in
-// hooks/wheelhouse.json (the only place Wheelhouse's hooks load without trust, check 56), the only hook file there;
-// the kit's agents, the only agents there; config.json holding the sign-in keys only, from the person's Copilot home
-// (`signedInFrom`); and nothing else but Copilot's own state. config.json is written last, so a home is never signed
-// in without its guards: a write that fails part way leaves a home no session can sign in from. A source with no
-// sign-in refuses the start before anything in the home is touched.
-export function writeSessionHome({ project, target, signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform }) {
-  const home = sessionHome(project, target);
+// The sign-in keys of the Copilot home `signedInFrom`'s config.json (SIGN_IN_KEYS), and nothing else of the file.
+// Throws, in plain words, when it holds none: no session starts unsigned.
+export function signInOf(signedInFrom = copilotHome()) {
   let source;
   try {
     source = JSON.parse(fs.readFileSync(path.join(signedInFrom, 'config.json'), 'utf8'));
@@ -128,6 +123,18 @@ export function writeSessionHome({ project, target, signedInFrom = copilotHome()
     ? Object.fromEntries(SIGN_IN_KEYS.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]))
     : {};
   if (Object.keys(signIn).length === 0) throw new Error("Copilot isn't signed in on this computer, so no session can start: sign in to Copilot CLI first");
+  return signIn;
+}
+
+// Writes the session's own home before a start (ruling P7-7), and returns its path: Wheelhouse's hook registration in
+// hooks/wheelhouse.json (the only place Wheelhouse's hooks load without trust, check 56), the only hook file there;
+// the kit's agents, the only agents there; config.json holding the sign-in keys only, from the person's Copilot home
+// (`signedInFrom`); and nothing else but Copilot's own state. config.json is written last, so a home is never signed
+// in without its guards: a write that fails part way leaves a home no session can sign in from. A source with no
+// sign-in refuses the start before anything in the home is touched.
+export function writeSessionHome({ project, target, signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform }) {
+  const home = sessionHome(project, target);
+  const signIn = signInOf(signedInFrom);
 
   const there = fs.lstatSync(home, { throwIfNoEntry: false });
   if (there && !there.isDirectory()) throw new Error(`A session's Copilot home must be a folder Wheelhouse made, and ${home} isn't`);
@@ -293,7 +300,7 @@ export function featureResumeCall({ sessionId, project, work, ...rest }) {
 }
 
 // The events in a run's output, one JSON object per line; a line that isn't one is skipped.
-function eventsOf(stdout) {
+export function eventsOf(stdout) {
   const events = [];
   for (const line of String(stdout ?? '').split(/\r?\n/)) {
     if (line.trim() === '') continue;

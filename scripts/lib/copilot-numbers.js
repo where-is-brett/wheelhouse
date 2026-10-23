@@ -30,3 +30,8 @@ export const HELPER_PROBE_MS = 2000;
 // Whether check 59 (C6) has shown a hook can see ask_user's answer, so a click a hook saw can be recorded as
 // `hook-click`. Until it has, a chat click is recorded as `chat-click`, the agent's own account (ruling P5-12).
 export const C6_PASSED = false;
+// Whether Copilot's signed review, in a clean session the helper starts (check 66's route b), is switched on. It is
+// false until three real runs in a row pass the clean check on COPILOT_VERSION and are recorded in check 66's note
+// (ruling P7-20); until then the gate counts no review on Copilot, and refuses with NO_CLEAN_REVIEW. Read only by
+// adapters/copilot/review.js.
+export const REVIEW_SESSION_READY = false;
