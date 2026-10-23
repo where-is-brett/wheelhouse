@@ -112,6 +112,12 @@ test('managedSettings makes the sandbox admin-required without switching it on e
   assert.deepEqual(s.sandbox.network.allowUnixSockets, [ADDRESS]);
 });
 
+test('managedSettings leaves the keychain to each project\'s own settings, so a project that signs apps elsewhere on the computer still can', () => {
+  const s = managedSettings({ dir: '/m', nodePath: NODE, address: ADDRESS, domains: [], hooksJson: HOOKS });
+  assert.ok(!JSON.stringify(s).includes('Library/Keychains'));
+  assert.equal(s.sandbox.credentials, undefined);
+});
+
 const NO_PLIST = '/nowhere/com.anthropic.claudecode.plist';
 
 test('installLocked refuses on Windows, with the quick connection, and with an MDM policy', async () => {

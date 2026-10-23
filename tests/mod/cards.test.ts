@@ -815,6 +815,8 @@ test('Suggest a change… opens a box with What would you change?, Send and Canc
     expect(box?.type).toBe('Input')
     expect(box?.props.label).toBe('What would you change?')
     expect(box?.props.autoFocus).toBe(true)
+    // A few lines tall, so what the director types stays in sight.
+    expect(box?.props.rows).toBe(4)
     expect(box?.props.value).toBe('')
     expect((await ui.find({ key: 'suggest-cancel' }))?.props.variant).toBe('secondary')
     expect((await ui.find({ key: 'suggest-cancel' }))?.text).toBe('Cancel')

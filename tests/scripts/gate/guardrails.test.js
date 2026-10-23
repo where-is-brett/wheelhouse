@@ -111,6 +111,16 @@ test('readConfig: bypass mode, a model that reads as a flag, and a command a rul
   for (const extra of bad) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), { message }, JSON.stringify(extra));
 });
 
+test('readConfig: signsApps is true or false when given, and any other value can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify(base)).signsApps, undefined, 'left out: the keychain stays shut');
+  assert.equal(readConfig(JSON.stringify({ ...base, signsApps: true })).signsApps, true);
+  assert.equal(readConfig(JSON.stringify({ ...base, signsApps: false })).signsApps, false);
+  for (const signsApps of ['true', 1, null, [], {}]) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, signsApps })), { message: "The project's Wheelhouse configuration can't be read" }, JSON.stringify(signsApps));
+  }
+});
+
 test('classification ignores case, for every kind of pattern', () => {
   const paths = ['.Claude/settings.json', 'claude.md', 'docs/Claude.md', '.MCP.json', '.GitHub/workflows/x.yml', 'CI/run.sh', 'Tests/Money/a.js', 'SRC/Money/b.js'];
   const config = readConfig(JSON.stringify({

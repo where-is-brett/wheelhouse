@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  hostStep, cardFor, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
+  hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
   checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
@@ -230,11 +230,12 @@ async function answerAll(step, ctx, pick) {
   throw new Error('the step kept asking');
 }
 
-const choose = ({ realUsers = REAL_USERS.no, locked = LEVELS.standard, host = HOST_LABELS.github, way = WAYS.quick } = {}) => (id) => {
+const choose = ({ realUsers = REAL_USERS.no, locked = LEVELS.standard, host = HOST_LABELS.github, way = WAYS.quick } = {}) => (id, card) => {
   if (id === 'real-users') return realUsers;
   if (id === 'locked') return locked;
   if (id === 'host') return host;
-  if (id.startsWith('connection-')) return way;
+  // On the Mac's card a narrow way sits behind Make it stricter.
+  if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
 };
 
@@ -328,6 +329,46 @@ test('the Wheelhouse app is not offered while it is not registered', async () =>
   const registered = appFile(tempFolder('wh-app-'));
   assert.equal(wheelhouseAppOffered({ appFile: registered }), true);
   assert.deepEqual(appFor({ appFile: registered, views: () => null }), { clientId: CLIENT_ID, slug: 'wheelhouse-test', owner: 'wheelhouse-org', own: false });
+});
+
+test('on a Mac Quick is the default and the narrow ways sit behind Make it stricter, recommended with real users', () => {
+  const registered = appFile(tempFolder('wh-app-'));
+  const where = `${USER}/shop on GitHub`;
+  for (const host of ['github', 'gitlab']) {
+    const card = connectionCard({ host, where, platform: 'darwin', appFile: registered });
+    assert.deepEqual(card.options.map((o) => o.label), [WAYS.quick, STRICTER]);
+    assert.equal(card.recommend, WAYS.quick);
+    assert.match(card.options[0].says, /ordinary .* sign-in/);
+    assert.doesNotMatch(card.options[0].says, /full .* access|leaked/, 'no alarm on the default');
+    assert.equal(card.options[1].says, 'A key to this one project only, instead of your whole account; recommended for teams and products with real users.');
+    assert.equal(connectionCard({ host, where, platform: 'darwin', realUsers: true }).recommend, STRICTER);
+    composeCard({ ...card, kind: 'question' });
+  }
+  // Locked and launched projects keep the narrow card on the Mac too.
+  assert.deepEqual(connectionCard({ host: 'github', where, platform: 'darwin', locked: true }).options.map((o) => o.label), [WAYS.own]);
+  assert.ok(!connectionCard({ host: 'gitlab', where, platform: 'darwin', launched: true }).options.some((o) => o.label === STRICTER));
+  // Where Make it stricter leads: GitLab's key, their own app, or a card while the Wheelhouse app is registered.
+  assert.equal(stricterWay({ host: 'gitlab' }), WAYS.narrow);
+  assert.equal(stricterWay({ host: 'github' }), WAYS.own);
+  assert.equal(stricterWay({ host: 'github', appFile: registered }), null);
+  const which = stricterCard({ where, appFile: registered });
+  assert.deepEqual(which.options.map((o) => o.label), [WAYS.wheelhouse, WAYS.own]);
+  assert.equal(which.recommend, WAYS.wheelhouse);
+  composeCard({ ...which, kind: 'question' });
+});
+
+test('on Windows a narrow way is recommended, with one plain line on why, and Quick says what it risks', () => {
+  const where = `${USER}/shop on GitHub`;
+  for (const host of ['github', 'gitlab']) {
+    const card = connectionCard({ host, where, platform: 'win32' });
+    assert.equal(card.recommend, host === 'github' ? WAYS.own : WAYS.narrow);
+    assert.match(card.because, /Windows has no sandbox/);
+    const quick = card.options.find((o) => o.label === WAYS.quick).says;
+    assert.ok(quick.startsWith(QUICK_LINE));
+    assert.match(quick, /For trying Wheelhouse out/);
+    composeCard({ ...card, kind: 'question' });
+  }
+  assert.doesNotMatch(connectionCard({ host: 'github', where, platform: 'win32', locked: true }).because, /Quick/);
 });
 
 test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and a Locked project is never offered Quick', async () => {
@@ -1505,8 +1546,9 @@ test('narrow on GitHub is always offered, through their own app when Wheelhouse\
     const w = standIn();
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.standard, way: WAYS.own }));
-    assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [WAYS.own, WAYS.quick]);
-    assert.equal(planned.asked.at(-1).card.recommend, WAYS.own, 'narrow is recommended for a product with real users');
+    // On the Mac, Make it stricter leads straight to their own app while Wheelhouse's isn't registered.
+    assert.deepEqual(planned.asked.at(-1).card.options.map((o) => o.label), [WAYS.quick, STRICTER]);
+    assert.equal(planned.asked.at(-1).card.recommend, STRICTER, 'stricter is recommended for a product with real users');
     // A Go ahead, not a wait: their own app is made on the director's account at apply.
     assert.equal(planned.wait, undefined);
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
@@ -2041,10 +2083,10 @@ const emptyFolder = (name = 'Cafe Menu') => {
   return folder;
 };
 
-const joining = ({ join = fromOtherComputer('Cafe-Menu'), typed = null, way = WAYS.quick, host = HOST_LABELS.github } = {}) => (id) => {
+const joining = ({ join = fromOtherComputer('Cafe-Menu'), typed = null, way = WAYS.quick, host = HOST_LABELS.github } = {}) => (id, card) => {
   if (id === 'join' || id.startsWith('join-')) return typed ?? join;
   if (id === 'host') return host;
-  if (id.startsWith('connection-')) return way;
+  if (id.startsWith('connection-')) return card?.options && !card.options.some((o) => o.label === way) && card.options.some((o) => o.label === STRICTER) ? STRICTER : way;
   throw new Error(`asked ${id}`);
 };
 
@@ -2135,7 +2177,7 @@ test('a second computer joins from an empty folder: the project found on an orga
     ]);
     assert.ok(!planned.changes.some((c) => c.action === 'repository'), 'nothing is made for the product');
     assert.deepEqual(planned.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'quick', locked: false });
-    assert.equal(planned.asked.at(-1).card.recommend, WAYS.own, 'a narrow way until the phase is known, never Quick');
+    assert.equal(planned.asked.at(-1).card.recommend, STRICTER, 'a narrow way until the phase is known, never Quick');
     const text = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, /Cafe-Menu found on your GitHub account or organisations, the one holding Wheelhouse's records, and checked out into this folder/);
     assert.doesNotMatch(text, /protection/, 'the first computer\'s step 7 switched it on');

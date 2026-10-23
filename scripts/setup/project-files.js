@@ -124,7 +124,7 @@ import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { readConfig, isModelName } from '../gate/guardrails.js';
 import { bestModel } from './best-model.js';
-import { projectSettings, localSettings, mergeSettings, directorStatusLine } from '../protection/settings.js';
+import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
@@ -132,7 +132,7 @@ import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome 
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
-import { LIVE_DATA } from './questions.js';
+import { LIVE_DATA, SIGNS_APPS } from './questions.js';
 import { newId, readJournal, SAY_CHARS } from './journal.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
@@ -251,6 +251,8 @@ export function starterConfig({ answers = {}, frontDesk = null } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
+  // Only the director's Yes on step 4's question opens the keychain (check 73), never the working copy.
+  if (answers['4.apple-apps']?.label === SIGNS_APPS.yes) starter.signsApps = true;
   return frontDesk ? { ...starter, routing: { ...starter.routing, frontDesk } } : starter;
 }
 
@@ -269,6 +271,10 @@ function configFrom(existing, starter) {
   const out = structuredClone(existing);
   for (const [key, value] of Object.entries(starter)) if (!Object.hasOwn(out, key)) out[key] = structuredClone(value);
   out.liveData = starter.liveData;
+  // `signsApps` follows step 4's answer alone: a true in the working copy that the director didn't
+  // give is set back to false (a key edit can't remove a key), so an agent's write can't open the keychain.
+  if (starter.signsApps === true) out.signsApps = true;
+  else if (Object.hasOwn(out, 'signsApps')) out.signsApps = false;
   // A project set up before the front desk had a model gets the starter's pin; a pin it holds stays.
   if (frontDeskPin(out) === null && frontDeskPin(starter) !== null && isObject(out.routing)) out.routing = { ...out.routing, frontDesk: starter.routing.frontDesk };
   return out;
@@ -324,8 +330,10 @@ function targetsFor({ folder, config, release }) {
   const configNow = objectIn(CONFIG, readText(path.join(folder, ...CONFIG.split('/'))));
   const effective = configFrom(configNow, config);
   const ours = projectSettings(effective, { release });
+  // A merge only adds, so a project that signs apps has the keychain's entries taken out (check 73).
+  const keychain = effective.signsApps === true ? withoutKeychainDenial : (merged) => merged;
   return {
-    [SETTINGS]: (text) => mergeSettings(objectIn(SETTINGS, text) ?? {}, ours),
+    [SETTINGS]: (text) => keychain(mergeSettings(objectIn(SETTINGS, text) ?? {}, ours)),
     [CONFIG]: (text) => configFrom(objectIn(CONFIG, text), config),
     [CLAUDE]: (text) => (hasSection(text) ? text : withSection(text)),
   };

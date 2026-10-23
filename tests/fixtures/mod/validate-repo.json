@@ -35,7 +35,7 @@
       ],
       "notes": [
         "types ./types/index.d.ts declares on $: nothing (no EngineInterface member)",
-        "types ./types/index.d.ts declares state: wheelhouse.pane, wheelhouse.tick, wheelhouse.card, wheelhouse.busy, wheelhouse.surface, wheelhouse.role, wheelhouse.pictured, wheelhouse.opened, wheelhouse.pressing, wheelhouse.stopping, wheelhouse.unhanded, wheelhouse.view, wheelhouse.settings, wheelhouse.asked"
+        "types ./types/index.d.ts declares state: wheelhouse.pane, wheelhouse.tick, wheelhouse.card, wheelhouse.why, wheelhouse.busy, wheelhouse.surface, wheelhouse.role, wheelhouse.pictured, wheelhouse.opened, wheelhouse.pressing, wheelhouse.suggesting, wheelhouse.stopping, wheelhouse.unhanded, wheelhouse.view, wheelhouse.settings, wheelhouse.asked, wheelhouse.choosing"
       ],
       "gatingHooks": []
     },
@@ -62,12 +62,12 @@
         "./register.ts hooks: session.start, session.measure, turn.start, turn.complete, prompt.submit, command.run{command=wheelhouse-go}, session.receive, command.run{command=wheelhouse}, command.run{command=wheelhouse-digest}, ui.render{component=Pane, requestId=wheelhouse}",
         "./register.ts answers its own command: command.run{command=wheelhouse-go}",
         "./register.ts answers its own command: command.run{command=wheelhouse}",
-        "./register.ts answers its own command: command.run{command=digest}",
+        "./register.ts answers its own command: command.run{command=wheelhouse-digest}",
         "./register.ts gating hook with .catch: prompt.submit",
         "./register.ts gating hook with .catch: session.receive",
-        "./register.ts calls: $.clock.every (via startTimer), $.clock.now (via drawPane, isOld, openPane, runTick), $.command.register, $.process.run (via ask), $.prompt.submit (via submitAll), $.session.id (via runTick, sendUsage, tick), $.session.root, $.session.surfaces (via openOnSurface), $.session.usage, $.state.get (via claim, drawPane, drawSettings, drawStop, handWake, isFrontDesk, isOld, markAsked, noPane, openPane, pressStop, pressingNow, readSettings, runTick, show, showOld), $.state.set (via claim, drawPane, forgetAsks, handWake, markAsked, pressStop, readSettings, release, releaseAll, runTick, show, showBoard, showSettings, startPane, turnEnded, turnStarted), $.ui.close (via show), $.ui.invalidate (via tick), $.ui.open (via openOnSurface), $.ui.panes (via paneIsOpen), $.ui.resolve (via drawCard, drawPane, drawSettings, drawStop), $.ui.status (via show, showOld), $.ui.toast",
-        "./register.ts state writes: wheelhouse.asked, wheelhouse.busy, wheelhouse.card, wheelhouse.opened, wheelhouse.pane, wheelhouse.pictured, wheelhouse.pressing, wheelhouse.role, wheelhouse.settings, wheelhouse.stopping, wheelhouse.surface, wheelhouse.tick, wheelhouse.unhanded, wheelhouse.view",
-        "./register.ts state reads: wheelhouse.asked, wheelhouse.busy, wheelhouse.card, wheelhouse.opened, wheelhouse.pane, wheelhouse.pictured, wheelhouse.pressing, wheelhouse.role, wheelhouse.settings, wheelhouse.stopping, wheelhouse.surface, wheelhouse.tick, wheelhouse.unhanded, wheelhouse.view"
+        "./register.ts calls: $.clock.after (via redrawAt), $.clock.every (via startTimer), $.clock.now (via drawPane, isOld, openPane, runTick), $.command.register, $.process.run (via ask), $.prompt.submit (via submitAll), $.session.id (via runTick, sendUsage, tick), $.session.root, $.session.surfaces (via openOnSurface), $.session.usage, $.state.get (via claim, drawCard, drawPane, drawSettings, drawStop, handWake, isFrontDesk, isOld, mark, noPane, openPane, openSuggest, pressStop, pressSuggest, pressWhy, pressingNow, readSettings, runTick, show, showOld), $.state.set (via choose, claim, closeSuggest, drawPane, forgetAsks, handWake, keepWords, mark, openSuggest, pressStop, pressWhy, readSettings, release, releaseAll, runTick, show, showBoard, showSettings, startPane, turnEnded, turnStarted), $.ui.close (via show), $.ui.invalidate (via redrawAt, tick), $.ui.open (via openOnSurface), $.ui.panes (via paneIsOpen), $.ui.resolve (via drawPane, drawParts, drawSettings, drawStop, drawWhole), $.ui.stat… [+34 chars]",
+        "./register.ts state writes: wheelhouse.asked, wheelhouse.busy, wheelhouse.card, wheelhouse.choosing, wheelhouse.opened, wheelhouse.pane, wheelhouse.pictured, wheelhouse.pressing, wheelhouse.role, wheelhouse.settings, wheelhouse.stopping, wheelhouse.suggesting, wheelhouse.surface, wheelhouse.tick, wheelhouse.unhanded, wheelhouse.view, wheelhouse.why",
+        "./register.ts state reads: wheelhouse.asked, wheelhouse.busy, wheelhouse.card, wheelhouse.choosing, wheelhouse.opened, wheelhouse.pane, wheelhouse.pictured, wheelhouse.pressing, wheelhouse.role, wheelhouse.settings, wheelhouse.stopping, wheelhouse.suggesting, wheelhouse.surface, wheelhouse.tick, wheelhouse.unhanded, wheelhouse.view, wheelhouse.why"
       ],
       "gatingHooks": [
         {

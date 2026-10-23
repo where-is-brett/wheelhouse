@@ -540,11 +540,12 @@ test('undo after a minute, or with nothing changed, records nothing', () => with
   await press(first, 'pace', '1');
   syncViews(at('2026-10-19T05:00:30.000Z'));
   const nothing = { made: false, says: 'There\'s nothing to undo now' };
+  const late = { made: false, says: 'It\'s too late to undo that. Undo lasts one minute.' };
   const client = fake();
-  // Confirmed a minute earlier or more: the row offers no Undo.
+  // Confirmed a minute earlier or more: the row offers no Undo, and a late press says it is too late.
   for (const when of ['2026-10-19T05:02:00.000Z', '2026-10-19T06:00:00.000Z']) {
     const now = at(when);
-    assert.deepEqual(await press(client, 'pace', 'undo', { now }), nothing);
+    assert.deepEqual(await press(client, 'pace', 'undo', { now }), late);
     const changes = changesFor({ project: P });
     assert.equal(rowOf(settingsRows({ effective: effectiveSettings({ now }), changes, now, timeZone: SYDNEY }), 'pace').changed, undefined);
   }

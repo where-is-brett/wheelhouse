@@ -6,7 +6,8 @@
 // value under the origin `pane`, and the bridge both sets it and signs the director's confirmation.
 // A `change` row is its name, its value and Change…, which hands the front desk a prompt naming the
 // row and asks the bridge nothing. A `value` row is its name and value. A row changed less than a
-// minute ago says so and offers Undo, which sends the choice `undo`.
+// minute ago says so and offers Undo, which sends the choice `undo`; the pane is drawn again when
+// that minute is up, so Undo leaves then.
 import type { EngineInterface, PluginState, RenderInput } from 'claude-code'
 import { ask } from './ask'
 import { body, filled, footnote, group, heading, outlined, small, title } from './calm'
@@ -150,11 +151,30 @@ function shownOf(row: Row): string {
   return typeof row.value === 'string' ? row.value : ''
 }
 
+// When a row's latest change stops being undoable: NaN for a change that can be undone with no
+// time known, null for a row with nothing to undo.
+function undoEnds(row: Row): number | null {
+  if (!isRecord(row.changed) || row.changed.undo !== true) return null
+  const at = typeof row.changed.at === 'number' ? row.changed.at : typeof row.changed.at === 'string' ? Date.parse(row.changed.at) : NaN
+  return at + UNDO_MS
+}
+
 // Whether a row's latest change is under a minute old and can still be undone.
 function justChanged(row: Row, now: number): boolean {
-  if (!isRecord(row.changed) || row.changed.undo !== true) return false
-  const at = typeof row.changed.at === 'number' ? row.changed.at : typeof row.changed.at === 'string' ? Date.parse(row.changed.at) : NaN
-  return !Number.isFinite(at) || now - at < UNDO_MS
+  const ends = undoEnds(row)
+  return ends !== null && (!Number.isFinite(ends) || now < ends)
+}
+
+// The times a redraw is asked for, so an Undo leaves when its minute is up although nothing else
+// redraws the pane. A reload starts the module over, and its first draw asks again.
+const redraws = new Set<number>()
+function redrawAt($: EngineInterface, due: number, now: number) {
+  if (redraws.has(due)) return
+  redraws.add(due)
+  $.clock.after(Math.max(1, due - now), () => {
+    redraws.delete(due)
+    $.ui.invalidate('ui.render')
+  })
 }
 
 // The settings view: Settings with Done, each group with its note, then (on the phone) a row's
@@ -240,6 +260,8 @@ export async function drawSettings($: EngineInterface, e: RenderInput<'Pane'>, s
 
   const rowOf = (row: Row) => {
     const name = row.label as string
+    const ends = undoEnds(row)
+    if (row.kind === 'select' && ends !== null && Number.isFinite(ends) && now < ends) redrawAt($, ends, now)
     const changed = row.kind === 'select' && justChanged(row, now) && (
       <t.Box flexDirection="row" gap="sm">
         {footnote(t, JUST_NOW)}
