@@ -10,10 +10,8 @@ const HERE = 'on this computer';
 // The files named first, by the name a director is likeliest to know; otherwise the first listed.
 const NAMED_FIRST = ['AGENTS.md', '.cursorrules', '.windsurfrules', '.github/copilot-instructions.md'];
 
-// A list the survey cut short (more than LIMIT lines, only LIMIT looked at) is said as "over LIMIT".
-const LIMIT = 200;
-
-const counted = (n, one, many, more = false) => (more ? `over ${LIMIT} ${many}` : `${n} ${n === 1 ? one : many}`);
+// A list the survey cut short (it looked at only so many lines) is said as at least what it found.
+const counted = (n, one, many, more = false) => `${more ? 'at least ' : ''}${n} ${n === 1 ? one : many}`;
 const changes = (n) => counted(n, 'change waiting to be merged', 'changes waiting to be merged');
 const pieces = (n, more) => counted(n, 'piece of unfinished work', 'pieces of unfinished work', more);
 
@@ -21,7 +19,8 @@ const pieces = (n, more) => counted(n, 'piece of unfinished work', 'pieces of un
 const listed = (parts) => (parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}`);
 
 // The line about work in flight, or null. Work pushed is unfinished work on the host; in git alone
-// (no host) it is on this computer, with the rest. A list cut short is said as over LIMIT.
+// (no host) it is on this computer, with the rest. A list cut short is said as at least what it
+// holds, and, with nothing found in it, not at all.
 function inFlightLine(survey, hostName) {
   const requests = survey.requests?.length ?? 0;
   const pushed = survey.pushed?.length ?? 0;
@@ -31,9 +30,9 @@ function inFlightLine(survey, hostName) {
   const parts = [];
   if (hostName !== null) {
     if (requests > 0) parts.push(`${changes(requests)} on ${hostName}`);
-    if (pushed > 0 || morePushed) parts.push(`${pieces(pushed, morePushed)} on ${hostName}`);
-    if (local > 0 || moreLocal) parts.push(`${pieces(local, moreLocal)} ${HERE}`);
-  } else if (pushed + local > 0 || morePushed || moreLocal) {
+    if (pushed > 0) parts.push(`${pieces(pushed, morePushed)} on ${hostName}`);
+    if (local > 0) parts.push(`${pieces(local, moreLocal)} ${HERE}`);
+  } else if (pushed + local > 0) {
     parts.push(`${pieces(pushed + local, morePushed || moreLocal)} ${HERE}`);
   }
   if (parts.length === 0) return null;
