@@ -2,7 +2,7 @@
 
 # The third Mac sitting: the agent's run sheet
 
-For the agent running the sitting. The director follows `mac-sitting-3.md` (in the main session's notes folder) on screen and never sees this sheet. It covers, in order: the fixes from the second mod sitting (check 41), Calm in Desktop (check 42), the keychain probe (check 73) and the timed setup run (check 19, `probes/19-setup-time/run.md`).
+For the agent running the sitting. The director follows `mac-sitting-3.md` (in the main session's notes folder) on screen and never sees this sheet. It covers, in order: Calm in Desktop (check 42), the fixes from the second mod sitting (check 41), the keychain probe (check 73) and the timed setup run (check 19, `probes/19-setup-time/run.md`).
 
 The kit in this folder is the second sitting's, kept in the repository. It makes a scratch Wheelhouse project (its own home, a stand-in host with pull request 7, a real helper with `gh` and `glab` stood in for, and six waiting cards) and never writes in the repository or in `~/.wheelhouse`.
 
@@ -20,7 +20,17 @@ node brief.mjs <your own local_ id>   # writes scratch-brief.txt, prints card 5'
 
 `check.mjs tick` also shows the approval card's Show me as a link (`-> https://example.com/`) and the launch figure for check 42. Press nothing in the scratch session before the director's go.
 
-## Part 1: the fixes from the second mod sitting (check 41, about 14 minutes)
+## Part 1: check 42, Calm in Desktop (about 18 minutes)
+
+Done first, since the pane must be liked before real use. Start the scratch session (Part 2, step 1) and have the director enable it; then these steps. The steps are `docs/checks/42-calm-desktop.md`'s eleven; the director's list says what to look at and answer. The agent's part:
+- Step 1 (`/wheelhouse`): nothing to do.
+- Step 8 (the Suggest box) and step 10 (Settings): after each press, `node check.mjs records --since T` must show what the press should (a Send gives a prompt naming the card and records nothing; a pick records a signed confirmation; the pick of the value in force, the empty Send and a closed pop-up record nothing). `node check.mjs settings` shows the value in force.
+- Step 9 (`$.prompt.fill`): the director types `/probe-fill`; the observer's command answers "probe-fill: filled" or says why not, and notes it (`node check.mjs observer`).
+- Step 10's "no value in force": the director picks an away choice in Availability, then opens the row again. Undo puts it back.
+- Step 11 (the phone): only the director can see it.
+- Afterwards write each answer into `docs/checks/42-calm-desktop.md` as the director gives them.
+
+## Part 2: the fixes from the second mod sitting (check 41, about 14 minutes)
 
 1. `start_session` (initiation `user_asked`, `cwd` `<S>/project`, `use_worktree: false`, title "Wheelhouse test project", prompt = `scratch-brief.txt`). When it says "Ready.", `node link.mjs found --observer`. The director clicks **Enable for this session**; send the session one cue ("Next step.") once the notice is queued. `node check.mjs courier` shows it ticking; `node check.mjs hold` says `held: false`.
 2. **A typed code and `stop` in a session another session started.** The director types `<code> Confirm`, then `stop`.
@@ -35,16 +45,6 @@ node brief.mjs <your own local_ id>   # writes scratch-brief.txt, prints card 5'
 7. **The notice wording and the `received` lines.** When the session is idle, send `Wheelhouse: third sitting trial A` with `SendMessage`, and `Wheelhouse: third sitting trial B` with the app's `send_message` (the session's `local_…` id). The director reads what the chat shows. Expected: "Wheelhouse: an update from another session, shown in the pane", a blocked-prompt notice at most, never the line in the conversation.
    - `node check.mjs transcript - "trial A"` and `"trial B"`: no `user` row.
    - `node check.mjs received`: one line for each, with origin and via and no text.
-
-## Part 2: check 42, Calm in Desktop (about 18 minutes)
-
-The same scratch session. The steps are `docs/checks/42-calm-desktop.md`'s eleven; the director's list says what to look at and answer. The agent's part:
-- Step 1 (`/wheelhouse`): nothing to do.
-- Step 8 (the Suggest box) and step 10 (Settings): after each press, `node check.mjs records --since T` must show what the press should (a Send gives a prompt naming the card and records nothing; a pick records a signed confirmation; the pick of the value in force, the empty Send and a closed pop-up record nothing). `node check.mjs settings` shows the value in force.
-- Step 9 (`$.prompt.fill`): the director types `/probe-fill`; the observer's command answers "probe-fill: filled" or says why not, and notes it (`node check.mjs observer`).
-- Step 10's "no value in force": the director picks an away choice in Availability, then opens the row again. Undo puts it back.
-- Step 11 (the phone): only the director can see it.
-- Afterwards write each answer into `docs/checks/42-calm-desktop.md` as the director gives them.
 
 ## Part 3: check 73, the keychain (about 5 minutes)
 
