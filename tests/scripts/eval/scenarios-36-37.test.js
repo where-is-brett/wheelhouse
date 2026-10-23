@@ -21,6 +21,7 @@ import scenario36Show, { PREVIEW, PROMPT as PROMPT_36_SHOW, judge as judge36Show
 import scenario37NotSent, { judge as judge37NotSent } from '../../eval/mod/37-not-sent-card-wake.js';
 import scenario37Reminder, { reminderPrompt } from '../../eval/mod/37-not-sent-reminder.js';
 import { NOT_SENT } from '../../../scripts/eval/harness.js';
+import { FRONT_DESK_LINE, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 
 // The events of a main session: ['say', text], ['narrate', text], or [toolName, input].
 function events(...steps) {
@@ -253,6 +254,11 @@ test('37 alone is offered PushNotification, and its project\'s local settings tu
       assert.deepEqual(hooks.map((h) => h.matcher), matchers);
       // The plugin's command runs the repository's own cli.js, so the sandbox reads it there.
       assert.deepEqual(context.readable, repositoryReadable());
+      // The session is given what the real session start gives: the front desk's line, the tool sheet and the command line.
+      const [plugin] = context.pluginDirs;
+      assert.equal(context.appendSystemPrompt, [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n'));
+      assert.ok(context.appendSystemPrompt.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+      assert.ok(fs.existsSync(path.join(plugin, 'scripts', 'frontdesk', 'cli.js')), 'and the scratch plugin holds that file');
       for (const [hook, said] of hooks.map((h, i) => [h, [SHOWN, phone][i]])) {
         // Each fails closed: a hook that can't run refuses the call (F107).
         assert.equal(hook.hooks[0].onFailure, 'block', hook.matcher);

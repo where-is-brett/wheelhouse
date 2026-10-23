@@ -186,6 +186,11 @@ test('installLocked stages under the Wheelhouse home, and asks once with every p
       const copyLineage = at(`cp -R ${quoted(path.join(call.stage, 'wheelhouse', 'lineage'))} ${quoted(`${dir}/wheelhouse/lineage.new`)}`);
       const swapLineage = at(`mv ${quoted(`${dir}/wheelhouse/lineage.new`)} ${quoted(`${dir}/wheelhouse/lineage`)}`);
       assert.ok(copyLineage < verify && swapScripts < swapLineage, 'the lineage folder is copied before the check and swapped in with the scripts');
+      // The adapters' folder goes in first: the new scripts import from it, and the old scripts never do,
+      // so a hook firing between two swaps never meets new scripts beside old or missing adapters.
+      const swapAdapters = at(`mv ${quoted(`${dir}/wheelhouse/adapters.new`)} ${quoted(`${dir}/wheelhouse/adapters`)}`);
+      const swapBin = at(`mv ${quoted(`${dir}/wheelhouse/bin.new`)} ${quoted(`${dir}/wheelhouse/bin`)}`);
+      assert.ok(swapAdapters < swapScripts && swapScripts < swapLineage && swapLineage < swapBin, 'adapters are swapped in before the scripts, then lineage, then bin');
       const copySettings = at(quoted(`${dir}/managed-settings.json`));
       const chown = at('chown -R root:wheel');
       const chmod = at('chmod -R go-w');

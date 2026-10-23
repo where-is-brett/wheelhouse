@@ -316,5 +316,14 @@ test('the kept entries hold only when Windows refuses every try on every one of 
   // Each try is given the entry and whether it is a folder.
   const given = [];
   keptNormalHeld(scratch, { ...allRefused, writeInto: (at, folder) => { given.push([path.basename(at), folder]); allRefused.writeInto(); } });
-  assert.deepEqual(given, [['.claude', true], ['.vscode', true], ['.git', false], ['.mcp.json', false]]);
+  assert.deepEqual(given, [['.claude', true], ['.vscode', true], ['.agents', true], ['.plugin', true], ['com.github.copilot', true], ['.codex', true], ['.cursor', true], ['.gemini', true],
+    ['.git', false], ['.mcp.json', false], ['plugin.json', false], ['.gitattributes', false]]);
+});
+
+test('the entries kept at the normal level are the settings folders and files and the plain names among the files that steer an agent', () => {
+  assert.deepEqual(KEPT_NORMAL.folders, ['.claude', '.vscode', '.agents', '.plugin', 'com.github.copilot', '.codex', '.cursor', '.gemini']);
+  assert.deepEqual(KEPT_NORMAL.files, ['.git', '.mcp.json', 'plugin.json', '.gitattributes']);
+  assert.ok(Object.isFrozen(KEPT_NORMAL) && Object.isFrozen(KEPT_NORMAL.folders) && Object.isFrozen(KEPT_NORMAL.files));
+  // A name with a glob in it, or a folder above it that is left at the low level, is not here: a name below .github would be moved away with its folder.
+  for (const name of [...KEPT_NORMAL.folders, ...KEPT_NORMAL.files]) assert.ok(!/[*?[]|\//.test(name), name);
 });

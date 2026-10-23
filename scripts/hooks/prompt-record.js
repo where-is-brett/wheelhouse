@@ -39,6 +39,7 @@
 // to a project as any card's does.
 import fs from 'node:fs';
 import path from 'node:path';
+import tools from '../../adapters/claude-code/tools.js';
 import { runAndExit, projectOf, beingSetUp } from './kit.js';
 import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -517,7 +518,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
 }
 
 export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState } = {}) {
-  if (input.tool_name !== 'AskUserQuestion') return undefined;
+  if (input.tool_name !== tools.ask) return undefined;
   const answered = clicks(input);
   const at = now();
   // Which questions and answers carry the private note's figures is settled first, before a Not now

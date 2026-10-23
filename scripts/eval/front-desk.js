@@ -31,7 +31,7 @@ import { ATTRIBUTION_OFF, frontDeskCommand } from '../protection/settings.js';
 import { helperAddress } from '../lib/paths.js';
 import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { briefHash } from '../feature/files.js';
-import { reload } from '../hooks/session-start.js';
+import { reload, toolSheetLines } from '../hooks/session-start.js';
 import { HEADINGS, briefingIn, cardsDue, cardsLine } from '../hooks/board-context.js';
 import { boardModel } from '../board/model.js';
 import { effectiveSettings } from '../settings/effective.js';
@@ -216,9 +216,11 @@ export function promptContext({ views, events, seen, at, usage = null, home }) {
 }
 
 // What the scratch plugin's hooks add, asked of the stand-in: the session start's reload, or the
-// board context hook's text when the scenario has it (`seen` not null).
-function hookText({ body, views, events, seen, usage, home }) {
-  if (body.event === 'SessionStart') return reload({ views, stop: null, notes: [], frontDesk: true });
+// board context hook's text when the scenario has it (`seen` not null). The session start's text
+// carries the Claude Code tool sheet and the Wheelhouse command line, named from `plugin`, the
+// scratch plugin's folder, as the real hook's does.
+function hookText({ body, views, events, seen, usage, home, plugin }) {
+  if (body.event === 'SessionStart') return reload({ views, stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) });
   if (body.event === 'UserPromptSubmit' && seen !== null) return promptContext({ views, events, seen, at: new Date(), usage, home });
   return null;
 }
@@ -295,7 +297,7 @@ export async function setUpFrontDesk(dir, variant, {
     if (plugin) {
       write(plugin, '.claude-plugin/plugin.json', `${JSON.stringify({ name: 'wheelhouse', version: '0.0.0', description: 'Wheelhouse\'s front desk, for one evaluation run.' }, null, 2)}\n`);
       for (const file of PLUGIN_FILES) write(plugin, file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'));
-      reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true });
+      reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) });
       write(plugin, 'hooks/hooks.json', `${JSON.stringify(hooksFor(lastPrompt !== undefined), null, 2)}\n`);
       pluginDirs.push(plugin);
       appendSystemPrompt = undefined;
@@ -311,7 +313,7 @@ export async function setUpFrontDesk(dir, variant, {
       address,
       home,
       state: { events: seed, approved, pullRequests: prs, signed },
-      onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home }),
+      onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home, plugin }),
     });
     const seededIds = new Set([...seed.map((e) => e.id), ...helper.events().map((e) => e.id)]);
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });

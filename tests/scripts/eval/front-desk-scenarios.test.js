@@ -15,7 +15,7 @@ import {
 import { runScenario, runSession, sessionIdOf } from '../../../scripts/eval/harness.js';
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { FRONT_DESK_LINE, reload } from '../../../scripts/hooks/session-start.js';
+import { FRONT_DESK_LINE, reload, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { HEADINGS, cardsLine, decide } from '../../../scripts/hooks/board-context.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -194,7 +194,8 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     assert.equal(hooks.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/context.js"');
     const hook = (input) => runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify(input) });
     const start = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'startup' })).out);
-    assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true }));
+    assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) }));
+    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.match(start.hookSpecificOutput.additionalContext, /Changed without the director's confirmation:\n.*Prices show to the cent/);
     // Confirmed between turns, the next reload has it in the rulebook instead.
     context.helper.confirm(context.helper.events()[0].id);

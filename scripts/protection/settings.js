@@ -47,6 +47,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
+import { AGENT_CONTROL, controlWritePaths, homeControlPaths } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
@@ -62,6 +63,16 @@ const PACKAGE_NAMES = ['netlify-cli', '@railway/cli'];
 const OWN_FILES = ['.claude/settings.json', '.claude/settings.local.json'];
 
 const unique = (list) => [...new Set(list)];
+
+// Edit denials for the files that steer an agent (agent-control.js): the project's, from its root
+// as the settings' and hooks' are (`**/X` for X in any folder), and the home folders of every
+// system, in the form the credentials' rules use. Reading them is not denied.
+function controlRules() {
+  return [
+    ...AGENT_CONTROL.map((p) => (p.startsWith('**/') ? `Edit(${p})` : `Edit(/${p})`)),
+    ...homeControlPaths().map((f) => `Edit(~/${f}/**)`),
+  ];
+}
 
 // Every system's credential paths together: the project file is shared.
 const allCredentials = () => unique(PLATFORMS.flatMap((p) => credentialPaths(p)));
@@ -170,6 +181,7 @@ export function projectSettings(config, { release = null } = {}) {
     'Read(~/.wheelhouse/**)', 'Edit(~/.wheelhouse/**)', 'Edit(~/.claude/**)',
     ...credentialRules(),
     ...OWN_FILES.map((f) => `Edit(/${f})`), 'Edit(/.claude/hooks/**)',
+    ...controlRules(),
     'Bash(gh:*)', 'Bash(glab:*)', 'Bash(git push:*)',
     ...HOST_TOOLS.map((t) => `Bash(${t}:*)`),
     ...RUNNERS.flatMap((r) => unique([...HOST_TOOLS, ...PACKAGE_NAMES]).flatMap((t) => [`Bash(${r} ${t}:*)`, `Bash(${r} ${t}@*)`])),
@@ -181,7 +193,7 @@ export function projectSettings(config, { release = null } = {}) {
       allowUnsandboxedCommands: false,
       filesystem: {
         denyRead: unique(['~/.wheelhouse', ...credentials.map((c) => `~/${c}`)]),
-        denyWrite: ['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks'],
+        denyWrite: unique(['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks', ...controlWritePaths(), ...homeControlPaths().map((f) => `~/${f}`)]),
       },
       network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null)]) },
     },
