@@ -2,7 +2,9 @@
 // Builds the Lean kit for Copilot: the skills, agents and instructions that the chat copies into a person's
 // ~/.copilot/ where no Node.js runs for them (design sections 6.4 and 8.2). It is built from the same
 // playbooks as Claude Code's, so there is one text: the skills and agent prompts are read from skills/ and agents/,
-// given Copilot's names and front matter, and have Claude Code's tool words mapped to Copilot's by one table.
+// given Copilot's names and front matter, and have Claude Code's tool words mapped to Copilot's by one table. It also
+// holds Lean's shell guard for a Mac without Node.js and the hook file that runs it (adapters/copilot/lean-hooks.js), built
+// here so every copy has the same bytes and MANIFEST.txt lists them; setup only copies them.
 //
 //   node scripts/agents/copilot/home.js           prints the paths that differ from adapters/copilot/home/, exit 1 if any
 //   node scripts/agents/copilot/home.js --write   replaces adapters/copilot/home/ with what buildHome gives
@@ -15,7 +17,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSheet } from '../../../adapters/copilot/tool-sheet.js';
 import tools from '../../../adapters/copilot/tools.js';
-import { BOARD_FILE } from '../../lib/copilot-numbers.js';
+import { GUARD_SCRIPT, TEMPLATE as GUARD_TEMPLATE, leanGuardScript, leanHookFile } from '../../../adapters/copilot/lean-hooks.js';
+import { BOARD_FILE, HOOK_FILE } from '../../lib/copilot-numbers.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -64,8 +67,9 @@ const PLAYBOOK_SKILLS = Object.freeze([
 // The words a source holds back for the kit to fill in, so the source stays in general words (the core never names an
 // agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js);
 // `{{agent-id}}` is the same word as it is written in a file's name (`.github/copilot-instructions.md`), where the playbook lists the
-// files that steer an agent.
-const KIT_WORDS = Object.freeze({ agent: 'Copilot', 'agent-id': 'copilot' });
+// files that steer an agent. `{{agent-hooks}}` is the person's hook folder as a shell finds it (adapters/copilot/hooks.js),
+// where the board asks whether the shell guard runs.
+const KIT_WORDS = Object.freeze({ agent: 'Copilot', 'agent-id': 'copilot', 'agent-hooks': '${COPILOT_HOME:-$HOME/.copilot}/hooks' });
 const AGENT_SOURCES = Object.freeze(['builder', 'reviewer', 'tester']);
 const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 
@@ -275,6 +279,9 @@ export function buildHome({ root = REPO } = {}) {
     foremanFrom(root),
     instructionsFrom(root),
   ]) files.set(entry[0], entry[1]);
+  // Lean's shell guard and its hook file (check 69). JSON has no comments; the script's path comment is its second line.
+  files.set(`hooks/${HOOK_FILE}`, `${JSON.stringify(leanHookFile({ platform: 'darwin' }), null, 2)}\n`);
+  files.set(`hooks/${GUARD_SCRIPT}`, leanGuardScript({ root, comment: `${HOME_DIR}/hooks/${GUARD_SCRIPT} (built from ${GUARD_TEMPLATE} by ${BUILD_COMMAND})` }));
   files.set('MANIFEST.txt', manifestOf(files));
   return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
 }

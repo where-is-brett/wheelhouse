@@ -233,7 +233,8 @@ test('at Lean without Node.js the guard line follows the system and whether the 
   const mac = lines({ tier: 'lean', platform: 'darwin' });
   assert.ok(mac.includes('No Wheelhouse guards run on this computer yet'));
   const macGuard = lines({ tier: 'lean', platform: 'darwin', shellGuard: true });
-  assert.ok(macGuard.includes('Wheelhouse\'s shell guard runs on this Mac, and refuses a command it can\'t check'));
+  // Ruling P5-35: what the shell guard keeps, in the line's own words.
+  assert.ok(macGuard.includes('Wheelhouse\'s shell guard runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn\'t know'));
   assert.ok(!macGuard.includes('No Wheelhouse guards run on this computer yet'));
   // The shell guard still answers inside the time Copilot allows, so the time-out sentence is there.
   assert.ok(macGuard.includes(`Copilot lets a guard through if it runs past ${GUARD_TIMEOUT_SEC} seconds, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`));

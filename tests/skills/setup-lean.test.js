@@ -182,6 +182,11 @@ test('the fetch-and-check block clones the tag and copies the kit into the home,
   for (const line of manifest) {
     const [hash, file] = line.split(' ');
     const copied = path.join(home, '.copilot', ...file.split('/'));
+    // The shell guard and its hook file are step 4's, on a Mac without Node.js (Part 5 Task 8).
+    if (file.startsWith('hooks/')) {
+      assert.ok(!fs.existsSync(copied), `${file} is left for step 4`);
+      continue;
+    }
     assert.ok(fs.existsSync(copied), `${file} was copied into the home's .copilot`);
     assert.equal(gitBlobHash(fs.readFileSync(copied)), hash, `${file} matches the manifest`);
   }
@@ -221,13 +226,9 @@ test('a copy that does not match stops at that file and copies nothing more', { 
 });
 
 test('a hooks/ file in the manifest is left for step 4', { skip: !unix && 'a shell script' }, () => {
-  const hook = '{"version":1,"hooks":{}}\n';
-  const release = makeRelease('v9.9.6', (dir) => {
-    const homeDir = path.join(dir, 'adapters/copilot/home');
-    fs.mkdirSync(path.join(homeDir, 'hooks'));
-    fs.writeFileSync(path.join(homeDir, 'hooks/wheelhouse.json'), hook);
-    fs.appendFileSync(path.join(homeDir, 'MANIFEST.txt'), `${gitBlobHash(hook)} hooks/wheelhouse.json\n`);
-  });
+  // The kit lists the shell guard and its hook file (Part 5 Task 8).
+  assert.match(fs.readFileSync(path.join(ROOT, 'adapters/copilot/home/MANIFEST.txt'), 'utf8'), / hooks\/wheelhouse\.json$/m);
+  const release = makeRelease('v9.9.6');
   const { home, project } = makeProject();
   const result = sh(fetchBlock('v9.9.6', release), { cwd: project, home });
   assert.equal(result.status, 0, result.stderr);
@@ -251,7 +252,8 @@ test('a clone that is not the tag asked for stops setup', { skip: !unix && 'a sh
 
 test('every sh block runs in a subshell and every PowerShell block in a script block of its own, never exit', () => {
   const marked = blocks(skill).filter((b) => /^# [a-z-]+$/.test(b.body.split('\n')[0]));
-  assert.equal(marked.length, 8, 'fetch-and-check, ignore-lines, first-commit and copy-remote, each for sh and for PowerShell');
+  assert.equal(marked.length, 9, 'fetch-and-check, ignore-lines, first-commit and copy-remote, each for sh and for PowerShell, and copy-guard for the Mac alone');
+  assert.deepEqual(marked.filter((b) => b.body.startsWith('# copy-guard\n')).map((b) => b.lang), ['sh'], 'the shell guard is the Mac\'s (check 69)');
   for (const marker of ['fetch-and-check', 'ignore-lines', 'first-commit', 'copy-remote']) {
     assert.equal(marked.filter((b) => b.body.split('\n')[0] === `# ${marker}`).map((b) => b.lang).sort().join(), 'powershell,sh', `${marker} has a block for each shell`);
   }
@@ -358,12 +360,17 @@ test('step 3 asks the computer four things and says the tier in one sentence', (
   assert.match(step, /Linux/);
 });
 
-test('the board case is chosen by what is running, and the kit holds no guard yet', () => {
+test('the board case is chosen by what is running, and a Mac without Node.js takes the shell guard\'s', () => {
   const step = section('Step 3: can Wheelhouse run here?');
-  // A Mac with no Node.js: the line safetyLine gives with no shell guard in the kit.
+  // Ruling P5-35: a Mac with no Node.js has the kit's shell guard once step 4 puts it in place.
+  const guarded = safetyLine({ tier: 'lean', platform: 'darwin', node: false, shellGuard: true });
+  assert.ok(step.includes(guarded[3]), 'the skill says what the board says on a Mac with the shell guard');
+  assert.ok(lean.includes(`- ${guarded[3]}\n`), 'the playbook holds the shell guard\'s line');
+  assert.match(step, /A Mac without Node\.js:\*\* the lines for a Mac where Wheelhouse's shell guard runs/);
+  // A Mac where it couldn't, or where Node.js runs: the line safetyLine gives with no shell guard.
   const mac = safetyLine({ tier: 'lean', platform: 'darwin', node: false, shellGuard: false });
   assert.ok(mac.includes('No Wheelhouse guards run on this computer yet'));
-  assert.ok(step.includes('No Wheelhouse guards run on this computer yet'), 'the skill says what the board says on a Mac');
+  assert.ok(step.includes('No Wheelhouse guards run on this computer yet'), 'the skill says what the board says on a Mac without the guard');
   assert.ok(step.includes('No Wheelhouse guards run on Windows without Node.js, until a way is found'), 'and on Windows');
   assert.match(step, /Mac or Windows without Node\.js|without Node\.js/);
   assert.match(step, /even where Node\.js runs|Node\.js runs[^\n]*until the helper is installed|until the helper is installed/i, 'until the helper is installed the board shows the no-Node.js lines');
@@ -522,12 +529,62 @@ test('hooks come from the kit only on a Mac without Node.js, and only when the k
   assert.match(step, /Mac/);
   assert.match(step, /node --version/);
   assert.match(step, /MANIFEST\.txt/);
-  assert.match(step, /lists? (any|no|nothing|files)|holds? neither|does not list|doesn't list|nothing under `?hooks\//i, 'it copies only what the manifest lists');
-  assert.match(step, /copy nothing/i);
-  assert.match(step, /no Wheelhouse guards run/i);
+  assert.match(step, /does not list|MANIFEST\.txt does not list/i, 'it copies only what the manifest lists');
+  assert.match(step, /copy no hook file/i);
+  assert.match(step, /no Wheelhouse guard runs here yet/i);
   assert.match(step, /69/, 'check 69');
-  // The kit holds no hook yet: the manifest lists none.
-  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/')));
+  // The kit holds the guard and its hook file now (Part 5 Task 8), and the block copies those two and nothing else.
+  assert.deepEqual([...kit.keys()].filter((f) => f.startsWith('hooks/')), ['hooks/wheelhouse-lean-guard.sh', 'hooks/wheelhouse.json']);
+  assert.deepEqual(block('copy-guard').match(/for file in (.*); do/)[1].split(' '), ['hooks/wheelhouse-lean-guard.sh', 'hooks/wheelhouse.json'], 'the guard first');
+  // Step 4 says which board block follows, and that the guard runs (ruling P5-35).
+  assert.ok(step.includes('Wheelhouse\'s shell guard now runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn\'t know'));
+  assert.match(step, /the block for a Mac where the shell guard runs/);
+  assert.ok(step.indexOf('# copy-guard') < step.indexOf('Write the board'), 'the guard is put in place before the board is written');
+});
+
+test('the copy-guard block puts the kit\'s guard in place on a Mac without Node.js, and the guard runs', { skip: process.platform !== 'darwin' && 'the shell guard is for macOS' }, () => {
+  const release = makeRelease('v9.9.4');
+  const { home, project } = makeProject();
+  assert.equal(sh(fetchBlock('v9.9.4', release), { cwd: project, home }).status, 0);
+  const noNode = tempFolder('wh-no-node-');
+  for (const tool of ['git', 'awk', 'cp', 'mv', 'mkdir', 'rm']) {
+    const found = spawnSync('/bin/sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim();
+    fs.symlinkSync(found, path.join(noNode, tool));
+  }
+  const PATH = `${stand.dir}${path.delimiter}${noNode}`;
+  const env = { ...GIT_ENV(home), PATH };
+  delete env.COPILOT_HOME;
+  const copy = block('copy-guard').replaceAll('<tag>', 'v9.9.4');
+  const run = (script, extra = {}) => spawnSync('/bin/sh', ['-c', script], { cwd: project, env: { ...env, ...extra }, encoding: 'utf8' });
+  assert.equal(run('command -v node').status, 1, 'no node on the PATH');
+  const done = run(copy);
+  assert.equal(done.status, 0, done.stdout + done.stderr);
+  assert.match(done.stdout, /Wheelhouse's shell guard is in place/);
+  const hooks = path.join(home, '.copilot', 'hooks');
+  assert.deepEqual(fs.readdirSync(hooks).sort(), ['wheelhouse-lean-guard.sh', 'wheelhouse.json']);
+  for (const name of ['wheelhouse.json', 'wheelhouse-lean-guard.sh']) assert.equal(fs.readFileSync(path.join(hooks, name), 'utf8'), kit.get(`hooks/${name}`));
+  // The hook file's entry runs the guard, which refuses a write to a file that steers an agent.
+  const entry = JSON.parse(fs.readFileSync(path.join(hooks, 'wheelhouse.json'), 'utf8')).hooks.preToolUse[0].bash;
+  const input = JSON.stringify({ sessionId: 's', timestamp: 0, cwd: project, toolName: 'create', toolArgs: { path: path.join(project, 'AGENTS.md') } });
+  const guard = spawnSync('/bin/sh', ['-c', entry], { cwd: project, env, input, encoding: 'utf8' });
+  assert.equal(guard.status, 2, guard.stdout + guard.stderr);
+  assert.equal(JSON.parse(guard.stdout).permissionDecision, 'deny');
+  // Run again, it puts the same files in place.
+  assert.equal(run(copy).status, 0);
+  // A guard that doesn't match the manifest stops it, and nothing it didn't match is left in the hook folder.
+  const bad = makeRelease('v9.9.3', (dir) => fs.appendFileSync(path.join(dir, 'adapters/copilot/home/hooks/wheelhouse-lean-guard.sh'), '# a line the manifest does not know\n'));
+  const other = makeProject('other');
+  const otherEnv = { ...GIT_ENV(other.home), PATH };
+  fs.mkdirSync(path.join(other.home, '.copilot', 'wheelhouse'), { recursive: true });
+  execFileSync('git', ['clone', '-q', '--branch', 'v9.9.3', `file://${bad}`, path.join(other.home, '.copilot', 'wheelhouse', 'v9.9.3')], { env: otherEnv });
+  const stopped = spawnSync('/bin/sh', ['-c', block('copy-guard').replaceAll('<tag>', 'v9.9.3')], { cwd: other.project, env: otherEnv, encoding: 'utf8' });
+  assert.equal(stopped.status, 1);
+  assert.match(stopped.stdout, /Does not match MANIFEST\.txt: hooks\/wheelhouse-lean-guard\.sh/);
+  assert.deepEqual(fs.readdirSync(path.join(other.home, '.copilot', 'hooks')), []);
+  // Where Node.js runs, it copies nothing.
+  const withNode = spawnSync('/bin/sh', ['-c', block('copy-guard').replaceAll('<tag>', 'v9.9.3')], { cwd: other.project, env: { ...otherEnv, PATH: `${path.dirname(process.execPath)}${path.delimiter}${PATH}` }, encoding: 'utf8' });
+  assert.equal(withNode.status, 1);
+  assert.match(withNode.stdout, /Node\.js runs here/);
 });
 
 test('the board setup writes has the playbook\'s parts, in the playbook\'s order, and says no copy yet', () => {

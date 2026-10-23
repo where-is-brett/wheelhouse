@@ -63,6 +63,8 @@ function copyOfSources() {
   for (const part of ['skills', 'agents', 'commands']) fs.cpSync(path.join(ROOT, part), path.join(root, part), { recursive: true });
   fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
+  // Lean's shell guard, the template the kit's guard is built from (Part 5 Task 8).
+  fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'lean-guard.sh'), path.join(root, 'adapters', 'copilot', 'lean-guard.sh'));
   // Lean's playbooks sit beside the adapter, not in skills/ (ruling P4-30).
   fs.cpSync(path.join(ROOT, 'adapters', 'copilot', 'skills'), path.join(root, 'adapters', 'copilot', 'skills'), { recursive: true });
   return root;
@@ -92,13 +94,15 @@ test('the kit is byte-stable: LF only, sorted, the same on every build', () => {
   }
 });
 
-test('the kit holds exactly the files Tasks 2, 3 and 5 build', () => {
+test('the kit holds exactly the files Tasks 2, 3 and 5 build, and Lean\'s shell guard from Part 5 Task 8', () => {
   assert.deepEqual([...kit.keys()], [
     'MANIFEST.txt',
     'agents/wheelhouse-builder.agent.md',
     'agents/wheelhouse-foreman.agent.md',
     'agents/wheelhouse-reviewer.agent.md',
     'agents/wheelhouse-tester.agent.md',
+    'hooks/wheelhouse-lean-guard.sh',
+    'hooks/wheelhouse.json',
     'instructions/wheelhouse.instructions.md',
     'skills/wheelhouse-board/SKILL.md',
     'skills/wheelhouse-briefing/SKILL.md',
@@ -110,8 +114,8 @@ test('the kit holds exactly the files Tasks 2, 3 and 5 build', () => {
     'skills/wheelhouse-sources/SKILL.md',
     'skills/wheelhouse-stop/SKILL.md',
   ]);
-  // The hook files come with Part 5 Task 8.
-  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/')));
+  // The hook files came with Part 5 Task 8: the hook file and the guard it runs, and nothing else under hooks/.
+  assert.deepEqual([...kit.keys()].filter((f) => f.startsWith('hooks/')), ['hooks/wheelhouse-lean-guard.sh', 'hooks/wheelhouse.json']);
 });
 
 // ---- The agents ----
@@ -239,7 +243,15 @@ test('the instructions file holds the tool sheet and says where Wheelhouse does 
 
 test('every file starts with its path comment, after front matter', () => {
   for (const [file, text] of kit) {
-    if (file === 'MANIFEST.txt') continue;
+    // JSON has no comments (the repository's rule exempts it).
+    if (file === 'MANIFEST.txt' || file.endsWith('.json')) continue;
+    // A shell script's comment is its second line, after the line that names its shell.
+    if (file.endsWith('.sh')) {
+      const [shebang, comment] = text.split('\n');
+      assert.equal(shebang, '#!/bin/sh', file);
+      assert.equal(comment, `# ${HOME_DIR}/${file} (built from adapters/copilot/lean-guard.sh by npm run copilot-home)`, file);
+      continue;
+    }
     const { body } = split(text);
     const first = body.replace(/^\n/, '').split('\n')[0];
     assert.match(first, new RegExp(`^<!-- ${HOME_DIR}/${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(built from [^ ]+ by npm run copilot-home\\) -->$`), `${file}: ${first}`);

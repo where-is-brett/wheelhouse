@@ -23,13 +23,13 @@ function networkLine(platform) {
 }
 
 // What Lean says of Wheelhouse's guards (ruling P5-31): while Wheelhouse's helper answers they run as Copilot
-// hooks (design section 6.4). Without it, on the Mac a shell guard can run once the kit holds one (check 69); on
-// Windows none is known yet without Node.js, and where Node.js runs none runs until the helper does.
+// hooks (design section 6.4). Without it, on the Mac the kit's shell guard runs where setup put it in place (check 69;
+// ruling P5-35); on Windows none is known yet without Node.js, and where Node.js runs none runs until the helper does.
 function leanGuards({ helper, node, platform, shellGuard }) {
   if (helper) return { line: null, running: true };
   if (platform === 'darwin') {
     return shellGuard
-      ? { line: 'Wheelhouse\'s shell guard runs on this Mac, and refuses a command it can\'t check', running: true }
+      ? { line: 'Wheelhouse\'s shell guard runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn\'t know', running: true }
       : { line: 'No Wheelhouse guards run on this computer yet', running: false };
   }
   if (node) return { line: 'No Wheelhouse guards run on this computer yet', running: false };
@@ -90,7 +90,7 @@ export function updateWaiting(name) {
 //   helper      whether Wheelhouse's helper is installed here and answering (at Lean, its block is chosen by this)
 //   addOn       whether the VS Code add-on is installed
 //   sandbox     whether Copilot's sandbox is in use, at a level that is not 'sandbox' itself
-//   shellGuard  whether the kit holds the Mac's shell guard (check 69; false until the kit is built with it)
+//   shellGuard  whether the kit's shell guard for a Mac runs here (check 69): its hook file is in place and names it
 //   phoneStop   whether a route to STOP from the phone exists (check 12 finds none yet)
 export default function safetyLine({ tier = 'lean', level, platform = process.platform, node = false, helper = false, addOn = false, sandbox, shellGuard = false, phoneStop = false } = {}) {
   if (!TIERS.includes(tier)) throw new Error(`${JSON.stringify(tier)} is not a tier; the tiers are ${TIERS.join(', ')}`);

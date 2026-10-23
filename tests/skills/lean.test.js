@@ -24,6 +24,7 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replaceAll
 const playbook = read('adapters/copilot/skills/lean/SKILL.md');
 const kit = buildHome({ root: ROOT });
 const leanKit = kit.get('skills/wheelhouse-lean/SKILL.md');
+const unix = process.platform !== 'win32';
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -398,13 +399,58 @@ test('the board chooses its block by whether the helper is installed and answeri
   // Windows where Node.js runs has the first block's guard line (safetyLine), so the first block names it.
   assert.ok(playbook.includes('On a Mac, or on Windows where Node.js runs, with no helper answering:'));
   assert.ok(playbook.includes('On Windows without Node.js:'));
-  // The third block is the helper's: its guard lines are the ones safetyLine gives where Node.js runs, and it is last.
+  // The third block is the helper's: its guard lines are the ones safetyLine gives where Node.js runs. The fourth is a Mac's
+  // with the shell guard and no helper (ruling P5-35).
   const blocks = [...playbook.matchAll(/^```\nTier: Lean\n([\s\S]*?)^```$/gm)].map((m) => m[1]);
-  assert.equal(blocks.length, 3);
+  assert.equal(blocks.length, 4);
   assert.match(blocks[0], /No Wheelhouse guards run on this computer yet/);
   assert.match(blocks[1], /No Wheelhouse guards run on Windows without Node\.js/);
   assert.match(blocks[2], /STOP is enforced by Wheelhouse's guards/);
+  assert.match(blocks[3], /Wheelhouse's shell guard runs on this Mac/);
+  assert.match(blocks[3], /STOP isn't enforced/, 'the shell guard keeps no STOP');
+  assert.ok(playbook.includes('On a Mac where Wheelhouse\'s shell guard runs, with no helper answering:'));
   assert.match(playbook, /\| "Node\.js is here, so the board can show the helper's lines" \|/);
+});
+
+test('the board takes the shell guard\'s block only where the hook file names the guard and the guard is beside it (ruling P5-35)', { skip: !unix && 'a shell script' }, () => {
+  const board = section(leanKit, 'The board');
+  const check = /`(grep -q wheelhouse-lean-guard\.sh [^`]+)`/.exec(board)?.[1];
+  assert.ok(check, 'the board says how to ask whether the shell guard runs');
+  assert.match(section(playbook, 'The board'), /\{\{agent-hooks\}\}/, 'the source names the hook folder in general words');
+  const home = tempFolder('wh-lean-guard-check-');
+  const hooks = path.join(home, '.copilot', 'hooks');
+  const asks = (env = {}) => spawnSync('/bin/sh', ['-c', check], { env: { PATH: '/usr/bin:/bin', HOME: home, ...env }, encoding: 'utf8' }).status;
+  assert.notEqual(asks(), 0, 'no hook file');
+  fs.mkdirSync(hooks, { recursive: true });
+  fs.writeFileSync(path.join(hooks, 'wheelhouse.json'), kit.get('hooks/wheelhouse.json'));
+  assert.notEqual(asks(), 0, 'a hook file with no guard beside it');
+  fs.writeFileSync(path.join(hooks, 'wheelhouse-lean-guard.sh'), kit.get('hooks/wheelhouse-lean-guard.sh'));
+  assert.equal(asks(), 0, 'the hook file and the guard');
+  // The helper's registration, written over it, names no shell guard, so the board doesn't take that block.
+  fs.writeFileSync(path.join(hooks, 'wheelhouse.json'), '{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"node hook-entry.js preToolUse"}]}}\n');
+  assert.notEqual(asks(), 0, 'the helper\'s hook file');
+  // COPILOT_HOME, where it is set, is the folder Copilot reads.
+  const other = tempFolder('wh-lean-guard-other-');
+  fs.mkdirSync(path.join(other, 'hooks'));
+  for (const name of ['wheelhouse.json', 'wheelhouse-lean-guard.sh']) fs.writeFileSync(path.join(other, 'hooks', name), kit.get(`hooks/${name}`));
+  assert.equal(asks({ COPILOT_HOME: other }), 0);
+});
+
+test('a record line is added with the shell, word for word, never by editing the file', { skip: !unix && 'a shell script' }, () => {
+  const record = section(playbook, 'The record');
+  assert.match(record, /Add the line with the shell, never by editing the file/);
+  assert.ok(record.includes("`cat >> .wheelhouse/record/<day>.jsonl <<'LINE'`"));
+  assert.ok(record.includes("`Add-Content -LiteralPath .wheelhouse/record/<day>.jsonl -Value '<the line>'`"));
+  assert.match(record, /refuses an edit to a record file that is already there/);
+  // The bash form keeps the director's words as they are: quotes, a dollar sign and a backslash included.
+  const cwd = tempFolder('wh-lean-append-');
+  const day = path.join(cwd, '.wheelhouse', 'record', '2026-10-24.jsonl');
+  fs.mkdirSync(path.dirname(day), { recursive: true });
+  fs.writeFileSync(day, recordLine('stop'));
+  const line = JSON.stringify({ at: '2026-10-24T01:00:00Z', kind: 'idea', card: 'it-s-ann', choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: 'Ann\'s "$HOME" \\ `x`' });
+  const result = spawnSync('bash', ['-c', `cat >> .wheelhouse/record/2026-10-24.jsonl <<'LINE'\n${line}\nLINE\n`], { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(day, 'utf8'), `${recordLine('stop')}${line}\n`);
 });
 
 test('the board is a view: STOP comes from the last committed stop or lift-stop line on the main version', () => {
@@ -684,7 +730,7 @@ test('the board is the file the design names, rewritten whole, and starts with t
   assert.match(board, /rewrite/i);
   assert.match(board, /first line/i);
   assert.ok(playbook.includes('```\nTier: Lean\n- Nothing is held off'), 'the board starts with the tier, then the safety lines');
-  assert.equal(playbook.split('\nTier: Lean\n').length, 4, 'one block for each case');
+  assert.equal(playbook.split('\nTier: Lean\n').length, 5, 'one block for each case');
 });
 
 test('every safety line safetyLine gives for Lean is in the playbook exactly, for each case it names', () => {
@@ -693,6 +739,8 @@ test('every safety line safetyLine gives for Lean is in the playbook exactly, fo
     { name: 'Windows without Node.js', options: { platform: 'win32', node: false } },
     { name: 'a computer where the helper answers', options: { platform: 'darwin', node: true, helper: true } },
     { name: 'Windows where Node.js runs and the helper doesn\'t answer', options: { platform: 'win32', node: true, helper: false } },
+    // Ruling P5-35: a Mac where setup put the kit's shell guard in place.
+    { name: 'a Mac where the shell guard runs', options: { platform: 'darwin', node: false, shellGuard: true } },
   ];
   // The source says "{{agent}}" where the line names the product, so the source stays free of its name (the kit says it).
   const inSource = (line) => line.replaceAll('Copilot', '{{agent}}');
@@ -796,6 +844,8 @@ test('buildHome throws when the Lean playbook is missing, and builds nothing fro
   fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
   fs.cpSync(path.join(ROOT, 'adapters', 'copilot', 'skills'), path.join(root, 'adapters', 'copilot', 'skills'), { recursive: true });
+  // The kit's shell guard is built from its template beside the adapter (Part 5 Task 8).
+  fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'lean-guard.sh'), path.join(root, 'adapters', 'copilot', 'lean-guard.sh'));
   assert.doesNotThrow(() => buildHome({ root }));
   const file = path.join(root, 'adapters', 'copilot', 'skills', 'lean', 'SKILL.md');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('{{agent}}', '{{somebody}}'));

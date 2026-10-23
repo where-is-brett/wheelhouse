@@ -34,6 +34,7 @@ Check these once in a session, before you write anything, with `git`:
 The record says what happened and who clicked. It is one file for each day, `.wheelhouse/record/YYYY-MM-DD.jsonl`, named for the UTC date, and it is committed to git with the project.
 
 - **One JSON line for each event,** at the end of the day's file, ending in a newline. Create the folder and the file if they aren't there. Never change or remove an earlier line.
+- **Add the line with the shell, never by editing the file.** In bash, `cat >> .wheelhouse/record/<day>.jsonl <<'LINE'`, then the line, then `LINE` on a line of its own; in PowerShell, `Add-Content -LiteralPath .wheelhouse/record/<day>.jsonl -Value '<the line>'`, with each `'` in the line written `''`. Where Wheelhouse's shell guard runs, it refuses an edit to a record file that is already there.
 - **Every line has all eight keys, in this order:** `at`, `kind`, `card`, `choice`, `commit`, `proof`, `by`, `tier`. A line of kind `idea`, `ruling` or `design` (Intake at Lean, below) has a ninth key after them, `text`, and no other kind has it.
   - `at` is the time in UTC, ISO 8601. Get it when the event happens: `date -u +%Y-%m-%dT%H:%M:%SZ` (bash) or `(Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")` (powershell).
   - `kind` is one of `card`, `approval`, `review`, `merge`, `undo`, `stop`, `lift-stop`, `copy`, and, from Intake at Lean, `idea`, `ruling`, `design`.
@@ -101,7 +102,7 @@ The board is `wheelhouse/board.md` in the project. Rewrite the whole file, not a
 
 **The board is a view, not state.** It is a file git ignores, so anyone sharing the folder can edit it and git will not show it. What is true is what is committed on the main version: STOP, what was reviewed, what was approved. Take no decision about STOP, a review or an approval from the board; where it disagrees with the record, say so to the director in a line and follow the record.
 
-**Its first line is the tier, and its next lines are the safety lines.** Choose the block for this computer: a Mac or Windows, and whether Wheelhouse's own helper is installed here and answering; there is no add-on at Lean. **The helper answers when `<lean> status` prints `"ok":true`** (With Wheelhouse's helper, below): ask it each time you rewrite the board, and use the third block only then. Having Node.js on the computer doesn't count: the helper is a Wheelhouse program of its own, installed only when the director approves it, and no guard runs without it. So never switch a board to the third block because `node --version` printed a version. With no helper answering, use the first block on a Mac, and on Windows where Node.js runs; the second on Windows without Node.js. Copy the lines of that block exactly, with a dash in front of each.
+**Its first line is the tier, and its next lines are the safety lines.** Choose the block for this computer: a Mac or Windows, whether Wheelhouse's own helper is installed here and answering, and on a Mac whether Wheelhouse's shell guard runs; there is no add-on at Lean. **The helper answers when `<lean> status` prints `"ok":true`** (With Wheelhouse's helper, below): ask it each time you rewrite the board, and use the third block only then. Having Node.js on the computer doesn't count: the helper is a Wheelhouse program of its own, installed only when the director approves it, and no guard runs without it. So never switch a board to the third block because `node --version` printed a version. **The shell guard runs** on a Mac where setup put it in place, for a Mac without Node.js: the hook file names it and it is beside the hook file, which `grep -q wheelhouse-lean-guard.sh "{{agent-hooks}}/wheelhouse.json" && [ -f "{{agent-hooks}}/wheelhouse-lean-guard.sh" ]` checks; ask it each time you rewrite the board too. With no helper answering, use the fourth block on a Mac where the shell guard runs, the first on any other Mac and on Windows where Node.js runs, and the second on Windows without Node.js. Copy the lines of that block exactly, with a dash in front of each.
 
 On a Mac, or on Windows where Node.js runs, with no helper answering:
 
@@ -138,6 +139,21 @@ Tier: Lean
 - Nothing is held off this computer except the copy in your folder
 - Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it
 - STOP is enforced by Wheelhouse's guards, which run as {{agent}} hooks
+- {{agent}} lets a guard through if it runs past 120 seconds, so every guard answers within 30 seconds or refuses
+- A command you allow can change anything Wheelhouse keeps, history and record included
+- {{agent}}'s command prompts aren't a control
+- Tests and second looks at a change aren't independent of the agent that built it
+- Not for projects with real users
+```
+
+On a Mac where Wheelhouse's shell guard runs, with no helper answering:
+
+```
+Tier: Lean
+- Nothing is held off this computer except the copy in your folder
+- Approvals are clicks in the chat, recorded as not proven
+- STOP isn't enforced: agents are told to stop, and VS Code's stop button ends the running request
+- Wheelhouse's shell guard runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn't know
 - {{agent}} lets a guard through if it runs past 120 seconds, so every guard answers within 30 seconds or refuses
 - A command you allow can change anything Wheelhouse keeps, history and record included
 - {{agent}}'s command prompts aren't a control
