@@ -63,13 +63,18 @@ test('the playbook has front matter, then its path comment, and is named lean', 
   assert.ok(playbook.split('\n')[2].length < 1100);
 });
 
-test('the front desk sends a Lean session to wheelhouse-lean, near its top', () => {
+test('Claude Code\'s front desk does not mention Lean or wheelhouse-lean', () => {
   const frontDesk = read('skills/front-desk/SKILL.md');
+  assert.doesNotMatch(frontDesk, /wheelhouse-lean/);
+  assert.doesNotMatch(frontDesk, /\bLean\b/);
+});
+
+test('the kit\'s front desk sends a Lean session to wheelhouse-lean, near its top', () => {
+  const frontDesk = kit.get('skills/wheelhouse-front-desk/SKILL.md');
   const at = frontDesk.indexOf(FRONT_DESK_LINE);
-  assert.ok(at > 0, 'the line is in the front desk');
+  assert.ok(at > 0, 'the line is in the kit\'s front desk');
   assert.ok(at < frontDesk.indexOf('## The command'), 'before the steps that need Node.js');
   assert.equal(frontDesk.split(FRONT_DESK_LINE).length, 2, 'once');
-  assert.ok(kit.get('skills/wheelhouse-front-desk/SKILL.md').includes(FRONT_DESK_LINE), 'and in the kit');
 });
 
 // ---- The record ----

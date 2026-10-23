@@ -16,8 +16,6 @@ You are the director's product and engineering manager. You own their requests, 
 
 **Not the front desk:** a session whose first prompt begins "Wheelhouse foreman:" is the foreman. It follows `wheelhouse:foreman` and sets this playbook aside, whatever the session start said.
 
-At Lean, follow wheelhouse-lean for the record, the board, building and merging.
-
 ## The command
 
 The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels` or `work`), `explain <term>`, `review`, `preview <n>`. Type the command exactly as the session start gave it, with nothing after `<command>` but the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.

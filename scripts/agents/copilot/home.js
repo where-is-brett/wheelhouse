@@ -80,6 +80,11 @@ const COMMAND_SKILLS = Object.freeze({
   stop: `Turn STOP on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "STOP" of ${LEAN}: tell the director once that nothing enforces STOP here, and ask the Lift STOP card alone.`,
 });
 
+// The one line the kit's front desk holds that Claude Code's doesn't: Claude Code has no `wheelhouse-lean` skill, so the
+// source stays without it and the kit adds it, straight before the heading that opens the steps that need Node.js.
+const FRONT_DESK_LEAN_LINE = 'At Lean, follow wheelhouse-lean for the record, the board, building and merging.';
+const FRONT_DESK_LEAN_ANCHOR = '\n## The command\n';
+
 const INSTRUCTIONS_LINE = 'In VS Code\'s Local harness Wheelhouse doesn\'t run: say so and ask the director to switch the chat to Copilot.';
 
 // ---- Reading the sources ----
@@ -154,10 +159,17 @@ function assemble({ file, source, front, rest }) {
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
+// The Lean line, put in before the front desk's "## The command" heading. A source without that heading is an error.
+function withLeanLine(text, rel) {
+  if (text.split(FRONT_DESK_LEAN_ANCHOR).length !== 2) throw new Error(`${rel} has no single "## The command" heading to put the Lean line before`);
+  return text.replace(FRONT_DESK_LEAN_ANCHOR, () => `\n${FRONT_DESK_LEAN_LINE}\n${FRONT_DESK_LEAN_ANCHOR}`);
+}
+
 function skillFrom(root, { name, source }) {
   const { front, body } = parse(readSource(root, source), source);
   const file = `skills/wheelhouse-${name}/SKILL.md`;
-  const rest = fillKitWords(renameSkills(mapToolWords(withoutPathComment(body, source), source)), source);
+  let rest = fillKitWords(renameSkills(mapToolWords(withoutPathComment(body, source), source)), source);
+  if (name === 'front-desk') rest = withLeanLine(rest, source);
   return [file, assemble({ file, source, front: { name: `wheelhouse-${name}`, description: front.description }, rest })];
 }
 

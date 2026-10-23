@@ -302,6 +302,13 @@ test('buildHome throws when a source is missing, and never skips one silently', 
   assert.throws(() => buildHome({ root: root3 }), /tool-sheet\.md/);
 });
 
+test('buildHome throws when the front desk source has no "## The command" heading to put the Lean line before', () => {
+  const root = copyOfSources();
+  const file = path.join(root, 'skills', 'front-desk', 'SKILL.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('\n## The command\n', '\n## The steps\n'));
+  assert.throws(() => buildHome({ root }), /## The command/);
+});
+
 test('buildHome refuses a backticked Claude Code tool name it has no mapping for', () => {
   const root = copyOfSources();
   const file = path.join(root, 'agents', 'builder.md');
