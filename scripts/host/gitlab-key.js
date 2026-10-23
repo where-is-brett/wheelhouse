@@ -6,6 +6,8 @@
 // protected to "no one") not push to the default branch. No function here
 // returns, logs or throws a message holding a key, and errors never repeat
 // GitLab's own message text.
+import { DEFAULT_GITLAB } from './gitlab-base.js';
+import { causeCode, failureKind, CERTIFICATE_NOT_TRUSTED } from './company-ca.js';
 
 const DEVELOPER = 30;
 const MAINTAINER = 40;
@@ -32,9 +34,11 @@ export function checkBaseUrl(baseUrl) {
 // `bearer: true` sends the token as "Authorization: Bearer", which is how an
 // OAuth sign-in token is sent; a personal or project access token uses the
 // PRIVATE-TOKEN header.
-export function gitlabApi({ baseUrl = 'https://gitlab.com', token, bearer = false, fetch = globalThis.fetch }) {
+// `baseUrl` on the client is the GitLab address itself (for pages such as the token page), not the API's.
+export function gitlabApi({ baseUrl = DEFAULT_GITLAB, token, bearer = false, fetch = globalThis.fetch }) {
   if (typeof token !== 'string' || token === '') throw new Error('The sign-in is missing');
-  const root = `${checkBaseUrl(baseUrl)}/api/v4`;
+  const address = checkBaseUrl(baseUrl);
+  const root = `${address}/api/v4`;
   const auth = bearer ? { Authorization: `Bearer ${token}` } : { 'PRIVATE-TOKEN': token };
 
   async function send(method, path, body) {
@@ -45,9 +49,14 @@ export function gitlabApi({ baseUrl = 'https://gitlab.com', token, bearer = fals
         headers: { Accept: 'application/json', ...auth, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-    } catch {
-      // The underlying error can quote the request, so its text is not passed on.
-      throw new Error('Could not reach GitLab');
+    } catch (error) {
+      // The underlying error can quote the request, so its text is not passed on: only its code is
+      // kept, so a certificate this computer does not trust reads differently from a server that is
+      // not there (company-ca.js).
+      const code = causeCode(error);
+      const failure = new Error(failureKind({ code }) === 'certificate' ? CERTIFICATE_NOT_TRUSTED(address) : 'Could not reach GitLab');
+      if (code !== null) failure.code = code;
+      throw failure;
     }
     const text = await response.text();
     let parsed = null;
@@ -56,6 +65,7 @@ export function gitlabApi({ baseUrl = 'https://gitlab.com', token, bearer = fals
   }
 
   return {
+    baseUrl: address,
     get: (path) => send('GET', path),
     post: (path, body = {}) => send('POST', path, body),
     put: (path, body = {}) => send('PUT', path, body),
@@ -69,10 +79,19 @@ function expiryDate(now, days) {
   return new Date(now().getTime() + days * DAY_MS).toISOString().slice(0, 10);
 }
 
-function refusal(status) {
+// What GitLab says when the group has switched project keys off ("Allow group and project access
+// tokens", check 71). The setting cannot be read through the API, so this refusal is the only signal.
+const KEYS_OFF = /does not have permission to create project access token/i;
+// The code on the error makeProjectKey throws for it, so a caller can offer another way without reading words.
+export const KEYS_OFF_CODE = 'keys-switched-off';
+export const isKeysSwitchedOff = (error) => error?.code === KEYS_OFF_CODE;
+export const KEYS_SWITCHED_OFF = 'GitLab refused a project key because the company\'s group has switched project keys off: ask the company\'s GitLab admin (an owner of the top-level group) to tick "Allow group and project access tokens" in the group\'s settings, or use a pasted token';
+
+function refusal(status, body) {
+  if (status === 400 && KEYS_OFF.test(String(body?.message ?? body?.error ?? ''))) return KEYS_SWITCHED_OFF;
   if (status === 401) return 'GitLab did not accept the sign-in used to make the project key';
   if (status === 403) {
-    return 'GitLab says this sign-in may not make a project key: it needs the Maintainer or Owner role on the project, and on GitLab.com a Premium or Ultimate plan';
+    return 'GitLab says this sign-in may not make a project key: it needs the Maintainer or Owner role on the project, and, on the public hosted service, a Premium or Ultimate plan';
   }
   if (status === 404) return 'GitLab could not find the project, or this sign-in cannot see it';
   return `GitLab refused the request for a project key (HTTP ${status})`;
@@ -95,7 +114,10 @@ export async function makeProjectKey({ api, projectId, name, days, accessLevel =
     access_level: accessLevel,
     expires_at: expiryDate(now, days),
   });
-  if (answer.status < 200 || answer.status >= 300) throw new Error(refusal(answer.status));
+  if (answer.status < 200 || answer.status >= 300) {
+    const line = refusal(answer.status, answer.body);
+    throw Object.assign(new Error(line), line === KEYS_SWITCHED_OFF ? { code: KEYS_OFF_CODE } : {});
+  }
   const { token, expires_at: expiresAt, id } = answer.body ?? {};
   if (typeof token !== 'string' || typeof id !== 'number') {
     throw new Error('GitLab answered, but did not return a project key');

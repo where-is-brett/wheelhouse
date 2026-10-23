@@ -17,6 +17,7 @@ import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { ciPushLine } from '../../../scripts/state/card-lines.js';
+import { CERTIFICATE_NOT_TRUSTED, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
@@ -265,7 +266,7 @@ const adapterFor = () => ({
 });
 
 // A project whose folder holds a clone on `feature`: `base` files on main, `change` files on feature.
-async function scenario({ base = { 'README.md': 'x\n' }, change, files = {} }) {
+async function scenario({ base = { 'README.md': 'x\n' }, change, files = {}, project = {} }) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const home = fs.realpathSync.native(shortHome());
   const work = path.join(home, 'work');
@@ -273,7 +274,7 @@ async function scenario({ base = { 'README.md': 'x\n' }, change, files = {} }) {
   const out = { remote, home, work };
   await as(home, async () => {
     writeProject('o__p', {
-      folder: work, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'narrow', project: 'o/p' },
+      folder: work, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'narrow', project: 'o/p' }, ...project,
     });
     writeSessionProvenance('o__p', SESSION);
     const { computer, publicKey } = makeSigningKey();
@@ -378,6 +379,52 @@ test('a CI change with the director\'s fresh click for this commit is pushed wit
     const values = Object.entries(pushes[0].env).filter(([k]) => /^GIT_CONFIG_VALUE_/.test(k)).map(([, v]) => v);
     assert.ok(values.some((v) => / auth git-credential$/.test(v)), 'signed in through the host tool');
     assert.ok(!values.some((v) => v.includes(Buffer.from(`x:${FAKE_KEY}`).toString('base64'))), 'not the key');
+  } finally { s.cleanup(); }
+});
+
+test('on a company GitLab the director\'s CI push carries the company\'s certificate for that address once setup has made the file, and git\'s own SSL text is never shown', async () => {
+  const company = 'https://git.example.org:8443';
+  const gitlab = { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: company } };
+  const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+  const settings = (env) => Object.keys(env ?? {}).filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]);
+  const withKey = { GITLAB_TOKEN: 'glpat-FAKEKEY0123456789abcd', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `http.${company}/.extraheader`, GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from('oauth2:glpat-FAKEKEY0123456789abcd').toString('base64')}` };
+
+  // Before the file: the click's push has no certificate setting. After: exactly that address's, and no key.
+  for (const made of [false, true]) {
+    const s = await scenario({ change: { '.gitlab-ci.yml': 'a: b\n' }, project: gitlab });
+    const calls = [];
+    const recording = async (file, args, options) => { calls.push({ file, args, env: options?.env }); return hostGuard(file, args, options); };
+    try {
+      await as(s.home, async () => {
+        click({ sha: s.sha }, 9);
+        if (made) writeCaFile({ home: s.home, pem });
+      });
+      await viaHelper(s, async (client) => {
+        assert.deepEqual(await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' }), { ok: true });
+      }, { env: withKey, runWith: recording });
+      assert.match(await heads(s), /refs\/heads\/feature/);
+      const pushes = calls.filter((c) => c.args.includes('push'));
+      assert.equal(pushes.length, 1);
+      assert.equal(pushes[0].env.GITLAB_TOKEN, undefined);
+      const ssl = settings(pushes[0].env).filter(([k]) => /sslcainfo|sslbackend/i.test(k));
+      assert.deepEqual(ssl, made ? [[`http.${company}/.sslCAInfo`, caFile(s.home)]] : []);
+      assert.ok(!settings(pushes[0].env).some(([k]) => /extraheader/i.test(k)), 'the director\'s push holds no key');
+      // Every call carries the fence's pairs, so the count is that of all the pairs, with the certificate's among them or not.
+      assert.equal(pushes[0].env.GIT_CONFIG_COUNT, String(settings(pushes[0].env).length));
+    } finally { s.cleanup(); }
+  }
+
+  // A push that git refuses over the certificate says the certificate card's line, not git's text.
+  const s = await scenario({ change: { '.gitlab-ci.yml': 'a: b\n' }, project: gitlab });
+  const sslText = `fatal: unable to access '${company}/o/p.git/': SSL certificate problem: unable to get local issuer certificate`;
+  const refusing = async (file, args, options) => (args.includes('push') ? { code: 128, stdout: '', stderr: sslText, timedOut: false } : hostGuard(file, args, options));
+  try {
+    await as(s.home, async () => click({ sha: s.sha }, 9));
+    await viaHelper(s, async (client) => {
+      const answer = await client.push({ project: 'o__p', dir: s.work, refspec: 'feature' });
+      assert.deepEqual(answer, { ok: false, refused: CERTIFICATE_NOT_TRUSTED(company) });
+      assert.doesNotMatch(JSON.stringify(answer), /SSL certificate problem|unable to access|local issuer/);
+    }, { env: withKey, runWith: refusing });
   } finally { s.cleanup(); }
 });
 

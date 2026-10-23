@@ -34,6 +34,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as defaultRun } from '../lib/run.js';
 import { directorSignIn, reachFor, safeGit } from '../lib/safe-git.js';
+import { companyGitEnv } from '../host/company-ca.js';
+import { DEFAULT_GITLAB } from '../host/gitlab-base.js';
 import { claudeHome as defaultClaudeHome, MARKETPLACE } from '../lineage/manifest.js';
 import { HOST_TOOLS, projectSettings, SWITCHED_OFF_PLUGINS } from '../protection/settings.js';
 
@@ -333,6 +335,15 @@ export function reachOfOrigin(url, { platform = process.platform } = {}) {
   return /^ssh:\/\//i.test(url) || SCP_STYLE.test(url) ? 'ssh' : reachFor(url, { platform });
 }
 
+// The origin of an https remote's address (scheme, host and port), or null when it is not one.
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 async function readInFlight({ folder, host, git, run, sshEnv }) {
   const remotes = (await git(['remote'])).split('\n').map((r) => r.trim()).filter(Boolean);
   let behind = 0;
@@ -341,8 +352,9 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
   if (remotes.includes('origin')) {
     const originUrl = (await git(['remote', 'get-url', 'origin'], folder, { allowFail: true })).trim();
     const reach = reachOfOrigin(originUrl);
-    // ssh uses the director's own command with BatchMode; https signs in through the host tool.
-    const env = reach === 'ssh' ? { GIT_SSH_COMMAND: batchSshCommand({ env: sshEnv }) } : reach === 'https' ? directorSignIn(host) : {};
+    // ssh uses the director's own command with BatchMode; https signs in through the host tool, and
+    // a company GitLab with its own certificate authority is given that authority for its address.
+    const env = reach === 'ssh' ? { GIT_SSH_COMMAND: batchSshCommand({ env: sshEnv }) } : reach === 'https' ? companyGitEnv(directorSignIn(host), { host, base: originOf(originUrl) }) : {};
     await git(['fetch', '--quiet', 'origin'], folder, { env, reach });
     let ref = (await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], folder, { allowFail: true })).trim();
     if (ref === '') {
@@ -394,7 +406,7 @@ export function originRepository(originUrl, host) {
   const parts = rest.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
   const named = host === 'gitlab' && hostname !== null ? parts : parts.slice(-2);
   if (named.length < 2) return null;
-  const own = hostname === null || hostname === (host === 'gitlab' ? 'gitlab.com' : 'github.com');
+  const own = hostname === null || hostname === (host === 'gitlab' ? new URL(DEFAULT_GITLAB).hostname : 'github.com');
   const repo = `${own ? '' : `${hostname}/`}${named.join('/')}`;
   return REPOSITORY.test(repo) ? { hostname: own ? null : hostname, repo } : null;
 }

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
 import { batchSshCommand, commandsIn, deniedByStandard, reachOfOrigin, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
+import { caFile } from '../../../scripts/host/company-ca.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -312,16 +313,17 @@ test('a command-start word at the end of a piece is not taken for a runner', () 
 });
 
 // A project whose origin is `url`, with the survey's fetch answered by a stand-in so nothing is reached.
-async function surveyWithOrigin(url, { sshEnv = {} } = {}) {
+async function surveyWithOrigin(url, { sshEnv = {}, host = 'github' } = {}) {
   const { folder } = await makeProject();
   await g(folder, 'remote', 'set-url', 'origin', url);
   const calls = [];
   const recording = async (file, args, options) => {
     if (file === 'git') calls.push({ args, env: options?.env ?? {} });
     if (file === 'git' && args.includes('fetch')) return { code: 0, stdout: '', stderr: '' };
+    if (file === 'glab') return { code: 0, stdout: '[]', stderr: '' };
     return noPrs(file, args, options);
   };
-  await surveyProject({ folder, manifest: { upstreams: [] }, run: recording, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-'), sshEnv });
+  await surveyProject({ folder, manifest: { upstreams: [] }, run: recording, upstreams: {}, host, claudeHome: tempFolder('wh-claude-'), sshEnv });
   return calls.find((c) => c.args.includes('fetch'));
 }
 
@@ -362,6 +364,36 @@ test('the survey\'s https fetch signs in through the host tool, never the global
   // A local origin carries no sign-in and allows a path.
   const local = await surveyWithOrigin(tempFolder('wh-origin-'));
   assert.equal(local.env.GIT_ALLOW_PROTOCOL, 'https:file');
+});
+
+// The pairs of a call's GIT_CONFIG_* environment, as [key, value].
+const pairsOf = (env) => Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+
+test('the survey\'s fetch from a company GitLab with its own authority is given that authority for its address alone', async () => {
+  const home = tempFolder('wh-home-');
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    // No file yet: no certificate pair, as before.
+    const none = await surveyWithOrigin('https://git.example.org:8443/o/p.git', { host: 'gitlab' });
+    assert.equal(pairsOf(none.env).some(([k]) => /sslcainfo/i.test(k)), false);
+    fs.mkdirSync(path.dirname(caFile(home)), { recursive: true });
+    fs.writeFileSync(caFile(home), 'CERTIFICATES\n');
+    const company = await surveyWithOrigin('https://git.example.org:8443/o/p.git', { host: 'gitlab' });
+    const pairs = pairsOf(company.env);
+    const certificate = pairs.filter(([k]) => /sslcainfo/i.test(k));
+    assert.deepEqual(certificate, [['http.https://git.example.org:8443/.sslCAInfo', caFile(home)]]);
+    assert.ok(pairs.findIndex(([k]) => k === 'credential.helper' && true) >= 0, 'the sign-in is still there');
+    assert.equal(company.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    // The public service, and GitHub, are left alone even with the file.
+    for (const [url, host] of [['https://gitlab.com/o/p.git', 'gitlab'], ['https://github.com/o/p.git', 'github'], ['https://git.example.org:8443/o/p.git', 'github']]) {
+      const got = await surveyWithOrigin(url, { host });
+      assert.equal(pairsOf(got.env).some(([k]) => /sslcainfo|sslbackend/i.test(k)), false, url);
+    }
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME;
+    else process.env.WHEELHOUSE_HOME = before;
+  }
 });
 
 test('a bare main repository is not listed as a worktree in flight', async () => {

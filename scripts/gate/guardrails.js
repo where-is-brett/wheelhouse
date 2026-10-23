@@ -9,7 +9,8 @@
 //              runbook?: { contain?: { describe: string, command: [string] } },
 //              routing?: { foreman, builder, reviewer, reviewerCritical, tester, mechanical },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
-//              hotFiles?: [glob], flagFiles?: [glob], pages?: [path] }
+//              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
+//              glabFrom?: string }
 // Other keys are kept and ignored.
 //
 // The build loop's keys (build-loop design, section 11; main design, section 8),

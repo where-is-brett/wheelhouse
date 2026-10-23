@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { startHelper, PUSH_REFUSALS, secretsOf } from '../../../scripts/host/helper.js';
+import { startHelper, PUSH_REFUSALS, secretsOf, GITLAB_MAINTAINERS_ONLY } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -1074,6 +1074,70 @@ test('/host/facts says whether protection is on and whether the default branch h
       await withHelper(fakeAdapter({ hasCi: async () => true }), async (client) => {
         assert.equal((await client.host.facts({ project: 'o__p' })).ci, 'present');
       }, { run: freePlanRun });
+    });
+  } finally { p.cleanup(); }
+});
+
+// This project's record, made a GitLab project on the company's own address.
+function asGitlab(remote, home) {
+  return as(home, () => writeProject('o__p', {
+    folder: os.tmpdir(), remoteUrl: remote.url, host: 'gitlab', repo: 'o/p',
+    connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: 'https://git.example.org' },
+  }));
+}
+
+test('/host/facts on GitLab carries the plan and the gaps the key could read', async () => {
+  const p = await project({ lock: false });
+  try {
+    await asGitlab(p.remote, p.home);
+    await as(p.home, async () => {
+      const level = (n, d) => [{ access_level: n, access_level_description: d }];
+      const seen = [];
+      // The company's GitLab as the project key sees it: Free (the approval rules are refused) and
+      // no right to list the variables.
+      const fetch = async (url) => {
+        const path = new URL(url).pathname.replace('/api/v4', '');
+        seen.push(path);
+        const body = (status, value) => ({ status, text: async () => JSON.stringify(value) });
+        const branch = /\/protected_branches\/(.+)$/.exec(path)?.[1];
+        if (branch) return body(200, { push_access_levels: branch === 'main' ? level(0, 'No one') : level(30, 'Developers + Maintainers'), merge_access_levels: level(30, 'Developers + Maintainers'), allow_force_push: false });
+        if (path === '/projects/o%2Fp') return body(200, { default_branch: 'main', only_allow_merge_if_pipeline_succeeds: true });
+        if (path.endsWith('/approval_rules')) return body(403, { message: '403 Forbidden' });
+        if (path.includes('/variables')) return body(403, { message: '403 Forbidden' });
+        return body(404, {});
+      };
+      await withHelper(fakeAdapter({ hasCi: async () => true }), async (client) => {
+        assert.deepEqual(await client.host.facts({ project: 'o__p' }), { ok: true, protection: 'on', ci: 'present', plan: 'free', gaps: [] });
+      }, { fetch, envFor: async () => ({ GITLAB_TOKEN: 'a-stand-in-key' }) });
+      assert.ok(seen.some((s) => s.endsWith('/approval_rules')), 'the plan was asked');
+    });
+  } finally { p.cleanup(); }
+});
+
+test('on GitLab a merge the key may not make is refused with the reason and what to do', async () => {
+  const p = await project();
+  try {
+    const head = await prOnHost(p.remote.url);
+    // GitLab keeps a merge request's head at its own ref.
+    const work = tempFolder('wh-mr-');
+    await g(work, 'init', '-q');
+    await g(work, 'fetch', '-q', p.remote.url, 'refs/pull/7/head');
+    await g(work, 'push', '-q', p.remote.url, 'FETCH_HEAD:refs/merge-requests/7/head');
+    await as(p.home, async () => {
+      reviewAndApproval(head);
+      const refuses = () => fakeAdapter({ prState: openAt(head), merge: async () => ({ merged: false, reason: 'this sign-in is not allowed to merge it' }) });
+      // On GitHub the adapter's own words stand.
+      await withHelper(refuses(), async (client) => {
+        const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(answer.refused, 'this sign-in is not allowed to merge it');
+      });
+      await asGitlab(p.remote, p.home);
+      await withHelper(refuses(), async (client) => {
+        const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(answer.ok, false);
+        assert.equal(answer.refused, GITLAB_MAINTAINERS_ONLY);
+        assert.match(answer.refused, /Maintainers only on GitLab, so a person who is a Maintainer presses Merge there/);
+      });
     });
   } finally { p.cleanup(); }
 });

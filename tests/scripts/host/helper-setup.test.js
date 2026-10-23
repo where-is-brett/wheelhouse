@@ -21,6 +21,7 @@ import { setupRoutes, stepsBefore, asksDuring } from '../../../scripts/setup/eng
 import { keepClick, clicksDir, answersFor } from '../../../scripts/setup/clicks.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { planHash } from '../../../scripts/setup/steps.js';
+import { caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
 
@@ -237,6 +238,25 @@ test('two applies in flight together, on two Go aheads on one card, start the st
       else assert.equal(runOf(folder).changes.length, 1);
       // The other click was not used: it can start the step again once this attempt has failed.
       assert.equal(fs.readdirSync(path.join(home, 'setup', 'clicks-used')).length, 1);
+    }, { spawn });
+  }
+});
+
+test('a long step\'s own process starts with the company\'s certificate for Node.js once setup has made the file, and not before', async () => {
+  const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+  for (const made of [false, true]) {
+    const spawned = [];
+    const spawn = (...args) => { spawned.push(args); return { on() {}, unref() {} }; };
+    await withSetup(async ({ client, home, folder }) => {
+      setWorld(home, { 2: [KEY(1)] });
+      if (made) writeCaFile({ home, pem });
+      const card = await client.setup.plan({ folder, step: 2 });
+      click(2, card.hash);
+      assert.equal((await client.setup.apply({ folder, step: 2, hash: card.hash })).ok, true);
+      assert.equal(spawned.length, 1);
+      const { env } = spawned[0][2];
+      assert.equal(env.NODE_EXTRA_CA_CERTS, made ? caFile(home) : process.env.NODE_EXTRA_CA_CERTS);
+      assert.equal(env.PATH, process.env.PATH, 'the rest of the environment is carried on');
     }, { spawn });
   }
 });

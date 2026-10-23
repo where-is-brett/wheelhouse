@@ -11,12 +11,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  hostStep, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
+  hostStep, cardFor, signIn, makeRepos, connectionCard, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
+import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
+import { applyCompanyCa } from '../../../scripts/setup/tools.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setupGit } from '../../../scripts/setup/git.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
@@ -38,7 +40,8 @@ import { guardedRun } from '../../helpers/host-stand-ins.js';
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
-import { composeCard } from '../../../scripts/cards/compose.js';
+import { composeCard, isTooLong } from '../../../scripts/cards/compose.js';
+import { termsIn, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
@@ -139,7 +142,7 @@ function standIn(state = {}) {
       }
       if (p.endsWith('/access_tokens')) {
         if (w.keyAnswer === 'unreachable') throw new Error('Could not reach GitLab');
-        if (w.keyAnswer !== undefined) return { status: w.keyAnswer, body: { message: 'no' } };
+        if (w.keyAnswer !== undefined) return { status: w.keyAnswer, body: w.keyBody ?? { message: 'no' } };
         if (w.refuseKeys) return { status: 403, body: { message: 'forbidden' } };
         w.api.keys.push(body);
         return { status: 201, body: { id: 900 + w.api.keys.length, token: `glpat-project-key-${w.api.keys.length}`, expires_at: body.expires_at } };
@@ -795,6 +798,35 @@ test('GitLab pipelines must succeed only where a pipeline exists', async () => {
   assert.match(ruled.line, /requires pipelines to pass/);
 });
 
+test('a project with real users is switched on to merge by Maintainers, and every gap the read-back found comes back for the director', async () => {
+  const plain = gitlabProtection({ pipelines: true });
+  // The director's own sign-in: Free (the approval rules are refused) and a list of variables.
+  const asFree = (inner, variables) => ({
+    ...inner,
+    async get(p) {
+      if (/\/approval_rules$/.test(p)) return { status: 403, body: {} };
+      if (/\/variables\?/.test(p)) return variables;
+      return inner.get(p);
+    },
+  });
+  const list = { status: 200, body: [{ key: 'DEPLOY_KEY', value: 'a-value-never-shown', protected: true }, { key: 'DEBUG', value: 'another-value', protected: false }] };
+  const got = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: asFree(plain, list), realUsers: true });
+  assert.equal(got.on, true);
+  assert.deepEqual(got.gaps, [
+    "DEBUG is a project secret that a merge request's pipeline could read",
+    "DEPLOY_KEY is a project secret that a pipeline on Wheelhouse's own state branch could read",
+    "With real users, the project's tests on the host could be faked with Wheelhouse's key; GitLab Premium's approval step would close that",
+  ]);
+  assert.equal(JSON.stringify(got).includes('never-shown'), false);
+  assert.equal(JSON.stringify(got).includes('another-value'), false);
+  // Without real users the project merges as before, and the faked-tests line is not said.
+  const before = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: asFree(gitlabProtection({ pipelines: true }), { status: 200, body: [] }) });
+  assert.deepEqual(before.gaps, []);
+  // A list the director's sign-in could not read is said.
+  const blind = await switchOnAsDirector({ host: 'gitlab', repo: 41, api: asFree(gitlabProtection({ pipelines: true }), { status: 403, body: {} }) });
+  assert.deepEqual(blind.gaps, ["Wheelhouse could not look at the project's secrets, so it cannot say which ones a pipeline could read"]);
+});
+
 test('protection is read back and said as it is', async () => {
   // GitHub took the rulesets without error, but reading them back shows none: said as not on.
   const calls = [];
@@ -1018,6 +1050,409 @@ test('a folder whose git has an unborn branch of another name ends up on main', 
     await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.equal(await g(folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
     assert.equal(await g(folder, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+  });
+});
+
+test('a group that has switched project keys off also falls back to the system\'s box; any other 400 stops', async () => {
+  const switchedOff = { message: '400 Bad request - User does not have permission to create project access token' };
+  await withHome(async () => {
+    const w = standIn({ keyAnswer: 400, keyBody: switchedOff });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+    const opened = [];
+    const boxes = [];
+    const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async (box) => { boxes.push(box); return `${PASTED}\n`; } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    await applyStep(step, folder, planned.changes, { answers: planned.answers });
+    assert.equal(boxes.length, 1);
+    assert.ok(opened[0].startsWith('https://gitlab.com/-/user_settings/personal_access_tokens'), opened[0]);
+    assert.deepEqual(readKey(`gitlab-project-${w.repos[`${USER}/shop`].id}`), { kind: 'pasted-token', token: PASTED, expiresAt: null });
+  });
+  await withHome(async () => {
+    const w = standIn({ keyAnswer: 400, keyBody: { message: '400 Bad request - something else' } });
+    await w.add(`${USER}/shop`);
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://gitlab.com/${USER}/shop.git`);
+    const opened = [];
+    const step = stepFor(w, { open: async (url) => { opened.push(url); }, askSecret: async () => { throw new Error('no box should open'); } });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), /HTTP 400/);
+    assert.deepEqual(opened, []);
+  });
+});
+
+test('a company remote named in gitlabHosts, with its port, gives that address through setup\'s path', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['localhost:8929'] }));
+    await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
+    const found = productOf(folder, { config: { gitlabHosts: ['localhost:8929'] } });
+    assert.deepEqual(found, { isNew: false, host: 'gitlab', repo: `${USER}/shop`, name: 'shop', base: 'https://localhost:8929' });
+    const planned = await answerAll(stepFor(w), ctxFor(folder), choose({ way: WAYS.quick }));
+    const connection = planned.changes.find((c) => c.action === 'connection');
+    assert.equal(connection.target, 'gitlab');
+    assert.equal(connection.base, 'https://localhost:8929');
+    // A company's GitLab with no OAuth application is signed in to with a typed token, not a sign-up page.
+    assert.match(planned.card.what, /sign in to GitLab with a token pasted into your computer's box/);
+    const glab = w.calls.filter((c) => c.tool === 'glab');
+    assert.ok(glab.length > 0);
+    for (const c of glab) assert.equal(c.env?.GITLAB_HOST, 'localhost:8929');
+    assert.deepEqual(glab[0].args, ['auth', 'status', '--hostname', 'localhost:8929']);
+  });
+  // Without the setting, the same remote is not a GitLab address setup knows.
+  await withHome(async () => {
+    const w = standIn();
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
+    await assert.rejects(answerAll(stepFor(w), ctxFor(folder), choose()), /localhost:8929.*not GitHub or GitLab/);
+  });
+});
+
+test('step 3\'s card for a company\'s GitLab behind its own authority, with the certificate and the typed token, composes', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('A product whose folder has a very long name indeed, Zoë');
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
+    await withOrigin(folder, `https://git.example.org:8443/${USER}/a-product-with-a-long-name-to-fill-the-card.git`);
+    const step = stepFor(w, { certificateProbe: async () => 'certificate' });
+    const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, way: WAYS.narrow }));
+    assert.ok(planned.changes.some((c) => c.action === 'certificate'));
+    assert.equal(planned.changes.find((c) => c.action === 'sign-in').via, 'token');
+    // The full wording fits the calm card's length, the shorter one only when the names are longer; both say the same things.
+    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443, (?:copied from this computer's own certificate store and given to Node\.js, glab and git )?for that address only \(certificate checks stay on\)/);
+    assert.match(planned.card.what, /sign in (?:to GitLab )?with a token pasted into your computer's box, never the chat/);
+    assert.match(planned.card.what, /for your company's GitLab admin/);
+    const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    assert.ok(question.question.length <= 1200, String(question.question.length));
+  });
+});
+
+// Step 3's card for a company's GitLab behind its own authority, with the certificate, the typed token, the
+// admin's part, the profile repository and (joining) the computer's key: it composes whatever the names'
+// lengths, and always says the two safety things.
+test('step 3\'s card on a company\'s GitLab composes for ordinary and for very long names, joining or not, with the two safety phrases', async () => {
+  const lengths = [];
+  // Each case with the wording its card is expected to come in: the full one, the tight one (shorter clauses) or the bare
+  // one (the address and the names left out), so a fallback that stops being reached shows here.
+  const cases = [
+    ['gitlab.acme.com:8443', 'engineering/shop', 'sam', 'full'],
+    ['gitlab.example.com', 'platform/customer-portal', 'a-director', 'full'],
+    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, 'full'],
+    [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
+    // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
+    [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
+    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name', { joining: 'tight', new: 'tight', existing: 'full' }],
+  ];
+  const wording = (what) => (/copied from this computer's own certificate store/.test(what) ? 'full' : /certificate for your GitLab's address/.test(what) ? 'bare' : 'tight');
+  for (const [hostName, repo, user, expected] of cases) {
+    const base = `https://${hostName}`;
+    const owner = repo.split('/').slice(0, -1).join('/');
+    const name = repo.split('/').at(-1);
+    for (const kind of ['joining', 'new', 'existing']) {
+      const product = kind === 'joining' ? { isNew: false, joining: true, host: null, repo, name }
+        : kind === 'new' ? { isNew: true, host: 'gitlab', name, base } : { isNew: false, host: 'gitlab', repo, name, base };
+      const changes = [
+        { kind: 'host', target: 'gitlab', action: 'certificate', base },
+        { kind: 'host', target: 'gitlab', action: 'sign-in', via: 'token' },
+        { kind: 'host', target: 'gitlab', action: 'profile-repository', repo: `${user}/${PROFILE_REPO}` },
+        { kind: 'host', target: 'gitlab', action: 'enrolment' },
+      ];
+      const card = cardFor({ host: 'gitlab', changes, product, owner: kind === 'joining' ? null : owner, user, way: WAYS.narrow, app: null, signedIn: false, appKeys: null, twoAccounts: false, base });
+      const { question } = composeCard({ ...card, target: { step: 3, hash: planHash(changes) } });
+      assert.ok(question.question.length <= 1200, `${kind} ${hostName}: ${question.question.length}`);
+      lengths.push(`${kind} ${hostName.length}/${repo.length}/${user.length}: ${question.question.length}`);
+      assert.equal(wording(card.what), typeof expected === 'string' ? expected : expected[kind], `${kind} ${hostName.length}: ${card.what}`);
+      assert.match(card.what, /for that address only \(certificate checks stay on\)/, `${kind} ${hostName}`);
+      assert.match(card.what, /pasted into your computer's box, never the chat/, `${kind} ${hostName}`);
+      assert.match(card.what, /for your company's GitLab admin/);
+      assert.deepEqual(termsIn(card.what.split('; ').filter((part) => /token|admin|certificate/.test(part)).join('; '), glossaryOf({})), []);
+    }
+  }
+  // GitHub names too: a joining or first computer with very long account and app names still composes.
+  for (const joiningNow of [true, false]) {
+    const long = 'o'.repeat(200);
+    const card = cardFor({
+      host: 'github', changes: [{ kind: 'host', target: 'github', action: 'sign-in' }, { kind: 'host', target: 'github', action: 'profile-repository', repo: `${long}/${PROFILE_REPO}` }, { kind: 'host', target: 'github', action: 'enrolment' }],
+      product: joiningNow ? { isNew: false, joining: true, host: null, repo: `${long}/${long}`, name: long } : { isNew: false, host: 'github', repo: `${long}/${long}`, name: long },
+      owner: long, user: `${long}-me`, way: WAYS.own, app: { own: true, account: long, name: long }, signedIn: false, appKeys: null, twoAccounts: true, base: 'https://gitlab.com',
+    });
+    composeCard({ ...card, target: { step: 3, hash: '0'.repeat(64) } });
+  }
+  assert.ok(lengths.length > 0);
+  // Only the length refusal sends the card to a shorter form; any other fault surfaces.
+  assert.equal(isTooLong(new Error('A setup card text would pass 1200 characters (it is 1300)')), true);
+  assert.equal(isTooLong(new Error('A setup card needs its why')), false);
+  assert.throws(() => cardFor({ host: 'gitlab', changes: [], product: null }), TypeError);
+});
+
+test('on a company\'s GitLab the typed token is the way offered, and the card names the admin\'s part', async () => {
+  const TYPED = 'glpat-never-on-a-card-0001';
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = productFolder('shop');
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['localhost:8929'] }));
+    await withOrigin(folder, `https://localhost:8929/${USER}/shop.git`);
+    const step = stepFor(w, { certificateProbe: async () => 'ok' });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.narrow }));
+    const signing = planned.changes.find((c) => c.action === 'sign-in');
+    assert.equal(signing.via, 'token');
+    assert.match(planned.card.what, /with a token pasted into your computer's box, never the chat/);
+    assert.match(planned.card.what, /never the chat/);
+    // The admin's part is its own sentence: it says what actually switches setup to the browser.
+    const [main, admin] = planned.card.what.split('; for your company\'s GitLab admin');
+    assert.ok(admin, planned.card.what);
+    assert.doesNotMatch(main, /read_user|client_id|openid|permissions/);
+    assert.match(admin, /register an application and give its id to glab here for the browser/);
+    assert.match(admin, /company's job, not setup's/);
+    // It composes as a card, and says nothing the glossary would have to put into plain words.
+    const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
+    assert.ok(question.question.length > 0);
+    assert.deepEqual(termsIn(planned.card.what.split('; ').filter((part) => /token|admin/.test(part)).join('; '), glossaryOf({})), []);
+    assert.match(planned.director, /token/);
+    assert.doesNotMatch(planned.card.what, new RegExp(TYPED));
+    // Where the company has registered an application, the browser way stays.
+    const registered = standIn({ signedIn: { github: true, gitlab: false } });
+    const base = registered.run;
+    registered.run = async (file, args = [], options = {}) => {
+      if (path.basename(file) === 'glab' && args[0] === 'config' && args[1] === 'get') return { code: 0, stdout: 'an-application-id\n', stderr: '' };
+      return base(file, args, options);
+    };
+    const browser = await answerAll(stepFor(registered, { certificateProbe: async () => 'ok' }), ctxFor(folder), choose({ way: WAYS.narrow }));
+    assert.deepEqual(browser.changes.find((c) => c.action === 'sign-in'), { kind: 'host', target: 'gitlab', action: 'sign-in' });
+    assert.match(browser.card.what, /in your browser/);
+  });
+});
+
+// ---- The company's own certificate (check 71) ----
+
+const COMPANY_ORIGIN = 'https://git.example.org:8443';
+const authorityFixture = () => fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+
+async function companyProduct() {
+  const folder = productFolder('shop');
+  fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
+  await withOrigin(folder, `${COMPANY_ORIGIN}/${USER}/shop.git`);
+  return folder;
+}
+
+test('a company GitLab whose certificate is not trusted gets a certificate step first, recorded in the journal, and the step carries on in a fresh process', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = await companyProduct();
+    const probed = [];
+    const calls = [];
+    const certificateRun = async (file, args) => {
+      calls.push([path.basename(file), ...args]);
+      return file === 'security' ? { code: 0, stdout: authorityFixture(), stderr: '' } : { code: 0, stdout: '', stderr: '' };
+    };
+    const step = stepFor(w, {
+      // A staged file (`file`) is tried against GitLab alone, and here it covers GitLab's certificate.
+      certificateProbe: async (a) => { if (a.file !== undefined) return 'ok'; probed.push([a.base, a.home]); return answer; },
+      trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
+    });
+    let answer = 'certificate';
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(probed, [[COMPANY_ORIGIN, wheelhouseHome()]]);
+    assert.deepEqual(planned.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
+    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443.*that address only.*certificate checks stay on/);
+    assert.ok(planned.changes.findIndex((c) => c.action === 'certificate') < planned.changes.findIndex((c) => c.action === 'sign-in'));
+    assert.ok(!fs.existsSync(caFile(wheelhouseHome())), 'planning changes nothing');
+
+    // Applied: the file, glab's setting for host:port, a journal entry holding the git setting for that
+    // address; nothing is signed in, and nothing is pushed (git is not run).
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => {
+      assert.equal(error.message, CERTIFICATE_GIVEN(COMPANY_ORIGIN));
+      return true;
+    });
+    const file = caFile(wheelhouseHome());
+    assert.equal(fs.readFileSync(file, 'utf8'), authorityFixture().replace(/^#.*\n/gm, ''));
+    assert.deepEqual(calls.map((c) => c[0]), ['security', 'security', 'glab']);
+    assert.deepEqual(calls.at(-1).slice(1), ['config', 'set', 'ca_cert', file, '--host', 'git.example.org:8443']);
+    assert.ok(!w.calls.some((c) => c.tool === 'glab' && c.args[0] === 'auth' && c.args[1] === 'login'));
+    const entry = findRun(folder).changes.find((c) => c.kind === 'answer' && c.after?.certificate);
+    assert.deepEqual(entry.after.certificate, {
+      base: COMPANY_ORIGIN, file, glabHost: 'git.example.org:8443', gitConfig: [{ key: `http.${COMPANY_ORIGIN}/.sslCAInfo`, value: file }],
+    });
+
+    // Planned again (the fresh process): GitLab is asked with the file, which covers it, so no certificate step.
+    probed.length = 0;
+    answer = 'ok';
+    const again = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(probed, [[COMPANY_ORIGIN, wheelhouseHome()]]);
+    assert.ok(again.changes.every((c) => c.action !== 'certificate'));
+  });
+});
+
+test('the certificate step is offered again whenever GitLab still does not trust, after a glab failure or with the file already there', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = await companyProduct();
+    const calls = [];
+    let glabWorks = false;
+    const certificateRun = async (file, args) => {
+      calls.push([path.basename(file), ...args]);
+      if (file === 'security') return { code: 0, stdout: authorityFixture(), stderr: '' };
+      return glabWorks ? { code: 0, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'glab: cannot write its configuration' };
+    };
+    let answer = 'certificate';
+    const step = stepFor(w, {
+      certificateProbe: async (a) => (a.file !== undefined ? 'ok' : answer),
+      trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
+    });
+    const first = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(first.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
+
+    // glab fails: the step says so, and leaves no file (so nothing says the work is done).
+    await assert.rejects(applyStep(step, folder, first.changes, { answers: first.answers }), /glab could not be given the company's certificate for git\.example\.org:8443/);
+    assert.ok(!fs.existsSync(caFile(wheelhouseHome())));
+    assert.deepEqual(fs.readdirSync(path.dirname(caFile(wheelhouseHome()))), [], 'no staged file is left either');
+    assert.equal(findRun(folder).changes.filter((c) => c.after?.certificate).length, 0, 'nothing is journaled as done');
+
+    // The second plan offers the step again, and it now works.
+    const second = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(second.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN });
+    glabWorks = true;
+    await assert.rejects(applyStep(step, folder, second.changes, { answers: second.answers }), /Setup has given this computer your company's certificate/);
+    assert.ok(fs.existsSync(caFile(wheelhouseHome())));
+
+    // The file is there but GitLab is still not trusted (an authority IT installed since): offered again,
+    // with the certificates read again from the store, and the file replaced.
+    const old = fs.readFileSync(caFile(wheelhouseHome()), 'utf8');
+    const securityBefore = calls.filter((c) => c[0] === 'security').length;
+    const third = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+    assert.deepEqual(third.changes[0], { kind: 'host', target: 'gitlab', action: 'certificate', base: COMPANY_ORIGIN, refresh: true });
+    await assert.rejects(applyStep(step, folder, third.changes, { answers: third.answers }), /Setup has given this computer/);
+    assert.equal(calls.filter((c) => c[0] === 'security').length, securityBefore + 2, 'the store was read again');
+    assert.equal(fs.readFileSync(caFile(wheelhouseHome()), 'utf8'), old);
+
+    // A refresh whose glab step fails leaves the file that was there.
+    glabWorks = false;
+    await assert.rejects(applyStep(step, folder, third.changes, { answers: third.answers }), /glab could not be given/);
+    assert.equal(fs.readFileSync(caFile(wheelhouseHome()), 'utf8'), old);
+    assert.deepEqual(fs.readdirSync(path.dirname(caFile(wheelhouseHome()))), ['company.pem']);
+  });
+});
+
+test('a staged certificate file that GitLab still does not trust is thrown away with a plain line, glab is not run and nothing is journaled; one that passes is kept as before', async () => {
+  await withHome(async () => {
+    const w = standIn({ signedIn: { github: true, gitlab: false } });
+    const folder = await companyProduct();
+    const calls = [];
+    const certificateRun = async (file, args) => {
+      calls.push([path.basename(file), ...args]);
+      return file === 'security' ? { code: 0, stdout: authorityFixture(), stderr: '' } : { code: 0, stdout: '', stderr: '' };
+    };
+    const tried = [];
+    let staged = 'certificate';
+    const step = stepFor(w, {
+      certificateProbe: async (a) => {
+        if (a.file === undefined) return 'certificate';
+        tried.push(a.file);
+        assert.ok(fs.existsSync(a.file), 'the staged file is there to be tried');
+        assert.notEqual(a.file, caFile(wheelhouseHome()), 'it is tried before it is put in place');
+        return staged;
+      },
+      trustCertificate: (a) => applyCompanyCa({ ...a, run: certificateRun }),
+    });
+    const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+
+    // The store does not hold the company's authority: a plain line, the staged file gone, no file,
+    // glab not run, nothing journaled, and the same card offered again with the same honest result.
+    for (let again = 0; again < 2; again += 1) {
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => {
+        assert.equal(error.message, CERTIFICATE_NOT_IN_STORE);
+        assert.match(error.message, /isn't in this computer's system store.*System keychain \(Mac\) or the Local Machine store \(Windows\).*ask for step 3's card again/);
+        return true;
+      });
+    }
+    assert.equal(tried.length, 2);
+    assert.ok(!fs.existsSync(caFile(wheelhouseHome())));
+    assert.deepEqual(fs.readdirSync(path.dirname(caFile(wheelhouseHome()))), [], 'no staged file is left');
+    assert.ok(!calls.some((c) => c[0] === 'glab'), 'glab was not run');
+    assert.equal(findRun(folder).changes.filter((c) => c.after?.certificate).length, 0, 'nothing is journaled');
+
+    // One that passes: kept, glab told, journaled, as before.
+    staged = 'ok';
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }), (error) => {
+      assert.equal(error.message, CERTIFICATE_GIVEN(COMPANY_ORIGIN));
+      return true;
+    });
+    assert.ok(fs.existsSync(caFile(wheelhouseHome())));
+    assert.ok(calls.some((c) => c[0] === 'glab'));
+    assert.equal(findRun(folder).changes.filter((c) => c.after?.certificate).length, 1);
+  });
+});
+
+test('the probe uses the company\'s file when it is there, and the certificates Node.js trusts otherwise', async () => {
+  await withHome(async () => {
+    const home = wheelhouseHome();
+    const asked = [];
+    const get = async ({ ca }) => { asked.push(ca); };
+    const fetch = async () => { asked.push('fetch'); return { status: 401 }; };
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get }), 'ok');
+    fs.mkdirSync(path.dirname(caFile(home)), { recursive: true });
+    fs.writeFileSync(caFile(home), authorityFixture());
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get }), 'ok');
+    assert.deepEqual(asked, ['fetch', authorityFixture()]);
+    const refuses = async () => { throw Object.assign(new Error('unable to verify'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' }); };
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, fetch, get: refuses }), 'certificate');
+    // A named file is tried on its own, whether or not the company's file is in place.
+    const only = path.join(home, 'staged.pem');
+    fs.writeFileSync(only, 'STAGED');
+    asked.length = 0;
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, home, file: only, fetch, get }), 'ok');
+    assert.deepEqual(asked, ['STAGED']);
+    assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, file: only, fetch, get: refuses }), 'certificate');
+  });
+});
+
+test('no certificate step is listed when GitLab\'s certificate is trusted, the address is the public service\'s, or the probe cannot tell', async () => {
+  for (const [answer, origin, want] of [['ok', COMPANY_ORIGIN, 1], ['unreachable', COMPANY_ORIGIN, 1], ['other', COMPANY_ORIGIN, 1], ['certificate', 'https://gitlab.com', 0]]) {
+    await withHome(async () => {
+      const w = standIn({ signedIn: { github: true, gitlab: false } });
+      const folder = productFolder('shop');
+      fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ gitlabHosts: ['git.example.org:8443'] }));
+      await withOrigin(folder, `${origin}/${USER}/shop.git`);
+      let probes = 0;
+      const step = stepFor(w, { certificateProbe: async () => { probes += 1; return answer; } });
+      const planned = await answerAll(step, ctxFor(folder), choose({ way: WAYS.quick }));
+      assert.equal(probes, want, `${answer} ${origin}`);
+      assert.ok(planned.changes.every((c) => c.action !== 'certificate'), `${answer} ${origin}`);
+    });
+  }
+  // The probe itself: a trusted certificate is 'ok' whatever GitLab then answers; the codes decide the rest.
+  const failing = (code) => async () => { throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('x'), { code }) }); };
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: async () => ({ status: 401, body: null }) }), 'ok');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('UNABLE_TO_VERIFY_LEAF_SIGNATURE') }), 'certificate');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('ECONNREFUSED') }), 'unreachable');
+  assert.equal(await probeCertificate({ base: COMPANY_ORIGIN, fetch: failing('EWHATEVER') }), 'other');
+});
+
+test('setup\'s git carries the company\'s certificate for that address once the file is made, and only then', async () => {
+  await withHome(async () => {
+    const certificateKey = `http.${COMPANY_ORIGIN}/.sslCAInfo`;
+    const pairs = (env) => Object.keys(env).filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]);
+    const before = directorGitEnv({ host: 'gitlab', platform: 'darwin', base: COMPANY_ORIGIN });
+    assert.ok(!pairs(before).some(([k]) => k === certificateKey));
+    fs.mkdirSync(path.dirname(caFile(wheelhouseHome())), { recursive: true });
+    fs.writeFileSync(caFile(wheelhouseHome()), authorityFixture());
+    const after = directorGitEnv({ host: 'gitlab', platform: 'darwin', base: COMPANY_ORIGIN });
+    assert.deepEqual(pairs(after).filter(([k]) => /ssl/i.test(k) && k.startsWith('http.') && !k.startsWith('http.sslVerify')), [[certificateKey, caFile(wheelhouseHome())]]);
+    assert.equal(after.GIT_CONFIG_COUNT, String(pairs(after).length));
+    assert.equal(after.GIT_CONFIG_GLOBAL, '/dev/null');
+    assert.equal(after.GIT_CONFIG_NOSYSTEM, '1');
+    // The sign-in helper and the fence are still there, ahead of it.
+    assert.ok(pairs(after).some(([k, v]) => k === 'credential.helper' && /auth git-credential/.test(v)));
+    assert.deepEqual(pairs(after).find(([k]) => k === 'http.sslVerify'), ['http.sslVerify', 'true']);
+    // Not for the public service, GitHub, or a call that names no address.
+    for (const given of [{ host: 'gitlab', base: 'https://gitlab.com' }, { host: 'github', base: COMPANY_ORIGIN }, { host: 'gitlab' }]) {
+      assert.ok(!pairs(directorGitEnv({ ...given, platform: 'darwin' })).some(([k]) => /sslcainfo|sslbackend/i.test(k)), JSON.stringify(given));
+    }
+    // On Windows it is the system store.
+    const win = directorGitEnv({ host: 'gitlab', platform: 'win32', base: COMPANY_ORIGIN });
+    assert.ok(pairs(win).some(([k, v]) => k === `http.${COMPANY_ORIGIN}/.sslBackend` && v === 'schannel'));
   });
 });
 

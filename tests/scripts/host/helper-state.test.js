@@ -15,9 +15,12 @@ import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
+import { HOST_UNREACHABLE, CERTIFICATE_NOT_TRUSTED, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
+import { connectionOf } from '../../../scripts/host/helper.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
+import { FENCE } from '../../../scripts/setup/git.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { keep, taken } from '../../../scripts/hooks/pending.js';
@@ -83,18 +86,18 @@ async function privateRepo() {
 
 // One computer: its own home, an enrolled signing key, a project record, and a
 // helper whose connection is the key. (In this process, so one call at a time.)
-async function computer(repo, { adapter = fakeAdapter(), envFor } = {}) {
+async function computer(repo, { adapter = fakeAdapter(), envFor, project = {}, run: runOver = hostGuard } = {}) {
   const home = shortHome();
   const entry = await as(home, async () => {
     const made = makeSigningKey();
     const e = { ...made, enrolledAt: '2026-10-18T00:00:00.000Z' };
     enrol(e);
-    writeProject(PROJECT, record(repo.url));
+    writeProject(PROJECT, { ...record(repo.url), ...project });
     return e;
   });
   let tick = 0; // each call to now() is a second later, so a touch is never the same as the take before it
   const helper = await as(home, () => startHelper({
-    run: hostGuard,
+    run: runOver,
     address: testAddress(home),
     adapterFor: async () => adapter,
     envFor: envFor ?? (async () => ({ mode: 'narrow', env: hostKeyEnv(repo.host.url, TOKEN) })),
@@ -647,6 +650,121 @@ test('a write while the host is away is kept, and a later sync pushes it', async
       assert.ok(!JSON.stringify([away, synced]).includes(TOKEN));
     });
   } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
+});
+
+test('a write while a company GitLab is away says so in the one line, and is kept for a later sync', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } } });
+  try {
+    await c.as(async () => {
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+    });
+    await repo.host.close();
+    await c.as(async () => {
+      const away = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
+      assert.equal(away.ok, true);
+      assert.equal(away.pushed, false);
+      assert.equal(away.refused, HOST_UNREACHABLE(repo.host.url));
+      // The helper says so on /health, for the board, for this project alone.
+      assert.deepEqual((await c.client.health()).away, { [PROJECT]: repo.host.url });
+      assert.deepEqual(await c.client.state.sync({ project: PROJECT }), { ok: true, pulled: false, unpushed: 1 });
+    });
+  } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
+});
+
+test('git is given the company\'s certificate for that project\'s address only, once setup has made the file', async () => {
+  const repo = await privateRepo();
+  const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+  const seen = [];
+  const spy = (file, args, options) => {
+    seen.push({ file, args, env: options?.env ?? {} });
+    return hostGuard(file, args, options);
+  };
+  const gitlab = { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } };
+  const settingsOf = (env) => Object.keys(env).filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map((k) => [env[k], env[k.replace('KEY', 'VALUE')]]);
+  // Every call goes through safeGit, so each carries the fence's settings and a clearing of the credential helpers; a call
+  // that talks to the host also carries the connection's own pairs, which are the ones that matter here.
+  const fenceKeys = new Set(FENCE.map(([key]) => key.toLowerCase()));
+  const beyondFence = (env) => settingsOf(env).filter(([k, v]) => !fenceKeys.has(k.toLowerCase()) && !(k === 'credential.helper' && v === ''));
+  const certificateKey = `http.${repo.host.url}/.sslCAInfo`;
+  const c = await computer(repo, { project: gitlab, run: spy });
+  try {
+    // Before setup has made the file: no certificate setting anywhere.
+    await c.as(async () => {
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+    });
+    const gitCalls = () => seen.filter((s) => s.file === 'git' && s.env.GIT_CONFIG_COUNT !== undefined && beyondFence(s.env).length > 0);
+    assert.ok(gitCalls().length > 0);
+    assert.ok(gitCalls().every((s) => !settingsOf(s.env).some(([k]) => /sslcainfo|sslbackend/i.test(k))));
+    // After: the setting for this address, beside the key, in the environment of the call (no file of git's).
+    seen.length = 0;
+    const file = await c.as(async () => {
+      const made = writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
+      assert.equal(made, caFile(process.env.WHEELHOUSE_HOME));
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } })).pushed, true);
+      return made;
+    });
+    const withIt = gitCalls().filter((s) => settingsOf(s.env).some(([k]) => k === certificateKey));
+    assert.ok(withIt.length > 0);
+    for (const s of gitCalls()) {
+      const own = beyondFence(s.env).filter(([k]) => /ssl/i.test(k));
+      assert.deepEqual(own, [[certificateKey, file]]);
+      assert.equal(s.env.GIT_CONFIG_COUNT, String(settingsOf(s.env).length));
+      // The fence is whole beside it, the clearing of credential helpers is first, and the certificate comes after the connection's own pairs.
+      const pairs = settingsOf(s.env);
+      assert.deepEqual(pairs[0], ['credential.helper', '']);
+      for (const [key, value] of FENCE) assert.ok(pairs.some(([k, v]) => k === key && v === value), `${key} stays set`);
+      const connectionAt = pairs.findIndex(([k, v]) => !fenceKeys.has(k.toLowerCase()) && !/ssl/i.test(k) && !(k === 'credential.helper' && v === ''));
+      assert.ok(connectionAt >= 0, 'the connection\'s own pair is there to come after');
+      assert.ok(pairs.findIndex(([k]) => k === certificateKey) > connectionAt);
+      assert.equal(s.env.GIT_CONFIG_NOSYSTEM, '1');
+    }
+    assert.ok(withIt.some((s) => s.args.includes('push')), 'the push carries it');
+    assert.ok(!seen.some((s) => s.args.some((a) => /--global|--system/.test(String(a)))));
+  } finally { await c.close(); await repo.cleanup(); }
+  // A GitHub project never gets it, file or no file.
+  const other = await privateRepo();
+  seen.length = 0;
+  const d = await computer(other, { run: spy });
+  try {
+    await d.as(async () => {
+      writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
+      assert.equal((await d.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+    });
+    assert.ok(seen.every((s) => !JSON.stringify(s.env).includes('sslCAInfo')));
+  } finally { await d.close(); await other.cleanup(); }
+});
+
+test('a write refused over the company\'s certificate says the certificate line, never git\'s own text', async () => {
+  const repo = await privateRepo();
+  let down = false;
+  const sslText = `fatal: unable to access '${repo.host.url}/o/p.git/': SSL certificate problem: unable to get local issuer certificate`;
+  const spy = (file, args, options) => (down && file === 'git' && (args.includes('fetch') || args.includes('ls-remote')) && args.includes('origin')
+    ? { code: 128, stdout: '', stderr: sslText, timedOut: false }
+    : hostGuard(file, args, options));
+  const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } }, run: spy });
+  try {
+    await c.as(async () => {
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+      down = true;
+      const refused = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
+      assert.equal(refused.pushed, false);
+      assert.equal(refused.refused, CERTIFICATE_NOT_TRUSTED(repo.host.url));
+      assert.doesNotMatch(JSON.stringify(refused), /SSL certificate problem|unable to access/);
+      assert.equal((await c.client.health()).away, undefined, 'a certificate is not an unreachable server');
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
+test('an environment carrying only the certificate setting is not a key', () => {
+  const certificate = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://git.example.org/.sslCAInfo', GIT_CONFIG_VALUE_0: '/home/pat/.wheelhouse/ca/company.pem' };
+  assert.equal(connectionOf(certificate).mode, 'quick');
+  assert.equal(connectionOf({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://git.example.org/.sslBackend', GIT_CONFIG_VALUE_0: 'schannel' }).mode, 'quick');
+  // The header with a key still makes it narrow, with the certificate beside it or not.
+  const header = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://git.example.org/.extraheader', GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic eDp5' };
+  assert.equal(connectionOf(header).mode, 'narrow');
+  assert.equal(connectionOf({ ...header, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_1: certificate.GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_1: certificate.GIT_CONFIG_VALUE_0 }).mode, 'narrow');
+  assert.equal(connectionOf({ GITLAB_TOKEN: 'glpat-x' }).mode, 'narrow');
 });
 
 test('two computers writing at once through their own helpers both land', async () => {

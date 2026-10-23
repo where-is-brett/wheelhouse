@@ -67,7 +67,7 @@ import { startWatcher } from '../foreman/start.js';
 import { projectConfig } from '../watcher/main.js';
 import { readJournal, newId } from './journal.js';
 import { HEALTH_STEP } from '../lib/setup-run.js';
-import { directorGitEnv, directorGitlabApi, STOPPED } from './host.js';
+import { directorGitEnv, directorGitlabApi, STOPPED, launchedIn } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 
@@ -269,14 +269,14 @@ async function gitIn(run, { gitPath, env, dir }, args) {
 
 // git for the trial, with the director's own sign-in, in a new scratch repository, to `use`; the
 // scratch is removed afterwards. Never the director's own folder.
-async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl }, use) {
+async function withTrialGit({ run, findGit, gitEnvFor, host, platform, remoteUrl, base }, use) {
   const located = await findGit({ platform });
   if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-health-'));
   try {
     // https only, with a local path too only when the project's address as setup recorded it is one
     // (ruling R111).
-    const git = { gitPath: located.path, env: reaching(gitEnvFor({ host, gitPath: located.path, platform }), remoteUrl), dir };
+    const git = { gitPath: located.path, env: reaching(gitEnvFor({ host, gitPath: located.path, platform, base }), remoteUrl), dir };
     await gitIn(run, git, ['init', '-q', '--bare', '.']);
     return await use(git);
   } finally {
@@ -336,9 +336,9 @@ export async function closeOpenTrial({
   if (trial === null) return null;
   const projectRecord = readProject(trial.project);
   if (projectRecord === null) return null;
-  const adapter = (adapterFor ?? (({ host, repo }) => makeAdapter({ host, repo, run, env: {} })))({ host: projectRecord.host, repo: projectRecord.repo });
+  const adapter = (adapterFor ?? (({ host, repo, base }) => makeAdapter({ host, repo, run, env: {}, base })))({ host: projectRecord.host, repo: projectRecord.repo, base: projectRecord.connection?.baseUrl });
   const finder = findGit ?? (async ({ platform: p }) => (await toolsStatus({ platform: p, run, tools: ['git'] })).git);
-  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: projectRecord.remoteUrl }, (git) => use({ ...git, run }));
+  const gitFor = (use) => withTrialGit({ run, findGit: finder, gitEnvFor, host: projectRecord.host, platform, remoteUrl: projectRecord.remoteUrl, base: projectRecord.connection?.baseUrl }, (git) => use({ ...git, run }));
   return closeTrial({ project: trial.project, projectRecord, pr: trial.pr, sha: trial.sha, adapter, gitFor, record });
 }
 
@@ -415,9 +415,9 @@ function checkPinsNow({ folder }) {
 
 // The host's protection, read back with the director's own sign-in: 'on', 'off', or 'not offered'
 // on a plan without it.
-async function readProtectionNow({ host, repo, run }) {
-  const api = host === 'gitlab' ? await directorGitlabApi({ run }) : undefined;
-  const read = await protectionStatus({ host, repo, run, api, env: {} });
+async function readProtectionNow({ host, repo, run, realUsers = false, base }) {
+  const api = host === 'gitlab' ? await directorGitlabApi({ run, baseUrl: base }) : undefined;
+  const read = await protectionStatus({ host, repo, run, api, env: {}, realUsers, director: true });
   if (read.on === true) return 'on';
   return read.available === false ? 'not offered' : 'off';
 }
@@ -425,19 +425,19 @@ async function readProtectionNow({ host, repo, run }) {
 // Whether step 10's apply, the helper's half, has finished: done or not, the board decides that.
 const applied = (run) => typeof run?.steps?.[HEALTH_STEP]?.doneAt === 'string';
 
-// Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo })` the adapter, with the
+// Step 10. `run` runs git and the host's tools; `adapterFor({ host, repo, base })` the adapter, with the
 // director's own sign-in; `client` the helper's client the merge is asked through; `findGit` the
-// git step 2 found; `gitEnvFor({ host, gitPath, platform })` git's environment; `trySTOP`,
-// `checkPins({ folder })` and `readProtection({ host, repo })` the other checks. All for tests.
+// git step 2 found; `gitEnvFor({ host, gitPath, platform, base })` git's environment; `trySTOP`,
+// `checkPins({ folder })` and `readProtection({ host, repo, realUsers, base })` the other checks. All for tests.
 export function healthStep({
   run = realRun,
-  adapterFor = ({ host, repo }) => makeAdapter({ host, repo, run, env: {} }),
+  adapterFor = ({ host, repo, base }) => makeAdapter({ host, repo, run, env: {}, base }),
   client,
   findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
   gitEnvFor = directorGitEnv,
   trySTOP = () => stopTrial({ run }),
   checkPins = checkPinsNow,
-  readProtection = ({ host, repo }) => readProtectionNow({ host, repo, run }),
+  readProtection = ({ host, repo, realUsers, base }) => readProtectionNow({ host, repo, run, realUsers, base }),
 } = {}) {
   return {
     n: HEALTH_STEP,
@@ -475,9 +475,9 @@ export function healthStep({
         if (ctx.stopped?.() === true) throw new Error(STOPPED);
       };
       halt();
-      const adapter = adapterFor({ host: record.host, repo: record.repo });
+      const adapter = adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl });
       const asker = client ?? helperClient({ timeout: HEALTH_MERGE_WAIT_MS });
-      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: record.remoteUrl }, (git) => use({ ...git, run }));
+      const gitFor = (use) => withTrialGit({ run, findGit, gitEnvFor, host: record.host, platform, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl }, (git) => use({ ...git, run }));
       // A trial an earlier attempt left open is closed first: a pull request from the same branch
       // can't be opened twice (ruling R68).
       await closeOpenTrial({ setupRun: readJournal().runs.find((r) => r?.id === ctx.runId) ?? null, record: ctx.record, run, adapterFor, findGit, gitEnvFor, platform });
@@ -522,7 +522,7 @@ export function healthStep({
         add('installed skills', pins);
         let protection = 'could not run';
         try {
-          protection = await readProtection({ host: record.host, repo: record.repo });
+          protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project), ...(record.connection?.baseUrl ? { base: record.connection.baseUrl } : {}) });
         } catch { /* could not run */ }
         add('host protection', protection);
       } catch (error) {

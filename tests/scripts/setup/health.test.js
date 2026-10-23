@@ -29,6 +29,9 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { caFile } from '../../../scripts/host/company-ca.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import { withProject, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
 // The session's seven trial lines, every one as expected.
@@ -181,6 +184,73 @@ const stepWith = (adapter, client, extra = {}) => healthStep({
   adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
 });
 const cleanups = (recorded) => recorded.filter((c) => c.kind === 'answer' && c.after?.cleanup).map((c) => c.after.cleanup);
+
+test('step 10 reads the host\'s protection knowing whether the project has real users', async () => {
+  for (const launched of [false, true]) {
+    await withProject(async ({ folder }) => {
+      if (launched) {
+        const file = path.join(stateDir(SLUG), 'events', '2026', 'phase.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ v: 1, id: '0f1e2d3c-0000-4000-8000-000000000009', at: '2026-10-19T00:00:00.000Z', computer: 'c-first', kind: 'setting', data: { key: 'phase', value: 'launched' } }));
+      }
+      const { remote } = await productOnRemote(folder);
+      const { adapter } = standIn(remote);
+      const { client } = merges(REFUSED);
+      const seen = [];
+      const step = stepWith(adapter, client, { readProtection: async (asked) => { seen.push(asked); return 'on'; } });
+      const { changes } = await step.plan({ folder });
+      const { ctx } = ctxFor(folder, remote);
+      await step.apply(ctx, changes);
+      assert.deepEqual(seen, [{ host: 'github', repo: REPO, realUsers: launched }]);
+    });
+  }
+});
+
+test('step 10 on a company GitLab uses the company address for the adapter, git\'s certificate pair and the protection read', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    writeProject(SLUG, { folder, remoteUrl: remote, host: 'gitlab', repo: REPO, connection: { baseUrl: COMPANY } });
+    const file = caFile(wheelhouseHome());
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'CERTIFICATES\n');
+    const { adapter } = standIn(remote);
+    const bases = [];
+    const glab = [];
+    const gitEnvs = [];
+    const run = async (command, args = [], options = {}) => {
+      const name = path.basename(command);
+      if (name === 'git') { gitEnvs.push(options.env ?? {}); return realRun(command, args, options); }
+      if (name === 'glab') {
+        glab.push({ args: [...args], env: options.env });
+        return { code: 0, stdout: 'Token found: glpat-made-up-0001\n', stderr: '' };
+      }
+      return { code: 1, stdout: '', stderr: 'not run in this test' };
+    };
+    const asked = [];
+    const fetched = globalThis.fetch;
+    globalThis.fetch = async (url) => { asked.push(String(url)); return new Response('{}', { status: 404 }); };
+    try {
+      const step = healthStep({
+        run, adapterFor: ({ base }) => { bases.push(base); return adapter; }, client: merges(REFUSED).client, findGit: GIT,
+        trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match',
+      });
+      const { changes } = await step.plan({ folder });
+      const { ctx } = ctxFor(folder, remote);
+      await step.apply(ctx, changes).catch(() => null);
+    } finally {
+      globalThis.fetch = fetched;
+    }
+    // The adapter is made for the company's address (here and for the leftover trial's closing).
+    assert.ok(bases.length >= 1 && bases.every((b) => b === COMPANY), JSON.stringify(bases));
+    // Git carries the certificate for that address, and no check is switched off.
+    const pairs = gitEnvs.flatMap((env) => Object.entries(env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([, key]) => key));
+    assert.ok(gitEnvs.length > 0 && pairs.includes(`http.${COMPANY}/.sslCAInfo`), JSON.stringify(pairs));
+    // The protection read is made at the company's address, with glab told the host.
+    assert.ok(asked.length > 0 && asked.every((u) => u.startsWith(`${COMPANY}/api/v4/`)), JSON.stringify(asked));
+    assert.ok(glab.length > 0 && glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab));
+  });
+});
 
 test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, STOP holds, and the pull request is left open for the session', async () => {
   await withProject(async ({ folder }) => {
