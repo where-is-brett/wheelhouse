@@ -414,6 +414,7 @@ export const PUSH_REFUSALS = {
   ciFile: 'the branch changes a CI file, so it needs the director\'s click on its card',
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
   outsideProject: 'the folder to push from is not inside the project',
+  notOwn: 'that is not the branch this folder is on: a push sends only the folder\'s own branch',
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   movedOn: 'the host\'s branch has moved on since this one was taken from it',
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
@@ -1191,6 +1192,9 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to push from was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PUSH_REFUSALS.outsideProject };
+    // The worktrees of one repository share its branches, so the folder's own branch is the only one
+    // it sends, as /pull brings in only that one. Like /pull's, this reads the folder's HEAD.
+    if (branchOf(dir) !== branch) return { ok: false, refused: PUSH_REFUSALS.notOwn };
     try {
       if (isPartialClone(dir)) return { ok: false, refused: PUSH_REFUSALS.partialClone };
     } catch {
