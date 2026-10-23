@@ -3,7 +3,9 @@
 // place of giving its list. The helper composes and records the card as asked; the prompt record
 // keeps a signed answer only on that exact card, for its run; the answers reach every step's plan,
 // so a Go ahead's hash includes them. A step may also wait, or settle on its answers alone.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +22,11 @@ import { main as cli } from '../../../scripts/setup/cli.js';
 import { AFTER_WAIT_MS, NOT_AN_ANSWER } from '../../../scripts/setup/engine.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const STEPS_MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
 const T0 = new Date('2026-10-19T03:00:00.000Z');
@@ -43,6 +50,7 @@ async function withSetup(fn, extra = {}) {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
     const helper = await startHelper({
+      run: hostGuard,
       address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}),
       now: () => T0, setupSteps: STEPS_MODULE, userHome: user, ...extra,
     });

@@ -1,20 +1,29 @@
 // scripts/state/git.js
 import path from 'node:path';
-import { run, withoutGitVars } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 
 // Every git call for the state and lock clones goes through here: no shell, a
 // fixed author so the director's own name and address never reach the branch,
 // no prompting, replace refs ignored, and no GIT_* variable inherited from
 // whatever started this process. `env`, when given (the helper passes the
 // connection's), is added on top; these clones are Wheelhouse's own, under
-// ~/.wheelhouse/, so a key may travel there.
+// ~/.wheelhouse/, so a key may travel there. The whole is fenced through
+// safeGitEnv: git's global and system config shut out, hooks off, and one
+// transport allowed: https, with a local path as well where the caller's
+// GIT_ALLOW_PROTOCOL already allows `file` (a local stand-in host).
 export function git(dir, args, env = {}) {
-  return run('git', ['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args], {
+  const allowed = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':');
+  const reach = allowed.includes('http') ? 'loopback' : allowed.includes('file') ? 'local' : 'https';
+  // look 'never': these are Wheelhouse's own clones under ~/.wheelhouse/, which no agent or project
+  // writes into; setup looks once before its sequence, and the helper looks once per request at
+  // each repository it uses (lookOnce in scripts/host/helper.js), before its first call here.
+  return safeGit({
     cwd: dir,
-    baseEnv: withoutGitVars(),
-    timeoutMs: 5 * 60 * 1000, // a hung remote reads as a failure, not a wait without end
     env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', ...env },
-  });
+    reach,
+    look: 'never',
+    timeoutMs: 5 * 60 * 1000, // a hung remote reads as a failure, not a wait without end
+  })(['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args]);
 }
 
 const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', git: '9418' };

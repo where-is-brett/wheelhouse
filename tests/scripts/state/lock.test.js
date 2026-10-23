@@ -3,11 +3,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readLock, takeLock, touchLock, holdsLock, heldCounter } from '../../../scripts/state/lock.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { run } from '../../../scripts/lib/run.js';
-import { makeBareRemote, push } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
@@ -26,7 +27,7 @@ async function as(home, fn) {
 }
 async function setup(remote) {
   const homes = [makeHome(), makeHome()];
-  for (const h of homes) await as(h, () => cloneState({ project: 'o__p', remoteUrl: remote.url }));
+  for (const h of homes) await as(h, () => cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url }));
   return homes;
 }
 const idOf = (h) => JSON.parse(fs.readFileSync(path.join(h, 'computer.json'), 'utf8')).id;
@@ -36,17 +37,17 @@ test('the first computer takes the lock with counter 1', async () => {
   try {
     const [a] = await setup(remote);
     await as(a, async () => {
-      assert.equal(await readLock({ project: 'o__p' }), null);
-      const r = await takeLock({ project: 'o__p', push, now: at(0) });
+      assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
+      const r = await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) });
       assert.deepEqual(r, { taken: true, counter: 1 });
-      const lock = await readLock({ project: 'o__p' });
+      const lock = await readLock({ env: LOCAL_PATHS, project: 'o__p' });
       assert.equal(lock.counter, 1);
       assert.equal(lock.takenAt, '2026-10-18T01:00:00.000Z');
       assert.equal(heldCounter({ project: 'o__p' }), 1);
-      assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), true);
-      assert.equal(await holdsLock({ project: 'o__p', counter: 2 }), false);
+      assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), true);
+      assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 2 }), false);
       // the same computer may take its own lock again
-      assert.deepEqual(await takeLock({ project: 'o__p', push, now: at(1000) }), { taken: true, counter: 2 });
+      assert.deepEqual(await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(1000) }), { taken: true, counter: 2 });
     });
   } finally { remote.cleanup(); }
 });
@@ -55,10 +56,10 @@ test('a second computer is refused while the lock is fresh, and told who holds i
   const remote = await makeBareRemote();
   try {
     const [a, b] = await setup(remote);
-    await as(a, () => takeLock({ project: 'o__p', push, now: at(0) }));
+    await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
     const holder = idOf(a);
     await as(b, async () => {
-      const r = await takeLock({ project: 'o__p', push, now: at(2 * HOUR - 1) });
+      const r = await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(2 * HOUR - 1) });
       assert.deepEqual(r, { taken: false, holder, since: '2026-10-18T01:00:00.000Z' });
       assert.equal(heldCounter({ project: 'o__p' }), null);
     });
@@ -69,9 +70,9 @@ test('a lock with no write for two hours can be taken over, and the counter rise
   const remote = await makeBareRemote();
   try {
     const [a, b] = await setup(remote);
-    await as(a, () => takeLock({ project: 'o__p', push, now: at(0) }));
+    await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
     await as(b, async () => {
-      assert.deepEqual(await takeLock({ project: 'o__p', push, now: at(2 * HOUR) }), { taken: true, counter: 2 });
+      assert.deepEqual(await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(2 * HOUR) }), { taken: true, counter: 2 });
       assert.equal(heldCounter({ project: 'o__p' }), 2);
     });
   } finally { remote.cleanup(); }
@@ -84,10 +85,10 @@ test('when two computers take a free lock at once, exactly one wins', async () =
     let bResult;
     // A has read the free lock; B takes it before A's push lands.
     const racingPush = async (dir, branch) => {
-      bResult = await as(b, () => takeLock({ project: 'o__p', push, now: at(0) }));
+      bResult = await as(b, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
       return push(dir, branch);
     };
-    const aResult = await as(a, () => takeLock({ project: 'o__p', push: racingPush, now: at(0) }));
+    const aResult = await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push: racingPush, now: at(0) }));
     assert.equal(bResult.taken, true);
     assert.equal(aResult.taken, false);
     assert.equal(aResult.holder, idOf(b));
@@ -104,8 +105,8 @@ test('any push failure other than non-fast-forward throws a plain error', async 
   try {
     const [a] = await setup(remote);
     await as(a, async () => {
-      await assert.rejects(takeLock({ project: 'o__p', push: async () => ({ ok: false, rejected: 'other' }), now: at(0) }), /could not be pushed/);
-      assert.equal(await readLock({ project: 'o__p' }), null);
+      await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push: async () => ({ ok: false, rejected: 'other' }), now: at(0) }), /could not be pushed/);
+      assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
     });
   } finally { remote.cleanup(); }
 });
@@ -115,12 +116,12 @@ test('touchLock updates lastWriteAt only for the holder', async () => {
   try {
     const [a, b] = await setup(remote);
     await as(a, async () => {
-      await takeLock({ project: 'o__p', push, now: at(0) });
-      assert.deepEqual(await touchLock({ project: 'o__p', push, now: at(HOUR) }), { touched: true });
-      assert.equal((await readLock({ project: 'o__p' })).lastWriteAt, '2026-10-18T02:00:00.000Z');
+      await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) });
+      assert.deepEqual(await touchLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR) }), { touched: true });
+      assert.equal((await readLock({ env: LOCAL_PATHS, project: 'o__p' })).lastWriteAt, '2026-10-18T02:00:00.000Z');
     });
     await as(b, async () => {
-      assert.deepEqual(await touchLock({ project: 'o__p', push, now: at(HOUR) }), { touched: false });
+      assert.deepEqual(await touchLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR) }), { touched: false });
     });
   } finally { remote.cleanup(); }
 });
@@ -129,23 +130,23 @@ test('holdsLock is false for a computer that lost the lock while asleep', async 
   const remote = await makeBareRemote();
   try {
     const [a, b] = await setup(remote);
-    await as(a, () => takeLock({ project: 'o__p', push, now: at(0) }));
-    await as(b, () => takeLock({ project: 'o__p', push, now: at(3 * HOUR) }));
+    await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
+    await as(b, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(3 * HOUR) }));
     await as(a, async () => {
-      assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false);
+      assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), false);
       assert.equal(heldCounter({ project: 'o__p' }), null);
-      assert.deepEqual(await touchLock({ project: 'o__p', push, now: at(3 * HOUR) }), { touched: false });
+      assert.deepEqual(await touchLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(3 * HOUR) }), { touched: false });
     });
-    await as(b, async () => assert.equal(await holdsLock({ project: 'o__p', counter: 2 }), true));
+    await as(b, async () => assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 2 }), true));
   } finally { remote.cleanup(); }
 });
 
 test('holdsLock fails closed when the remote cannot be reached', async () => {
   const remote = await makeBareRemote();
   const [a] = await setup(remote);
-  await as(a, () => takeLock({ project: 'o__p', push, now: at(0) }));
+  await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
   remote.cleanup();
-  await as(a, async () => assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false));
+  await as(a, async () => assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), false));
 });
 
 // Puts a lock.json with this text on the remote's lock branch, as another computer's push would.
@@ -169,8 +170,8 @@ test('an unreadable or malformed lock.json refuses the lock instead of counting 
       const [a] = await setup(remote);
       await plant(remote, text);
       await as(a, async () => {
-        await assert.rejects(takeLock({ project: 'o__p', push, now: at(5 * HOUR) }), /the lock can't be read/);
-        assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false);
+        await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(5 * HOUR) }), /the lock can't be read/);
+        assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), false);
         const heads = await run('git', ['--git-dir', remote.url, 'log', '--format=%s', 'wheelhouse-lock']);
         assert.equal(heads.stdout.trim(), 'plant', 'nothing was pushed over it');
       });
@@ -190,7 +191,7 @@ test('readLock checks the shape it returns', async () => {
       const [a] = await setup(remote);
       await plant(remote, JSON.stringify(lock));
       await as(a, async () => {
-        await assert.rejects(readLock({ project: 'o__p' }), /the lock can't be read/, JSON.stringify(lock));
+        await assert.rejects(readLock({ env: LOCAL_PATHS, project: 'o__p' }), /the lock can't be read/, JSON.stringify(lock));
       });
     } finally { remote.cleanup(); }
   }
@@ -198,7 +199,7 @@ test('readLock checks the shape it returns', async () => {
   try {
     const [a] = await setup(remote);
     await plant(remote, JSON.stringify(good));
-    await as(a, async () => assert.deepEqual(await readLock({ project: 'o__p' }), good));
+    await as(a, async () => assert.deepEqual(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), good));
   } finally { remote.cleanup(); }
 });
 
@@ -208,36 +209,42 @@ test('the lock clone\'s remote must be the state clone\'s', async () => {
   try {
     const [a] = await setup(remote);
     await as(a, async () => {
-      assert.equal(await readLock({ project: 'o__p' }), null);
+      assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
       const lockClone = path.join(a, 'projects', 'o__p', 'lock');
       await run('git', ['remote', 'set-url', 'origin', other.url], { cwd: lockClone });
-      await assert.rejects(readLock({ project: 'o__p' }), /state clone/);
-      await assert.rejects(takeLock({ project: 'o__p', push, now: at(0) }), /state clone/);
-      assert.equal(await holdsLock({ project: 'o__p', counter: 1 }), false);
+      await assert.rejects(readLock({ env: LOCAL_PATHS, project: 'o__p' }), /state clone/);
+      await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }), /state clone/);
+      assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), false);
       // the same repository spelled another way is the same remote
       await run('git', ['remote', 'set-url', 'origin', `file://${remote.url}`], { cwd: lockClone });
-      assert.equal(await readLock({ project: 'o__p' }), null);
+      assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
     });
   } finally { remote.cleanup(); other.cleanup(); }
 });
 
-test('holdsLock makes one round trip to the host', async () => {
+test('holdsLock makes one round trip to the host', { skip: process.platform === 'win32' }, async () => {
   const remote = await makeBareRemote();
+  const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  const shimDir = tempFolder('wh-shim-');
+  const trace = path.join(shimDir, 'trace.txt');
+  // git's own trace variables are shut out by the fence, so a program named git on the path records each call.
+  fs.writeFileSync(path.join(shimDir, 'git'), `#!/bin/sh\necho "built-in: git $*" >> '${trace}'\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const pathBefore = process.env.PATH;
   try {
     const [a] = await setup(remote);
     await as(a, async () => {
-      await takeLock({ project: 'o__p', push, now: at(0) });
+      await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) });
+      process.env.PATH = `${shimDir}${path.delimiter}${pathBefore}`;
       const trips = async () => {
-        const trace = path.join(a, 'trace.txt');
         fs.rmSync(trace, { force: true });
-        await holdsLock({ project: 'o__p', counter: 1, env: { GIT_TRACE: trace } });
+        await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 });
         const lines = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').split('\n') : [];
-        return lines.filter((l) => /\bgit (fetch|ls-remote|pull|clone)\b/.test(l) && !/run_command|exec/.test(l)).length;
+        return lines.filter((l) => / (fetch|ls-remote|pull|clone) /.test(l)).length;
       };
       assert.equal(await trips(), 1);
       // and the same when the remote has no lock branch
       await run('git', ['--git-dir', remote.url, 'update-ref', '-d', 'refs/heads/wheelhouse-lock']);
       assert.equal(await trips(), 1);
     });
-  } finally { remote.cleanup(); }
+  } finally { process.env.PATH = pathBefore; remote.cleanup(); }
 });

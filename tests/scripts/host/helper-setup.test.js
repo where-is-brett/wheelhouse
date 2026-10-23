@@ -1,7 +1,9 @@
 // tests/scripts/host/helper-setup.test.js
 // The helper's setup routes: a step's list is worked out by the helper, shown on a card named by
 // its hash, and applied only after the director's signed click on that card (design section 15).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +24,11 @@ import { planHash } from '../../../scripts/setup/steps.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
 
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
+
 const STEPS_MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
 const T0 = new Date('2026-10-19T03:00:00.000Z');
 const MINUTE = 60 * 1000;
@@ -33,6 +40,7 @@ function setWorld(home, world) {
 
 async function startOne(home, user, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}),
     now: () => T0, setupSteps: STEPS_MODULE, userHome: user, ...extra,
   });

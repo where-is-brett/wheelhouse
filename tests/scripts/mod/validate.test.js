@@ -367,6 +367,13 @@ test('a bridge that reaches the locked or setup files, or takes more than the re
   for (const clause of ['{ managedDir, other }', '* as managed', 'managed']) {
     assert.match(managed(clause).reaches.join('\n'), /scripts\/mod\/bridge\.js imports .* from scripts\/protection\/managed\.js/, clause);
   }
+  // scripts/setup/git.js, git's fence, is the one file of scripts/setup/ the bridge may import.
+  const fence = (name) => bridgeImports(tree(t, {
+    'scripts/mod/bridge.js': `import { a } from '../setup/${name}';\n`,
+    [`scripts/setup/${name}`]: 'export const a = 1;\n',
+  })).reaches;
+  assert.deepEqual(fence('git.js'), []);
+  assert.deepEqual(fence('host.js'), ['scripts/setup/host.js']);
   // A file the bridge doesn't import may import them.
   const apart = bridgeImports(tree(t, {
     'scripts/mod/bridge.js': "import { a } from '../a.js';\n",

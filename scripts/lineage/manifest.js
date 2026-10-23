@@ -12,7 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../lib/build-loop.js';
-import { run, withoutGitVars } from '../lib/run.js';
+import { run } from '../lib/run.js';
+import { reachFor, safeGit } from '../lib/safe-git.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -152,9 +153,11 @@ export function checkInstalled({ manifest, projectDir, claudeHome: home, locate 
 
 // Fetches `upstream` at its pinned commit, shallow, into `dir` (a new, empty folder).
 export async function fetchUpstream(upstream, dir) {
-  const env = { GIT_TERMINAL_PROMPT: '0' };
+  // `dir` is a new, empty folder of Wheelhouse's own, so there is no config of anyone else's to look
+  // at: the fence alone.
+  const fenced = safeGit({ run, cwd: dir, reach: reachFor(upstream.repo), look: 'never', timeoutMs: 300000 });
   const git = async (...args) => {
-    const result = await run('git', ['-c', 'core.autocrlf=false', ...args], { cwd: dir, baseEnv: withoutGitVars(), env, timeoutMs: 300000 });
+    const result = await fenced(['-c', 'core.autocrlf=false', ...args]);
     if (result.code !== 0) throw new Error(`git ${args[0]} failed for ${upstream.name}: ${result.stderr.trim().split('\n').pop()}`);
     return result.stdout.trim();
   };

@@ -6,7 +6,7 @@
 // The run ends finished with no green mark, and its last records are copied into the project's
 // state. Nothing real is signed in, installed or pushed: `gh` and `claude` are stand-ins, git runs
 // for real only against bare remotes in temporary folders, and every home is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -27,6 +27,12 @@ import { HOST_LABELS, WAYS, fromOtherComputer } from '../../../scripts/setup/hos
 import { READY, ARRIVED, READY_ID, ARRIVED_ID } from '../../../scripts/setup/notify.js';
 import { PUSH_TEST_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+
+// Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { withProject, T0 } from '../../helpers/setup-answers.js';
@@ -120,7 +126,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
         fs.writeFileSync(settings, JSON.stringify(JSON.parse(fs.readFileSync(settings, 'utf8'))));
         return answer(`Successfully installed plugin: ${args[2]} (scope: project)\n`);
       }
-      return realRun(file, args, options);
+      return hostGuard(file, args, options);
     };
     // setup-quiet-steps.js, whose fake computer steps 2 and 6 run on, reads its own world as it loads.
     fs.mkdirSync(wheelhouseHome(), { recursive: true });

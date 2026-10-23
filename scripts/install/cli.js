@@ -17,7 +17,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readManifest } from '../lineage/manifest.js';
-import { run, withoutGitVars } from '../lib/run.js';
+import { run } from '../lib/run.js';
+import { reachFor, safeGit } from '../lib/safe-git.js';
 import { readBrief } from './brief.js';
 import { surveyProject, upstreamsNeeded } from './survey.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -36,9 +37,11 @@ export async function cloneUpstreams(manifest, { runner = run } = {}) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wh-install-${upstream.name}-`));
       made.push(dir);
       const target = path.join(dir, 'repo.git');
-      const result = await runner('git', ['clone', '--bare', '--quiet', upstream.repo, target], {
-        cwd: dir, baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: CLONE_WAIT_MS,
-      });
+      // The folder is new and Wheelhouse's own, and the clone makes the repository in it, so there is
+      // no config of anyone else's to look at: the fence alone. A clone has no folder of its own to
+      // run in yet, so git runs in the new folder's parent.
+      const git = safeGit({ run: runner, cwd: dir, reach: reachFor(upstream.repo), look: 'never', timeoutMs: CLONE_WAIT_MS });
+      const result = await git(['clone', '--bare', '--quiet', upstream.repo, target]);
       if (result.code !== 0) throw new Error(`${upstream.name} could not be cloned: ${result.stderr.trim().split('\n').pop()}`);
       clones[upstream.name] = target;
     }

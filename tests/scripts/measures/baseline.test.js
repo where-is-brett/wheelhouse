@@ -3,7 +3,9 @@
 // director gives the note's figures at the front desk. `cli.js baseline` asks the helper, which
 // reads the figures back on a card; only the director's signed click on that card writes
 // <wheelhouseHome()>/measures/baseline.json, and the figures go nowhere else.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +26,12 @@ import { makeEvent, writeEvent, listEvents, carriesBaseline } from '../../../scr
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { LOCAL_PATHS } from '../../helpers/git-fixture.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const T0 = new Date('2026-10-19T03:00:00.000Z');
 // Made-up figures, each distinctive enough to search a home for.
@@ -88,7 +96,7 @@ async function withHelper(fn) {
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
     try {
       await fn({ home, client: helperClient({ address: helper.address }), setClock: (at) => { clock = at; } });
     } finally {
@@ -260,7 +268,7 @@ test('the figures reach no state event', async () => {
       makeEvent({ kind: 'note', data: { text: 'Record the private note\u2019s  FIGURES as the baseline' }, now: () => T0 }),
       makeEvent({ kind: 'note', data: { header: 'Baseline', text: `The note: ${COUNTED.toUpperCase()}` }, now: () => T0 }),
     ]) {
-      await assert.rejects(writeEvent({ project: P, event, push: false, now: () => T0 }), /baseline/);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: P, event, push: false, now: () => T0 }), /baseline/);
     }
     // The recorded baseline's account of how the note counted, on its own, is not refused: the net
     // is for a card in flight, not a lasting ban on those words.
@@ -315,7 +323,7 @@ test('a reworded, stripped or look-alike baseline card is refused, and its figur
       assert.deepEqual(helper.calls, [], name);
       // And the state refuses it, should it ever be sent.
       const event = makeEvent({ kind: 'card-answer', data: { question: variant.question, label: 'Record these' }, now: () => T0 });
-      await assert.rejects(writeEvent({ project: 'o__p', event, push: false, now: () => T0 }), /baseline/, name);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push: false, now: () => T0 }), /baseline/, name);
     }
     assert.equal(fs.existsSync(path.join(process.env.WHEELHOUSE_HOME, 'measures', 'clicks')), false);
   });
@@ -397,7 +405,7 @@ test('the net catches the figures only while they wait, and only as the figures'
     for (const text of ['Budget $1,200 for hosting', 'It is US$1200.00', 'Each was $30.00', 'merged PRs only, as before']) {
       assert.equal(holdsFigures(text, { now: waiting }), true, text);
       assert.equal(carriesBaseline(note(text), { now: waiting }), true, text);
-      await assert.rejects(writeEvent({ project: 'o__p', event: note(text), push: false, now: waiting }), /baseline/, text);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: note(text), push: false, now: waiting }), /baseline/, text);
       // Once they are out of date, nothing is refused.
       assert.equal(holdsFigures(text, { now: later }), false, text);
       assert.equal(carriesBaseline(note(text), { now: later }), false, text);

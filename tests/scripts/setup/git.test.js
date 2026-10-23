@@ -17,7 +17,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  setupGit, setupGitEnv, isolated, reaching, localPath, refuseUnlistedSettings, unlistedSettingsLine, allowedSetting, NULL_FILE,
+  setupGit, setupGitEnv, isolated, reaching, localPath, refuseUnlistedSettings, unlistedSettingsLine, allowedSetting, FENCE, NULL_FILE,
 } from '../../../scripts/setup/git.js';
 import { directorGitEnv } from '../../../scripts/setup/host.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -118,13 +118,15 @@ test('setup\'s environment passes only the sign-in and the fence, and the direct
     ['submodule.recurse', 'false'], ['fetch.recurseSubmodules', 'false'], ['push.recurseSubmodules', 'no'],
     ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
     ['http.sslVerify', 'true'],
+    ['commit.gpgSign', 'false'], ['tag.gpgSign', 'false'], ['push.gpgSign', 'false'],
+    ['log.showSignature', 'false'], ['merge.verifySignatures', 'false'],
   ]);
   assert.equal(env.PATH, '/opt/git/bin:/usr/bin');
   assert.deepEqual(directorGitEnv({ host: 'github', gitPath: '/opt/git/bin/git', env: { PATH: '/usr/bin' }, platform: 'darwin' }), env);
   // Applied twice it is the same; with no sign-in, only the fence.
   assert.deepEqual(isolated(env), env);
   const bare = setupGitEnv({ env: {}, platform: 'darwin' });
-  assert.equal(bare.GIT_CONFIG_COUNT, '11');
+  assert.equal(bare.GIT_CONFIG_COUNT, String(FENCE.length));
   assert.equal(bare.GIT_CONFIG_KEY_0, 'core.hooksPath');
   // A local path is allowed only for a call reaching a path setup named, and survives the fence;
   // anything else setup passes is put back to https.

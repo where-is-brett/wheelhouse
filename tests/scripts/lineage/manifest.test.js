@@ -194,6 +194,20 @@ test('the manifest in the repository lists Superpowers and Matt\'s skills at che
   assert.deepEqual(UPSTREAMS.map((u) => u.sha), manifest.upstreams.map((u) => u.sha));
 });
 
+// Points HOME and XDG_CONFIG_HOME at a scratch folder whose .gitconfig sends `from` to a place that
+// holds nothing, for the length of `body`; never the real home.
+async function withGlobalRewrite(from, body) {
+  const home = tempFolder('wh-gitconfig-home-');
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[url "${tempFolder('wh-nowhere-').replace(/\\/g, '/')}"]\n\tinsteadOf = ${from.replace(/\\/g, '/')}\n`);
+  const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.XDG_CONFIG_HOME = home;
+  process.env.USERPROFILE = home;
+  try { return await body(); } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
 test('fetchUpstream fetches the pinned commit shallow into the folder it is given', async () => {
   const origin = tempFolder('wh-origin-');
   await g(origin, 'init', '--quiet', '-b', 'main');
@@ -211,6 +225,19 @@ test('fetchUpstream fetches the pinned commit shallow into the folder it is give
   assert.equal(await g(into, 'rev-list', '--count', 'HEAD'), '1', 'shallow');
 
   await assert.rejects(fetchUpstream({ ...TINY, repo: pathToFileURL(origin).href, sha: 'f'.repeat(40) }, tempFolder('wh-fetched-')), /failed for kit/);
+});
+
+test('fetchUpstream never reads the director\'s global git config', async () => {
+  const origin = tempFolder('wh-origin-');
+  await g(origin, 'init', '--quiet', '-b', 'main');
+  await g(origin, 'commit', '--quiet', '--allow-empty', '-m', 'first');
+  const pinned = await g(origin, 'rev-parse', 'HEAD');
+  const repo = pathToFileURL(origin).href;
+  await withGlobalRewrite(repo, async () => {
+    const into = tempFolder('wh-fetched-');
+    await fetchUpstream({ ...TINY, repo, sha: pinned }, into);
+    assert.equal(await g(into, 'rev-parse', 'HEAD'), pinned);
+  });
 });
 
 test('write fetches each upstream into a new empty folder, fingerprints it and removes the folder', async () => {

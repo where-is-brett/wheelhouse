@@ -3,13 +3,14 @@
 // connection's key, so these work against a private repository (a stand-in
 // host that refuses any request without the key) from a computer whose own
 // code has no key at all.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
@@ -21,7 +22,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { keep, taken } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
-import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { makeBareRemote, LOOPBACK_HTTP } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { startHttpHost } from '../../helpers/http-host.js';
 import { hostKeyEnv } from '../../helpers/host-key.js';
@@ -36,6 +37,11 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { waitLongerOnTheHelper } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -88,6 +94,7 @@ async function computer(repo, { adapter = fakeAdapter(), envFor } = {}) {
   });
   let tick = 0; // each call to now() is a second later, so a touch is never the same as the take before it
   const helper = await as(home, () => startHelper({
+    run: hostGuard,
     address: testAddress(home),
     adapterFor: async () => adapter,
     envFor: envFor ?? (async () => ({ mode: 'narrow', env: hostKeyEnv(repo.host.url, TOKEN) })),
@@ -139,7 +146,7 @@ test('the same calls made without the helper are refused by the host', async () 
   const home = shortHome();
   try {
     await as(home, async () => {
-      await assert.rejects(cloneState({ project: PROJECT, remoteUrl: repo.url, env: {} }), /could not be reached/);
+      await assert.rejects(cloneState({ project: PROJECT, remoteUrl: repo.url, env: LOOPBACK_HTTP }), /could not be reached/);
     });
     assert.ok(repo.host.refusedCount() > 0, 'the host refused the keyless request');
   } finally { fs.rmSync(home, { recursive: true, force: true }); await repo.cleanup(); }
@@ -770,4 +777,24 @@ test('the helper script starts a helper and stays up', { skip: process.platform 
     child.kill('SIGTERM');
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('a connection\'s own GIT_ALLOW_PROTOCOL never widens an https recorded remote', { skip: process.platform === 'win32' }, async () => {
+  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-shim-'));
+  const seen = path.join(shimDir, 'seen.txt');
+  const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  fs.writeFileSync(path.join(shimDir, 'git'), `#!/bin/sh\necho "$GIT_ALLOW_PROTOCOL" >> '${seen}'\nexec '${realGit}' "$@"\n`, { mode: 0o755 });
+  const pathBefore = process.env.PATH;
+  const c = await computer({ url: 'https://example.invalid/o/p.git', host: { url: 'https://example.invalid' } }, {
+    envFor: async () => ({ mode: 'quick', env: { GIT_ALLOW_PROTOCOL: 'https:file:http' } }),
+  });
+  try {
+    await c.as(async () => {
+      process.env.PATH = `${shimDir}${path.delimiter}${pathBefore}`;
+      await c.client.state.clone({ project: PROJECT }).catch(() => {});
+    });
+    const values = fs.existsSync(seen) ? fs.readFileSync(seen, 'utf8').split('\n').filter(Boolean) : [];
+    assert.ok(values.length > 0, 'git ran');
+    assert.deepEqual([...new Set(values)], ['https']);
+  } finally { process.env.PATH = pathBefore; await c.close(); fs.rmSync(shimDir, { recursive: true, force: true }); }
 });

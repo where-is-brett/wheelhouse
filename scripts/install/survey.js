@@ -23,13 +23,17 @@
 //   passes the list (`scheduled`, as `{ name, folder, path? }`), and the survey keeps this project's.
 //   With no list given, `scheduled` is null: not read, which is not the same as none.
 //
-// Git never runs the project's own code here: every call on the project turns fsmonitor off and
-// points core.hooksPath at an empty folder, and the fetch's ssh never asks for a passphrase.
+// Git never runs the project's own code here: every call goes through the fenced git route
+// (scripts/lib/safe-git.js), which shuts out the global and system config, points hooks at the null
+// file, turns fsmonitor off, and looks at the repository's own config first, refusing any setting
+// that could run a program (the project's, and each worktree's, since an agent can write to both).
+// The fetch's ssh never asks for a passphrase.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { run as defaultRun, withoutGitVars } from '../lib/run.js';
+import { run as defaultRun } from '../lib/run.js';
+import { directorSignIn, reachFor, safeGit } from '../lib/safe-git.js';
 import { claudeHome as defaultClaudeHome, MARKETPLACE } from '../lineage/manifest.js';
 import { HOST_TOOLS, projectSettings, SWITCHED_OFF_PLUGINS } from '../protection/settings.js';
 
@@ -195,7 +199,9 @@ async function sortCopies({ folder, skills, manifest, upstreams, git }) {
     for (const { upstream, folder: pinnedFolder } of matches) {
       const clone = upstreams[upstream.name];
       if (typeof clone !== 'string') throw new Error(`No copy of ${upstream.name} was given to compare the project's ${skill.name} skill with`);
-      const found = await git(['log', '--all', '--format=%H', `--find-object=${blob}`, '--', `${pinnedFolder}/SKILL.md`], clone);
+      // The clone is a new temporary folder of Wheelhouse's own, made by the install command, so the
+      // look is not needed there.
+      const found = await git(['log', '--all', '--format=%H', `--find-object=${blob}`, '--', `${pinnedFolder}/SKILL.md`], clone, { look: 'never' });
       if (found.trim() !== '') { copyOf = upstream; break; }
     }
     if (copyOf) copies.push({ name: skill.name, path: skill.path, plugin: copyOf.plugin });
@@ -311,12 +317,20 @@ export function deniedByStandard(named) {
 
 // --- Work in flight ---
 
-// The ssh command for the survey's fetch: the one git would use (GIT_SSH_COMMAND, else the
-// configured core.sshCommand, else plain ssh), with BatchMode on, so a passphrase prompt fails
-// at once instead of waiting.
-export function batchSshCommand({ env = process.env, configured = '' } = {}) {
-  const own = typeof env.GIT_SSH_COMMAND === 'string' && env.GIT_SSH_COMMAND.trim() !== '' ? env.GIT_SSH_COMMAND.trim() : configured.trim();
+// The ssh command for the survey's fetch: the director's own GIT_SSH_COMMAND, else plain ssh, with
+// BatchMode on, so a passphrase prompt fails at once instead of waiting. The project's own
+// core.sshCommand is never read: a repository that sets it is refused by the look.
+export function batchSshCommand({ env = process.env } = {}) {
+  const own = typeof env.GIT_SSH_COMMAND === 'string' && env.GIT_SSH_COMMAND.trim() !== '' ? env.GIT_SSH_COMMAND.trim() : '';
   return `${own || 'ssh'} -o BatchMode=yes`;
+}
+
+// How the fetch reaches an origin's address: 'ssh' for ssh:// and scp-style (user@host:path),
+// (the user is optional, as an ~/.ssh/config alias has none; a host of two or more characters keeps
+// `C:` a drive letter), else what reachFor says ('https', or 'local' for a path on this computer).
+const SCP_STYLE = /^(?:[^\s/\\@:]+@)?[^\s/\\:]{2,}:(?!\/\/|:)/;
+export function reachOfOrigin(url, { platform = process.platform } = {}) {
+  return /^ssh:\/\//i.test(url) || SCP_STYLE.test(url) ? 'ssh' : reachFor(url, { platform });
 }
 
 async function readInFlight({ folder, host, git, run, sshEnv }) {
@@ -325,8 +339,11 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
   let onDefault = false;
   let prs = [];
   if (remotes.includes('origin')) {
-    const configured = (await git(['config', '--get', 'core.sshCommand'], folder, { allowFail: true })).trim();
-    await git(['fetch', '--quiet', 'origin'], folder, { env: { GIT_SSH_COMMAND: batchSshCommand({ env: sshEnv, configured }) } });
+    const originUrl = (await git(['remote', 'get-url', 'origin'], folder, { allowFail: true })).trim();
+    const reach = reachOfOrigin(originUrl);
+    // ssh uses the director's own command with BatchMode; https signs in through the host tool.
+    const env = reach === 'ssh' ? { GIT_SSH_COMMAND: batchSshCommand({ env: sshEnv }) } : reach === 'https' ? directorSignIn(host) : {};
+    await git(['fetch', '--quiet', 'origin'], folder, { env, reach });
     let ref = (await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], folder, { allowFail: true })).trim();
     if (ref === '') {
       for (const candidate of ['refs/remotes/origin/main', 'refs/remotes/origin/master']) {
@@ -340,9 +357,9 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
       const branch = (await git(['symbolic-ref', '--quiet', 'HEAD'], folder, { allowFail: true })).trim();
       onDefault = branch !== '' && branch === `refs/heads/${ref.slice('refs/remotes/origin/'.length)}`;
     }
-    prs = await openRequests({ folder, host, run });
+    prs = await openRequests({ originUrl, host, run });
   }
-  const dirty = (await git(['status', '--porcelain'])).trim() !== '';
+  const dirty = (await git(['status', '--porcelain', '--ignore-submodules=dirty'])).trim() !== '';
   const worktrees = [];
   const blocks = (await git(['worktree', 'list', '--porcelain'])).replace(/\r\n/g, '\n').split('\n\n').filter((b) => b.trim() !== '');
   for (const block of blocks) {
@@ -353,17 +370,63 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
     const branchLine = lines.find((l) => l.startsWith('branch '));
     const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : null;
     const there = fs.existsSync(at);
-    const changed = there ? (await git(['status', '--porcelain'], at, { allowFail: true })).trim() !== '' : false;
+    // Looked at in its own folder: an agent can write a worktree's config too.
+    const changed = there ? (await git(['status', '--porcelain', '--ignore-submodules=dirty'], at, { allowFail: true })).trim() !== '' : false;
     worktrees.push({ path: at, branch, dirty: changed });
   }
   return { behind, dirty, onDefault, prs, worktrees };
 }
 
-async function openRequests({ folder, host, run }) {
+// What `-R` takes: an optional host, then owner and name (GitLab: group, subgroups, name).
+const REPOSITORY = /^([a-z0-9.-]+(:[0-9]+)?\/)?[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)+$/;
+
+// The repository an origin address names: `{ hostname, repo }` (`hostname` null for a path on this computer;
+// `repo` is `[HOST/]OWNER/NAME`, the host written only when it is not the tool's own public host), or null
+// when the address names none or holds anything `-R` should not be given.
+export function originRepository(originUrl, host) {
+  const text = String(originUrl ?? '').trim().replaceAll('\\', '/');
+  let hostname = null;
+  let rest = text;
+  const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:]+)(?::\d+)?(\/.*)?$/.exec(text);
+  if (text.includes('://') && url === null) return null;
+  const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
+  if (url && !/^file:/i.test(text)) { hostname = url[1].toLowerCase(); rest = url[2] ?? ''; } else if (scp) { hostname = scp[1].toLowerCase(); rest = scp[2]; }
+  const parts = rest.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
+  const named = host === 'gitlab' && hostname !== null ? parts : parts.slice(-2);
+  if (named.length < 2) return null;
+  const own = hostname === null || hostname === (host === 'gitlab' ? 'gitlab.com' : 'github.com');
+  const repo = `${own ? '' : `${hostname}/`}${named.join('/')}`;
+  return REPOSITORY.test(repo) ? { hostname: own ? null : hostname, repo } : null;
+}
+export const repositoryOf = (originUrl, host) => originRepository(originUrl, host)?.repo ?? null;
+
+// Variables that would send the director's own token to the host an origin address names.
+const TOKEN_VARIABLES = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'GITLAB_HOST'];
+const withoutTokens = () => ({ ...Object.fromEntries(TOKEN_VARIABLES.map((n) => [n, undefined])), GH_PROMPT_DISABLED: '1', NO_COLOR: '1' });
+
+async function openRequests({ originUrl, host, run }) {
+  const named = originRepository(originUrl, host);
+  if (named === null) throw new Error('the origin address does not name a repository, so its open requests could not be listed');
+  const tool = host === 'gitlab' ? 'glab' : 'gh';
   const [file, args] = host === 'gitlab'
-    ? ['glab', ['mr', 'list', '--output', 'json', '--per-page', '100']]
-    : ['gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
-  const result = await run(file, args, { cwd: folder, env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }, timeoutMs: GIT_WAIT_MS });
+    ? [tool, ['mr', 'list', `--repo=${named.repo}`, '--output', 'json', '--per-page', '100']]
+    : [tool, ['pr', 'list', `--repo=${named.repo}`, '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
+  // Run outside the project: gh and glab run git themselves, and would read the project's own config.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
+  let result;
+  try {
+    // A host other than the tool's own public one is named only when the director is signed in to it,
+    // and with the token variables cleared, so a planted origin cannot make the tool send them anywhere.
+    // The tool's own public host keeps them: a director may sign in to it by a token variable alone.
+    const env = named.hostname === null ? { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } : withoutTokens();
+    if (named.hostname !== null) {
+      const auth = await run(tool, ['auth', 'status', `--hostname=${named.hostname}`], { cwd: outside, env, timeoutMs: GIT_WAIT_MS });
+      if (auth.code !== 0) throw new Error(`${tool} is not signed in to ${named.hostname}, so the open ${host === 'gitlab' ? 'merge' : 'pull'} requests were not listed`);
+    }
+    result = await run(file, args, { cwd: outside, env, timeoutMs: GIT_WAIT_MS });
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
   if (result.code !== 0) throw new Error(`${file} could not list the open ${host === 'gitlab' ? 'merge' : 'pull'} requests: ${String(result.stderr).trim().split('\n').pop()}`);
   let listed;
   try { listed = JSON.parse(result.stdout); } catch { throw new Error(`${file} did not answer with a list`); }
@@ -433,21 +496,17 @@ export async function surveyProject({ folder, manifest, run = defaultRun, upstre
   if (typeof folder !== 'string' || !fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory()) throw new Error('The project folder is not there');
   if (scheduled !== null && !Array.isArray(scheduled)) throw new Error('The scheduled tasks are not a list');
   const project = path.resolve(folder);
-  // An empty hooks folder, so no hook of the project's runs during the survey.
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
-  try {
-    return await surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv, hooksPath: path.join(scratch, 'hooks') });
-  } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
+  return surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv });
 }
 
-async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv, hooksPath }) {
-  fs.mkdirSync(hooksPath);
-  const git = async (args, cwd = project, { allowFail = false, env = {} } = {}) => {
-    const result = await run('git', ['-c', 'core.quotepath=off', '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${hooksPath}`, ...args], {
-      cwd, baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...env }, timeoutMs: GIT_WAIT_MS,
-    });
+async function surveyIn({ project, manifest, run, upstreams, host, scheduled, claudeHome, sshEnv }) {
+  // One fenced git for each folder, kind of look and reach. A refusal by the look is thrown as it
+  // comes, naming the settings, whatever allowFail says.
+  const routes = new Map();
+  const git = async (args, cwd = project, { allowFail = false, env = {}, reach = 'https', look = 'each' } = {}) => {
+    const key = `${look}|${reach}|${cwd}`;
+    if (!routes.has(key)) routes.set(key, safeGit({ run, cwd, env: { GIT_OPTIONAL_LOCKS: '0' }, reach, look, list: 'project', timeoutMs: GIT_WAIT_MS, caller: 'survey' }));
+    const result = await routes.get(key)(['-c', 'core.quotepath=off', ...args], { env });
     if (result.code !== 0) {
       if (allowFail) return '';
       throw new Error(`git ${args[0]} failed: ${String(result.stderr).trim().split('\n').pop()}`);

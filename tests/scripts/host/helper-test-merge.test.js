@@ -2,19 +2,26 @@
 // /test-merge: two branches merged in the helper's own mirror with
 // `git merge-tree`, which checks nothing out and runs nothing from either
 // branch (design section 12).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
+import { safeKeyName } from '../../../scripts/lib/safe-git.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
-import { makeBareRemote, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const fakeAdapter = () => ({
   defaultBranch: async () => 'main',
@@ -57,14 +64,14 @@ async function project(remote) {
     writeProject('o__p', {
       folder: path.join(home, 'work'), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
   });
   return home;
 }
 
 async function withHelper(home, fn, { env = {} } = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => env });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => env });
     try {
       return await fn(helperClient({ address: helper.address }));
     } finally {
@@ -183,7 +190,7 @@ test('/test-merge refuses when the mirror\'s own configuration names a filter or
       await run('git', ['config', 'merge.evil.driver', 'false'], { cwd: mirrorOf() });
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
       assert.equal(answer.ok, false);
-      assert.match(answer.refused, /filter or merge driver/);
+      assert.match(answer.refused, /merge\.evil\.driver/);
       assert.equal(await workingRefs(), '');
     });
   } finally { remote.cleanup(); }
@@ -219,10 +226,10 @@ test('a hook named in git\'s configuration is refused, not run, by /test-merge a
     fs.rmSync(marks);
 
     const home = await project(remote);
-    // In the connection's configuration (the quick connection's carries the director's own).
+    // In the director's global configuration: shut out of the helper's git in every connection, so the hook neither runs nor needs refusing.
     await withHelper(home, async (client) => {
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
-      assert.deepEqual(answer, { ok: false, refused: 'the git configuration names a hook, filter or merge driver, so nothing is merged' });
+      assert.deepEqual(answer, { ok: true, clean: true, conflicts: [] });
       assert.equal(fs.existsSync(marks), false);
     }, { env: { GIT_CONFIG_GLOBAL: config } });
 
@@ -234,10 +241,31 @@ test('a hook named in git\'s configuration is refused, not run, by /test-merge a
       }
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
       assert.equal(answer.ok, false);
-      assert.match(answer.refused, /names a hook/);
+      assert.match(answer.refused, /hook\.reference-transaction\.(command|event)/);
       const written = await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
       assert.equal(written.pushed, false, JSON.stringify(written));
       assert.equal(fs.existsSync(marks), false, fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : '');
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a filter or url.insteadOf planted in the mirror\'s config refuses the request, naming it', async () => {
+  const remote = await remoteWith({ base: { 'app.js': 'base\n' }, branches: { a: { 'app.js': 'a\n' }, b: { 'b.js': 'b\n' } } });
+  try {
+    const home = await project(remote);
+    await withHelper(home, async (client) => {
+      assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);
+      for (const [key, value] of [['filter.evil.clean', 'false'], ['url.https://elsewhere.invalid/.insteadOf', 'https://example.invalid/']]) {
+        await run('git', ['config', key, value], { cwd: mirrorOf() });
+        const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
+        assert.equal(answer.ok, false);
+        assert.ok(answer.refused.toLowerCase().includes(safeKeyName(key).toLowerCase()), answer.refused);
+        assert.match(answer.refused, /does not allow/);
+        assert.doesNotMatch(answer.refused, /setup|Go ahead/i);
+        await run('git', ['config', '--unset-all', key], { cwd: mirrorOf() });
+      }
+      assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);
+      assert.equal(await workingRefs(), '');
     });
   } finally { remote.cleanup(); }
 });

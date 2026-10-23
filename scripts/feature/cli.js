@@ -20,7 +20,7 @@
 // from the helper.
 import fs from 'node:fs';
 import path from 'node:path';
-import { run, withoutGitVars } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
 import { QUESTION_ID, QUESTION_KINDS, featurePaths, parseReport, readQuestions } from './files.js';
 import {
   planIn, planInside, readBrief, readCapped, readPlan, readPrRecord, safeFeatureFolder, writeWhole, SMALL_BYTES,
@@ -378,9 +378,16 @@ export async function pull({ client, worktree }) {
   }
   if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
   const file = path.join(featurePaths(worktree).dir, 'pull.bundle');
-  const git = (args) => run('git', args, {
-    cwd: worktree, baseEnv: withoutGitVars(process.env), env: { GIT_TERMINAL_PROMPT: '0' }, input: '', timeoutMs: PULL_MS,
-  });
+  // The fenced route; the bundle is a file on this computer, so a local path is let through. A
+  // setting off the allowed list in the worktree's repository is refused with the look's line.
+  const fenced = safeGit({ cwd: worktree, reach: 'local', look: 'each', list: 'project', timeoutMs: PULL_MS, caller: 'feature' });
+  const git = async (args) => {
+    try {
+      return await fenced(args, { env: { GIT_TERMINAL_PROMPT: '0' }, input: '' });
+    } catch (e) {
+      throw new CliError(e.message);
+    }
+  };
   try {
     writeWhole(file, Buffer.from(got.bundle, 'base64'));
     const fetched = await git(['fetch', '-q', '--no-tags', file, 'refs/wheelhouse/pulled']);

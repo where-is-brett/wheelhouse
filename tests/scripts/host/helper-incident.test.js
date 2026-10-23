@@ -4,7 +4,9 @@
 // state's views, never from the caller: an incident from its declaration until
 // the director's click on End it, a fix only from the director's click on the
 // card, and shown-first from the signed approval of the work the branch names.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,10 +19,15 @@ import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { setStop } from '../../../scripts/lib/stop.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody } from '../../helpers/provenance.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -56,8 +63,8 @@ async function project(remote) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return home;
 }
@@ -97,7 +104,7 @@ function fakeAdapter(prs) {
 
 async function withHelper(home, adapter, fn, options = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     try {
       return await fn(helperClient({ address: helper.address }));
     } finally { await helper.close(); }

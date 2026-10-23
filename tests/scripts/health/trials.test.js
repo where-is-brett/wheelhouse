@@ -147,6 +147,16 @@ test('github.com: only 2xx and 3xx count, a proxy 403 is not reached', async () 
   }
 });
 
+test('the gh trial tries only the paths it is given', async () => {
+  const f = fakes({ ghPaths: ['/given/gh'], fs: { ...fakes().fs, existsSync: (p) => p === '/given/gh' } });
+  await runTrials(f);
+  const gh = f.calls.spawn.filter(([file]) => file !== 'curl');
+  assert.deepEqual(gh.map(([file]) => file), ['/given/gh']);
+  const none = fakes({ ghPaths: ['/given/gh'] });
+  await runTrials(none);
+  assert.deepEqual(none.calls.spawn.filter(([file]) => file !== 'curl').map(([file]) => file), ['gh'], 'none of the given paths exists, so gh by its bare name');
+});
+
 test('github.com goes through curl', async () => {
   const f = fakes();
   await runTrials(f);

@@ -4,7 +4,9 @@
 // its record in the profile (which a second computer gets once the director confirms it), and its
 // undo. Nothing real is registered or signed in: `gh` and GitHub's sign-in pages are fakes, the
 // profile is a bare repository in a temporary folder, and every home is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,6 +29,11 @@ import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/sign
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
 const USER = 'a-director';
@@ -245,6 +252,7 @@ async function computer({ shared } = {}) {
   let tick = 0;
   const now = () => new Date(NOW.getTime() + 1000 * (tick += 1));
   const helper = await as(home, () => startHelper({
+    run: hostGuard,
     address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({ mode: 'quick', env: {} }), now,
   }));
   return {

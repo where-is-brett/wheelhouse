@@ -4,7 +4,8 @@
 // with its own real helper on a socket (a named pipe on Windows). State and
 // the lock are written through the helper's own requests: client -> helper ->
 // the helper's clone and mirror -> the bare repository.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -23,6 +24,11 @@ import { as, shortHome, testAddress } from '../helpers/homes.js';
 import { prOnHost } from '../helpers/pr-on-host.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -68,6 +74,7 @@ async function makeComputer(adapter, remoteUrl) {
   // The helper's clock is set by the test, so the lock's age is the test's to move.
   let ms = 0;
   const helper = await as(home, () => startHelper({
+    run: hostGuard,
     address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), now: () => new Date(T0.getTime() + ms),
   }));
   const client = helperClient({ address: helper.address });

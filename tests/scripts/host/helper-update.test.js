@@ -3,7 +3,8 @@
 // section 12): the helper merges the default branch into the pull request's
 // branch in its own mirror and pushes the merge; a signed review of an
 // earlier commit still counts when the feature's own changes did not move.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -19,10 +20,15 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
 import { until as waitUntil } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -99,8 +105,8 @@ async function project(remote) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return home;
 }
@@ -119,7 +125,7 @@ const approved = (commitSha) => record('approval', { pr: 7, commit: commitSha })
 // One helper for the home, with the adapter for the host, and `options` for startHelper.
 async function withHelper(home, adapter, fn, options = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     try {
       return await fn(helperClient({ address: helper.address }));
     } finally { await helper.close(); }
@@ -334,7 +340,7 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
     const fetches = [];
     const counting = (file, args, options) => {
       if (args.includes('fetch')) fetches.push(args);
-      return run(file, args, options);
+      return hostGuard(file, args, options);
     };
     const adapter = fakeAdapter(pr.remote);
     await withHelper(home, adapter, async (client) => {
@@ -351,7 +357,7 @@ test('with no CLEAN review to weigh, /pr/carried reads nothing from the host', a
 });
 
 test('a mirror that can\'t say whether the branch is up to date says so, not that it is behind', async () => {
-  // M5: carryFacts throws when the mirror's configuration names a filter.
+  // M5: the look refuses a filter named in the mirror's configuration.
   const pr = await remoteWithPr({ base: { 'app.js': 'one\n' }, change: { 'b.js': 'b\n' } });
   try {
     const home = await project(pr.remote);
@@ -362,7 +368,9 @@ test('a mirror that can\'t say whether the branch is up to date says so, not tha
       assert.equal((await carried(client)).upToDate, true);
       await g(path.join(stateDir('o__p'), '..', 'mirror.git'), 'config', 'filter.x.clean', 'cat');
       const answer = await merge(client);
-      assert.deepEqual([answer.ok, answer.reasons], [false, ['whether the branch is up to date could not be checked']]);
+      // The look at the mirror refuses the merge outright, with its line, before anything is read.
+      assert.equal(answer.ok, false);
+      assert.match(answer.refused, /filter\.x\.clean/);
       assert.deepEqual(adapter.merges, []);
     });
   } finally { pr.remote.cleanup(); }
@@ -705,7 +713,7 @@ function heldShoot() {
 // Starts a helper for `home`, runs `fn(client, helper)`, and closes the helper if `fn` did not.
 async function withOpenHelper(home, adapter, fn, options) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     let closed = false;
     const close = async () => { closed = true; await helper.close(); };
     try {

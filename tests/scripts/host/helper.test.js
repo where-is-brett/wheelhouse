@@ -1,5 +1,6 @@
 // tests/scripts/host/helper.test.js
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -17,11 +18,16 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
 import { until } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -62,6 +68,7 @@ function fakeAdapter(overrides = {}) {
 // Runs fn with a helper on the current home's test address.
 async function withHelper(adapter, fn, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), ...extra,
   });
   try {
@@ -94,8 +101,8 @@ async function project({ lock = true } = {}) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    if (lock) assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    if (lock) assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return { remote, home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }
@@ -153,7 +160,7 @@ test('the Windows address is a named pipe for the user', () => {
 
 test('a socket path that is too long is refused with a plain error', { skip: unixOnly }, async () => {
   const address = path.join(os.tmpdir(), 'x'.repeat(120), 'helper.sock');
-  await assert.rejects(startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }), /too long/);
+  await assert.rejects(startHelper({ run: hostGuard, address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }), /too long/);
 });
 
 test('a second helper refuses to start while the first answers', async () => {
@@ -161,7 +168,7 @@ test('a second helper refuses to start while the first answers', async () => {
   try {
     await as(home, () => withHelper(fakeAdapter(), async (client, helper) => {
       await assert.rejects(
-        startHelper({ address: helper.address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }),
+        startHelper({ run: hostGuard, address: helper.address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) }),
         /already running/,
       );
       assert.equal((await client.health()).ok, true, 'the first is untouched');
@@ -445,9 +452,15 @@ test('the folder\'s own git config never runs with the key: sshCommand, credenti
       await g(agent, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/o/p.git');
 
       await withHelper(fakeAdapter(), async (client) => {
-        assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'feature' }), { ok: true });
+        // The look at the folder's config refuses the push, naming the settings that send git elsewhere or run a
+        // program, before git runs there. The settings the fence overrides (core.sshCommand, core.askPass, the
+        // credential helper, http.sslVerify, the hooks folder) are let through: no fenced call reads them.
+        const answer = await client.push({ project: 'o__p', dir: agent, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        for (const key of ['core.gitproxy', 'http.proxy']) assert.ok(answer.refused.toLowerCase().includes(key), `${key}: ${answer.refused}`);
+        for (const key of ['core.sshcommand', 'credential.helper', 'core.askpass', 'http.sslverify', 'core.hookspath']) assert.ok(!answer.refused.toLowerCase().includes(key), `${key}: ${answer.refused}`);
       }, { envFor: async () => env });
-      assert.match(await remoteHeads(p.remote.url), new RegExp(`refs/heads/feature ${sha}`));
+      assert.doesNotMatch(await remoteHeads(p.remote.url), new RegExp(`refs/heads/feature ${sha}`));
       assert.deepEqual(fs.readdirSync(leaks).filter((f) => f.endsWith('.txt')), [], 'nothing the folder configured ran');
       fs.rmSync(agent, { recursive: true, force: true });
     });
@@ -595,8 +608,8 @@ test('merge is refused when this computer has lost the lock', async () => {
   try {
     // Another computer takes the stale lock three hours later.
     await as(otherHome, async () => {
-      await cloneState({ project: 'o__p', remoteUrl: p.remote.url });
-      assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(3 * HOUR) })).taken, true);
+      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: p.remote.url });
+      assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(3 * HOUR) })).taken, true);
     });
     const adapter = fakeAdapter();
     await as(p.home, async () => {
@@ -634,7 +647,7 @@ test('a push or merge refusal never includes a key', async () => {
   const calls = [];
   const recordingRun = async (file, args, options) => {
     calls.push({ file, args, env: options?.env });
-    return run(file, args, options);
+    return hostGuard(file, args, options);
   };
   const leaky = fakeAdapter({
     prState: async () => { throw new Error(`gh pr view failed: bad credentials ${FAKE_KEY}`); },
@@ -683,12 +696,12 @@ test('a push or merge refusal never includes a key', async () => {
         assert.equal(call.args.join(' ').includes(basic), false);
       }
       const pushes = calls.filter((c) => c.args.includes('push'));
-      assert.ok(calls.some((c) => c.args.includes('fetch') && c.env?.GIT_CONFIG_VALUE_0 === env.GIT_CONFIG_VALUE_0), 'the key reached git, through its environment');
+      assert.ok(calls.some((c) => c.args.includes('fetch') && Object.entries(c.env ?? {}).some(([name, value]) => /^GIT_CONFIG_VALUE_\d+$/.test(name) && value === env.GIT_CONFIG_VALUE_0)), 'the key reached git, through its environment');
       assert.ok(pushes.every((c) => !c.args.some((a) => a === '--force' || a === '-f' || a.startsWith('--force') || a.startsWith('+'))));
       // The copy from the folder runs with no key at all.
       const copies = calls.filter((c) => c.args.includes('fetch') && c.args.includes(dir));
       assert.ok(copies.length > 0);
-      assert.ok(copies.every((c) => c.env?.GH_TOKEN === undefined && c.env?.GIT_CONFIG_VALUE_0 === undefined));
+      assert.ok(copies.every((c) => c.env?.GH_TOKEN === undefined && !pairsOf(c.env ?? {}).some(([, v]) => v.includes(basic))));
     });
   } finally { p.cleanup(); }
   assert.equal(seen.length, 5);
@@ -750,7 +763,11 @@ async function withProcessEnv(vars, fn) {
   }
 }
 
-test('quick keeps the system and user git config for keyed calls; narrow switches both off', async () => {
+const EXTRA = `AUTHORIZATION: basic ${Buffer.from(`x:${FAKE_KEY}`).toString('base64')}`;
+const KEY_PAIR = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraheader', GIT_CONFIG_VALUE_0: EXTRA };
+const pairsOf = (env) => Array.from({ length: Number(env.GIT_CONFIG_COUNT ?? 0) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+
+test('quick and narrow both shut out the system and user git config; quick signs in through the host tool', async () => {
   const p = await project();
   try {
     await withProcessEnv({ GIT_SSH_COMMAND: 'inherited-should-not-reach-git', GIT_CONFIG_PARAMETERS: "'core.hookspath'='/tmp'" }, () => as(p.home, async () => {
@@ -759,25 +776,28 @@ test('quick keeps the system and user git config for keyed calls; narrow switche
       const cases = [
         ['quick, bare', async () => ({}), 'quick'],
         ['quick, said', async () => ({ mode: 'quick', env: {} }), 'quick'],
-        ['narrow, said', async () => ({ mode: 'narrow', env: { GH_TOKEN: FAKE_KEY } }), 'narrow'],
-        ['narrow, bare', async () => ({ GH_TOKEN: FAKE_KEY }), 'narrow'],
+        ['narrow, said', async () => ({ mode: 'narrow', env: { GH_TOKEN: FAKE_KEY, ...KEY_PAIR } }), 'narrow'],
+        ['narrow, bare', async () => ({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR }), 'narrow'],
       ];
       for (const [label, envFor, mode] of cases) {
         const calls = [];
-        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return run(file, args, options); };
+        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
         await withHelper(fakeAdapter(), async (client) => {
           await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
           await g(dir, 'branch', '-f', 'feature');
           assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
         }, { envFor, run: recordingRun });
         const push = calls.find((c) => c.args.includes('push'));
+        const penv = push.options.env;
+        assert.equal(penv.GIT_CONFIG_NOSYSTEM, '1', label);
+        assert.equal(penv.GIT_CONFIG_GLOBAL, '/dev/null', label);
+        const pairs = pairsOf(penv);
         if (mode === 'quick') {
-          assert.equal(push.options.env.GIT_CONFIG_NOSYSTEM, undefined, label);
-          assert.equal(push.options.env.GIT_CONFIG_GLOBAL, undefined, label);
+          assert.ok(pairs.some(([k, v]) => k === 'credential.helper' && / auth git-credential$/.test(v)), `${label}: signs in through the host tool`);
         } else {
-          assert.equal(push.options.env.GIT_CONFIG_NOSYSTEM, '1', label);
-          assert.equal(push.options.env.GIT_CONFIG_GLOBAL, '/dev/null', label);
-          assert.equal(push.options.env.GH_TOKEN, FAKE_KEY, label);
+          assert.equal(penv.GH_TOKEN, FAKE_KEY, label);
+          assert.ok(pairs.some(([k, v]) => k.toLowerCase() === 'http.extraheader' && v === EXTRA), `${label}: the key's pair`);
+          assert.ok(!pairs.some(([k, v]) => k === 'credential.helper' && v !== ''), `${label}: no host-tool helper`);
         }
         const copy = calls.find((c) => c.args.includes('fetch') && c.args.includes(dir));
         assert.equal(copy.options.env.GIT_NO_LAZY_FETCH, '1', label);
@@ -835,7 +855,7 @@ test('a folder that takes too long to read is refused', async () => {
       await g(dir, 'branch', 'feature');
       const slowFolder = async (file, args, options) => (args.includes('fetch') && args.includes(dir)
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
-        : run(file, args, options));
+        : hostGuard(file, args, options));
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: 'reading the folder took too long' });
       }, { run: slowFolder });
@@ -887,7 +907,7 @@ test('a push that times out is refused, saying so', async () => {
       await g(dir, 'branch', 'feature');
       const slowHost = async (file, args, options) => (args.includes('push')
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
-        : run(file, args, options));
+        : hostGuard(file, args, options));
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: 'the host did not answer the push in time' });
       }, { run: slowHost });
@@ -906,7 +926,7 @@ test('the mirror drops its per-request refs, keeps the base, and tidies after th
       await g(dir, 'branch', 'feature');
       await g(dir, 'branch', 'second');
       const calls = [];
-      const recording = async (file, args, options) => { calls.push({ args, cwd: options?.cwd }); return run(file, args, options); };
+      const recording = async (file, args, options) => { calls.push({ args, cwd: options?.cwd }); return hostGuard(file, args, options); };
       const refs = async () => (await run('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror })).stdout.trim();
       const collected = (from) => calls.slice(from).some((c) => c.args.includes('gc') && c.args.includes('--auto') && c.cwd === mirror);
       // The tidy runs after the answer, behind it on the same queue: wait until it has run.
@@ -965,9 +985,11 @@ test('a folder\'s own uploadpack.packObjectsHook is not run', async () => {
       assert.equal(fs.existsSync(control), true, 'the hook is one git runs when it is in global configuration');
 
       await withHelper(fakeAdapter(), async (client) => {
-        assert.deepEqual(await client.push({ project: 'o__p', dir: agent, refspec: 'feature' }), { ok: true });
+        const answer = await client.push({ project: 'o__p', dir: agent, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /uploadpack\.packobjectshook/);
       });
-      assert.equal(fs.existsSync(marker), false, 'a repository\'s own setting is not honoured by git, so the hook did not run');
+      assert.equal(fs.existsSync(marker), false, 'the look refused the folder, so the hook did not run');
       fs.rmSync(agent, { recursive: true, force: true });
     });
   } finally { p.cleanup(); fs.rmSync(scratch, { recursive: true, force: true }); }
@@ -979,7 +1001,7 @@ test('two helpers starting at once leave one running and none orphaned', { skip:
     await as(home, async () => {
       for (let round = 0; round < 8; round += 1) {
         const address = testAddress(home);
-        const start = () => startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
+        const start = () => startHelper({ run: hostGuard, address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
         const settled = await Promise.allSettled([start(), start(), start()]);
         const running = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
         try {
@@ -1022,7 +1044,7 @@ test('a helper that finds another starting says so in its own words', { skip: un
       const address = testAddress(home);
       fs.writeFileSync(`${address}.start`, `${process.pid}\n`);
       await assert.rejects(
-        startHelper({ address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}), startWaitMs: 150 }),
+        startHelper({ run: hostGuard, address, adapterFor: async () => fakeAdapter(), envFor: async () => ({}), startWaitMs: 150 }),
         /Another helper is starting/,
       );
       assert.equal(fs.existsSync(`${address}.start`), true, 'a lock that is not ours is left alone');
@@ -1074,4 +1096,244 @@ test('/host/facts says unknown for what the host would not tell, and still answe
       }, { run: refused });
     });
   } finally { p.cleanup(); }
+});
+
+test('a hostile global git config reaches none of the helper\'s git, in quick or narrow', async () => {
+  for (const [label, envFor] of [['quick', async () => ({})], ['narrow', async () => ({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR })]]) {
+    const p = await project();
+    const other = await makeBareRemote({ repo: 'x/y' });
+    const scratch = tempFolder('wh-hostile-');
+    const marker = path.join(scratch, 'marker');
+    try {
+      const hooks = path.join(scratch, 'hooks');
+      fs.mkdirSync(hooks);
+      const hook = (name, body) => { fs.writeFileSync(path.join(hooks, name), body, { mode: 0o755 }); };
+      hook('pre-push', `#!/bin/sh\necho hook >> "${marker}"\n`);
+      hook('reference-transaction', `#!/bin/sh\necho hook >> "${marker}"\n`);
+      const helperScript = path.join(scratch, 'cred.sh');
+      fs.writeFileSync(helperScript, `#!/bin/sh\necho cred >> "${marker}"\n`, { mode: 0o755 });
+      const slash = (f) => f.replaceAll('\\', '/');
+      fs.writeFileSync(path.join(scratch, '.gitconfig'), [
+        `[core]\n\thooksPath = ${slash(hooks)}`,
+        `[url "${slash(other.url)}"]\n\tinsteadOf = ${slash(p.remote.url)}`,
+        `[credential]\n\thelper = !${slash(helperScript)}`,
+      ].join('\n') + '\n');
+      await as(p.home, async () => {
+        const dir = stateDir('o__p');
+        await g(dir, 'branch', 'feature');
+        await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
+        await g(dir, 'branch', '-f', 'feature');
+        // Only the helper and its git see the hostile home; the test's own git calls do not.
+        const calls = [];
+        const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
+        await withProcessEnv({ HOME: scratch, USERPROFILE: scratch, XDG_CONFIG_HOME: path.join(scratch, 'xdg') }, () => withHelper(fakeAdapter(), async (client) => {
+          assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
+        }, { envFor, run: recordingRun }));
+        // The local-path remote never asks for a credential, so the helper's pairs are checked directly.
+        const pushEnv = calls.find((c) => c.args.includes('push')).options.env;
+        const helpers = pairsOf(pushEnv).filter(([k]) => k === 'credential.helper').map(([, v]) => v);
+        if (label === 'quick') {
+          assert.equal(helpers.length, 2, 'quick: the cleared list, then the host tool');
+          assert.equal(helpers[0], '');
+          assert.match(helpers[1], / auth git-credential$/);
+        } else assert.deepEqual(helpers, [''], 'narrow: the cleared list and no credential helper');
+      });
+      const heads = async (url) => (await run('git', ['ls-remote', '--heads', url], { env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } })).stdout;
+      assert.match(await heads(p.remote.url), /refs\/heads\/feature/, `${label}: lands on the recorded remote`);
+      assert.equal(await heads(other.url), '', `${label}: not on the rewritten one`);
+      assert.equal(fs.existsSync(marker), false, `${label}: no hook or credential helper ran`);
+    } finally { p.cleanup(); other.cleanup(); fs.rmSync(scratch, { recursive: true, force: true }); }
+  }
+});
+
+test('a local path is reached only for a project whose recorded remote is one', async () => {
+  const p = await project({ lock: false });
+  try {
+    await as(p.home, async () => {
+      const dir = stateDir('o__p');
+      const calls = [];
+      const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
+      const protocolOfFetch = async (keyEnv = null) => {
+        calls.length = 0;
+        await withHelper(fakeAdapter(), async (client) => {
+          await client.testMerge({ project: 'o__p', a: 'main', b: 'wheelhouse-state' });
+        }, { run: recordingRun, ...(keyEnv ? { envFor: async () => keyEnv } : {}) });
+        return calls.find((c) => c.args.includes('fetch') && c.args.includes('origin'))?.options.env.GIT_ALLOW_PROTOCOL;
+      };
+      assert.equal(await protocolOfFetch(), 'https:file', 'a local-path remote: a local path is reached');
+      const remoteUrl = 'https://example.invalid/o/p.git';
+      writeProject('o__p', { folder: os.tmpdir(), remoteUrl, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await g(dir, 'remote', 'set-url', 'origin', remoteUrl);
+      assert.equal(await protocolOfFetch(), 'https', 'an https remote: https only');
+      // A connection whose own environment asks for a local path does not widen an https remote.
+      const asked = await protocolOfFetch({ GH_TOKEN: FAKE_KEY, ...KEY_PAIR, GIT_ALLOW_PROTOCOL: 'https:file' });
+      assert.equal(asked, 'https', 'a narrow environment asking for https:file on an https record: https only');
+    });
+  } finally { p.cleanup(); }
+});
+
+// --- the helper looks before it trusts a repository ---
+
+// An agent's project folder holding one commit on `feature`, with `config` lines added to its .git/config.
+async function folderWith(lines = []) {
+  const dir = tempFolder('wh-proj-');
+  await g(dir, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+  await g(dir, 'add', '-A');
+  await g(dir, 'commit', '-q', '-m', 'One');
+  await g(dir, 'checkout', '-q', '-b', 'feature');
+  for (const [key, value] of lines) await g(dir, 'config', key, value);
+  return dir;
+}
+const lookCalls = (calls) => calls.filter((c) => c.file === 'git' && c.args.includes('--name-only') && c.args.includes('--list'));
+const recorder = (calls) => async (file, args, options) => {
+  calls.push({ file, args, cwd: options?.cwd, env: options?.env });
+  return hostGuard(file, args, options);
+};
+
+test('a push from a project folder whose config sets core.alternateRefsCommand is refused, naming it, and nothing runs', async () => {
+  const p = await project();
+  const outside = tempFolder('wh-mark-');
+  const marks = path.join(outside, 'marks');
+  const script = path.join(outside, 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho ran >> "${marks.split(path.sep).join('/')}"\n`, { mode: 0o755 });
+  const dir = await folderWith([['core.alternateRefsCommand', script.split(path.sep).join('/')]]);
+  try {
+    await as(p.home, async () => {
+      writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        const answer = await client.push({ project: 'o__p', dir, refspec: 'feature' });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /core\.alternaterefscommand/);
+        assert.match(answer.refused, /does not allow/);
+        assert.doesNotMatch(answer.refused, /setup|Go ahead/i);
+        assert.match(answer.refused, /try the request again/);
+        assert.equal(fs.existsSync(marks), false);
+        assert.equal(await remoteHeads(p.remote.url).then((t) => t.includes('refs/heads/feature')), false);
+      });
+    });
+  } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('a push from a project folder whose config sets core.fsmonitor goes through, and the program never runs', async () => {
+  const p = await project();
+  const outside = tempFolder('wh-mark-');
+  const marks = path.join(outside, 'marks');
+  const script = path.join(outside, 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho ran >> "${marks.split(path.sep).join('/')}"\n`, { mode: 0o755 });
+  // The project list lets the setting through, because the fence sets core.fsmonitor to false on every call.
+  const dir = await folderWith([['core.fsmonitor', script.split(path.sep).join('/')], ['core.longpaths', 'true']]);
+  try {
+    await as(p.home, async () => {
+      writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        const answer = await client.push({ project: 'o__p', dir, refspec: 'feature' });
+        assert.equal(answer.ok, true, JSON.stringify(answer));
+        assert.equal(fs.existsSync(marks), false);
+      });
+    });
+  } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('a key planted in the lock clone refuses the merge, naming it, before the lock is touched', async () => {
+  const p = await project();
+  const calls = [];
+  try {
+    await as(p.home, async () => {
+      const lockClone = path.join(stateDir('o__p'), '..', 'lock');
+      await run('git', ['config', 'core.fsmonitor', 'true'], { cwd: lockClone });
+      reviewAndApproval();
+      const adapter = fakeAdapter();
+      await withHelper(adapter, async (client) => {
+        const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(answer.ok, false);
+        assert.match(answer.refused, /core\.fsmonitor/);
+        assert.deepEqual(adapter.merges, []);
+        const inLock = calls.filter((c) => c.cwd === lockClone);
+        assert.ok(inLock.length > 0 && lookCalls(inLock).length === inLock.length, 'only the look ran in the lock clone');
+      }, { run: recorder(calls) });
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a request looks at each repository once, however many git calls it makes', async () => {
+  const p = await project();
+  const calls = [];
+  try {
+    await as(p.home, () => withHelper(fakeAdapter(), async (client) => {
+      await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'w' } }); // makes the mirror
+      calls.length = 0;
+      const written = await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
+      assert.equal(written.pushed, true);
+      const looks = lookCalls(calls);
+      const byDir = new Map();
+      for (const c of looks) byDir.set(fs.realpathSync.native(c.cwd), (byDir.get(fs.realpathSync.native(c.cwd)) ?? 0) + 1);
+      assert.ok(byDir.size >= 2, 'the state clone and the mirror were looked at');
+      for (const [dir, count] of byDir) assert.equal(count, 1, `${dir} looked at ${count} times`);
+      const before = looks.length;
+      await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'y' } });
+      assert.equal(lookCalls(calls).length, before * 2, 'the next request looks again, once each');
+    }, { run: recorder(calls) }));
+  } finally { p.cleanup(); }
+});
+
+test('only the copy into the mirror may reach a local path', async () => {
+  const p = await project();
+  const calls = [];
+  try {
+    await as(p.home, async () => {
+      // A recorded remote at a host: no stand-in, so nothing but the copy may reach a path.
+      await g(stateDir('o__p'), 'remote', 'set-url', 'origin', 'https://example.invalid/o/p.git');
+      writeProject('o__p', { folder: os.tmpdir(), remoteUrl: 'https://example.invalid/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
+        const reaching = calls.filter((c) => c.file === 'git' && String(c.env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file'));
+        assert.ok(reaching.length >= 1, 'the copy ran');
+        const source = fs.realpathSync.native(stateDir('o__p'));
+        for (const c of reaching) assert.ok(c.args.includes('fetch') && c.args.includes(source), `a call other than the copy may reach a path: ${c.args.join(' ')}`);
+        const others = calls.filter((c) => c.file === 'git' && !reaching.includes(c));
+        assert.ok(others.length >= 1 && others.every((c) => !String(c.env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file')));
+      }, { run: recorder(calls) });
+    });
+  } finally { p.cleanup(); }
+});
+
+test('after a refused look, no more git runs in that repository: the mirror\'s tidy-up and the state clone\'s sync stay away', async () => {
+  const p = await project();
+  const dir = await folderWith();
+  const calls = [];
+  try {
+    await as(p.home, async () => {
+      writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      const mirror = path.join(stateDir('o__p'), '..', 'mirror.git');
+      const adapter = fakeAdapter();
+      await withHelper(adapter, async (client) => {
+        assert.equal((await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'makes the mirror' } })).pushed, true);
+        // A refused push in the mirror: the leftover per-request ref stays, and only the look ran there.
+        await run('git', ['update-ref', 'refs/wheelhouse/leftover', 'HEAD'], { cwd: mirror }).catch(() => {});
+        const head = await g(stateDir('o__p'), 'rev-parse', 'HEAD');
+        await run('git', ['update-ref', 'refs/wheelhouse/leftover', head], { cwd: mirror });
+        await run('git', ['config', 'core.fsmonitor', 'true'], { cwd: mirror });
+        calls.length = 0;
+        const refused = await client.push({ project: 'o__p', dir, refspec: 'feature' });
+        assert.equal(refused.ok, false);
+        assert.match(refused.refused, /core\.fsmonitor/);
+        assert.match(await run('git', ['for-each-ref', '--format=%(refname)', 'refs/wheelhouse/'], { cwd: mirror }).then((r) => r.stdout), /refs\/wheelhouse\/leftover/);
+        const inMirror = calls.filter((c) => c.cwd && fs.realpathSync.native(c.cwd) === fs.realpathSync.native(mirror));
+        assert.ok(inMirror.length > 0 && lookCalls(inMirror).length === inMirror.length, inMirror.map((c) => c.args.join(' ')).join(' | '));
+        await run('git', ['config', '--unset-all', 'core.fsmonitor'], { cwd: mirror });
+
+        // A merge with a planted key in the state clone: refused with the line, and no sync ran there.
+        const stateGitDir = path.join(stateDir('o__p'), '.git');
+        await g(stateDir('o__p'), 'config', 'core.fsmonitor', 'true');
+        fs.rmSync(path.join(stateGitDir, 'FETCH_HEAD'), { force: true });
+        reviewAndApproval();
+        const merged = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
+        assert.equal(merged.ok, false);
+        assert.match(merged.refused, /core\.fsmonitor/);
+        assert.deepEqual(adapter.merges, []);
+        assert.equal(fs.existsSync(path.join(stateGitDir, 'FETCH_HEAD')), false, 'no fetch or pull ran in the state clone');
+      }, { run: recorder(calls) });
+    });
+  } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

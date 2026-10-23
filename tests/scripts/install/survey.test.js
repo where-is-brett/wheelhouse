@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
-import { batchSshCommand, commandsIn, deniedByStandard, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
+import { batchSshCommand, commandsIn, deniedByStandard, reachOfOrigin, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -226,7 +226,7 @@ test('commands run through pnpm dlx, bunx and yarn dlx are listed and checked', 
   assert.deepEqual(denied.map((d) => d.rule), ['Bash(pnpm dlx vercel:*)', 'Bash(bunx netlify:*)', 'Bash(yarn dlx wrangler:*)']);
 });
 
-test('the survey never runs the project\'s hooks or fsmonitor, and its fetch never asks for a passphrase', async () => {
+test('the survey never runs the project\'s hooks, and every git call of it is fenced', async () => {
   const { folder, remote } = await makeProject();
   const upstream = await makeUpstream(folder);
   // A new commit on the remote, so the fetch updates a ref and would run reference-transaction.
@@ -238,7 +238,6 @@ test('the survey never runs the project\'s hooks or fsmonitor, and its fetch nev
   const hook = path.join(folder, '.git', 'hooks', 'reference-transaction');
   fs.writeFileSync(hook, `#!/bin/sh\necho ran >> "${marker.replace(/\\/g, '/')}"\n`);
   fs.chmodSync(hook, 0o755);
-  await g(folder, 'config', 'core.fsmonitor', hook);
 
   const calls = [];
   const recording = async (file, args, options) => {
@@ -247,17 +246,53 @@ test('the survey never runs the project\'s hooks or fsmonitor, and its fetch nev
   };
   await surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') });
   assert.equal(fs.existsSync(marker), false, 'a project hook ran');
-  for (const { args } of calls) {
-    assert.ok(args.includes('core.fsmonitor=false'), args.join(' '));
-    assert.ok(args.some((a) => a.startsWith('core.hooksPath=')), args.join(' '));
+  assert.ok(calls.some((c) => c.args.includes('fetch')), 'the survey fetched');
+  // Every call but the look's own read of the config (which carries only the shut-out global file).
+  for (const { env } of calls.filter((c) => c.args[0] !== 'config')) {
+    const pairs = Object.fromEntries(Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]));
+    assert.equal(pairs['core.hooksPath'], '/dev/null');
+    assert.equal(pairs['core.fsmonitor'], 'false');
+    assert.equal(env.GIT_CONFIG_GLOBAL, '/dev/null');
   }
-  const fetch = calls.find((c) => c.args.includes('fetch'));
-  assert.match(fetch.env.GIT_SSH_COMMAND, /BatchMode=yes/);
   // The same hook does run under plain git, so the test would see it.
   await g(other, 'commit', '--quiet', '--allow-empty', '-m', 'again');
   await g(other, 'push', '--quiet', 'origin', 'main');
   await g(folder, '-c', 'core.fsmonitor=false', 'fetch', '--quiet', 'origin');
   assert.equal(fs.existsSync(marker), true);
+});
+
+test('the survey refuses, naming it, a project whose config sets core.alternateRefsCommand or core.gitProxy, and never runs it', async () => {
+  const { folder } = await makeProject();
+  const upstream = await makeUpstream(folder);
+  const marker = path.join(tempFolder('wh-marker-'), 'ran');
+  const program = path.join(tempFolder('wh-program-'), 'program.sh');
+  fs.writeFileSync(program, `#!/bin/sh\necho ran >> "${marker.replace(/\\/g, '/')}"\n`);
+  fs.chmodSync(program, 0o755);
+  await g(folder, 'config', 'core.gitProxy', program);
+  await g(folder, 'config', 'core.alternateRefsCommand', program);
+  const calls = [];
+  const recording = async (file, args, options) => {
+    if (file === 'git') calls.push(args);
+    return noPrs(file, args, options);
+  };
+  await assert.rejects(
+    surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') }),
+    (error) => /core\.gitproxy/i.test(error.message) && /core\.alternaterefscommand/i.test(error.message) && /does not allow/.test(error.message) && /run the survey again/.test(error.message) && !/setup|Go ahead/i.test(error.message),
+  );
+  assert.equal(fs.existsSync(marker), false, 'the planted program ran');
+  assert.equal(calls.some((args) => args[0] === 'fetch' || args.includes('fetch')), false, 'git went on after the refusal');
+});
+
+test('a worktree whose config sets a program is refused too, and git does not run there', async () => {
+  const { folder } = await makeProject();
+  const worktree = path.join(path.dirname(folder), 'lantern-till');
+  await g(folder, 'worktree', 'add', '--quiet', '-b', 'feature/till', worktree);
+  await g(folder, 'config', 'extensions.worktreeConfig', 'true');
+  await g(worktree, 'config', '--worktree', 'core.alternateRefsCommand', '/bin/false');
+  await assert.rejects(
+    surveyProject({ folder, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') }),
+    /core\.alternaterefscommand/i,
+  );
 });
 
 test('surveyed from a linked worktree, the main checkout is listed and the worktree itself is not', async () => {
@@ -276,21 +311,57 @@ test('a command-start word at the end of a piece is not taken for a runner', () 
   assert.deepEqual(commandsIn('pnpm'), []);
 });
 
-test('the fetch keeps the director\'s own ssh command and adds BatchMode to it', async () => {
-  assert.equal(batchSshCommand({ env: {}, configured: '' }), 'ssh -o BatchMode=yes');
-  assert.equal(batchSshCommand({ env: {}, configured: 'ssh -i ~/.ssh/shop_key' }), 'ssh -i ~/.ssh/shop_key -o BatchMode=yes');
-  assert.equal(batchSshCommand({ env: { GIT_SSH_COMMAND: 'C:/Windows/System32/OpenSSH/ssh.exe' }, configured: 'ssh -i k' }), 'C:/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes');
-
+// A project whose origin is `url`, with the survey's fetch answered by a stand-in so nothing is reached.
+async function surveyWithOrigin(url, { sshEnv = {} } = {}) {
   const { folder } = await makeProject();
-  const upstream = await makeUpstream(folder);
-  await g(folder, 'config', 'core.sshCommand', 'ssh -i ~/.ssh/shop_key');
+  await g(folder, 'remote', 'set-url', 'origin', url);
   const calls = [];
   const recording = async (file, args, options) => {
     if (file === 'git') calls.push({ args, env: options?.env ?? {} });
+    if (file === 'git' && args.includes('fetch')) return { code: 0, stdout: '', stderr: '' };
     return noPrs(file, args, options);
   };
-  await surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-'), sshEnv: {} });
-  assert.equal(calls.find((c) => c.args.includes('fetch')).env.GIT_SSH_COMMAND, 'ssh -i ~/.ssh/shop_key -o BatchMode=yes');
+  await surveyProject({ folder, manifest: { upstreams: [] }, run: recording, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-'), sshEnv });
+  return calls.find((c) => c.args.includes('fetch'));
+}
+
+test('an origin that is an ssh host alias with no user is reached over ssh, and a drive letter is not', async () => {
+  const alias = await surveyWithOrigin('github-work:org/repo.git');
+  assert.equal(alias.env.GIT_ALLOW_PROTOCOL, 'https:ssh');
+  assert.equal(alias.env.GIT_SSH_COMMAND, 'ssh -o BatchMode=yes');
+  const scp = await surveyWithOrigin('git@github.com:org/repo.git');
+  assert.equal(scp.env.GIT_ALLOW_PROTOCOL, 'https:ssh');
+  const https = await surveyWithOrigin('https://example.invalid/o/p.git');
+  assert.equal(https.env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.equal(reachOfOrigin('github-work:org/repo.git'), 'ssh');
+  assert.equal(reachOfOrigin('C:\\x\\y.git', { platform: 'win32' }), 'local');
+  assert.equal(reachOfOrigin('C:/x/y.git', { platform: 'win32' }), 'local');
+  for (const url of ['ext::sh -c x', 'file:///srv/x.git', 'https://example.invalid/x', 'C:foo']) {
+    assert.notEqual(reachOfOrigin(url, { platform: 'win32' }), 'ssh', url);
+  }
+});
+
+test('the fetch keeps the director\'s own ssh command and adds BatchMode to it', async () => {
+  assert.equal(batchSshCommand({ env: {} }), 'ssh -o BatchMode=yes');
+  assert.equal(batchSshCommand({ env: { GIT_SSH_COMMAND: 'C:/Windows/System32/OpenSSH/ssh.exe' } }), 'C:/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes');
+
+  const plain = await surveyWithOrigin('git@example.invalid:o/p.git');
+  assert.equal(plain.env.GIT_SSH_COMMAND, 'ssh -o BatchMode=yes');
+  assert.equal(plain.env.GIT_ALLOW_PROTOCOL, 'https:ssh');
+  const own = await surveyWithOrigin('ssh://git@example.invalid/o/p.git', { sshEnv: { GIT_SSH_COMMAND: 'ssh -i ~/.ssh/shop_key' } });
+  assert.equal(own.env.GIT_SSH_COMMAND, 'ssh -i ~/.ssh/shop_key -o BatchMode=yes');
+});
+
+test('the survey\'s https fetch signs in through the host tool, never the global config', async () => {
+  const fetch = await surveyWithOrigin('https://example.invalid/o/p.git', { sshEnv: { GIT_SSH_COMMAND: 'ssh -i k' } });
+  assert.equal(fetch.env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.equal(fetch.env.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.equal(fetch.env.GIT_SSH_COMMAND, undefined);
+  const pairs = Array.from({ length: Number(fetch.env.GIT_CONFIG_COUNT) }, (_, i) => [fetch.env[`GIT_CONFIG_KEY_${i}`], fetch.env[`GIT_CONFIG_VALUE_${i}`]]);
+  assert.ok(pairs.some(([k, v]) => k === 'credential.helper' && /auth git-credential/.test(v)), JSON.stringify(pairs));
+  // A local origin carries no sign-in and allows a path.
+  const local = await surveyWithOrigin(tempFolder('wh-origin-'));
+  assert.equal(local.env.GIT_ALLOW_PROTOCOL, 'https:file');
 });
 
 test('a bare main repository is not listed as a worktree in flight', async () => {

@@ -1,7 +1,8 @@
 // tests/scripts/runbook/runbook.test.js
 // The runbook's five steps (design section 12.7), served by the host helper,
 // and runbook.js, the only command STOP lets through.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -24,9 +25,14 @@ import { parseArgs, runbook, USAGE } from '../../../scripts/runbook/runbook.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { approvalLine, runbookLine } from '../../../scripts/state/card-lines.js';
 import { listEvents } from '../../../scripts/state/events.js';
-import { makeBareRemote, push as plainPush, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { matchingBody } from '../../helpers/provenance.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = new Date('2026-10-18T12:00:00.000Z');
 const MIN = 60 * 1000;
@@ -83,8 +89,8 @@ async function scenario({ headFiles = { 'a.txt': '3\n' }, headRemove = [], first
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: () => new Date(NOW.getTime() - HOUR) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: () => new Date(NOW.getTime() - HOUR) })).taken, true);
   });
   s.cleanup = () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(work, { recursive: true, force: true }); };
   return s;
@@ -124,6 +130,7 @@ function fakeAdapter(overrides = {}) {
 async function viaHelper(s, adapter, fn, extra = {}) {
   await as(s.home, async () => {
     const helper = await startHelper({
+      run: hostGuard,
       address: testAddress(s.home), adapterFor: async () => adapter, envFor: async () => ({}), now: () => NOW, ...extra,
     });
     try { await fn(helperClient({ address: helper.address }), helper); } finally { await helper.close(); }
@@ -400,8 +407,8 @@ test('restore-state adds back the events missing from the branch, and only adds'
       const note = (text, ms) => makeEvent({ kind: 'note', data: { text }, now: () => new Date(NOW.getTime() - ms) });
       const kept = note('kept', 3 * HOUR);
       const lost = note('lost', 2 * HOUR);
-      await writeEvent({ project: 'o__p', event: kept, push });
-      await writeEvent({ project: 'o__p', event: lost, push });
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: kept, push });
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: lost, push });
       // An action whose data was changed after signing.
       const bad = sign({ v: 1, id: crypto.randomUUID(), at: new Date(NOW.getTime() - HOUR).toISOString(), computer: computerId(), kind: 'action', data: { action: 'runbook', step: 5, question: 'q', label: 'l' } });
       bad.data.step = 4;
@@ -597,7 +604,7 @@ test('with no sign-in either, a runbook route that needs the host answers with t
   const envFor = envForConnection((project) => readProject(project).connection, { fetch: noFetch, now: () => NOW });
   const failing = async (file, args, options) => (args.includes('fetch') && !options?.env?.GH_TOKEN
     ? { code: 1, stdout: '', stderr: AUTH_FAILURE, timedOut: false }
-    : run(file, args, options));
+    : hostGuard(file, args, options));
   try {
     await viaHelper(s, fakeAdapter(), async (client) => {
       assert.deepEqual(await client.runbook.candidates({ project: 'o__p' }), { ok: false, refused: PUSH_REFUSALS.ciSignIn });
@@ -613,7 +620,7 @@ test('a restore that changes a CI file is pushed with the director\'s sign-in on
   const env = { GH_TOKEN: FAKE_KEY, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraHeader', GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x:${FAKE_KEY}`).toString('base64')}` };
   const pushed = async (scene, sceneEnv, key) => {
     const calls = [];
-    const recording = async (file, args, options) => { calls.push({ args, env: options?.env }); return run(file, args, options); };
+    const recording = async (file, args, options) => { calls.push({ args, env: options?.env }); return hostGuard(file, args, options); };
     let answer;
     await as(scene.home, async () => { click(3, { sha: scene.c1.slice(0, 12) }); });
     await viaHelper(scene, fakeAdapter(), async (client) => { answer = await client.runbook.restoreMain({ project: 'o__p', sha: scene.c1 }); }, { envFor: async () => sceneEnv, run: recording });
@@ -978,4 +985,45 @@ test('on the narrow connection: step 2, step 3 opens the restore, the director a
       assert.deepEqual(adapter.merges, [{ number: 7, sha: tip }]);
     }, { envFor });
   } finally { s.cleanup(); }
+});
+
+test('restore-state runs no hook of the director\'s global git config', async () => {
+  const s = await scenario();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-restore-cfg-'));
+  const hooks = path.join(scratch, 'hooks');
+  const marker = path.join(scratch, 'marker');
+  fs.mkdirSync(hooks);
+  for (const name of ['pre-commit', 'post-commit', 'post-checkout', 'post-merge', 'post-rewrite', 'pre-rebase']) {
+    fs.writeFileSync(path.join(hooks, name), `#!/bin/sh\necho ${name} >> '${marker}'\n`, { mode: 0o755 });
+  }
+  const home = path.join(scratch, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[core]\n\thooksPath = ${hooks.replaceAll('\\', '/')}\n`);
+  const keep = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  try {
+    await as(s.home, async () => {
+      const dir = stateDir('o__p');
+      const push = async (_d, branch) => plainPush(dir, branch);
+      const lost = makeEvent({ kind: 'note', data: { text: 'lost' }, now: () => new Date(NOW.getTime() - 2 * HOUR) });
+      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: lost, push });
+      await writeBackup({ project: 'o__p', now: () => NOW });
+      await g(dir, 'rm', '-q', path.join(dir, eventPath(lost)));
+      await g(dir, 'commit', '-q', '-m', 'lost');
+      await plainPush(dir, 'wheelhouse-state');
+      click(4);
+    });
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    process.env.XDG_CONFIG_HOME = path.join(home, '.config');
+    await viaHelper(s, fakeAdapter(), async (client) => {
+      const answer = await client.runbook.restoreState({ project: 'o__p' });
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+      assert.equal(answer.added, 1);
+    });
+    assert.equal(fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '', '');
+  } finally {
+    for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    s.cleanup();
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
 });
