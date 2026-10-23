@@ -239,6 +239,88 @@ test('start makes its branch and worktree afresh, refusing ones no recorded feat
   }
 }));
 
+// A commit off the default branch, kept only by refs/wheelhouse/from/<work>, as carrying a change on fetches it.
+async function readyMade(checkout, work, name) {
+  await g(checkout, 'checkout', '-q', '-b', 'their-line');
+  fs.writeFileSync(path.join(checkout, name), 'Their change.\n');
+  await g(checkout, 'add', name);
+  await g(checkout, 'commit', '-q', '-m', `Add ${name}`);
+  const sha = await g(checkout, 'rev-parse', 'HEAD');
+  await g(checkout, 'checkout', '-q', 'main');
+  await g(checkout, 'branch', '-q', '-D', 'their-line');
+  const ref = `refs/wheelhouse/from/${work}`;
+  await g(checkout, 'update-ref', ref, sha);
+  return { sha, ref };
+}
+
+function fromViews(from) {
+  const views = startViews();
+  views.work['add-export'].work.data.from = from;
+  return views;
+}
+
+test('start makes feature/<work> from the ready-made change the work recorded, checked through the fenced git', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const from = { ...(await readyMade(checkout, 'add-export', 'theirs.txt')), request: 7 };
+  const gitCalls = [];
+  const run = (file, args, opts) => { gitCalls.push({ args, opts }); return runProgram(file, args, opts); };
+  const fake = fakeClient({ views: fromViews(from) });
+  const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run });
+  assert.equal(r.code, 0, r.err);
+
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  assert.equal(branchOf(wt), 'feature/add-export');
+  assert.equal(await g(wt, 'rev-parse', 'HEAD'), from.sha);
+  assert.equal(fs.readFileSync(path.join(wt, 'theirs.txt'), 'utf8'), 'Their change.\n');
+  assert.deepEqual(parseBrief(fs.readFileSync(featurePaths(wt).brief, 'utf8')).fields.from, from);
+  // The ref was checked in the fence, and the worktree made from the commit itself, not the ref.
+  const verify = gitCalls.findIndex((c) => c.args.join(' ') === `rev-parse --verify --quiet ${from.ref}^{commit}`);
+  const add = gitCalls.findIndex((c) => c.args[0] === 'worktree');
+  assert.ok(verify >= 0 && verify < add, gitCalls.map((c) => c.args.join(' ')).join('\n'));
+  assert.equal(gitCalls[verify].opts.env.GIT_ALLOW_PROTOCOL, 'https');
+  assert.deepEqual(gitCalls[add].args.slice(-2), [wt, from.sha]);
+  // Nothing pushed or fetched anywhere.
+  assert.ok(gitCalls.every((c) => !['push', 'fetch'].includes(c.args[0])));
+  assert.deepEqual(fake.writes.map((w) => [w.kind, w.data.step]), [['feature', 'started']]);
+}));
+
+test('start refuses work whose ready-made change moved, or is gone, since it was recorded, and makes nothing', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const from = await readyMade(checkout, 'add-export', 'theirs.txt');
+  const wt = path.join(checkout, '.claude', 'worktrees', 'add-export');
+  const words = /^The change this work starts from isn't there as it was recorded: ask the director$/m;
+
+  // The request's head moved on, and the ref was fetched again.
+  const moved = await readyMade(checkout, 'add-export', 'later.txt');
+  assert.notEqual(moved.sha, from.sha);
+  const fake = fakeClient({ views: fromViews(from) });
+  const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(r);
+  assert.match(r.err, words);
+
+  // The ref is gone.
+  await g(checkout, 'update-ref', '-d', from.ref);
+  const gone = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(gone);
+  assert.match(gone.err, words);
+
+  // The ref names the commit's tree rather than the commit.
+  await g(checkout, 'update-ref', from.ref, await g(checkout, 'rev-parse', `${from.sha}^{tree}`));
+  const tree = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  refusedInOneLine(tree);
+  assert.match(tree.err, words);
+
+  assert.equal(fs.existsSync(wt), false);
+  await assert.rejects(g(checkout, 'rev-parse', '--verify', '--quiet', 'refs/heads/feature/add-export'));
+  assert.equal(fake.writes.length, 0);
+
+  // Back as it was recorded, it starts.
+  await g(checkout, 'update-ref', from.ref, from.sha);
+  const ok = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(ok.code, 0, ok.err);
+  assert.equal(await g(wt, 'rev-parse', 'HEAD'), from.sha);
+}));
+
 test('the foreman refuses, naming it, a worktree in a checkout whose config sets core.alternateRefsCommand or a hook, and nothing runs', () => withHome(async () => {
   const checkout = await project({ git: true });
   const config = path.join(checkout, '.git', 'config');

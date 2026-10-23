@@ -273,6 +273,30 @@ test('the goal, the done contract, the appetite and the rulings are in the brief
   assert.throws(() => renderBrief({ fields: { ...fields(), lane: 'huge' }, pluginRoot }), /can't be read/);
 });
 
+test('a brief for work from a ready-made change says to read the change and the document first, and how the pull request begins', () => {
+  const from = { sha: 'c'.repeat(40), ref: 'refs/wheelhouse/from/login-page' };
+  const plain = render('feature');
+  assert.doesNotMatch(plain, /ready-made change/);
+  assert.doesNotMatch(plain, /Carries on/);
+
+  const text = render('feature', { from });
+  assert.deepEqual(parseBrief(text).fields.from, from);
+  const said = 'This work starts from a ready-made change: your branch `feature/login-page` begins where that change stands. '
+    + "Before anything else, read the change (`git diff origin/HEAD...HEAD`) and the work's document, and carry the work on from there. "
+    + 'Push only through `open-pr` and `push`, which push your own branch; never push to the change\'s own branch.';
+  assert.ok(text.includes(`\n${said}\n`), text);
+  assert.doesNotMatch(text, /Carries on/);
+  // It comes before the goal, so the session reads it first.
+  assert.ok(text.indexOf(said) < text.indexOf('# The goal'));
+
+  const carried = render('feature', { from: { ...from, request: 7 } });
+  assert.ok(carried.includes(`\n${said} Begin your report's words, which become the pull request's body, with "Carries on #7."\n`), carried);
+
+  for (const bad of [{ ...from, sha: 'short' }, { ...from, ref: 'refs/heads/x' }, { ...from, ref: 'refs/wheelhouse/from/another' }, { ...from, request: 0 }, { ...from, extra: 1 }]) {
+    assert.throws(() => render('feature', { from: bad }), /can't be read/, JSON.stringify(bad));
+  }
+});
+
 test('an amended brief says what changed and has a new hash', () => {
   const original = render('feature');
   const now = '2026-10-19T03:04:05.000Z';

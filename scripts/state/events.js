@@ -161,7 +161,9 @@ function questionIdOf(id) {
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
-  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent'] },
+  // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
+  // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
+  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks'] },
@@ -212,6 +214,15 @@ function checkPlain(kind, data) {
     }
     if (data.place !== undefined && !Number.isFinite(data.place)) bad('has a place that is not a number');
     if (data.parent !== undefined) slug('parent');
+    if (data.from !== undefined) {
+      const f = data.from;
+      if (!(isPlain(f) && Object.keys(f).every((k) => ['sha', 'ref', 'request'].includes(k))
+        && typeof f.sha === 'string' && /^[0-9a-f]{40}$/.test(f.sha)
+        && f.ref === `refs/wheelhouse/from/${data.id}`
+        && (f.request === undefined || (Number.isInteger(f.request) && f.request >= 1)))) {
+        bad('has a from that is not a full commit, its refs/wheelhouse/from/<id> ref and the request it carries on');
+      }
+    }
   } else if (kind === 'feature') {
     slug('work');
     if (!FEATURE_STEPS.includes(data.step)) bad('needs its step to be one the build loop knows');

@@ -30,6 +30,7 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 - Add `--slices N` when the document splits the work into N slices.
 - **An extra plan:** its goal is its title. Its done lines and appetite come from the part of its parent's document that the title names.
 - **Missing done lines or appetite,** or anything unclear: `act ask` instead.
+- **Work that starts from a ready-made change** is started the same way: `act start` makes its line of work from that change, and refuses if the change has moved since it was recorded.
 
 ## Asking the director
 

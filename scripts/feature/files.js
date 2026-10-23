@@ -99,8 +99,15 @@ function splitJsonBlock(text) {
 
 // --- The brief ---
 
-const BRIEF_KEYS = ['v', 'work', 'lane', 'version', 'goal', 'done', 'appetite', 'rulings', 'routing', 'shownFirst', 'plan', 'slices'];
-const BRIEF_REQUIRED = BRIEF_KEYS.filter((k) => k !== 'plan' && k !== 'slices');
+const BRIEF_KEYS = ['v', 'work', 'lane', 'version', 'goal', 'done', 'appetite', 'rulings', 'routing', 'shownFirst', 'plan', 'slices', 'from'];
+const BRIEF_REQUIRED = BRIEF_KEYS.filter((k) => k !== 'plan' && k !== 'slices' && k !== 'from');
+
+// The ready-made change work starts from, as its work event records it: a full commit, the
+// work's own refs/wheelhouse/from/<work> ref and, when it carries on a pull request, its number.
+const validFrom = (from, work) => isPlain(from) && hasOnly(from, ['sha', 'ref', 'request'])
+  && typeof from.sha === 'string' && /^[0-9a-f]{40}$/.test(from.sha)
+  && from.ref === `refs/wheelhouse/from/${work}`
+  && (from.request === undefined || (Number.isInteger(from.request) && from.request >= 1));
 
 function validBrief(f) {
   return hasOnly(f, BRIEF_KEYS)
@@ -116,7 +123,8 @@ function validBrief(f) {
     && isPlain(f.routing) && Object.values(f.routing).every((x) => typeof x === 'string')
     && typeof f.shownFirst === 'boolean'
     && (f.plan === undefined || typeof f.plan === 'string')
-    && (f.slices === undefined || (Number.isInteger(f.slices) && f.slices >= 1));
+    && (f.slices === undefined || (Number.isInteger(f.slices) && f.slices >= 1))
+    && (f.from === undefined || validFrom(f.from, f.work));
 }
 
 // The brief's fields and the text after its JSON block. Throws if it is anything else.

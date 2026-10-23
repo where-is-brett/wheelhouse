@@ -365,7 +365,10 @@ function checkRepoConfig(checkout) {
 // checkout. A feature/<work> branch or worktree folder that is there already
 // was not made by a recorded start (a recorded feature never reaches here), so
 // it is refused, never reused: an agent can make branches in the shared repository.
-async function makeWorktree(ctx, work, checkout, worktree, branch) {
+// Work that starts from a ready-made change (`from`, ruling P4) has its branch made
+// from the recorded commit instead, and only while the work's ref still names that
+// commit: a change that moved after it was recorded is refused, not followed.
+async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
   // The fenced route, looking at the repository's settings before each call: a setting off the
   // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
   const fenced = safeGit({
@@ -389,7 +392,13 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   }
   const kept = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   if (kept.code === 0) refuse(`The branch ${branch} is there already, but no recorded feature made it: ask the director`);
-  const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, base]);
+  if (from !== undefined) {
+    const named = await git(['rev-parse', '--verify', '--quiet', `${from.ref}^{commit}`]);
+    if (named.code !== 0 || String(named.stdout ?? '').trim() !== from.sha) {
+      refuse("The change this work starts from isn't there as it was recorded: ask the director");
+    }
+  }
+  const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, from === undefined ? base : from.sha]);
   if (made.code !== 0) refuse(`git couldn't make the worktree: ${oneLine(made.stderr || made.stdout || 'no reason given', 200)}`);
 }
 
@@ -476,6 +485,7 @@ async function start(ctx, work, rest) {
   const fields = {
     v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing, shownFirst: entry.approval?.shownFirst === true,
     ...(plan ? { plan } : {}), ...(slices ? { slices } : {}),
+    ...(entry.work.data.from === undefined ? {} : { from: entry.work.data.from }),
   };
   let text;
   try {
@@ -500,8 +510,8 @@ async function start(ctx, work, rest) {
     const set = reuseWorktree(work, existing, worktree, branch);
     ctx.say(`${work} closed and was queued again: it starts afresh in its worktree ${worktree} on ${branch}${set === null ? '' : `, with what the run before left for its status set aside in ${set}`}.`);
   } else {
-    await makeWorktree(ctx, work, checkout, worktree, branch);
-    ctx.say(`Made the worktree ${worktree} on ${branch}.`);
+    await makeWorktree(ctx, work, checkout, worktree, branch, fields.from);
+    ctx.say(`Made the worktree ${worktree} on ${branch}${fields.from === undefined ? '' : `, from the ready-made change ${short(fields.from.sha)}`}.`);
   }
   try {
     ensureIgnored(worktree, { mainCheckout: checkout });

@@ -424,6 +424,20 @@ test('a lineage-hold record says when a session start held the project, and whic
   });
 });
 
+test('work may start from a ready-made change: its full commit, its own ref and the request it carries on', async () => {
+  await withHome(() => {
+    const w = SHAPES.work;
+    const from = { sha: 'c'.repeat(40), ref: 'refs/wheelhouse/from/export-csv' };
+    assert.deepEqual(makeEvent({ kind: 'work', data: { ...w, from } }).data.from, from);
+    assert.deepEqual(makeEvent({ kind: 'work', data: { ...w, from: { ...from, request: 7 } } }).data.from, { ...from, request: 7 });
+    for (const bad of [
+      null, 'c'.repeat(40), { sha: 'c'.repeat(39), ref: from.ref }, { sha: 'C'.repeat(40), ref: from.ref }, { ref: from.ref }, { sha: from.sha },
+      { ...from, ref: 'refs/wheelhouse/from/another' }, { ...from, ref: 'refs/heads/export-csv' }, { ...from, ref: 'refs/wheelhouse/from/export-csv/x' },
+      { ...from, request: 0 }, { ...from, request: 1.5 }, { ...from, request: '7' }, { ...from, branch: 'x' },
+    ]) assert.throws(() => makeEvent({ kind: 'work', data: { ...w, from: bad } }), /work event has a from/, JSON.stringify(bad));
+  });
+});
+
 test('a work id that is not a short slug is refused', async () => {
   await withHome(() => {
     const ok = (id) => makeEvent({ kind: 'work', data: { ...SHAPES.work, id } });
