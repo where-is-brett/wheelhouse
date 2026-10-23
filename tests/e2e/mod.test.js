@@ -479,7 +479,7 @@ test('a STOP wake the mod couldn\'t hand on is undone, and the next tick wakes f
   assert.equal((await tick(c)).submit, undefined);
 }));
 
-test('/digest gives the briefing, and a prompt within the next two hours brings none', { skip: SKIP }, () => onComputer({}, async (c) => {
+test('/wheelhouse-digest gives the briefing, and a prompt within the next two hours brings none', { skip: SKIP }, () => onComputer({}, async (c) => {
   const now = Date.now();
   // The director's last message, three hours ago, brought a briefing; a card has come in since.
   assert.ok((await prompt(c, 'Good morning', new Date(now - 3 * HOUR))).includes(HEADINGS.briefing));
@@ -496,10 +496,10 @@ test('/digest gives the briefing, and a prompt within the next two hours brings 
   assert.equal(given.promptAt, seen.promptAt);
   assert.ok(Date.parse(given.briefedAt) > Date.parse(seen.briefedAt));
 
-  // The director's next prompt, a minute later, brings no briefing: /digest gave it.
+  // The director's next prompt, a minute later, brings no briefing: /wheelhouse-digest gave it.
   const next = await prompt(c, 'Thanks', new Date(Date.parse(given.briefedAt) + MINUTE));
   assert.ok(next === undefined || !next.includes(HEADINGS.briefing), next);
-  // Two hours after /digest, and after that prompt, the next one does.
+  // Two hours after /wheelhouse-digest, and after that prompt, the next one does.
   assert.ok((await prompt(c, 'Back again', new Date(Date.parse(given.briefedAt) + MINUTE + 2 * HOUR))).includes(HEADINGS.briefing));
 }));
 

@@ -519,7 +519,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: `STOP is off. ${SAYS.nothingBuilding}` });
     assert.equal(await c.act(() => stopState().on), false);
     const lifts = await c.act(() => eventsOf('action').filter((e) => e.data.action === 'lift-stop'));
-    assert.deepEqual(lifts.map((e) => e.data.label), ['/go']);
+    assert.deepEqual(lifts.map((e) => e.data.label), ['/wheelhouse-go']);
     assert.ok(lifts[0].sig, 'the lift is signed');
     assert.deepEqual(await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))), [], 'the helper took it');
 

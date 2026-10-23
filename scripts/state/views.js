@@ -152,12 +152,23 @@ function revisedBy(sorted) {
       && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))));
 }
 
-// The lineage holds the session start recorded (ruling R146), in order, each with the card made for
-// it (its id, or null): a card names the hold it was made from by its `event` (ruling F71).
-function lineageHoldsOf(sorted) {
+// The ids of the lineage holds a later lineage-lift names: a lift closes only the holds it names, so
+// a hold recorded after it was decided stands.
+function liftedHoldIds(sorted) {
+  const lifted = new Set();
+  for (const l of sorted.filter((e) => e.kind === 'lineage-lift' && Array.isArray(e.data?.holds))) {
+    for (const id of l.data.holds) lifted.add(id);
+  }
+  return lifted;
+}
+
+// The lineage holds the session start recorded (ruling R146) that no lift has lifted, in order, each
+// with the card made for it (its id, or null): a card names the hold it was made from by its `event`
+// (ruling F71).
+function lineageHoldsOf(sorted, lifted) {
   const cards = sorted.filter((e) => e.kind === 'card');
-  return sorted.filter((e) => e.kind === 'lineage-hold' && Array.isArray(e.data?.mismatches))
-    .map((e) => ({ id: e.id, at: e.at, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null }));
+  return sorted.filter((e) => e.kind === 'lineage-hold' && Array.isArray(e.data?.mismatches) && !lifted.has(e.id))
+    .map((e) => ({ id: e.id, at: e.at, computer: typeof e.computer === 'string' ? e.computer : null, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null }));
 }
 
 // The events with an id no other event carries, in order, and a line for each repeated one: an id
@@ -447,12 +458,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   const waiting = [];
+  // A card made from a lineage hold that has been lifted is closed, as an answered card is.
+  const liftedHolds = liftedHoldIds(sorted);
   // The approval and CI push cards closed only by a later head of their pull request or branch:
   // undecided and not revised, so a revised card may still name one (ruling C21), with `steered` as a
   // waiting card has it.
   const outdatedCards = [];
   for (const { card, answers: mine, decided, steered } of outcomes) {
-    if (decided !== null || revised(card)) continue;
+    if (decided !== null || revised(card) || liftedHolds.has(card.data?.event)) continue;
     const gone = outdated(card);
     if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data, steered });
     if (gone !== false) continue;
@@ -472,7 +485,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
   const gateAsks = gateAsksOf(sorted, { enrolled, approvals, handedOut });
-  const lineageHolds = lineageHoldsOf(sorted);
+  const lineageHolds = lineageHoldsOf(sorted, liftedHolds);
 
   // Launch blockers, shortcuts taken and decisions told.
   const blockers = latestPerKey(sorted.filter((e) => e.kind === 'blocker'), (e) => e.data?.key);

@@ -26,7 +26,7 @@ export const READ_TOOLS = tools.read;
 // They only halt work that is already running.
 export const HALT_TOOLS = tools.halt;
 // Claude Code's own notification, so the courier's wake for STOP can still reach the director's
-// phone. It only tells them. It is kept out of READ_TOOLS, so the lineage hold still holds it.
+// phone. It only tells them. It is kept out of READ_TOOLS; the lineage hold lets it through separately (lineage-hold.js).
 export const NOTIFY_TOOLS = tools.notify;
 export const SANDBOX_NEEDED = 'Locked needs the sandbox on in this project\'s settings';
 export const DENIED = 'STOP is on: only reading, reporting and the runbook carry on';
@@ -46,7 +46,10 @@ const ODD_SPACE = /[^\S \t]/u;
 const QUIET = /(?<!\\) +2>\/dev\/null *$/;
 const QUIET_WINDOWS = /(?<!\\) +2>(?:\/dev\/null|[Nn][Uu][Ll]) *$/;
 
-// The words after the script when `command` is `node <pluginRoot>/<script> …` with no shell
+// The one word allowed between `node` and the script (NO_SYSTEM_CA in scripts/protection/settings.js, which a hook can't load).
+const NO_SYSTEM_CA = '--no-use-system-ca';
+
+// The words after the script when `command` is `node [--no-use-system-ca] <pluginRoot>/<script> …` with no shell
 // syntax but one trailing QUIET, and the script in a real plugin root; null for anything else.
 export function scriptArguments(command, pluginRoots, platform, script) {
   if (typeof command !== 'string') return null;
@@ -55,6 +58,8 @@ export function scriptArguments(command, pluginRoots, platform, script) {
   if (CONTROL.test(bare) || ODD_SPACE.test(bare)) return null;
   const parts = words(bare, windows);
   if (!parts || parts.length < 2 || parts[0] !== 'node') return null;
+  if (parts[1] === NO_SYSTEM_CA) parts.splice(1, 1);
+  if (parts.length < 2) return null;
   const fold = (p) => {
     const slashed = windows ? p.replaceAll('\\', '/') : p;
     return windows || platform === 'darwin' ? slashed.toLowerCase() : slashed;

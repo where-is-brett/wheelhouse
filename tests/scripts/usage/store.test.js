@@ -6,7 +6,7 @@ import path from 'node:path';
 import { withHome } from '../../helpers/homes.js';
 import { usageDir } from '../../../scripts/lib/paths.js';
 import {
-  addPoints, recordModReading, recordAllowance, recordSession, summariseDay, computeDay, readDay, pruneUsage,
+  addPoints, recordModReading, recordReceived, recordAllowance, recordSession, summariseDay, computeDay, readDay, pruneUsage,
 } from '../../../scripts/usage/store.js';
 
 const NOW = '2026-10-18T10:00:00.000Z';
@@ -308,4 +308,18 @@ test('computeDay sums a day from its raw files and writes nothing', () => withHo
   assert.equal(fs.existsSync(path.join(usageDir(), 'days')), false);
   assert.equal(computeDay('2026-10-17'), null); // no raw files for the day
   assert.deepEqual(summariseDay('2026-10-18'), summary);
+}));
+
+test('a received line is kept in the day\'s mod file and is not a cost reading', () => withHome(() => {
+  recordModReading({ session: 's1', usd: 1, at: '2026-10-18T09:00:00.000Z' });
+  recordReceived({ session: 's1', via: 'prompt', origin: 'sdk', at: '2026-10-18T09:30:00.000Z' });
+  recordReceived({ session: 's1', via: 'receive', origin: 'peer', at: '2026-10-18T09:31:00.000Z' });
+  const lines = fs.readFileSync(path.join(usageDir(), 'mod', '2026-10-18.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepEqual(lines.slice(1), [
+    { at: '2026-10-18T09:30:00.000Z', event: 'received', via: 'prompt', origin: 'sdk', session: 's1' },
+    { at: '2026-10-18T09:31:00.000Z', event: 'received', via: 'receive', origin: 'peer', session: 's1' },
+  ]);
+  // The day's figures are the same with them there.
+  assert.equal(summariseDay('2026-10-18').sessions.s1.modUsd, 0);
+  assert.throws(() => recordReceived({ session: '../x', via: 'prompt', origin: 'sdk', at: '2026-10-18T09:30:00.000Z' }));
 }));

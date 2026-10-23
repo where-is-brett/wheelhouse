@@ -252,6 +252,16 @@ export function directorStatusLine({ claudeHome, projectDir }) {
   return null;
 }
 
+// The one flag a plugin script's command may carry between `node` and the script. Claude Code sets
+// NODE_USE_SYSTEM_CA=1 for a session's commands, and in the sandbox Node.js then prints a line for each
+// system certificate whose trust settings it can't read; this flag turns the system store off for that process.
+export const NO_SYSTEM_CA = '--no-use-system-ca';
+
+// Whether the Node.js running this knows NO_SYSTEM_CA (Node.js 22.15 and later); `flags` is what it allows.
+export function knowsNoSystemCa(flags = process.allowedNodeEnvironmentFlags) {
+  return flags.has('--use-system-ca');
+}
+
 // The command that runs one of the plugin's scripts (`script`, its path inside the plugin, such as
 // scripts/frontdesk/cli.js), as its allow rule and its playbook write it: `node`, then the
 // script's full path in double quotes. On Windows the path has forward slashes after its drive
@@ -259,7 +269,8 @@ export function directorStatusLine({ claudeHome, projectDir }) {
 // when the plugin's folder isn't a full path, or holds a character that could end the quotes or
 // change what the rule matches (a quote, `*`, a parenthesis, `$`, a backtick, a backslash or a
 // control character): that folder gets no rule, and the command is asked about each time.
-export function pluginScriptCommand(pluginRoot, script, { platform = process.platform } = {}) {
+// With `noSystemCa`, `node` is followed by NO_SYSTEM_CA.
+export function pluginScriptCommand(pluginRoot, script, { platform = process.platform, noSystemCa = false } = {}) {
   if (typeof pluginRoot !== 'string') return null;
   if (typeof script !== 'string' || !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(script) || script.split('/').includes('..')) {
     throw new Error('The script must be a path inside the plugin, written with forward slashes');
@@ -272,19 +283,19 @@ export function pluginScriptCommand(pluginRoot, script, { platform = process.pla
     return null;
   }
   if (/["*()$`\\\p{Cc}]/u.test(root)) return null;
-  return `node "${root.replace(/\/+$/, '')}/${script}"`;
+  return `node ${noSystemCa ? `${NO_SYSTEM_CA} ` : ''}"${root.replace(/\/+$/, '')}/${script}"`;
 }
 
 // The front desk's command (scripts/frontdesk/cli.js), as pluginScriptCommand gives it.
-export function frontDeskCommand(pluginRoot, { platform = process.platform } = {}) {
-  return pluginScriptCommand(pluginRoot, 'scripts/frontdesk/cli.js', { platform });
+export function frontDeskCommand(pluginRoot, { platform = process.platform, noSystemCa = false } = {}) {
+  return pluginScriptCommand(pluginRoot, 'scripts/frontdesk/cli.js', { platform, noSystemCa });
 }
 
 // Setup's command (scripts/setup/cli.js), as pluginScriptCommand gives it. Setup's step 2 writes
 // its allow rule into the project's local settings by itself (ruling R43), so the playbook's
 // calls before step 7 are not asked about each time.
-export function setupCommand(pluginRoot, { platform = process.platform } = {}) {
-  return pluginScriptCommand(pluginRoot, 'scripts/setup/cli.js', { platform });
+export function setupCommand(pluginRoot, { platform = process.platform, noSystemCa = false } = {}) {
+  return pluginScriptCommand(pluginRoot, 'scripts/setup/cli.js', { platform, noSystemCa });
 }
 
 // The allow rule for one of these commands, in this file's `Bash(x:*)` form, the same as
@@ -311,9 +322,13 @@ export function localSettings({ address, node, pluginRoot, ownStatusLine = null,
   // own cli.js files, by its full path, never `node` itself.
   const frontDesk = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform })) : null;
   const setup = pluginRoot ? allowRule(setupCommand(pluginRoot, { platform })) : null;
+  // The session start names the command with NO_SYSTEM_CA when its Node.js knows it, and the playbooks
+  // name setup's command from that line, so each command is allowed in both forms.
+  const frontDeskFlagged = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform, noSystemCa: true })) : null;
+  const setupFlagged = pluginRoot ? allowRule(setupCommand(pluginRoot, { platform, noSystemCa: true })) : null;
   const allow = [
-    ...(frontDesk === null ? [] : [frontDesk, `Edit(/${FRONT_DESK_INPUT})`]),
-    ...(setup === null ? [] : [setup]),
+    ...(frontDesk === null ? [] : [frontDesk, frontDeskFlagged, `Edit(/${FRONT_DESK_INPUT})`]),
+    ...(setup === null ? [] : [setup, setupFlagged]),
   ];
   if (allow.length > 0) settings.permissions = { allow };
   return settings;

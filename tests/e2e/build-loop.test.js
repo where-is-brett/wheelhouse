@@ -804,7 +804,8 @@ test('an installed Superpowers file differs: a warning, a hold, and the gate ref
     assert.equal(fs.existsSync(holdFile(P)), false);
     assert.equal(await holdOf(world, s, { tool_name: 'Edit', tool_input: { file_path: path.join(s.worktree, 'src', 'app.js') } }), undefined);
     holds = eventsOf('lineage-hold');
-    assert.equal(holds.length, 1, 'a lifted hold records nothing');
+    assert.equal(holds.length, 1, 'a lifted hold records no hold');
+    assert.equal(eventsOf('lineage-lift').length, 1, 'and one lift, which closes its card');
   });
 });
 

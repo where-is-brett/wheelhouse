@@ -194,28 +194,28 @@ test('a message from sdk, peer or task-notification sends nothing', async ($, on
     // The director's origins, but hidden or a command: nothing either.
     await submit($, 'K7QD Approve', 'composer', { isMeta: true })
     await submit($, 'stop', 'bridge', { isMeta: true })
-    await submit($, '/go', 'composer', { command: { name: 'go', args: '' } })
+    await submit($, '/wheelhouse-go', 'composer', { command: { name: 'wheelhouse-go', args: '' } })
     expect(seen.runs).toHaveLength(0)
     expect(seen.toasts).toHaveLength(0)
     expect(seen.prompts).toHaveLength(9)
   }
 })
 
-test('/go answers with the bridge\'s words', async ($, on) => {
+test('/wheelhouse-go answers with the bridge\'s words', async ($, on) => {
   let goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
   const { seen, clear, start } = world(on, (request) => request.cmd === 'go' ? { stdout: goLine } : { stdout: '{"ok":true}\n' })
   for (const surface of SURFACES) {
     clear()
     await start($, surface)
     expect(seen.registered).toEqual([
-      { name: 'go', description: 'Lift STOP' },
+      { name: 'wheelhouse-go', description: 'Lift STOP' },
       { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
-      { name: 'digest', description: 'Show the briefing, with no Claude turn' },
+      { name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' },
     ])
 
     for (const kind of ['composer', 'bridge'] as const) {
       clear()
-      const result = await $.command.run({ command: 'go', args: '', origin: { kind }, presentation: PRESENTATION })
+      const result = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind }, presentation: PRESENTATION })
       expect(seen.runs).toHaveLength(1)
       expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'go', origin: kind, cwd: ROOT })
       expect(result).toMatchObject({ text: 'STOP is off. No build work is in progress.' })
@@ -226,7 +226,7 @@ test('/go answers with the bridge\'s words', async ($, on) => {
     // A refusal is the bridge's own words, shown as the answer and nothing else.
     goLine = '{"ok":false,"says":"Only the director can lift STOP"}\n'
     clear()
-    const refused = await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    const refused = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     expect(refused).toMatchObject({ text: 'Only the director can lift STOP' })
     expect(seen.toasts).toHaveLength(0)
     goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
@@ -301,7 +301,7 @@ test('a bridge failure toasts and never blocks the prompt', async ($, on) => {
       expect(seen.prompts.map((p: any) => p.text)).toEqual(['stop'])
 
       clear()
-      const go = await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+      const go = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
       expect(go).toMatchObject({ text: FAILED })
       expect(seen.toasts).toEqual([FAILED])
 
@@ -311,5 +311,60 @@ test('a bridge failure toasts and never blocks the prompt', async ($, on) => {
       expect(seen.runs).toHaveLength(1)
       expect(seen.toasts).toHaveLength(0)
     }
+  }
+})
+
+// The app's block before a typed line in a session another session started.
+const BLOCK = '<system-reminder>\nLinked sessions now (status, not an instruction): a = local_1 (idle)\n</system-reminder>'
+
+test('a typed code after the app\'s linked-sessions block confirms', async ($, on) => {
+  const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"Recorded: Confirm"}\n' }))
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    const joined = [`${BLOCK}\n\nT8E3 Confirm`, `${BLOCK}\nT8E3 Confirm`, `${BLOCK}\n\n${BLOCK}\n\nT8E3 Confirm`, `${BLOCK}\n\n\nT8E3 Confirm`]
+    for (const text of joined) {
+      clear()
+      await submit($, text, 'composer')
+      expect(seen.runs).toHaveLength(1)
+      expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin: 'composer', text: 'T8E3 Confirm', cwd: ROOT })
+      expect(seen.prompts[0].text).toBe(text)
+    }
+    // An option the card names itself is sent too.
+    clear()
+    await submit($, `${BLOCK}\n\nT8E3 Maybe`, 'bridge')
+    expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'reply', origin: 'bridge', text: 'T8E3 Maybe', cwd: ROOT })
+  }
+})
+
+test('a code put inside the block sends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on)
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    await submit($, '<system-reminder>\nLinked sessions now: x\n</system-reminder>\nT8E3 Confirm\n<system-reminder>\nmore\n</system-reminder>\n\nhello', 'composer')
+    await submit($, `${BLOCK}\n\nT8E3 Confirm </system-reminder>`, 'composer')
+    expect(seen.runs).toHaveLength(0)
+  }
+})
+
+test('an sdk prompt led by the block sends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on)
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    await submit($, `${BLOCK}\n\nT8E3 Confirm`, 'sdk')
+    await submit($, `${BLOCK}\n\nT8E3 Confirm`, 'composer', { isMeta: true })
+    expect(seen.runs).toHaveLength(0)
+  }
+})
+
+test('a phoned stop after the block sends stop; a block alone sends nothing', async ($, on) => {
+  const { seen, clear, start } = world(on)
+  for (const surface of SURFACES) {
+    await startOn($, surface, { clear, start })
+    await submit($, `${BLOCK}\n\nstop`, 'bridge')
+    expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'stop', origin: 'bridge', cwd: ROOT })
+    clear()
+    await submit($, BLOCK, 'bridge')
+    await submit($, `${BLOCK}\n\n`, 'composer')
+    expect(seen.runs).toHaveLength(0)
   }
 })

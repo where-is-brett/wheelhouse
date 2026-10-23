@@ -992,6 +992,42 @@ test('a hold is recorded in the state once for each set of mismatches, through t
   });
 });
 
+test('a matching check after a hold records a lift, once; a compaction records one when the file is gone', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const standing = { lineageHolds: [{ id: 'h1', at: '2026-10-19T02:00:00.000Z', computer: computerId(), data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
+    const f = fake({ views: { ...VIEWS, ...standing } });
+    const lifts = () => f.calls.writes.filter((w) => w.kind === 'lineage-lift');
+    const at = { now: () => new Date('2026-10-19T06:00:00.000Z') };
+    // The hold file stands, so the hold stands.
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, at);
+    assert.equal(lifts().length, 0);
+    // A matching check removes the file; the views still show the hold, so one lift is recorded.
+    fixture.restore();
+    await lineageRun(f, fixture, folder, at);
+    assert.deepEqual(lifts(), [{ project: P, kind: 'lineage-lift', data: { at: '2026-10-19T06:00:00.000Z', holds: ['h1'] } }]);
+    // With the hold lifted in the views, nothing more.
+    const done = fake({ views: { ...VIEWS, lineageHolds: [] } });
+    await lineageRun(done, fixture, folder, at);
+    assert.equal(done.calls.writes.filter((w) => w.kind === 'lineage-lift').length, 0);
+  });
+});
+
+test('a compaction that finds the hold file gone records a lift, and never writes the file', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const standing = { lineageHolds: [{ id: 'h1', at: '2026-10-19T02:00:00.000Z', computer: computerId(), data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
+    const f = fake({ views: { ...VIEWS, ...standing } });
+    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
+    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
+    assert.equal(f.calls.writes.filter((w) => w.kind === 'lineage-lift').length, 1);
+    assert.equal(fs.existsSync(holdFile(P)), false);
+  });
+});
+
 test('a hold that could not be written is not called one, and a record that could not be kept leaves the hold standing', async () => {
   await withHome(async () => {
     const folder = tempFolder('wh-ss-project-');
@@ -1517,4 +1553,53 @@ test('a helper that answers nothing about enrolments costs the session start not
     assert.deepEqual(trustCards(out), []);
     assert.doesNotMatch(text(out), /different key|trusted/);
   });
+});
+
+test('a compaction\'s start writes no hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-compact-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    let checks = 0;
+    const counting = (args) => { checks += 1; return checkLineage(args); };
+    const said = text(await lineageRun(fake(), fixture, folder, { lineage: counting }, { source: 'compact' }));
+    assert.equal(checks, 0, 'the check is not called');
+    assert.equal(fs.existsSync(holdFile(P)), false);
+    assert.doesNotMatch(said, /Lineage/);
+  });
+});
+
+test('a compaction\'s start leaves a standing hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-compact-held-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    const f = fake();
+    await lineageRun(f, fixture, folder, {}, { source: 'startup' });
+    assert.ok(fs.existsSync(holdFile(P)), 'held before');
+    const before = fs.readFileSync(holdFile(P), 'utf8');
+    // Put right, yet a compaction still leaves the hold standing, untouched.
+    fixture.restore();
+    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
+    assert.equal(fs.readFileSync(holdFile(P), 'utf8'), before, 'held after, unchanged');
+  });
+});
+
+test('a startup still writes the hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-startup-held-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    for (const source of ['startup', 'resume', 'clear', 'fork']) {
+      if (fs.existsSync(holdFile(P))) fs.rmSync(holdFile(P));
+      await lineageRun(fake(), fixture, folder, {}, { source });
+      assert.ok(fs.existsSync(holdFile(P)), source);
+    }
+  });
+});
+
+test('the Wheelhouse command line carries the flag that turns the system certificate store off, when this Node.js knows it', () => {
+  const command = (flags) => toolSheetLines('claude-code', { pluginRoot: '/plugin/root', platform: 'darwin', allowedFlags: flags }).find((l) => l.startsWith('The Wheelhouse command is '));
+  assert.equal(command(new Set(['--use-system-ca'])), 'The Wheelhouse command is node --no-use-system-ca "/plugin/root/scripts/frontdesk/cli.js"');
+  assert.equal(command(new Set(['--inspect'])), 'The Wheelhouse command is node "/plugin/root/scripts/frontdesk/cli.js"');
 });

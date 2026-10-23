@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { decide, HELD } from '../../../scripts/hooks/lineage-hold.js';
-import { HALT_TOOLS, READ_TOOLS } from '../../../scripts/hooks/stop-guard.js';
+import { decide, HELD, APP_TURN_TOOLS } from '../../../scripts/hooks/lineage-hold.js';
+import { HALT_TOOLS, READ_TOOLS, NOTIFY_TOOLS } from '../../../scripts/hooks/stop-guard.js';
 import { hookMain, projectOf } from '../../../scripts/hooks/kit.js';
 import { MATCHED, checkLineage, holdFile, main as check } from '../../../scripts/lineage/check.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -92,12 +92,12 @@ test('while held, Edit, Write and Bash are refused, and reading and halting are 
   });
 });
 
-test('while held, the tool search that loads a schema runs, and the notification tool stays held', async () => {
+test('while held, the tool search that loads a schema runs, and other messaging tools stay held', async () => {
   await withHome(async (home) => {
     const main = makeProject();
     hold();
     assert.equal(await decide(call(main, 'ToolSearch', { query: 'select:PushNotification', max_results: 1 }), deps(home)), undefined);
-    for (const tool of ['PushNotification', 'Edit', 'SendMessage']) {
+    for (const tool of ['Edit', 'SendMessage']) {
       assert.ok(denied(await decide(call(main, tool, { message: 'x' }), deps(home))), tool);
     }
   });
@@ -292,5 +292,31 @@ test('the check needs nothing from the Wheelhouse home, which a sandboxed comman
     const lines = [];
     assert.equal(check([main], { write: (t) => lines.push(t), root: fixture.root, claudeHome: fixture.claudeHome }), 0);
     assert.equal(lines.join(''), `${MATCHED}\n`);
+  });
+});
+
+test('a hold lets the notification through', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    for (const tool of NOTIFY_TOOLS) assert.equal(await decide(call(main, tool), deps(home)), undefined, tool);
+    assert.ok(NOTIFY_TOOLS.length > 0);
+  });
+});
+
+test('a hold lets the app\'s task list and wrap-up through', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    assert.deepEqual(APP_TURN_TOOLS, ['mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up']);
+    for (const tool of APP_TURN_TOOLS) assert.equal(await decide(call(main, tool), deps(home)), undefined, tool);
+  });
+});
+
+test('a hold still refuses mcp__ccd_view__show_pane and Edit', async () => {
+  await withHome(async (home) => {
+    const main = makeProject();
+    hold();
+    for (const tool of ['mcp__ccd_view__show_pane', 'Edit', 'mcp__ccd_turn__other']) assert.ok(denied(await decide(call(main, tool), deps(home))), tool);
   });
 });

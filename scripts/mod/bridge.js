@@ -12,10 +12,13 @@
 // director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
-//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
+//   { cmd: 'tick', session, cwd, idle, surface, received? }  what the pane and the status line show now and the
 //                                                   courier's wake, with the ids it marked sent and its
 //                                                   stamp, or a Shape 2 foreman's wakes from one
-//                                                   watcher loop, or nothing while setup runs
+//                                                   watcher loop, or nothing while setup runs; it also
+//                                                   records a lineage-lift once a hold file is gone.
+//                                                   `received` ({ origin, via }, a kept-out message, never its text)
+//                                                   adds one line to the day's usage/mod file
 //   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped
 //                                                   `at`: its marks are undone, so the next tick wakes
 //                                                   again
@@ -26,10 +29,10 @@
 //                                                   the director's words handed on as one prompt
 //   { cmd: 'settings', cwd }                        the settings pane's rows and groups, from the views on disk
 //   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
-//   { cmd: 'go', origin, cwd, since? }              /go or the pane: lifts STOP with a signed record;
+//   { cmd: 'go', origin, cwd, since? }              /wheelhouse-go or the pane: lifts STOP with a signed record;
 //                                                   the pane's carries the start of the STOP it drew
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
-//   { cmd: 'digest', origin, cwd }                  /digest: the briefing since the last, as text (any origin)
+//   { cmd: 'digest', origin, cwd }                  /wheelhouse-digest: the briefing since the last, as text (any origin)
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
@@ -43,11 +46,12 @@ import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
-import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
+import { featureSlug as defaultFeatureSlug, localViews as defaultLocalViews } from '../hooks/session-start.js';
+import { recordLift as defaultRecordLift } from '../lineage/check.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
-import { recordModReading, recordSession } from '../usage/store.js';
+import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
 import { isOwnStatusLine } from '../protection/settings.js';
@@ -88,7 +92,7 @@ export const SAYS = {
   notProject: 'This isn\'t a Wheelhouse project',
   goNotDirector: 'Only the director can lift STOP',
   goNotProject: 'This isn\'t a Wheelhouse project, so STOP stays on',
-  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it',
+  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it',
   goOtherStop: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again',
   stopOff: 'STOP isn\'t on.',
   cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
@@ -115,6 +119,8 @@ const DEFAULTS = {
   settingsRows: defaultRows,
   settingsGroups: defaultGroups,
   computer: computerId,
+  localViews: defaultLocalViews,
+  recordLift: defaultRecordLift,
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
   readChanges: defaultChanges,
@@ -270,11 +276,11 @@ async function setting(req, d) {
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
-// /go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
+// /wheelhouse-go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
 // record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
 // leaves STOP on. The pane's press carries `since`, the start of the STOP the pane drew, and
 // lifts only that STOP, as a Lift STOP card does only for a STOP begun before it was shown, so a
-// pane drawn before STOP was set again can't lift a STOP the director never saw. /go typed or
+// pane drawn before STOP was set again can't lift a STOP the director never saw. /wheelhouse-go typed or
 // phoned lifts the STOP in force.
 async function go(req, d) {
   if (!fromDirector(req.origin) && req.origin !== PANE) return no(SAYS.goNotDirector);
@@ -285,7 +291,7 @@ async function go(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.goNotProject);
   if (fromPane && stop.at !== req.since) return no(SAYS.goOtherStop);
-  const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/go' } }, lift: true };
+  const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/wheelhouse-go' } }, lift: true };
   let lifting = false;
   let kept;
   try {
@@ -308,7 +314,7 @@ async function stop(req, d) {
   return { ok: true, says: SAYS.stopOn };
 }
 
-// /digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
+// /wheelhouse-digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
 // and marks a briefing given, so whose command it is doesn't matter.
 async function digest(req, d) {
   return d.digestText({ cwd: req.cwd, now: d.now, client: clientOf(d), load: d.loadInputs, readEffective: d.readEffective });
@@ -410,6 +416,31 @@ function settingUp(cwd, d) {
   }
 }
 
+// A lineage hold whose hold file is gone has its card closed within a tick: the lift is recorded
+// once for each standing hold (lineage/check.js recordLift), by the tick because the session start
+// can't, the hold file being gone while no session starts. It informs, so a failure is passed over.
+async function liftingHold(project, d) {
+  try {
+    const views = d.localViews(project, ['lineageHolds']);
+    if (!Array.isArray(views?.lineageHolds) || views.lineageHolds.length === 0) return;
+    await d.recordLift({ project, views, computer: d.computer(), now: d.now, client: clientOf(d), left: withinBudget(Date.now() + helperMs()) });
+  } catch { /* the next tick tries again */ }
+}
+
+// A tick for messages the mod kept out of the front desk says so in `received`, { origin, via } or
+// a list of them (never the text): one line each in the day's mod file, the newest MAX_RECEIVED
+// of a list. It never fails the tick.
+const MAX_RECEIVED = 50;
+function noteReceived(req, d) {
+  const all = Array.isArray(req.received) ? req.received.slice(-MAX_RECEIVED) : [req.received];
+  for (const got of all) {
+    if (!isRecord(got) || (got.via !== 'prompt' && got.via !== 'receive') || typeof got.origin !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(got.origin)) continue;
+    try {
+      recordReceived({ session: req.session, via: got.via, origin: got.origin, at: d.now() });
+    } catch { /* the line is a note; the tick goes on */ }
+  }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes, with whether the
 // watcher runs (a Shape 1 watcher that has stopped is started again here), and the courier's
@@ -421,6 +452,7 @@ function settingUp(cwd, d) {
 // ticking. In the terminal, when Wheelhouse's own status line is set, `status` is left out so the
 // glance isn't shown twice.
 async function tick(req, d) {
+  noteReceived(req, d);
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
   if (found !== null && role === 'foreman') return foremanTick(found, d);
@@ -429,10 +461,12 @@ async function tick(req, d) {
   const started = d.elapsedClock();
   // The watch runs beside the pane, so the two share the time the tick has.
   const watched = watching(found, role, clientOf(d), d);
+  const lifting = liftingHold(found.project, d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
   const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d), client: clientOf(d) });
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
+  await lifting;
   // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.
   const wake = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
   try {

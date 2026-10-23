@@ -396,6 +396,17 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
   });
 });
 
+test('a lineage-lift record says when, and which holds it lifts', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);
+    const data = { at: '2026-10-19T02:00:00.000Z', holds: ['h1', 'h2'] };
+    assert.deepEqual(makeEvent({ kind: 'lineage-lift', data }).data, data);
+    for (const bad of [null, { at: data.at }, { holds: ['h1'] }, { ...data, extra: 1 }, { ...data, at: 'yesterday' }, { ...data, holds: [] }, { ...data, holds: 'h1' }, { ...data, holds: [7] }]) {
+      assert.throws(() => makeEvent({ kind: 'lineage-lift', data: bad }), /lineage-lift event/, JSON.stringify(bad));
+    }
+  });
+});
+
 test('a lineage-hold record says when a session start held the project, and which upstreams and paths differ (R146)', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-hold'), true);

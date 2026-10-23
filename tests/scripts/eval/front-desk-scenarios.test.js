@@ -3,6 +3,7 @@
 // helper and the scratch plugin (the hooks asking the stand-in, the board context hook's text, a
 // confirmation made as a click would make it, an open pull request), the harness's sessions over
 // several turns, the readers, and each scenario's judgement on made-up streams and events.
+import { knowsNoSystemCa } from '../../../scripts/protection/settings.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -203,7 +204,7 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     const hook = (input) => runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify(input) });
     const start = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'startup' })).out);
     assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) }));
-    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.match(start.hookSpecificOutput.additionalContext, /Changed without the director's confirmation:\n.*Prices show to the cent/);
     // Confirmed between turns, the next reload has it in the rulebook instead.
     context.helper.confirm(context.helper.events()[0].id);

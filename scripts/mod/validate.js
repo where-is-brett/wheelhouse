@@ -24,8 +24,8 @@ const VALIDATE_MS = 60000;
 // The hooks, as the validator spells them, and the calls on `$` the brief allows: the whole
 // mod's lists, each entry added by the task that first needs it.
 export const HOOKS = [
-  'session.start', 'session.measure', 'turn.start', 'turn.complete', 'prompt.submit', 'command.run{command=go}', 'session.receive',
-  'command.run{command=wheelhouse}', 'command.run{command=digest}', `ui.render{component=Pane, requestId=${PANE_ID}}`,
+  'session.start', 'session.measure', 'turn.start', 'turn.complete', 'prompt.submit', 'command.run{command=wheelhouse-go}', 'session.receive',
+  'command.run{command=wheelhouse}', 'command.run{command=wheelhouse-digest}', `ui.render{component=Pane, requestId=${PANE_ID}}`,
 ];
 // $.clock.now reads the time a tick's answer was read and the time the pane is drawn, for the
 // line saying what is shown is old. $.prompt.submit hands the front desk the prompts a press's

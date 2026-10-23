@@ -104,7 +104,7 @@ test('a hook beyond the mod\'s, or one missing, fails', () => {
   assert.match(extra.problems.join('\n'), /tool\.call/);
   const missing = checkMod({ report: reportWith(['./register.ts hooks: session.start, prompt.submit']), sources: SOURCES });
   assert.match(missing.problems.join('\n'), /session\.measure/);
-  assert.match(missing.problems.join('\n'), /command\.run\{command=go\}/);
+  assert.match(missing.problems.join('\n'), /command\.run\{command=wheelhouse-go\}/);
   const none = checkMod({ report: reportWith([]), sources: SOURCES });
   assert.notDeepEqual(none.problems, []);
 });
@@ -412,6 +412,15 @@ test('the options the mod sends as a reply are the signed labels', () => {
   const list = /^const LABELS = (\[[^\]]*\])$/m.exec(source);
   assert.ok(list, 'hooks/register.ts names its LABELS on one line');
   assert.deepEqual(JSON.parse(list[1].replaceAll("'", '"')), SIGNED_LABELS);
+});
+
+test('the mod and the hooks read past the same reminder blocks', () => {
+  const pattern = (file) => {
+    const found = /^const BLOCKS = (.*)$/m.exec(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+    assert.ok(found, `${file} names its BLOCKS on one line`);
+    return found[1];
+  };
+  assert.equal(pattern('hooks/mod/messages.ts'), pattern('scripts/lib/own-words.js').replace(/;$/, ''));
 });
 
 test('the mod reads a reply code from the code alphabet', () => {

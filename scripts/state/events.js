@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold',
+  'lineage-hold', 'lineage-lift',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -184,6 +184,9 @@ const PLAIN_SHAPES = {
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card.
   'lineage-hold': { must: ['at', 'mismatches'], may: [] },
+  // The hold file of the project is gone, so the cards of the holds it names (`holds`, their event
+  // ids) are closed: recorded once for each standing hold, by a session start or the mod's tick.
+  'lineage-lift': { must: ['at', 'holds'], may: [] },
 };
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
@@ -296,6 +299,9 @@ function checkPlain(kind, data) {
     if (!Array.isArray(data.mismatches) || data.mismatches.length === 0 || !data.mismatches.every(one)) {
       bad('needs mismatches, each an upstream (or null) and a path');
     }
+  } else if (kind === 'lineage-lift') {
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    if (!Array.isArray(data.holds) || data.holds.length === 0 || !data.holds.every(isText)) bad('needs holds, the ids of the holds it lifts');
   }
 }
 

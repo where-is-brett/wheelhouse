@@ -257,7 +257,9 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
     const local = w.json('.claude/settings.local.json');
     assert.deepEqual(local.permissions.allow, [
       `Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`, `Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`,
+      `Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
       'Edit(/.wheelhouse/front-desk.json)',
+      `Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
     ]);
     assert.deepEqual(local.sandbox.network.allowUnixSockets, [ADDRESS]);
     assert.match(local.statusLine.command, /statusline\.js/);
