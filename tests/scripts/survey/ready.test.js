@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { carryOn, archiveCommit, restoreCommit, fetchInto, freeWork, folderGit, ReadyRefusal } from '../../../scripts/survey/ready.js';
+import { carryOn, carryOnPiece, pieceWork, archiveCommit, restoreCommit, fetchInto, freeWork, folderGit, ReadyRefusal } from '../../../scripts/survey/ready.js';
 import { archiveAt } from '../../../scripts/setup/uninstall.js';
 import { reaching } from '../../../scripts/setup/git.js';
 import { run } from '../../../scripts/lib/run.js';
@@ -125,6 +125,96 @@ test('only an open request is carried on, by a host ref of its own, and the body
     const made = await carryOn({ git: p.git, adapter: adapterFor(open), remoteUrl: p.remote.url, number: 7, work: 'carry-on-7' });
     assert.deepEqual([made.body, made.bodyWithheld, made.title], ['', true, 'Prices']);
     assert.equal(JSON.stringify(made).includes(SECRET), false);
+  } finally { p.cleanup(); }
+});
+
+// ---- Unfinished work with no request ----
+
+const noRef = async (p, work) => (await run('git', ['rev-parse', '--verify', '--quiet', `refs/wheelhouse/from/${work}`], { cwd: p.folder })).code === 1;
+
+test('a pushed piece is fetched from the host into the work\'s ref, as the survey saw it or as the host holds it now', async () => {
+  const p = await projectWith({ 'README.md': 'Start\n' });
+  try {
+    const seen = await commitAt(p, 'refs/heads/menu-photos', 'photos.txt', 'Photos\n');
+    await g(p.folder, 'fetch', '-q', 'origin');
+    const before = await folderNow(p.folder, 'carry-on-menu-photos');
+    const made = await carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'menu-photos', head: seen }, where: 'pushed', work: 'carry-on-menu-photos', base: 'refs/remotes/origin/main' });
+    assert.deepEqual(made, {
+      sha: seen, ref: 'refs/wheelhouse/from/carry-on-menu-photos', request: null, branch: 'menu-photos', where: 'pushed', moved: false,
+      commits: ['Change photos.txt'], files: [{ path: 'photos.txt', additions: 1, deletions: 0 }],
+    });
+    assert.equal(await g(p.folder, 'rev-parse', made.ref), seen);
+    assert.deepEqual(await folderNow(p.folder, 'carry-on-menu-photos'), before, 'nothing else in the folder moved');
+    // Moved on since the survey: the host's line now, said as moved.
+    const now = await commitAt(p, 'refs/heads/menu-photos', 'photos.txt', 'Photos, more\n');
+    const later = await carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'menu-photos', head: seen }, where: 'pushed', work: 'carry-on-menu-photos-2' });
+    assert.deepEqual([later.sha, later.moved, later.commits, later.files], [now, true, [], []]);
+    // Gone from the host, or a name git would take as something else: refused, nothing fetched.
+    await assert.rejects(carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'gone', head: seen }, where: 'pushed', work: 'carry-on-gone' }), /isn't on the host/);
+    for (const name of ['-x', 'a..b', 'a//b', 'x.lock', 'a@{1}']) {
+      await assert.rejects(carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name, head: seen }, where: 'pushed', work: 'carry-on-x' }), ReadyRefusal);
+    }
+    assert.equal(await noRef(p, 'carry-on-gone'), true);
+    assert.equal(await noRef(p, 'carry-on-x'), true);
+  } finally { p.cleanup(); }
+});
+
+test('a piece on this computer is pointed at where its line stands, only as the survey saw it or building on it', async () => {
+  const p = await projectWith({ 'README.md': 'Start\n' });
+  try {
+    await g(p.folder, 'branch', 'opening-hours', 'HEAD');
+    const tree = tempFolder('wh-ready-tree-');
+    await g(p.folder, 'worktree', 'add', '-q', tree, 'opening-hours');
+    fs.writeFileSync(path.join(tree, 'hours.txt'), 'Hours\n');
+    await g(tree, 'add', 'hours.txt');
+    await g(tree, 'commit', '-q', '-m', 'Start the hours page');
+    const seen = await g(tree, 'rev-parse', 'HEAD');
+    const before = await folderNow(p.folder, 'carry-on-opening-hours');
+    const made = await carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'opening-hours', head: seen }, where: 'local', work: 'carry-on-opening-hours', base: 'refs/remotes/origin/main' });
+    assert.deepEqual(made, {
+      sha: seen, ref: 'refs/wheelhouse/from/carry-on-opening-hours', request: null, branch: 'opening-hours', where: 'local', moved: false,
+      commits: ['Start the hours page'], files: [{ path: 'hours.txt', additions: 1, deletions: 0 }],
+    });
+    assert.deepEqual(await folderNow(p.folder, 'carry-on-opening-hours'), before);
+    // Built on since: the line as it is now. The ref already there is never moved.
+    fs.writeFileSync(path.join(tree, 'hours.txt'), 'Hours, more\n');
+    await g(tree, 'commit', '-q', '-am', 'Add the weekend');
+    const now = await g(tree, 'rev-parse', 'HEAD');
+    await assert.rejects(carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'opening-hours', head: seen }, where: 'local', work: 'carry-on-opening-hours' }), /ready-made change already/);
+    assert.equal(await g(p.folder, 'rev-parse', made.ref), seen);
+    const later = await carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'opening-hours', head: seen }, where: 'local', work: 'carry-on-opening-hours-2' });
+    assert.deepEqual([later.sha, later.moved], [now, true]);
+    // Rewritten, so no longer building on what the survey saw: refused, no ref made.
+    await g(tree, 'reset', '-q', '--hard', 'origin/main');
+    await g(tree, 'commit', '-q', '--allow-empty', '-m', 'Other work');
+    await assert.rejects(carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'opening-hours', head: seen }, where: 'local', work: 'carry-on-other' }), /changed since the survey/);
+    assert.equal(await noRef(p, 'carry-on-other'), true);
+    // A worktree on no line of its own, named by its folder: the commit the survey saw.
+    const loose = await carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'this folder', head: seen }, where: 'local', work: 'carry-on-this-folder' });
+    assert.deepEqual([loose.sha, loose.branch], [seen, 'this folder']);
+    fs.rmSync(tree, { recursive: true, force: true });
+  } finally { p.cleanup(); }
+});
+
+test('a piece\'s subjects and files holding a secret are left out, and its work id is a short slug of its name', async () => {
+  const p = await projectWith({ 'README.md': 'Start\n' });
+  try {
+    await g(p.seed, 'switch', '-q', '-c', 'keys', 'main');
+    fs.writeFileSync(path.join(p.seed, 'plain.txt'), 'Plain\n');
+    await g(p.seed, 'add', 'plain.txt');
+    await g(p.seed, 'commit', '-q', '-m', `Use ${SECRET}`);
+    await g(p.seed, 'commit', '-q', '--allow-empty', '-m', 'Tidy');
+    const head = await g(p.seed, 'rev-parse', 'HEAD');
+    await g(p.seed, 'push', '-q', p.remote.url, 'keys');
+    await g(p.seed, 'switch', '-q', 'main');
+    await g(p.folder, 'fetch', '-q', 'origin');
+    const made = await carryOnPiece({ git: p.git, remoteUrl: p.remote.url, piece: { name: 'keys', head }, where: 'pushed', work: 'carry-on-keys', base: 'refs/remotes/origin/main' });
+    assert.deepEqual(made.commits, ['Tidy']);
+    assert.equal(JSON.stringify(made).includes(SECRET), false);
+    assert.equal(pieceWork('Feature/Menu_Photos!'), 'carry-on-feature-menu-photos');
+    assert.equal(pieceWork('this folder'), 'carry-on-this-folder');
+    assert.equal(pieceWork('---'), 'carry-on-work');
+    assert.ok(pieceWork('x'.repeat(60)).length <= 37);
   } finally { p.cleanup(); }
 });
 

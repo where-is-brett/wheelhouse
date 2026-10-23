@@ -126,7 +126,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     survey: {
       again: post('/survey/again'), // { project } -> { ok, taken, id?, hostReached? }: when the latest survey missed the host and was not itself taken again, one more is taken and recorded (plan ruling P3); reads the project only; refused under STOP, since it writes to the state
       // A change made ready to start work from (scripts/survey/ready.js): the ref refs/wheelhouse/from/<work> in the project's folder and its ready record, nothing else; refused under STOP; `cwd` may stand for `project`.
-      carryOn: post('/survey/carry-on'), // { project | cwd, number } -> { ok, work, from: { sha, ref, request }, branch, fork, title, body, bodyWithheld, files, commits }: open request `number`, fetched by the host's ref for it and checked against its head
+      carryOn: post('/survey/carry-on'), // { project | cwd, number } -> { ok, work, from: { sha, ref, request }, branch, fork, title, body, bodyWithheld, files, commits }: open request `number`, fetched by the host's ref for it and checked against its head; or { project | cwd, line } -> { ok, work, from: { sha, ref }, branch, where, moved, commits, files }: the piece of unfinished work the latest survey lists by that name, fetched when pushed, pointed at when on this computer
       archive: post('/survey/archive'), // { project | cwd } -> { ok, work, from: { sha, ref }, moved }: the survey's instruction files that are plain files on the default branch now, moved into .wheelhouse-archive/
       restore: post('/survey/restore'), // { project | cwd } -> { ok, work, from: { sha, ref }, moved }: the archive put back, as uninstall reads it
     },

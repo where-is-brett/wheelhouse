@@ -264,7 +264,9 @@ test('views survey prints what the survey found as short lines, with the rules n
       '- number 12: Add a map of the shop',
       '- number 15: Fix the footer (a draft)',
       'Unfinished work pushed: 1',
+      '- a: Work (1 change saved)',
       'Unfinished work on this computer: at least 1',
+      '- b: Work (2 changes saved)',
       'Another agent setup\'s files: AGENTS.md, .cursorrules',
       'Parts of CLAUDE.md: 1',
       'Rules found: 2',
@@ -1562,11 +1564,25 @@ test('carry-on <n> asks the helper to make the request ready, and prints the wor
   const { ok: _ok, ...printed } = ready;
   assert.deepEqual(made.json, printed);
   assert.deepEqual([await run(helper, ['carry-on', '7'])].map((r) => [r.code, r.err]), [[1, 'STOP is on\n']]);
-  for (const argv of [['carry-on'], ['carry-on', '0'], ['carry-on', '7', '8'], ['carry-on', '#7']]) {
+  for (const argv of [['carry-on'], ['carry-on', '0'], ['carry-on', '7', '8'], ['carry-on', '#7'], ['carry-on', '--line'], ['carry-on', '--line', ''], ['carry-on', 'menu']]) {
     const refused = await run(helper, argv);
-    assert.deepEqual([refused.code, refused.err], [1, 'Give the request\'s number: carry-on <n>\n'], argv.join(' '));
+    assert.deepEqual([refused.code, refused.err], [1, 'Give the request\'s number or the piece of work\'s name: carry-on <n>, or carry-on --line <name>\n'], argv.join(' '));
   }
   assert.equal(asked.length, 2);
+});
+
+test('carry-on --line <name> asks the helper to make that piece of work ready, by its name', async () => {
+  const asked = [];
+  const ready = {
+    ok: true, work: 'carry-on-menu', from: { sha: FULL, ref: 'refs/wheelhouse/from/carry-on-menu' },
+    branch: 'menu', where: 'local', moved: false, commits: ['Start the menu'], files: [{ path: 'menu.md', additions: 3, deletions: 0 }],
+  };
+  const helper = { client: { survey: { carryOn: async (body) => { asked.push(body); return ready; } } } };
+  const made = await run(helper, ['carry-on', '--line', 'menu']);
+  assert.equal(made.code, 0, made.err);
+  assert.deepEqual(asked, [{ cwd: CWD, line: 'menu' }]);
+  const { ok: _ok, ...printed } = ready;
+  assert.deepEqual(made.json, printed);
 });
 
 test('archive and restore ask the helper to make the change ready, and print the work, the from to record and the files moved', async () => {

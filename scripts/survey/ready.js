@@ -7,8 +7,10 @@
 // it only when it is the head the host listed for the open request. Archiving another agent
 // setup's instructions, and putting them back, build one commit each with git's plumbing and a
 // temporary index, on the default branch as it is now, so neither the director's index nor their
-// working copy is touched. Nothing here pushes: the foreman starts the work from the ref, on a line
-// of its own (scripts/foreman/act.js).
+// working copy is touched. A piece of unfinished work with no request is carried on from where it
+// stands: fetched from the host when it was pushed, or pointed at here when it is on this computer.
+// Nothing here pushes: the foreman starts the work from the ref, on a line of its own
+// (scripts/foreman/act.js).
 //
 // `git(args, { input, env })` is git in the project's folder, fenced as setup's git is (folderGit);
 // `env` may add only the temporary index and the commit's author.
@@ -164,6 +166,89 @@ export async function carryOn({ git, adapter, remoteUrl, number, work }) {
       .map((f) => ({ path: f.path, additions: f.additions, deletions: f.deletions })),
     commits: (Array.isArray(details?.commits) ? details.commits : []).filter((c) => typeof c === 'string').map(text),
   };
+}
+
+// A piece's name as git takes a line's name: no option, no control character, no '..' or '//',
+// no '@{', and none of git's own special characters.
+const LINE_NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*\.lock$)[A-Za-z0-9._/@+-]+(?<![/.])$/;
+// The most subjects and files said of a piece, newest first.
+const MOST_SUBJECTS = 50;
+const MOST_FILES = 300;
+
+// pieceWork(name) -> the work id a piece of unfinished work is first tried under: carry-on- and
+// its name as a short slug, with room left for freeWork's -2 … -20.
+export function pieceWork(name) {
+  const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 28).replace(/-+$/, '');
+  return `carry-on-${slug === '' ? 'work' : slug}`;
+}
+
+// The commits of `sha` not on `base` (the main line as last fetched, a ref, or null), by subject,
+// newest first, and the files they touch: none when the main line can't be read here. A subject or
+// a file's name in which the secret scan finds anything is left out.
+async function pieceDetails(git, sha, base) {
+  const none = { commits: [], files: [] };
+  if (typeof base !== 'string' || !/^refs\/[A-Za-z0-9._/-]+$/.test(base)) return none;
+  const main = await git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+  const mainSha = String(main.stdout ?? '').trim();
+  if (main.code !== 0 || !FULL_SHA.test(mainSha)) return none;
+  const log = await git(['log', '--format=%s', `--max-count=${MOST_SUBJECTS}`, sha, `^${mainSha}`]);
+  const commits = log.code === 0 ? String(log.stdout).split('\n').filter((l) => l !== '' && !secretIn(l)).map((l) => l.slice(0, TEXT_CHARS)) : [];
+  const fork = await git(['merge-base', mainSha, sha]);
+  const from = String(fork.stdout ?? '').trim();
+  if (fork.code !== 0 || !FULL_SHA.test(from)) return { commits, files: [] };
+  const diff = await git(['diff', '--numstat', '-z', '--no-renames', from, sha]);
+  const count = (n) => (/^\d+$/.test(n) ? Number(n) : null);
+  const files = diff.code !== 0 ? [] : String(diff.stdout).split('\0').filter(Boolean).map((r) => r.split('\t'))
+    .filter((r) => r.length === 3 && !secretIn(r[2])).slice(0, MOST_FILES).map(([a, d, file]) => ({ path: file, additions: count(a), deletions: count(d) }));
+  return { commits, files };
+}
+
+// carryOnPiece({ git, remoteUrl, piece, where, work, base }) -> { sha, ref, request: null, branch,
+// where, moved, commits, files }: a piece of unfinished work the survey listed (`piece`, its
+// { name, head }), made ready at the work's ref. Pushed (`where` 'pushed'), its line is fetched from
+// `remoteUrl` alone, and kept only when it is the head the survey saw or the one the host holds now,
+// read just before; on this computer ('local'), the ref is pointed at the line's commit here (a
+// worktree on no line of its own: the commit the survey saw), only when that is the survey's head
+// or builds on it, and only while the ref isn't there yet. `moved` says the piece went on since the
+// survey. `branch` is the piece's own name, which its work's line must never be. Nothing is pushed.
+export async function carryOnPiece({ git, remoteUrl, piece, where, work, base = null }) {
+  checkWork(work);
+  const name = piece?.name;
+  const seen = piece?.head;
+  if (typeof name !== 'string' || name === '' || /[\0-\x1f]/.test(name) || typeof seen !== 'string' || !FULL_SHA.test(seen)) refuse('the survey didn\'t say where that piece of work stands');
+  const ref = fromRef(work);
+  let sha;
+  if (where === 'pushed') {
+    if (!LINE_NAME.test(name)) refuse('that piece of work has a name that isn\'t fetched');
+    checkAddress(remoteUrl);
+    const listed = await git(['ls-remote', '--heads', remoteUrl, `refs/heads/${name}`]);
+    if (listed.code !== 0) refuse('the host couldn\'t be read, to find that piece of work');
+    const now = String(listed.stdout).split('\n').map((l) => l.split('\t')).find(([, r]) => r === `refs/heads/${name}`)?.[0];
+    if (now === undefined) refuse(`${name} isn't on the host any more, so there is nothing to carry on`);
+    sha = await fetchInto({ git, remoteUrl, source: `refs/heads/${name}`, work });
+    if (sha !== seen && sha !== now) {
+      await dropRef(git, work, sha);
+      refuse(`${name} moved on while it was fetched, so it wasn't kept: ask again`);
+    }
+  } else if (where === 'local') {
+    if ((await git(['rev-parse', '--verify', '--quiet', ref])).code === 0) refuse(`the work ${work} has a ready-made change already`);
+    const line = LINE_NAME.test(name) ? await git(['rev-parse', '--verify', '--quiet', `refs/heads/${name}^{commit}`]) : null;
+    sha = line !== null && line.code === 0 ? String(line.stdout ?? '').trim() : await commitOf(git, seen, `${name} as the survey saw it`);
+    if (!FULL_SHA.test(sha)) refuse(`${name} couldn't be read in the project's folder`);
+    if (sha !== seen && (await git(['merge-base', '--is-ancestor', seen, sha])).code !== 0) {
+      refuse(`${name} has changed since the survey looked, other than by building on it, so it wasn't made ready: ask the director`);
+    }
+    const set = await git(['update-ref', ref, sha, '']);
+    if (set.code !== 0) refuse(`the work ${work} has a ready-made change already`);
+  } else {
+    refuse('a piece of work is either pushed or on this computer');
+  }
+  try {
+    return { sha, ref, request: null, branch: name, where, moved: sha !== seen, ...await pieceDetails(git, sha, base) };
+  } catch (error) {
+    await dropRef(git, work, sha);
+    throw error;
+  }
 }
 
 // The author and committer of a commit built here: the signed-in host account, as step 7's.

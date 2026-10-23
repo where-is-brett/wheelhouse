@@ -267,6 +267,17 @@ test('a project under way at Balanced: one survey, nothing changed, the carry-on
     assert.equal(await g(a.folder, 'rev-parse', carried.from.ref), request.head);
     assert.deepEqual(await a.act(() => readReadyRecord(SLUG, carried.work)), { ...carried.from, branch: REQUEST_LINE });
 
+    // A piece of unfinished work with no request, by the name the survey view gives it: made ready
+    // from where its line stands on this computer, its work's line never its own.
+    const piece = await desk(a, 'carry-on', '--line', 'menu-photos');
+    const photos = await g(world.worktrees['menu-photos'], 'rev-parse', 'HEAD');
+    assert.deepEqual([piece.work, piece.from, piece.branch, piece.where, piece.moved], [
+      'carry-on-menu-photos', { sha: photos, ref: 'refs/wheelhouse/from/carry-on-menu-photos' }, 'menu-photos', 'local', false,
+    ], JSON.stringify(piece));
+    assert.deepEqual(piece.commits, ['Start menu-photos']);
+    assert.equal(await g(a.folder, 'rev-parse', piece.from.ref), photos);
+    assert.deepEqual(await a.act(() => readReadyRecord(SLUG, piece.work)), { ...piece.from, request: null, branch: 'menu-photos' });
+
     // Archiving: a ready-made change on the default branch moving exactly the four files.
     const archived = await desk(a, 'archive');
     assert.equal(typeof archived.work, 'string', JSON.stringify(archived));

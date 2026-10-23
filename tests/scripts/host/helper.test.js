@@ -1598,6 +1598,37 @@ test('/survey/carry-on makes an open request ready at the work\'s ref, on a line
   } finally { p.cleanup(); }
 });
 
+test('/survey/carry-on with a line makes a piece the survey lists ready, from where it stands, on a line that is never the piece\'s own', async () => {
+  const p = await readyProject();
+  try {
+    // A piece pushed with no request, and one on this computer only.
+    const pushed = await p.requestAt('refs/heads/feature/carry-on-photos', 'photos.txt');
+    await g(p.dir, 'fetch', '-q', 'origin');
+    await g(p.dir, 'branch', 'hours', 'origin/main');
+    await g(p.dir, 'update-ref', 'refs/heads/hours', pushed);
+    const item = (name, head) => ({ name, head, commits: 1, subject: 'Add photos.txt', at: '' });
+    await as(p.home, () => withHelper(fakeAdapter(), async (client) => {
+      seedSurvey({ ...SURVEYED, hostReached: true, pushed: [item('feature/carry-on-photos', pushed)], local: [item('hours', pushed)] });
+      const before = await p.folderState();
+      const made = await client.survey.carryOn({ cwd: p.dir, line: 'feature/carry-on-photos' });
+      assert.deepEqual(made, {
+        ok: true, work: 'carry-on-feature-carry-on-photos', from: { sha: pushed, ref: 'refs/wheelhouse/from/carry-on-feature-carry-on-photos' },
+        branch: 'feature/carry-on-photos', where: 'pushed', moved: false, commits: ['Add photos.txt'], files: [{ path: 'photos.txt', additions: 1, deletions: 0 }],
+      });
+      assert.deepEqual(readReadyRecord('o__p', made.work), { ...made.from, request: null, branch: 'feature/carry-on-photos' });
+      const local = await client.survey.carryOn({ project: 'o__p', line: 'hours' });
+      assert.deepEqual([local.ok, local.work, local.where, local.from.sha], [true, 'carry-on-hours', 'local', pushed]);
+      assert.deepEqual(readReadyRecord('o__p', 'carry-on-hours'), { ...local.from, request: null, branch: 'hours' });
+      assert.deepEqual(await p.folderState(), before, 'nothing else in the folder moved');
+      // Only a piece the latest survey lists.
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'main' }), { ok: false, refused: 'the latest survey lists no unfinished work named main' });
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /carry-on-feature|carry-on-hours/);
+      fs.writeFileSync(stopFile(), '');
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'hours' }), { ok: false, refused: 'STOP is on' });
+    }, { authorFor }));
+  } finally { p.cleanup(); }
+});
+
 test('/survey/archive archives the survey\'s instruction files as they are on the default branch now, and /survey/restore puts them back', async () => {
   const p = await readyProject();
   try {

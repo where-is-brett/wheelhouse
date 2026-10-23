@@ -43,7 +43,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
-import { ReadyRefusal, archiveCommit, carryOn, dropRef, fetchInto, folderGit, freeWork, restoreCommit } from '../survey/ready.js';
+import { ReadyRefusal, archiveCommit, carryOn, carryOnPiece, dropRef, fetchInto, folderGit, freeWork, pieceWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
 import { reaching } from '../setup/git.js';
 import { directorGitEnv } from '../setup/host.js';
@@ -1524,8 +1524,11 @@ export async function startHelper({
   }
 
   // An open request carried on: { number }. The answer gives what a brief is written from, the
-  // body left out when the secret scan finds anything in it.
-  async function doCarryOn({ project, number, record, git, used }, ctx) {
+  // body left out when the secret scan finds anything in it. Or a piece of unfinished work with no
+  // request: { line }, its name, as the latest survey lists it (doCarryOnPiece).
+  async function doCarryOn(body, ctx) {
+    if (body.line !== undefined) return doCarryOnPiece(body, ctx);
+    const { project, number, record, git, used } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the request number must be a whole number from 1');
     const adapter = await ctx.adapter();
     const listed = adapter.openRequests();
@@ -1536,6 +1539,32 @@ export async function startHelper({
     await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: number, branch: made.branch });
     const { sha, ref, request, ...details } = made;
     return { ok: true, work, from: { sha, ref, request }, ...details };
+  }
+
+  // A piece of unfinished work the latest survey lists by `line`, its name: pushed with no request,
+  // or on this computer. Named in both (the same work, pushed and gone on here, or the other way
+  // round), the one that builds on the other is carried on, else the one pushed. Its work's line,
+  // feature/<work>, is never the piece's own. The answer gives what a brief is written from: its
+  // subjects and files, those holding anything the secret scan finds left out.
+  async function doCarryOnPiece({ project, line, views, record, git, used }, ctx) {
+    if (typeof line !== 'string' || line === '' || line.length > 400 || /[\0-\x1f]/.test(line)) refuse('give the piece of work by its name, as the survey lists it');
+    const data = views.survey?.data;
+    const named = (where) => (Array.isArray(data?.[where]) ? data[where] : []).find((i) => i !== null && typeof i === 'object' && i.name === line);
+    const pushed = named('pushed');
+    const local = named('local');
+    if (pushed === undefined && local === undefined) refuse(`the latest survey lists no unfinished work named ${line}`);
+    let where = pushed === undefined ? 'local' : 'pushed';
+    if (pushed !== undefined && local !== undefined && typeof pushed.head === 'string' && typeof local.head === 'string'
+      && (await git(['merge-base', '--is-ancestor', pushed.head, local.head])).code === 0) where = 'local';
+    const piece = where === 'pushed' ? pushed : local;
+    const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: pieceWork(line), lines: [line], used });
+    const made = await carryOnPiece({
+      git, remoteUrl: record.remoteUrl, piece, where, work, base: plainBranch(defaultBranch) ? `refs/remotes/origin/${defaultBranch}` : null,
+    });
+    await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: null, branch: made.branch });
+    const { sha, ref, request: _request, ...details } = made;
+    return { ok: true, work, from: { sha, ref }, ...details };
   }
 
   // The default branch as it is on the host now, fetched into the work's ref, and the commit `build`

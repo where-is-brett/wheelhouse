@@ -89,7 +89,7 @@ When they say yes to archiving another agent setup's instructions, run `archive`
 
 At Autonomy Cautious and Balanced, setup ends with a card asking whether to carry on the work already under way in the project (`views survey` lists it). Its click records itself.
 
-- **Carry on with it**, or at Trusting, where the first briefing says "I'm carrying them on" and there is no card: one brief each. For each request, run `carry-on <n>` with its number, then `wheelhouse-intake` with what it prints. For each piece of unfinished work that is no request, `wheelhouse-intake`, with the brief written from what you can read of it: its name, the words of its last change and the files it touches. "Stop", in any words, leaves the rest as it is.
+- **Carry on with it**, or at Trusting, where a briefing says "I'm carrying them on" (or "it") and there is no card: one brief each, for each piece `views survey` lists that isn't carried on yet. For each request, run `carry-on <n>` with its number. For each piece of unfinished work that is no request, run `carry-on --line <name>` with the name `views survey` gives it. Then `wheelhouse-intake` with what it prints: the brief is written from it, and the work is recorded with its `from`. A piece that `carry-on` refuses stays as it is: say so in one plain line. "Stop", in any words, leaves the rest as it is. The names are for you: to the director, a piece is its subject and where it is (on the host, or on this computer).
 - **Leave it for now:** nothing; it stays exactly as it is. A briefing a week later offers it once more; until then, take it on only when the director asks.
 
 ## The baseline from the private note

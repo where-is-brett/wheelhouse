@@ -26,7 +26,9 @@
 //                   there is none
 //   carry-on <n>    makes open request n ready to carry on (design section 15, A2): the helper
 //                   fetches it into the work's own ref; prints the work id it chose, the `from` to
-//                   record the work with, and what to write its brief from
+//                   record the work with, and what to write its brief from. `carry-on --line <name>`
+//                   does the same for a piece of unfinished work with no request, by the name
+//                   `views survey` gives it
 //   archive         makes ready the change that moves another agent setup's instructions into
 //                   .wheelhouse-archive/ (A4), and `restore` the one that puts them back; each prints
 //                   the work id, the `from` and the files it moves
@@ -787,8 +789,10 @@ const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
 // The survey taken when setup finished, as short lines: what it counted, the requests by number
-// and title, the other setup's files, and the rules found, numbered, each with its source, so the
-// front desk can confirm one when it first matters. A part with nothing in it is left out.
+// and title, each piece of unfinished work by its name (for `carry-on --line`), its newest subject
+// and how many changes it holds, the other setup's files, and the rules found, numbered, each with
+// its source, so the front desk can confirm one when it first matters. A part with nothing in it
+// is left out.
 function surveyLines(survey) {
   const data = isPlain(survey?.data) ? survey.data : null;
   if (data === null) return ['No survey has been taken.'];
@@ -806,8 +810,12 @@ function surveyLines(survey) {
     out.push(`Changes waiting to be merged: ${requests.length}`);
     for (const r of requests) out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}`);
   }
-  if (pushed > 0) out.push(count('Unfinished work pushed', pushed, data.more?.pushed === true));
-  if (local > 0) out.push(count('Unfinished work on this computer', local, data.more?.local === true));
+  const pieces = (items) => items.map((i) => {
+    const saved = Number.isInteger(i.commits) && i.commits > 0 ? ` (${i.commits} ${i.commits === 1 ? 'change' : 'changes'} saved)` : '';
+    return `- ${flat(i.name)}${flat(i.subject) ? `: ${flat(i.subject)}` : ''}${saved}`;
+  });
+  if (pushed > 0) out.push(count('Unfinished work pushed', pushed, data.more?.pushed === true), ...pieces(list(data.pushed)));
+  if (local > 0) out.push(count('Unfinished work on this computer', local, data.more?.local === true), ...pieces(list(data.local)));
   if (files.length > 0) out.push(`Another agent setup's files: ${files.map(flat).join(', ')}`);
   if (sections > 0) out.push(`Parts of CLAUDE.md: ${sections}`);
   if (rules.length > 0) {
@@ -1043,8 +1051,13 @@ export async function main(argv, {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the pull request\'s number: preview <n>');
       lines(await preview({ client: helper, cwd: here, n: Number(rest[0]) }));
     } else if (command === 'carry-on') {
-      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the request\'s number: carry-on <n>');
-      json(await ready(helper.survey.carryOn, { cwd: here, number: Number(rest[0]) }, `request #${rest[0]}`));
+      const usage = 'Give the request\'s number or the piece of work\'s name: carry-on <n>, or carry-on --line <name>';
+      if (rest.length === 2 && rest[0] === '--line' && rest[1] !== '') {
+        json(await ready(helper.survey.carryOn, { cwd: here, line: rest[1] }, `piece of work ${rest[1]}`));
+      } else {
+        if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError(usage);
+        json(await ready(helper.survey.carryOn, { cwd: here, number: Number(rest[0]) }, `request #${rest[0]}`));
+      }
     } else if (command === 'archive' || command === 'restore') {
       only(rest, 0, `${command} takes no arguments`);
       json(await ready(helper.survey[command], { cwd: here }, command === 'archive' ? 'archive' : 'putting back'));
