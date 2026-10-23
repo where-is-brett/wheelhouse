@@ -100,9 +100,13 @@ test('in a Wheelhouse project the line is the glance, with the share just record
     folder: repo, remoteUrl: 'https://example.com/owner/name.git', host: 'github', repo: 'owner/name', connection: {},
   }));
   fs.writeFileSync(path.join(project, 'views', 'waiting.json'), JSON.stringify([{ id: 'c1', at: '2026-10-18T09:00:00.000Z', data: { title: 'Approve it' } }]));
+  fs.writeFileSync(path.join(project, 'views', 'blockers.json'), JSON.stringify({
+    pay: { key: 'pay', id: 'b1', at: '2026-10-10T00:00:00.000Z', data: { what: 'Payments', resolved: true } },
+    law: { key: 'law', id: 'b2', at: '2026-10-11T00:00:00.000Z', data: { what: 'Privacy page' } },
+  }));
   fs.writeFileSync(path.join(home, 'STOP'), '');
   const resetsAt = Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60;
   const result = runScript(JSON.stringify({ workspace: { current_dir: repo }, rate_limits: { seven_day: { used_percentage: 41.2, resets_at: resetsAt } } }), home);
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), 'Wheelhouse · 1 waiting · week 41% · STOP on');
+  assert.equal(result.stdout.trim(), 'Wheelhouse · 1 waiting · launch 1 of 2 · week 41% · STOP on');
 }));

@@ -8,7 +8,7 @@ import { test, expect, mock } from 'claude-code/testing'
 const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
 const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
-const FAILED = 'Wheelhouse couldn\'t record that'
+const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const PRESENTATION = { isFullscreen: false, columns: 80 }
 const CONTEXT = { window: 200000, tokens: 1000, percent: 0.5 }

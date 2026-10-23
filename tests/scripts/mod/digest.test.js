@@ -5,7 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { digestText, FIRST_LINE, UNBUILT } from '../../../scripts/mod/digest.js';
+import { digestText, UNBUILT } from '../../../scripts/mod/digest.js';
+import { loadBoardInputs } from '../../../scripts/board/inputs.js';
+import { briefingIn, reviewOf, INPUTS_WAIT_MS } from '../../../scripts/hooks/board-context.js';
+import { CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { handle, BRIDGE_MS } from '../../../scripts/mod/bridge.js';
 import { NOT_A_PROJECT } from '../../../scripts/board/inputs.js';
 import { readSeen, markSeen, seenFile } from '../../../scripts/briefing/seen.js';
@@ -48,9 +51,10 @@ const withProject = (fn, titles) => {
 test('/digest gives the briefing since the last one, within its words, in plain words', () => withProject(async ({ repo }) => {
   const plain = await digestText({ cwd: repo, now: at(NOW), client: upClient });
   assert.equal(plain.ok, true);
-  assert.equal(plain.text.split('\n')[0], FIRST_LINE);
-  assert.equal(FIRST_LINE, 'Wheelhouse\'s briefing');
+  // The verdict opens it, the same sentence as the pane's; there is no title before it.
+  assert.equal(plain.text.split('\n')[0], 'One thing needs you. Nothing is broken.');
   assert.match(plain.text, /Waiting on you:\n1\. Approve the sign-in page/);
+  assert.match(plain.text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\.$/);
 
   // The glossary's plain words, as the briefing the hook adds is given in.
   fs.rmSync(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'));
@@ -63,7 +67,7 @@ test('/digest gives the briefing since the last one, within its words, in plain 
   put(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'), Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, at: '2026-10-18T09:00:00.000Z', data: { title: `Question number ${i} about the page` }, asked: ASKED })));
   setProfile({ briefing: 'short' });
   const short = await digestText({ cwd: repo, now: at(NOW), client: upClient });
-  assert.ok(short.text.slice(FIRST_LINE.length).split(/\s+/).filter(Boolean).length <= 80, short.text);
+  assert.ok(short.text.split(/\s+/).filter(Boolean).length <= 80, short.text);
   assert.match(short.text, /and \d+ more/);
 }));
 
@@ -123,7 +127,7 @@ test('the bridge gives /digest to any origin, as { ok, text }', () => withProjec
   for (const origin of ['composer', 'bridge', 'pane', 'sdk', 'peer', undefined]) {
     const got = await handle({ cmd: 'digest', origin, cwd: repo }, { now: () => new Date(NOW), client: upClient });
     assert.equal(got.ok, true, String(origin));
-    assert.ok(got.text.startsWith(`${FIRST_LINE}\n`), String(origin));
+    assert.ok(got.text.startsWith('One thing needs you. Nothing is broken.\n'), String(origin));
   }
   assert.deepEqual(await handle({ cmd: 'digest', cwd: shortHome() }, { now: () => new Date(NOW), client: upClient }), { ok: false, text: NOT_A_PROJECT });
 }));
@@ -142,7 +146,7 @@ test('/digest reads the events and sources too: what changed for users since the
   const got = await digestText({ cwd: repo, now: at(NOW), client: upClient });
   assert.equal(got.ok, true);
   // Only what is after the last briefing.
-  assert.match(got.text, /Changed for users:\n- New: saved searches/);
+  assert.match(got.text, /Changed for users \(\+1\):\n- New: saved searches/);
   assert.doesNotMatch(got.text, /dark mode/);
   assert.match(got.text, /- Anthropic's models overview page changed/);
 }));
@@ -165,4 +169,20 @@ test('a helper that never answers still leaves the briefing, inside the bridge\'
   const viaBridge = handled.value;
   assert.equal(viaBridge.ok, true);
   assert.match(viaBridge.text, /New: saved searches/);
+}));
+
+test('/digest gives the same briefing the hook builds after a gap', () => withProject(async ({ repo }) => {
+  putMerge('2026-10-19T09:00:00.000Z', 'New: saved searches');
+  markSeen(P, { briefedAt: new Date('2026-10-18T12:00:00.000Z') });
+  const at12 = new Date(NOW);
+  const inputs = await loadBoardInputs({ cwd: repo, now: () => at12, client: upClient, waitMs: INPUTS_WAIT_MS });
+  const seen = readSeen(P, { now: at12 });
+  const hook = briefingIn({
+    project: inputs.project, model: inputs.model, usage: inputs.usage, sources: inputs.sources, settings: inputs.settings,
+    since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(inputs.project, inputs.settings, at12), at: at12, room: CONTEXT_CHARS,
+  });
+  const got = await digestText({ cwd: repo, now: at(NOW), client: upClient });
+  assert.equal(got.text, hook.text);
+  // It opens with the verdict and when the last briefing was.
+  assert.match(got.text, /^One thing needs you\. Nothing is broken\.\n\nSince \d\d:\d\d, about \d+ hours\n\n/);
 }));

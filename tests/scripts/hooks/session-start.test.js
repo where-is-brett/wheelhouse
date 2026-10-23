@@ -1426,7 +1426,7 @@ test('the front desk is handed a trust card for each computer the profile holds 
     assert.deepEqual(more, [], 'one card: this computer and the one it trusts get none');
     assert.equal(setLineOf(card.question), trustLine(other.computer, ADDED, fingerprint(other.publicKey)));
     assert.deepEqual(cardProblems(card.question), [], 'the card check lets it through');
-    assert.deepEqual(card.options.map((o) => o.label), ['Trust it', 'Not now', 'Explain more']);
+    assert.deepEqual(card.options.map((o) => o.label), ['Trust it', 'Not now']);
     // A computer it trusts whose enrolment holds another key: a line, never a card.
     assert.ok(text(out).split('\n').includes(differentKeyLine(known.computer)));
     assert.equal(differentKeyLine(known.computer), 'A different key claims your computer 1b2c3d4e; nothing was trusted.');

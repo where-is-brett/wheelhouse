@@ -1,11 +1,15 @@
 // scripts/hooks/card-check.js
-// Refuses a question card in the wrong form before the director sees it. A card has its five
-// labelled parts; a card with a set line has that one line, its own reply code line (none for a
-// kind the composer gives no code, such as setup's, a trust card's or uninstall's), and a first part
-// that names what the set line names (for a trust card, the computer it trusts; for uninstall's, the
-// project) and no other pull request or commit. The prompt record is what refuses a wrong click, so
-// this only informs: it refuses nothing it can't read, and a failure of its own lets the card through. A card that doesn't come from
-// scripts/cards/compose.js can fail it; one that does cannot.
+// Refuses a question card in the wrong form before the director sees it (design section 23.4). A
+// card's plain lines (the question, what it is, why it is the director's, what happens meanwhile)
+// are followed by the line that says more is there for the asking, "To know more, just ask." (for
+// a question with four options of its own, the line that says a change is typed). A card with a set
+// line has that one line, its own reply code line (none for a kind the composer gives no code, such
+// as setup's, a trust card's or uninstall's) and nothing after it, and plain lines that between them name what the set
+// line names (for a trust card, the computer it trusts; for uninstall's, the project) and no other
+// pull request or commit. Given the question object, its options are checked too: one is
+// recommended, and none is Explain more. The prompt record is what refuses a wrong click, so this
+// only informs: it refuses nothing it can't read, and a failure of its own lets the card through.
+// A card that doesn't come from scripts/cards/compose.js can fail it; one that does cannot.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
 // its header with the private note's figures) is refused unless it is the very card the helper
 // composed and recorded as shown, word for word: a reworded copy would carry the figures without
@@ -16,14 +20,19 @@
 import tools from '../../adapters/claude-code/tools.js';
 import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
-import { PART_LABELS, whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
+import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
+import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 const SHA12 = '([0-9a-f]{12})';
-const FIVE = PART_LABELS.slice(0, 5);
+// The plain lines a card needs before its last: the question, why it is the director's and what happens meanwhile. A
+// question that is the same words as `what` (an answer, setup's kinds) carries them once, so a card with a question of its own has one more.
+const LEAD_LINES = 3;
+const EXPLAIN_MORE = 'Explain more';
+const RECOMMENDED = 'Recommended:';
 const REPLY_CODE = 'Reply code:';
 
 // The kind a set line is, and the target the composer would have made it from, so the card
@@ -52,21 +61,36 @@ function targetOf(line) {
 }
 
 // What is wrong with one question's form, each as a clause that follows "the card"; an empty
-// list when it is right. The hook refuses on any, and the mod's side pane shows the same.
+// list when it is right. `question` is the question's text, or the question object as
+// AskUserQuestion takes it ({ question, header, options }), whose options are then checked too.
+// The hook refuses on any, and the mod's side pane shows the same.
 export function cardProblems(question) {
-  const text = typeof question === 'string' ? question : '';
-  const lines = text.split(new RegExp('\\r\\n|[\\n\\r\\v\\f\\u0085\\u2028\\u2029]'));
+  const object = question !== null && typeof question === 'object' ? question : null;
+  const text = typeof question === 'string' ? question : typeof object?.question === 'string' ? object.question : '';
+  const lines = text === '' ? [] : text.split(new RegExp('\\r\\n|[\\n\\r\\v\\f\\u0085\\u2028\\u2029]'));
   const problems = [];
-  const starts = FIVE.map((label) => lines.findIndex((l) => l.startsWith(label)));
-  FIVE.forEach((label, i) => {
-    if (starts[i] < 0) problems.push(`lacks its "${label}" part`);
-    else if (lines[starts[i]].slice(label.length).trim() === '') problems.push(`has nothing after "${label}"`);
-  });
 
   const set = setLinesOf(text);
+  const line = set.length === 1 ? set[0] : null;
+  // The plain lines run to the set line, or the reply code line where there is none.
+  const end = lines.findIndex((l) => set.includes(l) || l.startsWith(REPLY_CODE));
+  const region = end < 0 ? lines : lines.slice(0, end);
+  const plain = region.filter((l) => l.trim() !== '');
+  const last = plain.at(-1);
+  if (region.length > plain.length) problems.push('has an empty line, and every line before its set line holds words');
+  if (last !== TO_KNOW_MORE && last !== TO_CHANGE_IT) problems.push(`lacks its "${TO_KNOW_MORE}" line`);
+  else if (plain.length - 1 < LEAD_LINES) problems.push(`has ${plain.length - 1} plain ${plain.length - 1 === 1 ? 'line' : 'lines'} before "${last}", and needs at least ${LEAD_LINES}: its question, why it is yours and what happens meanwhile`);
+
+  if (object !== null && Array.isArray(object.options)) {
+    const labels = object.options.map((o) => (typeof o === 'string' ? o : o?.label));
+    const recommended = object.options.filter((o) => typeof o?.description === 'string' && o.description.startsWith(RECOMMENDED)).length;
+    if (recommended === 0) problems.push('names no recommended option');
+    else if (recommended > 1) problems.push(recommended === 2 ? 'names two recommended options' : `names ${recommended} recommended options`);
+    if (labels.includes(EXPLAIN_MORE)) problems.push(`offers ${EXPLAIN_MORE}, which is not one of a card's options`);
+  }
+
   if (set.length === 0) return problems;
   if (set.length > 1) return [...problems, `carries ${set.length} set lines, and a card carries one set line`];
-  const line = set[0];
   const found = targetOf(line);
   const expected = replyCodeLine(replyCode(line));
   const codes = lines.filter((l) => l.startsWith(REPLY_CODE));
@@ -76,16 +100,13 @@ export function cardProblems(question) {
   else if (codes.some((c) => c !== expected)) problems.push(`carries the wrong reply code line for its set line: it should be "${expected}"`);
   else if (codes.length > 1) problems.push('carries its reply code line more than once');
 
-  // The first part runs from its label to the next part, the set line or the reply code line.
-  if (starts[0] >= 0) {
-    const first = [lines[starts[0]].slice(FIVE[0].length)];
-    for (const l of lines.slice(starts[0] + 1)) {
-      if (PART_LABELS.some((label) => l.startsWith(label)) || l === line || l.startsWith(REPLY_CODE)) break;
-      first.push(l);
-    }
-    const why = found === null ? null : whatProblem(found.kind, first.join(' ').trim(), found.target, { abbreviated: true });
-    if (why !== null) problems.push(`has a first part that ${why}`);
-  }
+  // Nothing but its reply code line may follow the set line: a line there would be read by the prompt record beside it.
+  const after = lines.slice(lines.indexOf(line) + 1, lines.at(-1) === '' ? -1 : undefined);
+  if (after.some((l) => !l.startsWith(REPLY_CODE))) problems.push('has a line after its set line other than its reply code line');
+
+  // Every plain line together must name what the set line names, and no other pull request or commit.
+  const why = found === null ? null : whatProblem(found.kind, plain.join(' ').trim(), found.target, { abbreviated: true });
+  if (why !== null) problems.push(`has words that ${why}`);
   return problems;
 }
 
@@ -123,7 +144,7 @@ export async function decide(input, { projectOf: find = projectOf, dir, now = ()
   const faults = questions.flatMap((q, i) => {
     if (typeof q?.question !== 'string') return [];
     const name = typeof q.header === 'string' && q.header !== '' ? `Question ${i + 1} ("${q.header}")` : `Question ${i + 1}`;
-    return cardProblems(q.question).map((problem) => `${name} ${problem}.`);
+    return cardProblems(q).map((problem) => `${name} ${problem}.`);
   });
   if (faults.length === 0) return undefined;
   return answer.deny(`The director has not seen this card, which is not in the form their cards take. ${faults.join(' ')} ${REFUSAL_END}`);
