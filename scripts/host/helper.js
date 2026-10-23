@@ -2383,8 +2383,9 @@ export async function startHelper({
   // when its patch-id (against its merge base with the default branch) is the head's, and every
   // commit after it on the head's first-parent line is a clean update merge. A commit of the
   // feature's own after it, or an update merge whose resolution changed code, needs the head
-  // signed again. Read-only toward the host. Throws when the mirror cannot say.
-  function carryFacts({ project, number, headSha, defaultBranch, from }, ctx) {
+  // signed again. With `withConfig`, the default branch's configuration as fetched here too (`config`, undefined
+  // when it can't be read). Read-only toward the host. Throws when the mirror cannot say.
+  function carryFacts({ project, number, headSha, defaultBranch, from, withConfig = false }, ctx) {
     if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
     if (typeof headSha !== 'string' || !FULL_SHA.test(headSha)) throw new Error('the head commit is not known');
     return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
@@ -2413,17 +2414,25 @@ export async function startHelper({
         };
         const out = { upToDate: onTop.code === 0 };
         for (const [name, commit] of Object.entries(from)) out[name] = await holds(commit);
+        const configHere = () => baseConfig(async (args, what) => {
+          const answer = await git(args);
+          if (answer.code !== 0) throw new Error(`${what} failed`);
+          return answer.stdout;
+        });
         // An approval that still holds is compared on the pages the configuration at the default
         // branch (fetched above) lists: none when it can't be read.
         if (out.approval === true) {
           try {
-            out.pages = pagesOf(await baseConfig(async (args, what) => {
-              const answer = await git(args);
-              if (answer.code !== 0) throw new Error(`${what} failed`);
-              return answer.stdout;
-            }));
+            out.pages = pagesOf(await configHere());
           } catch {
             out.pages = [];
+          }
+        }
+        if (withConfig) {
+          try {
+            out.config = await configHere();
+          } catch {
+            out.config = undefined;
           }
         }
         return out;
@@ -2517,8 +2526,9 @@ export async function startHelper({
   // screenshots of the two commits match too, and they are compared only when `compare` says the
   // merge needs the approval. Anything the mirror can't say leaves the branch unknown (null, which
   // the gate refuses with its own reason) and nothing carried. The one rule behind /merge and
-  // /pr/carried.
-  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false }, ctx) {
+  // /pr/carried. With `withConfig`, it gives the default branch's configuration read in the same fetch too
+  // (`config`, undefined when it can't be read).
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false, withConfig = false }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
     const from = {
@@ -2528,7 +2538,7 @@ export async function startHelper({
     let facts = { upToDate: null, review: false, approval: false };
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
-      facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
+      facts = await carryFacts({ project, number, headSha, defaultBranch, from, withConfig }, ctx);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
       /* not readable: not known whether it is up to date, and nothing carries */
@@ -2543,6 +2553,7 @@ export async function startHelper({
       upToDate: facts.upToDate === null ? null : facts.upToDate === true,
       review: facts.review === true ? { carried: true, record: review } : review,
       approval: shown ? { carried: true, record: approval } : approval,
+      ...(withConfig ? { config: facts.config } : {}),
     };
   }
 
@@ -2558,13 +2569,21 @@ export async function startHelper({
     const skipped = [];
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
     const reviews = views.reviews?.[String(number)] ?? {};
-    const earlier = Object.values(reviews).some((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
+    const cleanEarlier = Object.values(reviews).filter((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
     // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
-    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier };
-    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
+    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier: cleanEarlier.length > 0 };
+    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false, withConfig: true }, ctx);
+    // Only a review of a kind the gate counts for the agent this computer runs (ruling P8-14), from the default
+    // branch's configuration as the merge reads it (here from the same fetch, so the poll costs no second one): null,
+    // today's rule, counts any kind.
+    const kinds = reviewKindsOf(found.config !== undefined ? found.config : await defaultConfig(project, adapter, ctx));
+    const counted = (record) => kinds === null || kinds.includes(record?.data?.reviewKind);
+    const earlier = cleanEarlier.some(counted);
+    const record = found.review?.carried === true ? found.review.record : found.review;
     const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
-    return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
+    const clean = (found.review?.carried === true || own) && counted(record);
+    return { ok: true, review: clean ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
   }
 
   // --- the signed review in a clean session (rulings P7-14 to P7-18) ---
@@ -2741,9 +2760,25 @@ export async function startHelper({
     }
   }
 
+  // The most failed runs of the helper's review a head may have (ruling P8-14).
+  const MOST_FAILED_REVIEWS = 3;
+  // Why the head `headSha` of pull request `number` gets no further review from the helper (ruling P8-14), or null:
+  // a signed `review` record of it, whatever its verdict or kind, or MOST_FAILED_REVIEWS notes of failed runs (the
+  // notes reviewJob writes, which begin with NO_CLEAN_REVIEW for the head). So a commit is reviewed once, and a run
+  // that fails is tried again only up to the limit: a fix needs a new commit.
+  function reviewSpent(project, number, headSha) {
+    const events = listEvents(stateDir(project), { report: () => {} });
+    const views = buildViews(events, readEnrolled(), { damaged: [], now });
+    const short = headSha.slice(0, 7);
+    if (views.reviews?.[String(number)]?.[headSha] !== undefined) return `${short} has a signed review already`;
+    const failed = events.filter((e) => e.kind === 'note' && typeof e.data?.text === 'string' && e.data.text.startsWith(`${NO_CLEAN_REVIEW(short)}: `));
+    return failed.length >= MOST_FAILED_REVIEWS ? `the review of ${short} has failed ${failed.length} times` : null;
+  }
+
   // POST /review/run { project, number } (ruling P7-18): the helper's own reviewer, in a clean session, of the open
   // pull request's head. Refused under STOP (it starts an agent), for an agent whose reviews aren't the helper's,
-  // and while the agent's clean session isn't switched on. One review at a time per project: answered at once with
+  // while the agent's clean session isn't switched on, and for a head that has had its review (reviewSpent: one review
+  // per commit). One review at a time per project: answered at once with
   // `started`, or `running` when one is under way; the review finishes in the background.
   async function doReviewRun({ project, number }, ctx) {
     if (stopped()) return STOP_REFUSAL;
@@ -2763,6 +2798,8 @@ export async function startHelper({
     if (found.unknown === true) return { ok: false, refused: "which agent this project runs on this computer can't be told, so no review is started" };
     if (found.module === null) return { ok: false, refused: "this project's agent reviews in its own session, not the helper's" };
     if (found.module.ready() !== true) return { ok: false, refused: "the helper's clean review session isn't switched on for this agent yet" };
+    const spent = reviewSpent(project, number, pr.headSha);
+    if (spent !== null) return { ok: false, refused: `${spent}; one review per commit: a fix needs a new commit` };
     if (stopped()) return STOP_REFUSAL;
     if (queues.has(key)) return { ok: true, running: true };
     oneAtATime(key, () => reviewJob({ project, number, pr, defaultBranch, module: found.module }, ctx)).catch(() => {});

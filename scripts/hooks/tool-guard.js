@@ -6,7 +6,8 @@
 // the places that hold the guardrails (and the files that steer an agent, in the project and the
 // home folder: writes only), the host tools (gh, glab, git push), a plain read of the keychain and
 // connectors the project has not listed (the Claude Desktop app's own drawing tools
-// pass unlisted in a session it started). It backs up the deny rules and the
+// pass unlisted in a session it started), and a coding agent started from the shell (the agents'
+// own programs, scripts/agents/programs.js). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,6 +22,7 @@ import { projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
 import { readConfig } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -245,6 +247,15 @@ const KEYCHAIN_READS = ['find-generic-password', 'find-internet-password', 'dump
 const SECURITY_READS_INPUT = /^-[a-z]*[ip]/i;
 const KEYCHAIN = 'Wheelhouse does not let an agent read the keychain, where this computer keeps its passwords. If the work needs a password, say so instead of reading it';
 const PWSH = new Set(['pwsh', 'powershell']);
+// A coding agent started from an agent's shell (ruling P8-9): its program by name (NESTED_REFUSED), and its package
+// behind a package manager (NESTED_PACKAGES), whichever agent the session is. The names come from the adapters.
+const NESTED = 'Wheelhouse does not let an agent start another coding agent from its shell. Do the work in this session, or say what needs another agent instead';
+// The package managers that fetch or run a package's program: npx, npm exec, pnpm dlx, bunx and their kin. Any word
+// after one that names an agent's program or package is refused, whatever the subcommand.
+const PACKAGE_MANAGERS = new Set(['npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx']);
+// The commands that start a program named in their words, besides the runners: PowerShell's Start-Process and
+// cmd's start.
+const STARTERS = new Set(['start-process', 'saps', 'start']);
 
 // Whether a word is PowerShell's -EncodedCommand, which hides the command from
 // this check: any unambiguous short form (-e, -ec, -en, -enc ...), in any case,
@@ -526,8 +537,32 @@ function bashRefused(command, ctx, depth = 0) {
     const command = after[c].toLowerCase().replace(/\$.*$/s, '');
     return command === '' || command === '{}' || KEYCHAIN_READS.some((read) => read.startsWith(command));
   };
+  // An agent's program as a command (by its last part, with .exe, .cmd, .bat or .ps1 taken off, or named with a
+  // variable), behind wrappers, started by a runner or a starter, or named after a package manager, as a program or
+  // as its package (with a version, or as --package's value).
+  const agentName = (w) => fold(lastPart(w)).replace(/\.(exe|cmd|bat|ps1)$/i, '').toLowerCase();
+  const isAgent = (w) => NESTED_REFUSED.some((n) => agentName(w) === n || agentName(w).startsWith(`${n}$`));
+  const isPackage = (w) => {
+    const v = w.replace(/^--package=/i, '').toLowerCase();
+    return NESTED_PACKAGES.some((p) => v === p || v.startsWith(`${p}@`));
+  };
+  const agentVariable = segs.some((seg) => seg.some((w) => ASSIGNMENT.test(w) && isAgent(w.slice(w.indexOf('=') + 1))));
+  const startsNested = ({ words }) => {
+    const names = words.map(nameOf);
+    const k = commandAt(words, names, ctx);
+    if (k >= words.length) return false;
+    const starts = (j) => isAgent(words[j]) || (agentVariable && words[j].startsWith('$'))
+      || (PACKAGE_MANAGERS.has(agentName(words[j])) && words.slice(j + 1).some((w) => isAgent(w) || isPackage(w)));
+    if (starts(k)) return true;
+    const runner = RUNNERS.has(names[k]) || STARTERS.has(names[k].toLowerCase()) ? k : words.findIndex((w) => RUNNER_FLAGS.has(w));
+    return runner >= 0 && words.some((_, j) => j > runner && starts(j));
+  };
   if (checks.some(readsKeychain)) {
     ctx.state.keychain = true;
+    return true;
+  }
+  if (checks.some(startsNested)) {
+    ctx.state.nested = true;
     return true;
   }
   const counts = new Map();
@@ -742,9 +777,10 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     const root = found?.record?.folder ?? setup?.folder ?? cwd;
     // In PowerShell a backtick before a new line continues the command, as a space does.
     const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
-    const state = { unreadable: false, keychain: false };
+    const state = { unreadable: false, keychain: false, nested: false };
     if (!bashRefused(text, { windows, fold, cwd, home, root, state })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
+    if (state.nested) return answer.deny(NESTED);
     return state.unreadable ? answer.deny(UNREADABLE) : refuse('run the host tools, push, or read a .env file');
   }
   // The folders a project's own files are placed from: the project's main folder and the worktree

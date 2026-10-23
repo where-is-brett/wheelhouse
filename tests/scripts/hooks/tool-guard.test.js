@@ -1177,3 +1177,63 @@ test('PowerShell and Monitor refuse a read of the keychain too', async () => {
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
+
+// A coding agent started from an agent's shell (ruling P8-9): the agents' own programs and packages come from the
+// adapters (scripts/agents/programs.js), and the refusal names no agent.
+const NESTED = /does not let an agent start another coding agent from its shell/;
+const NESTED_FORMS = [
+  'copilot -p "do the work"', 'copilot', 'COPILOT -p x', '/usr/local/bin/copilot -p x', './node_modules/.bin/copilot -p x',
+  '"C:\\Program Files\\nodejs\\copilot.cmd" -p x', 'copilot.exe -p x', 'copilot.cmd -p x', 'copilot.ps1 -p x',
+  'npx @github/copilot -p x', 'npx -y @github/copilot@1.0.0 -p x', 'npx --package=@github/copilot copilot', 'npx copilot',
+  'npm exec @github/copilot -- -p x', 'npm exec -- @github/copilot', 'npm x @github/copilot', 'pnpm dlx @github/copilot -p x',
+  'bunx @github/copilot -p x', 'yarn dlx @github/copilot',
+  'sudo -u me copilot -p x', 'env A=1 copilot -p x', 'nohup copilot -p x', 'timeout 60 copilot -p x', 'command copilot -p x', 'exec copilot',
+  'echo x | xargs copilot -p', 'find . -name a -exec copilot -p {} \;', 'watch -n 5 copilot -p x', 'parallel copilot -p ::: a b',
+  'xargs npx @github/copilot', 'sh -c "copilot -p x"', 'bash -lc "cd sub && copilot -p x"', 'eval "copilot -p x"', 'echo $(copilot -p x)',
+  'x && copilot -p x', 'A=copilot; $A -p x', 'copilot$X -p x', 'cmd /c copilot -p x', 'pwsh -Command "copilot -p x"',
+];
+for (const command of NESTED_FORMS) {
+  test(`the tool guard refuses a nested agent: ${command}`, async () => {
+    await inProject(async (ctx) => {
+      const out = await bash(ctx, command);
+      assert.ok(denied(out), command);
+      assert.match(out.hookSpecificOutput.permissionDecisionReason, NESTED);
+      assert.doesNotMatch(out.hookSpecificOutput.permissionDecisionReason, /copilot|claude/i);
+    });
+  });
+}
+
+test('the tool guard refuses a nested agent in PowerShell and on Windows too', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['& copilot -p x', '& "C:\\Users\\me\\AppData\\Roaming\\npm\\copilot.cmd" -p x', 'Start-Process copilot -ArgumentList "-p x"',
+      'copilot.CMD -p x', 'npx.cmd @github/copilot']) {
+      for (const [platform, tool] of [['win32', 'Bash'], ['win32', 'PowerShell'], ['darwin', 'PowerShell']]) {
+        const out = await withWin(ctx, command, platform, tool);
+        assert.ok(denied(out), `${platform} ${tool}: ${command}`);
+        assert.match(out.hookSpecificOutput.permissionDecisionReason, NESTED, command);
+      }
+    }
+    // Monitor's command is held the same.
+    const monitored = await run(ctx.base, ctx.home, call(ctx.main, 'Monitor', { command: 'copilot -p x' }), 'darwin');
+    assert.match(monitored.hookSpecificOutput.permissionDecisionReason, NESTED);
+  });
+});
+
+test('words that only mention an agent pass, and Claude Code names no program of its own, so its commands are as before', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['grep -rn copilot docs', 'git commit -m "Refuse copilot in the guard"', 'echo copilot', 'cat copilot.md',
+      'ls node_modules/@github/copilot', 'git log --grep copilot', 'npm test', 'node --test tests/copilot-plugin.test.js',
+      'claude -p "x"', 'claude --version', 'npx @anthropic-ai/claude-code --version', 'find . -name copilot']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});
+
+test("Copilot's own script started through node is not caught here: the rules' shell(copilot:*) deny and the sandbox stand behind it", async () => {
+  // Noted in ruling P8-9: the guard reads the command line, and `node <script>` names no agent's program.
+  await inProject(async (ctx) => {
+    for (const command of ['node /usr/local/lib/node_modules/@github/copilot/index.js -p x', 'node node_modules/@github/copilot/npm-loader.js']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});
