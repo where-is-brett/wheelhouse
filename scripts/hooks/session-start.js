@@ -45,6 +45,7 @@ import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, manag
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
+import { caEnv } from '../host/company-ca.js';
 import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
@@ -299,7 +300,7 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: home, detached: true, windowsHide: true, stdio: 'ignore' });
+    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: home, detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
   } catch {

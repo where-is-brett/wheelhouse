@@ -95,12 +95,13 @@ import { readConfig } from '../gate/guardrails.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
+import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
 import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
-import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED } from './host.js';
+import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA } from './questions.js';
-import { newId, readJournal } from './journal.js';
+import { newId, readJournal, SAY_CHARS } from './journal.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
 // The setup commit's files, and only these (ruling R42). The adapter holds the list (packaging.js).
@@ -358,10 +359,10 @@ const parsed = (text) => {
 };
 
 // The default branch, by the host's API with the director's own sign-in (ruling R34).
-async function defaultBranchOf({ host, repo, run, gitlab }) {
+async function defaultBranchOf({ host, repo, run, gitlab, base }) {
   let branch;
   if (host === 'gitlab') {
-    const api = await gitlab({ run });
+    const api = await gitlab({ run, baseUrl: base });
     branch = (await api.get(projectPath(repo)))?.body?.default_branch;
   } else {
     const got = await quietly(run, toolPath('gh'), ['api', `repos/${repo}`]);
@@ -376,15 +377,15 @@ async function defaultBranchOf({ host, repo, run, gitlab }) {
 // The setup commit's author: the signed-in account, with its no-reply address, read with the
 // director's own sign-in (`gh api user`, `glab api user`). On GitLab, the account's own commit or
 // public address when it has one.
-export async function commitAuthor({ host, run = realRun }) {
-  const got = await quietly(run, toolPath(host === 'gitlab' ? 'glab' : 'gh'), ['api', 'user']);
+export async function commitAuthor({ host, run = realRun, base = DEFAULT_GITLAB }) {
+  // A company's GitLab is named to glab through GITLAB_HOST, which takes a port (check 71).
+  const got = await quietly(run, toolPath(host === 'gitlab' ? 'glab' : 'gh'), ['api', 'user'], host === 'gitlab' && base !== DEFAULT_GITLAB ? { env: { GITLAB_HOST: new URL(base).host } } : {});
   const user = got.code === 0 ? parsed(got.stdout) : null;
   const id = user?.id;
   if (host === 'gitlab') {
     const login = user?.username;
     if (typeof login === 'string' && login !== '' && Number.isInteger(id)) {
-      const own = [user.commit_email, user.public_email].find((e) => typeof e === 'string' && e.includes('@'));
-      return { name: typeof user.name === 'string' && user.name !== '' ? user.name : login, email: own ?? `${id}-${login}@users.noreply.gitlab.com` };
+      return { name: typeof user.name === 'string' && user.name !== '' ? user.name : login, email: commitEmailOf(user, base) };
     }
   } else {
     const login = user?.login;
@@ -404,8 +405,8 @@ export async function commitAuthor({ host, run = realRun }) {
 // that config says.
 // https is its only transport, with a local path too only when `remoteUrl`, the project's address
 // as setup recorded it, is one (ruling R111).
-function gitIn({ run, gitPath, host, platform, folder, remoteUrl }) {
-  const env = reaching(directorGitEnv({ host, gitPath, platform }), remoteUrl);
+function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base }) {
+  const env = reaching(directorGitEnv({ host, gitPath, platform, base }), remoteUrl);
   const call = async (args) => {
     await refuseUnlistedSettings({ run, gitPath, cwd: folder });
     return quietly(run, gitPath, args, { cwd: folder, env: { ...isolated(env), GIT_WORK_TREE: folder }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
@@ -558,6 +559,21 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
 // 3's record of it in the run's journal.
 const joiningRun = (ctx) => typeof ctx.runId === 'string' && joinedRepo(readJournal().runs.find((r) => r?.id === ctx.runId) ?? null) !== null;
 
+// The parts of a line a step says, joined into one that fits what the journal keeps; the parts that
+// do not fit are counted, not cut in the middle.
+function sayFit(parts) {
+  const more = (n) => ` (and ${n} more)`;
+  const clean = parts.map((p) => String(p).trim().replace(/\.$/, ''));
+  let out = '';
+  for (let i = 0; i < clean.length; i += 1) {
+    const next = out === '' ? clean[i] : `${out}. ${clean[i]}`;
+    const rest = clean.length - i - 1;
+    if (next.length + (rest > 0 ? more(rest).length : 0) > SAY_CHARS) return out === '' ? clean[0].slice(0, SAY_CHARS) : `${out}${more(clean.length - i)}`;
+    out = next;
+  }
+  return out;
+}
+
 // `run` runs git, the host's tool and `claude`; `findGit` gives the git step 2 found; `gitlab`
 // GitLab's API with the director's sign-in; `claude` finds Claude Code's command line (lib/claude.js:
 // on Windows its .exe or .cmd on the path); `manifest`, `claudeHome` and `locate` are the lineage
@@ -565,15 +581,15 @@ const joiningRun = (ctx) => typeof ctx.runId === 'string' && joinedRepo(readJour
 // are what the local settings name. All are for tests.
 export function projectFilesStep({
   run = realRun, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
-  gitlab = ({ run: r }) => directorGitlabApi({ run: r }), claude = () => resolveClaude(),
+  gitlab = ({ run: r, baseUrl }) => directorGitlabApi({ run: r, baseUrl }), claude = () => resolveClaude(),
   manifest = () => readManifest(), claudeHome = () => defaultClaudeHome(), locate = locateInstalled,
   switchOn = switchOnAsDirector, protectionStatus = realProtectionStatus,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
 } = {}) {
-  const gitFor = async ({ host, platform, folder, remoteUrl }) => {
+  const gitFor = async ({ host, platform, folder, remoteUrl, base }) => {
     const located = await findGit({ platform, run });
     if (!located?.ok || typeof located.path !== 'string') throw new Error('git is not on this computer; step 2 installs it');
-    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl });
+    return gitIn({ run, gitPath: located.path, host, platform, folder, remoteUrl, base });
   };
   const lineage = (folder) => checkInstalled({ manifest: manifest(), projectDir: folder, claudeHome: claudeHome(), locate });
   // This computer's part of the list, for either form: the line that keeps its settings out of git
@@ -605,7 +621,7 @@ export function projectFilesStep({
     const { host, repo } = found.record;
     const folder = ctx.folder;
     const at = (rel) => path.join(folder, ...rel.split('/'));
-    const git = await gitFor({ host, platform, folder, remoteUrl: found.record.remoteUrl });
+    const git = await gitFor({ host, platform, folder, remoteUrl: found.record.remoteUrl, base: found.record.connection?.baseUrl });
     const committed = await headText(git, CONFIG);
     if (committed === null) {
       throw new Error(`${CONFIG} is not in this folder's last commit of ${repo}, so setup can't read the project's configuration: finish setup on your other computer, bring its commit in here (git pull), then ask again`);
@@ -646,11 +662,11 @@ export function projectFilesStep({
       const folder = ctx.folder;
       const at = (rel) => path.join(folder, ...rel.split('/'));
 
-      const branch = await defaultBranchOf({ host, repo, run, gitlab });
+      const branch = await defaultBranchOf({ host, repo, run, gitlab, base: record.connection?.baseUrl });
       if (WHEELHOUSE_BRANCHES.includes(branch)) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, which is Wheelhouse's own branch, so setup can't put the project's files there: make the product's own branch the default in the repository's settings on ${NAME[host]}, then ask again`);
       }
-      const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl });
+      const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
       const current = await git.out(['symbolic-ref', '--short', '-q', 'HEAD']);
       if (current !== branch) {
         throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on. Switch this folder to ${branch}${current ? `, or make ${current} the default on ${NAME[host]}` : ''}, then ask again`);
@@ -771,7 +787,7 @@ export function projectFilesStep({
           // (ruling R103): rewritten by the installs into a layout of their own but holding the
           // same, it gets the committed text back, recorded first; holding something else, it is
           // left as it is and named.
-          const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl });
+          const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
           const committed = await headText(git, SETTINGS);
           const text = readText(settingsFile);
           if (committed !== null && text !== committed) {
@@ -800,7 +816,7 @@ export function projectFilesStep({
       // the step with nothing committed or pushed.
       const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
       if (up) {
-        const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl });
+        const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
         const moved = (what) => new Error(`${what} changed while the pinned kits were installed, so nothing went up: ask for the plan again`);
         const tipNow = await remoteTip(git, record.remoteUrl, up.branch);
         let sha = up.commit ?? null;
@@ -809,7 +825,7 @@ export function projectFilesStep({
           if ((await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}'])) !== up.base) throw moved('This folder\'s latest commit');
           for (const rel of SETUP_FILES) if (!sameContent(rel, readText(at(rel)), wrote[rel])) throw moved(rel);
           if (tipNow !== up.base) throw moved(`${up.branch} on ${NAME[host]}`);
-          const author = await commitAuthor({ host, run });
+          const author = await commitAuthor({ host, run, base: record.connection?.baseUrl });
           // A file new to git is added with intent only, so the commit takes it and nothing is staged;
           // a commit that fails takes those entries out again.
           const added = [];
@@ -857,18 +873,28 @@ export function projectFilesStep({
       // 4. Protection, with the same sign-in, then read back and said as it is.
       const protect = changes.find((c) => c.kind === 'host' && c.action === 'protect');
       if (protect) {
-        const api = host === 'gitlab' ? await gitlab({ run }) : undefined;
+        // Real users: the project's phase says launched (step 4), or step 3 was told so.
+        const realUsers = launchedIn(project) || ctx.answers?.['3.real-users']?.label === REAL_USERS.yes;
+        const api = host === 'gitlab' ? await gitlab({ run, baseUrl: record.connection?.baseUrl }) : undefined;
         let before = null;
         try {
-          before = await protectionStatus({ host, repo, run, api, env: {} });
+          before = await protectionStatus({ host, repo, run, api, env: {}, realUsers });
         } catch { /* recorded as not known */ }
         ctx.record({
           id: newId('chg'), kind: 'host', target: protect.target, before: { on: before?.on ?? null, available: before?.available ?? null },
           after: { action: 'protect', branch: protect.branch, on: true }, project,
         });
-        const got = await switchOn({ host, repo, run, api });
-        say(got.line);
-        if (got.askPipelines) say(`"Pipelines must succeed" is left off on ${protect.branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
+        const got = await switchOn({ host, repo, run, api, realUsers });
+        // What a step says is its latest line, so protection's read-back, what the real users
+        // changed and each gap the read-back found go in one line, in plain words.
+        // The gaps about the project's secrets come last: there can be many, and "(and N more)" then
+        // only ever stands for secrets' names.
+        const gaps = got.gaps ?? [];
+        const parts = [got.line];
+        if (realUsers && host === 'gitlab') parts.push('A project with real users is merged by Maintainers only on GitLab, so Wheelhouse\'s key is refused and a person presses Merge');
+        if (got.askPipelines) parts.push(`"Pipelines must succeed" is left off on ${protect.branch}, since the project has no pipeline yet; once it has one, Wheelhouse asks you to switch it on`);
+        parts.push(...gaps.filter((g) => !/\bsecrets?\b/i.test(g)), ...gaps.filter((g) => /\bsecrets?\b/i.test(g)));
+        say(sayFit(parts));
       }
       return [];
     },

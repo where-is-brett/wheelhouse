@@ -10,7 +10,7 @@ import { profileDir, profileViewsDir, wheelhouseHome } from '../../../scripts/li
 import { makeEvent, eventPath, confirmationFor } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { run } from '../../../scripts/lib/run.js';
-import { makeBareRemote, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-18T05:00:00.000Z');
@@ -60,7 +60,7 @@ test('the clone is made in place, keeps keys and backups, and never commits keys
     await as(shortHome(), async () => {
       put('keys/enrolled.json', '{"first":true}\n');
       put('backups/o__p/2026-10-11.bundle', 'first bundle');
-      assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: {} }), { made: true });
+      assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: LOCAL_PATHS }), { made: true });
       assert.equal(read('keys/enrolled.json'), '{"first":true}\n');
       assert.equal(read('backups/o__p/2026-10-11.bundle'), 'first bundle');
       assert.deepEqual(await remoteFiles(remote.url), ['README.md'], 'the branch starts with its first commit alone');
@@ -73,7 +73,7 @@ test('the clone is made in place, keeps keys and backups, and never commits keys
       await g(profileDir(), 'commit', '-q', '-m', 'Back up');
       await g(profileDir(), 'push', '-q', 'origin', PROFILE_BRANCH);
       // A second call finds the clone and keeps it.
-      assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: {} }), { made: false });
+      assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: LOCAL_PATHS }), { made: false });
       assert.equal((await g(profileDir(), 'symbolic-ref', '--short', 'HEAD')), PROFILE_BRANCH);
     });
     assert.deepEqual(await remoteFiles(remote.url), ['README.md', 'backups/o__p/2026-10-11.bundle']);
@@ -84,7 +84,7 @@ test('the clone is made in place, keeps keys and backups, and never commits keys
       put('backups/o__p/2026-10-12.bundle', 'second bundle');
       // The same day's bundle of the same project, made here too: the branch's is taken.
       put('backups/o__p/2026-10-11.bundle', 'second, same day');
-      assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: {} }), { made: true });
+      assert.deepEqual(await ensureProfileClone({ remote: remoteFor(remote.url), env: LOCAL_PATHS }), { made: true });
       assert.equal(read('keys/enrolled.json'), '{"second":true}\n');
       assert.equal(read('backups/o__p/2026-10-12.bundle'), 'second bundle');
       assert.equal(read('backups/o__p/2026-10-11.bundle'), 'first bundle', 'the remote\'s files are checked out');
@@ -101,9 +101,9 @@ test('a profile folder holding a clone of another repository is left alone', asy
   const other = await makeBareRemote({ repo: 'o/other' });
   try {
     await as(shortHome(), async () => {
-      await ensureProfileClone({ remote: remoteFor(other.url), env: {} });
+      await ensureProfileClone({ remote: remoteFor(other.url), env: LOCAL_PATHS });
       put('keys/enrolled.json', '{}\n');
-      await assert.rejects(ensureProfileClone({ remote: remoteFor(remote.url), env: {} }), /another repository/);
+      await assert.rejects(ensureProfileClone({ remote: remoteFor(remote.url), env: LOCAL_PATHS }), /another repository/);
       assert.ok(fs.existsSync(path.join(profileDir(), 'keys', 'enrolled.json')));
     });
   } finally { remote.cleanup(); other.cleanup(); }
@@ -142,7 +142,7 @@ test('a computer joining a profile whose branch holds keys/ refuses it, in any c
       await g(outside, 'push', '-q', remote.url, PROFILE_BRANCH);
       await as(shortHome(), async () => {
         writeProfileJson(remoteFor(remote.url));
-        await assert.rejects(ensureProfileClone({ remote: profileRemote() }), { message: PROFILE_HOLDS_KEYS }, folder);
+        await assert.rejects(ensureProfileClone({ remote: profileRemote(), env: LOCAL_PATHS }), { message: PROFILE_HOLDS_KEYS }, folder);
         assert.equal(fs.existsSync(path.join(profileDir(), 'README.md')), false, folder);
         assert.equal((await run('git', ['rev-parse', '--verify', '-q', `refs/heads/${PROFILE_BRANCH}`], { cwd: profileDir() })).code !== 0, true, folder);
       });

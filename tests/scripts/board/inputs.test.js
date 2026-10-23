@@ -14,6 +14,7 @@ import { profileViewsDir, sourcesDir, stateDir, stopFile, usageDir, wheelhouseHo
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
 import { NO_CHROME_LINE, phonePushLine } from '../../../scripts/board/health.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
+import { HOST_UNREACHABLE } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { beforeTimer } from '../../helpers/until.js';
 
@@ -63,6 +64,45 @@ function fakeClient({ health = { ok: true }, lock = { ok: true, result: null } }
 }
 
 const texts = (inputs) => inputs.model.director.health.map((line) => line.text);
+
+test('the board says GitLab can\'t be reached when the helper says so for this project, and only then', async () => {
+  const base = 'https://git.example.org:8443';
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    const linesFor = async (health, options = {}) => texts(await loadBoardInputs({ cwd: repo, client: fakeClient({ health }), address: testAddress(home), now: () => NOW, ...options }));
+    assert.equal((await linesFor({ ok: true, away: { [P]: base } })).filter((t) => t === HOST_UNREACHABLE(base)).length, 1);
+    assert.ok(!(await linesFor({ ok: true })).includes(HOST_UNREACHABLE(base)));
+    // Another project's trouble is not this one's, and a reading that is not an address is ignored.
+    assert.ok(!(await linesFor({ ok: true, away: { other__project: base } })).includes(HOST_UNREACHABLE(base)));
+    assert.ok(!(await linesFor({ ok: true, away: { [P]: { not: 'an address' } } })).some((t) => t.includes("can't be reached")));
+    // The glance asks nothing of the helper, so it says nothing.
+    assert.ok(!(await linesFor({ ok: true, away: { [P]: base } }, { offline: true })).includes(HOST_UNREACHABLE(base)));
+  });
+});
+
+test('the board says the project\'s tests could be faked, and names each secret, from the plan and gaps kept for GitLab', async () => {
+  const FAKED = "the project's tests on the host could be faked with Wheelhouse's key";
+  const gap = "DEPLOY_KEY is a project secret that a pipeline on Wheelhouse's own state branch could read";
+  const home = shortHome();
+  await as(home, async () => {
+    const repo = register(home);
+    // What the helper's host facts left in the cache on GitLab.
+    put(path.join(stateDir(P), '..', 'host-facts.json'), { at: NOW.toISOString(), facts: { protection: 'on', ci: 'present', plan: 'free', gaps: [gap] } });
+    const settings = path.join(wheelhouseHome(), 'projects', P, 'views', 'settings.json');
+    const board = async () => texts(await loadBoardInputs({ cwd: repo, client: fakeClient(), address: testAddress(home), now: () => NOW }));
+    // Real users (the phase setting says launched): the line, and the secret.
+    put(settings, { phase: { key: 'phase', id: 's1', at: '2026-10-01T00:00:00.000Z', value: 'launched', before: null } });
+    const launched = await board();
+    assert.ok(launched.some((t) => t.includes(FAKED)), 'the faked-tests line');
+    assert.ok(launched.includes(gap), 'the secret');
+    // Not launched: the secret is still named, the tests line is not.
+    put(settings, {});
+    const before = await board();
+    assert.equal(before.some((t) => t.includes(FAKED)), false);
+    assert.ok(before.includes(gap));
+  });
+});
 
 test('outside a Wheelhouse project the inputs say so', async () => {
   const home = shortHome();

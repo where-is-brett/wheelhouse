@@ -21,6 +21,16 @@
 // -P. Only the helper runs that copy (scripts/lib/host-tools.js's toolPath), so nothing else needs
 // it on the path. Which one: the host the project's `origin` names, or both while it names none.
 //
+// Where the public GitLab is blocked, the project's `glabFrom` setting (.claude/wheelhouse.json) reads
+// `company <path or address>` and `glab` is taken from the company's own list instead: a JSON file
+// shaped like GitLab's release (`tag_name`, and `assets.links` of { name, direct_asset_url, sha256? },
+// with a `checksums.txt` link where the company has one). A path is read from disk, its files beside
+// the list; an address is fetched over https only, no redirect followed, every file on the list's own
+// host. The version in the list is checked against the file's, and the checksum where the list gives
+// one. A list that gives none is named on step 2's card (`checksum: 'none'` on the change), and only
+// that change, once the director has said Go ahead, lets the copy be used, and only the very file the
+// plan hashed (`pin`). Nothing downloaded runs before then, and the one run at apply is `--version`.
+//
 // The step also writes one allow rule into the project's .claude/settings.local.json, by key, for
 // setup's own command (ruling R43), so the playbook's calls before step 7 are not asked about
 // each time. With everything here and the rule in, nothing is listed, and the step settles with
@@ -35,10 +45,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { NODE_FLOOR } from '../lib/setup-numbers.js';
-import { HOST_TOOLS, toolFolder, fetchedPath } from '../lib/host-tools.js';
+import { HOST_TOOLS, toolFolder, fetchedPath, toolPath } from '../lib/host-tools.js';
+import { wheelhouseHome } from '../lib/paths.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { setupCommand, allowRule } from '../protection/settings.js';
 import { detectHost } from '../host/adapter.js';
+import { readGitlabHosts } from '../host/gitlab-base.js';
+import { caFile, exportSystemRoots, stageCaFile, caEnv, glabCaArgs, gitCaConfig, addressOf, failureKind, CERTIFICATE_NOT_IN_STORE } from '../host/company-ca.js';
+import { composeCard, isTooLong } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
@@ -173,6 +187,175 @@ async function latestTag(fetch, releases) {
   return tagFromLocation(response.headers.get('location'));
 }
 
+// ---- glab from the company's own list ----
+
+export const GLAB_FROM_LINE = 'glabFrom reads "gitlab" (glab\'s official release, the default) or "company <path or address>" (your company\'s own list), so setup did not fetch glab';
+const ADDRESS_ONLY_HTTPS = 'A company\'s address is fetched only over https, so setup did not fetch glab from it';
+const LIST_LIMIT = 1024 * 1024;
+
+// Where `glab` comes from: { kind: 'gitlab', from: null } (the official release) or
+// { kind: 'company', from } with `from` a path or an https address, as written in the setting.
+export function glabSource({ setting } = {}) {
+  const text = typeof setting === 'string' ? setting.trim() : '';
+  if (text === '' || text === 'gitlab') return { kind: 'gitlab', from: null };
+  const from = /^company(?:\s+(\S[\s\S]*))?$/.exec(text)?.[1]?.trim();
+  if (!from) throw new Error(GLAB_FROM_LINE);
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(from)) {
+    let address = null;
+    try {
+      address = new URL(from);
+    } catch { /* not an address */ }
+    if (address?.protocol !== 'https:' || address.username || address.password || !address.hostname) throw new Error(ADDRESS_ONLY_HTTPS);
+  }
+  return { kind: 'company', from };
+}
+
+// The project's `glabFrom` setting, read from its committed configuration without judging the rest
+// of the file; undefined when there is none.
+export function readGlabFrom(folder) {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'))?.glabFrom;
+    return typeof value === 'string' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const isAddress = (from) => /^https:\/\//i.test(from);
+
+// The real path of a company's list on this computer. It must be written as a full path, and neither the
+// path as written nor the real one it comes to (a symbolic link out of or into the folder is followed) may
+// lie inside the project's folder: what is in the folder can be written by an agent working there, and glab
+// runs with the director's own sign-in.
+function outsideProject(from, folder) {
+  if (!path.isAbsolute(from)) {
+    throw new Error(`Your company's list at ${from} must be written as a full path or an https address, so setup did not fetch glab`);
+  }
+  let file;
+  try {
+    file = fs.realpathSync.native(from);
+  } catch {
+    throw new Error(`Your company's list at ${from} could not be read, so setup did not fetch glab`);
+  }
+  if (typeof folder === 'string') {
+    const roots = [path.resolve(folder)];
+    try {
+      roots.push(fs.realpathSync.native(folder));
+    } catch { /* the folder as given */ }
+    const inside = (target, root) => {
+      const rel = path.relative(root, target);
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+    };
+    if ([path.resolve(from), file].some((target) => roots.some((root) => inside(target, root)))) {
+      throw new Error(`Your company's list at ${from} is inside this project's folder, where an agent could change it, so setup did not fetch glab: keep the list outside the project`);
+    }
+  }
+  return file;
+}
+
+// A source for a card: as it is when short, else its beginning and end with an ellipsis between.
+const SHOWN_SOURCE = 64;
+const shownSource = (from) => (from.length <= SHOWN_SOURCE ? from : `${from.slice(0, 40)}…${from.slice(-(SHOWN_SOURCE - 41))}`);
+
+// The company's list read, on disk or at its address, as the release the fetch needs: its version
+// (or null), the checksums it gives (from a `checksums.txt` link and from `sha256` on the links), the
+// names, and how to read one file. Only the list and its checksum file are read here.
+async function companyRelease({ from, folder, fetch }) {
+  let listText;
+  let bytesOf;
+  if (isAddress(from)) {
+    const listUrl = new URL(from);
+    const resolve = (name, link) => {
+      let url = null;
+      try {
+        url = new URL(link ?? name, listUrl);
+      } catch { /* not an address */ }
+      if (url === null || url.protocol !== 'https:' || url.host !== listUrl.host || url.username || url.password) {
+        throw new Error(`${name} is not on the company's list host, so setup did not fetch it`);
+      }
+      return url.href;
+    };
+    const get = async (url) => {
+      try {
+        return await getOk(fetch, url, { redirect: 'error' });
+      } catch (error) {
+        const kind = failureKind(error);
+        if (kind === 'certificate') {
+          throw new Error(`The certificate at ${listUrl.host}, where your company's list is, isn't one this computer trusts, and setup never switches certificate checks off. Ask whoever looks after your company's computers to put the list and its files in a folder on this computer; the change to where Wheelhouse looks for them then reaches you as a card to approve`);
+        }
+        if (kind === 'unreachable') throw new Error(`Your company's list at ${listUrl.host} can't be reached from here, perhaps off the company network`);
+        throw error;
+      }
+    };
+    listText = await (await get(from)).text();
+    bytesOf = { resolve, bytes: async (url) => Buffer.from(await (await get(url)).arrayBuffer()), text: async (url) => (await get(url)).text() };
+  } else {
+    const file = outsideProject(from, folder);
+    const beside = path.dirname(file);
+    const resolve = (name, link) => {
+      const leaf = link ?? name;
+      if (leaf === '' || leaf === '.' || leaf === '..' || path.basename(leaf) !== leaf || /[\\/]/.test(leaf)) throw new Error(`${name} is not beside the company's list, so setup did not use it`);
+      return path.join(beside, leaf);
+    };
+    const read = (target) => {
+      const info = fs.lstatSync(target);
+      if (!info.isFile()) throw new Error(`${path.basename(target)} is not a plain file, so setup did not use it`);
+      return fs.readFileSync(target);
+    };
+    try {
+      if (fs.statSync(file).size > LIST_LIMIT) throw new Error('too large');
+      listText = fs.readFileSync(file, 'utf8');
+    } catch {
+      throw new Error(`Your company's list at ${file} could not be read, so setup did not fetch glab`);
+    }
+    bytesOf = { resolve, bytes: async (target) => read(target), text: async (target) => read(target).toString('utf8') };
+  }
+  let list;
+  try {
+    list = JSON.parse(listText);
+  } catch {
+    throw new Error('Your company\'s list is not a readable list, so setup did not fetch glab');
+  }
+  const links = Array.isArray(list?.assets?.links) ? list.assets.links.filter((l) => l && typeof l.name === 'string') : [];
+  if (links.length === 0) throw new Error('Your company\'s list names no files, so setup did not fetch glab');
+  const byName = new Map(links.map((l) => [l.name, bytesOf.resolve(l.name, typeof l.direct_asset_url === 'string' ? l.direct_asset_url : undefined)]));
+  const sums = new Map();
+  if (byName.has('checksums.txt')) {
+    for (const [name, sum] of parseChecksums(await bytesOf.text(byName.get('checksums.txt')))) sums.set(name, sum);
+  }
+  for (const l of links) {
+    if (l.sha256 === undefined) continue;
+    if (typeof l.sha256 !== 'string' || !/^[0-9a-fA-F]{64}$/.test(l.sha256)) throw new Error(`The checksum the company's list gives for ${l.name} is not readable, so setup did not use it`);
+    if (!sums.has(l.name)) sums.set(l.name, l.sha256.toLowerCase());
+  }
+  return {
+    company: true,
+    tag: typeof list.tag_name === 'string' && list.tag_name !== '' ? list.tag_name : null,
+    checksumText: [...sums].map(([name, sum]) => `${sum}  ${name}`).join('\n'),
+    names: [...byName.keys()],
+    bytesFor: (name) => bytesOf.bytes(byName.get(name)),
+  };
+}
+
+// What a company's list says about the glab file this computer would take: its version and whether
+// the list gives a checksum for it. Reads only.
+async function describeCompany({ source, folder, fetch, platform, arch }) {
+  const release = await companyRelease({ from: source.from, folder, fetch });
+  const name = pickArchive('glab', release.names, platform, arch);
+  const version = versionOf(name);
+  checkListedVersion(release, version);
+  if (parseChecksums(release.checksumText).has(name)) return { from: 'company', source: source.from, version, checksum: 'listed' };
+  // No checksum to hold the file to: the file as it is now is hashed (a read, not a run) and the hash goes
+  // in the change, so apply uses only that file.
+  return { from: 'company', source: source.from, version, checksum: 'none', pin: crypto.createHash('sha256').update(await release.bytesFor(name)).digest('hex') };
+}
+
+function checkListedVersion(release, version) {
+  if (release.tag !== null && release.tag.replace(/^v/, '') !== version) {
+    throw new Error(`The company's list says ${release.tag}, but its glab file is ${version}, so setup did not use it`);
+  }
+}
+
 // Where each host tool's official release lives. Neither needs a token.
 const SOURCES = {
   gh: async (fetch) => {
@@ -222,14 +405,30 @@ function findBinary(dir, name) {
 // unpacked in a new folder beside it, run once, and only then put in place, with the release's tag
 // kept beside it in `version`. `record(change)`, when given, gets the folder's change just before
 // it is put in place. Gives the program's path and version.
-export async function fetchHostTool({ tool, platform = process.platform, arch = process.arch, fetch = globalThis.fetch, run = realRun, record } = {}) {
+export async function fetchHostTool({
+  tool, platform = process.platform, arch = process.arch, fetch = globalThis.fetch, run = realRun, record,
+  source = { kind: 'gitlab', from: null }, folder, pin, expectVersion,
+} = {}) {
   if (!HOST_TOOLS.includes(tool)) throw new Error(`There is no host tool named ${tool}`);
-  const release = await SOURCES[tool](fetch);
+  const company = source?.kind === 'company';
+  if (company && tool !== 'glab') throw new Error(`A company's list gives glab only, not ${tool}`);
+  const release = company ? await companyRelease({ from: source.from, folder, fetch }) : await SOURCES[tool](fetch);
   const sums = parseChecksums(release.checksumText);
   const name = pickArchive(tool, release.names, platform, arch);
   const version = versionOf(name);
-  const bytes = await getBytes(fetch, official(release.urlFor(name), tool));
-  verifyChecksum(name, bytes, sums);
+  if (company) checkListedVersion(release, version);
+  if (expectVersion !== undefined && expectVersion !== version) throw new Error(`The company's list now offers glab ${version}, not ${expectVersion} as the card said: ask for step 2's card again`);
+  const tagged = release.tag ?? `v${version}`;
+  // A copy the list gives no checksum for is used only if the card that said so named this very file:
+  // `pin` is the hash the plan took of it.
+  if (company && !sums.has(name) && pin === undefined) {
+    throw new ChecksumError(`${name} has no checksum on the company's list, so setup did not use it until a card says so and you agree`);
+  }
+  const bytes = company ? await release.bytesFor(name) : await getBytes(fetch, official(release.urlFor(name), tool));
+  if (!company || sums.has(name)) verifyChecksum(name, bytes, sums);
+  else if (crypto.createHash('sha256').update(bytes).digest('hex') !== pin) {
+    throw new ChecksumError(`${name} is not the file the card was shown, so setup did not use it: ask for step 2's card again`);
+  }
   const target = toolFolder(tool);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const work = fs.mkdtempSync(path.join(path.dirname(target), `.${tool}-`));
@@ -247,7 +446,7 @@ export async function fetchHostTool({ tool, platform = process.platform, arch = 
     const program = path.join(staged, 'bin', binary);
     fs.copyFileSync(findBinary(unpacked, binary), program);
     if (platform !== 'win32') fs.chmodSync(program, 0o755);
-    fs.writeFileSync(path.join(staged, 'version'), `${release.tag}\n`);
+    fs.writeFileSync(path.join(staged, 'version'), `${tagged}\n`);
     const ran = await run(program, ['--version']);
     if (ran.code !== 0) throw new Error(`${tool} was fetched but would not run`);
     let before = null;
@@ -255,7 +454,7 @@ export async function fetchHostTool({ tool, platform = process.platform, arch = 
       before = { version: fs.readFileSync(path.join(target, 'version'), 'utf8').trim() };
     } catch { /* none there, or none setup fetched */ }
     if (typeof record === 'function') {
-      record({ id: newId('chg'), kind: 'folder', target, before: fs.existsSync(target) ? before ?? {} : null, after: { tool, version: release.tag } });
+      record({ id: newId('chg'), kind: 'folder', target, before: fs.existsSync(target) ? before ?? {} : null, after: { tool, version: tagged } });
     }
     if (fs.existsSync(target)) fs.renameSync(target, path.join(work, 'earlier'));
     fs.renameSync(staged, target);
@@ -336,7 +535,7 @@ export function hostToolsFor(folder) {
   const url = originUrl(folder);
   if (url === null) return [...HOST_TOOLS];
   try {
-    return [detectHost(url) === 'github' ? 'gh' : 'glab'];
+    return [detectHost(url, readGitlabHosts(folder)) === 'github' ? 'gh' : 'glab'];
   } catch {
     return [...HOST_TOOLS];
   }
@@ -366,6 +565,46 @@ export async function toolsStatus({ platform = process.platform, run = realRun, 
 export function nodeRefusal(node) {
   const found = node?.found ? `this computer's Node.js is ${node.version ?? 'one whose version could not be read'}` : 'Node.js was not found on this computer';
   return `${NODE_LINE} (Setup stopped here, and installed nothing: ${found}; it needs ${FLOOR} or later.)`;
+}
+
+// ---- The company's own certificate authority (check 71) ----
+
+// Gives a company GitLab's certificate authority to the tools, for that address only. The computer's
+// own certificates are copied into <home>/ca/company.pem when the file is not there yet (or `refresh`
+// asks for them again); `glab` is told the file for the host (`glab config set ca_cert`, in glab's own
+// configuration, as it runs today). Git is not run and nothing of the person's git configuration is
+// written: its settings come back as `gitConfig`, entries for the environment of a git call that
+// reaches this address (withGitConfig), and Node.js's as `nodeEnv`. A step that applies it adds it to
+// the journal as it does any other change. `verify({ file })`, when given, tries GitLab with the staged
+// certificates alone and says 'certificate' when they still do not cover it: the file is then thrown away,
+// glab is not run, and the step stops with CERTIFICATE_NOT_IN_STORE.
+export async function applyCompanyCa({ base, home = wheelhouseHome(), platform = process.platform, run = realRun, refresh = false, verify } = {}) {
+  // The address is checked first (https, or http on this computer): nothing is written or run for another.
+  const address = addressOf(base);
+  const file = caFile(home);
+  // New certificates are staged beside the file and put in place only once glab has accepted it, so a
+  // failure leaves the file as it was (or none), never one that says the work is done.
+  const staged = refresh || !fs.existsSync(file) ? stageCaFile({ home, pem: await exportSystemRoots({ platform, run }) }) : null;
+  if (staged !== null && typeof verify === 'function') {
+    let kind;
+    try {
+      kind = await verify({ file: staged.temporary });
+    } catch {
+      kind = 'other';
+    }
+    if (kind === 'certificate') {
+      staged.discard();
+      throw new Error(CERTIFICATE_NOT_IN_STORE);
+    }
+  }
+  const host = new URL(address).host;
+  const set = await quietly(run, toolPath('glab', { platform }), glabCaArgs(host, file));
+  if (set.code !== 0) {
+    staged?.discard();
+    throw new Error(`glab could not be given the company's certificate for ${host}`);
+  }
+  staged?.commit();
+  return { file, glabHost: host, nodeEnv: caEnv(home), gitConfig: gitCaConfig(address, file, platform) };
 }
 
 // ---- The installers ----
@@ -500,20 +739,39 @@ function directorFor(changes, platform) {
   return 'One click';
 }
 
-// The card of a list with something on it: an empty list settles the step (ruling R75).
+// The card of a list with something on it: an empty list settles the step (ruling R75). A card is
+// limited in length (CARD.chars), and a first run can list git's installer, both host tools and the
+// permission rules at once, so the full wording is tried first and, when it does not compose, a terse one:
+// one short clause for each, the source of a company's list shortened (all of it stays in the change,
+// and so under the plan hash). The warning that a company's copy has no checksum is in both.
 function cardFor(changes, status, platform) {
-  const lines = [];
-  for (const c of changes.filter((x) => x.kind === 'process')) {
-    lines.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
-  }
-  const fetched = changes.filter((c) => c.action === 'fetch').map((c) => c.tool);
-  if (fetched.length > 0) {
-    lines.push(`${fetched.join(' and ')}, the host's command-line ${fetched.length === 1 ? 'tool' : 'tools'}: fetched from ${fetched.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
-  }
-  if (changes.some((c) => c.kind === 'json-key')) lines.push('permission rules in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
+  const processes = changes.filter((x) => x.kind === 'process');
+  const fetches = changes.filter((c) => c.action === 'fetch');
+  const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
+  const company = fetches.filter((x) => x.from === 'company');
+  const rule = changes.some((c) => c.kind === 'json-key');
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
-  const what = `Setup step 2, ${SETUP_TITLES[2]}: ${lines.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`;
-  return {
+  const full = [];
+  for (const c of processes) full.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
+  if (official.length > 0) {
+    full.push(`${official.join(' and ')}, the host's command-line ${official.length === 1 ? 'tool' : 'tools'}: fetched from ${official.length === 1 ? 'its' : 'their'} official release into Wheelhouse's tools folder, checked against the published checksums; a few seconds, nothing for you to do`);
+  }
+  for (const c of company) {
+    full.push(`${c.tool}, from your company's list at ${c.source} (version ${c.version}); ${c.checksum === 'listed'
+      ? 'checked against the checksum the list gives'
+      : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
+  }
+  if (rule) full.push('permission rules in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
+  const terse = [];
+  for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
+  if (official.length > 0) terse.push(`${official.join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
+  for (const c of company) {
+    terse.push(c.checksum === 'listed'
+      ? `${c.tool}: from your company's list at ${shownSource(c.source)}, checked`
+      : `${c.tool}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
+  }
+  if (rule) terse.push('permission rules');
+  const card = (what) => ({
     kind: 'setup',
     level: 3,
     what,
@@ -523,9 +781,21 @@ function cardFor(changes, status, platform) {
       { label: 'Not now', says: 'Setup waits at this step; nothing is installed.' },
     ],
     recommend: SETUP_LABEL,
-    because: 'each comes from its official source, and setup needs them for the next steps',
+    because: company.length > 0 ? 'setup needs them for the next steps' : 'each comes from its official source, and setup needs them for the next steps',
     meanwhile: 'Setup waits at this step; nothing is installed.',
-  };
+  });
+  const long = card(`Setup step 2, ${SETUP_TITLES[2]}: ${full.join('; ')}.${here.length > 0 ? ` Already here: ${here.join(', ')}.` : ''}`);
+  try {
+    composeCard({ ...long, target: { step: 2, hash: '0'.repeat(64) } });
+    return long;
+  } catch (error) {
+    if (!isTooLong(error)) throw error;
+    // too long: the terse card below
+  }
+  const short = card(`Setup step 2, ${SETUP_TITLES[2]}: ${terse.join('; ')}.`);
+  // The terse card is composed here too, so a card still too long is refused now, with the length refusal, not later.
+  composeCard({ ...short, target: { step: 2, hash: '0'.repeat(64) } });
+  return short;
 }
 
 // The allow rules in a settings file, as they are; an empty list when there is no file. A file that
@@ -573,7 +843,15 @@ export function toolsStep({
           ? { kind: 'process', target: 'git', action: 'wait' }
           : { kind: 'process', target: 'git', action: 'install', waitsFor: WAITS_FOR[platform] });
       }
-      for (const tool of hostTools) if (!status[tool].ok) changes.push({ kind: 'folder', target: toolFolder(tool), action: 'fetch', tool });
+      for (const tool of hostTools) {
+        if (status[tool].ok) continue;
+        const change = { kind: 'folder', target: toolFolder(tool), action: 'fetch', tool };
+        // Where the project's glabFrom names the company's own list, glab comes from there; what the list
+        // says (its version, whether it gives a checksum) goes on the card before anything is fetched.
+        const source = tool === 'glab' ? glabSource({ setting: readGlabFrom(ctx.folder) }) : null;
+        if (source?.kind === 'company') Object.assign(change, await describeCompany({ source, folder: ctx.folder, fetch, platform, arch }));
+        changes.push(change);
+      }
       // Both forms of setup's command: the plain one and the one the session start names with
       // --no-use-system-ca. Each is checked and added on its own.
       const rules = [false, true]
@@ -605,7 +883,10 @@ export function toolsStep({
         if (!started.started) throw new Error(`the ${c.target} installer did not start${started.why ? `: ${started.why}` : ''}`);
         record({ id: newId('chg'), kind: 'process', target: started.image, before: null, after: { tool: c.target, pid: started.pid, startedAt: now().toISOString(), image: started.image } });
       });
-      const fetches = changes.filter((c) => c.action === 'fetch').map((c) => fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record }));
+      const fetches = changes.filter((c) => c.action === 'fetch').map((c) => (c.from === 'company'
+        // What the card said: the list it named, the version it gave, and whether it gave a checksum.
+        ? fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record, source: glabSource({ setting: `company ${c.source}` }), folder: ctx.folder, expectVersion: c.version, ...(c.checksum === 'none' ? { pin: c.pin } : {}) })
+        : fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record })));
       // The rule is written once every installer's start is recorded, so a write that fails can't
       // leave an installer open that the journal doesn't know about.
       const failed = (await Promise.allSettled([...installs, ...fetches])).find((r) => r.status === 'rejected');

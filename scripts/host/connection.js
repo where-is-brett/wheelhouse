@@ -7,7 +7,7 @@
 //     mode: 'quick' | 'narrow',
 //     project: 'owner/name',
 //     projectId?: number,   GitLab narrow: the project's number, naming its key
-//     baseUrl?: string,     GitLab: the GitLab address (default https://gitlab.com)
+//     baseUrl?: string,     GitLab: the GitLab address (default: the public service's)
 //     locked?: boolean,     the project's protection level is Locked
 //     installationId?: number,  GitHub narrow: the app's installation on the project's
 //                           account, kept when step 3 connected it
@@ -20,6 +20,7 @@
 // returns a key other than in that environment, or logs or throws one.
 import { renewKeys } from './github-app.js';
 import { checkBaseUrl } from './gitlab-key.js';
+import { DEFAULT_GITLAB } from './gitlab-base.js';
 import { readKey, writeKey } from './keys.js';
 
 const RENEW_WITHIN_MS = 10 * 60 * 1000;
@@ -131,7 +132,7 @@ export async function childEnv(connection, { fetch = globalThis.fetch, now = () 
     const key = await githubAccessKey({ fetch, now });
     return { GH_TOKEN: key, ...gitHeader(GITHUB_HEADER, 'x-access-token', key) };
   }
-  const root = checkBaseUrl(connection.baseUrl ?? 'https://gitlab.com');
+  const root = checkBaseUrl(connection.baseUrl ?? DEFAULT_GITLAB);
   const base = new URL(root);
   const { token } = gitlabKey(connection);
   return {

@@ -15,7 +15,8 @@
 // lineage check the hold lets through) and the foreman's (act.js and wake.js, which forward to
 // the helper; the helper runs them outside the sandbox as a child process, ruling R156). Hooks
 // run outside the sandbox (check 32), as do the helper and the watcher.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,6 +53,11 @@ import { lineageFixture, writeFiles } from '../helpers/lineage.js';
 import { writeSessionProvenance } from '../helpers/provenance.js';
 import { sandboxed as wallSandboxed, sandboxHolds as wallHolds } from '../helpers/sandbox-wall.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -169,6 +175,7 @@ async function makeWorld({ lineage = false } = {}) {
     });
     enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
     const helper = await startHelper({
+      run: hostGuard,
       address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}), now, ...(fixture ? { pluginRoot: fixture.root } : {}),
     });
     world.close = async () => {

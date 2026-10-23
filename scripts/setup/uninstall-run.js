@@ -170,10 +170,10 @@ async function putBackOnHost(git, tip, folder, entries) {
 // The real host work, with the director's own sign-in: git in a scratch repository, the host's tool
 // through the adapter, and GitLab's API for a merge request's search.
 function hostWork({ platform, run, fetch }) {
-  const adapterFor = ({ host, repo }) => makeAdapter({ host, repo, run, env: {} });
+  const adapterFor = ({ host, repo, base }) => makeAdapter({ host, repo, run, env: {}, base });
   return {
     findGit: async () => (await toolsStatus({ platform, run, tools: ['git'] })).git,
-    gitEnvFor: ({ host, gitPath }) => directorGitEnv({ host, gitPath, platform }),
+    gitEnvFor: ({ host, gitPath, base }) => directorGitEnv({ host, gitPath, platform, base }),
     adapterFor,
     // The open pull request from `branch`, or null.
     async findOpenPr({ host, repo, branch, baseUrl }) {
@@ -243,10 +243,10 @@ export async function applyUninstall({
     }
   }
   let git = null;
-  const gitFor = async (host, remoteUrl, use, index = false) => {
+  const gitFor = async (host, remoteUrl, use, index = false, base = undefined) => {
     git ??= await o.findGit();
     if (!git?.ok || typeof git.path !== 'string') halt('git is not on this computer, so uninstall can\'t reach the host');
-    return withScratchGit({ run, gitPath: git.path, env: o.gitEnvFor({ host, gitPath: git.path }), remoteUrl, index }, use);
+    return withScratchGit({ run, gitPath: git.path, env: o.gitEnvFor({ host, gitPath: git.path, base }), remoteUrl, index }, use);
   };
 
   // A push 15a's plan read as not made may have reached the host if setup stopped before it fetched:
@@ -284,7 +284,7 @@ export async function applyUninstall({
       const h = hostTarget(ask.target);
       if (ask.put === 'delete-branch') {
         if (record === null) halt('the project\'s record is gone, so its state branch could not be deleted');
-        const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, STATE_BRANCH, null));
+        const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, STATE_BRANCH, null), false, record.connection?.baseUrl);
         say(got.put ? `The ${STATE_BRANCH} branch of ${record.repo} is deleted.` : `The ${STATE_BRANCH} branch stays: ${got.why}.`);
       } else {
         const base = h.host === 'gitlab' ? (record?.connection?.baseUrl ?? GITLAB_URL) : null;
@@ -344,7 +344,7 @@ export async function applyUninstall({
         const fetched = await g.git(['fetch', '-q', '--no-tags', remoteUrl, `+refs/heads/${branch}:refs/fetched/branch`]);
         if (fetched.code !== 0) halt(`${branch} on ${hostName(record.host)} could not be read with your sign-in, so uninstall did not go on; try again once it can be`);
         return (await g.git(['cat-file', '-e', `${sha}^{commit}`])).code === 0;
-      });
+      }, false, record.connection?.baseUrl);
       if (there) {
         // Recorded first, so the next plan reads the push as made and plans the pull request.
         markOnHost(unpushed.id, { now });
@@ -414,7 +414,7 @@ export async function applyUninstall({
             // Wheelhouse's own branch: a retry's commit takes the place of an earlier attempt's.
             await g.must(['push', '-q', '--no-verify', '--force', record.remoteUrl, `${sha}:refs/heads/${UNINSTALL_BRANCH}`], `uninstall's branch could not be pushed to ${hostName(record.host)} with your sign-in`);
             return { tip, left, sha };
-          }, true);
+          }, true, record.connection?.baseUrl);
           for (const l of made.left) mark(l.ids, false, l.why);
           if (made.sha === null) {
             mark(entry.ids, true, `nothing of setup's is left on ${entry.branch}`);
@@ -422,7 +422,7 @@ export async function applyUninstall({
           } else {
             const baseUrl = record.connection?.baseUrl ?? GITLAB_URL;
             const pr = (await o.findOpenPr({ host: record.host, repo: record.repo, branch: UNINSTALL_BRANCH, baseUrl }))
-              ?? await (await o.adapterFor({ host: record.host, repo: record.repo })).openPr({ head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: UNINSTALL_BODY });
+              ?? await (await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl })).openPr({ head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: UNINSTALL_BODY });
             mark(entry.ids, true, `taken out by pull request ${pr.number}, for the director to merge`);
             say(`Pull request ${pr.number} takes setup's files and pins out of ${entry.branch}: merge it on ${hostName(record.host)}. Once it is merged, Wheelhouse's checks no longer guard this project; protection stays on.`);
             await page('the pull request', pr.url);
@@ -434,7 +434,7 @@ export async function applyUninstall({
           break; // with its pull request
         case 'close-pull-request': {
           if (record === null) halt('the project\'s record is gone, so the trial pull request could not be closed');
-          const adapter = await o.adapterFor({ host: record.host, repo: record.repo });
+          const adapter = await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl });
           const number = entry.number ?? (await o.findOpenPr({ host: record.host, repo: record.repo, branch: entry.branch, baseUrl: record.connection?.baseUrl ?? GITLAB_URL }))?.number ?? null;
           if (number !== null && (await adapter.prState(number))?.state === 'open') await adapter.closePr(number);
           mark(entry.ids, true);
@@ -450,7 +450,7 @@ export async function applyUninstall({
             say(`The trial branch ${entry.branch} stays: its commit was never recorded.`);
             break;
           }
-          const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, entry.branch, entry.sha));
+          const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, entry.branch, entry.sha), false, record.connection?.baseUrl);
           mark(entry.ids, got.put, got.put ? undefined : got.why);
           say(got.put ? `The trial branch ${entry.branch} is deleted.` : `The trial branch ${entry.branch} stays: ${got.why}.`);
           break;
@@ -490,7 +490,7 @@ export async function applyUninstall({
           const setUp = byId.get(entry.ids.at(-1));
           git ??= await o.findGit();
           if (!git?.ok || typeof git.path !== 'string') halt('git is not on this computer, so uninstall can\'t reach the host');
-          const got = await o.withdrawEnrolment({ profile, target: entry.target, after: setUp?.after, gitPath: git.path, env: o.gitEnvFor({ host: profile.host, gitPath: git.path }) });
+          const got = await o.withdrawEnrolment({ profile, target: entry.target, after: setUp?.after, gitPath: git.path, env: o.gitEnvFor({ host: profile.host, gitPath: git.path, base: profile.connection?.baseUrl }) });
           mark(entry.ids, got.put, got.put ? undefined : got.why);
           say(got.put ? 'This computer\'s key is taken out of your profile.' : `This computer's key in your profile: ${got.why}.`);
           break;

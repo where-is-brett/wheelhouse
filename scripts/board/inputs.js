@@ -102,6 +102,8 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
   const facts = asked === LATE ? await readHostFacts(project, { now, ask: false }).catch(() => null) : asked;
   return {
     helperUp: health?.ok === true,
+    // The GitLab address, while the helper says it could not lately be reached for this project.
+    away: typeof health?.away?.[project] === 'string' ? health.away[project] : undefined,
     lock: lock !== LATE && lock?.ok === true ? (isRecord(lock.result) ? lock.result : null) : undefined,
     facts,
   };
@@ -171,6 +173,6 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
 
   // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.
   const since = offline ? null : attempt(() => readSeen(project, { now: clock }).briefedAt);
-  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock, since });
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, now: clock, since });
   return { project, model, usage, sources, settings };
 }

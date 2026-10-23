@@ -461,12 +461,13 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // A card made from a lineage hold that has been lifted is closed, as an answered card is.
   const liftedHolds = liftedHoldIds(sorted);
   // The approval and CI push cards closed only by a later head of their pull request or branch:
-  // undecided and not revised, so a revised card may still name one (ruling C21).
+  // undecided and not revised, so a revised card may still name one (ruling C21), with `steered` as a
+  // waiting card has it.
   const outdatedCards = [];
   for (const { card, answers: mine, decided, steered } of outcomes) {
     if (decided !== null || revised(card) || liftedHolds.has(card.data?.event)) continue;
     const gone = outdated(card);
-    if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data });
+    if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data, steered });
     if (gone !== false) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);

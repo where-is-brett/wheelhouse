@@ -27,7 +27,7 @@ export function startRealHelper({
     onStop,
     adapterFor: (project, { env }) => {
       const record = recordOf(project);
-      return makeAdapter({ host: record.host, repo: record.repo, run, env });
+      return makeAdapter({ host: record.host, repo: record.repo, run, env, base: record.connection?.baseUrl });
     },
     envFor: envForConnection((project) => recordOf(project).connection, { fetch, now }),
   });

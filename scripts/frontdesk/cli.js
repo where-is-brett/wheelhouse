@@ -381,6 +381,7 @@ function topicOf(given) {
 // request or branch, and be of the card's kind. A card already waiting with its set line comes back
 // only when it is itself a revised card: the gate's plain card for that head is replaced instead.
 // An approval or CI push card revised at the same head commit is refused: the change must be committed first.
+// An outdated card may be revised only after a suggested change on it that came before the gate's record for the head.
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
@@ -405,6 +406,14 @@ export async function card({ client, cwd, input, now }) {
   // An approval or CI push card signs a head commit, so a revision at the same head describes a change the code doesn't hold.
   if (revised !== undefined && ['approval', 'ci-push'].includes(data.kind) && revised.data?.line === data.line) {
     throw new CliError('a revised approval needs the change committed first');
+  }
+  // An outdated card may be revised only after a suggested change on it, and only once the gate has
+  // recorded the head the revision is composed at: else the change is not one that card was given.
+  if (revised !== undefined && !views.waiting.some((c) => c.id === revised.id)) {
+    const record = Object.values(views.gateAsks ?? {}).find((g) => g.line === data.line);
+    if (typeof revised.steered !== 'string' || record === undefined || revised.steered >= record.at) {
+      throw new CliError('a revised approval must follow a suggested change on that card');
+    }
   }
   // A revised card takes the place of the gate's plain card at its own head, so for a revision only
   // a revised card already carrying the line comes back.

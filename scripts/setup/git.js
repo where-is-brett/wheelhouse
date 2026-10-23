@@ -4,8 +4,10 @@
 // settings it needs: the director's own sign-in as git's credential helper, when it uses it; hooks
 // pointed at the null file; no file-system monitor; no automatic maintenance; no going into
 // submodules (whose own settings are never looked at); inert values for the core settings that name
-// a program (core.sshCommand, core.askPass, core.editor, core.pager); https certificates always
-// checked (http.sslVerify); and no fetching of missing objects on the side (GIT_NO_LAZY_FETCH).
+// a program (core.sshCommand, core.askPass, core.editor, core.pager); https certificates checked
+// (http.sslVerify, which a URL-scoped http.<url>.sslVerify in the repository would beat, so the allowed
+// lists refuse those); no signing and no checking of signatures; and no fetching of missing objects on
+// the side (GIT_NO_LAZY_FETCH).
 // git may reach a remote over https only (GIT_ALLOW_PROTOCOL, which outranks any protocol.*
 // setting), so no transport that runs a program (ext::, a remote helper) and no ssh; a call to a
 // remote that setup itself named as a path on this computer (the stand-in host's repositories in
@@ -32,13 +34,18 @@ const GIT_WAIT_MS = 5 * 60 * 1000;
 // What every call carries, by environment, besides the sign-in: hooks and the monitor off; no
 // automatic maintenance after a commit or fetch; no going into submodules, since git runs there
 // without these settings and with the submodule's own; the core settings that name a program set
-// to ones that do nothing (a failing `false`, or `cat`); and https certificates checked (a setting
-// given this way outranks the repository's own `http.sslVerify`).
-const FENCE = [
+// to ones that do nothing (a failing `false`, or `cat`); https certificates checked (a setting
+// given this way outranks the repository's own plain `http.sslVerify`, but not a URL-scoped
+// `http.<url>.sslVerify`, which beats it: the allowed lists refuse every URL-scoped `http.` key); and
+// no signing and no checking of a signature (commits, tags and pushes unsigned; `git log` and
+// `git merge` verify nothing), so no signing program is ever started.
+export const FENCE = [
   ['core.hooksPath', NULL_FILE], ['core.fsmonitor', 'false'], ['maintenance.auto', 'false'],
   ['submodule.recurse', 'false'], ['fetch.recurseSubmodules', 'false'], ['push.recurseSubmodules', 'no'],
   ['core.sshCommand', 'false'], ['core.askPass', 'false'], ['core.editor', 'false'], ['core.pager', 'cat'],
   ['http.sslVerify', 'true'],
+  ['commit.gpgSign', 'false'], ['tag.gpgSign', 'false'], ['push.gpgSign', 'false'],
+  ['log.showSignature', 'false'], ['merge.verifySignatures', 'false'],
 ];
 // The transports git may use (ruling R111): https, and a local path only where setup named one.
 const HTTPS_ONLY = 'https';
@@ -171,7 +178,7 @@ export async function refuseUnlistedSettings({ run = realRun, gitPath = 'git', c
 }
 
 // git's subcommand among its arguments: the first that is neither an option nor the value of `-c`.
-function subcommandOf(args) {
+export function subcommandOf(args) {
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === '-c' || args[i] === '-C') i += 1;
     else if (!String(args[i]).startsWith('-')) return args[i];

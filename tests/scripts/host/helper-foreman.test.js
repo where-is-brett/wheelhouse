@@ -4,7 +4,8 @@
 // sandbox with no key or secret in its environment, and gives back the exit code and output.
 // And a feature session's push and pull name its worktree, from which the helper places the
 // project (ruling R157); a pull hands back the host's branch as a bundle (final review, I1).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,8 +21,13 @@ import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
-import { makeBareRemote, g, push as plainPush } from '../../helpers/git-fixture.js';
+import { makeBareRemote, g, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const P = 'o__p';
 const NOT_MAIN = { ok: false, refused: 'the foreman\'s commands run only in the project\'s main checkout' };
@@ -44,8 +50,8 @@ async function project() {
       folder: checkout, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
     enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: P, remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: P, push: plainPush })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: P, remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: P, push: plainPush })).taken, true);
   });
   return { remote, checkout, home };
 }
@@ -54,7 +60,7 @@ const adapter = { defaultBranch: async () => 'main' };
 
 async function withHelper(home, fn, options = {}) {
   return as(home, async () => {
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), ...options });
     try {
       return await fn(helperClient({ address: helper.address }), helper);
     } finally {
@@ -112,7 +118,7 @@ test('the foreman\'s commands for one project wait their turn: a retry sent whil
   const spans = [];
   let running = 0;
   const run = async (file, args, options = {}) => {
-    if (file !== process.execPath) return realRun(file, args, options);
+    if (file !== process.execPath) return hostGuard(file, args, options);
     running += 1;
     const span = { argv: args.slice(2), overlapped: running > 1 };
     spans.push(span);
@@ -154,7 +160,7 @@ test('the foreman\'s command gets no key or secret, and none comes back in its o
   const seen = [];
   const KEY = 'ghs_STANDINKEY0123456789abcdef';
   const run = async (file, args, options = {}) => {
-    if (file !== process.execPath) return realRun(file, args, options);
+    if (file !== process.execPath) return hostGuard(file, args, options);
     seen.push({ args, options });
     return { code: 0, stdout: `the key ${KEY}\n`, stderr: '' };
   };

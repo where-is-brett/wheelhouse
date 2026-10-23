@@ -1,9 +1,11 @@
 // scripts/host/token-url.js
 // Links to the host's new-token page with the agents' token already
 // described, so the director only checks it, picks the repositories and
-// clicks. GitHub can't pre-select repositories; the description names them.
+// clicks. GitHub can't pre-select repositories; the description names them. The GitLab page is on
+// the project's own GitLab (`base`, from gitlabBase).
+import { DEFAULT_GITLAB } from './gitlab-base.js';
 
-export function tokenUrl({ host, owner, repos, name, days }) {
+export function tokenUrl({ host, owner, repos, name, days, base = DEFAULT_GITLAB }) {
   const description = `Wheelhouse agents: code, pull requests and issues in ${repos.join(', ')} only.`;
   if (host === 'github') {
     if (!Number.isInteger(days) || days < 1 || days > 366) throw new Error('GitHub accepts an expiry of 1 to 366 days');
@@ -19,7 +21,7 @@ export function tokenUrl({ host, owner, repos, name, days }) {
     return url.toString();
   }
   if (host === 'gitlab') {
-    const url = new URL('https://gitlab.com/-/user_settings/personal_access_tokens');
+    const url = new URL(`${base.replace(/\/+$/, '')}/-/user_settings/personal_access_tokens`);
     url.searchParams.set('name', name);
     url.searchParams.set('scopes', 'api');
     return url.toString();

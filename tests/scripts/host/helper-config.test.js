@@ -1,7 +1,9 @@
 // tests/scripts/host/helper-config.test.js
 // /config: the project's configuration as the default branch has it, read in
 // the helper's mirror, so the watcher never reads a working copy an agent can edit.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,8 +13,13 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { cloneState } from '../../../scripts/state/clone.js';
-import { makeBareRemote, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const fakeAdapter = () => ({ defaultBranch: async () => 'main' });
 const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
@@ -49,8 +56,8 @@ async function withHelper(remote, fn) {
     writeProject('o__p', {
       folder: path.join(home, 'work'), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => fakeAdapter(), envFor: async () => ({}) });
     try {
       return await fn(helperClient({ address: helper.address }), home);
     } finally {

@@ -35,10 +35,11 @@ import { keepAnswer, keepUninstallClick, uninstallShownFor, freshUninstallClicks
 import { withdrawEnrolment } from '../../../scripts/setup/computers.js';
 import { madeBySetup, joinedFolder } from '../../../scripts/setup/host.js';
 import { writeKey, readKey } from '../../../scripts/host/keys.js';
+import { caFile } from '../../../scripts/host/company-ca.js';
 import { openInstaller } from '../../../scripts/setup/tools.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { standInTools } from '../../helpers/host-stand-ins.js';
+import { standInTools, guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { PROFILE_TARGET } from '../../../scripts/setup/own-app.js';
@@ -46,6 +47,11 @@ import { EXCLUDE_LINE, WHEELHOUSE_LINE } from '../../../scripts/setup/project-fi
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = () => new Date('2026-10-20T03:00:00.000Z');
 const SLUG = 'o__Cafe-Menu';
@@ -1237,6 +1243,51 @@ test('a second project keeps the helper, telemetry and the signing key when the 
   }
 });
 
+test('uninstall on a company GitLab gives git the certificate for its address, and glab its host, for the pull request and the branches', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'quick', project: REPO, baseUrl: COMPANY } });
+      const file = caFile(wheelhouseHome());
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'CERTIFICATES\n');
+      const f = fakes(world);
+      // The host work is setup's own: only git, glab and the pages are stood in for.
+      delete f.ops.adapterFor;
+      const gitEnvs = [];
+      const glab = [];
+      const inner = f.run;
+      f.run = async (command, args = [], options = {}) => {
+        if (path.basename(command) === 'git') gitEnvs.push({ args: [...args], env: options.env ?? {} });
+        if (path.basename(command) === 'glab') {
+          glab.push({ args: [...args], env: options.env });
+          return { code: 0, stdout: `${COMPANY}/${REPO}/-/merge_requests/12\n`, stderr: '' };
+        }
+        return inner(command, args, options);
+      };
+      const asked = [];
+      f.ops.findOpenPr = async (a) => { asked.push(a.baseUrl); return null; };
+      const { done } = await applyPlan(world, f);
+      assert.equal(done.ok, true, done.refused);
+      // The pull request was made through glab told the company's host.
+      assert.ok(glab.some((c) => c.args[0] === 'mr' && c.args[1] === 'create'), JSON.stringify(glab));
+      assert.ok(glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab.map((c) => c.env)));
+      assert.deepEqual([...new Set(asked)], [COMPANY]);
+      // Every git call that reached the host carried the certificate for that address.
+      const carries = ({ env }) => Object.values(env).includes(`http.${COMPANY}/.sslCAInfo`);
+      assert.ok(gitEnvs.some(carries), 'git was given the certificate');
+      // Including the project's own fetch and push, which go over the network (the profile's are another address).
+      const network = gitEnvs.filter(({ args }) => args.some((a) => ['fetch', 'push', 'ls-remote'].includes(a)) && args.includes(host.product.url));
+      assert.ok(network.some(({ args }) => args.includes('fetch')) && network.some(({ args }) => args.includes('push')), JSON.stringify(network.map((c) => c.args)));
+      assert.deepEqual(network.filter((c) => !carries(c)).map((c) => c.args), [], 'every fetch, push and ls-remote carried the certificate');
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
 test('an uninstall cut short resumes with a fresh plan and never puts anything back twice; the run is closed only once all is done', async () => {
   const host = await standIn();
   try {
@@ -1304,6 +1355,42 @@ test('a push the plan read as never made is looked for on the host first: there,
       const next = await applyPlan(world, f);
       assert.equal(next.done.ok, true, next.done.refused);
       assert.deepEqual(readJson(path.join(world.folder, '.claude', 'settings.json')), {});
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('looking on a company GitLab for a push never made gives git the certificate for its address', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const world = makeWorld();
+      world.lockedDir = tempFolder('wh-locked ');
+      world.register(SLUG, world.folder, REPO, { host: 'gitlab', mode: 'quick', project: REPO, baseUrl: COMPANY });
+      writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'quick', project: REPO, baseUrl: COMPANY } });
+      const file = caFile(wheelhouseHome());
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'CERTIFICATES\n');
+      const run = startRun({ folder: world.folder, now: NOW });
+      const r = recorder(run.id);
+      writeText(path.join(world.folder, '.claude', 'settings.json'), '{}\n');
+      r.key(7, path.join(world.folder, '.claude', 'settings.json'), ['extraKnownMarketplaces'], { wheelhouse: { ref: 'v1' } });
+      const tip = await g(host.work, 'rev-parse', 'HEAD');
+      r.add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: tip }, after: { action: 'push', branch: 'main', sha: tip } });
+      markStep(run.id, 7, 'failed', { now: NOW, reason: 'the setup commit could not be pushed' });
+      const f = fakes(world);
+      const calls = [];
+      const inner = f.run;
+      f.run = async (command, args = [], options = {}) => {
+        if (path.basename(command) === 'git') calls.push({ args: [...args], env: options.env ?? {} });
+        return inner(command, args, options);
+      };
+      await applyPlan(world, f);
+      const looked = calls.filter(({ args }) => args.includes('ls-remote') && args.includes(host.product.url));
+      assert.ok(looked.length > 0, 'the host was asked');
+      assert.deepEqual(looked.filter(({ env }) => !Object.values(env).includes(`http.${COMPANY}/.sslCAInfo`)), [], 'every ask carried the certificate');
     });
   } finally {
     host.cleanup();
@@ -1507,6 +1594,7 @@ test('through the helper, uninstall runs in its own process, and the helper stop
       // The list of a folder nothing was set up in, on the last project: the receiver's stop (no
       // receiver runs in this home), setup's own records removed, the plugin's line, the helper.
       const helper = await startHelper({
+        run: hostGuard,
         address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), userHome: user,
         onStop: (close) => { stopped = true; return close(); },
       });

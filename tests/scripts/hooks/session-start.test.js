@@ -19,6 +19,7 @@ import { decide as hold } from '../../../scripts/hooks/lineage-hold.js';
 import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HELD } from '../../../scripts/lineage/check.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
+import { writeCaFile } from '../../../scripts/host/company-ca.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
@@ -108,6 +109,21 @@ test('a helper that does not answer is started, detached and hidden', async () =
     assert.equal(f.calls.unref, 1);
     assert.equal(f.calls.sync, 1);
     assert.doesNotMatch(text(out), /isn't running/);
+  });
+});
+
+test('a helper started once setup has made the company\'s certificate gets it for Node.js, set at process start', async () => {
+  const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+  await withHome(async (home) => {
+    const before = fake();
+    await run(before);
+    assert.equal(before.calls.spawn[0].opts.env.NODE_EXTRA_CA_CERTS, process.env.NODE_EXTRA_CA_CERTS);
+    const file = writeCaFile({ home, pem });
+    const after = fake();
+    await run(after);
+    assert.equal(after.calls.spawn[0].opts.env.NODE_EXTRA_CA_CERTS, file);
+    assert.equal(after.calls.spawn[0].opts.env.PATH, process.env.PATH);
+    assert.equal(after.calls.spawn[0].opts.detached, true);
   });
 });
 
