@@ -274,8 +274,9 @@ function lastJson(stdout) {
 const NOT_READY = Object.freeze({ lowStarts: false, writeHeld: false, keysReadHeld: false });
 
 // A scratch folder in `<home>/windows` (never in the project), labelled as labelWorktree labels a
-// worktree: the folder low, and in it a .git file, .claude, .mcp.json and .vscode, each at the
-// normal level. Scratch folders left by a self-test that stopped part-way are removed first.
+// worktree: the folder low, and in it each entry kept at the normal level (KEPT_NORMAL), with
+// .github/hooks in .github, for the runner's try at planting a hook there. Scratch folders left by
+// a self-test that stopped part-way are removed first.
 async function scratchWorktree({ run, home, env, now }) {
   const dir = path.join(home, 'windows');
   fs.mkdirSync(dir, { recursive: true });
@@ -291,6 +292,7 @@ async function scratchWorktree({ run, home, env, now }) {
   try {
     for (const name of KEPT_NORMAL_FOLDERS) fs.mkdirSync(path.join(scratch, name));
     for (const name of KEPT_NORMAL_FILES) fs.writeFileSync(path.join(scratch, name), `A stand-in for a worktree's ${name}, for the Guarded self-test.\n`);
+    fs.mkdirSync(path.join(scratch, '.github', 'hooks'), { recursive: true });
     await labelKeepingNormal(scratch, { run, env });
     return scratch;
   } catch (error) {
@@ -339,9 +341,10 @@ function writeSelfTest(home, result) {
 // The self-test: makes the low copy, locks reads of the helper's keys folder and the credential
 // folders where Windows allows it, places a marker beside the helper's keys, makes a scratch
 // folder in `<home>/windows` labelled as a worktree is (scratchWorktree), then starts the runner
-// from the low copy, which checks it is low, tries to write in `<home>`, to read the marker, and
-// to write into, rename and remove each entry kept at the normal level in the scratch folder. The
-// scratch folder is removed afterwards. `writeHeld` is true only when the write in `<home>` and
+// from the low copy, which checks it is low, tries to write in `<home>` and through a link from the
+// scratch folder to `<home>`, to read the marker, to write into, rename and remove each entry kept
+// at the normal level in the scratch folder, and to write `.github/hooks/x.json` there. The
+// scratch folder is removed afterwards. `writeHeld` is true only when the writes in `<home>` and
 // every one of those tries were refused. Resolves with `{ at, lowStarts, writeHeld, keysReadHeld }`,
 // written to `<home>/windows/guarded-selftest.json`. One that can't finish within `timeoutMs` is
 // not ready (`timedOut: true`, so the next session start tries again), and so is one that fails.

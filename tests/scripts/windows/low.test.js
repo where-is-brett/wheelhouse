@@ -124,7 +124,7 @@ function repository({ vscode = true, claude = true, mcp = true } = {}) {
 
 const labels = (fake) => fake.icacls().filter((a) => a[1] === '/setintegritylevel');
 // The folders other agents' control files live in, kept at the normal level beside .claude and .vscode (KEPT_NORMAL).
-const AGENT_FOLDERS = ['.agents', '.plugin', 'com.github.copilot', '.codex', '.cursor', '.gemini'];
+const AGENT_FOLDERS = ['.agents', '.plugin', 'com.github.copilot', '.codex', '.cursor', '.gemini', '.github'];
 const keptFolderLabels = (root) => AGENT_FOLDERS.map((name) => [path.join(root, name), '/setintegritylevel', '(OI)(CI)M']);
 
 test('a worktree is labelled low, with its .git file, .claude and .mcp.json put back at the normal level', async () => {
@@ -376,6 +376,16 @@ test('the self-test labels a scratch folder in the home as a worktree is, for th
   assert.equal(refusedResult.writeHeld, false);
   assert.ok(scratchRefused.calls.every((c) => nameOf(c.file) === 'icacls'), 'the runner never started');
   assert.deepEqual(fs.readdirSync(path.join(refusing.home, 'windows')).filter((n) => n.startsWith('guarded-scratch-')), []);
+});
+
+test('the self-test\'s scratch folder holds .github/hooks, for the runner\'s try at planting a hook', async () => {
+  let hooks = null;
+  const { go } = selfTestScene((args) => {
+    hooks = fs.lstatSync(path.join(args.at(-1), '.github', 'hooks'), { throwIfNoEntry: false })?.isDirectory() ?? false;
+    return said({ low: true, writeHeld: true, readHeld: true, keptHeld: true });
+  });
+  assert.equal((await go()).writeHeld, true);
+  assert.equal(hooks, true);
 });
 
 test('a self-test that can\'t finish in its time, or whose low copy can\'t be made, is not ready', async () => {

@@ -201,11 +201,13 @@ test('a run past the time limit has its whole tree killed', async () => {
   assert.ok(!quick.calls.some((c) => nameOf(c.file) === 'taskkill'));
 });
 
-// A scratch folder as the self-test labels one: the entries kept at the normal level, each there.
+// A scratch folder as the self-test labels one: the entries kept at the normal level, each there,
+// and .github/hooks in .github.
 function scratchFolder() {
   const scratch = fs.realpathSync(tempFolder('wh-scratch-'));
   for (const name of KEPT_NORMAL.folders) fs.mkdirSync(path.join(scratch, name));
   for (const name of KEPT_NORMAL.files) fs.writeFileSync(path.join(scratch, name), 'kept\n');
+  fs.mkdirSync(path.join(scratch, '.github', 'hooks'));
   return scratch;
 }
 
@@ -213,6 +215,7 @@ function scratchFolder() {
 // and, when `parent` is true, the scratch folder can't be changed either, so nothing in it can be
 // renamed or removed.
 function lockScratch(scratch, { parent }) {
+  fs.chmodSync(path.join(scratch, '.github', 'hooks'), 0o500);
   for (const name of fs.readdirSync(scratch)) {
     const entry = path.join(scratch, name);
     fs.chmodSync(entry, fs.lstatSync(entry).isDirectory() ? 0o500 : 0o400);
@@ -227,6 +230,8 @@ function openScratch(scratch) {
     const entry = path.join(scratch, name);
     fs.chmodSync(entry, fs.lstatSync(entry).isDirectory() ? 0o700 : 0o600);
   }
+  const hooks = path.join(scratch, '.github', 'hooks');
+  if (fs.existsSync(hooks)) fs.chmodSync(hooks, 0o700);
 }
 
 test('in self-test mode the runner tries a write in the home, a read of the marker, and the kept entries, and says what Windows did', async () => {
@@ -317,13 +322,13 @@ test('the kept entries hold only when Windows refuses every try on every one of 
   const given = [];
   keptNormalHeld(scratch, { ...allRefused, writeInto: (at, folder) => { given.push([path.basename(at), folder]); allRefused.writeInto(); } });
   assert.deepEqual(given, [['.claude', true], ['.vscode', true], ['.agents', true], ['.plugin', true], ['com.github.copilot', true], ['.codex', true], ['.cursor', true], ['.gemini', true],
-    ['.git', false], ['.mcp.json', false], ['plugin.json', false], ['.gitattributes', false]]);
+    ['.github', true], ['.git', false], ['.mcp.json', false], ['plugin.json', false], ['.gitattributes', false]]);
 });
 
 test('the entries kept at the normal level are the settings folders and files and the plain names among the files that steer an agent', () => {
-  assert.deepEqual(KEPT_NORMAL.folders, ['.claude', '.vscode', '.agents', '.plugin', 'com.github.copilot', '.codex', '.cursor', '.gemini']);
+  assert.deepEqual(KEPT_NORMAL.folders, ['.claude', '.vscode', '.agents', '.plugin', 'com.github.copilot', '.codex', '.cursor', '.gemini', '.github']);
   assert.deepEqual(KEPT_NORMAL.files, ['.git', '.mcp.json', 'plugin.json', '.gitattributes']);
   assert.ok(Object.isFrozen(KEPT_NORMAL) && Object.isFrozen(KEPT_NORMAL.folders) && Object.isFrozen(KEPT_NORMAL.files));
-  // A name with a glob in it, or a folder above it that is left at the low level, is not here: a name below .github would be moved away with its folder.
+  // A name with a glob in it, or one below a folder (.github/hooks and the rest), is not here: .github is kept whole.
   for (const name of [...KEPT_NORMAL.folders, ...KEPT_NORMAL.files]) assert.ok(!/[*?[]|\//.test(name), name);
 });
