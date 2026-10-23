@@ -958,6 +958,42 @@ test('a survey that missed the host is taken again once, before the briefing is 
   });
 });
 
+// A survey that missed the host, recorded and mentioned (its in-flight line said on the carry-on
+// card, or at Trusting by the briefing), then taken again and finding a request as well.
+async function againAfterMentioned(repo, { trusting = false } = {}) {
+  const local = [{ name: 'menu', head: 'a'.repeat(40), commits: 1, subject: 'Start the menu', at: '' }];
+  const missed = makeEvent({ kind: 'survey', data: surveyData({ hostReached: false, local }), now: () => new Date(NOW) });
+  store(stateDir(P), [missed]);
+  putSurvey(missed.data, missed.id);
+  markSeen(P, { surveyAt: missed.id, briefedAt: NOW });
+  if (trusting) setProfile({ autonomy: 'trusting' });
+  else carryOnAnswered(CARRY_ON, '2026-10-19T12:05:00.000Z');
+  const fresh = { ...surveyData({ requests: [{ number: 3, title: 'Add a map', draft: false }], local }), again: true };
+  const looked = {
+    ...client,
+    survey: { again: async () => ({ ok: true, taken: true, id: 'survey-2', hostReached: true }) },
+    state: { views: async () => ({ ok: true, views: { survey: { id: 'survey-2', at: LATER, data: fresh } } }) },
+  };
+  return contextOf(await run(repo, 'Hello', '2026-10-19T15:00:00.000Z', { client: looked }));
+}
+
+test('a survey taken again names only what is new since the one the card asked about', async () => {
+  await withProject(async ({ repo }) => {
+    const text = await againAfterMentioned(repo);
+    assert.match(text, /Found here:\n- Already under way here: 1 change waiting to be \w+ on GitHub\. Say if you'd like me to carry it on\./);
+    assert.doesNotMatch(text, /unfinished work/);
+    assert.equal(readSurveyAt(P), 'survey-2');
+  });
+});
+
+test('at Trusting, a survey taken again says it is carrying on what is new', async () => {
+  await withProject(async ({ repo }) => {
+    const text = await againAfterMentioned(repo, { trusting: true });
+    assert.match(text, /Found here:\n- Already under way here: 1 change waiting to be \w+ on GitHub\. I'm carrying it on; say stop if you'd rather I didn't\./);
+    assert.doesNotMatch(text, /unfinished work/);
+  });
+});
+
 test('a survey the host could not be reached for says so when it still cannot be, and under STOP no new one is taken', async () => {
   await withProject(async ({ repo }) => {
     putSurvey(surveyData({ hostReached: false }));

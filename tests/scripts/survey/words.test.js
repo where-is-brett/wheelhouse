@@ -106,6 +106,21 @@ test('lines can be left out by name, so a caller says one of them itself', () =>
   assert.deepEqual(briefingLines(survey({ hostReached: false }), { host: 'github', leave: ['missed'] }), []);
 });
 
+test('a survey taken again after an earlier one was said names only what is new since it', () => {
+  const earlier = survey({ hostReached: false, local: [item('a'), item('b')], instructions: { files: ['AGENTS.md'], sections: [] } });
+  const again = survey({ requests: [request(7)], pushed: [item('b')], local: [item('a'), item('c')], instructions: { files: ['AGENTS.md'], sections: [] } });
+  // Pieces are known by name wherever they are now; requests by number; the same instructions aren't said again.
+  assert.deepEqual(briefingLines(again, { host: 'github', since: earlier }), [
+    'Already under way here: 1 change waiting to be merged on GitHub, and 1 piece of unfinished work on this computer. Say if you\'d like me to carry any of them on.',
+  ]);
+  assert.deepEqual(briefingLines(again, { host: 'github', since: earlier, carrying: true }), [
+    'Already under way here: 1 change waiting to be merged on GitHub, and 1 piece of unfinished work on this computer. I\'m carrying them on, one brief each; say stop if you\'d rather I didn\'t.',
+  ]);
+  // Nothing new, nothing said; other instructions than before are said.
+  assert.deepEqual(briefingLines(survey({ local: [item('a')] }), { host: 'github', since: earlier }), []);
+  assert.match(briefingLines(survey({ instructions: { files: ['AGENTS.md', '.cursorrules'], sections: [] } }), { host: 'github', since: earlier })[0], /^This project also has instructions/);
+});
+
 // ---- The card at setup's end, and the line at Trusting (ruling A9) ----
 
 test('the carry-on card holds the design\'s words, with the project\'s name and the host filled in', () => {

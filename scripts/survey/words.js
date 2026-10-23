@@ -70,17 +70,40 @@ function instructionsLine(survey) {
   return `${line} I can move ${moved} into an archive folder, which you can undo at any time.`;
 }
 
+// The work in flight in `survey` that `since`, an earlier survey already mentioned, didn't hold:
+// requests by number, and pieces by name, wherever each is now.
+function newSince(survey, since) {
+  const items = (xs) => (Array.isArray(xs) ? xs : []);
+  const numbers = new Set(items(since.requests).map((r) => r?.number));
+  const names = new Set([...items(since.pushed), ...items(since.local)].map((i) => i?.name));
+  return {
+    ...survey,
+    requests: items(survey.requests).filter((r) => !numbers.has(r?.number)),
+    pushed: items(survey.pushed).filter((i) => !names.has(i?.name)),
+    local: items(survey.local).filter((i) => !names.has(i?.name)),
+  };
+}
+
 // briefingLines(survey, { host }) -> string[]: the survey's lines for the first briefing, in
 // order; none for a survey with nothing to say. `host` is 'github', 'gitlab' or null (git alone).
 // `leave` names lines a caller says itself and wants left out: 'inFlight', 'instructions', 'missed'.
 // `carrying` says Wheelhouse is carrying the work in flight on (Autonomy at Trusting, ruling A9), so
-// its line is trustingLine's.
-export function briefingLines(survey, { host = null, leave = [], carrying = false } = {}) {
+// its line is trustingLine's. `since` is an earlier survey a briefing or the carry-on card already
+// mentioned (one that missed the host, before this second look): only what is new since it is said
+// of the work in flight, and the instructions line only when it says something else.
+export function briefingLines(survey, { host = null, leave = [], carrying = false, since = null } = {}) {
   const hostName = HOST_NAMES[host] ?? null;
   const missed = hostName !== null && survey.hostReached === false
     ? `I couldn't look at ${hostName} for changes waiting to be merged; I'll look again next time.`
     : null;
-  const lines = { inFlight: carrying ? trustingLine(survey, { host }) : inFlightLine(survey, hostName), instructions: instructionsLine(survey), missed };
+  const earlier = since !== null && typeof since === 'object' && !Array.isArray(since) ? since : null;
+  const flight = earlier === null ? survey : newSince(survey, earlier);
+  const instructions = instructionsLine(survey);
+  const lines = {
+    inFlight: carrying ? trustingLine(flight, { host }) : inFlightLine(flight, hostName),
+    instructions: earlier !== null && instructions === instructionsLine(earlier) ? null : instructions,
+    missed,
+  };
   return Object.entries(lines).filter(([name, line]) => line !== null && !leave.includes(name)).map(([, line]) => line);
 }
 

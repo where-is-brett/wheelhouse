@@ -261,13 +261,13 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 // What is marked as shown is what that cut kept.
 // `settings` are the settings in force, `weeklySince` the last briefing that showed the weekly
 // lines and `review` the delegation review's { due, days } (reviewOf). `survey`, `surveyAt`, `host`,
-// `leaveOut` and `carrying` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
+// `leaveOut`, `carrying` and `earlier` are the briefing model's: what the survey found is mentioned once, and `surveyShown`
 // is the id of the survey whose lines the text showed whole (none when it was cut), or whose every
 // line the caller said itself. Throws when it can't be built.
 export function briefingIn({
-  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying,
+  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier,
 }) {
-  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying });
+  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier });
   const length = settings?.briefing?.value;
   const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
   const words = wordsOf(project, settings, model);
@@ -354,7 +354,7 @@ export function reviewOf(project, settings, at) {
 }
 
 // The addition for `want`, and the unusual items it showed. Throws when it can't be built.
-async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve, survey, surveyAt, leaveOut }) {
+async function build(want, { project, cwd, at, client, load, command, since, weeklySince, briefingModel, reserve, survey, surveyAt, leaveOut, earlier }) {
   const inputs = await load({ cwd, now: () => at, client, waitMs: INPUTS_WAIT_MS + helperGrace() });
   if (!isRecord(inputs) || inputs.none !== undefined || !isRecord(inputs.model)) throw new Error('No board inputs');
   const { model, usage, sources, settings } = inputs;
@@ -362,7 +362,9 @@ async function build(want, { project, cwd, at, client, load, command, since, wee
   if (want === 'briefing') {
     const review = reviewOf(project, settings, at);
     const host = attempt(() => readProject(project)?.host ?? null, null);
-    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut });
+    // At Trusting the work in flight is being carried on, and its line says so (ruling A9).
+    const carrying = settings?.autonomy?.value === 'trusting';
+    const given = briefingIn({ project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier });
     return { text: `${HEADINGS.briefing}\n\n${given.text}`, raise: given.raise, weeklyShown: given.weeklyShown, surveyShown: given.surveyShown };
   }
   let body;
@@ -396,6 +398,15 @@ async function surveyOf({ project, cwd, client }) {
   } catch {
     return survey;
   }
+}
+
+// The survey a second look follows (one taken again after the host was missed), when a briefing or
+// the carry-on card mentioned it (`surveyAt`): its data, read from the project's events, or null.
+// What it held was said then, so the second look says only what is new (briefingLines' `since`).
+function earlierSurvey(project, survey, surveyAt) {
+  if (!isRecord(survey?.data) || survey.data.again !== true || typeof surveyAt !== 'string' || survey.id === surveyAt) return null;
+  const found = listEvents(stateDir(project), { report: () => {} }).find((e) => e.kind === 'survey' && e.id === surveyAt);
+  return isRecord(found?.data) ? found.data : null;
 }
 
 // How long after the director's Leave it for now on setup's carry-on card the work in flight is
@@ -455,7 +466,8 @@ export async function decide(input, deps = {}) {
     const built = want
       ? await within(() => build(want, {
         project, cwd: input.cwd, at, client, load, command, since: seen.briefedAt, weeklySince: seen.weeklyAt, briefingModel, reserve, survey,
-        surveyAt: again ? null : readSurveyAt(project), ...(again ? { leaveOut: ['instructions', 'missed'] } : {}),
+        surveyAt: again ? null : readSurveyAt(project),
+        ...(again ? { leaveOut: ['instructions', 'missed'] } : { earlier: attempt(() => earlierSurvey(project, survey, readSurveyAt(project)), null) }),
       }), waitMs)
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
