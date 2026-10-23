@@ -52,6 +52,7 @@ import { foremanTools } from '../foreman/tools.js';
 import { readConfig } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { takeStartLock } from '../lib/start-lock.js';
+import { PROTECTED_KINDS, makeEvent } from '../state/events.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 // How often old wake files are pruned.
@@ -86,11 +87,15 @@ export async function projectConfig(project, client) {
 }
 
 // What the waker raises (a `control-file` record or its lift), written to the
-// project's state through the helper. Throws when the helper doesn't take it,
-// so the waker raises it again at the next wake.
-export function raiseRecord(project, client) {
+// project's state through the helper. A `control-file` record is a signed kind
+// (ruling P7-33), signed here with this computer's key and sent as its own
+// record, so no session can write one; its lift is plain. Throws when the
+// helper doesn't take it, so the waker raises it again at the next wake.
+export function raiseRecord(project, client, { now = () => new Date() } = {}) {
   return async ({ kind, data }) => {
-    const answer = await client.state.write({ project, kind, data });
+    const answer = PROTECTED_KINDS.includes(kind)
+      ? await client.state.record({ project, event: makeEvent({ kind, data, now }) })
+      : await client.state.write({ project, kind, data });
     if (answer?.ok !== true) throw new Error(typeof answer?.refused === 'string' ? answer.refused : 'the helper gave no answer');
   };
 }
@@ -197,7 +202,7 @@ export async function runWatcher({
       if (settings !== null && wake === null) {
         try {
           wake = waker ?? makeWaker({
-            shape, project, config: settings, now, onError: fault, raise: raiseRecord(project, client), ...wakerOptions,
+            shape, project, config: settings, now, onError: fault, raise: raiseRecord(project, client, { now }), ...wakerOptions,
           });
         } catch (error) {
           fault(`The watcher can't wake sessions with this configuration: ${error.message}`);

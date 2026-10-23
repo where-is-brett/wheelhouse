@@ -46,7 +46,7 @@ import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
 import { profileDir, stateDir, computerId } from '../lib/paths.js';
-import { readEnrolled, enrol, ownKey } from '../state/signing.js';
+import { readEnrolled, enrol, ownKey, verify } from '../state/signing.js';
 import { trustedBy, keepTrustClick, fingerprint, keyHash } from '../lib/trust-clicks.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
@@ -175,15 +175,16 @@ const declared = (project, id) => held(project, 'incident').some((e) => e.data?.
 
 // The record a Confirm on a card keeping a feature's files that steer agents earns (ruling P7-31):
 // the card carries that one set line, and the state holds one finding of the watcher's for that
-// work whose full hash the line's twelve characters name. The record names the work and that hash,
+// work (signed by an enrolled computer, ruling P7-33) whose full hash the line's twelve characters name. The record names the work and that hash,
 // which the watcher matches against what it finds before it keeps the files as they are.
 function keepControlOf(project, question) {
   const lines = setLinesOf(question);
   if (lines.length !== 1) return null;
   const m = KEEP_CONTROL_LINE.exec(lines[0]);
   if (!m || lines[0] !== keepControlLine(m[1], m[2])) return null;
+  const enrolled = readEnrolled();
   const hashes = new Set(held(project, 'control-file')
-    .filter((e) => e.data?.work === m[1] && typeof e.data?.hash === 'string' && e.data.hash.startsWith(m[2]))
+    .filter((e) => e.data?.work === m[1] && typeof e.data?.hash === 'string' && e.data.hash.startsWith(m[2]) && verify(e, enrolled))
     .map((e) => e.data.hash));
   return hashes.size === 1 ? { action: 'keep-control-files', work: m[1], hash: [...hashes][0] } : null;
 }
@@ -521,9 +522,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, setup's card of the rules found, a trust card and uninstall's card have no reply
-    // code (rulings R36, R80, R90): only the click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found, a trust card, uninstall's card and a Keep card have
+    // no reply code (rulings R36, R80, R90, P7-31): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;

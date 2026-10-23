@@ -17,7 +17,7 @@ import { NULL_FILE } from '../../../scripts/lib/safe-git.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { dataHash, listEvents } from '../../../scripts/state/events.js';
+import { dataHash, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { controlFileInput } from '../../../scripts/cards/build-loop.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -255,7 +255,10 @@ test('the Keep card of a feature\'s files that steer agents is confirmed in the 
   try {
     const hash = 'd'.repeat(64);
     const data = { work: 'login', why: 'changed', paths: ['AGENTS.md'], hash, at: new Date(T0).toISOString() };
-    const raised = await c.client.state.write({ project: PROJECT, kind: 'control-file', data });
+    // The watcher's finding is a signed record of this computer's own (ruling P7-33); written plain, it is refused.
+    const plain = await c.client.state.write({ project: PROJECT, kind: 'control-file', data });
+    assert.equal(plain.ok, false);
+    const raised = await c.client.state.record({ project: PROJECT, event: makeEvent({ kind: 'control-file', data }) });
     assert.equal(raised.ok, true, raised.refused);
     const record = c.events().find((e) => e.kind === 'control-file');
     const { card } = composeCard(controlFileInput(record, 'login'));

@@ -289,6 +289,7 @@ test('the waker asks the project\'s adapter for the mode checks', () => withHome
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
+  writeBaseline(P, 'login-page', worktree); // the record of its agent files, as the foreman's start keeps it
   const held = configOf2();
   const { w } = waker({ config: held, sessions: stood, locate: () => worktree });
   assert.deepEqual(seen.map(([kind]) => kind), ['foreman'], 'the waker is checked as it is made');

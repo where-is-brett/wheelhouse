@@ -21,7 +21,7 @@ import { confirmationFor, dataHash, eventPath, makeEvent } from '../../../script
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { guardedCommand, selfTestFile } from '../../../scripts/windows/low.js';
-import { writeBaseline } from '../../../scripts/watcher/control-files.js';
+import { readBaseline, writeBaseline } from '../../../scripts/watcher/control-files.js';
 
 const unix = process.platform !== 'win32';
 const P = 'o__p';
@@ -125,7 +125,21 @@ function waker(fake, over = {}) {
     ...over,
   });
   w.clock = clock;
+  // A start comes straight after the foreman's start made the worktree and recorded its agent
+  // files, which the waker now checks before a start too (ruling P7-33): kept here when missing.
+  const start = w.startFeature;
+  w.startFeature = (args = {}) => {
+    keepRecord(args);
+    return start(args);
+  };
   return w;
+}
+
+// The record of a worktree's agent files the foreman's start keeps, when there is none yet.
+function keepRecord({ work, worktree: dir } = {}) {
+  try {
+    if (readBaseline(P, work, dir) === null) writeBaseline(P, work, dir);
+  } catch { /* a start the waker refuses for its own reasons */ }
 }
 
 test('a foreman bundle starts one fresh foreman with the configured model and mode, told to read its own copy', () => withHome(async () => {

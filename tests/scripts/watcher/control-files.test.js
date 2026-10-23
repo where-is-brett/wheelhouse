@@ -24,8 +24,9 @@ import { featurePaths } from '../../../scripts/feature/files.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { CONTROL_PATHS, eventPath, makeEvent } from '../../../scripts/state/events.js';
-import { enrol, makeSigningKey, readEnrolled } from '../../../scripts/state/signing.js';
+import { enrol, makeSigningKey, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { keepControlLine } from '../../../scripts/state/card-lines.js';
+import { AGENT_CONTROL } from '../../../scripts/lib/agent-control.js';
 import { earned } from '../../../scripts/hooks/prompt-record.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -116,6 +117,7 @@ const asEvents = (raised, from = T0) => raised.map((r, i) => makeEvent({ kind: r
 const viewsOf = (events) => buildViews(events, readEnrolled());
 
 test('a new .github/hooks file stops the wake and raises one card', () => withHome(async () => {
+  enrolHere();
   const dir = worktree();
   writeBaseline(P, WORK, dir);
   const h = waker(dir);
@@ -203,6 +205,7 @@ test('an unchanged folder wakes as before', () => withHome(async () => {
 }));
 
 test('a file reached through a link is read where it really is', { skip: !unix && 'links need rights Windows tests lack' }, () => withHome(async () => {
+  enrolHere();
   const dir = worktree();
   const outside = fs.realpathSync.native(tempFolder('wh-outside-'));
   const target = put(outside, 'steer.md', 'Be careful.\n');
@@ -227,9 +230,11 @@ test('a file reached through a link is read where it really is', { skip: !unix &
   // A dangling link that comes to lead somewhere is changed too.
   fs.writeFileSync(path.join(outside, 'gone.md'), 'Now here.\n');
   assert.deepEqual(changedPaths(readBaseline(P, WORK, dir), controlFilesState(dir)), ['AGENTS.md', 'GEMINI.md']);
-  // A link back into the worktree is walked once, and its files are read where they are.
+  // A link back to the root is walked under its own name once, and the loop ends there.
   fs.symlinkSync(dir, path.join(dir, 'src', 'loop'));
-  assert.ok(![...controlFilesState(dir).keys()].some((p) => p.startsWith('src/loop/')));
+  const looped = [...controlFilesState(dir).keys()];
+  assert.ok(looped.includes('src/loop/AGENTS.md'));
+  assert.ok(!looped.some((p) => p.startsWith('src/loop/src/loop/')));
 }));
 
 test('the files that steer agents: the control list and .claude/, but not other features\' worktrees', () => {
@@ -267,6 +272,7 @@ test('the walk reads with fs alone, skipping .git, .wheelhouse and every node_mo
 }));
 
 test('a feature with no record of its agent files waits, and raises the card that says so', () => withHome(async () => {
+  enrolHere();
   const dir = worktree();
   const h = waker(dir);
   await wake(h, 'd1');
@@ -302,17 +308,20 @@ test('Shape 2 prints no wake for a feature whose folder gained a file that steer
 test('a record the helper doesn\'t take is raised again at the next wake, and the wake still waits', () => withHome(async () => {
   const dir = worktree();
   writeBaseline(P, WORK, dir);
+  enrolHere();
   const writes = [];
   let answer = { ok: false, refused: 'STOP is on' };
-  const client = { state: { write: async (body) => { writes.push(body); return answer; } } };
+  // The finding is a signed record, sent as this computer's own (ruling P7-33).
+  const client = { state: { record: async (body) => { writes.push(body); return answer; }, write: async () => { throw new Error('never written plain'); } } };
   const h = waker(dir, { raise: raiseRecord(P, client) });
   put(dir, '.claude/commands/x.md', 'Do it.\n');
   await wake(h, 'f1');
   assert.equal(h.fake.calls.length, 0);
   assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0], {
-    project: P, kind: 'control-file', data: { work: WORK, why: 'changed', paths: ['.claude/commands/x.md'], hash: checkControlFiles(P, WORK, dir).hash, at: new Date(T0).toISOString() },
-  });
+  assert.equal(writes[0].project, P);
+  assert.equal(writes[0].event.kind, 'control-file');
+  assert.ok(verify(writes[0].event, readEnrolled()), 'signed with this computer\'s key');
+  assert.deepEqual(writes[0].event.data, { work: WORK, why: 'changed', paths: ['.claude/commands/x.md'], hash: checkControlFiles(P, WORK, dir).hash, at: new Date(T0).toISOString() });
   answer = { ok: true, id: 'x' };
   h.move(2 * MIN);
   await h.w.pump();
@@ -324,6 +333,7 @@ test('a record the helper doesn\'t take is raised again at the next wake, and th
 }));
 
 test('a control-file record names its work, why, its paths, what was found and when', () => withHome(() => {
+  enrolHere();
   const at = new Date(T0).toISOString();
   const hash = 'c'.repeat(64);
   const make = (kind, data) => makeEvent({ kind, data, now: () => new Date(T0) });
@@ -455,6 +465,7 @@ test('a pre-upgrade worktree with no record is lifted by Keep it', () => withHom
 }));
 
 test('a folder with too many files to check holds the wake with its card', () => withHome(async () => {
+  enrolHere();
   const dir = worktree();
   writeBaseline(P, WORK, dir);
   const h = waker(dir, { walkCap: 5 });
@@ -498,6 +509,7 @@ test('the foreman\'s start records the worktree\'s agent files right after makin
 }));
 
 test('the prompt record earns a Keep only for a finding the state holds, and only on Confirm', () => withHome(async () => {
+  enrolHere();
   const hash = 'b'.repeat(64);
   const ask = (question, label = 'Confirm') => earned({ project: P, question, label, client: {}, now: () => new Date(T0), left: (p) => p });
   const line = keepControlLine(WORK, hash);
@@ -508,4 +520,128 @@ test('the prompt record earns a Keep only for a finding the state holds, and onl
   assert.equal(await ask(`Keep these files?\n${line}`, 'Show me'), null);
   assert.equal(await ask(`Keep these files?\n${keepControlLine('search-box', hash)}`), null, 'another work\'s finding');
   assert.equal(await ask(`Keep these files?\n${keepControlLine(WORK, 'a'.repeat(64))}`), null, 'another finding');
+}));
+
+// --- Ruling P7-33 ---
+
+// A worktree whose record holds a settings file and a hook file, as the reviewer's three cases begin.
+function recorded() {
+  const dir = worktree();
+  put(dir, '.claude/settings.json', '{}\n');
+  put(dir, '.github/hooks/wh.json', '{}\n');
+  writeBaseline(P, WORK, dir);
+  return dir;
+}
+
+test('a folder reached by a second link is read under that link\'s name too', { skip: !unix && 'links need rights Windows tests lack' }, () => withHome(() => {
+  // .claude -> . (the root), with a settings file at the root.
+  const one = recorded();
+  fs.rmSync(path.join(one, '.claude'), { recursive: true });
+  fs.symlinkSync('.', path.join(one, '.claude'));
+  put(one, 'settings.json', '{"disableAllHooks":true}\n');
+  assert.ok(changedPaths(readBaseline(P, WORK, one), controlFilesState(one)).includes('.claude/settings.json'));
+  assert.equal(checkControlFiles(P, WORK, one).ok, false);
+
+  // .a -> /X and .claude -> /X, with /X outside the worktree.
+  const two = recorded();
+  const outside = fs.realpathSync.native(tempFolder('wh-x-'));
+  put(outside, 'settings.json', '{"disableAllHooks":true}\n');
+  fs.rmSync(path.join(two, '.claude'), { recursive: true });
+  fs.symlinkSync(outside, path.join(two, '.a'));
+  fs.symlinkSync(outside, path.join(two, '.claude'));
+  assert.ok(changedPaths(readBaseline(P, WORK, two), controlFilesState(two)).includes('.claude/settings.json'));
+
+  // .a -> .b and .github/hooks -> .b, with .b inside the worktree.
+  const three = recorded();
+  put(three, '.b/off.json', '{"disableAllHooks":true}\n');
+  fs.symlinkSync(path.join(three, '.b'), path.join(three, '.a'));
+  fs.rmSync(path.join(three, '.github', 'hooks'), { recursive: true });
+  fs.symlinkSync(path.join(three, '.b'), path.join(three, '.github', 'hooks'));
+  assert.ok(changedPaths(readBaseline(P, WORK, three), controlFilesState(three)).includes('.github/hooks/off.json'));
+}));
+
+test('node_modules and .git are walked inside a folder that steers agents, and CLAUDE.md, CLAUDE.local.md and .mcp.json are checked anywhere', () => withHome(() => {
+  const dir = worktree();
+  put(dir, '.claude/skills/node_modules/SKILL.md', 'A skill.\n');
+  put(dir, '.github/instructions/.git/x.instructions.md', 'An instruction.\n');
+  put(dir, 'node_modules/kit/.claude/settings.json', '{}\n');
+  put(dir, 'CLAUDE.md', 'Rules.\n');
+  put(dir, 'docs/CLAUDE.md', 'More rules.\n');
+  put(dir, 'CLAUDE.local.md', 'Mine.\n');
+  put(dir, 'tools/.mcp.json', '{}\n');
+  const paths = [...controlFilesState(dir).keys()].sort();
+  for (const p of ['.claude/skills/node_modules/SKILL.md', '.github/instructions/.git/x.instructions.md', 'CLAUDE.md', 'docs/CLAUDE.md', 'CLAUDE.local.md', 'tools/.mcp.json']) {
+    assert.ok(paths.includes(p), p);
+  }
+  assert.ok(!paths.some((p) => p.startsWith('node_modules/')), 'a package\'s files are still skipped');
+  // The check's own list: the guards' list is unchanged.
+  assert.ok(!AGENT_CONTROL.includes('**/CLAUDE.md'));
+}));
+
+test('a forged record with the true hash and a harmless path makes a card whose Confirm keeps nothing', () => withHome(async () => {
+  enrolHere();
+  const dir = worktree();
+  writeBaseline(P, WORK, dir, { now: () => new Date(T0 - MIN) });
+  const h = waker(dir);
+  put(dir, '.github/hooks/off.json', '{"disableAllHooks":true}\n');
+  await wake(h, 'k1');
+  const { hash } = h.raised[0].data;
+  // A record naming the true hash but a harmless file (signed here, as no session could), and its card.
+  const forged = makeEvent({ kind: 'control-file', data: { work: WORK, why: 'changed', paths: ['docs/notes.md'], hash, at: new Date(T0).toISOString() }, now: () => new Date(T0 + 2000) });
+  putInState(forged);
+  const { card } = composeCard(controlFileInput(forged, WORK));
+  assert.match(card.question, /docs\/notes\.md/);
+  await keepClick(card.question);
+  h.move(2 * MIN);
+  await h.w.pump();
+  assert.equal(h.fake.calls.length, 0, 'the Confirm named a card that didn\'t say what the watcher found');
+  assert.equal(readBaseline(P, WORK, dir).get('.github/hooks/off.json'), undefined);
+  // An unsigned record is no finding at all: the views and the prompt record pass it by.
+  const { sig, ...unsigned } = makeEvent({ kind: 'control-file', data: { ...forged.data, paths: ['docs/other.md'] }, now: () => new Date(T0 + 3000) });
+  assert.deepEqual(viewsOf([unsigned]).controlFiles, []);
+}));
+
+test('a session started again in a reused worktree waits while its files that steer agents are new or changed', () => withHome(async () => {
+  const dir = worktree();
+  fs.rmSync(sessionFile(P, WORK));
+  writeBaseline(P, WORK, dir);
+  for (const shape of [1, 2]) {
+    const h = waker(dir, { shape });
+    put(dir, 'AGENTS.md', `Planted by the run before (${shape}).\n`);
+    await assert.rejects(h.w.startFeature({ work: WORK, worktree: dir }), /steer agents/);
+    assert.equal(h.fake.calls.length, 0);
+    assert.deepEqual(h.lines, []);
+    assert.equal(fs.existsSync(sessionFile(P, WORK)), false, 'no session id kept');
+    assert.equal(h.raised.at(-1).kind, 'control-file');
+    fs.rmSync(path.join(dir, 'AGENTS.md'));
+    const started = await h.w.startFeature({ work: WORK, worktree: dir });
+    assert.ok(shape === 1 ? started.pid > 0 : started.printed);
+    fs.rmSync(sessionFile(P, WORK), { force: true });
+  }
+}));
+
+test('a finding a plain lift closed is raised again while the files still differ', () => withHome(async () => {
+  const dir = worktree();
+  writeBaseline(P, WORK, dir);
+  const h = waker(dir);
+  put(dir, 'GEMINI.md', 'Steer.\n');
+  await wake(h, 'l1');
+  assert.equal(h.raised.length, 1);
+  h.move(2 * MIN);
+  await h.w.pump();
+  assert.equal(h.raised.length, 1, 'raised once');
+  putInState(makeEvent({ kind: 'control-file-lift', data: { work: WORK, at: new Date(T0).toISOString() }, now: () => new Date(T0 + 3 * MIN) }));
+  h.move(6 * MIN);
+  await h.w.pump();
+  assert.equal(h.raised.length, 2, 'raised again after a lift the watcher didn\'t write');
+  assert.equal(h.fake.calls.length, 0);
+}));
+
+test('a keep-control-files action carries its Keep line as its question\'s one set line', () => withHome(() => {
+  enrolHere();
+  const hash = 'f'.repeat(64);
+  const data = (question) => ({ action: 'keep-control-files', work: WORK, hash, question, label: 'Confirm' });
+  assert.equal(makeEvent({ kind: 'action', data: data(`Keep?\n${keepControlLine(WORK, hash)}`) }).data.work, WORK);
+  assert.throws(() => makeEvent({ kind: 'action', data: data('Keep these files?') }), /Keep line/);
+  assert.throws(() => makeEvent({ kind: 'action', data: data(`Keep?\n${keepControlLine('search-box', hash)}`) }), /Keep line/);
 }));

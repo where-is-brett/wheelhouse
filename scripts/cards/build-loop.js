@@ -147,6 +147,18 @@ function pathsOf(paths) {
   return named.length === 1 ? named[0] : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
 }
 
+// The sentence a Keep card opens with, saying what the watcher found (`data` a control-file
+// record's): the new or changed files, the first three by name or (`short`) only how many, or that
+// there is no record of them. The watcher keeps the files only on a Confirm whose card said this of
+// its own last finding (ruling P7-33).
+export function controlFilesNamed(data, { short = false } = {}) {
+  const { why, paths } = data;
+  if (why === 'no-record') return 'There is no record yet of this feature\'s agent files, so they can\'t be checked: look at them before the feature carries on.';
+  const one = paths.length === 1;
+  const named = short ? `${paths.length} ${one ? 'file' : 'files'}` : pathsOf(paths);
+  return `A feature's folder has ${one ? 'a new or changed file that steers' : 'new or changed files that steer'} agents, ${named}: look at ${one ? 'it' : 'them'} before the feature carries on.`;
+}
+
 // The composer's input for a control-file record's card (rulings P7-13, P7-31). For new or changed
 // files it says which, in the plan's words, and for a folder with no record kept that there is
 // none: the card's Confirm, a signed step, keeps the files as they are now, through its set line
@@ -173,14 +185,10 @@ export function controlFileInput(record, name, { short = false } = {}) {
       event: record.id,
     };
   }
-  const one = paths.length === 1;
-  const named = short ? `${paths.length} ${one ? 'file' : 'files'}` : pathsOf(paths);
   return {
     kind: 'keep-control-files',
     level: 3,
-    what: why === 'no-record'
-      ? `There is no record yet of this feature's agent files, so they can't be checked: look at them before the feature carries on. The feature is ${feature}.`
-      : `A feature's folder has ${one ? 'a new or changed file that steers' : 'new or changed files that steer'} agents, ${named}: look at ${one ? 'it' : 'them'} before the feature carries on. The feature is ${feature}.`,
+    what: `${controlFilesNamed(record.data, { short })} The feature is ${feature}.`,
     why: why === 'no-record'
       ? 'A file that steers agents could change what a session may do, so a feature\'s session is woken only while those files are as they were last kept, and this folder was made before that record was kept.'
       : 'A file that steers agents could change what a session may do, so the feature\'s session isn\'t woken until you have looked. Taking the files out lifts the hold too.',

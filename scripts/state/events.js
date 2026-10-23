@@ -8,7 +8,7 @@ import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
 import { STATE_BRANCH } from './clone.js';
-import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -18,9 +18,10 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file', 'control-file-lift',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift',
 ];
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
+// `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
@@ -170,6 +171,7 @@ function checkAction(data) {
     if (!isSlug(data.work)) bad('needs the work, named by a short slug');
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of what the watcher found');
     if (data.label !== 'Confirm') bad('needs the Confirm label');
+    if (setLineOf(data.question) !== keepControlLine(data.work, data.hash)) bad('carries the Keep line for its work and hash as its question\'s one set line');
   } else if (data.action === 'undo-merge') {
     if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
     if (data.label !== 'Undo') bad('needs the Undo label');

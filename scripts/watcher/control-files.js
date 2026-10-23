@@ -4,14 +4,21 @@
 // steer or switch off the guards of the session woken next, so the watcher wakes no session whose
 // folder holds such a file that is new or changed since the folder was made.
 //
-// What is read: every path in the worktree matching AGENT_CONTROL (scripts/lib/agent-control.js) or
-// under `.claude/` (but not `.claude/worktrees/`), each mapped to the sha256 of its bytes. The walk
-// uses `fs` alone, never git, since the folder is one an agent controls. It skips every `.git` and
-// `node_modules` folder (packages ship their own AGENTS.md and .github/, which agents don't take
-// instructions from unless working inside them) and the feature's own `.wheelhouse/` folder. A path
-// reached through a link is read where it really is: it maps to `link:<real path>:<hash>`, or to
-// `dangling` when the link leads nowhere. A folder reached through a link is walked once, where it
-// really is. Anything that isn't a regular file maps to `special`.
+// What is read: every path in the worktree matching AGENT_CONTROL (scripts/lib/agent-control.js),
+// under `.claude/` (but not `.claude/worktrees/`), or named CLAUDE.md, CLAUDE.local.md or .mcp.json
+// in any folder (ruling P7-33: the check's own list, not AGENT_CONTROL), each mapped to the sha256
+// of its bytes. The walk uses `fs` alone, never git, since the folder is one an agent controls. It
+// skips the feature's own `.wheelhouse/` folder, and every `.git` and `node_modules` folder that
+// isn't inside a folder that steers agents (packages ship their own AGENTS.md and .github/, which
+// agents don't take instructions from unless working inside them; inside `.claude/` or `.github/`
+// such a folder is one like any other). A path reached through a link is read where it really is:
+// it maps to `link:<real path>:<hash>`, or to `dangling` when the link leads nowhere. A folder
+// reached through a link is walked under that link's name, every time it is reached: only a folder
+// already twice on the way down from the root (a loop) is not entered again, and WALK_CAP bounds
+// the rest. Anything that isn't a regular file maps to `special`.
+//
+// Between the check and the session's start, a process an earlier session left running could still
+// write; the tool guard and the sandbox are the first line against that, and this check the second.
 //
 // The record of the files as the folder was made (the baseline) is kept where no session can reach
 // it, in <home>/projects/<p>/watcher/control/<work>.json, written by the foreman's start straight
@@ -27,6 +34,11 @@ import { matchGlob } from '../gate/glob.js';
 // The paths under `.claude/` steer Claude Code; its worktrees folder holds other features' folders.
 const CLAUDE_FOLDER = '.claude/**';
 const NOT_CONTROL = '.claude/worktrees/**';
+// Claude Code's own instruction and connector files, in any folder: checked here, though agents may write them.
+const CHECKED_TOO = Object.freeze(['**/CLAUDE.md', '**/CLAUDE.local.md', '**/.mcp.json']);
+// The folders that steer agents, as prefixes: inside one, a `.git` or `node_modules` folder is walked.
+const CONTROL_FOLDERS = Object.freeze([...new Set(['.claude', '.github', '.agents',
+  ...AGENT_CONTROL.filter((p) => p.endsWith('/**') && !p.startsWith('**/')).map((p) => p.slice(0, -3))])]);
 // The most entries one walk reads before it gives up: a folder that large is refused, not woken.
 export const WALK_CAP = 200000;
 const CHUNK = 64 * 1024;
@@ -50,7 +62,14 @@ function lstatOf(p) {
 export function isControlPath(rel, { platform = process.platform } = {}) {
   const ignoreCase = platform === 'darwin' || platform === 'win32';
   if (matchGlob(NOT_CONTROL, rel, { ignoreCase })) return false;
-  return [CLAUDE_FOLDER, ...AGENT_CONTROL].some((p) => matchGlob(p, rel, { ignoreCase }));
+  return [CLAUDE_FOLDER, ...AGENT_CONTROL, ...CHECKED_TOO].some((p) => matchGlob(p, rel, { ignoreCase }));
+}
+
+// Whether `rel` lies inside a folder that steers agents.
+function insideControlFolder(rel, platform) {
+  const ignoreCase = platform === 'darwin' || platform === 'win32';
+  const fold = (x) => (ignoreCase ? x.toLowerCase() : x);
+  return CONTROL_FOLDERS.some((f) => fold(rel).startsWith(`${fold(f)}/`));
 }
 
 // The sha256 of a regular file's bytes, or `special` when it isn't one. Opened without waiting, so
@@ -84,10 +103,22 @@ function hashOf(file) {
 export function controlFilesState(worktree, { platform = process.platform, walkCap = WALK_CAP } = {}) {
   const root = fs.realpathSync.native(worktree);
   const state = new Map();
-  const walked = new Set([root]);
   let entries = 0;
   const control = (rel) => isControlPath(rel, { platform });
-  const skipped = (name, rel) => name === '.git' || name === 'node_modules' || rel === '.wheelhouse';
+  const skipped = (name, rel) => rel === '.wheelhouse' || ((name === '.git' || name === 'node_modules') && !insideControlFolder(rel, platform));
+  // The real folders on the way down to the one being walked, so a loop ends: a folder is entered
+  // again only while it is on that way at most once (a link to the root, say, is walked once under
+  // its own name).
+  const onTheWay = [root];
+  const timesOnTheWay = (real) => onTheWay.filter((d) => d === real).length;
+  const enter = (dir, prefix, throughLink) => {
+    onTheWay.push(dir);
+    try {
+      walk(dir, prefix, throughLink);
+    } finally {
+      onTheWay.pop();
+    }
+  };
 
   const walk = (dir, prefix, throughLink) => {
     for (const name of fs.readdirSync(dir).sort()) {
@@ -108,14 +139,13 @@ export function controlFilesState(worktree, { platform = process.platform, walkC
         }
         const target = lstatOf(real);
         if (target?.isDirectory()) {
-          if (walked.has(real)) continue;
-          walked.add(real);
-          walk(real, rel, true);
+          if (timesOnTheWay(real) >= 2) continue; // a loop
+          enter(real, rel, true);
         } else if (control(rel)) {
           state.set(rel, `link:${real}:${hashOf(real)}`);
         }
       } else if (stat.isDirectory()) {
-        walk(full, rel, throughLink);
+        enter(full, rel, throughLink);
       } else if (control(rel)) {
         const hash = hashOf(full);
         state.set(rel, throughLink ? `link:${full}:${hash}` : hash);
@@ -230,19 +260,24 @@ export function checkControlFiles(project, work, worktree, { platform = process.
   return { ok: false, why: 'changed', paths, hash: hashOfText(JSON.stringify(paths.map((p) => [p, state.get(p)]))), state, since };
 }
 
-// The hash of the finding last raised for the feature, or null.
-export function raisedHash(project, work) {
+// The watcher's own last finding raised for the feature, { hash, why, paths, at }, as it raised
+// it, or null. Kept here, under the home, so the Keep a director confirms is matched against what
+// the watcher found and said, never against a record in the state.
+export function raisedOf(project, work) {
   const kept = readSmall(raisedFile(project, work));
-  return isPlain(kept) && typeof kept.hash === 'string' ? kept.hash : null;
+  if (!isPlain(kept) || typeof kept.hash !== 'string' || typeof kept.why !== 'string' || typeof kept.at !== 'string') return null;
+  if (!Array.isArray(kept.paths) || !kept.paths.every((p) => typeof p === 'string')) return null;
+  return { hash: kept.hash, why: kept.why, paths: kept.paths, at: kept.at };
 }
 
-// Marks the finding `hash` as raised for the feature, or (null) clears it once its files match again.
-export function markRaised(project, work, hash) {
+// Keeps `raised` ({ hash, why, paths, at }) as the feature's last finding raised, or (null) clears
+// it once its files match again.
+export function markRaised(project, work, raised) {
   const file = raisedFile(project, work);
-  if (hash === null) {
+  if (raised === null) {
     fs.rmSync(file, { force: true });
     return;
   }
   controlFolder(project);
-  writeWhole(file, { hash });
+  writeWhole(file, raised);
 }

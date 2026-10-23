@@ -177,10 +177,11 @@ function lineageHoldsOf(sorted, lifted) {
 
 // The control-file records (ruling P7-13) that still stand, in order, each with the card made for it
 // (its id, or null), and the ids of those closed. A record stands until a later control-file-lift
-// of its work, or a later control-file record of its work, which takes its place.
-function controlFilesOf(sorted) {
+// of its work, or a later control-file record of its work, which takes its place. A record counts
+// only when it is signed by an enrolled computer: the watcher's own (ruling P7-33).
+function controlFilesOf(sorted, enrolled) {
   const cards = sorted.filter((e) => e.kind === 'card');
-  const records = sorted.filter((e) => e.kind === 'control-file' && typeof e.data?.work === 'string' && Array.isArray(e.data?.paths));
+  const records = sorted.filter((e) => e.kind === 'control-file' && typeof e.data?.work === 'string' && Array.isArray(e.data?.paths) && verify(e, enrolled));
   const lifts = sorted.filter((e) => e.kind === 'control-file-lift' && typeof e.data?.work === 'string');
   const closed = new Set();
   const standing = [];
@@ -520,7 +521,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   // A card made from a lineage hold that has been lifted is closed, as an answered card is, and so
   // is one made from a control-file record that no longer stands.
   const liftedHolds = liftedHoldIds(sorted);
-  const controlFiles = controlFilesOf(sorted);
+  const controlFiles = controlFilesOf(sorted, enrolled);
   // The approval and CI push cards closed only by a later head of their pull request or branch:
   // undecided and not revised, so a revised card may still name one (ruling C21), with `steered` as a
   // waiting card has it.
