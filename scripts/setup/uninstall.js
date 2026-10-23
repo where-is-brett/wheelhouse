@@ -58,7 +58,8 @@
 // text as the branch holds it, and takes the archive folder out (archiveAt, below). A move whose
 // place is taken on the branch is left in the archive, and named; the archive's list is then
 // written again with only what stays. A list that can't be read, or that names a path outside the
-// project or a move from outside the archive, is refused whole: nothing is moved, and why is named.
+// project, a file that isn't another setup's instructions (OTHER_SETUP_PATHS), or a move from
+// anywhere but `.wheelhouse-archive/<from>`, is refused whole: nothing is moved, and why is named.
 // What is moved is in the pull request's entry (`archive`), so the hash covers it; the apply reads
 // the archive again from the host and goes ahead only when it is the same. On a shared project the
 // archive stays as it is, for the other computers.
@@ -140,6 +141,8 @@ import { SETUP_FILES, WHEELHOUSE_LINE, GITIGNORE, ENV_STAYS_LINES } from './proj
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
 import { setupGit } from './git.js';
+import { OTHER_SETUP_PATHS } from '../lib/agent-control.js';
+import { matchGlob } from '../gate/glob.js';
 import { toolsStatus } from './tools.js';
 
 // The phases, in the order uninstall applies them (ruling R89).
@@ -438,7 +441,7 @@ export const ARCHIVE_MANIFEST = `${ARCHIVE}/archived.json`;
 const ARCHIVE_MOST = 1000;
 // Why an archive is refused whole, named on the card.
 export const ARCHIVE_UNREAD = 'its list of what was moved (archived.json) could not be read';
-export const ARCHIVE_OUTSIDE = 'its list names a path outside the project, or a move from outside the archive folder';
+export const ARCHIVE_OUTSIDE = 'its list names a path outside the project, a file that isn\'t another agent setup\'s instructions, or a move from anywhere but its own path in the archive folder';
 export const ARCHIVE_TWICE = 'its list names one place twice, or one inside another';
 // What the pull request does with it, as the card says it.
 export const ARCHIVE_BACK = 'the other agent setup\'s instructions, back where they were';
@@ -462,6 +465,9 @@ function insideProject(p) {
     return part !== '' && !/[. ]$/.test(part) && !['', '.', '..', '.git', 'git~1'].includes(key);
   });
 }
+
+// Whether `p` is one of another agent setup's instruction files (OTHER_SETUP_PATHS), in any case.
+const otherSetupFile = (p) => OTHER_SETUP_PATHS.some((pattern) => matchGlob(pattern, p, { ignoreCase: true }));
 
 // git's tree at `tree`, every entry with its mode, type and object: `ls-tree -z`'s records.
 function treeEntries(text) {
@@ -504,9 +510,11 @@ export async function archiveAt(git, ref) {
   const moved = manifest?.moved;
   if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.v !== 1 || !Array.isArray(moved) || moved.length > ARCHIVE_MOST) return refused(ARCHIVE_UNREAD);
   if (moved.some((m) => m === null || typeof m !== 'object' || typeof m.from !== 'string' || typeof m.to !== 'string')) return refused(ARCHIVE_UNREAD);
+  // A move counts only for another setup's instruction file (any case), from its own path in the
+  // archive; anything else refuses the whole archive.
   for (const { from, to } of moved) {
-    if (!insideProject(from) || underArchive(from)) return refused(ARCHIVE_OUTSIDE);
-    if (!insideProject(to) || !to.startsWith(`${ARCHIVE}/`) || to === ARCHIVE_MANIFEST) return refused(ARCHIVE_OUTSIDE);
+    if (!insideProject(from) || underArchive(from) || !otherSetupFile(from)) return refused(ARCHIVE_OUTSIDE);
+    if (to !== `${ARCHIVE}/${from}`) return refused(ARCHIVE_OUTSIDE);
   }
   const froms = moved.map((m) => blindKey(m.from));
   const tos = moved.map((m) => blindKey(m.to));

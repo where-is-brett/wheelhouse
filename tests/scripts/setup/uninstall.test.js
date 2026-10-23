@@ -2609,7 +2609,7 @@ test('a moved file whose place is taken on the default branch stays in the archi
   try {
     await withHome(async () => {
       const { world } = await applyWorld({ host });
-      const moved = [...movesOf(Object.keys(ARCHIVED)), { from: 'gone.md', to: `${ARCHIVE}/gone.md` }];
+      const moved = [...movesOf(Object.keys(ARCHIVED)), { from: '.windsurfrules', to: `${ARCHIVE}/.windsurfrules` }];
       // Since the archive, the project has a .cursorrules of its own again.
       await archiveOnHost(host, { manifest: manifestText(moved), extra: { '.cursorrules': 'A new rule.\n' } });
       await fetchToFolder(world, host.product.url);
@@ -2617,7 +2617,7 @@ test('a moved file whose place is taken on the default branch stays in the archi
       const got = await planHere(world, f);
       assert.deepEqual(archiveOf(got).moves, movesOf(['AGENTS.md', '.claude/agents/writer.md']));
       assert.deepEqual(archiveOf(got).taken, ['.cursorrules']);
-      assert.deepEqual(archiveOf(got).missing, ['gone.md']);
+      assert.deepEqual(archiveOf(got).missing, ['.windsurfrules']);
       assert.match(got.card.what, /Left in \.wheelhouse-archive\/, as its place is taken: \.cursorrules\./);
       const { done } = await applyHere(world, f);
       assert.equal(done.ok, true, done.refused);
@@ -2666,7 +2666,12 @@ test('an archive whose list can\'t be read, names a path outside the project or 
     ['a move from the archive\'s parent', one('x.md', `${ARCHIVE}/../AGENTS.md`), ARCHIVE_OUTSIDE],
     ['the archive\'s own list', one('x.md', `${ARCHIVE}/archived.json`), ARCHIVE_OUTSIDE],
     ['one place twice, in another case', manifestText([{ from: 'AGENTS.md', to: `${ARCHIVE}/AGENTS.md` }, { from: 'agents.md', to: `${ARCHIVE}/agents.md` }]), ARCHIVE_TWICE],
-    ['one place inside another', manifestText([{ from: 'docs', to: `${ARCHIVE}/docs` }, { from: 'Docs/x.md', to: `${ARCHIVE}/Docs/x.md` }]), ARCHIVE_TWICE],
+    ['one place inside another', manifestText([{ from: '.claude/skills/x', to: `${ARCHIVE}/.claude/skills/x` }, { from: '.claude/skills/X/y.md', to: `${ARCHIVE}/.claude/skills/X/y.md` }]), ARCHIVE_TWICE],
+    ['a file that is not another setup\'s instructions', one('docs/notes.md'), ARCHIVE_OUTSIDE],
+    ['a workflow, not instructions', one('.github/workflows/x.yml'), ARCHIVE_OUTSIDE],
+    ['a move to another place in the archive', one('AGENTS.md', `${ARCHIVE}/other.md`), ARCHIVE_OUTSIDE],
+    ['a move to the same name in another case', one('AGENTS.md', `${ARCHIVE}/agents.md`), ARCHIVE_OUTSIDE],
+    ['a move to a folder deeper in the archive', one('AGENTS.md', `${ARCHIVE}/old/AGENTS.md`), ARCHIVE_OUTSIDE],
     ['no list at all', null, ARCHIVE_UNREAD],
   ];
   for (const [what, manifest, why] of cases) {
@@ -2677,6 +2682,11 @@ test('an archive whose list can\'t be read, names a path outside the project or 
     assert.equal(got.view.moves, undefined, what);
     assert.ok(got.view.folder.includes(`${ARCHIVE}/AGENTS.md`), what);
   }
+  // Another setup's instruction files match in any case, each moved to its own path in the archive.
+  await g(work, 'rm', '-r', '-q', '--ignore-unmatch', ARCHIVE);
+  const files = { '.Claude/Agents/checker.md': '# Checker\n', 'agents.md': '# agents\n', '.github/copilot-instructions.md': 'Be kind.\n' };
+  await commitArchive(work, { manifest: manifestText(movesOf(Object.keys(files))), files });
+  assert.deepEqual((await archiveAt(git, 'HEAD')).view.moves, movesOf(Object.keys(files)));
 });
 
 test('a refused archive stays as it is in uninstall\'s pull request, and the card says why', async () => {
