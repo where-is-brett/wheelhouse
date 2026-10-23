@@ -261,15 +261,15 @@ test('the survey never runs the project\'s hooks, and every git call of it is fe
   assert.equal(fs.existsSync(marker), true);
 });
 
-test('the survey refuses, naming it, a project whose config sets core.sshCommand or core.fsmonitor, and never runs it', async () => {
+test('the survey refuses, naming it, a project whose config sets core.alternateRefsCommand or core.gitProxy, and never runs it', async () => {
   const { folder } = await makeProject();
   const upstream = await makeUpstream(folder);
   const marker = path.join(tempFolder('wh-marker-'), 'ran');
   const program = path.join(tempFolder('wh-program-'), 'program.sh');
   fs.writeFileSync(program, `#!/bin/sh\necho ran >> "${marker.replace(/\\/g, '/')}"\n`);
   fs.chmodSync(program, 0o755);
-  await g(folder, 'config', 'core.sshCommand', program);
-  await g(folder, 'config', 'core.fsmonitor', program);
+  await g(folder, 'config', 'core.gitProxy', program);
+  await g(folder, 'config', 'core.alternateRefsCommand', program);
   const calls = [];
   const recording = async (file, args, options) => {
     if (file === 'git') calls.push(args);
@@ -277,7 +277,7 @@ test('the survey refuses, naming it, a project whose config sets core.sshCommand
   };
   await assert.rejects(
     surveyProject({ folder, manifest: MANIFEST, run: recording, upstreams: { 'kit-a': upstream }, host: 'github', claudeHome: tempFolder('wh-claude-') }),
-    (error) => /core\.sshcommand/i.test(error.message) && /core\.fsmonitor/i.test(error.message) && /does not allow/.test(error.message) && /run the survey again/.test(error.message) && !/setup|Go ahead/i.test(error.message),
+    (error) => /core\.gitproxy/i.test(error.message) && /core\.alternaterefscommand/i.test(error.message) && /does not allow/.test(error.message) && /run the survey again/.test(error.message) && !/setup|Go ahead/i.test(error.message),
   );
   assert.equal(fs.existsSync(marker), false, 'the planted program ran');
   assert.equal(calls.some((args) => args[0] === 'fetch' || args.includes('fetch')), false, 'git went on after the refusal');
@@ -288,10 +288,10 @@ test('a worktree whose config sets a program is refused too, and git does not ru
   const worktree = path.join(path.dirname(folder), 'lantern-till');
   await g(folder, 'worktree', 'add', '--quiet', '-b', 'feature/till', worktree);
   await g(folder, 'config', 'extensions.worktreeConfig', 'true');
-  await g(worktree, 'config', '--worktree', 'core.fsmonitor', '/bin/false');
+  await g(worktree, 'config', '--worktree', 'core.alternateRefsCommand', '/bin/false');
   await assert.rejects(
     surveyProject({ folder, manifest: { upstreams: [] }, run: noPrs, upstreams: {}, host: 'github', claudeHome: tempFolder('wh-claude-') }),
-    /core\.fsmonitor/,
+    /core\.alternaterefscommand/i,
   );
 });
 

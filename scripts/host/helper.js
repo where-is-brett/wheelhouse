@@ -914,18 +914,26 @@ export async function startHelper({
   // the refusal, is kept in the request's context, so later calls there neither look again nor skip
   // the refusal. `marker` is the file whose presence says a repository is there to look at (a
   // repository not made yet has no config to hold anything).
-  async function lookOnce(ctx, dir, marker = null, what = null) {
+  // `list` is 'own' (the default) for a repository Wheelhouse made, or 'project' for a director's
+  // project folder (the one being copied from), as in scripts/lib/safe-git.js.
+  async function lookOnce(ctx, dir, marker = null, what = null, list = 'own') {
     if (marker !== null && !fs.existsSync(path.join(dir, marker))) return;
     const { looked } = ctx;
     if (!(looked instanceof Map)) throw new Error('the request has no record of the repositories it has looked at');
     let key = path.resolve(dir);
     try { key = fs.realpathSync.native(dir); } catch { /* the look says what is wrong */ }
-    if (!looked.has(key)) {
-      looked.set(key, lookAtSettings({ run, cwd: dir }).then((found) => {
-        if (found.unread || found.keys.length > 0) throw new LookRefusal(lookRefusalLine('helper', found, { what }));
-      }));
+    // A look under the own list (the stricter) answers a later request for the project list; a look under
+    // the project list does not answer one for the own list.
+    const have = looked.get(key);
+    if (have === undefined || (have.list === 'project' && list === 'own')) {
+      looked.set(key, {
+        list,
+        done: lookAtSettings({ run, cwd: dir, list }).then((found) => {
+          if (found.unread || found.keys.length > 0) throw new LookRefusal(lookRefusalLine('helper', found, { what }));
+        }),
+      });
     }
-    await looked.get(key);
+    await looked.get(key).done;
   }
   const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git', "the project's state repository");
   const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD', "the project's mirror repository");
@@ -1038,7 +1046,7 @@ export async function startHelper({
     // The folder's own config can name a program for git to run (core.fsmonitor and the like), so
     // git is not run there until its settings have been looked at.
     try {
-      await lookOnce(ctx, source, null, 'the folder being copied from');
+      await lookOnce(ctx, source, null, 'the folder being copied from', 'project');
     } catch (error) {
       return error instanceof Error ? error.message : 'the folder\'s git settings could not be read';
     }
@@ -1663,8 +1671,10 @@ export async function startHelper({
 
   // Whether the configuration git reads when the fenced runner `fenced` runs in `mirror` sets any
   // key matching `pattern`: 'none', 'some', or 'unreadable'.
-  async function configSets(fenced, mirror, pattern) {
-    const listed = await fenced('git', ['config', '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
+  // `where` narrows what is read (`--local --includes`: the repository's own file and what it includes,
+  // not the call's environment, where the fence sets `merge.verifySignatures`).
+  async function configSets(fenced, mirror, pattern, where = []) {
+    const listed = await fenced('git', ['config', ...where, '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
     if (listed.code === 1) return 'none';
     if (listed.code !== 0) return 'unreadable';
     return listed.stdout.trim() === '' ? 'none' : 'some';
@@ -1696,7 +1706,7 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
       const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
       const local = (args) => plain('git', args, { cwd: mirror, input: '' });
-      for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook)\\.')]) {
+      for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook)\\.', ['--local', '--includes'])]) {
         if (said !== 'none') return { ok: false, refused: CONFIG_REFUSED[said] };
       }
       try {
@@ -1739,7 +1749,7 @@ export async function startHelper({
   // mirror's own. The refusal, or null.
   async function mirrorRefusal(mirror, keyed) {
     const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
-    for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook|diff)\\.')]) {
+    for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook|diff)\\.', ['--local', '--includes'])]) {
       if (said !== 'none') return CONFIG_REFUSED[said];
     }
     return null;

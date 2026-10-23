@@ -3,6 +3,10 @@
 // allowed list lives in scripts/setup/git.js (rulings R109 to R113); it is to move into scripts/lib/
 // once the work changing setup's files has merged. This file imports the fence and the list and
 // never copies them.
+// There are two allowed lists, by the kind of repository the look reads: the own list (setup's, ruling
+// R112, in scripts/setup/git.js) for the repositories Wheelhouse made and commits and pushes in, and
+// the project list (below) for a director's project repository, where Wheelhouse only reads, fetches,
+// makes worktrees and fast-forwards. The design review is docs/specs/notes/2026-10-23-git-settings-allowed-list.md.
 // Every call shuts out git's global and system config, points hooks at the null file, and allows one
 // transport: https, or https and a local path where the caller names a local remote, or https and
 // ssh where the caller asks for ssh by name. Before a call it can look at the repository's own config
@@ -15,7 +19,7 @@
 import { run as realRun, withoutGitVars } from './run.js';
 import path from 'node:path';
 import {
-  isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, FENCE, NULL_FILE,
+  isolated, refuseUnlistedSettings, setupGitEnv, subcommandOf, allowedSetting, unlistedSettingsLine, CONFIG_UNREAD, FENCE, NULL_FILE,
 } from '../setup/git.js';
 
 export { NULL_FILE };
@@ -51,6 +55,139 @@ export function reachFor(url, { platform = process.platform } = {}) {
   return 'https';
 }
 
+// --- The project list ---
+// The settings a director's project repository may hold, besides the own list's (the design review's
+// section 3). Wheelhouse runs only `symbolic-ref`, `rev-parse`, `worktree add`, `fetch`, `merge --ff-only`,
+// `log`, `rev-list`, `status`, `remote` and `worktree list` there. A setting is on it because it runs no
+// program and changes nowhere git connects or writes, or because the fence sets the same key on every
+// call (PROJECT_OVERRIDDEN below, kept true by a test). It fails closed, as the own list does.
+// Case does not matter in a section or a key; a subsection is kept as written.
+
+// Conditions the list's last rows rest on. Each is the result of a scan in
+// tests/scripts/lib/safe-git-lists.test.js, which fails when the value here and the scan disagree.
+export const PROJECT_CONDITIONS = Object.freeze({
+  // Test 9: every `gh` and `glab` call in scripts/ names its repository (`-R`, `--repo`, or a full API
+  // path) or runs outside any project. `gh` writes `remote.<name>.gh-resolved` to pick a repository, so
+  // that key, and any other hyphenated `remote.<name>.<key>` (git reads no key with a `-`), is on the
+  // list only while this holds. It does not today: the survey's open-requests list runs `gh pr list`
+  // and `glab mr list` in the project's folder with no repository named (scripts/install/survey.js,
+  // openRequests). Those keys stay refused until that call names its repository.
+  ghNamesRepository: false,
+  // Test 10: no route whose look is the project list runs `push`, `commit`, `tag`, `rebase` or `am`.
+  // Holds today. The push targets (`remote.<name>.pushurl`, `remote.pushDefault`,
+  // `branch.<name>.pushRemote`) are on the list only while it does.
+  noPushFromProject: true,
+});
+
+// A key of a section, with no subsection (`core.longpaths`).
+const PROJECT_PLAIN = new Set([
+  // Storage, speed and line handling (Windows and Scalar write several).
+  'core.longpaths', 'core.fscache', 'core.untrackedcache', 'core.splitindex', 'core.commitgraph', 'core.multipackindex',
+  'core.preloadindex', 'core.checkstat', 'core.trustctime', 'core.whitespace', 'core.abbrev', 'core.compression',
+  'core.sparsecheckout', 'core.sparsecheckoutcone',
+  // Overridden by the fence on every call (see PROJECT_OVERRIDDEN). `core.fsmonitorhookversion` only
+  // says how a hook named by `core.fsmonitor` is called, and the fence sets that to `false`.
+  'core.fsmonitor', 'core.fsmonitorhookversion', 'core.sshcommand', 'core.askpass', 'core.editor', 'core.pager',
+  // Identity only; a signing key's id runs nothing.
+  'user.signingkey', 'user.useconfigonly', 'author.name', 'author.email', 'committer.name', 'committer.email',
+  // Signing and signature checks: the fence turns them off. `gpg.format` only picks the kind.
+  'commit.gpgsign', 'tag.gpgsign', 'push.gpgsign', 'log.showsignature', 'merge.verifysignatures', 'gpg.format',
+  // Every fenced call clears the credential helpers before adding the director's own.
+  'credential.helper', 'credential.username', 'credential.usehttppath',
+  // Transfer sizes and timing only; the plain sslverify is overridden. URL-scoped `http.<url>.*` are refused.
+  'http.postbuffer', 'http.version', 'http.lowspeedlimit', 'http.lowspeedtime', 'http.maxrequests', 'http.sslverify',
+  'protocol.version',
+  'submodule.active', 'submodule.recurse',
+  'merge.conflictstyle', 'rebase.autostash', 'rebase.autosquash', 'rebase.updaterefs',
+  'fetch.prunetags', 'fetch.writecommitgraph', 'fetch.parallel', 'fetch.showforcedupdates', 'fetch.unpacklimit',
+  'fetch.negotiationalgorithm', 'fetch.output', 'fetch.recursesubmodules',
+  'push.autosetupremote', 'push.followtags', 'push.useforceifincludes', 'push.recursesubmodules',
+  'gc.auto', 'gc.autodetach', 'gc.autopacklimit', 'gc.writecommitgraph', 'gc.cruftpacks', 'gc.reflogexpire',
+  'gc.reflogexpireunreachable', 'gc.pruneexpire',
+  'checkout.defaultremote', 'checkout.workers', 'checkout.thresholdforparallelism',
+  'worktree.guessremote', 'worktree.userelativepaths',
+  'extensions.partialclone', 'extensions.preciousobjects',
+]);
+// A key under any named subsection of the section (`branch.<name>.pushremote`).
+const PROJECT_NAMED = new Map([
+  // A URL's own helper, user name and path rule (cleared with the rest by the fence's reset).
+  ['credential', new Set(['helper', 'username', 'usehttppath'])],
+  ['branch', new Set([
+    // Not mergeoptions: it can name a merge strategy (a program) or signing.
+    ...(PROJECT_CONDITIONS.noPushFromProject ? ['pushremote'] : []),
+  ])],
+  ['remote', new Set([
+    // Which refs a fetch takes; no address.
+    'tagopt', 'prune', 'prunetags', 'push', 'partialclonefilter', 'promisor', 'followremotehead', 'skipdefaultupdate', 'skipfetchall',
+    // Only while no Wheelhouse call pushes from a project (PROJECT_CONDITIONS.noPushFromProject).
+    ...(PROJECT_CONDITIONS.noPushFromProject ? ['pushurl'] : []),
+  ])],
+  // Wheelhouse never runs `git submodule`, and the fence turns recursion off. Not `update`: its
+  // `!command` form runs a program.
+  ['submodule', new Set(['url', 'path', 'active', 'branch', 'ignore', 'shallow', 'fetchrecursesubmodules'])],
+]);
+// `remote.pushdefault`, with no subsection, is the one push target that sits on a plain key.
+if (PROJECT_CONDITIONS.noPushFromProject) PROJECT_PLAIN.add('remote.pushdefault');
+// Sections where git 2.54 has no key that runs a program or names an address. A git upgrade is looked
+// at before it is trusted: test 14 fails when the installed git lists a key in one of these that the
+// snapshot (tests/fixtures/git-config-keys.json) lacks. `lfs` is read only by git-lfs, which runs only
+// through a filter or a hook, both off.
+export const PROJECT_WHOLE_SECTIONS = Object.freeze([
+  'pack', 'index', 'feature', 'commitgraph', 'status', 'log', 'column', 'gui', 'rerere', 'blame', 'lfs', 'maintenance',
+]);
+const PROJECT_WHOLE = new Set(PROJECT_WHOLE_SECTIONS);
+// The own list's entries stay on this one (`user.name`, `user.email`, `init.defaultbranch`, `merge.ff`,
+// `fetch.prune`, `push.default`, `remote.*.url`, `branch.*.merge` and the rest).
+
+// Each setting the project list allows because the fence sets another on every call, as
+// [the listed shape, the fence key that holds it]. `credential.helper` is the reset that begins every
+// call's own pairs (safeGitEnv). A test keeps every row true.
+export const PROJECT_OVERRIDDEN = Object.freeze([
+  ['core.fsmonitor', 'core.fsmonitor'],
+  ['core.sshcommand', 'core.sshcommand'],
+  ['core.askpass', 'core.askpass'],
+  ['core.editor', 'core.editor'],
+  ['core.pager', 'core.pager'],
+  ['commit.gpgsign', 'commit.gpgsign'],
+  ['tag.gpgsign', 'tag.gpgsign'],
+  ['push.gpgsign', 'push.gpgsign'],
+  ['log.showsignature', 'log.showsignature'],
+  ['merge.verifysignatures', 'merge.verifysignatures'],
+  ['http.sslverify', 'http.sslverify'],
+  ['submodule.recurse', 'submodule.recurse'],
+  ['fetch.recursesubmodules', 'fetch.recursesubmodules'],
+  ['push.recursesubmodules', 'push.recursesubmodules'],
+  ['maintenance.auto', 'maintenance.auto'],
+  ['submodule.<name>.fetchrecursesubmodules', 'fetch.recursesubmodules'],
+  ['credential.helper', 'credential.helper'],
+  ['credential.<url>.helper', 'credential.helper'],
+].map((row) => Object.freeze(row)));
+
+// Whether a setting, named as `git config --name-only` gives it, is on the project list: the own list's
+// settings, and the rows above.
+export function allowedProjectSetting(name) {
+  if (allowedSetting(name)) return true;
+  if (typeof name !== 'string') return false;
+  const first = name.indexOf('.');
+  const last = name.lastIndexOf('.');
+  if (first <= 0 || last === name.length - 1) return false;
+  const section = name.slice(0, first).toLowerCase();
+  const key = name.slice(last + 1).toLowerCase();
+  if (PROJECT_WHOLE.has(section)) return true;
+  if (first === last) return PROJECT_PLAIN.has(`${section}.${key}`) || section === 'alias';
+  // A remote's name holds no `/`, `\` or `:` (ruling R113), whatever the key.
+  if (section === 'remote' && /[/\\:]/.test(name.slice(first + 1, last))) return false;
+  if (last === first + 1) return false;
+  if (PROJECT_NAMED.get(section)?.has(key)) return true;
+  // A tool's own key holds a `-`, and git reads no key with a `-` in its name. A branch's are allowed
+  // outright; a remote's only while every `gh` and `glab` call names its repository (`gh-resolved`).
+  if (key.includes('-')) return section === 'branch' || (section === 'remote' && PROJECT_CONDITIONS.ghNamesRepository);
+  return false;
+}
+
+// What each list is, for the look: `own` is setup's (R112), `project` the list above.
+const LISTS = { own: allowedSetting, project: allowedProjectSetting };
+
 // `env` with the whole fence, and the transport `reach` names in place of any given. Safe to apply twice.
 export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
   const transport = TRANSPORT[reach];
@@ -72,8 +209,15 @@ export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
       throw new Error(`safeGitEnv: GIT_CONFIG_COUNT is ${count}, but setting ${i} is not given`);
     }
     const key = kept[`GIT_CONFIG_KEY_${i}`];
-    if (!fenceKeys.has(String(key).toLowerCase())) own.push([key, kept[`GIT_CONFIG_VALUE_${i}`]]);
+    const value = kept[`GIT_CONFIG_VALUE_${i}`];
+    // A caller's own clearing of the credential helpers is dropped: the reset below does it, once.
+    if (String(key).toLowerCase() === 'credential.helper' && value === '') continue;
+    if (!fenceKeys.has(String(key).toLowerCase())) own.push([key, value]);
   }
+  // The call's own pairs begin with a clearing of every credential helper the repository (or a URL
+  // in it) lists, so none runs; the director's sign-in, which comes after it among the caller's
+  // pairs, is then the only helper. Nothing after it names credential.helper: the fence does not.
+  own.unshift(['credential.helper', '']);
   for (const name of Object.keys(kept)) if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(name)) delete kept[name];
   own.forEach(([key, value], i) => {
     kept[`GIT_CONFIG_KEY_${i}`] = key;
@@ -83,10 +227,13 @@ export function safeGitEnv(env = {}, { reach = 'https' } = {}) {
   return { ...isolated({ ...kept, GIT_ALLOW_PROTOCOL: TRANSPORT.https }), GIT_ALLOW_PROTOCOL: transport };
 }
 
-// The settings the repository in `cwd` holds that are off the allowed list: `{ keys }` (empty when
+// The settings the repository in `cwd` holds that are off the allowed list (`list`: 'own', the default,
+// or 'project'): `{ keys }` (empty when
 // all are listed, or when no repository is there), or `{ unread: true }` when git could not say. The
-// same call as setup's look, and it never throws, so each caller words its own refusal.
-export async function lookAtSettings({ run = realRun, gitPath = 'git', cwd }) {
+// same call as setup's look; it throws only for an unknown list, so each caller words its own refusal.
+export async function lookAtSettings({ run = realRun, gitPath = 'git', cwd, list = 'own' }) {
+  const allowed = Object.hasOwn(LISTS, list) ? LISTS[list] : undefined;
+  if (allowed === undefined) throw new Error(`lookAtSettings: unknown list ${String(list)}`);
   const env = { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE };
   let got;
   try {
@@ -96,7 +243,7 @@ export async function lookAtSettings({ run = realRun, gitPath = 'git', cwd }) {
   }
   if (got.code !== 0) return { unread: true };
   const names = String(got.stdout ?? '').split('\0').map((k) => k.trim()).filter((k) => k !== '');
-  return { keys: [...new Set(names.filter((k) => !allowedSetting(k)))] };
+  return { keys: [...new Set(names.filter((k) => !allowed(k)))] };
 }
 
 const KEY_CHARS = 80;
@@ -150,25 +297,30 @@ export function lookRefusalLine(caller, found, { what = null } = {}) {
 // The settings that git's `-c` may not set in a call's arguments: the fence's own keys, which
 // `-c` would lift (git applies it after the environment's pairs). A short named list is let through.
 const ARGUMENT_SETTINGS_ALLOWED = new Set(['core.editor=true']);
+// `credential.helper`, and a URL's own `credential.<url>.helper`: an argument's would come after the reset.
+const CREDENTIAL_HELPER = /^credential\.(?:.+\.)?helper$/i;
 function refuseFenceOverride(args) {
   const fenceKeys = new Set(FENCE.map(([key]) => key.toLowerCase()));
   for (let i = 0; i < args.length; i += 1) {
     const given = String(args[i]);
     // `--config-env=<key>=<var>`, or `--config-env` with `<key>=<var>` as the next argument.
     const fromEnv = given.startsWith('--config-env=') ? given.slice(13) : given === '--config-env' ? String(args[i + 1] ?? '') : null;
-    if (fromEnv !== null && fenceKeys.has(fromEnv.split('=')[0].toLowerCase())) {
+    if (fromEnv !== null && (fenceKeys.has(fromEnv.split('=')[0].toLowerCase()) || CREDENTIAL_HELPER.test(fromEnv.split('=')[0]))) {
       throw new Error(`safeGit: an argument may not set ${fromEnv.split('=')[0].toLowerCase()}, a setting of the fence`);
     }
     if (given !== '-c') continue;
     const setting = String(args[i + 1] ?? '');
     const key = setting.split('=')[0].toLowerCase();
+    if (CREDENTIAL_HELPER.test(key)) throw new Error(`safeGit: an argument may not set ${key}, which would come after the fence's clearing of the credential helpers`);
     if (fenceKeys.has(key) && !ARGUMENT_SETTINGS_ALLOWED.has(setting.toLowerCase())) {
       throw new Error(`safeGit: an argument may not set ${key}, a setting of the fence`);
     }
   }
 }
 
-// git in `cwd`: `git(args, options)` gives run's answer. `look` is 'each' (look at the repository's
+// git in `cwd`: `git(args, options)` gives run's answer. `list` says which allowed list the look uses:
+// 'own' (the default, so a caller that says nothing gets the strict one) for a repository Wheelhouse
+// made, or 'project' for a director's project repository. `look` is 'each' (look at the repository's
 // settings before every call), 'once' (before the first call of this function only; a refusal is
 // thrown again on every later call) or 'never' (the fence alone; for a caller whose comment says
 // why). `workTree` makes that folder git's working tree (not for `init`). `options.env` is added
@@ -177,16 +329,21 @@ function refuseFenceOverride(args) {
 // `caller` ('helper', 'foreman', 'survey', 'feature' or 'reinstall'), a refused look throws a
 // LookRefusal worded for that caller (and `what` names the repository); without it, setup's line.
 export function safeGit({
-  run = realRun, gitPath = 'git', cwd, env = {}, reach = 'https', look = 'each', workTree = null, timeoutMs = GIT_WAIT_MS,
+  run = realRun, gitPath = 'git', cwd, env = {}, reach = 'https', look = 'each', list = 'own', workTree = null, timeoutMs = GIT_WAIT_MS,
   caller = null, what = null,
 } = {}) {
   if (!['each', 'once', 'never'].includes(look)) throw new Error(`safeGit: unknown look ${String(look)}`);
+  if (!Object.hasOwn(LISTS, list)) throw new Error(`safeGit: unknown list ${String(list)}`);
   if (caller !== null && !(caller in NEXT)) throw new Error(`safeGit: unknown caller ${String(caller)}`);
   let looked = null;
   const lookNow = caller === null
-    ? () => refuseUnlistedSettings({ run, gitPath, cwd })
+    ? (list === 'own' ? () => refuseUnlistedSettings({ run, gitPath, cwd }) : async () => {
+      const found = await lookAtSettings({ run, gitPath, cwd, list });
+      if (found.unread) throw new Error(CONFIG_UNREAD);
+      if (found.keys.length > 0) throw new Error(unlistedSettingsLine(found.keys));
+    })
     : async () => {
-      const found = await lookAtSettings({ run, gitPath, cwd });
+      const found = await lookAtSettings({ run, gitPath, cwd, list });
       if (found.unread || found.keys.length > 0) throw new LookRefusal(lookRefusalLine(caller, found, { what }));
     };
   return async (args, options = {}) => {

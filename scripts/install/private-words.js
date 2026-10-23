@@ -102,11 +102,11 @@ async function scan({ root, words, commits = PRIVATE_SCAN_COMMITS, run = default
     .map(({ word, wordNo }) => ({ lower: word.trim().toLowerCase(), wordNo }));
   // It scans the maintainer's own checkout, whose ordinary keys the allowed list would refuse, and
   // none of its commands runs a filter, diff driver or pager under the fence (--no-ext-diff and
-  // --no-textconv stay), so the fence alone is used. `log.showSignature` is switched off, so a
+  // --no-textconv stay), so the fence alone is used. The fence switches `log.showSignature` off, so a
   // `git log` never runs the checkout's `gpg.program` to verify a signature.
   const fenced = safeGit({ run, cwd: root, env: { GIT_OPTIONAL_LOCKS: '0' }, look: 'never' });
   const git = async (args, { input, encoding } = {}) => {
-    const result = await fenced(['-c', 'core.quotepath=off', '-c', 'log.showSignature=false', ...args], { input, encoding });
+    const result = await fenced(['-c', 'core.quotepath=off', ...args], { input, encoding });
     return result.code === 0 ? result.stdout : null;
   };
   const hits = [];

@@ -239,7 +239,7 @@ test('start makes its branch and worktree afresh, refusing ones no recorded feat
   }
 }));
 
-test('the foreman refuses, naming it, a worktree in a checkout whose config sets core.fsmonitor or a hook, and nothing runs', () => withHome(async () => {
+test('the foreman refuses, naming it, a worktree in a checkout whose config sets core.alternateRefsCommand or a hook, and nothing runs', () => withHome(async () => {
   const checkout = await project({ git: true });
   const config = path.join(checkout, '.git', 'config');
   const plain = fs.readFileSync(config, 'utf8');
@@ -247,7 +247,7 @@ test('the foreman refuses, naming it, a worktree in a checkout whose config sets
   const script = path.join(checkout, 'mark.sh');
   fs.writeFileSync(script, `#!/bin/sh\necho ran > "${marker}"\n`, { mode: 0o755 });
   const cases = [
-    ['core.fsmonitor', `[core]\n\tfsmonitor = ${script}\n`],
+    ['core.alternateRefsCommand', `[core]\n\talternateRefsCommand = ${script}\n`],
     ['hook.x.command', `[hook "x"]\n\tevent = post-checkout\n\tcommand = ${script}\n`],
   ];
   for (const [key, section] of cases) {
@@ -256,7 +256,7 @@ test('the foreman refuses, naming it, a worktree in a checkout whose config sets
     const fake = fakeClient({ views: startViews() });
     const r = await act(START, { client: fake.client, wakerFor: fakeWaker().wakerFor, run: (file, args, opts) => { gitCalls.push(args); return runProgram(file, args, opts); } });
     refusedInOneLine(r);
-    assert.ok(r.err.includes(key), `${key}: ${r.err}`);
+    assert.ok(r.err.includes(key.toLowerCase()), `${key}: ${r.err}`);
     assert.ok(gitCalls.every((a) => a[0] === 'config'), 'only the look ran');
     assert.equal(fs.existsSync(marker), false);
     assert.equal(fs.existsSync(path.join(checkout, '.claude', 'worktrees', 'add-export')), false);

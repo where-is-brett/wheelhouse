@@ -255,10 +255,13 @@ test('git log never verifies signatures, so a planted gpg.program does not run',
   await g(root, 'config', 'log.showSignature', 'true');
   const seen = [];
   const recording = async (file, args, options) => {
-    seen.push(args);
+    seen.push({ args, env: options?.env ?? {} });
     return run(file, args, options);
   };
   await scanRepo({ root, words: ['lanternshop'], run: recording });
   assert.equal(fs.existsSync(marker), false, 'the planted program ran');
-  assert.ok(seen.some((args) => args.includes('log') && args.includes('log.showSignature=false')));
+  // The fence switches signature checks off on every call; the scan adds nothing of its own.
+  const off = ({ env }) => Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]])
+    .some(([k, v]) => k === 'log.showSignature' && v === 'false');
+  assert.ok(seen.some((call) => call.args.includes('log') && off(call)));
 });

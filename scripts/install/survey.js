@@ -459,7 +459,7 @@ async function surveyIn({ project, manifest, run, upstreams, host, scheduled, cl
   const routes = new Map();
   const git = async (args, cwd = project, { allowFail = false, env = {}, reach = 'https', look = 'each' } = {}) => {
     const key = `${look}|${reach}|${cwd}`;
-    if (!routes.has(key)) routes.set(key, safeGit({ run, cwd, env: { GIT_OPTIONAL_LOCKS: '0' }, reach, look, timeoutMs: GIT_WAIT_MS, caller: 'survey' }));
+    if (!routes.has(key)) routes.set(key, safeGit({ run, cwd, env: { GIT_OPTIONAL_LOCKS: '0' }, reach, look, list: 'project', timeoutMs: GIT_WAIT_MS, caller: 'survey' }));
     const result = await routes.get(key)(['-c', 'core.quotepath=off', ...args], { env });
     if (result.code !== 0) {
       if (allowFail) return '';

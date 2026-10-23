@@ -552,17 +552,17 @@ test('a feature\'s pull refuses, naming it, a worktree whose config holds a key 
   const marker = path.join(tree, 'ran.txt');
   const script = path.join(tree, '..', '..', '..', '..', 'mark.sh');
   fs.writeFileSync(script, `#!/bin/sh\necho ran > "${marker}"\n`, { mode: 0o755 });
-  // A hook in .git/hooks is stopped by the null hooks path; a config-declared one and an fsmonitor are refused by the look.
+  // A hook in .git/hooks is stopped by the null hooks path; a config-declared one and a program-running core setting are refused by the look.
   const hooks = path.join(tree, '..', '..', '..', '.git', 'hooks');
   fs.mkdirSync(hooks, { recursive: true });
   fs.copyFileSync(script, path.join(hooks, 'post-merge'));
   for (const [key, args] of [
     ['hook.x.command', ['config', 'hook.x.command', script]],
-    ['core.fsmonitor', ['config', 'core.fsmonitor', script]],
+    ['core.alternateRefsCommand', ['config', 'core.alternateRefsCommand', script]],
   ]) {
     git(tree, ...args);
     if (key === 'hook.x.command') git(tree, 'config', 'hook.x.event', 'post-merge');
-    await assert.rejects(pull({ client, worktree: tree }), (e) => e instanceof CliError && e.message.includes(key) && e.message.includes('does not allow') && /run pull again/.test(e.message) && !/setup|Go ahead/i.test(e.message), key);
+    await assert.rejects(pull({ client, worktree: tree }), (e) => e instanceof CliError && e.message.includes(key.toLowerCase()) && e.message.includes('does not allow') && /run pull again/.test(e.message) && !/setup|Go ahead/i.test(e.message), key);
     assert.equal(fs.existsSync(marker), false, key);
     assert.equal(fs.existsSync(path.join(tree, 'b.txt')), false, key);
     git(tree, 'config', '--unset-all', key);

@@ -452,10 +452,13 @@ test('the folder\'s own git config never runs with the key: sshCommand, credenti
       await g(agent, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/o/p.git');
 
       await withHelper(fakeAdapter(), async (client) => {
-        // The look at the folder's config refuses the push, naming the settings, before git runs there.
+        // The look at the folder's config refuses the push, naming the settings that send git elsewhere or run a
+        // program, before git runs there. The settings the fence overrides (core.sshCommand, core.askPass, the
+        // credential helper, http.sslVerify, the hooks folder) are let through: no fenced call reads them.
         const answer = await client.push({ project: 'o__p', dir: agent, refspec: 'feature' });
         assert.equal(answer.ok, false);
-        for (const key of ['core.sshcommand', 'credential.helper', 'core.gitproxy', 'core.askpass', 'http.proxy']) assert.ok(answer.refused.toLowerCase().includes(key), `${key}: ${answer.refused}`);
+        for (const key of ['core.gitproxy', 'http.proxy']) assert.ok(answer.refused.toLowerCase().includes(key), `${key}: ${answer.refused}`);
+        for (const key of ['core.sshcommand', 'credential.helper', 'core.askpass', 'http.sslverify', 'core.hookspath']) assert.ok(!answer.refused.toLowerCase().includes(key), `${key}: ${answer.refused}`);
       }, { envFor: async () => env });
       assert.doesNotMatch(await remoteHeads(p.remote.url), new RegExp(`refs/heads/feature ${sha}`));
       assert.deepEqual(fs.readdirSync(leaks).filter((f) => f.endsWith('.txt')), [], 'nothing the folder configured ran');
@@ -693,7 +696,7 @@ test('a push or merge refusal never includes a key', async () => {
         assert.equal(call.args.join(' ').includes(basic), false);
       }
       const pushes = calls.filter((c) => c.args.includes('push'));
-      assert.ok(calls.some((c) => c.args.includes('fetch') && c.env?.GIT_CONFIG_VALUE_0 === env.GIT_CONFIG_VALUE_0), 'the key reached git, through its environment');
+      assert.ok(calls.some((c) => c.args.includes('fetch') && Object.entries(c.env ?? {}).some(([name, value]) => /^GIT_CONFIG_VALUE_\d+$/.test(name) && value === env.GIT_CONFIG_VALUE_0)), 'the key reached git, through its environment');
       assert.ok(pushes.every((c) => !c.args.some((a) => a === '--force' || a === '-f' || a.startsWith('--force') || a.startsWith('+'))));
       // The copy from the folder runs with no key at all.
       const copies = calls.filter((c) => c.args.includes('fetch') && c.args.includes(dir));
@@ -1133,7 +1136,7 @@ test('a hostile global git config reaches none of the helper\'s git, in quick or
           assert.equal(helpers.length, 2, 'quick: the cleared list, then the host tool');
           assert.equal(helpers[0], '');
           assert.match(helpers[1], / auth git-credential$/);
-        } else assert.deepEqual(helpers, [], 'narrow: no credential helper');
+        } else assert.deepEqual(helpers, [''], 'narrow: the cleared list and no credential helper');
       });
       const heads = async (url) => (await run('git', ['ls-remote', '--heads', url], { env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } })).stdout;
       assert.match(await heads(p.remote.url), /refs\/heads\/feature/, `${label}: lands on the recorded remote`);
@@ -1188,25 +1191,45 @@ const recorder = (calls) => async (file, args, options) => {
   return hostGuard(file, args, options);
 };
 
-test('a push from a project folder whose config sets core.fsmonitor is refused, naming it, and nothing runs', async () => {
+test('a push from a project folder whose config sets core.alternateRefsCommand is refused, naming it, and nothing runs', async () => {
   const p = await project();
   const outside = tempFolder('wh-mark-');
   const marks = path.join(outside, 'marks');
   const script = path.join(outside, 'mark.sh');
   fs.writeFileSync(script, `#!/bin/sh\necho ran >> "${marks.split(path.sep).join('/')}"\n`, { mode: 0o755 });
-  const dir = await folderWith([['core.fsmonitor', script.split(path.sep).join('/')]]);
+  const dir = await folderWith([['core.alternateRefsCommand', script.split(path.sep).join('/')]]);
   try {
     await as(p.home, async () => {
       writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
       await withHelper(fakeAdapter(), async (client) => {
         const answer = await client.push({ project: 'o__p', dir, refspec: 'feature' });
         assert.equal(answer.ok, false);
-        assert.match(answer.refused, /core\.fsmonitor/);
+        assert.match(answer.refused, /core\.alternaterefscommand/);
         assert.match(answer.refused, /does not allow/);
         assert.doesNotMatch(answer.refused, /setup|Go ahead/i);
         assert.match(answer.refused, /try the request again/);
         assert.equal(fs.existsSync(marks), false);
         assert.equal(await remoteHeads(p.remote.url).then((t) => t.includes('refs/heads/feature')), false);
+      });
+    });
+  } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('a push from a project folder whose config sets core.fsmonitor goes through, and the program never runs', async () => {
+  const p = await project();
+  const outside = tempFolder('wh-mark-');
+  const marks = path.join(outside, 'marks');
+  const script = path.join(outside, 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho ran >> "${marks.split(path.sep).join('/')}"\n`, { mode: 0o755 });
+  // The project list lets the setting through, because the fence sets core.fsmonitor to false on every call.
+  const dir = await folderWith([['core.fsmonitor', script.split(path.sep).join('/')], ['core.longpaths', 'true']]);
+  try {
+    await as(p.home, async () => {
+      writeProject('o__p', { folder: dir, remoteUrl: p.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
+      await withHelper(fakeAdapter(), async (client) => {
+        const answer = await client.push({ project: 'o__p', dir, refspec: 'feature' });
+        assert.equal(answer.ok, true, JSON.stringify(answer));
+        assert.equal(fs.existsSync(marks), false);
       });
     });
   } finally { p.cleanup(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }

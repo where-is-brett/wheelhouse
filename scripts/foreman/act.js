@@ -369,7 +369,7 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   // The fenced route, looking at the repository's settings before each call: a setting off the
   // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
   const fenced = safeGit({
-    run: ctx.run, cwd: checkout, look: 'each', timeoutMs: GIT_MS, caller: 'foreman',
+    run: ctx.run, cwd: checkout, look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
   });
   const git = async (args) => {
     try {
