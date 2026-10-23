@@ -52,23 +52,28 @@ const REVIEWER_TOOLS = Object.freeze(['view', 'glob', 'rg']);
 const BUILDER_TOOLS = Object.freeze(['view', 'glob', 'rg', ...tools.edit, ...tools.shell]);
 
 // Ruling P4-8: the explicit list of sources. A source missing from the tree is an error, never skipped.
-// Task 3 adds `wheelhouse-lean` (from skills/lean) and Task 5 adds `wheelhouse-setup` (from skills/setup-lean, since
+// `wheelhouse-lean` is Lean's playbook, from skills/lean. Task 5 adds `wheelhouse-setup` (from skills/setup-lean, since
 // skills/setup's steps need Node.js).
 const PLAYBOOK_SKILLS = Object.freeze([
   { name: 'front-desk', source: 'skills/front-desk/SKILL.md' },
   { name: 'intake', source: 'skills/intake/SKILL.md' },
+  { name: 'lean', source: 'skills/lean/SKILL.md' },
 ]);
+// The words a source holds back for the kit to fill in, so the source stays in general words (the core never names an
+// agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js).
+const KIT_WORDS = Object.freeze({ agent: 'Copilot' });
 const AGENT_SOURCES = Object.freeze(['builder', 'reviewer', 'tester']);
 const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 
-// The skills the director calls by name. Each points to the front desk's section for it (the description is the command's).
-const FRONT_DESK = '`wheelhouse-front-desk`';
+// The skills the director calls by name. Each points to Lean's playbook for it, since no Wheelhouse program runs at
+// Lean to give the front desk's own views (the description is the command's).
+const LEAN = '`wheelhouse-lean`';
 const COMMAND_SKILLS = Object.freeze({
-  board: `Show the director the board: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the board couldn't be read.\n\nThe front desk (${FRONT_DESK}) keeps the board up to date; its section "What the director sends" says when.`,
-  briefing: `Give the director the briefing now, as it is, with nothing added, as ${FRONT_DESK} gives it (its section "Each turn, in order"). If you can't build it, say only that the briefing couldn't be read.`,
-  settings: `Show the director the settings in force, and where each comes from, as they are, with nothing added, as ${FRONT_DESK} gives them (its section "The command", the settings view). If they can't be read, say only that the settings couldn't be read.`,
-  sources: `Show the director what changed in the sources at the last weekly check, as it is, with nothing added, as the briefing in ${FRONT_DESK} lists it (its section "Each turn, in order"). If it can't be read, say only that the changed sources couldn't be read.`,
-  stop: `Turn STOP on: start no building, planning or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the STOP paragraph of ${FRONT_DESK} (its section "What the director sends"): ask the Lift STOP card alone.`,
+  board: `Show the director the board: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the board couldn't be read.\n\nLean's playbook (${LEAN}) keeps the board up to date; its section "The board" says how and when.`,
+  briefing: `Give the director the briefing now, as ${LEAN} gives it (its section "The briefing"), with nothing added. If you can't build it, say only that the briefing couldn't be read.`,
+  settings: `Show the director the settings in force, and where each comes from, as ${LEAN} gives them (its section "Settings"), with nothing added: at Lean they are the tier and its lines at the top of the board, and the folder the copy goes to. If they can't be read, say only that the settings couldn't be read.`,
+  sources: `Lean has no weekly check of the sources: it is a Wheelhouse program, and none runs here. Say so in one line, as ${LEAN} does (its section "Sources"), and show nothing else.`,
+  stop: `Turn STOP on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "STOP" of ${LEAN}: tell the director once that nothing enforces STOP here, and ask the Lift STOP card alone.`,
 });
 
 const INSTRUCTIONS_LINE = 'In VS Code\'s Local harness Wheelhouse doesn\'t run: say so and ask the director to switch the chat to Copilot.';
@@ -116,6 +121,14 @@ function mapToolWords(text, rel) {
 // Skills name each other with a colon in Claude Code (`wheelhouse:intake`) and by their Copilot names here.
 const renameSkills = (text) => text.replace(/\bwheelhouse:([a-z][a-z-]*)/g, 'wheelhouse-$1');
 
+// The words a source holds back (`{{agent}}`) become the kit's own. A word the table lacks is an error, not a pass.
+function fillKitWords(text, rel) {
+  return text.replace(/\{\{([A-Za-z-]+)\}\}/g, (_, word) => {
+    if (!Object.hasOwn(KIT_WORDS, word)) throw new Error(`${rel} holds {{${word}}}, which KIT_WORDS has no entry for`);
+    return KIT_WORDS[word];
+  });
+}
+
 function mapRulesFiles(text) {
   let out = text;
   for (const [from, to] of RULES_PHRASES) out = out.replaceAll(from, to);
@@ -140,7 +153,7 @@ function assemble({ file, source, front, rest }) {
 function skillFrom(root, { name, source }) {
   const { front, body } = parse(readSource(root, source), source);
   const file = `skills/wheelhouse-${name}/SKILL.md`;
-  const rest = renameSkills(mapToolWords(withoutPathComment(body, source), source));
+  const rest = fillKitWords(renameSkills(mapToolWords(withoutPathComment(body, source), source)), source);
   return [file, assemble({ file, source, front: { name: `wheelhouse-${name}`, description: front.description }, rest })];
 }
 

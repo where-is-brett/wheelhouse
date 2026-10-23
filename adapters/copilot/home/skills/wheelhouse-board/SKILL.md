@@ -6,4 +6,4 @@ description: "Show Wheelhouse's board."
 
 Show the director the board: read `wheelhouse/board.md` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the board couldn't be read.
 
-The front desk (`wheelhouse-front-desk`) keeps the board up to date; its section "What the director sends" says when.
+Lean's playbook (`wheelhouse-lean`) keeps the board up to date; its section "The board" says how and when.

@@ -90,7 +90,7 @@ test('the kit is byte-stable: LF only, sorted, the same on every build', () => {
   }
 });
 
-test('the kit holds exactly the files Task 2 builds', () => {
+test('the kit holds exactly the files Tasks 2 and 3 build', () => {
   assert.deepEqual([...kit.keys()], [
     'MANIFEST.txt',
     'agents/wheelhouse-builder.agent.md',
@@ -102,12 +102,13 @@ test('the kit holds exactly the files Task 2 builds', () => {
     'skills/wheelhouse-briefing/SKILL.md',
     'skills/wheelhouse-front-desk/SKILL.md',
     'skills/wheelhouse-intake/SKILL.md',
+    'skills/wheelhouse-lean/SKILL.md',
     'skills/wheelhouse-settings/SKILL.md',
     'skills/wheelhouse-sources/SKILL.md',
     'skills/wheelhouse-stop/SKILL.md',
   ]);
-  // The hook files come with Part 5 Task 8; wheelhouse-lean and wheelhouse-setup with Tasks 3 and 5.
-  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/') || f.includes('wheelhouse-lean') || f.includes('wheelhouse-setup')));
+  // The hook files come with Part 5 Task 8; wheelhouse-setup with Task 5.
+  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/') || f.includes('wheelhouse-setup')));
 });
 
 // ---- The agents ----
@@ -198,7 +199,7 @@ test('the front desk, intake and command skills are the playbooks under Copilot\
     assert.ok(source.front.description.startsWith(built.front.description), `${command}'s description is the command's`);
     assert.ok(!/build tab/.test(built.front.description));
     assert.ok(built.front.description.length >= 20);
-    assert.match(built.body, /wheelhouse-front-desk/, `${command} points to the front desk`);
+    assert.match(built.body, /wheelhouse-lean/, `${command} points to Lean's playbook`);
     assert.ok(built.body.length < 900, `${command} is short`);
   }
   assert.match(kit.get('skills/wheelhouse-board/SKILL.md'), new RegExp(BOARD_FILE.replace('/', '\\/')));

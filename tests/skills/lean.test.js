@@ -1,0 +1,314 @@
+// tests/skills/lean.test.js
+// Lean's playbook (design section 6.4, Part 4 Task 3): the record, the board, building, merging, undo and the copy, with
+// git alone. The playbook is text the chat follows, so these tests hold what it says: the record line for each kind,
+// the git commands as the brief gives them (and that they work, in a repository of the test's own), the safety lines the
+// board starts with, and that the kit built from it names neither a Claude Code tool nor, in its source, Copilot.
+import '../helpers/homes.js';
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { standInTools } from '../helpers/host-stand-ins.js';
+import { tempFolder } from '../helpers/homes.js';
+import safetyLine from '../../adapters/copilot/safety-line.js';
+import { buildHome } from '../../scripts/agents/copilot/home.js';
+import { BOARD_FILE, LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../../scripts/lib/copilot-numbers.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replaceAll('\r\n', '\n');
+const playbook = read('skills/lean/SKILL.md');
+const kit = buildHome({ root: ROOT });
+const leanKit = kit.get('skills/wheelhouse-lean/SKILL.md');
+
+// Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
+const stand = standInTools();
+after(() => stand.restore());
+
+const KINDS = ['card', 'approval', 'review', 'merge', 'undo', 'stop', 'lift-stop', 'copy'];
+const KEYS = ['at', 'kind', 'card', 'choice', 'commit', 'proof', 'by', 'tier'];
+const FRONT_DESK_LINE = 'At Lean, follow wheelhouse-lean for the record, the board, building and merging';
+const CLAUDE_CODE_TOOL_WORDS = /\b(Write|Read|Edit|Bash) tool\b|Claude Code/;
+const TOOL_NAMES = ['AskUserQuestion', 'PushNotification', 'ToolSearch', 'SendMessage', 'CLAUDE_PLUGIN_ROOT', 'TodoWrite', 'WebFetch', 'WebSearch', 'NotebookRead'];
+
+// The record lines the playbook gives, one JSON object a line, as the example for each kind.
+function exampleLines() {
+  return playbook.split('\n').filter((line) => line.startsWith('{"at"'));
+}
+
+// The playbook's section named heading, up to the next `##` heading, leaving out the fenced examples (the board's own headings are in them).
+function section(text, heading) {
+  text = text.replace(/^```[\s\S]*?^```$/gm, '');
+  const start = text.indexOf(`\n## ${heading}\n`);
+  assert.ok(start >= 0, `a section "${heading}"`);
+  const next = text.indexOf('\n## ', start + 1);
+  return text.slice(start, next < 0 ? undefined : next);
+}
+
+// ---- The playbook itself ----
+
+test('the playbook has front matter, then its path comment, and is named lean', () => {
+  assert.match(playbook, /^---\nname: lean\ndescription: [^\n]+\n---\n<!-- skills\/lean\/SKILL\.md -->\n/);
+  assert.ok(playbook.split('\n')[2].length < 1100);
+});
+
+test('the front desk sends a Lean session to wheelhouse-lean, near its top', () => {
+  const frontDesk = read('skills/front-desk/SKILL.md');
+  const at = frontDesk.indexOf(FRONT_DESK_LINE);
+  assert.ok(at > 0, 'the line is in the front desk');
+  assert.ok(at < frontDesk.indexOf('## The command'), 'before the steps that need Node.js');
+  assert.equal(frontDesk.split(FRONT_DESK_LINE).length, 2, 'once');
+  assert.ok(kit.get('skills/wheelhouse-front-desk/SKILL.md').includes(FRONT_DESK_LINE), 'and in the kit');
+});
+
+// ---- The record ----
+
+test('the record line for each kind has every field', () => {
+  const lines = exampleLines();
+  assert.equal(lines.length, KINDS.length, 'one example a kind');
+  const seen = [];
+  for (const line of lines) {
+    const entry = JSON.parse(line);
+    assert.deepEqual(Object.keys(entry), KEYS, `${line}: all eight keys, in order`);
+    seen.push(entry.kind);
+    assert.match(entry.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/, 'UTC ISO 8601');
+    for (const key of ['at', 'kind', 'proof', 'by', 'tier']) assert.notEqual(entry[key], null, `${entry.kind}: ${key} is never null`);
+    assert.ok(typeof entry.card === 'string' || entry.card === null);
+    assert.ok(typeof entry.choice === 'string' || entry.choice === null);
+    assert.ok(entry.commit === null || /^[0-9a-f]{12}$/.test(entry.commit), `${entry.kind}: a commit is 12 lowercase hex characters`);
+    assert.equal(entry.by, 'chat');
+    assert.equal(entry.tier, 'lean');
+    // A click's proof is one of the design's PROOFS; a review is not a click, and its proof is the chat review that REVIEW_KINDS names.
+    assert.ok(entry.kind === 'review' ? REVIEW_KINDS.includes(entry.proof) : PROOFS.includes(entry.proof));
+    assert.equal(entry.proof, entry.kind === 'review' ? 'chat-review' : 'chat-click', `${entry.kind}'s proof`);
+  }
+  assert.deepEqual([...seen].sort(), [...KINDS].sort(), 'every kind once');
+  // The ones that name a commit say which.
+  const byKind = Object.fromEntries(lines.map((l) => JSON.parse(l)).map((e) => [e.kind, e]));
+  for (const kind of ['approval', 'review', 'merge', 'undo']) assert.ok(byKind[kind].commit, `${kind} names a commit`);
+  assert.equal(byKind.approval.choice, 'Approve');
+  assert.equal(byKind.approval.card, byKind.merge.card);
+  assert.equal(byKind.review.commit, byKind.approval.commit, 'the review and the approval name the same head');
+  assert.notEqual(byKind.merge.commit, byKind.approval.commit, 'the merge is its own commit');
+});
+
+test('the record is one file a day in the record folder, written on the main version only', () => {
+  const record = section(playbook, 'The record');
+  assert.ok(record.includes(`${LEAN_RECORD_DIR}/YYYY-MM-DD.jsonl`));
+  assert.match(record, /one JSON line/i);
+  assert.match(record, /UTC/);
+  assert.match(record, /main version is checked out/i);
+  assert.match(record, /git rev-parse --short=12/);
+  for (const kind of KINDS) assert.ok(record.includes(`\`${kind}\``), `the kind ${kind} is explained`);
+});
+
+// ---- The git steps ----
+
+test('merging uses --no-ff and undo uses revert -m 1', () => {
+  assert.ok(playbook.includes('git merge --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"'));
+  assert.ok(playbook.includes('git revert -m 1 <merge>'));
+  assert.ok(playbook.includes('git switch -c feature/<slug>'));
+  assert.doesNotMatch(playbook, /git push [^\n]*--force|git reset --hard|git branch -D\b/, 'nothing that rewrites or discards history');
+  assert.doesNotMatch(playbook, /git merge (?!--no-ff|--abort)[^\n]*feature/, 'every merge is --no-ff');
+});
+
+test('the copy push names wheelhouse-copy', () => {
+  assert.ok(playbook.includes('git push wheelhouse-copy main'));
+  const copy = section(playbook, 'The copy');
+  assert.match(copy, /git init --bare/);
+  assert.match(copy, /setup/i);
+  assert.match(copy, /fails?/i);
+  assert.match(copy, /work is not lost/i);
+});
+
+test('the git steps work as written, in a repository of the test\'s own', () => {
+  const dir = tempFolder('wh-lean-git-');
+  const copy = path.join(tempFolder('wh-lean-copy-'), 'copy.git');
+  const project = path.join(dir, 'project');
+  fs.mkdirSync(project);
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: path.join(dir, 'none'), GIT_CONFIG_SYSTEM: path.join(dir, 'none'), GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const git = (...args) => execFileSync('git', args, { cwd: project, env, encoding: 'utf8' }).trim();
+  git('init', '-b', 'main');
+  fs.mkdirSync(copy, { recursive: true });
+  execFileSync('git', ['init', '--bare', copy], { env, encoding: 'utf8' });
+  git('remote', 'add', 'wheelhouse-copy', copy);
+  fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
+  git('add', 'a.txt');
+  git('commit', '-m', 'Start');
+  // Building: a feature branch, one commit.
+  git('switch', '-c', 'feature/export-orders');
+  fs.writeFileSync(path.join(project, 'b.txt'), 'two\n');
+  git('add', 'b.txt');
+  git('commit', '-m', 'Add the export');
+  const approved = git('rev-parse', '--short=12', 'feature/export-orders');
+  assert.match(approved, /^[0-9a-f]{12}$/);
+  // Merging: on main, with a merge commit, the message naming the approved head.
+  git('switch', 'main');
+  git('merge', '--no-ff', 'feature/export-orders', '-m', `Export orders (approved ${approved})`);
+  const merge = git('rev-parse', '--short=12', 'HEAD');
+  assert.equal(git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').length, 3, 'a merge commit has two parents');
+  assert.match(git('log', '-1', '--format=%s'), new RegExp(`\\(approved ${approved}\\)$`));
+  // The record: a line appended on main, committed alone.
+  const day = '2026-10-23';
+  fs.mkdirSync(path.join(project, LEAN_RECORD_DIR), { recursive: true });
+  const recordFile = path.join(project, LEAN_RECORD_DIR, `${day}.jsonl`);
+  fs.appendFileSync(recordFile, `${JSON.stringify({ at: '2026-10-23T01:20:41Z', kind: 'merge', card: 'merge-export-orders', choice: null, commit: merge, proof: 'chat-click', by: 'chat', tier: 'lean' })}\n`);
+  git('add', `${LEAN_RECORD_DIR}/${day}.jsonl`);
+  git('commit', '-m', 'Record: merge export-orders');
+  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n'), [`${LEAN_RECORD_DIR}/${day}.jsonl`]);
+  // The copy.
+  git('push', 'wheelhouse-copy', 'main');
+  assert.equal(execFileSync('git', ['rev-parse', 'main'], { cwd: copy, env, encoding: 'utf8' }).trim(), git('rev-parse', 'main'));
+  // Undo: a new commit that reverses the merge; the record's later lines stay.
+  git('revert', '-m', '1', merge, '--no-edit');
+  assert.ok(!fs.existsSync(path.join(project, 'b.txt')), 'the feature is gone');
+  assert.ok(fs.existsSync(recordFile), 'the record stays');
+  git('push', 'wheelhouse-copy', 'main');
+  assert.equal(execFileSync('git', ['rev-parse', 'main'], { cwd: copy, env, encoding: 'utf8' }).trim(), git('rev-parse', 'main'));
+});
+
+// ---- STOP ----
+
+test('STOP is said to be unenforced', () => {
+  const stop = section(playbook, 'STOP');
+  assert.match(stop, /nothing here makes me stop|nothing enforces/i);
+  assert.match(stop, /once (in|per) (a )?session/i);
+  assert.match(stop, /VS Code's stop button/);
+  assert.match(stop, /`stop`/);
+  assert.match(stop, /`lift-stop`/);
+  assert.match(stop, /Lift STOP/);
+});
+
+// ---- The project key ----
+
+test('the key is never asked for in the chat', () => {
+  assert.ok(playbook.includes('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin feature/<slug>'));
+  const host = section(playbook, 'On a code host, without Node.js');
+  assert.match(host, /never typed into the chat/i);
+  assert.match(host, /sign-in window/);
+  assert.match(host, /once/);
+  assert.doesNotMatch(playbook, /(paste|type|send|give me|tell me|enter) (me )?(the|your|a) (project )?(key|token|password)/i);
+  assert.doesNotMatch(playbook, /ask (them|the director) for (the|a|their) (project )?(key|token|password)/i);
+});
+
+// ---- The board ----
+
+test('the board is the file the design names, rewritten whole, and starts with the tier and the safety lines', () => {
+  const board = section(playbook, 'The board');
+  assert.ok(board.includes(BOARD_FILE));
+  assert.match(board, /rewrite/i);
+  assert.match(board, /first line/i);
+  assert.ok(playbook.includes('```\nTier: Lean\n- Nothing is held off'), 'the board starts with the tier, then the safety lines');
+  assert.equal(playbook.split('\nTier: Lean\n').length, 4, 'one block for each case');
+});
+
+test('every safety line safetyLine gives for Lean is in the playbook exactly, for each case it names', () => {
+  const cases = [
+    { name: 'a Mac without Node.js', options: { platform: 'darwin', node: false } },
+    { name: 'Windows without Node.js', options: { platform: 'win32', node: false } },
+    { name: 'a computer where Node.js may run', options: { platform: 'darwin', node: true } },
+  ];
+  // The source says "{{agent}}" where the line names the product, so the source stays free of its name (the kit says it).
+  const inSource = (line) => line.replaceAll('Copilot', '{{agent}}');
+  for (const { name, options } of cases) {
+    const lines = safetyLine({ tier: 'lean', shellGuard: false, addOn: false, ...options });
+    assert.ok(lines.length >= 7, name);
+    for (const line of lines) {
+      assert.ok(playbook.includes(`- ${inSource(line)}\n`), `${name}: the playbook lacks "${line}"`);
+      assert.ok(leanKit.includes(`- ${line}\n`), `${name}: the kit lacks "${line}"`);
+    }
+  }
+  // Windows with Node.js says what the Mac does.
+  assert.deepEqual(safetyLine({ tier: 'lean', platform: 'win32', node: true }), safetyLine({ tier: 'lean', platform: 'darwin', node: true }));
+});
+
+test('the playbook names a case for the board by what the computer allows, not by guessing', () => {
+  const board = section(playbook, 'The board');
+  assert.match(board, /Mac/);
+  assert.match(board, /Windows/);
+  assert.match(board, /Node\.js/);
+  assert.match(board, /no add-on|add-on/);
+});
+
+// ---- Words ----
+
+test('no Claude Code tool is named, nor Copilot in the source, nor a model name', () => {
+  for (const name of TOOL_NAMES) assert.ok(!playbook.includes(name), `names ${name}`);
+  assert.doesNotMatch(playbook, CLAUDE_CODE_TOOL_WORDS);
+  assert.doesNotMatch(playbook, /copilot/i, 'the source stays in general words (core-neutral)');
+  assert.doesNotMatch(playbook, /\b(ask_user|askQuestions|apply_patch)\b/);
+  for (const tool of ['Write', 'Read', 'Edit', 'Bash', 'Grep', 'Glob']) assert.ok(!playbook.includes(`\`${tool}\``), `names \`${tool}\``);
+  assert.doesNotMatch(playbook, /\b(opus|sonnet|haiku)\b|Co-Authored-By|Generated with/i);
+  assert.doesNotMatch(playbook, /\b(enhanced|improved|fixed)\b/i);
+  assert.ok(playbook.includes('your clickable-question tool'), 'cards use the general word');
+});
+
+test('the playbook speaks in plain words to the director and names the options on a card', () => {
+  const cards = section(playbook, 'Cards');
+  for (const option of ['Approve', 'Not now', 'Explain more', 'Show me']) assert.ok(cards.includes(`**${option}**`), option);
+  assert.match(cards, /12 characters/);
+  assert.match(cards, /what this is/i);
+  assert.match(cards, /recommend/i);
+  assert.match(cards, /meanwhile|what happens/i);
+});
+
+test('the playbook states the dates in the form the project uses', () => {
+  assert.match(playbook, /23 October 2026/);
+  assert.doesNotMatch(playbook, /October 23|23\/10|10\/23/);
+});
+
+// ---- The kit's Lean path ----
+
+test('the Lean path of the kit names no Claude Code tool and no Claude Code', () => {
+  const files = ['lean', 'board', 'stop', 'sources', 'settings', 'briefing'].map((n) => `skills/wheelhouse-${n}/SKILL.md`);
+  for (const file of files) {
+    assert.ok(kit.has(file), file);
+    assert.doesNotMatch(kit.get(file), CLAUDE_CODE_TOOL_WORDS, file);
+  }
+});
+
+test('the kit holds the playbook as wheelhouse-lean, with the product named where the source says {{agent}}', () => {
+  const text = kit.get('skills/wheelhouse-lean/SKILL.md');
+  assert.match(text, /^---\nname: "wheelhouse-lean"\ndescription: "[^\n]+"\n---\n<!-- adapters\/copilot\/home\/skills\/wheelhouse-lean\/SKILL\.md \(built from skills\/lean\/SKILL\.md by npm run copilot-home\) -->\n/);
+  assert.ok(!text.includes('{{'), 'no token is left');
+  assert.ok(text.includes('Copilot\'s command prompts aren\'t a control'));
+  assert.ok(!text.includes('wheelhouse:'), 'skills are named with a hyphen');
+});
+
+test('the kit\'s sources and settings skills send the chat to wheelhouse-lean, and say plainly what Lean has none of', () => {
+  const sources = kit.get('skills/wheelhouse-sources/SKILL.md');
+  const settings = kit.get('skills/wheelhouse-settings/SKILL.md');
+  assert.match(sources, /wheelhouse-lean/);
+  assert.match(sources, /no weekly check|nothing checks the sources/i, 'Lean has no weekly check, and the skill says so');
+  assert.match(settings, /wheelhouse-lean/);
+  assert.match(settings, /section "Settings"/);
+  for (const heading of ['The board', 'Settings', 'Sources', 'The briefing', 'STOP']) assert.ok(section(playbook, heading), heading);
+  for (const command of ['board', 'briefing', 'stop']) assert.match(kit.get(`skills/wheelhouse-${command}/SKILL.md`), /wheelhouse-lean/, command);
+});
+
+test('the builder and the reviewer the playbook names are in the kit', () => {
+  assert.ok(playbook.includes('wheelhouse-builder'));
+  assert.ok(playbook.includes('wheelhouse-reviewer'));
+  assert.ok(kit.has('agents/wheelhouse-builder.agent.md'));
+  assert.ok(kit.has('agents/wheelhouse-reviewer.agent.md'));
+});
+
+test('buildHome throws when the Lean playbook is missing, and builds nothing from a token it does not know', () => {
+  const root = tempFolder('wh-lean-home-');
+  for (const part of ['skills', 'agents', 'commands']) fs.cpSync(path.join(ROOT, part), path.join(root, part), { recursive: true });
+  fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
+  assert.doesNotThrow(() => buildHome({ root }));
+  const file = path.join(root, 'skills', 'lean', 'SKILL.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('{{agent}}', '{{somebody}}'));
+  assert.throws(() => buildHome({ root }), /somebody/);
+  fs.rmSync(path.join(root, 'skills', 'lean'), { recursive: true });
+  assert.throws(() => buildHome({ root }), /skills[\\/]lean[\\/]SKILL\.md/);
+});
+
+// ---- No host program ran ----
+
+test('none of gh, glab or copilot ran', () => {
+  assert.deepEqual(stand.calls(), []);
+});
