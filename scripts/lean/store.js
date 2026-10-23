@@ -28,6 +28,7 @@ import { readEnrolled } from '../state/signing.js';
 import { readLeanRecord, leanToEvents } from '../state/lean-record.js';
 import { leanMergeDecision } from '../gate/conditions.js';
 import { readLean, updateLean, leanState } from './project.js';
+import { AGENT_VARIABLES } from '../agents/variables.js';
 
 // A refusal: its message is the one plain line the director's chat says; `extra` goes beside it in the answer.
 export class LeanRefusal extends Error {
@@ -385,10 +386,10 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
 
 // --- the project's tests ---
 
-// Wheelhouse's own variables and the code hosts' are cleared from the tests' environment.
-const CLEARED = /^(?:WHEELHOUSE_|GIT_|GH_|GITHUB_|GITLAB_|GLAB_|COPILOT_|CLAUDE|ANTHROPIC_)|^CI_JOB_TOKEN$/i;
+// Wheelhouse's own variables, the code hosts' and the coding agents' are cleared from the tests' environment.
+const CLEARED = /^(?:WHEELHOUSE_|GIT_|GH_|GITHUB_|GITLAB_|GLAB_)|^CI_JOB_TOKEN$/i;
 export function testEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !CLEARED.test(name)));
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !CLEARED.test(name) && !AGENT_VARIABLES.test(name)));
 }
 
 // The command line the tests run by: the system's own shell.
