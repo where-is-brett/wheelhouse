@@ -15,7 +15,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 15 | Installing at a pinned release | Yes | [15-install-and-pinning.md](15-install-and-pinning.md) |
 | 17 | Keyless signing of releases | Deferred | [17-keyless-signing.md](17-keyless-signing.md) |
 | 18 | Connectors and the deny rule | Yes | [18-connectors.md](18-connectors.md) |
-| 19 | Setup time | Deferred (held for the director's sitting) | [19-setup-time.md](19-setup-time.md) |
+| 19 | Setup time | Deferred (the director put the timed run off on 23 October 2026; it needs a tag on the host) | [19-setup-time.md](19-setup-time.md) |
 | 8 | The prompt-record hook | Yes | [08-prompt-record.md](08-prompt-record.md) |
 | 11 | The host helper | Partly | [11-host-helper.md](11-host-helper.md) |
 | 16 | The password-style box | Yes | [16-secret-box.md](16-secret-box.md) |
@@ -47,7 +47,7 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 40 | The mod without a screen | Yes, with five changes | [40-mod-headless.md](40-mod-headless.md) |
 | 33 | The mod's first piece in Desktop | Partly | [41-mod-desktop.md](41-mod-desktop.md) |
 | 41 | The mod in Desktop | Partly | [41-mod-desktop.md](41-mod-desktop.md) |
-| 42 | Calm in Desktop | Deferred, held for the director's sitting at the Mac | [42-calm-desktop.md](42-calm-desktop.md) |
+| 42 | Calm in Desktop | Partly (Mac): good enough for real use once three faults are put right | [42-calm-desktop.md](42-calm-desktop.md) |
 | 50 | Switching a project's own parts off and on | Deferred | [50-switch-off.md](50-switch-off.md) |
 | 52 | The low-integrity runner on Windows | Deferred | [52-low-integrity.md](52-low-integrity.md) |
 | 53 | Granting build commands to a feature session on Windows | Deferred | [53-windows-grants.md](53-windows-grants.md) |
@@ -70,4 +70,4 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 70 | Lean in VS Code with nothing added | Not run yet | None yet |
 | 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
 | 72 | The add-on at Lean | Not run yet | None yet |
-| 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Deferred (held for the director's Mac sitting) | [73-keychain.md](73-keychain.md) |
+| 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Yes on the Mac (the denial holds); Windows waits for check 52 | [73-keychain.md](73-keychain.md) |

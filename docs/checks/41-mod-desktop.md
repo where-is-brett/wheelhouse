@@ -40,6 +40,10 @@
     - how long a session refuses prompts after Esc;
     - a press while the reply is being written;
     - the `ui.open` line (the director didn't recall it).
+- **Third sitting, 23 October 2026** (see "Third sitting"):
+  - *Passed:* a typed code and a typed "stop" in a session another session started; `/compact` followed by a wrap-up and a notification; a hold that lets the wrap-up and notification through, and whose card leaves within a tick once the hold file is gone; `/wheelhouse-digest` with another plugin installed; the notice's words and the `received` lines.
+  - *Not shown:* the certificate ERROR lines are still in the command output, because the sitting kit's brief gives the command without `--no-use-system-ca`, though the session start gives it with the flag.
+  - *Still not seen:* a notification after a real absence, a press while the reply is being written, how long a session refuses prompts after Esc, and the `ui.open` line.
 - **Windows:** follows when the director is next at that computer.
 - **Check 33** (the mod's first piece in Desktop), folded into the same sitting: **Partly**. The usage readings and every phone line passed; its two typed-in-Desktop steps weren't run.
 
@@ -358,6 +362,26 @@ Six changes answer the sitting's findings. Each says what it does and what the t
 - **The phone's `stop`.** Its origin in the transcript is `human`, the same as a typed prompt, while the mod sees `bridge`.
 - **`session.receive`.** Design section 17.1's "On the Mac, `session.receive` fires" held only for the first sitting's path; the design now says so.
 
+### Third sitting (Mac, 23 October 2026)
+
+12:30 to 12:42 UTC, on macOS 27.0.1 with Claude Desktop 3.6556.2. The plugin was a copy of `main` at f070089, after the fixes above. The scratch session was started from the sitting's own session, so the app's "Linked sessions now" note led each of the director's lines. The kit is `probes/mac-sitting/`, run as its run sheet's Part 2 says.
+
+- **A typed code there (33-3): passed.** The director typed "H9VZ Confirm". It gave a signed confirmation that verifies, of the right setting (12:31:20, `confirms` = the kit's `check33Typed.setting`).
+- **A typed "stop" there: passed.** STOP went on by prompt (12:31:35). The chat asked the Lift STOP card and the pane drew "STOP is on" with a filled Lift STOP. The director answered Lift STOP in the chat, and the card left the waiting list.
+- **`/compact`: passed.** It ran at 12:33, compacting 113,929 tokens. Afterwards `hold` was still `held: false`. The wrap-up went through with no error, Claude's notification answered "Mobile push requested.", and nothing was refused.
+- **The hold card: passed, with one point.**
+  - The kit's `make-hold` (12:35) set a hold. With it on, a wrap-up and a notification still passed (12:37, nothing refused).
+  - The hold's card isn't made by a tick: the front desk composes it at its next `cards`. Here the agent ran `cards` in the scratch project, and from then on the tick listed "The installed kits differ…" (it named superpowers and mattpocock-skills as not installed). The run sheet had expected the tick alone to show it. In real use a session start that sets a hold is followed by the front desk's visit, so this costs nothing there.
+  - With `hold.json` removed (12:37:36), the tick recorded the lift and the card left. The director saw the pane go back to "Five things need you" within the tick.
+- **`/wheelhouse-digest` with enterprise-search installed: passed.** The mod's briefing showed as its own row ("Five things need you. Nothing is broken.", then the five waiting cards with recommendations, usage and a pointer to `/wheelhouse:board`). No assistant reply followed, and `briefedAt` moved from 12:18:00 to 12:38:38.
+- **No certificate ERROR lines: not shown.** Eight rows of the session's command output still carried "ERROR: failed to copy trust settings of system certificate". The session start's context does give `The Wheelhouse command is node --no-use-system-ca "…/cli.js"`, so the change is in place. But the kit's brief (`probes/mac-sitting/brief.mjs`) tells the session to type `node "PLUGIN/scripts/frontdesk/cli.js"` exactly, so none of its ten commands carried the flag. In the agent's own shell neither form prints the lines, so they weren't reproduced there. The brief needs the flag before this can be seen.
+- **The notice's words and the `received` lines: passed.**
+  - Trial A came by `SendMessage` and trial B by the app's `send_message`. For each, the chat showed "Received message from Mac sitting 3…" and then the app's red-triangle notice "A hook blocked your prompt: Prompt dropped by a hook: Wheelhouse: an update from another session, shown in the pane".
+  - Neither left a `user` row in the transcript.
+  - Two `received` lines (via `prompt`, origin `sdk`, no text) were written at 12:41:12 and 12:41:22.
+  - The app draws the notice as a warning, which can read as an error to the director.
+- **Not tried in this sitting:** a notification after a real absence, a press while the reply is being written, how long a session refuses prompts after Esc, and the `ui.open` line.
+
 ## What it means for the design
 
 - **The pane, its presses and the settings pane** (section 17.1) work in Desktop on the Mac as designed: each press records what the matching click would, signed where the record is a signed kind, and a settings choice is in force at once.
@@ -378,8 +402,12 @@ Six changes answer the sitting's findings. Each says what it does and what the t
 
 ## Needs the director
 
-- **After the second sitting (23 October 2026):** nothing now. The fixes above are made.
-- **A third short sitting on the Mac** must try:
+- **After the third sitting (23 October 2026):** no new sitting is needed for the fixes. The kit's brief should give the front desk's command with `--no-use-system-ca`, so the next sitting, or the first real use, can see that the ERROR lines are gone. These are still open, and can be watched in real use:
+  - a notification after a real absence;
+  - a press while the reply is being written;
+  - how long a session refuses prompts after Esc;
+  - the `ui.open` line.
+- **After the second sitting (23 October 2026)**, the third sitting was to try:
   - a code typed in a session another session started, and a typed "stop" there;
   - `/compact`, then a wrap-up and a notification;
   - deleting `hold.json`, and the card leaving within a tick;
