@@ -76,18 +76,19 @@ Each failure went back to the file that owns the behaviour. The `--again` round 
 - **36 and 37, the mod's front desk.** Every leg failed on text said before the playbook loaded ("I'll load the front-desk playbook first", "Using wheelhouse:front-desk to …", the second from Superpowers' habit of announcing a skill). The session start's front desk line now reads "Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line." 37 passed 2 of 3 after it, every leg in the trials that passed. For 36, more followed:
   - A refused `work` record named no field, so the session tried several, saying so each time. A record's refusal now names the stray field and the fields its kind takes (`scripts/state/events.js`).
   - The Why? leg left out the everyday sentence before the card. `cli.js why <n>` now prints the sentence to say, with the card's own everyday example from the glossary.
-  - The suggested-change leg still said a line before its one line. The playbook now spells out its four calls, with no text before or between them and no intake.
+  - The suggested-change leg still said a line before its one line. The playbook spelled out its four calls, with no text between them; that was not enough, and `suggest` replaced them (below).
 
 ## Scenario 36 after the run
 
-Scenario 36 is the one with-failure left. Its fixes landed while its round was running, so it was then run alone, three trials with Wheelhouse, after each of the last two changes. A trial passes only when all three of its legs do.
+Scenario 36 is the one with-failure left. Its fixes landed while its round was running, so it was then run alone, three trials with Wheelhouse, after each of the last three changes. A trial passes only when all three of its legs do.
 
 | Commit | Suggest a change… | Show me | Typed why | Whole trials |
 |---|---|---|---|---|
 | 9877e02 | 1 of 3 | 3 of 3 | 3 of 3 | 1 of 3 |
 | 1217995 | 2 of 3 | 3 of 3 | 2 of 3 | 1 of 3 |
+| c7fb77a | 3 of 3 | 3 of 3 | 3 of 3 | 3 of 3 |
 
-What still fails is a progress line said before the work record on a suggested change ("Handing the suggested change to the build; writing the work record now."), and once a why with no everyday example. Nothing was signed, decided or asked wrongly in any trial. The gate opens only on a fresh `npm run eval -- --all` with 36 passing.
+On 1217995 what still failed was a progress line said before the work record on a suggested change ("Handing the suggested change to the build; writing the work record now."), and once a why with no everyday example. Nothing was signed, decided or asked wrongly in any trial. Two changes in the front desk's command made both hold, as the read-back's line did for scenario 26: `suggest <card id> <work id> <the change>` hands a suggested change to the build in one call and prints the one line to say, and `why <n>` prints the whole sentence to say, with the card's everyday example from the glossary. On c7fb77a, 36 passed 3 of 3, every leg 3 of 3, for 1.59M input. The gate opens only on a fresh `npm run eval -- --all`.
 
 ## Passing without Wheelhouse too
 
