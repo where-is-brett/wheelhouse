@@ -289,6 +289,7 @@ test('start brings the default branch up to date before it makes the worktree: t
     assert.ok(args.includes(p.mirror));
     assert.equal(args.includes('origin') || args.includes(p.remote.url), false);
     assert.equal(args.at(-1), '+refs/wheelhouse/base:refs/remotes/origin/main');
+    assert.ok(args.includes('--upload-pack=git-upload-pack'), 'git\'s own upload-pack, whatever a remote of the mirror\'s name says');
     assert.equal(opts.env.GIT_ALLOW_PROTOCOL, 'https:file');
     assert.equal(opts.env.GIT_TERMINAL_PROMPT, '0');
     assert.equal(opts.env.GIT_CONFIG_GLOBAL, NULL_FILE);

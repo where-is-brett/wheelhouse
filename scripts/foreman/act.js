@@ -403,7 +403,10 @@ async function fetchBase(ctx, git, checkout, base) {
   });
   let copied;
   try {
-    copied = await fenced(['fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', mirror, `+${MIRROR_BASE}:${base}`], {
+    // The mirror's path is also read as a remote's name, so a remote of that name an agent slipped
+    // into the checkout's config after the look could name a program to serve the fetch: the
+    // argument names git's own, and outranks it.
+    copied = await fenced(['fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--upload-pack=git-upload-pack', mirror, `+${MIRROR_BASE}:${base}`], {
       env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
     });
   } catch (e) {
