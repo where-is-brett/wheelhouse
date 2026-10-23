@@ -1075,7 +1075,7 @@ test('again gives the card the board numbers n, with its id, and records it as a
   });
 });
 
-test('why n notes a Why? answer for card n and prints one line', async () => {
+test('why n notes a Why? answer for card n and says the one sentence to put before the card', async () => {
   await inHome(async () => {
     const one = cardEvent(PRODUCT(1), 1);
     const two = cardEvent(PRODUCT(2), 2);
@@ -1084,7 +1084,9 @@ test('why n notes a Why? answer for card n and prints one line', async () => {
     const n = model.director.waiting.findIndex((w) => w.since === two.at) + 1;
     const out = await run(helper, ['why', String(n)]);
     assert.equal(out.code, 0, out.err);
-    assert.equal(out.out, `Noted that you asked why about card ${n}.\n`);
+    const [noted, next] = out.out.trimEnd().split('\n');
+    assert.equal(noted, `Noted that you asked why about card ${n}.`);
+    assert.match(next, new RegExp(`^Next, in one message: this one sentence, then card ${n} from \`again ${n}\` in your clickable-question tool\. "It's like .+: <what card ${n} decides, in plain words>\."$`));
     // The answer names the card's question as it was shown, as the pane's own answers do.
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'card-answer', data: { question: two.data.question, label: WHY } }]);
     // It never gives the card again, and a Why? decides nothing: the card still waits.
@@ -1111,7 +1113,7 @@ test('why n keeps its answer in pending/ when the helper doesn\'t take it, and s
     writeProject('o__p', { folder, remoteUrl: 'https://example.test/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     const kept = await run({ client: down }, ['why', '1'], undefined, { cwd: folder });
     assert.equal(kept.code, 0, kept.err);
-    assert.equal(kept.out, 'Noted that you asked why about card 1.\n');
+    assert.equal(kept.out.split('\n')[0], 'Noted that you asked why about card 1.');
     const files = fs.readdirSync(pendingDir('o__p')).filter((name) => name.endsWith('.json'));
     assert.equal(files.length, 1);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pendingDir('o__p'), files[0]), 'utf8')),

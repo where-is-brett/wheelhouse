@@ -488,7 +488,18 @@ export async function why({ client, cwd, n }) {
     got = null;
   }
   if (!taken(got) && !keepAnswer(cwd, body)) throw new CliError(`The ${WHY} about card ${n} wasn't noted: ${said(got, 'the host helper did not answer')}`);
-  return [`Noted that you asked why about card ${n}.`];
+  return [`Noted that you asked why about card ${n}.`, whyNext(views, question, n)];
+}
+
+// What the front desk does next for a Why?, with the everyday example of the first term the card
+// uses that the glossary gives one for, so the one sentence before the card is never left out
+// (scenario 36).
+function whyNext(views, question, n) {
+  const glossary = glossaryOf(views.glossary);
+  const term = Object.keys(glossary).find((t) => glossary[t].example && termPattern(t).test(question));
+  const like = term === undefined ? null : glossary[term].example.trim().replace(/^like\s+/i, '').replace(/[.!]+$/, '');
+  const opening = like ? `It's like ${like}: <what card ${n} decides, in plain words>.` : `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`;
+  return `Next, in one message: this one sentence, then card ${n} from \`again ${n}\` in your clickable-question tool. "${opening}"`;
 }
 
 // --- record ---
