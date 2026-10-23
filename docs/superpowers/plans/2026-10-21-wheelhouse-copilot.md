@@ -1118,7 +1118,7 @@ test('a merge that could not reach the host says so, and a stale head says the h
 
 ### Task 1: The plugin for Copilot CLI, and the watcher on Copilot
 
-**Safety: no**
+**Safety: yes**
 
 **Files:**
 - Create: `plugin.json` (the Agent Plugins manifest), `adapters/copilot/plugin/com.github.copilot/` (no hooks), `tests/scripts/agents/copilot-plugin.test.js`
@@ -1126,8 +1126,17 @@ test('a merge that could not reach the host says so, and a stale head says the h
 
 **Interfaces:**
 - Produces: a root manifest Copilot reads first (check 56) naming the Lean kit's skills and agents, and carrying no hooks; `.claude-plugin/` unchanged. Check 56 found the root `plugin.json` is read first and its `com.github.copilot/` hooks do run, so the root manifest carries no hooks and `com.github.copilot/` holds none; the `hooks/hooks.json` beside `.claude-plugin/` did not run in that layout (seen with Copilot-format hooks only), so `.claude-plugin/` needs no empty hooks list. Direct installs of a local path are deprecated (check 56): setup's `copilot plugin install` is one function, so a marketplace route replaces it before Copilot drops direct installs, and the ledger says so.
+- From Part 7 (rulings P7-1, P7-22 and later): what switches the Copilot sessions on, in one commit. `adapters/copilot/sessions.js`'s built object becomes the adapter's `sessions` part and leaves `pending`, in the same commit that:
+  - has the waker's launch write a Copilot call's whole stdout to its `activityFile`; on exit read `sessionIdOf` and rewrite the session file; settle a run with no `result` event as failed whatever the exit code, and read refusals from the tool events;
+  - calls `writeSessionHome` before every start and fails the start if it throws;
+  - writes the `activity` event (P7-4) and, when a guard refusal appears, one board note; `waker.prune()` calls `pruneActivity`;
+  - passes the level's inputs on every system (`level`, `grants` from a fresh `buildGrants`, `guardedCommand`, `worktree`, `domains`, `realUsers`, `keysUnreadable`, `hostApproval`, `unattendedConfirmed`), from their trusted sources;
+  - writes a `level` event when the level a project's builders run at changes;
+  - decides `start.js`'s long foreman on Copilot, the Copilot cards line under STOP at Middle and Full, the pinned loops' skills in each session's home, and whether the window takes an Ask allowance's answer;
+  - has the tool guard refuse a nested `copilot` started from an agent's shell;
+  - adds the foreman's step that asks the helper to review a pull request (`POST /review/run`), with a limit so a caller can't re-run a review on the same head until it says CLEAN; `/pr/carried` reads the review kind.
 
-- [ ] **Step 1: Tests:** `the root manifest carries no hooks`; `Copilot installing the plugin loads no Wheelhouse hook from it` (with the stand-in, from check 56's answer); `Claude Code's manifest is unchanged`; `a Copilot project's foreman and features are started by the Copilot adapter`. **Step 2: Run, implement, run `npm test`.** **Step 3: Commit** (`"Package Wheelhouse for Copilot CLI and run the watcher's sessions on Copilot"`).
+- [ ] **Step 1: Tests:** `the root manifest carries no hooks`; `Copilot installing the plugin loads no Wheelhouse hook from it` (with the stand-in, from check 56's answer); `Claude Code's manifest is unchanged`; `a Copilot project's foreman and features are started by the Copilot adapter`; `a Copilot run with no result event is a failed wake whatever its exit code`. **Step 2: Run, implement, run `npm test`.** **Step 3: Commit** (`"Package Wheelhouse for Copilot CLI and run the watcher's sessions on Copilot"`).
 
 ### Task 2: Lineage and usage on Copilot
 
