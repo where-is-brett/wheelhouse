@@ -7,8 +7,9 @@ import path from 'node:path';
 import claudeSessions from '../../adapters/claude-code/sessions.js';
 import copilotSessions from '../../adapters/copilot/sessions.js';
 import { computerId } from '../lib/paths.js';
+import { AGENTS } from './names.js';
 
-export const AGENTS = Object.freeze(['claude-code', 'copilot']);
+export { AGENTS };
 
 // Copilot's sessions part is built, but its checks refuse until its switch is on (adapters/copilot/sessions.js).
 const SESSIONS = Object.freeze({ 'claude-code': claudeSessions, copilot: copilotSessions });

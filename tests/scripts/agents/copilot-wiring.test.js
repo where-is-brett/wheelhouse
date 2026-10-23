@@ -57,9 +57,11 @@ function signedIn() {
   return dir;
 }
 
-// Copilot's sessions part switched on, with no kit to fetch and a scratch sign-in.
+// Copilot's sessions part switched on, with no kit to fetch and a scratch sign-in. Its versions are read with no
+// program started, and the safety subset a new version runs (Part 8 Task 2) is a stand-in that passes.
 const copilotOn = ({ kits = { manifest: { upstreams: [] } } } = {}) => sessionsPart({
   ready: true, kits, home: { signedInFrom: signedIn(), node: process.execPath, root: ROOT },
+  versions: { run: async () => { throw new Error('no copilot is started here'); }, runSubset: async () => ({ ok: true }) },
 });
 
 const copilotConfig = (over = {}) => readConfig(JSON.stringify(projectConfig({ agents: { [computerId()]: 'copilot' }, ...over })));

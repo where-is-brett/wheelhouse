@@ -7,12 +7,17 @@
 // copied into a session's home. A folder that differs, or a copy that isn't there, refuses the start, and the error
 // carries the lineage hold's record (the `lineage-hold` kind, for the card the lineage hold already raises).
 //
+// A mismatch also writes the project's kit hold (`lineage/hold-copilot-kits.json`, scripts/lineage/check.js), so the
+// project's hooks hold edits and commands and no tick lifts the hold's card while it stands; a start whose kits match
+// removes it (kitsForSession).
+//
 // A link is never copied or followed: a kit folder holding one refuses the start.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fingerprintTree } from '../../lineage/fingerprint.js';
 import { fetchUpstream, readManifest } from '../../lineage/manifest.js';
+import { holdAgentWork, liftAgentWork, markAgentRecorded } from '../../lineage/check.js';
 import { wheelhouseHome } from '../../lib/paths.js';
 
 const NAME = /^[a-z0-9-]{1,64}$/;
@@ -128,4 +133,28 @@ export function kitSkills({ manifest = readManifest(), now = () => new Date() } 
   const twice = names.find((name, i) => names.indexOf(name) !== i);
   if (twice !== undefined) throw new Error(`Two upstream kits have a skill named ${twice}, so neither can be given to a session`);
   return skills;
+}
+
+// The agent hold a kit that differs takes.
+export const KITS_HOLD = 'copilot-kits';
+
+// kitsForSession({ project, manifest, fetchTo, now }) -> Promise<skills>
+//   Before a session of `project` starts: the kits fetched once (ensureKits) and checked (kitSkills). A match lifts
+//   the project's kit hold; a mismatch writes it and refuses the start, the error carrying the lineage hold's record
+//   until it is in the state (its `raised`, which the waker calls), so a hold raises one card. A fetch that fails
+//   refuses the start as it is, and writes no hold: nothing was found to differ.
+export async function kitsForSession({ project, now = () => new Date(), ...kits } = {}) {
+  try {
+    await ensureKits({ ...kits, now });
+    const skills = kitSkills({ ...kits, now });
+    liftAgentWork(project, KITS_HOLD);
+    return skills;
+  } catch (error) {
+    const record = Array.isArray(error?.records) ? error.records.find((r) => r?.kind === 'lineage-hold') : undefined;
+    if (record === undefined) throw error;
+    const { set, recorded } = holdAgentWork({ project, name: KITS_HOLD, mismatches: record.data.mismatches, now });
+    error.records = recorded ? [] : [record];
+    error.raised = () => markAgentRecorded(project, KITS_HOLD, set);
+    throw error;
+  }
 }

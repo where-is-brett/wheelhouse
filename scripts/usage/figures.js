@@ -6,11 +6,18 @@
 // This reads only. Today's counts are summed from the raw files without writing a summary
 // (the store's computeDay), and the one file written here is usage/raised.json, through markRaised.
 // A missing or damaged file becomes a missing figure and a line in `missing`, never an error.
+//
+// A background session that reports its own use (ruling P8-21, check 64) adds credits: when any session
+// in the window has such runs, every figure carries `credits` too, summed from the runs that gave them and null
+// (shown as not available) where none did; unusual use is then worked out on credits where there are no tokens; and
+// the agent's own words (scripts/agents/usage-words.js) take the place of the allowance line, with `words` for the
+// board's note. Without such runs nothing here differs from before.
 import fs from 'node:fs';
 import path from 'node:path';
 import { usageDir } from '../lib/paths.js';
 import { UNUSUAL, WEEK_MS, KEEP_DAYS } from '../lib/core-numbers.js';
 import { readDay, computeDay } from './store.js';
+import { usageWords } from '../agents/usage-words.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ROLES = ['front-desk', 'foreman', 'feature'];
@@ -77,19 +84,23 @@ function loadSession(id, cache) {
   return meta;
 }
 
-// Sums of tokens and dollars, with whether any figure was seen at all.
+// Sums of tokens, dollars and credits, with whether any figure was seen at all.
 function sums() {
-  return { tokens: 0, usd: 0, tokensSeen: false, usdSeen: false };
+  return { tokens: 0, usd: 0, credits: 0, tokensSeen: false, usdSeen: false, creditsSeen: false };
 }
 function addTo(total, entry) {
   total.tokens += entry.tokens;
   total.usd += entry.usd;
+  total.credits += entry.credits;
   if (entry.tokensSeen) total.tokensSeen = true;
   if (entry.usdSeen) total.usdSeen = true;
+  if (entry.creditsSeen) total.creditsSeen = true;
 }
-const figure = (total) => ({
+// `credits` only when some session reported its own use: null when none of these runs gave a credit figure.
+const figure = (total, credits = false) => ({
   tokens: total.tokensSeen ? total.tokens : null,
   usd: total.usdSeen ? round(total.usd) : null,
+  ...(credits ? { credits: total.creditsSeen ? round(total.credits) : null } : {}),
 });
 
 // One session's share of one day. Dollars are telemetry's where the session has any, else the mod's reading.
@@ -109,15 +120,21 @@ function entryOf(date, id, raw, meta) {
   for (const [source, count] of Object.entries(sources)) {
     if (source !== 'main' && source !== 'unknown') subagentTokens += number(count);
   }
+  const runs = Number.isInteger(raw.runs) && raw.runs > 0;
+  const credits = runs && typeof raw.credits === 'number' && Number.isFinite(raw.credits) && raw.credits >= 0 ? raw.credits : null;
   return {
     date,
     id,
     meta,
     tokens,
     usd: telemetryUsd > 0 ? telemetryUsd : modUsd ?? 0,
+    credits: credits ?? 0,
     tokensSeen: tokens > 0,
     usdSeen: telemetryUsd > 0 || modUsd !== null,
+    creditsSeen: credits !== null,
     telemetry: tokens > 0 || telemetryUsd > 0,
+    runs,
+    agent: runs && typeof raw.agent === 'string' ? raw.agent : null,
     models,
     subagentTokens,
   };
@@ -169,7 +186,7 @@ function causeOf(item, metric) {
 // Items of one kind against the others of the same kind: those with use in the week whose
 // value is over `factor` times the median of the rest, once there are enough of the kind.
 function unusualOf(kind, items, factor) {
-  const metric = items.some((item) => item.tokens > 0) ? 'tokens' : 'usd';
+  const metric = items.some((item) => item.tokens > 0) ? 'tokens' : items.some((item) => item.credits > 0) ? 'credits' : 'usd';
   const valued = items.filter((item) => item[metric] > 0);
   if (valued.length < UNUSUAL.minSamples) return [];
   const found = [];
@@ -254,9 +271,12 @@ export function usageFigures({ project = null, now, factor } = {}) {
     if (entry.meta?.role === 'feature' && entry.meta.work) bump(features, entry.meta.work, entry);
   }
 
+  // Whether any session here reported its own use, and the words of its agent.
+  const runs = entries.some((entry) => entry.runs);
+  const words = runs ? usageWords(entries.find((entry) => entry.agent !== null)?.agent) : null;
   const byPart = {};
-  for (const role of ROLES) byPart[role] = parts.has(role) ? figure(parts.get(role)) : { tokens: null, usd: null };
-  const byFeature = Object.fromEntries([...features].map(([work, total]) => [work, figure(total)]));
+  for (const role of ROLES) byPart[role] = figure(parts.get(role) ?? sums(), runs);
+  const byFeature = Object.fromEntries([...features].map(([work, total]) => [work, figure(total, runs)]));
 
   const kinds = { session: new Map(), feature: new Map(), day: new Map() };
   for (const entry of entries) {
@@ -272,13 +292,17 @@ export function usageFigures({ project = null, now, factor } = {}) {
     .map(({ ratio, ...item }) => item);
 
   const missing = [];
-  if (!telemetry) missing.push(NO_TOKENS);
-  if (!allowance) missing.push(NO_ALLOWANCE);
+  if (words !== null) missing.push(words.allowance);
+  else {
+    if (!telemetry) missing.push(NO_TOKENS);
+    if (!allowance) missing.push(NO_ALLOWANCE);
+  }
 
   return {
     week: {
-      from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), ...figure(weekTotal), share, shareAt,
+      from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), ...figure(weekTotal, runs), share, shareAt,
     },
+    ...(words !== null ? { words: { note: words.note } } : {}),
     byPart,
     bySubagents: { tokens: subagents },
     byFeature,

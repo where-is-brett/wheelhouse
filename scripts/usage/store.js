@@ -16,7 +16,11 @@
 // Layout:
 //   series.json            for a cumulative series its last value, and for a delta one its
 //                          recent export times, so a repeat adds nothing
-//   records/<date>.jsonl   increases: { at, session, model, type?, source?, tokens? | usd? }
+//   records/<date>.jsonl   increases: { at, session, model, type?, source?, tokens? | usd? }, and a
+//                          background session's use as its run gave it (ruling P8-21): { at, session,
+//                          role, source: 'run', agent, credits, premiumRequests, tokens? }, each figure null
+//                          when the run didn't give it (tokens is then counts by kind, never a sum,
+//                          so a reader of the sums above passes over it)
 //   mod/<date>.jsonl       the mod's readings of a session's running cost: { at, session, usd }, and each
 //                          message it kept out of the front desk: { at, event: 'received', via, origin, session }
 //   allowance.json         the latest rate-limit windows: { at, windows }
@@ -288,6 +292,25 @@ export function recordSession({ session, project, role, work, at, by }) {
   writeJson(file, record);
 }
 
+const figureOrNull = (value) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null);
+const TOKEN_KINDS = ['input', 'output', 'cache_read', 'cache_write'];
+
+// A background session's use, as its own run gave it (ruling P8-21; check 64): one line in the day's records, with
+// the session's purpose recorded too (recordSession), so the week's figures place it. `credits`, `premiumRequests`
+// and each count in `tokens` are numbers or null, never 0 for a figure the run didn't give.
+// `agent` is the agent's name, by which the figures find the words for its use (scripts/agents/usage-words.js).
+export function recordRunUsage({ at, session, project, role, work, agent, credits, premiumRequests, tokens }) {
+  checkSession(session);
+  const time = timeOf(at);
+  if (typeof agent !== 'string' || !/^[a-z0-9-]{1,64}$/.test(agent)) throw new Error("A run's use needs the agent's name");
+  recordSession({ session, project, role, work, at: time });
+  const line = { at: time, session, role, source: 'run', agent, credits: figureOrNull(credits), premiumRequests: figureOrNull(premiumRequests) };
+  if (tokens !== null && typeof tokens === 'object' && !Array.isArray(tokens)) {
+    line.tokens = Object.fromEntries(TOKEN_KINDS.map((kind) => [kind, figureOrNull(tokens[kind])]));
+  }
+  appendLines('records', new Map([[dateOf(time), [line]]]));
+}
+
 function bump(map, key, field, amount) {
   if (!map.has(key)) map.set(key, { tokens: 0, usd: 0 });
   map.get(key)[field] += amount;
@@ -312,12 +335,19 @@ function buildDay(date) {
   const modFile = usagePath('mod', `${date}.jsonl`);
   const sessions = new Map();
   const sessionOf = (id) => {
-    if (!sessions.has(id)) sessions.set(id, { tokens: 0, usd: 0, byModel: new Map(), bySource: new Map(), modUsd: null });
+    if (!sessions.has(id)) sessions.set(id, { tokens: 0, usd: 0, byModel: new Map(), bySource: new Map(), modUsd: null, runs: 0, credits: null });
     return sessions.get(id);
   };
   for (const line of readLines(rawFile)) {
     if (typeof line.session !== 'string' || !SESSION.test(line.session)) continue;
     const entry = sessionOf(line.session);
+    // A run's own figures: its credits summed, a run that gave none adding nothing.
+    if (line.source === 'run') {
+      entry.runs += 1;
+      if (typeof line.agent === 'string') entry.agent = line.agent;
+      if (figureOrNull(line.credits) !== null) entry.credits = (entry.credits ?? 0) + line.credits;
+      continue;
+    }
     const model = typeof line.model === 'string' ? line.model : 'unknown';
     if (Number.isFinite(line.tokens)) {
       entry.tokens += line.tokens;
@@ -351,6 +381,8 @@ function buildDay(date) {
       byModel: Object.fromEntries([...entry.byModel].map(([model, sums]) => [model, { tokens: sums.tokens, usd: round(sums.usd) }])),
       bySource: Object.fromEntries(entry.bySource),
       modUsd: entry.modUsd,
+      // Only for a session with runs of its own, so a day of the others reads as it always has.
+      ...(entry.runs > 0 ? { runs: entry.runs, agent: entry.agent ?? null, credits: entry.credits === null ? null : round(entry.credits) } : {}),
     }])),
   };
   return summary;

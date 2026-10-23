@@ -53,9 +53,11 @@
 //
 // What an adapter may add (ruling P8-2), each asked for only when it is there:
 //   - `prepare({ project, target })`, run before every start: a throw refuses
-//     the start before anything is run;
+//     the start before anything is run, the error's `records` are raised, each
+//     once, and its `raised(record)`, when it has one, is told of each once it
+//     is in the state;
 //   - a call's `output`, a file the child's stdout and stderr are appended to,
-//     with `afterRun({ stdout, code, call, target, at })` reading what the run
+//     with `afterRun({ stdout, code, call, target, project, at })` reading what the run
 //     appended once it ends: its `{ ok, why }` settles the wakes in place of the
 //     exit code, its `records` are written through `raise`, and, for a call
 //     with `idFromRun`, its `sessionId` is the one kept for the feature's wakes
@@ -880,7 +882,7 @@ export function makeWaker({
   async function finishRun(adapter, target, kept, code, entries) {
     let result;
     try {
-      result = adapter.afterRun({ stdout: readOutput(kept.output, kept.from), code, call: kept, target, at: now().toISOString() });
+      result = adapter.afterRun({ stdout: readOutput(kept.output, kept.from), code, call: kept, target, project, at: now().toISOString() });
     } catch (error) {
       result = { ok: false, why: `its output couldn't be read: ${error instanceof Error ? error.message : 'unknown error'}`, sessionId: null, records: [] };
     }
@@ -960,7 +962,13 @@ export function makeWaker({
           try {
             await raise(record);
             raisedPrepare.add(said);
-          } catch { /* raised again at the next start */ }
+          } catch {
+            continue; // raised again at the next start
+          }
+          // The adapter keeps that its record is in the state, so a later start (or another watcher) raises it no more.
+          try {
+            if (typeof error?.raised === 'function') error.raised(record);
+          } catch { /* raised again, at worst */ }
         }
         throw error;
       }

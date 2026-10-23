@@ -17,6 +17,7 @@ import { reachFor, safeGit } from '../lib/safe-git.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { AGENT_PINS } from '../agents/pins.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
 export const MODELS = 'the routing table in .claude/wheelhouse.json';
@@ -59,6 +60,9 @@ const repoRoot = () => path.resolve(path.dirname(fileURLToPath(import.meta.url))
 // --- Reading ---
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+// The agents' pins (`agents`, ruling P8-18): each agent's name, with the version of its command line it is pinned to.
+const PIN = /^\d+\.\d+\.\d+$/;
+const pinsOk = (agents) => isObject(agents) && Object.entries(agents).every(([name, pin]) => /^[a-z0-9-]{1,64}$/.test(name) && isObject(pin) && typeof pin.cli === 'string' && PIN.test(pin.cli));
 const isHashed = (list) => Array.isArray(list) && list.every((item) => isObject(item) && typeof item.path === 'string' && typeof item.hash === 'string');
 
 // The manifest in `root`'s lineage folder; throws when it is missing or is not a manifest.
@@ -73,6 +77,7 @@ export function readManifest(root = repoRoot()) {
     && typeof manifest.wheelhouse?.version === 'string'
     && typeof manifest.claudeCode?.floor === 'string'
     && typeof manifest.models === 'string'
+    && (manifest.agents === undefined || pinsOk(manifest.agents))
     && Array.isArray(manifest.upstreams)
     && manifest.upstreams.every((u) => isObject(u)
       && ['name', 'plugin', 'repo', 'ref', 'sha'].every((key) => typeof u[key] === 'string')
@@ -168,8 +173,11 @@ export async function fetchUpstream(upstream, dir) {
   if (head !== upstream.sha) throw new Error(`${upstream.name} fetched ${head}, not ${upstream.sha}`);
 }
 
+// The agents' pins as the manifest holds them, from scripts/agents/pins.js.
+export const agentPins = (pins = AGENT_PINS) => Object.fromEntries(Object.entries(pins).map(([name, pin]) => [name, { cli: pin.cli }]));
+
 // The manifest for the upstream copies in `roots` (name -> folder), fingerprinted.
-export function buildManifest({ roots, version, upstreams = UPSTREAMS }) {
+export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AGENT_PINS }) {
   return {
     v: 1,
     wheelhouse: { version },
@@ -186,6 +194,7 @@ export function buildManifest({ roots, version, upstreams = UPSTREAMS }) {
       };
     }),
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
+    agents: agentPins(pins),
     models: MODELS,
   };
 }
@@ -224,9 +233,9 @@ const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 // temporary folder (removed after), and checks: each listed folder's and file's fingerprint
 // is the manifest's; the register's anchors and carried text are found there; the
 // marketplace pins each upstream at the manifest's commit; and the pins in this script
-// (`upstreams`) are the manifest's. `log` takes a line for each thing found. Resolves with
+// (`upstreams`) and the agents' pins (`pins`) are the manifest's. `log` takes a line for each thing found. Resolves with
 // { ok, broken }.
-export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstream, upstreams = UPSTREAMS, log = () => {} } = {}) {
+export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstream, upstreams = UPSTREAMS, pins = AGENT_PINS, log = () => {} } = {}) {
   const broken = [];
   const say = (line) => log(line);
   const breaks = (line) => { broken.push(line); say(`broken: ${line}`); };
@@ -286,6 +295,7 @@ export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstrea
   }
   const named = (list) => JSON.stringify(list.map(({ name, plugin, repo, ref, sha }) => [name, plugin, repo, ref, sha]));
   if (named(upstreams) !== named(manifest.upstreams)) breaks(`the pins in scripts/lineage/manifest.js are not the manifest's: write the manifest again`);
+  if (JSON.stringify(manifest.agents ?? null) !== JSON.stringify(agentPins(pins))) breaks(`the agents' pins in scripts/agents/pins.js are not the manifest's: write the manifest again`);
   say(broken.length === 0 ? 'lineage ok' : `lineage broken: ${broken.length}`);
   return { ok: broken.length === 0, broken };
 }

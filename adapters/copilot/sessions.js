@@ -19,7 +19,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { kitSkills, ensureKits } from '../../scripts/agents/copilot/kits.js';
+import { kitsForSession } from '../../scripts/agents/copilot/kits.js';
+import { checkVersions, noSubsetRunner, readVersions } from '../../scripts/agents/copilot/versions.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
 import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/lib/copilot-numbers.js';
@@ -29,6 +30,10 @@ import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { isConfiguredBuildCommand } from '../../scripts/protection/windows-builds.js';
 import { scanText } from '../../scripts/state/secret-scan.js';
 import { fingerprintTree } from '../../scripts/lineage/fingerprint.js';
+import { writeProvenance } from '../../scripts/lineage/check.js';
+import { readManifest } from '../../scripts/lineage/manifest.js';
+import { run as realRun } from '../../scripts/lib/run.js';
+import { recordRunUsage } from '../../scripts/usage/store.js';
 import { copilotHome, file as hookFile, writeRegistration } from './hooks.js';
 import { levelAllowed, levelRules } from './permissions.js';
 
@@ -509,6 +514,55 @@ export function sessionUsage({ usageFile = null, stdout = '' } = {}) {
   return { source: premiumRequests === null ? null : 'result', totalNanoAiu: null, totalPremiumRequestCost: null, tokens: tokensOf(null), premiumRequests };
 }
 
+// The model a run used, by name (check 64: the usage file's `currentModel`, else the last checkpoint's), or null.
+export function modelOfRun({ usageFile = null, stdout = '' } = {}) {
+  const plain = (value) => (typeof value === 'string' && isModelName(value) ? value : null);
+  if (typeof usageFile === 'string') {
+    try {
+      const file = JSON.parse(fs.readFileSync(usageFile, 'utf8'));
+      if (plain(file?.currentModel) !== null) return file.currentModel;
+    } catch {
+      // Missing or unreadable: the checkpoint.
+    }
+  }
+  let model = null;
+  for (const event of eventsOf(stdout)) {
+    if (event.type === 'session.usage_checkpoint') model = plain(event.data?.accountingSnapshot?.currentModel) ?? plain(event.data?.currentModel) ?? model;
+  }
+  return model;
+}
+
+// A credit is a billion of the `totalNanoAiu` unit (check 64 reads the name so; Copilot's output doesn't say it).
+const NANO_AIU_PER_CREDIT = 1e9;
+
+// What a run that named its session leaves on this computer once it ends (rulings P8-19 and P8-21): its use in the
+// usage store, by the session it was (the sessions Wheelhouse started, each counted as its own use), and the
+// session's provenance, for the pull requests it opens: the pinned kits' commits (the start checked them), the
+// versions read before it started (`versions`, each null when not known) and the model it used. Each informs: one
+// that can't be written is passed over, and the run still settles.
+function recordRun({ project, sessionId, work, usage, model, versions, at }) {
+  try {
+    recordRunUsage({
+      at, session: sessionId, project, role: work === undefined ? 'foreman' : 'feature', work, agent: 'copilot',
+      credits: usage.totalNanoAiu === null ? null : usage.totalNanoAiu / NANO_AIU_PER_CREDIT,
+      premiumRequests: usage.totalPremiumRequestCost ?? usage.premiumRequests,
+      tokens: usage.tokens,
+    });
+  } catch { /* the run's use isn't counted */ }
+  try {
+    let upstreams = {};
+    let ok = false;
+    try {
+      upstreams = Object.fromEntries(readManifest().upstreams.map((u) => [u.name, u.sha]));
+      ok = true;
+    } catch { /* no manifest: the kits can't be named, and the fingerprints don't match */ }
+    writeProvenance({
+      project, sessionId, upstreams, ok, agent: 'copilot',
+      agentVersion: versions?.cli ?? null, editor: versions?.vscode ?? null, runtime: versions?.runtime ?? null, models: model === null ? [] : [model],
+    });
+  } catch { /* the session has no provenance, so its pull requests carry none */ }
+}
+
 // Removes the project's activity older than ACTIVITY_DAYS: each run's output, usage file and log folder, by when
 // it was last written. A link is removed, never followed, and a link anywhere from Wheelhouse's home down to the
 // activity folder refuses the whole prune (ruling P8-12). Returns the names removed.
@@ -549,14 +603,18 @@ function guardNote(refusals, work) {
 // to the state: the run's `activity` (ruling P7-4), with its use (sessionUsage) and, for a feature, its work; and,
 // when a guard refused anything, one `note` for the board. `call` is what the waker kept of the call: its `output`,
 // `usageFile` and `idFromRun`. A first run's output (`idFromRun`) is renamed to the session's own name, so its wakes
-// append to it (activityFile).
-export function afterRun({ stdout = '', code: _code = null, call = {}, target, at = new Date().toISOString() } = {}) {
+// append to it (activityFile). Given the `project`, a run that named its session also records its use and the
+// session's provenance (recordRun), with `versions`, the versions read before it started.
+export function afterRun({ stdout = '', code: _code = null, call = {}, target, project, versions = null, at = new Date().toISOString() } = {}) {
   const finished = eventsOf(stdout).some((event) => event.type === 'result');
   const sessionId = sessionIdOf(stdout);
   const work = typeof target === 'string' && target.startsWith('feature-') ? target.slice('feature-'.length) : undefined;
   const summary = activitySummary(stdout);
   const usage = sessionUsage({ usageFile: typeof call?.usageFile === 'string' ? call.usageFile : null, stdout });
   const records = [{ kind: 'activity', data: { ...summary, role: work === undefined ? 'foreman' : 'builder', ...(work === undefined ? {} : { work }), usage, at } }];
+  if (typeof project === 'string' && sessionId !== null) {
+    recordRun({ project, sessionId, work, usage, model: modelOfRun({ usageFile: typeof call?.usageFile === 'string' ? call.usageFile : null, stdout }), versions, at });
+  }
   const guards = summary.refusals.filter((r) => r.kind === 'guard');
   if (guards.length > 0) records.push({ kind: 'note', data: { text: guardNote(guards, work) } });
   if (call?.idFromRun === true && sessionId !== null && typeof call.output === 'string' && path.basename(call.output).endsWith('.jsonl')) {
@@ -586,8 +644,13 @@ export const GRANT_PROOFS = Object.freeze(['window']);
 
 // The sessions part. `ready` is the switch (BACKGROUND_SESSIONS_READY unless a test builds the part switched on);
 // `kits` ({ manifest, fetchTo }) and `home` ({ signedInFrom, node, root }) are for tests, which never fetch from the
-// network or read the person's Copilot home.
-export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, home = {} } = {}) {
+// network or read the person's Copilot home. `versions` ({ run, env, home, runSubset }) is how the versions are read
+// and a new one checked: `run` starts `copilot --version`, and `runSubset` is the safety subset's runner, which Part 8
+// Task 3 builds (until then noSubsetRunner, which fails, so a new version holds Copilot work).
+export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, home = {}, versions: versionsFrom = {} } = {}) {
+  const { runSubset = noSubsetRunner, run = realRun, ...readFrom } = versionsFrom;
+  // The versions read before this part's latest start, for that run's provenance.
+  let lastVersions = null;
   return Object.freeze({
     checkForeman: (config) => checkForemanAt(config, ready),
     checkFeature: (config) => checkFeatureAt(config, ready),
@@ -595,16 +658,20 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, hom
     featureStartCall: (options) => switched(ready, buildFeatureStartCall, options),
     featureResumeCall: (options) => switched(ready, buildFeatureResumeCall, options),
     finalAnswer,
-    // Before every start (ruling P7-27 a): the pinned kits fetched once and checked, the activity folder, and the
-    // session's own home written afresh. A throw refuses the start; nothing has been run.
+    // Before every start (ruling P7-27 a): the versions in use read, and a new one checked by the safety subset before
+    // any work starts on it (rulings P8-20, P8-23); the pinned kits fetched once and checked; the activity folder; and
+    // the session's own home written afresh. A throw refuses the start; nothing has been run. A version that fails,
+    // or a kit that differs, holds the project's work (its agent hold) and carries the lineage hold's record.
     async prepare({ project, target }) {
       switchedOn(ready);
-      await ensureKits(kits);
-      const skills = kitSkills(kits);
+      const versions = await readVersions({ ...readFrom, run });
+      lastVersions = versions;
+      await checkVersions({ project, versions, runSubset, ...(readFrom.home === undefined ? {} : { home: readFrom.home }) });
+      const skills = await kitsForSession({ project, ...kits });
       activityFolder(project);
       writeSessionHome({ project, target, skills, ...home });
     },
-    afterRun,
+    afterRun: (options) => afterRun({ ...options, versions: lastVersions }),
     pruneActivity,
     // A build-command grant counts only from a click in the helper's own window (ruling P8-8): no Copilot hook
     // signs, so no other answer binds.

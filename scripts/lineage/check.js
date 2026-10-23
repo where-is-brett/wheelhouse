@@ -43,14 +43,65 @@ function liftMark(project) {
   return path.join(projectHome(project), 'lineage', 'lifted.json');
 }
 
-// Whether the project is held. Anything at the hold file's place counts.
+// An agent's own hold, beside the session start's (rulings P8-13, P8-23): `lineage/hold-<name>.json`, written and
+// removed by the agent's own starter (its kits, or a new version of the agent that hasn't passed the safety checks),
+// never by the session start's check, so a matching check can't lift it. `name` is a plain name, the agent's own.
+// The file is { at, mismatches, why?, recorded?, ...what the starter keeps }, as the hold file is.
+const AGENT_HOLD_NAME = /^[a-z0-9-]{1,64}$/;
+const AGENT_HOLD_FILE = /^hold-[a-z0-9-]{1,64}\.json$/;
+export function agentHoldFile(project, name) {
+  if (typeof name !== 'string' || !AGENT_HOLD_NAME.test(name)) throw new Error(`An agent's hold needs a plain name: ${JSON.stringify(name)}`);
+  return path.join(projectHome(project), 'lineage', `hold-${name}.json`);
+}
+
+// Whether the project is held: by the session start's hold file, or by any agent's own. Anything at the hold file's
+// place counts, and so does a lineage folder that can't be read.
 export function isHeld(project) {
   try {
     fs.lstatSync(holdFile(project));
     return true;
   } catch (error) {
+    if (error?.code !== 'ENOENT') return true;
+  }
+  try {
+    return fs.readdirSync(path.dirname(holdFile(project))).some((name) => AGENT_HOLD_FILE.test(name));
+  } catch (error) {
     return error?.code !== 'ENOENT';
   }
+}
+
+// An agent's hold as its file keeps it, or null when there is none or it can't be read.
+export function readAgentHold(project, name) {
+  const held = readJson(agentHoldFile(project, name));
+  return held !== null && typeof held === 'object' && Array.isArray(held.mismatches) ? held : null;
+}
+
+// Writes an agent's hold for `mismatches` (each { upstream, path }), with `why` and anything else in `keep` kept in
+// the file. Gives { set, recorded }: `recorded` is whether the hold that stood already had this set put in the state,
+// so its lineage-hold record isn't raised again.
+export function holdAgentWork({ project, name, mismatches, why, keep = {}, now = () => new Date() }) {
+  const file = agentHoldFile(project, name);
+  const set = mismatchSet(mismatches);
+  const recorded = readJson(file)?.recorded === set;
+  writeFileMade(file, { ...keep, at: now().toISOString(), mismatches, ...(typeof why === 'string' ? { why } : {}), ...(recorded ? { recorded: set } : {}) });
+  return { set, recorded };
+}
+
+// Notes in an agent's hold that its set `set` is in the state now. Nothing is written when the hold is gone or holds
+// another set.
+export function markAgentRecorded(project, name, set) {
+  const held = readAgentHold(project, name);
+  if (held === null || mismatchSet(held.mismatches) !== set) return false;
+  writeFileMade(agentHoldFile(project, name), { ...held, recorded: set });
+  return true;
+}
+
+// Removes an agent's hold. Its card closes once no hold of the project is left (recordLift). Gives whether one was there.
+export function liftAgentWork(project, name) {
+  const file = agentHoldFile(project, name);
+  const there = fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  fs.rmSync(file, { force: true });
+  return there;
 }
 
 // What the session start records of a session: projects/<p>/sessions/<session_id>/provenance.json.
@@ -247,8 +298,12 @@ export function warningLines(mismatches, { kept = true } = {}) {
   return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${namedPaths(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
 }
 
-// Writes the session's provenance: what it runs on, and whether the fingerprints matched.
-export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok, claudeCode, transcript }) {
+// Writes the session's provenance: what it runs on, and whether the fingerprints matched. A session of an agent
+// other than Claude Code (ruling P8-19) names it (`agent`), its version (`agentVersion`), the editor's and the
+// agent's runtime's versions (`editor`, `runtime`) and the models its run used (`models`, as it has no transcript to
+// read them from); each is null when not known. Claude Code's session start gives none of them, and its file is as
+// it was.
+export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok, claudeCode, transcript, agent, agentVersion, editor, runtime, models }) {
   const file = provenanceFile(project, sessionId);
   if (file === null) return null;
   const provenance = {
@@ -258,6 +313,9 @@ export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok
     claudeCode: claudeCode ?? null,
     fingerprints: ok ? 'match' : 'mismatch',
     transcript: typeof transcript === 'string' ? transcript : null,
+    ...(typeof agent === 'string' ? {
+      agent, agentVersion: agentVersion ?? null, editor: editor ?? null, runtime: runtime ?? null, models: Array.isArray(models) ? models : [],
+    } : {}),
   };
   writeFileMade(file, provenance);
   return provenance;
