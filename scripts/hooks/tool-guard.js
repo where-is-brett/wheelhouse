@@ -4,7 +4,7 @@
 // beingSetUp), as in a project: refuses
 // secrets (.env files, the credential folders, Wheelhouse's own home), writes to
 // the places that hold the guardrails (and the files that steer an agent, in the project and the
-// home folder: writes only), the host tools (gh, glab, git push) and
+// home folder: writes only), the host tools (gh, glab, git push), a plain read of the keychain and
 // connectors the project has not listed (the Claude Desktop app's own drawing tools
 // pass unlisted in a session it started). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
@@ -230,6 +230,16 @@ const OPTION = /^-|^\/[A-Za-z]$/;
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path']);
 const GIT_PUSHERS = new Set(['git-push', 'git-send-pack', 'git-receive-pack']);
 const MAX_DEPTH = 6;
+// macOS's `security` commands that read saved passwords and keys out of the keychain. `security`
+// takes any first part of a command's name (`find-g`, `dump`), so its command word is refused when
+// it begins one of these; so is one made at run time (`$C`, `{}`), and the options that read more
+// commands from the input (-i, and -p, which implies it). Matched as words, whatever their case,
+// and with a `$` after them as a host tool's name is. This holds only the plain command line: the
+// sandbox's denial of ~/Library/Keychains (check 73) is what stops a read, as a program or script
+// that calls the security service is not seen here.
+const KEYCHAIN_READS = ['find-generic-password', 'find-internet-password', 'dump-keychain', 'export'];
+const SECURITY_READS_INPUT = /^-[a-z]*[ip]/i;
+const KEYCHAIN = 'Wheelhouse does not let an agent read the keychain, where this computer keeps its passwords. If the work needs a password, say so instead of reading it';
 const PWSH = new Set(['pwsh', 'powershell']);
 
 // Whether a word is PowerShell's -EncodedCommand, which hides the command from
@@ -437,6 +447,9 @@ function bashRefused(command, ctx, depth = 0) {
   // kept with its place, so a script is named only by another word.
   const checks = [];
   let pending = null;
+  const isSecurity = (w) => /^security(?:\$|$)/i.test(nameOf(w));
+  // A variable set to `security` makes a command word that starts with `$` count as it.
+  const securityVariable = segs.some((seg) => seg.some((w) => ASSIGNMENT.test(w) && isSecurity(w.slice(w.indexOf('=') + 1))));
   for (const [index, seg] of segs.entries()) {
     const names = seg.map(nameOf);
     for (let i = 0; i < seg.length; i += 1) {
@@ -486,6 +499,32 @@ function bashRefused(command, ctx, depth = 0) {
     if (k >= words.length) continue;
     if (['test', '[', '[['].includes(names[k])) places.forEach((p) => unnamed.add(p));
     for (const [j] of scriptsRun(words, names, k)) unnamed.add(places[j]);
+  }
+  // `security` as a command (behind wrappers, or started by a runner), with its words across any
+  // redirect; a file descriptor's number before a redirect (`2>`) is not one of them.
+  const readsKeychain = ({ words: all, places }) => {
+    const words = all.filter((w, j) => {
+      const [index, i] = places[j].split(' ').map(Number);
+      return !(/^\d+$/.test(w) && i === segs[index].length - 1 && ['<', '>'].includes(operators[index + 1]));
+    });
+    const names = words.map(nameOf);
+    const k = commandAt(words, names, ctx);
+    if (k >= words.length) return false;
+    const runner = RUNNERS.has(names[k]) ? k : words.findIndex((w) => RUNNER_FLAGS.has(w));
+    const isCommand = (j) => isSecurity(words[j]) || (securityVariable && words[j].startsWith('$'));
+    const at = isCommand(k) ? k : runner >= 0 ? words.findIndex((_, j) => j > runner && isCommand(j)) : -1;
+    if (at < 0) return false;
+    const after = words.slice(at + 1);
+    const c = after.findIndex((w) => !OPTION.test(w));
+    if ((c < 0 ? after : after.slice(0, c)).some((w) => SECURITY_READS_INPUT.test(w))) return true;
+    // With no command word, a runner gives it from the input; without one, security prints its usage.
+    if (c < 0) return runner >= 0;
+    const command = after[c].toLowerCase().replace(/\$.*$/s, '');
+    return command === '' || command === '{}' || KEYCHAIN_READS.some((read) => read.startsWith(command));
+  };
+  if (checks.some(readsKeychain)) {
+    ctx.state.keychain = true;
+    return true;
   }
   const counts = new Map();
   for (const [index, seg] of segs.entries()) {
@@ -699,8 +738,9 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     const root = found?.record?.folder ?? setup?.folder ?? cwd;
     // In PowerShell a backtick before a new line continues the command, as a space does.
     const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
-    const state = { unreadable: false };
+    const state = { unreadable: false, keychain: false };
     if (!bashRefused(text, { windows, fold, cwd, home, root, state })) return undefined;
+    if (state.keychain) return answer.deny(KEYCHAIN);
     return state.unreadable ? answer.deny(UNREADABLE) : refuse('run the host tools, push, or read a .env file');
   }
   // The folders a project's own files are placed from: the project's main folder and the worktree

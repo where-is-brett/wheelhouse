@@ -110,8 +110,8 @@
 // so the two never meet. The answer still names the work (core.js's
 // workOfQuestion), so it wakes that feature's session too.
 //
-// Git runs only in the main checkout, to make the worktree, with hooks and
-// fsmonitor off. Everything read from a worktree goes through the safe
+// Git runs only in the main checkout, to bring the default branch up to date
+// and make the worktree, with hooks and fsmonitor off. Everything read from a worktree goes through the safe
 // readers of scripts/feature/files.js and status.js.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -140,9 +140,11 @@ import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.j
 import { CARD } from '../lib/front-desk.js';
 import { TO_KNOW_MORE } from '../lib/calm-words.js';
 import { canonicalJson } from '../lib/canonical.js';
-import { computerId, wheelhouseHome } from '../lib/paths.js';
+import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { run as runProgram } from '../lib/run.js';
 import { LookRefusal, safeGit } from '../lib/safe-git.js';
+import { readProject } from '../lib/projects.js';
+import { sameRemote } from '../state/git.js';
 import { readReadyRecord } from '../survey/ready-record.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
@@ -165,6 +167,8 @@ const CONFIG_BYTES = 1024 * 1024;
 // What each `feature` event carries forward from the one before.
 const CARRIED = Object.freeze(['worktree', 'branch', 'session', 'plan', 'files', 'slice']);
 const BASE_REF = /^refs\/remotes\/origin\/[A-Za-z0-9._/-]+$/;
+// Where the helper keeps the host's default branch in the project's mirror (scripts/host/helper.js).
+const MIRROR_BASE = 'refs/wheelhouse/base';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const refuse = (message) => { throw new ForemanError(message); };
@@ -362,6 +366,61 @@ function checkRepoConfig(checkout) {
   }
 }
 
+// Brings the main checkout's copy of the default branch (`base`, refs/remotes/origin/<name>) up to
+// date before a worktree is made from it. No key or sign-in is used in the checkout, whose git
+// settings an agent can change between the look and git's own read: the helper fetches the host's
+// default branch into the project's mirror with its key (/base/fetch), and this copies it from
+// the mirror, a local path, through the fenced route with no credential. Only while origin is the
+// address setup recorded (ruling R111), so the copy stays origin's, and only when the host's
+// default branch is the one origin/HEAD names. Anything else leaves the copy fetched last and says
+// so: the gate brings a branch up to date before it merges. A look that refuses the repository's
+// settings refuses the start, as it does for every other call here.
+async function fetchBase(ctx, git, checkout, base) {
+  const name = base.slice('refs/remotes/origin/'.length);
+  const behind = (why) => ctx.say(`origin/${name} wasn't brought up to date: ${why}, so the worktree starts from the copy fetched last.`);
+  const record = readProject(ctx.project);
+  const origin = await git(['remote', 'get-url', 'origin']);
+  if (origin.code !== 0 || typeof record?.remoteUrl !== 'string' || !sameRemote(String(origin.stdout ?? '').trim(), record.remoteUrl)) {
+    behind("the main checkout's origin isn't the address setup recorded");
+    return;
+  }
+  let answer;
+  try {
+    answer = await ctx.client.fetchBase({ project: ctx.project });
+  } catch {
+    answer = null;
+  }
+  if (answer?.ok !== true) {
+    behind(`the helper couldn't fetch it from the host (${refusal(answer)})`);
+    return;
+  }
+  if (answer.branch !== name) {
+    behind(`the host's default branch is ${oneLine(String(answer.branch), 80)}, not ${name}`);
+    return;
+  }
+  const mirror = path.join(stateDir(ctx.project), '..', 'mirror.git');
+  const fenced = safeGit({
+    run: ctx.run, cwd: checkout, reach: 'local', look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
+  });
+  let copied;
+  try {
+    // The mirror's path is also read as a remote's name, so a remote of that name an agent slipped
+    // into the checkout's config after the look could name a program to serve the fetch: the
+    // argument names git's own, and outranks it.
+    copied = await fenced(['fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--upload-pack=git-upload-pack', mirror, `+${MIRROR_BASE}:${base}`], {
+      env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
+    });
+  } catch (e) {
+    if (e instanceof LookRefusal) refuse(e.message);
+    copied = { code: 1, stderr: e instanceof Error ? e.message : '' };
+  }
+  if (copied.code !== 0) {
+    behind(`copying it from the helper's mirror failed (${copied.timedOut ? 'it took too long' : oneLine(copied.stderr || copied.stdout || 'git gave no reason', 160)})`);
+    return;
+  }
+  ctx.say(`Brought origin/${name} up to date.`);
+}
+
 // Git in the main checkout by the fenced route, looking at the repository's settings before each
 // call: a setting off the allowed list (a hook or fsmonitor an agent set, say) is refused, naming
 // it, and git runs no more. A git that fails to run is refused with `nothing` said of the outcome.
@@ -419,6 +478,7 @@ async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
   if (head.code !== 0 || !BASE_REF.test(base) || base.includes('..')) {
     refuse("The main checkout doesn't name its default branch (refs/remotes/origin/HEAD), so no worktree was made");
   }
+  await fetchBase(ctx, git, checkout, base);
   const kept = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   if (kept.code === 0) refuse(`The branch ${branch} is there already, but no recorded feature made it: ask the director`);
   if (from !== undefined) {

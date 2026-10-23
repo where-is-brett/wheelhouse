@@ -194,7 +194,9 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   }
   add('ok', locked ? 'Protection: Locked' : 'Protection: Standard');
   if (!locked && realUsers && platform === 'darwin') add('watch', 'This project has real users: Locked would protect it more');
-  if (record?.connection?.mode === 'quick') add('watch', QUICK_LINE);
+  // Quick is the Mac's default, since the sandbox denies its sign-in files and the keychain (check 73),
+  // so it brings no line there; on Windows, where nothing does, it is a calm note (design section 22).
+  if (record?.connection?.mode === 'quick' && platform !== 'darwin') add('ok', QUICK_LINE);
   if (platform === 'win32') {
     add('watch', WINDOWS_LINE);
     if (builds?.level === 'unattended') add('watch', UNATTENDED_LINE);

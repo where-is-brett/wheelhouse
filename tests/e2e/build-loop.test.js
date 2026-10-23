@@ -6,8 +6,9 @@
 // foreman's commands (act.js, wake.js) make real git worktrees there. The watcher's core and
 // sources run as runWatcher runs them; the waker is the real one in Shape 2, which starts no
 // process: what it would hand to a session is caught as its printed lines, and each wake is
-// copied into the session's own folder. The hooks' `decide` functions are called with the
-// input Claude Code sends, and the director's clicks are signed by the prompt-record hook.
+// copied into the session's own folder. One test runs Shape 1's start instead: the helper's child
+// starts a stand-in `claude` found on the helper's PATH. The hooks' `decide` functions are called
+// with the input Claude Code sends, and the director's clicks are signed by the prompt-record hook.
 //
 // Sandbox-shaped. The commands sessions run through Bash run inside `sandboxed`, which refuses,
 // as the project's sandbox does, every file call into the Wheelhouse home and records it: each
@@ -46,7 +47,7 @@ import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
-import { makeWaker, readWake } from '../../scripts/watcher/waker.js';
+import { PROMPTS, makeWaker, readWake, sessionFile } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { lineageFixture, writeFiles } from '../helpers/lineage.js';
@@ -138,7 +139,7 @@ function standInHost(remoteUrl) {
 // from it, a home with this computer's signing key enrolled, the project's record, a helper,
 // the state cloned and the lock taken. `lineage` makes a Wheelhouse root and an install record
 // for the checkout (tests/helpers/lineage.js), whose manifest the helper's gate reads.
-async function makeWorld({ lineage = false } = {}) {
+async function makeWorld({ lineage = false, shape = 2 } = {}) {
   const remote = await makeBareRemote({ repo: 'o/p' });
   const seed = tempFolder('wh-seed-');
   await g(seed, 'init', '-q', '-b', 'main');
@@ -146,7 +147,7 @@ async function makeWorld({ lineage = false } = {}) {
     'README.md': 'The product.\n',
     'package.json': '{ "name": "product" }\n',
     'src/app.js': 'export const app = 1;\n',
-    '.claude/wheelhouse.json': `${JSON.stringify(CONFIG)}\n`,
+    '.claude/wheelhouse.json': `${JSON.stringify({ ...CONFIG, watcherShape: shape })}\n`,
   });
   await g(seed, 'add', '-A');
   await g(seed, 'commit', '-q', '-m', 'The product');
@@ -186,7 +187,7 @@ async function makeWorld({ lineage = false } = {}) {
     assert.deepEqual(await world.client.state.clone({ project: P }), { ok: true });
     assert.equal((await world.client.lock.take({ project: P })).result.taken, true);
     world.config = (await projectConfig(P, world.client)).config;
-    assert.equal(world.config?.watcherShape, 2, 'the configuration is read from the default branch');
+    assert.equal(world.config?.watcherShape, shape, 'the configuration is read from the default branch');
     world.waker = makeWaker({ shape: 2, project: P, config: world.config, print: (line) => lines.push(line), now });
   });
   return world;
@@ -906,5 +907,80 @@ test('an upgrade whose anchor has gone stops before landing', async () => {
     assert.doesNotMatch(said, /Lineage:/);
     assert.equal(isHeld(P), false);
     assert.deepEqual(eventsOf('lineage-hold'), []);
+  });
+});
+
+// --- Shape 1 ---
+
+// A stand-in for `claude` in a folder of its own, put first on the PATH: each run writes what it
+// was started with (its arguments, its folder, and its environment) to a file of its own in
+// `records`, then ends. On Windows it is a claude.cmd, as npm installs claude there.
+function standInClaude() {
+  const dir = fs.realpathSync.native(tempFolder('wh-claude-'));
+  const records = path.join(dir, 'records');
+  fs.mkdirSync(records);
+  const script = path.join(dir, 'stand-in.cjs');
+  fs.writeFileSync(script, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    `fs.writeFileSync(path.join(${JSON.stringify(records)}, \`\${process.pid}.json\`), JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), env: process.env }));`,
+    '',
+  ].join('\n'));
+  if (process.platform === 'win32') fs.writeFileSync(path.join(dir, 'claude.cmd'), `@"${process.execPath}" "${script}" %*\r\n`);
+  else fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+  const read = () => fs.readdirSync(records).map((name) => JSON.parse(fs.readFileSync(path.join(records, name), 'utf8')));
+  return { dir, read };
+}
+
+// Sets `vars` in this process's environment, which the helper (run in this process) passes on, for
+// the length of `fn`.
+async function withEnv(vars, fn) {
+  const before = Object.fromEntries(Object.keys(vars).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, vars);
+  try {
+    return await fn();
+  } finally {
+    for (const [name, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+}
+
+test('Shape 1: the foreman\'s start, run by the helper\'s child, starts claude from the helper\'s PATH with the sign-in and no key', async () => {
+  const claude = standInClaude();
+  const pathKey = Object.keys(process.env).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
+  await onComputer({ shape: 1 }, async (world) => {
+    await queueWork(world, 'export', { lane: 'quick' });
+    const said = await withEnv({
+      [pathKey]: `${claude.dir}${path.delimiter}${process.env[pathKey] ?? ''}`,
+      CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-stand-in', AWS_PROFILE: 'work',
+      GH_TOKEN: 'ghp_stand_in', CLAUDECODE: '1', WHEELHOUSE_ROLE: 'foreman',
+    }, () => foreman(world, ['start', 'export', '--goal', 'Build export', '--done', 'It works', '--appetite-sessions', '1', '--appetite-tokens', '200000']));
+    assert.equal(said.code, 0, said.err);
+    assert.match(said.out, /^Started the export session\.$/m);
+    const worktree = path.join(world.checkout, '.claude', 'worktrees', 'export');
+
+    // The stand-in ran once, in the worktree, as the session the waker recorded.
+    let runs = [];
+    for (let i = 0; i < 200 && runs.length === 0; i += 1) {
+      runs = claude.read();
+      if (runs.length === 0) await new Promise((done) => { setTimeout(done, 50); });
+    }
+    assert.equal(runs.length, 1, 'claude was started once');
+    const [run] = runs;
+    assert.equal(fs.realpathSync.native(run.cwd), worktree);
+    const { sessionId } = JSON.parse(fs.readFileSync(sessionFile(P, 'export'), 'utf8'));
+    const after = (flag) => (run.argv.includes(flag) ? run.argv[run.argv.indexOf(flag) + 1] : null);
+    assert.equal(after('--session-id'), sessionId);
+    assert.equal(after('--permission-mode'), 'acceptEdits');
+    if (process.platform !== 'win32') assert.equal(after('-p'), PROMPTS.start);
+
+    // Claude Code's sign-in reaches the session through the helper's child; no key, no host-session
+    // marker and no foreman role do.
+    assert.equal(run.env.CLAUDE_CODE_USE_BEDROCK, '1');
+    assert.equal(run.env.CLAUDE_CODE_OAUTH_TOKEN, 'oauth-stand-in');
+    assert.equal(run.env.AWS_PROFILE, 'work');
+    for (const name of ['GH_TOKEN', 'CLAUDECODE', 'WHEELHOUSE_ROLE']) assert.equal(name in run.env, false, name);
+    assert.equal(run.env.WHEELHOUSE_HOME, process.env.WHEELHOUSE_HOME, 'the session finds the helper\'s socket');
   });
 });

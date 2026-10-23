@@ -49,20 +49,25 @@ export function hostVariableNames(env) {
   return Object.keys(env).filter((name) => /^(claude|anthropic_base_url)/i.test(name) && name.toUpperCase() !== 'CLAUDE_CONFIG_DIR');
 }
 
-// The variables Claude Code signs in with, to Anthropic or through Amazon Bedrock (and its Mantle
-// endpoint) or Google Cloud's Vertex AI (Claude Code's documentation, read 19 October 2026: the
-// Bedrock and Vertex pages): the switches, the keys and cloud credentials, and the profile,
-// region, project, credential-file and endpoint variables, spelt exactly. Some name a secret, and
-// the switches start "CLAUDE": a list that drops secrets or the host session's variables keeps
-// these by name. Beside them, every VERTEX_REGION_CLAUDE_* variable (CLAUDE_SIGN_IN_PREFIXES).
+// The variables Claude Code signs in with, to Anthropic (a key, or the director's OAuth token), or
+// through Amazon Bedrock (and its Mantle endpoint), Google Cloud's Vertex AI, Microsoft Foundry or
+// Claude Platform on AWS (Claude Code's documentation, read 19 October 2026 for Bedrock and Vertex,
+// and its environment-variables page on 23 October 2026 for the rest): the switches, the keys and
+// cloud credentials, and the profile, region, project, resource, workspace, credential-file and
+// endpoint variables, spelt exactly. Some name a secret, and the switches and the OAuth token start
+// "CLAUDE": a list that drops secrets or the host session's variables keeps these by name. Beside
+// them, every VERTEX_REGION_CLAUDE_* variable (CLAUDE_SIGN_IN_PREFIXES).
 export const CLAUDE_SIGN_IN_NAMES = Object.freeze([
-  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_SKIP_BEDROCK_AUTH', 'CLAUDE_CODE_SKIP_MANTLE_AUTH',
   'AWS_BEARER_TOKEN_BEDROCK', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE',
   'AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE',
   'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION',
   'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_SKIP_VERTEX_AUTH', 'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_VERTEX_PROJECT_ID',
   'CLOUD_ML_REGION', 'ANTHROPIC_VERTEX_BASE_URL', 'GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT',
+  'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_SKIP_FOUNDRY_AUTH', 'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
+  'ANTHROPIC_FOUNDRY_RESOURCE', 'ANTHROPIC_FOUNDRY_BASE_URL',
+  'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH', 'ANTHROPIC_AWS_API_KEY', 'ANTHROPIC_AWS_WORKSPACE_ID', 'ANTHROPIC_AWS_BASE_URL',
 ]);
 export const CLAUDE_SIGN_IN_PREFIXES = Object.freeze(['VERTEX_REGION_CLAUDE_']);
 
