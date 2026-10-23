@@ -358,7 +358,8 @@ test('with everything here, the list is only the allow rule, written by key besi
     const m = machine(everythingHere);
     const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
-    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', ...SETUP_RULES] }]);
+    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', ...SETUP_RULES], added: SETUP_RULES.length }]);
+    assert.match(planned.card.what, /two permission rules/);
     assert.equal(planned.director, 'One click');
     // The same world gives the same list, so the hash a card names stays good.
     assert.equal(planHash((await step.plan(ctxFor(folder))).changes), planHash(planned.changes));
@@ -385,7 +386,8 @@ test('a plain rule already in leaves only the flagged rule to add, and the plain
     fs.writeFileSync(file, JSON.stringify({ permissions: { allow: [SETUP_PLAIN_RULE] } }));
     const step = toolsStep({ run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
-    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [SETUP_PLAIN_RULE, SETUP_FLAGGED_RULE] }]);
+    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [SETUP_PLAIN_RULE, SETUP_FLAGGED_RULE], added: 1 }]);
+    assert.match(planned.card.what, /one permission rule/);
   });
 });
 

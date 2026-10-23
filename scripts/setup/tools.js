@@ -749,7 +749,10 @@ function cardFor(changes, status, platform) {
   const fetches = changes.filter((c) => c.action === 'fetch');
   const official = fetches.filter((c) => c.from !== 'company').map((c) => c.tool);
   const company = fetches.filter((x) => x.from === 'company');
-  const rule = changes.some((c) => c.kind === 'json-key');
+  // How many allow rules the change adds: one or both forms of setup's command.
+  const rules = changes.find((c) => c.kind === 'json-key')?.added ?? 0;
+  const rule = rules > 0;
+  const ruleWords = rules === 1 ? 'one permission rule' : 'two permission rules';
   const here = Object.entries(status).filter(([, s]) => s.ok).map(([tool, s]) => `${tool === 'node' ? 'Node.js' : tool} ${s.version}`);
   const full = [];
   for (const c of processes) full.push(c.action === 'wait' ? 'git: waiting for the git installer already open, which setup leaves to finish' : installLine(platform));
@@ -761,7 +764,7 @@ function cardFor(changes, status, platform) {
       ? 'checked against the checksum the list gives'
       : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
   }
-  if (rule) full.push('permission rules in this project\'s .claude/settings.local.json, so setup\'s own command is not asked about each time');
+  if (rule) full.push(`${ruleWords} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
   const terse = [];
   for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
   if (official.length > 0) terse.push(`${official.join(' and ')}: official ${official.length === 1 ? 'release' : 'releases'}, checked`);
@@ -770,7 +773,7 @@ function cardFor(changes, status, platform) {
       ? `${c.tool}: from your company's list at ${shownSource(c.source)}, checked`
       : `${c.tool}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
   }
-  if (rule) terse.push('permission rules');
+  if (rule) terse.push(ruleWords);
   const card = (what) => ({
     kind: 'setup',
     level: 3,
@@ -861,7 +864,7 @@ export function toolsStep({
         const file = path.join(ctx.folder, '.claude', 'settings.local.json');
         const allow = allowRules(file);
         const missing = rules.filter((rule) => !allow.includes(rule));
-        if (missing.length > 0) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, ...missing] });
+        if (missing.length > 0) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, ...missing], added: missing.length });
       }
       // Nothing to do settles the step, with no Go ahead (ruling R75).
       if (changes.length === 0) return { settled: { record: { nothing: true } } };
