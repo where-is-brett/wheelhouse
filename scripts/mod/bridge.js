@@ -16,7 +16,7 @@
 //                                                   courier's wake, with the ids it marked sent and its
 //                                                   stamp, or a Shape 2 foreman's wakes from one
 //                                                   watcher loop, or nothing while setup runs; it also
-//                                                   records a lineage-lift once a hold file is gone
+//                                                   records a lineage-lift once a hold file is gone.
 //                                                   `received` ({ origin, via }, a kept-out message, never its text)
 //                                                   adds one line to the day's usage/mod file
 //   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped

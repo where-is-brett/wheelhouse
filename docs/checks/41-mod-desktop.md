@@ -335,7 +335,7 @@ Six changes answer the sitting's findings. Each says what it does and what the t
   - The mod and the stop-word hook now read past whole leading app reminder blocks to the director's own words. A remainder that still holds a reminder tag sends nothing. Origins are unchanged.
   - *Confirm:* type a reply code in a session another session started, and a typed "stop" there.
 - **A compaction's session start.**
-  - It now runs no lineage check, so it writes no hold and lifts none. The hold, when one is on, now lets Claude's notification and the app's task list and wrap-up through. The tool guard keeps its own check on the two app tools.
+  - It now runs no lineage check, so it neither writes nor removes the hold file (a lift may still be recorded for a hold whose file is gone). The hold, when one is on, now lets Claude's notification and the app's task list and wrap-up through. The tool guard keeps its own check on the two app tools.
   - *Confirm:* `/compact` in the test session, then a wrap-up and a notification.
 - **The hold's card.**
   - A `lineage-lift` event `{at, holds}` now names the holds it lifts. The session start and the bridge's tick record it once when this computer has no hold file. A hold belongs to the computer on its event's envelope.

@@ -538,8 +538,9 @@ export async function decide(input, deps = {}) {
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
   // installed are setup's own state, not drift, and write no hold (ruling R136).
   const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
-  // A compaction installs nothing, so the check belongs to the session's real start: no check, no
-  // hold written or lifted, no provenance rewritten, and a hold already standing stands.
+  // A compaction installs nothing, so the check belongs to the session's real start: no check,
+  // the hold file neither written nor removed (a lift may still be recorded, elsewhere, for a hold
+  // whose file is gone), no provenance rewritten, and a hold already standing stands.
   const lineage = input.source === 'compact' ? [] : lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.

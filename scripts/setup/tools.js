@@ -574,11 +574,16 @@ export function toolsStep({
           : { kind: 'process', target: 'git', action: 'install', waitsFor: WAITS_FOR[platform] });
       }
       for (const tool of hostTools) if (!status[tool].ok) changes.push({ kind: 'folder', target: toolFolder(tool), action: 'fetch', tool });
-      const rule = allowRule(setupCommand(pluginRoot, { platform }));
-      if (rule !== null) {
+      // Both forms of setup's command: the plain one and the one the session start names with
+      // --no-use-system-ca. Each is checked and added on its own.
+      const rules = [false, true]
+        .map((noSystemCa) => allowRule(setupCommand(pluginRoot, { platform, noSystemCa })))
+        .filter((rule, i, all) => rule !== null && all.indexOf(rule) === i);
+      if (rules.length > 0) {
         const file = path.join(ctx.folder, '.claude', 'settings.local.json');
         const allow = allowRules(file);
-        if (!allow.includes(rule)) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, rule] });
+        const missing = rules.filter((rule) => !allow.includes(rule));
+        if (missing.length > 0) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, ...missing] });
       }
       // Nothing to do settles the step, with no Go ahead (ruling R75).
       if (changes.length === 0) return { settled: { record: { nothing: true } } };

@@ -203,6 +203,8 @@ export function liftedIds(project) {
 // otherwise). It informs, so a failure is passed over. Gives whether a lift was kept.
 export async function recordLift({ project, views, computer, now = () => new Date(), client, left = (promise) => promise }) {
   try {
+    // A standing hold costs one stat per tick: nothing is read until the hold file is gone.
+    if (isHeld(project)) return false;
     const have = liftedIds(project);
     if (holdsToLift(views, { computer, held: isHeld(project) }).filter((id) => !have.has(id)).length === 0) return false;
     // Looked at again just before keeping: a hold file written meanwhile is a hold this lift is not for.

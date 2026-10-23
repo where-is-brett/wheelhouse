@@ -27,7 +27,9 @@ import { fileURLToPath } from 'node:url';
 const NOW = new Date('2026-10-19T03:00:00.000Z');
 const QUIET_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-quiet-steps.js');
 const PLUGIN = '/Applications/Plug ins/wheelhouse';
-const SETUP_RULE = `Bash(node "${PLUGIN}/scripts/setup/cli.js":*)`;
+const SETUP_PLAIN_RULE = `Bash(node "${PLUGIN}/scripts/setup/cli.js":*)`;
+const SETUP_FLAGGED_RULE = `Bash(node --no-use-system-ca "${PLUGIN}/scripts/setup/cli.js":*)`;
+const SETUP_RULES = [SETUP_PLAIN_RULE, SETUP_FLAGGED_RULE];
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
 
 // ---- A fake computer: what `run` finds and does ----
@@ -356,7 +358,7 @@ test('with everything here, the list is only the allow rule, written by key besi
     const m = machine(everythingHere);
     const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
-    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', SETUP_RULE] }]);
+    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', ...SETUP_RULES] }]);
     assert.equal(planned.director, 'One click');
     // The same world gives the same list, so the hash a card names stays good.
     assert.equal(planHash((await step.plan(ctxFor(folder))).changes), planHash(planned.changes));
@@ -366,12 +368,24 @@ test('with everything here, the list is only the allow rule, written by key besi
     const run = startRun({ folder, now: () => NOW });
     markStep(run.id, 2, 'clickedAt', { now: () => NOW });
     assert.deepEqual(await runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id }) }), { ok: true });
-    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)', SETUP_RULE] }, theirs: 1 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)', ...SETUP_RULES] }, theirs: 1 });
     // Planned again, nothing is left to change, so the step settles with no Go ahead (ruling R75).
     assert.deepEqual(await step.plan(ctxFor(folder)), { settled: { record: { nothing: true } } });
     const [change] = findRun(folder).changes;
     assert.deepEqual(reverseChange(change), { put: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { permissions: { allow: ['Bash(ls:*)'] }, theirs: 1 });
+  });
+});
+
+test('a plain rule already in leaves only the flagged rule to add, and the plain one is not repeated', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ permissions: { allow: [SETUP_PLAIN_RULE] } }));
+    const step = toolsStep({ run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [SETUP_PLAIN_RULE, SETUP_FLAGGED_RULE] }]);
   });
 });
 
@@ -386,8 +400,8 @@ test('through the helper, step 2 with everything here and the rule in settles: i
     // Without the rule, the rule is the list, on a card.
     const card = await routes['/setup/plan']({ folder, step: 2 });
     assert.equal(card.ok, true, card.refused);
-    assert.deepEqual(card.changes.map((c) => c.after), [[SETUP_RULE]]);
-    fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: [SETUP_RULE] } }));
+    assert.deepEqual(card.changes.map((c) => c.after), [SETUP_RULES]);
+    fs.writeFileSync(path.join(folder, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: SETUP_RULES } }));
     assert.deepEqual(await routes['/setup/plan']({ folder, step: 2 }), { ok: true, done: true });
     const run = findRun(folder);
     assert.equal(run.steps[2].doneAt, NOW.toISOString());

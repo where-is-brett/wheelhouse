@@ -19,20 +19,20 @@ export const KEPT_OUT = 'Wheelhouse: an update from another session, shown in th
 // a task's notification and a plugin's own prompt are never traffic.
 const TRAFFIC_ORIGINS = ['sdk', 'peer']
 
+// The reminder blocks alone, as scripts/lib/own-words.js reads them (kept in step by
+// tests/scripts/mod/validate.test.js).
+const BLOCKS = /^(?:<system-reminder>\n(?:(?:(?!<\/system-reminder>)[\s\S])*\n)?<\/system-reminder>(?:\n|$)\n*)*/
+
 // What the Claude app puts before another session's message (check 41), read past only at the
 // start and only whole: any number of system reminders, each with its opening and closing tags
 // on lines of their own and any blank lines after it; then the line the app writes before a
 // peer's message; then the opening tag of the message's wrapper, on a line of its own. Whichever
 // session the tag names, the message's own first line is the one after.
 const WRAPPER = new RegExp([
-  String.raw`^(?:<system-reminder>\n(?:(?:(?!</system-reminder>)[\s\S])*\n)?</system-reminder>(?:\n|$)\n*)*`,
+  BLOCKS.source,
   String.raw`(?:Another Claude session sent a message:\n)?`,
   String.raw`(?:<cross-session-message(?: [a-z-]+="[^"\n]*")*>\n)?`,
 ].join(''))
-
-// The same reminder blocks alone, as scripts/lib/own-words.js reads them (kept in step by
-// tests/scripts/mod/validate.test.js).
-const BLOCKS = /^(?:<system-reminder>\n(?:(?:(?!<\/system-reminder>)[\s\S])*\n)?<\/system-reminder>(?:\n|$)\n*)*/
 
 // The director's own words: the text after any leading reminder blocks the app put before the
 // typed line, or null when what is left still holds a reminder tag, which is not their words.
