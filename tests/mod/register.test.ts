@@ -194,28 +194,28 @@ test('a message from sdk, peer or task-notification sends nothing', async ($, on
     // The director's origins, but hidden or a command: nothing either.
     await submit($, 'K7QD Approve', 'composer', { isMeta: true })
     await submit($, 'stop', 'bridge', { isMeta: true })
-    await submit($, '/go', 'composer', { command: { name: 'go', args: '' } })
+    await submit($, '/wheelhouse-go', 'composer', { command: { name: 'wheelhouse-go', args: '' } })
     expect(seen.runs).toHaveLength(0)
     expect(seen.toasts).toHaveLength(0)
     expect(seen.prompts).toHaveLength(9)
   }
 })
 
-test('/go answers with the bridge\'s words', async ($, on) => {
+test('/wheelhouse-go answers with the bridge\'s words', async ($, on) => {
   let goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
   const { seen, clear, start } = world(on, (request) => request.cmd === 'go' ? { stdout: goLine } : { stdout: '{"ok":true}\n' })
   for (const surface of SURFACES) {
     clear()
     await start($, surface)
     expect(seen.registered).toEqual([
-      { name: 'go', description: 'Lift STOP' },
+      { name: 'wheelhouse-go', description: 'Lift STOP' },
       { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
-      { name: 'digest', description: 'Show the briefing, with no Claude turn' },
+      { name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' },
     ])
 
     for (const kind of ['composer', 'bridge'] as const) {
       clear()
-      const result = await $.command.run({ command: 'go', args: '', origin: { kind }, presentation: PRESENTATION })
+      const result = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind }, presentation: PRESENTATION })
       expect(seen.runs).toHaveLength(1)
       expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'go', origin: kind, cwd: ROOT })
       expect(result).toMatchObject({ text: 'STOP is off. No build work is in progress.' })
@@ -226,7 +226,7 @@ test('/go answers with the bridge\'s words', async ($, on) => {
     // A refusal is the bridge's own words, shown as the answer and nothing else.
     goLine = '{"ok":false,"says":"Only the director can lift STOP"}\n'
     clear()
-    const refused = await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    const refused = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     expect(refused).toMatchObject({ text: 'Only the director can lift STOP' })
     expect(seen.toasts).toHaveLength(0)
     goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
@@ -301,7 +301,7 @@ test('a bridge failure toasts and never blocks the prompt', async ($, on) => {
       expect(seen.prompts.map((p: any) => p.text)).toEqual(['stop'])
 
       clear()
-      const go = await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+      const go = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
       expect(go).toMatchObject({ text: FAILED })
       expect(seen.toasts).toEqual([FAILED])
 

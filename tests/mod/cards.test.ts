@@ -342,12 +342,12 @@ test('the pane origin is sent only from a press', async ($, on) => {
   const { seen, clear, start, clock } = world(on, () => ({ ok: true, says: 'Done' }), () => frontDesk(true))
   for (const surface of SURFACES) {
     await start($, surface)
-    // Ticks, turns, typed prompts, /go and opening the pane send nothing under `pane`.
+    // Ticks, turns, typed prompts, /wheelhouse-go and opening the pane send nothing under `pane`.
     await $.turn.start({ turnId: 't1', text: 'hello' })
     await $.prompt.submit({ text: 'ABCD Approve', origin: { kind: 'composer' }, wait: false })
     await $.prompt.submit({ text: 'stop', origin: { kind: 'bridge' }, wait: false })
     await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 1, isAborted: false, reason: 'answer' })
-    await $.command.run({ command: 'go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     await clock.advance(2 * TICK_MS)
     const ui = await mount($, surface)
@@ -372,7 +372,7 @@ test('the pane origin is sent only from a press', async ($, on) => {
 test('Lift STOP on a picture with no STOP start sends since null, and the bridge\'s refusal is a toast', async ($, on) => {
   // The bridge lifts only the STOP the pane drew (ruling 21): with no start drawn it refuses, and
   // the director sees its words.
-  const UNDATED = 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it'
+  const UNDATED = 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it'
   let stop: object = { on: true, since: null }
   let reply: Reply = { ok: false, says: UNDATED }
   const { seen, clear, start } = world(on, () => reply, () => ({ ...frontDesk(true), pane: { ...model(true), stop } }))

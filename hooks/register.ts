@@ -6,7 +6,7 @@
 //
 // This file only wires the hooks, each passing on with next(e) and never changing the message,
 // but for Wheelhouse traffic in the front desk's session (hooks/mod/messages.ts):
-//   session.start    registers /go, /wheelhouse and /digest, sends the session's usage figures
+//   session.start    registers /wheelhouse-go, /wheelhouse and /wheelhouse-digest, sends the session's usage figures
 //                    and starts the pane's ticks (hooks/mod/pane.tsx), which hand on the prompts
 //                    their answers hold
 //   session.measure  sends the usage figures again when the allowance or the cost moved
@@ -15,8 +15,8 @@
 //   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead
 //   turn.start       marks the session busy, for the tick
 //   turn.complete    marks it idle again
-//   command.run      /go sends go and answers with the bridge's words; /wheelhouse opens the pane;
-//                    /digest answers with the bridge's briefing
+//   command.run      /wheelhouse-go sends go and answers with the bridge's words; /wheelhouse opens the pane;
+//                    /wheelhouse-digest answers with the bridge's briefing
 //   ui.render        draws the pane, with each card's buttons, STOP or Lift STOP and the settings
 //                    view (hooks/mod/cards.tsx, hooks/mod/settings.tsx)
 // A typed reply or "stop" is read past any reminder blocks the app puts before it (ownWords),
@@ -97,7 +97,7 @@ function requestFor(e: PromptSubmitInput): { request: Record<string, unknown>, q
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
-      await $.command.register({ name: 'go', description: 'Lift STOP' })
+      await $.command.register({ name: 'wheelhouse-go', description: 'Lift STOP' })
     } catch {
       // Without the command, a reply code still lifts STOP.
     }
@@ -107,7 +107,7 @@ export const register: Register = on => {
       // Without the command, the pane still opens at the session's start.
     }
     try {
-      await $.command.register({ name: 'digest', description: 'Show the briefing, with no Claude turn' })
+      await $.command.register({ name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' })
     } catch {
       // Without the command, the front desk still gives the briefing.
     }
@@ -159,7 +159,7 @@ export const register: Register = on => {
 
   // The bridge's words, refusals included, are the command's output; only no answer at all
   // is a toast too.
-  on('command.run', { command: 'go' }, async ($, e) => {
+  on('command.run', { command: 'wheelhouse-go' }, async ($, e) => {
     let answer: Answer | null = null
     try {
       answer = await ask($, { cmd: 'go', origin: e.origin.kind, cwd: await $.session.root() })
@@ -180,7 +180,7 @@ export const register: Register = on => {
 
   // The bridge's text is the command's output, its own words when it has no briefing included
   // (or its refusal's, should it refuse); only no answer at all is a toast too.
-  on('command.run', { command: 'digest' }, async ($, e) => {
+  on('command.run', { command: 'wheelhouse-digest' }, async ($, e) => {
     let answer: Answer | null = null
     try {
       answer = await ask($, { cmd: 'digest', origin: e.origin.kind, cwd: await $.session.root() })

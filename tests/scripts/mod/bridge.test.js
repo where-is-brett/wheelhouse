@@ -149,7 +149,7 @@ test('a reply from composer or bridge is recorded; from sdk or peer it is not', 
   assert.equal(client.calls.record.length, 0);
 }));
 
-test('/go from the director lifts STOP with a signed record, kept before it lifts', () => withHome(async () => {
+test('/wheelhouse-go from the director lifts STOP with a signed record, kept before it lifts', () => withHome(async () => {
   enrolKey();
   for (const origin of ['composer', 'bridge']) {
     setStop({ by: 'prompt', now: () => NOW });
@@ -171,7 +171,7 @@ test('/go from the director lifts STOP with a signed record, kept before it lift
     assert.equal(kept.body.project, P);
     const event = kept.body.event;
     assert.equal(event.kind, 'action');
-    assert.deepEqual(event.data, { action: 'lift-stop', question: LIFT_STOP, label: '/go' });
+    assert.deepEqual(event.data, { action: 'lift-stop', question: LIFT_STOP, label: '/wheelhouse-go' });
     assert.equal(verify(event, readEnrolled()), true);
 
     // Sent to the helper, and gone from pending once it was taken.
@@ -200,7 +200,7 @@ test('/go from the director lifts STOP with a signed record, kept before it lift
   assert.deepEqual(pendingFiles(), []);
 }));
 
-test('/go from any other origin leaves STOP on', () => withHome(async () => {
+test('/wheelhouse-go from any other origin leaves STOP on', () => withHome(async () => {
   enrolKey();
   setStop({ by: 'prompt', now: () => NOW });
   const client = fakeClient();
@@ -269,7 +269,7 @@ test('press is refused for any origin but pane; stop and go accept pane', () => 
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
 }));
 
-test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go typed or phoned needs no date', () => withHome(async () => {
+test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /wheelhouse-go typed or phoned needs no date', () => withHome(async () => {
   enrolKey();
   const SHOWN = '2026-10-19T04:00:00.000Z';
   setStop({ by: 'prompt', now: () => new Date(SHOWN) });
@@ -284,7 +284,7 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go
     assert.match(answer.says, /STOP stays on/, String(since));
     assert.doesNotMatch(answer.says, /\n/);
   }
-  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it' });
+  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it' });
   assert.deepEqual(await goFromPane('2026-10-19T03:00:00.000Z'), { ok: false, says: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again' });
   assert.equal(lifted, 0);
   assert.equal(stopState().on, true);
@@ -305,7 +305,7 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go
   assert.equal(stopState().on, false);
   assert.equal(client.calls.record.length, 1);
 
-  // /go typed or phoned lifts whatever STOP is on, with no date and whatever date it carries.
+  // /wheelhouse-go typed or phoned lifts whatever STOP is on, with no date and whatever date it carries.
   for (const [origin, since] of [['composer', undefined], ['bridge', '2026-10-19T03:00:00.000Z']]) {
     setStop({ by: 'prompt', now: () => new Date(SHOWN) });
     const answer = await handle({ cmd: 'go', origin, cwd: '/work', ...(since === undefined ? {} : { since }) }, deps({ client, loadInputs: building(1) }));

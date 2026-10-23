@@ -778,22 +778,22 @@ test('traffic that comes while a tick runs gets its own tick once that one ends,
   }
 })
 
-test('/digest answers with the bridge\'s briefing', async ($, on) => {
+test('/wheelhouse-digest answers with the bridge\'s briefing', async ($, on) => {
   const BRIEFING = 'Since you were last here\n\nThe banner change merged. 2 cards wait.'
   let answer: Reply = { ok: true, text: BRIEFING }
   const { seen, clear, start } = world(on, () => feature(), () => answer)
   for (const surface of SURFACES) {
     await start($, surface)
     expect(seen.registered).toEqual([
-      { name: 'go', description: 'Lift STOP' },
+      { name: 'wheelhouse-go', description: 'Lift STOP' },
       { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
-      { name: 'digest', description: 'Show the briefing, with no Claude turn' },
+      { name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' },
     ])
 
     for (const kind of ['composer', 'bridge'] as const) {
       answer = { ok: true, text: BRIEFING }
       clear()
-      const result = await $.command.run({ command: 'digest', args: '', origin: { kind }, presentation: PRESENTATION })
+      const result = await $.command.run({ command: 'wheelhouse-digest', args: '', origin: { kind }, presentation: PRESENTATION })
       expect(result).toMatchObject({ text: BRIEFING })
       expect(seen.runs).toHaveLength(1)
       expect(seen.runs[0].argv[0]).toBe('node')
@@ -807,7 +807,7 @@ test('/digest answers with the bridge\'s briefing', async ($, on) => {
     // The bridge's own words when it has no briefing are the answer, and nothing else.
     answer = { ok: false, text: 'This folder isn\'t a Wheelhouse project.' }
     clear()
-    expect(await $.command.run({ command: 'digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
+    expect(await $.command.run({ command: 'wheelhouse-digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
       .toMatchObject({ text: 'This folder isn\'t a Wheelhouse project.' })
     expect(seen.toasts).toHaveLength(0)
 
@@ -815,7 +815,7 @@ test('/digest answers with the bridge\'s briefing', async ($, on) => {
     for (const failure of ['no-start', { exitCode: 1 }, { stdout: 'not json\n' }, { stdout: '{"text":"no ok"}\n' }] as Reply[]) {
       answer = failure
       clear()
-      expect(await $.command.run({ command: 'digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
+      expect(await $.command.run({ command: 'wheelhouse-digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
         .toMatchObject({ text: FAILED })
       expect(seen.toasts).toEqual([FAILED])
       expect(seen.commands).toHaveLength(0)

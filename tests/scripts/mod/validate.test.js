@@ -104,7 +104,7 @@ test('a hook beyond the mod\'s, or one missing, fails', () => {
   assert.match(extra.problems.join('\n'), /tool\.call/);
   const missing = checkMod({ report: reportWith(['./register.ts hooks: session.start, prompt.submit']), sources: SOURCES });
   assert.match(missing.problems.join('\n'), /session\.measure/);
-  assert.match(missing.problems.join('\n'), /command\.run\{command=go\}/);
+  assert.match(missing.problems.join('\n'), /command\.run\{command=wheelhouse-go\}/);
   const none = checkMod({ report: reportWith([]), sources: SOURCES });
   assert.notDeepEqual(none.problems, []);
 });

@@ -27,10 +27,10 @@
 //                                                   the director's words handed on as one prompt
 //   { cmd: 'settings', cwd }                        the settings pane's rows and groups, from the views on disk
 //   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
-//   { cmd: 'go', origin, cwd, since? }              /go or the pane: lifts STOP with a signed record;
+//   { cmd: 'go', origin, cwd, since? }              /wheelhouse-go or the pane: lifts STOP with a signed record;
 //                                                   the pane's carries the start of the STOP it drew
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
-//   { cmd: 'digest', origin, cwd }                  /digest: the briefing since the last, as text (any origin)
+//   { cmd: 'digest', origin, cwd }                  /wheelhouse-digest: the briefing since the last, as text (any origin)
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
@@ -90,7 +90,7 @@ export const SAYS = {
   notProject: 'This isn\'t a Wheelhouse project',
   goNotDirector: 'Only the director can lift STOP',
   goNotProject: 'This isn\'t a Wheelhouse project, so STOP stays on',
-  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it',
+  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it',
   goOtherStop: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again',
   stopOff: 'STOP isn\'t on.',
   cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
@@ -274,11 +274,11 @@ async function setting(req, d) {
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
-// /go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
+// /wheelhouse-go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
 // record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
 // leaves STOP on. The pane's press carries `since`, the start of the STOP the pane drew, and
 // lifts only that STOP, as a Lift STOP card does only for a STOP begun before it was shown, so a
-// pane drawn before STOP was set again can't lift a STOP the director never saw. /go typed or
+// pane drawn before STOP was set again can't lift a STOP the director never saw. /wheelhouse-go typed or
 // phoned lifts the STOP in force.
 async function go(req, d) {
   if (!fromDirector(req.origin) && req.origin !== PANE) return no(SAYS.goNotDirector);
@@ -289,7 +289,7 @@ async function go(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.goNotProject);
   if (fromPane && stop.at !== req.since) return no(SAYS.goOtherStop);
-  const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/go' } }, lift: true };
+  const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/wheelhouse-go' } }, lift: true };
   let lifting = false;
   let kept;
   try {
@@ -312,7 +312,7 @@ async function stop(req, d) {
   return { ok: true, says: SAYS.stopOn };
 }
 
-// /digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
+// /wheelhouse-digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
 // and marks a briefing given, so whose command it is doesn't matter.
 async function digest(req, d) {
   return d.digestText({ cwd: req.cwd, now: d.now, client: clientOf(d), load: d.loadInputs, readEffective: d.readEffective });

@@ -30,7 +30,7 @@
 // late helper leaves the rest for next visit.
 //
 // Two kinds of prompt are left alone, recording no time and adding nothing: the mod's own commands
-// (/go, /digest, /wheelhouse), whose answer starts no turn, so a briefing added to one would be
+// (/wheelhouse-go, /wheelhouse-digest, /wheelhouse), whose answer starts no turn, so a briefing added to one would be
 // lost (a classic hook isn't shown a mod command's typed line, so this is a second line of
 // defence), and the courier's wake (LEADS.courier), which is not the director arriving. A pane
 // press (LEADS.pane) is the director's, as their press made it, and is handled like any prompt.
@@ -91,7 +91,7 @@ export const FOREMAN_LINE = 'This session is the foreman, not the front desk. Fo
 export const cardsLine = (n) => `Cards to ask this visit: ${n}. Run \`cli.js cards\` and ask them in one AskUserQuestion call, after the briefing.`;
 const TABS = ['director', 'build'];
 // The mod's own commands, whose answer starts no turn.
-const MOD_COMMAND = /^\/(?:go|digest|wheelhouse)(?:[ \t]+.*)?$/i;
+const MOD_COMMAND = /^\/(?:wheelhouse-go|wheelhouse-digest|wheelhouse)(?:[ \t]+.*)?$/i;
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -389,7 +389,7 @@ export async function decide(input, deps = {}) {
     const visits = attempt(() => readVisits(project, { now: at }), { visitAt: null, boardAsks: [] });
     const command = commandOf(input.prompt);
     // The gap runs from the director's last prompt or the last briefing given, whichever is later,
-    // so a briefing /digest gave counts as given: a prompt soon after it brings none.
+    // so a briefing /wheelhouse-digest gave counts as given: a prompt soon after it brings none.
     const due = gapPassed(project, [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null, at);
     const want = command?.name ?? (due ? 'briefing' : null);
     // A visit begins with the first prompt of any kind after a gap since the last one seen: the last
