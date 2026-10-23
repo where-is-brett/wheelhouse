@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   uninstallPlan, uninstallRoutes, planLines, readProgress, writeProgress, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP,
   UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
-  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION,
+  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION, ENV_STAYS,
 } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
 import {
@@ -2359,6 +2359,66 @@ test('the .wheelhouse/ exclude line stays while the project\'s .wheelhouse/ fold
     const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
     assert.equal(done.ok, true, done.refused);
     assert.equal(readText(exclude), before, 'the line goes as before');
+  });
+});
+
+// Setup's .env lines (step 7) keep secrets out of git and cost nothing: uninstall never takes them
+// out, in the project's .gitignore (made or added to by setup) or in a joining computer's own list,
+// and names them as kept with a short reason.
+test('setup\'s .env lines stay in a .gitignore setup made or added to, alone or shared, and are named as kept', async () => {
+  for (const shared of [false, true]) {
+    await withHome(async () => {
+      const world = makeWorld();
+      world.register();
+      world.lockedDir = tempFolder('wh-locked ');
+      if (shared) enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
+      const run = startRun({ folder: world.folder, now: NOW });
+      const r = recorder(run.id);
+      // One .gitignore setup made whole, one it added to.
+      const made = path.join(world.folder, '.gitignore');
+      const lineOne = r.file(7, made, '.env\n', { line: '.env' });
+      const lineTwo = r.file(7, made, '.env\n.env.*\n', { line: '.env.*' });
+      const exclude = path.join(world.folder, '.git', 'info', 'exclude');
+      const before = '# git ls-files --others --exclude-from=.git/info/exclude\n';
+      writeText(exclude, before);
+      const settingsLine = r.file(7, exclude, `${before}${EXCLUDE_LINE}\n`, { line: EXCLUDE_LINE });
+      const envLine = r.file(7, exclude, `${before}${EXCLUDE_LINE}\n.env\n`, { line: '.env' });
+      const got = await plan(world);
+      const stays = got.keep.filter((k) => /\.env/.test(k.what));
+      assert.equal(stays.length, 2, JSON.stringify(stays));
+      assert.ok(stays.every((k) => k.why === ENV_STAYS));
+      assert.deepEqual(stays.flatMap((k) => k.ids).sort(), [lineOne.id, lineTwo.id, envLine.id].sort());
+      // The made file is not offered for deletion or reversal; the settings line alone is put back in the list.
+      assert.equal(got.changes.some((c) => c.change?.target === made), false);
+      const reversing = got.changes.filter((c) => c.put === 'reverse' && c.change.target === exclude);
+      assert.deepEqual(reversing.map((c) => c.ids), [[settingsLine.id]]);
+      assert.equal(reversing[0].change.before, `${before}.env\n`);
+      assert.deepEqual(accounted(got), recordedIds());
+      const f = fakes(world);
+      const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+      assert.equal(done.ok, true, done.refused);
+      assert.equal(readText(made), '.env\n.env.*\n', 'the .gitignore setup made is kept with its lines');
+      assert.equal(readText(exclude), `${before}.env\n`, 'the settings line goes, the .env line stays');
+    });
+  }
+});
+
+test('a .gitignore setup added .env.* to keeps its own text and the line', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    world.register();
+    world.lockedDir = tempFolder('wh-locked ');
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    const file = path.join(world.folder, '.gitignore');
+    writeText(file, 'node_modules\n');
+    r.file(7, file, 'node_modules\n.env.*\n', { line: '.env.*' });
+    const got = await plan(world);
+    assert.ok(got.keep.some((k) => /\.env\.\*/.test(k.what) && k.why === ENV_STAYS));
+    const f = fakes(world);
+    const done = await applyUninstall({ folder: world.folder, plan: got, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+    assert.equal(done.ok, true, done.refused);
+    assert.equal(readText(file), 'node_modules\n.env.*\n');
   });
 });
 

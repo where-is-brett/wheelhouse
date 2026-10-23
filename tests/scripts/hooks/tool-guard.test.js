@@ -923,3 +923,173 @@ test('reading those files is still allowed', async () => {
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
+
+import { segments, segmentsWithOperators } from '../../../scripts/hooks/shell-words.js';
+
+test('segments reads quotes and substitutions nested inside each other', () => {
+  assert.deepEqual(segments('echo "$(cat "a b")"', false).flat(), ['echo', '', 'cat', 'a b']);
+  assert.deepEqual(segments('echo "a \\" b"', false), [['echo', 'a " b']]);
+  assert.deepEqual(segments("echo 'it'\\''s'", false), [['echo', "it's"]]);
+  assert.deepEqual(segments('echo "${HOME}/x" "${y:-"a b"}"', false), [['echo', '${HOME}/x', '${y:-a b}']]);
+  assert.deepEqual(segments('echo "$(echo ")"; gh pr list)"', false).flat().slice(0, 2), ['echo', '']);
+  const found = segmentsWithOperators('echo "$(echo "$(gh x)")"', false);
+  assert.ok(found.segments.some((s) => s[0] === 'gh'));
+  assert.equal(found.segments.length, found.operators.length);
+  assert.deepEqual(segments('git commit -m "$(cat <<\'EOF\'\nSay "why" here\nEOF\n)"', false).flat().includes('why'), true);
+});
+
+test('segments gives null for anything it cannot read with confidence', () => {
+  const unreadable = [
+    'echo "$(gh', 'echo "$(cat "a)"', 'echo $(echo "x)', 'echo `gh', 'echo "`gh',
+    'echo "x', "echo 'x", 'echo $(gh', 'echo "${x', 'echo "${x:-\'y\'}"', 'echo "${x:-\\}}"',
+    'echo "`echo \\"gh\\"`"', 'echo `echo \\`gh\\``', 'echo `echo "`gh`"`', 'echo `echo $(echo `gh`)`',
+    'echo "$(case x in a) gh ;; esac)"', "echo $'x'", 'echo $"x"', 'echo "$(echo $\'x\')"',
+    `${'$(echo '.repeat(40)}x${')'.repeat(40)}`, `echo ${'"$(echo '.repeat(33)}x${')"'.repeat(33)}`,
+  ];
+  for (const command of unreadable) assert.equal(segments(command, false), null, command);
+  assert.notEqual(segmentsWithOperators('echo )', false), null);
+  assert.notEqual(segments('case $x in a) echo 1 ;; esac', false), null);
+  const ok = `echo ${'"$(echo '.repeat(8)}x${')"'.repeat(8)}`;
+  assert.notEqual(segments(ok, false), null);
+});
+
+test('Bash reads nested quotes inside substitutions, and refuses what hides in them', async () => {
+  await inProject(async (ctx) => {
+    const allowed = [
+      'echo "$(cat "a b")"', 'echo "a \\" b"', 'echo "a \\"gh\\" b"', "echo 'it'\\''s'", 'echo "$(echo "x")"',
+      'echo "${HOME}/x"', 'echo "${x:-"y z"}"', 'echo "$(echo "$(echo "a b")")"', 'echo "a `echo b` c"',
+      'git commit -m "$(cat <<\'EOF\'\nTidy the guard\n\nSay "why" here\nEOF\n)"',
+    ];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+    const refused = [
+      'echo "$(echo "x" ; gh pr list)"', 'echo "$(cat ".env")"', 'echo "$(printf ")"; gh pr list)"',
+      'echo "$(echo "$(gh pr list)")"', 'echo "`gh pr list`"', 'echo "$(echo `gh x`)"', 'echo "`echo \\"gh\\"`"',
+      'echo "a \\" $(gh x) \\" b"', 'echo "$(gh', 'echo "$(cat "a)"', 'echo $(echo "x)', 'echo `gh',
+      'echo "${x:-"$(gh x)"}"', 'echo "$(echo \'a)\'; gh x)"', 'echo "$(case x in a) gh ;; esac)"',
+      `echo ${'"$(echo '.repeat(33)}x${')"'.repeat(33)}`, 'echo "$(echo "x"; git push)"',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+  });
+});
+
+test('a heredoc body cannot close a frame the shell is still in', async () => {
+  await inProject(async (ctx) => {
+    const refused = [
+      'echo "$(cat <<\'EOF\'\n1)\nEOF\ngh pr list)"',
+      'echo "$(cat <<EOF\n1)\nEOF\ngh pr list)"',
+      'echo "$(cat <<"EOF"\n1)\nEOF\ngh pr list)"',
+      'echo "$(cat <<-EOF\n\t1)\n\tEOF\ngh pr list)"',
+      'echo "`cat <<EOF\n1`\nEOF\ngh pr list`"',
+      'echo "$(cat <<A <<B\n1)\nA\nx\nB\ngh pr list)"',
+      'echo "$(cat <<EOF\nx"\nEOF\ngh pr list)"',
+      'echo "$(cat <<EOF\nDon\'t\nEOF\n)"',
+      'cat <<EOF\nhello', 'echo "$(cat <<EOF\nhello\n)"', 'cat <<$X\nhello\n$X', 'cat <<\nx',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+    const allowed = [
+      'git commit -m "$(cat <<\'EOF\'\nTidy (a) and b\nEOF\n)"',
+      'git commit -m "$(cat <<-\'EOF\'\n\tTidy (a)\n\tEOF\n)"',
+      'cat <<EOF\nhello\nEOF', 'cat <<A <<B\nx\nA\ny\nB', 'cat <<< "hello"',
+    ];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('Bash reads heredoc bodies as the shell does, and keeps refusing what they hide', async () => {
+  await inProject(async (ctx) => {
+    const refused = [
+      'cat <<EOF\nIt\'s $(gh pr list) it\'s\nEOF',
+      'cat <<EOF\n\'\n$(gh pr list)\n\'\nEOF',
+      'git commit -m "$(cat <<EOF\nDon\'t $(gh pr list) won\'t\nEOF\n)"',
+      'cat <<\'EOF\'\nit\'s\nEOF\ngh pr list\n\'\nEOF',
+      'cat <<EOF\nit\'s\nEOF\ngh pr list\n\'\nEOF',
+      'cat <<EOF\nx $(echo "\nEOF\n")',
+      'cat <<\'EOF\'\nDon\'t\nEOF',
+      'bash <<\'EOF\'\ngh pr list\nEOF', 'sh -s <<EOF\ngh pr list\nEOF', 'cat <<\'EOF\' | sh\ngh pr list\nEOF',
+      'source /dev/stdin <<EOF\ngh pr list\nEOF', 'source <(cat <<\'EOF\'\ngh pr list\nEOF\n)',
+      '. <(cat <<\'EOF\'\ngh pr list\nEOF\n)', 'eval "$(cat <<\'EOF\'\ngh pr list\nEOF\n)"',
+      'cat <<gh\nx\ngh',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+    const allowed = [
+      'cat <<EOF\nIt\\\'s fine, $(echo hi) and ${HOME} (see 1)\nEOF',
+      'cat <<\'EOF\'\nit "quoted" (a)\nEOF',
+      'git commit -m "$(cat <<\'EOF\'\nTidy (a) and b\n\nCloses #12\n1) first\nEOF\n)"',
+      'cat <<EOF\nhello $(echo "a b")\nEOF\necho done',
+    ];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('Bash refuses what hides in comments and case patterns, and a gh word built with $', async () => {
+  await inProject(async (ctx) => {
+    const refused = [
+      'echo x # \'\ngh pr list\n# \'', 'echo "$(echo x # )\ngh pr list\n)"', 'echo "$(echo "$(echo x # )\ngh pr list\n)")"',
+      'echo ok # gh', 'echo x # (\ngh pr list',
+      'echo "$(! case x in x) gh pr list ;; esac)"', 'echo "$({ case x in x) gh pr list ;; esac; })"',
+      'echo "$(if true; then case x in x) gh pr list ;; esac; fi)"', 'echo "$(time case x in x) gh pr list ;; esac)"',
+      'echo "$(echo "$(! case x in x) gh pr list ;; esac)")"', 'for i in 1; do echo "$(case x in x) gh pr list ;; esac)"; done',
+      'gh$x pr list', 'gh${y} pr list', 'glab$x mr list',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+    const allowed = ['echo a#b $# "${#HOME}"', 'echo x # a note', 'case $x in a) echo 1 ;; esac', 'echo "$(echo case)"'.replace('case)', 'cased)'), 'echo "$(echo x) # not a comment"'];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
+
+test('on Windows a backslash before a quote, $ or a backtick is refused', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['echo \\\'; gh pr list; echo \\\'', 'echo \\"; gh pr list; echo \\"', 'echo \\$x', 'echo \\`x']) {
+      assert.ok(denied(await withWin(ctx, command)), command);
+    }
+    assert.equal(await withWin(ctx, 'dir C:\\Users\\x'), undefined);
+  });
+});
+
+test('Bash refuses where the guard and the shell could disagree about a heredoc', async () => {
+  await inProject(async (ctx) => {
+    const refused = [
+      'echo x # <<EOF\n# \'\ngh pr list\n# \'\nEOF',
+      'echo x # <<E\ncat <<\'X\'\n\'\nX\ngh pr list\n\'\nE',
+      'echo $[1<<E]\n# \'\ngh pr list\n# \'\nE]',
+      'echo ${x:-<<E}\n# \'\ngh pr list\n# \'\nE}',
+      'echo ${x:-${y}<<E}\n# \'\ngh pr list\n# \'\nE}',
+      'cat <<EOF\r\nEOF\n\'\n$(gh pr list)\n\'\nEOF\r\n',
+      'echo "$(echo x)"\r\ngh pr list',
+      'cat <<A\ncat <<B\n\'\nB\nA\ngh pr list',
+      'cat <<EOF\n\'\nE\\\nOF\ngh pr create #\'\nEOF',
+      'cat <<EOF\nx $(\n\'\nEOF\ngh pr create #\'\n)\nEOF',
+      'cat <<EOF\nx `\n\'\nEOF\ngh pr create #\'\n`\nEOF',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+    const windows = ['echo \\<<EOF\n# \'\ngh pr list\n# \'\nEOF', 'echo \;gh pr list', 'echo a\\ b', 'echo \\#x', 'echo \\|x'];
+    for (const command of windows) assert.ok(denied(await withWin(ctx, command)), command);
+    const allowed = ['npm test # run tests (all)', 'git commit -m "x" # done (wip)', 'git commit -m "$(cat <<\'EOF\'\nTidy\n\nCloses #12 (partial)\nEOF\n)"', 'cat <<EOF\nE\\\nOF\nEOF', 'echo "a < b" \'<<x\'', 'echo ${x:-y} ${#x}', 'cat <<EOF\nhello\nEOF\necho done', 'echo \'a\rb\''];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+    assert.equal(await withWin(ctx, 'dir C:\\Users\\x'), undefined);
+  });
+});
+
+test('the splitter reads long inputs in linear time', () => {
+  const inputs = [
+    ['gh x; ' + '# '.repeat(30000), 'gh'], ['${'.repeat(30000), '${'.repeat(30000)], ['echo ${a}${b}\n'.repeat(5000), 'echo'], ['a # b\n'.repeat(10000), 'a'],
+  ];
+  for (const [command, first] of inputs) {
+    const start = Date.now();
+    const found = segments(command, false);
+    assert.ok(Date.now() - start < 1000, `${command.slice(0, 20)} took ${Date.now() - start} ms`);
+    assert.ok(found.flat().includes(first), command.slice(0, 20));
+  }
+});
+
+test('an unreadable command is refused with its own message, and a PowerShell line continuation is read', async () => {
+  await inProject(async (ctx) => {
+    const unreadable = await bash(ctx, 'echo "x');
+    assert.match(unreadable.hookSpecificOutput.permissionDecisionReason, /could not read this command with certainty/);
+    const host = await bash(ctx, 'gh pr list');
+    assert.doesNotMatch(host.hookSpecificOutput.permissionDecisionReason, /certainty/);
+    assert.equal(await withWin(ctx, 'Get-ChildItem `\n  -Force', 'darwin', 'PowerShell'), undefined);
+    assert.ok(denied(await withWin(ctx, 'Get-ChildItem `\r\n  -Force', 'darwin', 'PowerShell')));
+    assert.ok(denied(await withWin(ctx, 'echo `\n gh pr list', 'darwin', 'PowerShell')));
+  });
+});
