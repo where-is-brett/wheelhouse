@@ -17,6 +17,7 @@ import { buildHome } from '../../scripts/agents/copilot/home.js';
 import { AGENT_CONTROL } from '../../scripts/lib/agent-control.js';
 import { TO_KNOW_MORE } from '../../scripts/lib/calm-words.js';
 import { BOARD_FILE, LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../../scripts/lib/copilot-numbers.js';
+import { parseLeanRecord } from '../../scripts/state/lean-record.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replaceAll('\r\n', '\n');
@@ -801,6 +802,155 @@ test('buildHome throws when the Lean playbook is missing, and builds nothing fro
   assert.throws(() => buildHome({ root }), /somebody/);
   fs.rmSync(path.join(root, 'adapters', 'copilot', 'skills', 'lean'), { recursive: true });
   assert.throws(() => buildHome({ root }), /skills[\\/]lean[\\/]SKILL\.md/);
+});
+
+// ---- Intake at Lean (ruling P5-37, P5-38) ----
+
+const intake = () => section(playbook, 'Intake at Lean');
+// The intake section's own example lines, each in backticks on a line of its own (so the eight kinds' examples stay eight).
+const intakeExamples = () => intake().split('\n').filter((l) => l.startsWith('`{"at"')).map((l) => JSON.parse(l.slice(1, -1)));
+
+test('Intake at Lean routes each of the nine questions to a Lean step', () => {
+  const part = intake();
+  // The questions are the intake's own, in its order; each row names the step at Lean.
+  const rows = part.split('\n').filter((l) => /^\| [1-9] \|/.test(l));
+  assert.equal(rows.length, 9, 'nine questions');
+  rows.forEach((row, i) => assert.ok(row.startsWith(`| ${i + 1} |`), `question ${i + 1} in order`));
+  const routes = [
+    [/Incident/, /Looking at an incident/, /\*\*Undo\*\*/],
+    [/Answer/, /card/],
+    [/Running work/],
+    [/Bug/, /brief/, /Building/],
+    [/Question/, /Want me to go ahead\?/],
+    [/Runbook/, /local steps/],
+    [/Chore/, /quick/],
+    [/Later/, /idea/],
+    [/Change/, /shaping questions/],
+  ];
+  routes.forEach((bits, i) => { for (const bit of bits) assert.match(rows[i], bit, `question ${i + 1}`); });
+  // The steps the intake sets around them.
+  for (const bit of [/\*\*Split\*\*/, /Say the route in one line/, /Doing: X\. Not doing: Y\. Done when: Z\./, /what it does, who sees it, (and )?what done means/]) assert.match(part, bit);
+  // Route 9 doesn't start the brainstorming skill, which the kit doesn't carry.
+  assert.match(part, /brainstorming/);
+  assert.match(part, /isn't installed/);
+  // The playbook sends every message here first.
+  assert.match(section(playbook, 'Overview'), /Intake at Lean/);
+});
+
+test('a matching idea is merged under the same short name, never a second idea', () => {
+  const part = intake();
+  const grep = 'git grep -h -e \'"kind":"idea"\' -e \'"kind":"ruling"\' main -- .wheelhouse/record/';
+  assert.ok(part.includes(`\`${grep}\``), 'the check names the ideas and rulings on the main version');
+  assert.match(part, /"Building now"/);
+  assert.match(part, /"Set aside"/);
+  assert.match(part, /same `card`/);
+  assert.match(part, /old words with the new|the old words, then the new/);
+  assert.match(part, /Never two ideas for one thing/);
+  // The command works as written: the main version's ideas and rulings, oldest first, and not a line left in the folder.
+  const r = repo('intake');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  const line = (o) => `${JSON.stringify({ at: o.at, kind: o.kind, card: o.card, choice: o.choice ?? null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', ...(o.text ? { text: o.text } : {}) })}\n`;
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-22.jsonl`, line({ at: '2026-10-22T01:00:00Z', kind: 'idea', card: 'orders-spreadsheet', text: 'A spreadsheet of orders' }) + line({ at: '2026-10-22T01:05:00Z', kind: 'card', card: 'something', choice: 'Not now' }), 'Record: idea');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, line({ at: '2026-10-23T01:00:00Z', kind: 'ruling', card: 'exports-are-csv', choice: 'Confirm', text: 'Exports are CSV' }), 'Record: ruling');
+  fs.appendFileSync(path.join(cwd, LEAN_RECORD_DIR, '2026-10-23.jsonl'), line({ at: '2026-10-23T02:00:00Z', kind: 'idea', card: 'not-committed', text: 'x' }));
+  const args = grep.split(' ').slice(1).map((a) => a.replace(/^'|'$/g, ''));
+  const printed = r.run(cwd, ...args).split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(printed.map((e) => [e.kind, e.card]), [['idea', 'orders-spreadsheet'], ['ruling', 'exports-are-csv']]);
+});
+
+test('an idea is written at once and a ruling only after its confirm card, each with the director\'s words', () => {
+  const part = intake();
+  const examples = intakeExamples();
+  assert.deepEqual(examples.map((e) => e.kind), ['idea', 'ruling', 'design'], 'one example for each intake kind');
+  // Each example is a good Lean line, with the eight keys and text after them.
+  const { entries, problems } = parseLeanRecord(examples.map((e) => JSON.stringify(e)).join('\n'), { file: `${LEAN_RECORD_DIR}/2026-10-23.jsonl` });
+  assert.deepEqual(problems, []);
+  assert.equal(entries.length, 3);
+  for (const e of examples) assert.deepEqual(Object.keys(e), [...KEYS, 'text'], e.kind);
+  assert.match(part, /\*\*An idea\*\* is written at once, with no card/);
+  assert.match(part, /verbatim|as they wrote them/);
+  assert.match(part, /never narrowed/);
+  // The ruling's card has every part a card has, and the three options.
+  const ruling = /\*\*A ruling\*\*[\s\S]*?(?=\n- \*\*Confirm|\n\n)/.exec(part)?.[0] ?? '';
+  for (const bit of [/what this is \(a standing rule for every feature/, /why it comes to them \(it steers the builder from now on\)/, /\*\*Confirm\*\*/, /\*\*Change the words\*\*/, /\*\*Not now\*\*/, /recommend/, /meanwhile \(nothing changes until they confirm\)/]) assert.match(ruling, bit);
+  assert.match(part, /only after/);
+  // The board shows them; the builder's brief names the confirmed rulings, and the reviewer checks against them.
+  assert.match(section(playbook, 'Building'), /"Rulings"/);
+  assert.match(section(playbook, 'Building'), /"kind":"ruling"/);
+  assert.match(section(playbook, 'Reviewing'), /Check the change against the rulings/);
+  // The record section knows the three kinds and their ninth key.
+  const record = section(playbook, 'The record');
+  for (const kind of ['idea', 'ruling', 'design']) assert.ok(record.includes(`\`${kind}\``), kind);
+  assert.match(record, /`text`/);
+});
+
+test('a design\'s approval card names its git blob hash', () => {
+  const part = intake();
+  assert.ok(part.includes('`.wheelhouse/record/designs/<slug>.md`'));
+  assert.ok(part.includes('`git hash-object --no-filters .wheelhouse/record/designs/<slug>.md`'));
+  assert.ok(part.includes('git commit -m "Record: design <slug>"'));
+  assert.match(part, /names (that|the) hash in full/);
+  assert.match(part, /new card/);
+  assert.match(part, /\*\*Build it\*\*/);
+  // The design is committed alone on the main version, and the hash the card names is git's own for the file.
+  const r = repo('design');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
+  // A line-ending rule that would change the file on the way in: --no-filters hashes the bytes as they are.
+  commitFile(r, cwd, '.gitattributes', '*.md text eol=lf\n', 'Attributes');
+  const rel = `${LEAN_RECORD_DIR}/designs/export-orders.md`;
+  commitFile(r, cwd, rel, '<!-- design -->\n# Export orders\n\nWhat it does: exports the orders.\n', 'Record: design export-orders');
+  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n'), [rel], 'committed alone');
+  const hash = git('hash-object', '--no-filters', rel);
+  assert.equal(hash, git('rev-parse', `HEAD:${rel}`), 'the hash is the committed file\'s');
+  // The design line carries the path and hash, and the record reads it beside the days.
+  const design = intakeExamples().find((e) => e.kind === 'design');
+  const own = { ...design, text: `${rel} ${hash}` };
+  const { entries, problems } = parseLeanRecord(JSON.stringify(own), { file: `${LEAN_RECORD_DIR}/2026-10-23.jsonl` });
+  assert.deepEqual(problems, []);
+  assert.equal(entries[0].text, `${rel} ${hash}`);
+});
+
+test('Intake at Lean names no Claude Code tool and no cli.js step without the helper', () => {
+  const part = intake();
+  assert.doesNotMatch(part, /cli\.js/);
+  assert.doesNotMatch(part, /superpowers:/);
+  assert.doesNotMatch(part, CLAUDE_CODE_TOOL_WORDS);
+  for (const name of TOOL_NAMES) assert.ok(!part.includes(name), name);
+  for (const tool of ['Write', 'Read', 'Edit', 'Bash', 'Grep', 'Glob']) assert.ok(!part.includes(`\`${tool}\``), tool);
+  // Where the helper answers, its own section says how intake goes instead.
+  assert.match(part, /With Wheelhouse's helper/);
+});
+
+test('where the helper answers, intake uses the front desk\'s command and writes no record line', () => {
+  const helper = section(playbook, 'With Wheelhouse\'s helper');
+  const bullet = /- \*\*Intake\*\*[^\n]*/.exec(helper)?.[0] ?? '';
+  for (const step of ['`cli.js similar`', '`cli.js record idea`', '`cli.js record ruling`', '`cli.js card`']) assert.ok(bullet.includes(step), step);
+  assert.match(bullet, /wheelhouse[:-]intake/);
+  assert.match(bullet, /no record lines?|writes? no/);
+  // The ruling's confirm card is a click in the chat, recorded by the Lean command, never the window.
+  assert.match(bullet, /`<lean> click/);
+  assert.match(bullet, /chat click/);
+  assert.match(bullet, /never goes to the helper's window/);
+  assert.doesNotMatch(bullet, /<lean> confirm/);
+  // The shaping questions still take brainstorming's place.
+  assert.match(bullet, /shaping questions/);
+});
+
+test('the board lists ideas and rulings, with Nothing when there are none', () => {
+  const board = playbook.slice(playbook.indexOf('\n## The board\n'), playbook.indexOf('\n## Intake at Lean\n'));
+  const at = (h) => board.indexOf(`\n## ${h}\n`);
+  assert.ok(at('Ideas') > at('Waiting to be recorded') && at('Rulings') > at('Ideas'), 'Ideas, then Rulings, after the lines waiting');
+  assert.ok(at('What the record\'s marks mean') > at('Rulings'));
+  assert.match(board, /say "Nothing" where a part is empty/);
+  assert.match(section(playbook, 'The board'), /Ideas/);
+  // A new board from setup has them, with Nothing.
+  const setup = read('adapters/copilot/skills/setup-lean/SKILL.md');
+  assert.ok(setup.includes('## Ideas\nNothing\n'));
+  assert.ok(setup.includes('## Rulings\nNothing\n'));
+  assert.match(kit.get('skills/wheelhouse-board/SKILL.md'), /"Ideas" and "Rulings"/);
 });
 
 // ---- No host program ran ----

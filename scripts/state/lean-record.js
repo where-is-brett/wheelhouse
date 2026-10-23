@@ -12,14 +12,22 @@ import { makeEvent, PROTECTED_KINDS } from './events.js';
 import { LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../lib/copilot-numbers.js';
 
 // The kinds a Lean line can name, and the eight keys every line has, in the order they are written.
-export const LEAN_KINDS = Object.freeze(['card', 'approval', 'review', 'merge', 'undo', 'stop', 'lift-stop', 'copy']);
+// Intake at Lean (ruling P5-37) adds `idea`, `ruling` and `design`, which carry a ninth key, `text`, after them:
+// the director's words, verbatim, for an idea and a ruling; the design file's path and git blob hash for a design.
+export const LEAN_KINDS = Object.freeze(['card', 'approval', 'review', 'merge', 'undo', 'stop', 'lift-stop', 'copy', 'idea', 'ruling', 'design']);
 export const LEAN_KEYS = Object.freeze(['at', 'kind', 'card', 'choice', 'commit', 'proof', 'by', 'tier']);
+export const LEAN_TEXT_KINDS = Object.freeze(['idea', 'ruling', 'design']);
+export const LEAN_TEXT_CHARS = 4000;
+// The folder in the record that holds Lean's designs, one Markdown file each (ruling P5-38). It is not a day's file.
+export const LEAN_DESIGNS_DIR = 'designs';
 // Only these kinds can have a click behind them, and only when the line names the option clicked.
-const CLICK_KINDS = Object.freeze(['card', 'approval', 'undo', 'lift-stop']);
+const CLICK_KINDS = Object.freeze(['card', 'approval', 'undo', 'lift-stop', 'ruling', 'design']);
 
 const FILE_NAME = /^(\d{4})-(\d{2})-(\d{2})\.jsonl$/;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const COMMIT = /^[0-9a-f]{12}$/;
+// A design line's text: its file in the designs folder, a space, and the file's git blob hash in full.
+const DESIGN_TEXT = new RegExp(`^(${LEAN_RECORD_DIR.replaceAll('.', '\\.')}/${LEAN_DESIGNS_DIR}/[a-z0-9][a-z0-9-]{0,39}\\.md) ([0-9a-f]{40})$`);
 // A real time: Date.parse lets 31 February roll into March, so the date must come back as it went in.
 const isTime = (x) => typeof x === 'string' && TIME.test(x) && !Number.isNaN(Date.parse(x)) && new Date(x).toISOString().slice(0, 19) === x.slice(0, 19);
 const isText = (x) => typeof x === 'string' && x !== '';
@@ -29,19 +37,27 @@ const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const relative = (name) => `${LEAN_RECORD_DIR}/${name}`;
 
 // Why a parsed line is not a good Lean line, or null when it is one. Ruling P4-13: all eight keys,
-// the five that are never null, and the proof each kind carries.
+// the five that are never null, and the proof each kind carries; ruling P5-37: `text` on the three intake
+// kinds, and on no other.
 function whyBad(line, file) {
   if (!isPlain(line)) return 'the line is not a JSON object';
   const keys = Object.keys(line);
   const missing = LEAN_KEYS.filter((k) => !Object.hasOwn(line, k));
   if (missing.length > 0) return `the line lacks ${missing.join(', ')}`;
-  const extra = keys.filter((k) => !LEAN_KEYS.includes(k));
+  const extra = keys.filter((k) => !LEAN_KEYS.includes(k) && k !== 'text');
   if (extra.length > 0) return `the line has ${extra.join(', ')}, which a Lean line does not`;
   if (!isTime(line.at)) return 'the time is not UTC in ISO 8601';
   // A line belongs in the file for its own UTC day (the playbook writes it there).
   const day = FILE_NAME.exec(String(file ?? '').split('/').pop());
   if (day && line.at.slice(0, 10) !== `${day[1]}-${day[2]}-${day[3]}`) return 'the time is not on the day of the file';
   if (!LEAN_KINDS.includes(line.kind)) return `the kind ${typeof line.kind === 'string' ? `"${line.kind}" ` : ''}is not one Lean writes`;
+  if (LEAN_TEXT_KINDS.includes(line.kind)) {
+    if (!Object.hasOwn(line, 'text')) return 'the line lacks text, which an idea, a ruling and a design carry';
+    if (typeof line.text !== 'string' || line.text.trim() === '') return 'the text is not the director\'s words';
+    if (line.text.length > LEAN_TEXT_CHARS) return `the text is over ${LEAN_TEXT_CHARS} characters`;
+  } else if (Object.hasOwn(line, 'text')) {
+    return 'only an idea, a ruling or a design carries text';
+  }
   for (const k of ['card', 'choice']) if (line[k] !== null && !isText(line[k])) return `${k} is neither text nor null`;
   if (line.commit !== null && !(typeof line.commit === 'string' && COMMIT.test(line.commit))) return 'the commit is not 12 lower-case hex characters';
   const proof = line.kind === 'review' ? 'chat-review' : 'chat-click';
@@ -63,6 +79,11 @@ function whyBad(line, file) {
     // "Nothing else is in the line" for stop; the click on Lift STOP, or no click at all.
     case 'stop': return need(line.choice === null, 'a stop line has no choice');
     case 'lift-stop': return need(line.choice === null || line.choice === 'Lift STOP', 'a lift-stop line names Lift STOP, or nothing');
+    // An idea is written at once, with no card; a ruling only after the click on Confirm; a design after Build it.
+    case 'idea': return need(line.card !== null && line.choice === null && line.commit === null, 'an idea names its short name, and no choice or commit');
+    case 'ruling': return need(line.card !== null && line.choice === 'Confirm' && line.commit === null, 'a ruling names its short name and Confirm, and no commit');
+    case 'design':
+      return need(line.card !== null && line.choice === 'Build it' && line.commit === null && DESIGN_TEXT.test(line.text), 'a design names its card, Build it, and as text its file in the designs folder and its full git blob hash');
     default: return null;
   }
 }
@@ -107,6 +128,8 @@ export function readLeanRecord(folder) {
   }
   for (const name of names) {
     const file = relative(name);
+    // Lean's designs folder (ruling P5-38) holds designs, not record lines; a file of that name is not it.
+    if (name === LEAN_DESIGNS_DIR && isFolder(path.join(dir, name))) continue;
     const m = FILE_NAME.exec(name);
     if (!m || !isTime(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`)) {
       problems.push({ file, line: null, text: '', why: 'the file is not named for a day (YYYY-MM-DD.jsonl)' });
@@ -128,6 +151,14 @@ export function readLeanRecord(folder) {
   return { entries, problems };
 }
 
+function isFolder(p) {
+  try {
+    return fs.lstatSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 const words = (slug) => String(slug).replace(/-/g, ' ');
 
 // One plain sentence for an event kept as a note. Each says the click was a chat click, not proven.
@@ -144,16 +175,19 @@ function sentence(e) {
       ? 'Lean: STOP was lifted with no click behind it.'
       : 'Lean: the director lifted STOP, by a click in the chat, not proven.';
     case 'copy': return e.choice === 'pushed' ? `Lean: the copy was updated to ${e.commit}.` : `Lean: the copy was not updated at ${e.commit}.`;
+    case 'ruling': return `Lean: the director confirmed the ruling ${card}, by a click in the chat, not proven.`;
+    case 'design': return `Lean: the director chose to build the design ${card}, by a click in the chat, not proven.`;
     default: return '';
   }
 }
 
-// What each Lean kind becomes. Only `card` and `merge` have an unsigned state event that means the
-// same. An approval, a review and a click on an action are signed kinds, and a Lean line is never
-// signed, so those, with the rest, are notes that say which Lean kind they are.
+// What each Lean kind becomes. `card`, `merge`, `idea` and `ruling` have an unsigned state event that
+// means the same. An approval, a review and a click on an action are signed kinds, and a Lean line is
+// never signed, so those, with the rest, are notes that say which Lean kind they are. A ruling's state
+// event is the ruling itself, plain and so unconfirmed; its confirm click is a note beside it.
 function stateKind(kind) {
   if (kind === 'card') return 'card-answer';
-  if (kind === 'merge') return 'merge';
+  if (['merge', 'idea', 'ruling'].includes(kind)) return kind;
   return 'note';
 }
 
@@ -168,6 +202,14 @@ function dataOf(e) {
     ...(isText(e.file) && Number.isInteger(e.line) ? { source: { file: e.file, line: e.line } } : {}),
   };
   if (e.kind === 'card') return { question: e.card, label: e.choice, ...kept };
+  // An idea is kept under its short name, so a later line with the same name replaces it (views' latestPerKey).
+  if (e.kind === 'idea') return { key: e.card, text: e.text, ...kept };
+  // The ruling is the director's words, never narrowed; the click on Confirm is the note that follows it.
+  if (e.kind === 'ruling') return { words: e.text, card: e.card, ...kept, clicked: false };
+  if (e.kind === 'design') {
+    const [, file, hash] = DESIGN_TEXT.exec(e.text);
+    return { text: sentence(e), lean: 'design', card: e.card, choice: e.choice, commit: e.commit, path: file, hash, ...kept };
+  }
   if (e.kind === 'merge') {
     return {
       commit: e.commit,
@@ -184,14 +226,23 @@ function dataOf(e) {
 // protected kind, so makeEvent does not reach for a key, and none carries `sig`. An entry that is
 // not a good Lean line throws. `project` is the project the events go to; an event carries no
 // project of its own, because it is kept in that project's state, so moveUp writes them there.
+// A ruling line gives two events: the ruling, then a note of its confirm click (`data.lean` 'ruling-confirm',
+// naming the ruling by its id).
 export function leanToEvents(entries, { project } = {}) { // eslint-disable-line no-unused-vars
-  return entries.map((entry) => {
-    const why = whyBad(Object.fromEntries(LEAN_KEYS.map((k) => [k, entry?.[k]])), entry?.file);
-    if (why) throw new Error(`A Lean entry cannot become an event: ${why}`);
-    const kind = stateKind(entry.kind);
+  const make = (kind, data, at) => {
     if (PROTECTED_KINDS.includes(kind)) throw new Error('A Lean entry is never a signed kind');
-    const event = makeEvent({ kind, data: dataOf(entry), now: () => new Date(entry.at) });
+    const event = makeEvent({ kind, data, now: () => new Date(at) });
     if (event.sig !== undefined) throw new Error('A Lean entry is never signed');
     return event;
+  };
+  return entries.flatMap((entry) => {
+    const keys = Object.hasOwn(entry ?? {}, 'text') ? [...LEAN_KEYS, 'text'] : LEAN_KEYS;
+    const why = whyBad(Object.fromEntries(keys.map((k) => [k, entry?.[k]])), entry?.file);
+    if (why) throw new Error(`A Lean entry cannot become an event: ${why}`);
+    const event = make(stateKind(entry.kind), dataOf(entry), entry.at);
+    if (entry.kind !== 'ruling') return [event];
+    const { words: _words, ...kept } = event.data;
+    const confirm = { ...kept, text: sentence(entry), lean: 'ruling-confirm', ruling: event.id, choice: entry.choice, commit: entry.commit, clicked: true };
+    return [event, make('note', confirm, entry.at)];
   });
 }

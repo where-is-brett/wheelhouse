@@ -198,6 +198,12 @@ Off
 
 ## Waiting to be recorded
 Nothing
+
+## Ideas
+Nothing
+
+## Rulings
+Nothing
 ```
 
 4. **On a Mac where `node --version` finds nothing,** the kit may also hold a guard that runs without Node.js (check 69): `hooks/wheelhouse.json` and the shell guard it runs. Both are built when the kit is built, not on this computer, so they come in `adapters/copilot/home/` and are listed in `MANIFEST.txt`. If `MANIFEST.txt` lists lines that start `hooks/`, copy each one into `~/.copilot/` the same way as in Step 2 (make the folder first, check it with `git hash-object --no-filters` against its line, stop at the first that doesn't match), and tell the director in a line that a Wheelhouse guard now runs on this Mac. If it lists none, which is so until the guards are built, copy nothing and say nothing about guards beyond what the board's first lines say: no Wheelhouse guards run. On Windows, and where Node.js runs, copy no hook file.

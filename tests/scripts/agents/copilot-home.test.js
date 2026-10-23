@@ -290,6 +290,37 @@ test('MANIFEST.txt lists every file with its git blob hash', () => {
 
 // ---- Building, checking and writing ----
 
+// Ruling P5-38: the kit's intake sends a Lean session without a Wheelhouse command to wheelhouse-lean's Intake at Lean,
+// as P4-34 does for the front desk; the rest is skills/intake as it stands, under Copilot's names.
+const INTAKE_LEAN_LINE = 'At Lean, where no Wheelhouse command runs, follow wheelhouse-lean\'s Intake at Lean in place of each `cli.js` step.';
+
+test('the kit\'s intake carries the Lean line and is otherwise built from skills/intake', () => {
+  const built = kit.get('skills/wheelhouse-intake/SKILL.md');
+  assert.equal(built.split(INTAKE_LEAN_LINE).length, 2, 'the line is there once');
+  const at = built.indexOf(INTAKE_LEAN_LINE);
+  assert.ok(at > built.indexOf('## Overview\n'), 'after the overview\'s heading');
+  assert.ok(at < built.indexOf('## Every message, in this order\n'), 'before the steps');
+  // Without the line, the body is the source's, with skills named as Copilot names them.
+  const source = split(lf(fs.readFileSync(path.join(ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8'))).body.replace(/^\n?<!--[^\n]*-->\n/, '');
+  const body = split(built).body.replace(/^<!--[^\n]*-->\n/, '');
+  assert.equal(body.replace(`\n${INTAKE_LEAN_LINE}\n`, ''), source.replace(/\bwheelhouse:([a-z][a-z-]*)/g, 'wheelhouse-$1'));
+  // Claude Code's own intake is not edited.
+  assert.ok(!fs.readFileSync(path.join(ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8').includes('wheelhouse-lean'));
+});
+
+test('buildHome throws when the intake source has no "## Every message, in this order" heading to put the Lean line before', () => {
+  const root = copyOfSources();
+  const file = path.join(root, 'skills', 'intake', 'SKILL.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('\n## Every message, in this order\n', '\n## Each message\n'));
+  assert.throws(() => buildHome({ root }), /## Every message, in this order/);
+});
+
+test('the kit\'s board skill names the board\'s Ideas and Rulings parts', () => {
+  const board = kit.get('skills/wheelhouse-board/SKILL.md');
+  assert.match(board, /"Ideas"/);
+  assert.match(board, /"Rulings"/);
+});
+
 test('buildHome throws when a source is missing, and never skips one silently', () => {
   const root = copyOfSources();
   fs.rmSync(path.join(root, 'skills', 'intake'), { recursive: true });
