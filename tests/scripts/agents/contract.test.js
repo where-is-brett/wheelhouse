@@ -40,6 +40,12 @@ test('checkAdapter names a missing part in plain words', () => {
   assert.equal(checkAdapter(null).length, 1);
 });
 
+test('checkAdapter names a missing checkForeman', () => {
+  const { checkForeman, ...rest } = claudeCode.sessions;
+  assert.deepEqual(checkAdapter({ ...claudeCode, sessions: rest }), ['The sessions part has no checkForeman']);
+  assert.deepEqual(checkAdapter({ ...claudeCode, sessions: { ...rest, checkForeman: 'yes' } }), ["The sessions part's checkForeman must be a function, and it is string"]);
+});
+
 test('adapterFor throws for an agent it does not know', () => {
   assert.deepEqual(AGENTS, ['claude-code', 'copilot']);
   assert.equal(adapterFor('claude-code'), claudeCode);

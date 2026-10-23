@@ -10,7 +10,7 @@ const SHAPES = Object.freeze({
   translate: { type: 'object', members: { toGuardInput: 'function', fromGuardAnswer: 'function' } },
   tools: { type: 'object', members: { read: 'array', halt: 'array', notify: 'array', ask: 'string', shell: 'array' } },
   settings: { type: 'object', members: { project: 'function', local: 'function' } },
-  sessions: { type: 'object', members: { checkFeature: 'function', foremanCall: 'function', featureStartCall: 'function', featureResumeCall: 'function', finalAnswer: 'function' } },
+  sessions: { type: 'object', members: { checkForeman: 'function', checkFeature: 'function', foremanCall: 'function', featureStartCall: 'function', featureResumeCall: 'function', finalAnswer: 'function' } },
   cards: { type: 'object', members: { binding: 'array' } },
   packaging: { type: 'object', members: { files: 'function' } },
   toolSheet: { type: 'string' },

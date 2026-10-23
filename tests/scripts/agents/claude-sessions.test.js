@@ -2,12 +2,13 @@
 // Sessions start through the project's adapter, and Claude Code's adapter builds exactly the command line the
 // waker and the foreman's start built before it. The recorded command lines (tests/fixtures/agents/claude-argv.json)
 // were taken from that earlier code, so each session's permissions are held to what they were.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adapterFor } from '../../../scripts/agents/index.js';
+import { NOT_BUILT_YET } from '../../../scripts/agents/contract.js';
 import { agentOfConfig, agentOfProject, sessionsFor, sessionsOfProject } from '../../../scripts/agents/project-agent.js';
 import { foremanSession } from '../../../scripts/foreman/start.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
@@ -15,12 +16,17 @@ import { computerId } from '../../../scripts/lib/paths.js';
 import { makeWaker, writeWake } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { withHome } from '../../helpers/homes.js';
+import { standInTools } from '../../helpers/host-stand-ins.js';
 import { P, config as projectConfig, project } from '../../helpers/foreman.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const RECORDED = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agents', 'claude-argv.json'), 'utf8'));
 const sessions = adapterFor('claude-code').sessions;
 const T0 = '2026-10-19T09:00:00.000Z';
+
+// Stand-ins for gh, glab, copilot and claude come first on the PATH; the tests that name them assert none ran.
+const hostStandIns = standInTools();
+after(() => hostStandIns.restore());
 
 // The configuration a recorded case was built from.
 const configOf = ({ sessionMode, routing }) => ({ ...(sessionMode === null ? {} : { sessionMode }), routing });
@@ -104,7 +110,7 @@ test('the waker asks the project\'s adapter for the foreman\'s call, the feature
     seen.push({ name, options });
     return { file: `agent-${name}`, args: [name, options.prompt], input: 'in', verbatim: false, env: { PATH: '/p', MARK: name } };
   };
-  const stand = { checkFeature: (config) => seen.push({ name: 'check', config }), foremanCall: answer('foreman'), featureStartCall: answer('start'), featureResumeCall: answer('resume'), finalAnswer: () => null };
+  const stand = { checkForeman: (config) => seen.push({ name: 'check-foreman', config }), checkFeature: (config) => seen.push({ name: 'check', config }), foremanCall: answer('foreman'), featureStartCall: answer('start'), featureResumeCall: answer('resume'), finalAnswer: () => null };
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
@@ -239,4 +245,82 @@ test('a builder model that can\'t be passed is refused before the worktree is la
   await assert.rejects(w.startFeature({ work: 'login-page', worktree, briefFile: featurePaths(worktree).brief }), /model can't be passed/);
   assert.deepEqual(labelled, [], 'nothing was labelled');
   assert.equal(calls.length, 0);
+}));
+
+// --- The waker asks the project's adapter whether its sessions may start ---
+
+test('Claude Code\'s checkForeman refuses bypass mode as sessionModeOf does', () => {
+  assert.throws(() => sessions.checkForeman({ sessionMode: 'bypassPermissions' }), /never starts a session in bypass mode/);
+  assert.throws(() => sessions.checkForeman({ sessionMode: 'nonsense' }), /isn't a permission mode/);
+  assert.equal(sessions.checkForeman({ sessionMode: 'auto' }), undefined, 'the foreman may be in auto mode');
+  assert.equal(sessions.checkForeman({}), undefined, 'none given: the explicit default');
+  assert.equal(sessions.checkForeman(null), undefined);
+});
+
+test('the waker asks the project\'s adapter for the mode checks', () => withHome(async () => {
+  const checkout = await project();
+  const seen = [];
+  const call = () => ({ file: 'agent', args: [], input: '', verbatim: false, env: {} });
+  const stood = {
+    checkForeman: (config) => seen.push(['foreman', config]),
+    checkFeature: (config) => seen.push(['feature', config]),
+    foremanCall: call, featureStartCall: call, featureResumeCall: call, finalAnswer: () => null,
+  };
+  const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
+  fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
+  fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
+  const held = configOf2();
+  const { w } = waker({ config: held, sessions: stood, locate: () => worktree });
+  assert.deepEqual(seen.map(([kind]) => kind), ['foreman'], 'the waker is checked as it is made');
+  assert.equal(seen[0][1], held, 'with the very configuration it holds');
+  seen.length = 0;
+
+  await w.wakeForeman(foremanWake());
+  assert.ok(seen.length >= 1 && seen.every(([kind, given]) => kind === 'foreman' && given === held), 'a foreman wake is a foreman check');
+  seen.length = 0;
+  await w.wakeFeature('login-page', writeWake(P, { to: 'feature', work: 'login-page', events: [{ type: 'ci-red', id: 'x' }], digest: [], dropped: 0 }, { now: () => new Date(T0) }));
+  assert.ok(seen.some(([kind]) => kind === 'feature'), 'a feature wake is a feature check');
+  assert.ok(seen.every(([, given]) => given === held));
+  seen.length = 0;
+  await w.startFeature({ work: 'login-page', worktree, briefFile: featurePaths(worktree).brief });
+  assert.ok(seen.some(([kind]) => kind === 'feature'), 'a feature start is a feature check');
+
+  // A check that throws refuses the waker, as a bad mode does.
+  const refusing = { ...stood, checkForeman: () => { throw new Error('The adapter will not start a foreman'); } };
+  assert.throws(() => waker({ sessions: refusing }), /will not start a foreman/);
+}));
+
+// A waker made for a project with no `agents` map, whose held configuration is then given one naming this
+// computer's agent: the configuration changes after the waker was made, as the bad-mode test changes the mode.
+async function copilotProject() {
+  const checkout = await project();
+  const held = configOf2();
+  const made = waker({ config: held });
+  held.agents = { [computerId()]: 'copilot' };
+  return { checkout, held, ...made };
+}
+
+test('the waker refuses a Copilot project\'s foreman wake while Copilot\'s sessions are not built', () => withHome(async () => {
+  hostStandIns.reset();
+  const { w, calls } = await copilotProject();
+  await assert.rejects(w.wakeForeman(foremanWake()), (error) => error.code === NOT_BUILT_YET && /not built yet/.test(error.message));
+  assert.equal(calls.length, 0, 'no session was started');
+  assert.deepEqual(w.waiting(), [], 'nothing was recorded for the refused wake, as with a bad mode');
+  assert.deepEqual(hostStandIns.calls(), [], 'no host program ran, claude included');
+  // A waker made for such a project is refused as it is made, as a bad mode is.
+  assert.throws(() => waker({ config: configOf2({ agents: { [computerId()]: 'copilot' } }) }), (error) => error.code === NOT_BUILT_YET);
+}));
+
+test('the waker refuses a Copilot project\'s feature wake while Copilot\'s sessions are not built', () => withHome(async () => {
+  hostStandIns.reset();
+  const { checkout, w, calls } = await copilotProject();
+  const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
+  fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
+  fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
+  const bundle = { to: 'feature', work: 'login-page', events: [{ type: 'ci-red', id: 'x' }], digest: [], dropped: 0 };
+  await assert.rejects(w.wakeFeature('login-page', writeWake(P, bundle, { now: () => new Date(T0) })), (error) => error.code === NOT_BUILT_YET);
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree, briefFile: featurePaths(worktree).brief }), (error) => error.code === NOT_BUILT_YET);
+  assert.equal(calls.length, 0, 'no session was started');
+  assert.deepEqual(w.waiting(), []);
+  assert.deepEqual(hostStandIns.calls(), []);
 }));

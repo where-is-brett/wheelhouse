@@ -55,7 +55,7 @@ test('a part not built yet throws NOT_BUILT_YET naming the part', () => {
       assert.throws(() => fn(), (error) => error.code === NOT_BUILT_YET && error.part === part && error.message.includes(`The ${part} part`) && error.message.includes(member), `${part}.${member}`);
     }
   }
-  assert.deepEqual(Object.keys(copilot.sessions).sort(), ['checkFeature', 'featureResumeCall', 'featureStartCall', 'finalAnswer', 'foremanCall']);
+  assert.deepEqual(Object.keys(copilot.sessions).sort(), ['checkFeature', 'checkForeman', 'featureResumeCall', 'featureStartCall', 'finalAnswer', 'foremanCall']);
 });
 
 test('sessionsFor gives the very object the Copilot adapter holds', () => {

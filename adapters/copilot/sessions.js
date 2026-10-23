@@ -5,4 +5,4 @@
 // contract, so the waker and the registry can both load it without a cycle.
 import { pendingPart } from '../../scripts/agents/contract.js';
 
-export default pendingPart('sessions', ['checkFeature', 'foremanCall', 'featureStartCall', 'featureResumeCall', 'finalAnswer']);
+export default pendingPart('sessions', ['checkForeman', 'checkFeature', 'foremanCall', 'featureStartCall', 'featureResumeCall', 'finalAnswer']);
