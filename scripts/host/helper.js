@@ -46,6 +46,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
+import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
@@ -682,6 +683,7 @@ function placeMainCheckout(folder) {
     }
   };
   const record = readProject(project);
+  if (record === null && readLean(project) !== null) refuse(LEAN_NO_HOST);
   const here = real(folder);
   if (here === null || typeof record?.folder !== 'string' || here !== real(record.folder)) refuse(NOT_MAIN_CHECKOUT);
   return project;
@@ -707,6 +709,11 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
 const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
+
+// A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
+// its local state repository, before any connection is made. Every other route refuses it.
+const LEAN_ROUTES = ['/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync'];
+const isLean = (project) => readProject(project) === null && readLean(project) !== null;
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -885,6 +892,22 @@ export async function startHelper({
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
         return adapter;
       },
+    };
+  }
+
+  // A Lean project's request: no connection, no secret, no transport beyond this computer, and no
+  // adapter (ruling P5-9). Its state's git calls carry no key.
+  function leanContext() {
+    return {
+      lean: true,
+      mode: 'lean',
+      env: {},
+      signedOut: false,
+      looked: new Map(),
+      gitEnv: {},
+      reach: 'https',
+      secrets: [],
+      adapter: async () => refuse(LEAN_NO_HOST),
     };
   }
 
@@ -1321,10 +1344,14 @@ export async function startHelper({
   }
 
   const pushFor = (project, ctx) => (_dir, branch) => pushOwn(project, branch, ctx);
+  // A Lean project's state stays on this computer: its events are committed and never pushed.
+  const keptHere = async () => ({ ok: false });
+  const statePush = (project, ctx) => (ctx.lean ? keptHere : pushFor(project, ctx));
 
   const stateRoute = (fn, { clone = true, write = false } = {}) => (body, ctx) => oneAtATime(`state:${body.project}`, async () => {
     if (write && stopped()) return STOP_REFUSAL;
-    if (clone) await ensureStateClone(body.project, ctx);
+    if (clone && ctx.lean) await leanState(body.project, { run });
+    else if (clone) await ensureStateClone(body.project, ctx);
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
   });
@@ -1369,7 +1396,7 @@ export async function startHelper({
     }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
@@ -1410,16 +1437,17 @@ export async function startHelper({
       const there = events.filter((e) => e.id === target.id);
       if (there.some((e) => canonicalJson(e) !== canonicalJson(target))) refuse('another event in the state carries the confirmed event\'s id, so neither was recorded');
       if (there.length === 0) {
-        await writeEvent({ project, event: target, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+        await writeEvent({ project, event: target, push: statePush(project, ctx), env: ctx.gitEnv, now });
         if (held.length > 0) await freshViews(() => writeViews(project, { now }));
       }
     }
     // The same record again has been taken (a hook sending its kept copy); another
     // event under its id has not, and says so in words a hook does not count as taken.
     if (held.length > 0) refuse('the state already holds an event with that id');
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
-    if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
+    // A Lean project has no preview to photograph.
+    if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
@@ -2686,7 +2714,8 @@ export async function startHelper({
     }, { clone: false }),
     '/state/write': stateRoute(doWrite, { write: true }),
     '/state/record': signedIn(stateRoute(doRecord)),
-    '/state/sync': stateRoute(async ({ project }, ctx) => ({
+    // A Lean project's state has no remote, so there is nothing to pull or push.
+    '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
@@ -2925,7 +2954,13 @@ export async function startHelper({
         ctx = await profileContext();
       } else {
         const project = checkProject(body.project);
-        ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+        // A Lean project is served before any connection is made, on its state routes alone.
+        if (isLean(project)) {
+          if (!LEAN_ROUTES.includes(url.pathname)) refuse(LEAN_NO_HOST);
+          ctx = leanContext();
+        } else {
+          ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+        }
       }
       onArrive(url.pathname); // for tests: the request is about to enter its queue
       const answer = await route(body, ctx);

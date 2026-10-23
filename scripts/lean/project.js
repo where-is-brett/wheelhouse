@@ -1,0 +1,164 @@
+// scripts/lean/project.js
+// A Lean project on this computer (ruling P5-9). Lean has no code host, so it has no project.json:
+// its record is <wheelhouseHome>/projects/<project>/lean.json,
+//
+//   LeanRecord = {
+//     folder: string,           the project's working folder (a full path)
+//     store: string | null,     the store repository's folder (a full path), once Task 5 makes it
+//     copy: string | null,      where the store's copy goes, once one is set
+//     test: string | null,      the command that tests the product, once one is set
+//     identity: { name, email } | null, who a merge or an undo is committed as
+//     registeredAt: string,     when it was registered, UTC ISO 8601
+//   }
+//
+// readProject stays strict (scripts/lib/projects.js), so every caller that needs a host finds no
+// record and refuses. projectForFolder reads this record too, so the hooks place a Lean folder.
+// Its state is a local repository at stateDir(project): events are committed there and never pushed.
+import fs from 'node:fs';
+import path from 'node:path';
+import { stateDir } from '../lib/paths.js';
+import { run as realRun } from '../lib/run.js';
+import { safeGit } from '../lib/safe-git.js';
+import { readProject, projectForFolder } from '../lib/projects.js';
+import { STATE_BRANCH } from '../state/clone.js';
+
+// What every route that needs a host answers for a Lean project.
+export const LEAN_NO_HOST = 'a Lean project has no code host';
+
+const LEAN_FILE = 'lean.json';
+const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const fullPath = (x) => typeof x === 'string' && path.isAbsolute(x);
+const textOrNull = (x) => x === null || (typeof x === 'string' && x !== '');
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// Each field the record holds, in the order it is written, and what it must be. A later task adds
+// its own row here.
+const FIELDS = [
+  ['folder', fullPath],
+  ['store', (x) => x === null || fullPath(x)],
+  ['copy', textOrNull],
+  ['test', textOrNull],
+  ['identity', (x) => x === null || (isPlain(x) && typeof x.name === 'string' && x.name !== '' && typeof x.email === 'string' && x.email !== '')],
+  ['registeredAt', (x) => typeof x === 'string' && TIME.test(x) && !Number.isNaN(Date.parse(x))],
+];
+
+// stateDir refuses a name that is not a folder name.
+const projectFolder = (project) => path.join(stateDir(project), '..');
+const leanFile = (project) => path.join(projectFolder(project), LEAN_FILE);
+
+// The record with only its known fields, each checked, or null when one is missing or wrong.
+function checked(record) {
+  if (!isPlain(record)) return null;
+  const kept = {};
+  for (const [name, good] of FIELDS) {
+    const value = name === 'identity' && isPlain(record.identity) ? { name: record.identity.name, email: record.identity.email } : record[name];
+    if (!good(value)) return null;
+    kept[name] = value;
+  }
+  return kept;
+}
+
+// The project's Lean record, or null when there is none or it is unreadable.
+export function readLean(project) {
+  try {
+    return checked(JSON.parse(fs.readFileSync(leanFile(project), 'utf8')));
+  } catch {
+    return null;
+  }
+}
+
+// Writes the record whole: a temporary file in the same folder, then a rename.
+function writeLean(project, record) {
+  const kept = checked(record);
+  if (kept === null) throw new Error('The Lean record is not whole');
+  const file = leanFile(project);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(kept, null, 2)}\n`);
+    fs.renameSync(temp, file);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
+  return kept;
+}
+
+const realOrNull = (p) => {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+};
+
+// Registers `folder` as the Lean project `project` (for Task 6's install). Registering the same
+// project and folder again keeps the record as it was. Refused for a project with a code host, for
+// another folder under the same name, and for a folder that is already another project's.
+export function registerLean({ project, folder, now = () => new Date() }) {
+  stateDir(project);
+  if (!fullPath(folder)) throw new Error('The Lean project\'s folder must be a full path');
+  const real = realOrNull(folder);
+  if (real === null || !fs.statSync(real).isDirectory()) throw new Error('The Lean project\'s folder does not exist');
+  if (readProject(project) !== null) throw new Error('This project is registered with a code host, so it is not registered as a Lean project');
+  const held = readLean(project);
+  if (held !== null) {
+    if (realOrNull(held.folder) !== real) throw new Error('This Lean project is registered for another folder');
+    return held;
+  }
+  const found = projectForFolder(real);
+  if (found !== null && found.project !== project && realOrNull(found.record.folder) === real) {
+    throw new Error('This folder is already registered as another project');
+  }
+  return writeLean(project, {
+    folder, store: null, copy: null, test: null, identity: null, registeredAt: now().toISOString(),
+  });
+}
+
+const STATE_WHAT = 'the Lean project\'s state repository';
+// The state's own commits are Wheelhouse's, as the state clone's are (scripts/state/git.js).
+const WHEELHOUSE = {
+  GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid',
+};
+const README = `<!-- README.md -->
+# Wheelhouse state
+
+This repository holds Wheelhouse's event log for a Lean project: small files under \`events/\`, one
+per event. It stays on this computer. Do not edit these files by hand.
+`;
+
+// The Lean project's state repository, made when there is none: `git init` on the state branch and
+// a first commit, with no remote, so nothing is ever pushed from it. Every call goes through
+// safeGit on the own list with the `lean` caller. A repository already there is looked at first,
+// and is used only when it has no remote and is on the state branch; any other is left alone.
+// Gives the folder.
+export async function leanState(project, { run = realRun } = {}) {
+  const dir = stateDir(project);
+  const gitHere = (look) => safeGit({ run, cwd: dir, env: WHEELHOUSE, list: 'own', look, caller: 'lean', what: STATE_WHAT });
+  if (fs.existsSync(path.join(dir, '.git'))) {
+    const git = gitHere('once');
+    const remotes = await git(['remote']);
+    if (remotes.code !== 0) throw new Error(`The Lean project's state repository could not be read, so the folder ${dir} was left alone`);
+    if (remotes.stdout.trim() !== '') throw new Error(`The folder ${dir} holds a repository with a remote, so it is not this Lean project's own state and was left alone`);
+    const branch = await git(['symbolic-ref', '--short', 'HEAD']);
+    if (branch.code !== 0 || branch.stdout.trim() !== STATE_BRANCH) throw new Error(`The folder ${dir} holds a repository that is not on the state branch, so it was left alone`);
+    return dir;
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  // The folder was made empty just now, so there are no settings of its own to look at.
+  const git = gitHere('never');
+  try {
+    for (const args of [['init', '-q'], ['symbolic-ref', 'HEAD', `refs/heads/${STATE_BRANCH}`]]) {
+      if ((await git(args)).code !== 0) throw new Error('git init');
+    }
+    fs.writeFileSync(path.join(dir, 'README.md'), README);
+    for (const args of [['add', '--', 'README.md'], ['commit', '-q', '-m', 'Start the state branch']]) {
+      if ((await git(args)).code !== 0) throw new Error('git commit');
+    }
+  } catch {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw new Error('The Lean project\'s state repository could not be made');
+  }
+  return dir;
+}
