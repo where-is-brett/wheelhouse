@@ -7,14 +7,19 @@
 // client and every spawn are stand-ins, and `reg` is never run.
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { guardedRun, standInTools } from '../../helpers/host-stand-ins.js';
 import { as, shortHome } from '../../helpers/homes.js';
 import { run, withoutGitVars } from '../../../scripts/lib/run.js';
 import { computerId } from '../../../scripts/lib/paths.js';
+import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
+import { confirmLine } from '../../../scripts/state/card-lines.js';
+import { readLeanRecord } from '../../../scripts/state/lean-record.js';
+import { briefHash } from '../../../scripts/feature/files.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { readLean, registerLean } from '../../../scripts/lean/project.js';
 import { storeDir } from '../../../scripts/lean/store.js';
 import { releaseProject } from '../../../scripts/lean/release.js';
@@ -23,7 +28,7 @@ import { ownKey, readEnrolled } from '../../../scripts/state/signing.js';
 import { projectForFolder } from '../../../scripts/lib/projects.js';
 import { registeredLeanProjects, leanState } from '../../../scripts/lean/project.js';
 import {
-  planInstall, install, startAll, planUninstall, uninstall, main, CHANGED, STOP_ON, RUNNING, NOT_STARTED,
+  planInstall, install, startAll, planUninstall, uninstall, main, CHANGED, STOP_ON, STOP_CARRIED, RUNNING, NOT_STARTED,
 } from '../../../scripts/agents/copilot/start-helper.js';
 
 const shims = standInTools();
@@ -275,6 +280,7 @@ test('uninstall-plan lists what leaving the helper does, and uninstall takes onl
     const keep = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
     assert.deepEqual(keep.lines, [
       'This project, shop-front, leaves Wheelhouse\'s helper: its guards, its record and its merges by the helper stop for it',
+      'Nothing decided through the helper needs writing into this folder\'s record files: it holds no ideas, rulings or designs the record files don\'t',
       `Its git moves back into this folder, ${c.folder}, with the main version checked out, so you work with git alone, as Lean does without the helper`,
       `Wheelhouse's guards are no longer registered with Copilot: ${hooks} is removed`,
       `What starts Wheelhouse's helper when you sign in is removed: ${path.join(c.userHome, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist')}`,
@@ -282,7 +288,7 @@ test('uninstall-plan lists what leaving the helper does, and uninstall takes onl
     ]);
     const drop = await planUninstall({ folder: c.folder, removeState: true }, c.deps);
     assert.notEqual(drop.hash, keep.hash, 'the answer is in the hash');
-    assert.match(drop.lines.at(-1), /^Its Wheelhouse state, .+, is removed: what the helper recorded there goes, and the record files in the project stay$/);
+    assert.match(drop.lines.at(-1), /^Its Wheelhouse state, .+, is removed: what the helper recorded there goes, and the record files in the project stay, with what was written into them$/);
     await assert.rejects(planUninstall({ folder: c.folder }, c.deps), /--remove-state/);
     // Planning changed nothing.
     assert.ok(readLean('shop-front') !== null);
@@ -513,5 +519,182 @@ test('a sign-in start that can\'t be removed says the state was left in place to
       return true;
     });
     assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front')), true);
+  });
+});
+
+// ---- Moving onto the helper and off it (ruling P5-58) ----
+
+test('plan runs adoption\'s own checks and refuses before any card, registering nothing', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    fs.writeFileSync(path.join(c.folder, 'README.md'), 'changed\n');
+    await assert.rejects(planInstall({ folder: c.folder, ...ANSWERS }, c.deps), /changes that aren't committed/);
+    await git(c.folder, ['checkout', '--', 'README.md']);
+    await git(c.folder, ['switch', '-q', '-c', 'feature/x']);
+    await assert.rejects(planInstall({ folder: c.folder, ...ANSWERS }, c.deps), /isn't on the main version/);
+    await git(c.folder, ['switch', '-q', 'main']);
+    await git(c.folder, ['config', 'core.hooksPath', '.husky']);
+    await assert.rejects(planInstall({ folder: c.folder, ...ANSWERS }, c.deps), /could make git run a program/);
+    await git(c.folder, ['config', '--unset', 'core.hooksPath']);
+    await git(c.folder, ['worktree', 'add', '-q', '--detach', path.join(path.dirname(c.folder), 'other-tree')]);
+    await assert.rejects(planInstall({ folder: c.folder, ...ANSWERS }, c.deps), /worktrees of its own/);
+    // Nothing was registered or written, and the folder's git is its own.
+    assert.equal(readLean('shop-front'), null);
+    assert.equal(fs.existsSync(path.join(c.userHome, '.copilot')), false);
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isDirectory(), true);
+  });
+});
+
+test('an install whose adoption is refused or fails leaves nothing registered, and the next one goes ahead', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    const plan = await planInstall({ folder: c.folder, ...ANSWERS }, c.deps);
+    // Refused by adoption's checks after the card: the folder went off the main version.
+    await git(c.folder, ['switch', '-q', '-c', 'feature/x']);
+    await assert.rejects(install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, c.deps), /isn't on the main version/);
+    assert.equal(readLean('shop-front'), null);
+    assert.equal(projectForFolder(c.folder), null);
+    await git(c.folder, ['switch', '-q', 'main']);
+    // Failing during the move itself: the git is put back and nothing is registered.
+    const failing = async (file, args, options) => (args.includes('reset') ? { code: 1, stdout: '', stderr: 'no', timedOut: false } : hostGuard(file, args, options));
+    await assert.rejects(install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, { ...c.deps, run: failing }), /could not be matched/);
+    assert.equal(readLean('shop-front'), null);
+    assert.equal(projectForFolder(c.folder), null);
+    assert.deepEqual(registeredLeanProjects(), []);
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isDirectory(), true, 'the git is back in the folder');
+    assert.deepEqual(c.started, [], 'the helper was not started');
+    // Then an install goes ahead, and registers the project with the card's answers and the store.
+    assert.equal((await install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, c.deps)).ok, true);
+    const record = readLean('shop-front');
+    assert.deepEqual([record.store, record.test, record.realUsers, record.agent], [storeDir('shop-front'), 'npm test', true, 'copilot']);
+    assert.match(record.main, /^[0-9a-f]{40}$/);
+  });
+});
+
+const recordLine = (fields) => `${JSON.stringify({ card: null, choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', ...fields })}\n`;
+
+test('a STOP the folder\'s record leaves on is STOP once the helper is installed', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    const record = path.join(c.folder, '.wheelhouse', 'record');
+    fs.mkdirSync(record, { recursive: true });
+    fs.writeFileSync(path.join(record, '2026-10-22.jsonl'), recordLine({ at: '2026-10-22T03:00:00Z', kind: 'stop' }));
+    await git(c.folder, ['add', '-A']);
+    await git(c.folder, ['commit', '-q', '-m', 'Record: stop']);
+    const plan = await planInstall({ folder: c.folder, ...ANSWERS }, c.deps);
+    assert.equal(plan.lines.at(-1), STOP_CARRIED);
+    assert.equal(stopState().on, false, 'planning changes nothing');
+    const done = await install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, c.deps);
+    assert.deepEqual(done.lines, ['Wheelhouse\'s helper is installed for shop-front', STOP_CARRIED, RUNNING]);
+    assert.deepEqual([stopState().on, stopState().by], [true, 'prompt']);
+    liftStop();
+  });
+  // A record whose last line lifts it leaves STOP off, and the plan says nothing of it.
+  const d = await computer();
+  await d.as(async () => {
+    const record = path.join(d.folder, '.wheelhouse', 'record');
+    fs.mkdirSync(record, { recursive: true });
+    fs.writeFileSync(path.join(record, '2026-10-22.jsonl'), recordLine({ at: '2026-10-22T03:00:00Z', kind: 'stop' })
+      + recordLine({ at: '2026-10-22T03:05:00Z', kind: 'lift-stop', card: 'lift-stop', choice: 'Lift STOP' }));
+    await git(d.folder, ['add', '-A']);
+    await git(d.folder, ['commit', '-q', '-m', 'Record: stop and lift']);
+    const plan = await planInstall({ folder: d.folder, ...ANSWERS }, d.deps);
+    assert.equal(plan.lines.includes(STOP_CARRIED), false);
+    assert.equal((await install({ folder: d.folder, ...ANSWERS, hash: plan.hash }, d.deps)).ok, true);
+    assert.equal(stopState().on, false);
+  });
+});
+
+test('leaving the helper writes the ideas, rulings and designs decided through it into the record, in one commit on main', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    // A design file on main, and a ruling and an idea the record held before the helper.
+    const designPath = '.wheelhouse/record/designs/export-orders.md';
+    const record = path.join(c.folder, '.wheelhouse', 'record');
+    fs.mkdirSync(path.join(record, 'designs'), { recursive: true });
+    fs.writeFileSync(path.join(c.folder, ...designPath.split('/')), '# Export orders\nA CSV of the week\'s orders.\n');
+    fs.writeFileSync(path.join(record, '2026-10-22.jsonl'), recordLine({ at: '2026-10-22T02:00:00Z', kind: 'idea', card: 'old-idea', text: 'From before the helper' }));
+    await git(c.folder, ['add', '-A']);
+    await git(c.folder, ['commit', '-q', '-m', 'Record: design and idea']);
+    await installed(c, c.folder);
+    const before = readLean('shop-front').main;
+
+    // Through the helper: an idea, a ruling confirmed by the chat click, a ruling only proposed, and the design
+    // approved in the window.
+    let tick = 0;
+    const at = () => new Date(Date.parse('2026-10-24T01:00:00.000Z') + 60000 * (tick += 1));
+    const put = async (kind, data) => {
+      await leanState('shop-front', { run: hostGuard });
+      const event = makeEvent({ kind, data, now: at });
+      await writeEvent({ project: 'shop-front', event, push: async () => ({ ok: false }), env: {}, now: at });
+      return event;
+    };
+    await put('idea', { key: 'dark-mode', text: 'A darker theme for the evening' });
+    const ruling = await put('ruling', { words: 'Every export is a CSV file, never Excel.', card: 'exports-are-csv' });
+    const question = `Confirm this ruling?\n${confirmLine(ruling)}`;
+    const card = await put('card', { question, header: 'Ruling', options: ['Confirm', 'Not now'], kind: 'confirm', level: 3, line: confirmLine(ruling) });
+    await put('card-answer', { card: card.id, label: 'Confirm', hash: crypto.createHash('sha256').update(question).digest('hex'), proof: 'chat-click', tier: 'lean' });
+    await put('ruling', { words: 'Only proposed, never confirmed.', card: 'not-confirmed' });
+    const docHash = briefHash(fs.readFileSync(path.join(c.folder, ...designPath.split('/')), 'utf8'));
+    await put('work', { id: 'export-orders', title: 'Export orders', lane: 'feature', visible: true, dependsOn: [], doc: { path: designPath, hash: docHash } });
+    await put('action', { action: 'approve-work', work: 'export-orders', lane: 'feature', hash: docHash, shownFirst: false, question: 'Build export orders?', label: 'Approve', proof: 'window' });
+
+    const plan = await planUninstall({ folder: c.folder, removeState: true }, c.deps);
+    assert.equal(plan.lines[1], 'What you decided through the helper, 1 idea, 1 ruling and 1 design, is written into this folder\'s record files in .wheelhouse/record/, in one commit of its own on the main version, so working with git alone still follows it');
+    assert.equal((await uninstall({ folder: c.folder, removeState: true, hash: plan.hash }, c.deps)).ok, true);
+
+    // One commit on main after the helper's, holding only the record's day file, and the folder on it with git alone.
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isDirectory(), true);
+    assert.equal(await git(c.folder, ['symbolic-ref', 'HEAD']), 'refs/heads/main');
+    assert.equal(await git(c.folder, ['rev-parse', 'HEAD~1']), before);
+    assert.equal(await git(c.folder, ['diff', '--name-only', before, 'HEAD']), '.wheelhouse/record/2026-10-24.jsonl');
+    assert.equal(await git(c.folder, ['status', '--porcelain', '--untracked-files=no']), '');
+    // Every line reads as a good Lean line, and keeps the proof the helper's record named.
+    const { entries, problems } = readLeanRecord(c.folder);
+    assert.deepEqual(problems, []);
+    const written = entries.filter((e) => e.file === '.wheelhouse/record/2026-10-24.jsonl').map(({ file, line, at: _at, ...rest }) => rest);
+    const blob = await git(c.folder, ['rev-parse', `HEAD:${designPath}`]);
+    assert.deepEqual(written, [
+      { kind: 'idea', card: 'dark-mode', choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: 'A darker theme for the evening' },
+      { kind: 'ruling', card: 'exports-are-csv', choice: 'Confirm', commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: 'Every export is a CSV file, never Excel.' },
+      { kind: 'design', card: 'design-export-orders', choice: 'Build it', commit: null, proof: 'window', by: 'chat', tier: 'lean', text: `${designPath} ${blob}` },
+    ]);
+    // The line the record held before is not written again, and the state went as the director chose.
+    assert.equal(entries.filter((e) => e.card === 'old-idea').length, 1);
+    assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front')), false);
+    // The git-alone playbook's grep for rulings finds the ruling confirmed through the helper.
+    assert.match(await git(c.folder, ['grep', '-h', '-e', '"kind":"ruling"', 'main', '--', ':(glob).wheelhouse/record/*.jsonl']), /Every export is a CSV file/);
+  });
+});
+
+test('with nothing decided through the helper the card says so and no commit is made', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const before = readLean('shop-front').main;
+    const plan = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
+    assert.equal(plan.lines[1], 'Nothing decided through the helper needs writing into this folder\'s record files: it holds no ideas, rulings or designs the record files don\'t');
+    assert.equal((await uninstall({ folder: c.folder, removeState: false, hash: plan.hash }, c.deps)).ok, true);
+    assert.equal(await git(c.folder, ['rev-parse', 'HEAD']), before);
+  });
+});
+
+test('a write-back blocked by a record file not committed in the folder changes nothing', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const before = readLean('shop-front').main;
+    const now = () => new Date('2026-10-24T01:00:00.000Z');
+    await leanState('shop-front', { run: hostGuard });
+    await writeEvent({ project: 'shop-front', event: makeEvent({ kind: 'idea', data: { key: 'dark-mode', text: 'Darker' }, now }), push: async () => ({ ok: false }), env: {}, now });
+    const record = path.join(c.folder, '.wheelhouse', 'record');
+    fs.mkdirSync(record, { recursive: true });
+    fs.writeFileSync(path.join(record, '2026-10-24.jsonl'), recordLine({ at: '2026-10-24T00:00:00Z', kind: 'stop' }));
+    const plan = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
+    await assert.rejects(uninstall({ folder: c.folder, removeState: false, hash: plan.hash }, c.deps), /aren't committed, so nothing was written/);
+    assert.equal(readLean('shop-front').main, before);
+    assert.equal(await git(storeDir('shop-front'), ['rev-parse', 'refs/heads/main']), before);
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isFile(), true, 'still in the store');
+    assert.equal(fs.readFileSync(path.join(record, '2026-10-24.jsonl'), 'utf8'), recordLine({ at: '2026-10-24T00:00:00Z', kind: 'stop' }));
   });
 });

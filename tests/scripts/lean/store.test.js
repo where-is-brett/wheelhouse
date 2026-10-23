@@ -14,13 +14,13 @@ import { shortHome } from '../../helpers/homes.js';
 import { run, withoutGitVars } from '../../../scripts/lib/run.js';
 import { NULL_FILE, lookRefusalLine, safeKeyName } from '../../../scripts/lib/safe-git.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
-import { setStop, liftStop } from '../../../scripts/lib/stop.js';
+import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { listEvents, makeEvent, writeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { projectOf } from '../../../scripts/hooks/kit.js';
 import { registerLean, readLean, updateLean, leanState } from '../../../scripts/lean/project.js';
 import {
-  storeDir, adoptProject, mergeApproved, undoMerge, copyNow, keepMain, leanStatus, withLocalLock, testEnv,
+  storeDir, adoptProject, checkAdoptable, mergeApproved, undoMerge, copyNow, keepMain, leanStatus, withLocalLock, testEnv,
   LeanRefusal, OTHER_WINDOW, MAIN_CHECKED_OUT, MAIN_MOVED, NOT_IN_STORE, STOPPED, leanApprovalLine, mainMovedLine,
   undoLine, undoCard, mainMovedCard,
 } from '../../../scripts/lean/store.js';
@@ -136,7 +136,8 @@ test('the project folder\'s .git is a pointer file into the store', async () => 
     assert.ok(fs.statSync(path.join(c.folder, '.git')).isDirectory(), 'nothing moved while refused');
 
     const got = await adoptProject(c.ask({ folder: c.folder }));
-    assert.deepEqual(got, { adopted: true, main: before, imported: 1, problems: 0 });
+    // The record's last stop line leaves STOP on, so STOP is on once adopted (ruling P5-58).
+    assert.deepEqual(got, { adopted: true, main: before, imported: 1, problems: 0, stop: true });
     const store = storeDir(PROJECT);
     assert.equal(store, path.join(c.home, 'projects', PROJECT, 'git'));
     const pointer = path.join(c.folder, '.git');
@@ -158,12 +159,12 @@ test('the project folder\'s .git is a pointer file into the store', async () => 
     assert.equal(notes.length, 1);
     assert.ok(fs.existsSync(path.join(c.folder, '.wheelhouse', 'record', '2026-10-22.jsonl')));
     // Adopting again changes nothing and imports nothing.
-    assert.deepEqual(await adoptProject(c.ask({ folder: c.folder })), { adopted: false, main: before, imported: 0, problems: 0 });
+    assert.deepEqual(await adoptProject(c.ask({ folder: c.folder })), { adopted: false, main: before, imported: 0, problems: 0, stop: false });
     assert.equal(c.events().filter((e) => e.kind === 'note' && e.data?.lean === 'stop').length, 1);
     // The hooks still place the folder in its project, though its .git points into a bare store.
     assert.equal(projectOf(c.folder)?.project, PROJECT);
     assert.equal(projectOf(c.folder)?.lean, true);
-    assert.deepEqual(await leanStatus(c.ask()), { adopted: true, main: before, moved: false, stop: false, copy: c.copy, test: null, realUsers: false });
+    assert.deepEqual(await leanStatus(c.ask()), { adopted: true, main: before, moved: false, stop: true, copy: c.copy, test: null, realUsers: false });
   } finally {
     c.close();
   }
@@ -758,6 +759,57 @@ test('the helper\'s card is reused only with its own recommendation, kind and le
     const status = await leanStatus(c.ask());
     assert.notEqual(status.card, fake.id);
     assert.equal(c.events().find((e) => e.id === status.card).data.recommend, 'Undo it');
+  } finally {
+    c.close();
+  }
+});
+
+// ---- STOP and the checks, carried from the git-alone record (ruling P5-58) ----
+
+const line = (fields) => `${JSON.stringify({ card: null, choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', ...fields })}\n`;
+
+test('a STOP the record leaves on is STOP once adopted, and the helper\'s merges and copies stop with it', async () => {
+  const c = await computer({ adopt: false, records: line({ at: '2026-10-22T03:00:00Z', kind: 'stop' }) });
+  try {
+    assert.deepEqual(await checkAdoptable({ project: PROJECT, folder: c.folder, run: hostGuard }), { adopted: false, stop: true });
+    assert.equal(stopState().on, false, 'the check changes nothing');
+    const got = await adoptProject(c.ask({ folder: c.folder }));
+    assert.equal(got.stop, true);
+    assert.deepEqual([stopState().on, stopState().by], [true, 'prompt']);
+    await assert.rejects(copyNow(c.ask()), refusedWith(new RegExp(`^${STOPPED}$`)));
+    assert.deepEqual(await checkAdoptable({ project: PROJECT, folder: c.folder, run: hostGuard }), { adopted: true, stop: false });
+  } finally {
+    c.close();
+  }
+  // Lifted later in the record: STOP stays off.
+  const d = await computer({
+    adopt: false,
+    records: line({ at: '2026-10-22T03:00:00Z', kind: 'stop' }) + line({ at: '2026-10-22T03:05:00Z', kind: 'lift-stop', card: 'lift-stop', choice: 'Lift STOP' }),
+  });
+  try {
+    assert.equal((await adoptProject(d.ask({ folder: d.folder }))).stop, false);
+    assert.equal(stopState().on, false);
+  } finally {
+    d.close();
+  }
+});
+
+test('adoption\'s checks refuse, changing nothing, what adoption refuses', async () => {
+  const c = await computer({ adopt: false });
+  try {
+    const check = () => checkAdoptable({ project: PROJECT, folder: c.folder, run: hostGuard });
+    fs.writeFileSync(path.join(c.folder, 'README.md'), 'changed\n');
+    await assert.rejects(check(), refusedWith(/changes that aren't committed/));
+    await git(c.folder, ['checkout', '--', 'README.md']);
+    await git(c.folder, ['config', 'core.hooksPath', '.husky']);
+    await assert.rejects(check(), refusedWith(/could make git run a program/));
+    await git(c.folder, ['config', '--unset', 'core.hooksPath']);
+    fs.mkdirSync(path.join(c.folder, '.git', 'modules'));
+    await assert.rejects(check(), refusedWith(/submodules/));
+    fs.rmdirSync(path.join(c.folder, '.git', 'modules'));
+    assert.deepEqual(await check(), { adopted: false, stop: false });
+    assert.ok(fs.statSync(path.join(c.folder, '.git')).isDirectory());
+    assert.equal(fs.existsSync(storeDir(PROJECT)), false);
   } finally {
     c.close();
   }

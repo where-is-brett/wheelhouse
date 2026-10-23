@@ -7,21 +7,26 @@
 //        prints the changes install makes, one plain line each, and their hash: the hook file, the sign-in start
 //        (none on a work computer), a signing key where this computer has none, the project's registration, its
 //        git moved into Wheelhouse's store, and the change card's answers (real users and the test command), so
-//        the hash covers them. The chat asks the card with these lines.
+//        the hash covers them, and a line when the folder's own record leaves STOP on. Adoption's own checks run
+//        first, so a folder the store would refuse gets that plain line and no card (ruling P5-58). The chat asks
+//        the card with these lines.
 //   install --hash <hash> and the same answers
 //        on the card's Approve: makes the changes plan listed, refused if they are no longer the ones the card
-//        showed (the hash) or while STOP is on. The registration and the move into the store are made holding the
-//        project's lock, so two installs at once never both register. Then it starts the helper.
+//        showed (the hash) or while STOP is on. The move into the store and then the registration are made holding
+//        the project's lock, so two installs at once never both register, and an adoption refused or failed leaves
+//        nothing registered. A STOP the folder's record leaves on is STOP from then on. Then it starts the helper.
 //   start
 //        starts the helper detached if it isn't answering, and the watcher for each project on an agent whose
 //        sessions part is built (none at Lean, so the waker is never made for one); the usage receiver only with
 //        such a watcher (design section 6.4: nothing runs in the background at Lean). Prints one plain line:
 //        "Wheelhouse's helper is running", or why not.
 //   uninstall-plan --remove-state yes|no
-//        prints what taking the project off the helper does, one plain line each, and their hash (ruling P5-51);
+//        prints what taking the project off the helper does, one plain line each, and their hash (ruling P5-51),
+//        with how many ideas, rulings and designs decided through the helper are written into the record (P5-58);
 //        the chat asks the card with them.
 //   uninstall --hash <hash> --remove-state yes|no
-//        on the card's click, the Lean removal setup's LEAN_FOLDER line points to: the project's git moves back into
+//        on the card's click, the Lean removal setup's LEAN_FOLDER line points to: what was decided through the
+//        helper is written into the record files in one commit on main, the project's git moves back into
 //        its folder with the main version checked out, its Lean record goes, the hook file and the sign-in start go
 //        when no other project on this computer needs them, and its Wheelhouse state goes only when the director
 //        chose it. Refused under STOP, and for a hash that isn't the card's.
@@ -44,8 +49,8 @@ import { projectForFolder, readProject, registeredProjects } from '../../lib/pro
 import { loginEntry, installLoginStart, removeLoginStart, loginStartRecord } from '../../lib/login-start.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 import { readLean, registerLean, registeredLeanProjects, unregisterLean, updateLean } from '../../lean/project.js';
-import { releaseProject } from '../../lean/release.js';
-import { LeanRefusal, adoptProject, storeDir, withLocalLock } from '../../lean/store.js';
+import { releaseProject, writeBackLines, writeBackCount } from '../../lean/release.js';
+import { LeanRefusal, adoptProject, checkAdoptable, storeDir, withLocalLock } from '../../lean/store.js';
 import { ownKey, makeSigningKey, enrol } from '../../state/signing.js';
 import { helperClient } from '../../host/helper-client.js';
 import { caEnv } from '../../host/company-ca.js';
@@ -69,6 +74,8 @@ export const RUNNING = 'Wheelhouse\'s helper is running';
 export const NOT_STARTED = `Wheelhouse's helper didn't start within ${START_WAIT_MS / 1000} seconds. Run the start command again; if it still doesn't start, restart the computer and try once more`;
 export const CHANGED = 'The changes are no longer the ones the card showed, so nothing was installed. Ask for the plan again, and the card with it';
 export const STOP_ON = 'STOP is on, so nothing was changed. Lift STOP first, then try again';
+// The plan's line, and install's, when the folder's own record leaves STOP on (ruling P5-58).
+export const STOP_CARRIED = 'This folder\'s record says STOP is on, so STOP stays on with the helper: only Lift STOP in Wheelhouse\'s own window lifts it';
 const NOT_LEAN = 'This folder isn\'t a Lean project on this computer, so there is nothing to remove';
 const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
 
@@ -134,6 +141,8 @@ export async function planInstall(answers, deps = {}) {
   const dotGit = path.join(folder, '.git');
   if (!fs.existsSync(dotGit)) refuse('Run this in the project\'s own folder, where its git is');
   const project = projectNameFor(folder);
+  // Adoption's own checks first (ruling P5-58), so no card is asked for a folder the store would refuse.
+  const look = await checkAdoptable({ project, folder, run: d.run });
   const hooks = hookFile({ home: copilotHome({ env: d.env, homedir: d.userHome }) });
   const entry = workComputer ? null : loginEntry({ platform: d.platform, node: d.node, root: d.root, script: START_SCRIPT, home: d.userHome });
   const store = storeDir(project);
@@ -146,6 +155,7 @@ export async function planInstall(answers, deps = {}) {
     { change: 'store', path: store },
     { change: 'real-users', value: realUsers },
     { change: 'test', value: test },
+    ...(look.stop ? [{ change: 'stop-carried' }] : []),
   ];
   const lines = [
     `Wheelhouse's guards are registered with ${LABEL} in ${hooks}, for every project on this computer`,
@@ -163,6 +173,7 @@ export async function planInstall(answers, deps = {}) {
     test === null
       ? 'No test command is set, so merges go ahead with no tests run, and the record says so'
       : `Before each merge the helper runs \`${test}\` on the approved commit`,
+    ...(look.stop ? [STOP_CARRIED] : []),
   ];
   const hash = crypto.createHash('sha256').update(canonicalJson({ folder, project, changes })).digest('hex');
   return { project, folder, changes, lines, hash, entry, store, hooks, needsKey };
@@ -177,14 +188,30 @@ export async function install(answers, deps = {}) {
   const { project, folder } = plan;
   const { realUsers, test } = answersOf(answers);
   // One install at a time per project: the second waits, then finds the project registered and in the store.
+  let adopted;
   await withLocalLock(project, async () => {
-    try {
-      registerLean({ project, folder, now: d.now });
-    } catch (error) {
-      refuse(`The project could not be registered: ${error.message}`);
+    const answers = { test, realUsers, agent: AGENT };
+    if (readLean(project) === null) {
+      // The git moves into the store first, and the project is registered only then (ruling P5-58): an adoption the
+      // store refuses, or one that fails on the way, leaves nothing registered.
+      adopted = await adoptProject({
+        project,
+        folder,
+        run: d.run,
+        now: d.now,
+        register: ({ store, main, copy }) => {
+          try {
+            registerLean({ project, folder, now: d.now });
+          } catch (error) {
+            refuse(`The project could not be registered: ${error.message}`);
+          }
+          updateLean(project, { ...answers, store, main, ...(copy === null ? {} : { copy }) });
+        },
+      });
+    } else {
+      updateLean(project, answers);
+      adopted = await adoptProject({ project, folder, run: d.run, now: d.now });
     }
-    updateLean(project, { test, realUsers, agent: AGENT });
-    await adoptProject({ project, folder, run: d.run, now: d.now });
     // Made inside the lock, so a second install of this project finds it; an install of another project that made
     // it a moment before is taken as made.
     if (plan.needsKey && ownKey() === null) {
@@ -199,7 +226,7 @@ export async function install(answers, deps = {}) {
   writeRegistration({ home: copilotHome({ env: d.env, homedir: d.userHome }), node: d.node, root: d.root, platform: d.platform });
   if (plan.entry !== null) await installLoginStart({ entry: plan.entry, run: d.regRun, now: d.now });
   const started = await d.start();
-  return { ok: started.ok === true, lines: [`Wheelhouse's helper is installed for ${project}`, started.line] };
+  return { ok: started.ok === true, lines: [`Wheelhouse's helper is installed for ${project}`, ...(adopted.stop ? [STOP_CARRIED] : []), started.line] };
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -291,8 +318,13 @@ export async function planUninstall({ folder: given, removeState } = {}, deps = 
   const hooks = hookFile({ home: copilotHome({ env: d.env, homedir: d.userHome }) });
   const start = loginStartRecord();
   const state = path.join(wheelhouseHome(), 'projects', project);
+  // What the director decided through the helper, written back into the record before the git leaves the store
+  // (ruling P5-58): the card names how many, and its hash covers each line.
+  const main = readLean(project)?.main ?? null;
+  const written = main === null ? [] : await writeBackLines({ project, run: d.run, main });
   const changes = [
     { change: 'leave-helper', project },
+    { change: 'write-back', lines: written },
     { change: 'git-back', folder },
     others.length > 0 ? { change: 'keep-guards', others } : { change: 'remove-hook-file', path: hooks, start: start === null ? null : start.path },
     { change: removeState ? 'remove-state' : 'keep-state', path: state },
@@ -300,6 +332,9 @@ export async function planUninstall({ folder: given, removeState } = {}, deps = 
   const n = others.length;
   const lines = [
     `This project, ${project}, leaves Wheelhouse's helper: its guards, its record and its merges by the helper stop for it`,
+    written.length > 0
+      ? `What you decided through the helper, ${writeBackCount(written)}, is written into this folder's record files in .wheelhouse/record/, in one commit of its own on the main version, so working with git alone still follows it`
+      : 'Nothing decided through the helper needs writing into this folder\'s record files: it holds no ideas, rulings or designs the record files don\'t',
     `Its git moves back into this folder, ${folder}, with the main version checked out, so you work with git alone, as Lean does without the helper`,
     ...(n > 0
       ? [`Wheelhouse's guards stay registered with ${LABEL}, and its sign-in start stays: ${n} other project${n === 1 ? '' : 's'} on this computer use${n === 1 ? 's' : ''} them`]
@@ -310,7 +345,7 @@ export async function planUninstall({ folder: given, removeState } = {}, deps = 
           : `What starts Wheelhouse's helper when you sign in is removed: ${start.kind === 'launch-agent' ? start.path : 'the start-up entry named Wheelhouse helper'}`,
       ]),
     removeState
-      ? `Its Wheelhouse state, ${state}, is removed: what the helper recorded there goes, and the record files in the project stay`
+      ? `Its Wheelhouse state, ${state}, is removed: what the helper recorded there goes, and the record files in the project stay, with what was written into them`
       : `Its Wheelhouse state stays in ${state}`,
   ];
   const hash = crypto.createHash('sha256').update(canonicalJson({ folder, project, changes })).digest('hex');
@@ -328,7 +363,7 @@ export async function uninstall(answers = {}, deps = {}) {
   if (stopState().on) refuse(STOP_ON);
   const { project, folder } = plan;
   await withLocalLock(project, async () => {
-    await releaseProject({ project, folder, run: d.run });
+    await releaseProject({ project, folder, run: d.run, now: d.now });
     unregisterLean(project);
     if (othersNeeding(project).length === 0) {
       fs.rmSync(plan.hooks, { force: true });

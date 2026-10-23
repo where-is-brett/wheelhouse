@@ -8,7 +8,7 @@ import { standInTools } from '../../helpers/host-stand-ins.js';
 import { PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { gateDecision } from '../../../scripts/gate/conditions.js';
 import { verify } from '../../../scripts/state/signing.js';
-import { parseLeanRecord, readLeanRecord, leanToEvents, LEAN_KINDS, LEAN_KEYS, LEAN_TEXT_CHARS } from '../../../scripts/state/lean-record.js';
+import { parseLeanRecord, readLeanRecord, leanToEvents, leanStopOpen, LEAN_KINDS, LEAN_KEYS, LEAN_TEXT_CHARS } from '../../../scripts/state/lean-record.js';
 import { buildViews } from '../../../scripts/state/views.js';
 
 // The lines the Lean playbook shows for each kind (adapters/copilot/skills/lean/SKILL.md, "The record").
@@ -396,4 +396,25 @@ test('readLeanRecord leaves the designs folder to the designs, and reads the day
   fs.mkdirSync(path.join(other, '.wheelhouse', 'record'), { recursive: true });
   fs.writeFileSync(path.join(other, '.wheelhouse', 'record', 'designs'), 'x');
   assert.equal(readLeanRecord(other).problems.length, 1);
+});
+
+test('an idea, a ruling or a design written back from the helper keeps the proof its record named; other kinds don\'t', () => {
+  for (const kind of ['idea', 'ruling', 'design']) {
+    for (const proof of ['window', 'signed-hook', 'chat-click']) {
+      assert.deepEqual(parseLeanRecord(text({ ...INTAKE[kind], proof }), { file: FILE }).problems, [], `${kind} ${proof}`);
+    }
+    const bad = parseLeanRecord(text({ ...INTAKE[kind], proof: 'made-up' }), { file: FILE });
+    assert.match(bad.problems[0].why, new RegExp(`proof of ${kind} must be chat-click, or the one the helper recorded`));
+  }
+  const stop = { at: '2026-10-23T02:00:00Z', kind: 'stop', card: null, choice: null, commit: null, proof: 'window', by: 'chat', tier: 'lean' };
+  assert.match(parseLeanRecord(text(stop), { file: FILE }).problems[0].why, /proof of stop must be chat-click/);
+});
+
+test('the record leaves STOP on when its last stop or lift-stop line is a stop', () => {
+  const line = (kind) => ({ kind });
+  assert.equal(leanStopOpen([]), false);
+  assert.equal(leanStopOpen([line('stop')]), true);
+  assert.equal(leanStopOpen([line('stop'), line('idea'), line('lift-stop')]), false);
+  assert.equal(leanStopOpen([line('lift-stop'), line('stop'), line('merge')]), true);
+  assert.equal(leanStopOpen([line('card'), line('merge')]), false);
 });

@@ -18,6 +18,8 @@ export const LEAN_KINDS = Object.freeze(['card', 'approval', 'review', 'merge', 
 export const LEAN_KEYS = Object.freeze(['at', 'kind', 'card', 'choice', 'commit', 'proof', 'by', 'tier']);
 export const LEAN_TEXT_KINDS = Object.freeze(['idea', 'ruling', 'design']);
 export const LEAN_TEXT_CHARS = 4000;
+// The record's folder and the proofs a line may name, for the modules that write lines back (scripts/lean/release.js).
+export { LEAN_RECORD_DIR, PROOFS as LEAN_PROOFS };
 // The folder in the record that holds Lean's designs, one Markdown file each (ruling P5-38). It is not a day's file.
 export const LEAN_DESIGNS_DIR = 'designs';
 // Only these kinds can have a click behind them, and only when the line names the option clicked.
@@ -38,7 +40,7 @@ const relative = (name) => `${LEAN_RECORD_DIR}/${name}`;
 
 // Why a parsed line is not a good Lean line, or null when it is one. Ruling P4-13: all eight keys,
 // the five that are never null, and the proof each kind carries; ruling P5-37: `text` on the three intake
-// kinds, and on no other.
+// kinds, and on no other; ruling P5-58: those three may carry any proof Wheelhouse knows, as written back by release.
 function whyBad(line, file) {
   if (!isPlain(line)) return 'the line is not a JSON object';
   const keys = Object.keys(line);
@@ -61,7 +63,11 @@ function whyBad(line, file) {
   for (const k of ['card', 'choice']) if (line[k] !== null && !isText(line[k])) return `${k} is neither text nor null`;
   if (line.commit !== null && !(typeof line.commit === 'string' && COMMIT.test(line.commit))) return 'the commit is not 12 lower-case hex characters';
   const proof = line.kind === 'review' ? 'chat-review' : 'chat-click';
-  if (line.proof !== proof) return `the proof of ${line.kind} must be ${proof}`;
+  // An idea, a ruling or a design that the helper recorded and its release wrote back (ruling P5-58) keeps the proof
+  // the helper's record named, such as the window's for a design approved there.
+  if (LEAN_TEXT_KINDS.includes(line.kind)) {
+    if (!PROOFS.includes(line.proof)) return `the proof of ${line.kind} must be ${proof}, or the one the helper recorded`;
+  } else if (line.proof !== proof) return `the proof of ${line.kind} must be ${proof}`;
   // Both are named in the numbers, so a proof that drifts from them is caught here as well.
   if (!(PROOFS.includes(line.proof) || REVIEW_KINDS.includes(line.proof))) return 'the proof is not one Wheelhouse knows';
   if (line.by !== 'chat') return 'by must be chat';
@@ -157,6 +163,12 @@ function isFolder(p) {
   } catch {
     return false;
   }
+}
+
+// Whether the record leaves STOP on: its last stop or lift-stop line, in the order the files and lines read (as the
+// playbook's `git grep` prints them), is a stop.
+export function leanStopOpen(entries) {
+  return entries.filter((e) => e?.kind === 'stop' || e?.kind === 'lift-stop').at(-1)?.kind === 'stop';
 }
 
 const words = (slug) => String(slug).replace(/-/g, ' ');

@@ -21,14 +21,14 @@ import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
 import { safeGit, lookRefusalLine } from '../lib/safe-git.js';
 import { computerId, stateDir } from '../lib/paths.js';
-import { stopState } from '../lib/stop.js';
+import { setStop, stopState } from '../lib/stop.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { listEvents, makeEvent, writeEvent } from '../state/events.js';
 import { writeViews } from '../state/views.js';
 import { readEnrolled, sign, verify } from '../state/signing.js';
-import { readLeanRecord, leanToEvents } from '../state/lean-record.js';
+import { readLeanRecord, leanToEvents, leanStopOpen } from '../state/lean-record.js';
 import { leanMergeDecision } from '../gate/conditions.js';
-import { readLean, updateLean, leanState } from './project.js';
+import { readLean, updateLean, unregisterLean, leanState } from './project.js';
 import { AGENT_VARIABLES } from '../agents/variables.js';
 
 // A refusal: its message is the one plain line the director's chat says; `extra` goes beside it in the answer.
@@ -103,7 +103,7 @@ function gitAt(cwd, { run, env = {}, reach = 'https', list = 'project', what = S
 }
 
 // Who commits: the record's identity, or Wheelhouse's, at `now`.
-function identityEnv(lean, now) {
+export function identityEnv(lean, now) {
   const who = lean.identity ?? WHEELHOUSE;
   const at = now().toISOString();
   return {
@@ -150,7 +150,7 @@ async function moveMain(project, run, to, from) {
 
 // A fresh worktree of the store at `at`, detached, in a folder of its own under the project's folder, for `fn`;
 // removed afterwards whatever happens.
-async function inTempTree(project, { run, at, env = {} }, fn) {
+export async function inTempTree(project, { run, at, env = {} }, fn) {
   const store = gitAt(storeDir(project), { run });
   const parent = fs.mkdtempSync(path.join(projectFolder(project), 'work-'));
   const tree = path.join(parent, 'tree');
@@ -344,28 +344,31 @@ const realOrNull = (p) => {
   }
 };
 
-// Moves the project's `.git` into the store and leaves the folder a worktree of it, detached at the main
-// version's head (ruling P5-26). Refused for a folder with uncommitted changes, one that isn't on `main`, one
-// whose git settings are off the project list, or one with worktrees of its own. Earlier lines of the chat's own
-// record (`.wheelhouse/record/*.jsonl`) become events once (leanToEvents), and the files stay where they are.
-// Adopting a folder already in the store changes nothing. Gives { adopted, main, imported, problems }.
-export async function adoptProject({ project, folder, run = realRun, now = () => new Date() } = {}) {
+// Where `folder` stands for adoption into `project`'s store: { real, dotGit, store, lean, adopted } once the folder
+// is the project's own (registered under it, or not yet registered at all), with `adopted` true when its git is in
+// the store already. Refused for a folder that is another's, or has no git of its own.
+async function placeForAdoption(project, folder, run) {
   const lean = readLean(project);
-  if (lean === null) refuse('This project is not registered as a Lean project');
   const real = realOrNull(folder);
-  if (real === null || real !== realOrNull(lean.folder)) refuse('That folder is not this Lean project\'s folder');
+  if (real === null || (lean !== null && real !== realOrNull(lean.folder))) refuse('That folder is not this Lean project\'s folder');
   const store = storeDir(project);
   const dotGit = path.join(real, '.git');
   let stat = null;
   try { stat = fs.lstatSync(dotGit); } catch { /* none */ }
-  if (stat?.isFile() && lean.store !== null && fs.existsSync(store)) {
+  if (stat?.isFile() && lean !== null && lean.store !== null && fs.existsSync(store)) {
     const common = await gitAt(real, { run, what: FOLDER_WHAT }).must(['rev-parse', '--path-format=absolute', '--git-common-dir'], 'The project\'s folder could not be read');
     if (realOrNull(common) !== realOrNull(store)) refuse('The project\'s folder points to another repository, so it was left alone');
-    return { adopted: false, main: lean.main ?? null, imported: 0, problems: 0 };
+    return { real, dotGit, store, lean, adopted: true };
   }
   if (!stat?.isDirectory()) refuse('The project\'s folder has no git repository of its own, so there is nothing to move');
-  if (fs.existsSync(store) && fs.readdirSync(store).length > 0) refuse(`The store's folder ${store} already holds files, so it was left alone`);
+  return { real, dotGit, store, lean, adopted: false };
+}
 
+// Adoption's own checks on a folder whose git is still its own: the store's folder empty, the folder on `main` with
+// nothing uncommitted, no worktrees of its own, no hooks folder or include in its settings, no submodules. Gives
+// { main, copy }: the main version's head, and the copy folder its `wheelhouse-copy` remote names, or null.
+async function adoptionChecks({ real, dotGit, store }, run) {
+  if (fs.existsSync(store) && fs.readdirSync(store).length > 0) refuse(`The store's folder ${store} already holds files, so it was left alone`);
   const here = gitAt(real, { run, what: FOLDER_WHAT });
   const head = await here.must(['symbolic-ref', '-q', 'HEAD'], 'The project\'s folder isn\'t on the main version');
   if (head !== MAIN) refuse('The project\'s folder isn\'t on the main version: switch to main, then try again');
@@ -383,6 +386,35 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
   if (fs.existsSync(path.join(dotGit, 'modules'))) refuse('The project has submodules, which can\'t move into the store yet, so it was left alone');
   const copyUrl = await here.call(['remote', 'get-url', 'wheelhouse-copy']);
   const copy = copyUrl.code === 0 && path.isAbsolute(copyUrl.stdout.trim()) ? copyUrl.stdout.trim() : null;
+  return { main, copy };
+}
+
+// Whether `folder` can be adopted into `project`'s store, checked as adoptProject checks it and changing nothing
+// (ruling P5-58): for the helper's install plan, so no card is asked for a folder the store would refuse. Refuses
+// with adoption's own plain line. Gives { adopted, stop }: whether its git is in the store already, and whether the
+// chat's own record leaves STOP on (its last stop or lift-stop line is a stop), which adoption carries over.
+export async function checkAdoptable({ project, folder, run = realRun } = {}) {
+  const place = await placeForAdoption(project, folder, run);
+  if (place.adopted) return { adopted: true, stop: false };
+  await adoptionChecks(place, run);
+  return { adopted: false, stop: leanStopOpen(readLeanRecord(place.real).entries) };
+}
+
+// Moves the project's `.git` into the store and leaves the folder a worktree of it, detached at the main
+// version's head (ruling P5-26). Refused for a folder with uncommitted changes, one that isn't on `main`, one
+// whose git settings are off the project list, or one with worktrees of its own. Earlier lines of the chat's own
+// record (`.wheelhouse/record/*.jsonl`) become events once (leanToEvents), and the files stay where they are; when
+// the record's last stop or lift-stop line is a stop, STOP is turned on, as the director left it (ruling P5-58), and
+// only the helper's window lifts it. Adopting a folder already in the store changes nothing.
+// `register`, for a project not registered yet (the helper's install): called with { store, main, copy } once the
+// git is in the store, to register the project; if it throws, the git is put back and nothing stays registered, so
+// a failed adoption never leaves a project half on the helper. Gives { adopted, main, imported, problems, stop }.
+export async function adoptProject({ project, folder, run = realRun, now = () => new Date(), register = null } = {}) {
+  if (readLean(project) === null && register === null) refuse('This project is not registered as a Lean project');
+  const place = await placeForAdoption(project, folder, run);
+  const { real, dotGit, store, lean } = place;
+  if (place.adopted) return { adopted: false, main: lean.main ?? null, imported: 0, problems: 0, stop: false };
+  const { main, copy } = await adoptionChecks(place, run);
 
   fs.mkdirSync(path.dirname(store), { recursive: true });
   fs.rmSync(store, { recursive: true, force: true });
@@ -418,24 +450,28 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
     await folderGit.must(['reset', '--quiet', '--mixed'], 'The project\'s folder could not be matched to the main version');
     const left = await folderGit.must(['status', '--porcelain=v1', '--untracked-files=no'], 'The project\'s folder could not be read');
     if (left !== '') refuse('The project\'s folder didn\'t match the main version after the move');
+    if (lean === null) register({ store, main, copy });
+    else updateLean(project, { store, main, ...(lean.copy === null && copy !== null ? { copy } : {}) });
   } catch (error) {
+    if (lean === null) unregisterLean(project);
     await gitAt(store, { run }).call(['config', 'core.bare', 'false']).catch(() => {});
     putBack();
     throw error;
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
-  updateLean(project, { store, main, ...(lean.copy === null && copy !== null ? { copy } : {}) });
 
-  // The chat's own record, kept until now in the project, becomes events once.
+  // The chat's own record, kept until now in the project, becomes events once. A STOP it leaves on stays on.
   const { entries, problems } = readLeanRecord(real);
+  const stop = leanStopOpen(entries);
+  if (stop) setStop({ by: 'prompt', now });
   const events = leanToEvents(entries, { project });
   if (events.length > 0) {
     await leanState(project, { run });
     for (const event of events) await writeEvent({ project, event, push: async () => ({ ok: false }), env: {}, now });
     try { await writeViews(project, { now }); } catch { /* the next write brings them up to date */ }
   }
-  return { adopted: true, main, imported: events.length, problems: problems.length };
+  return { adopted: true, main, imported: events.length, problems: problems.length, stop };
 }
 
 // --- the project's tests ---
