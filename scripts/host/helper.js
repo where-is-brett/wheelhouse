@@ -1467,15 +1467,22 @@ export async function startHelper({
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     if (confirmed && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
-    // A ruling's confirm card at Lean (ruling P5-52): Confirm, unsigned, on the card named `ruling-<its id>`, when the
-    // state holds that card as a ruling's confirm card and the click names its text as the state holds it. The views
-    // count it only in a Lean project's rulebook. On any other project Confirm stays signed and is refused below.
+    // A ruling's confirm card at Lean (rulings P5-52, P5-53): one click in the chat, unsigned, with proof chat-click,
+    // on the card named `ruling-<its id>`, when the state holds that card as a ruling's confirm card, the click names
+    // its text as the state holds it, the label is one of its options and nothing has answered it yet. Confirm puts the
+    // ruling in force in a Lean project's rulebook; Not now or Suggest a change… (with the new words) closes the card.
+    // On any other project Confirm stays signed and is refused below.
     const rulingCard = RULING_CARD.exec(card);
-    if (ctx.lean === true && label === 'Confirm' && rulingCard && text === undefined && commit === undefined) {
-      const held = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === rulingCard[1] && e.kind === 'card');
+    if (ctx.lean === true && rulingCard) {
+      if (proof !== 'chat-click') refuse('a click on a ruling\'s card is recorded as chat-click');
+      if (commit !== undefined) refuse('a click on a ruling\'s card names no commit');
+      const events = listEvents(stateDir(project), { report: () => {} });
+      const held = events.find((e) => e.id === rulingCard[1] && e.kind === 'card');
       if (!held || held.data?.kind !== 'confirm' || !/^Confirm ruling \S+: "/.test(held.data?.line ?? '') || typeof held.data?.question !== 'string') refuse('that is not a ruling\'s confirm card in this project');
       if (hash !== crypto.createHash('sha256').update(held.data.question).digest('hex')) refuse('the click must name the card\'s text as the state holds it');
-      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean' } }, ctx, { own: true });
+      if (!Array.isArray(held.data.options) || !held.data.options.includes(label)) refuse('that label isn\'t one of the card\'s options');
+      if (events.some((e) => e.kind === 'card-answer' && e.data?.card === held.id)) refuse('that ruling\'s card has been answered already');
+      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
     }
     const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
     if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');

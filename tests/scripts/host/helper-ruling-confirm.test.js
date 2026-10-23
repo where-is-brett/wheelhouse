@@ -164,3 +164,57 @@ test('on a Claude Code project an unsigned Confirm in the chat is refused, and t
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('at Lean a ruling\'s card takes one chat click: Not now or Suggest a change… closes it, nothing after counts, and only chat-click is taken', async () => {
+  const c = await leanComputer();
+  try {
+    const ask = async (words) => {
+      const made = await record({ client: c.client, cwd: c.folder, kind: 'ruling', input: { words, card: 'exports' }, now: c.now });
+      return { id: made.card.id, shown: made.card.question.question };
+    };
+    const waiting = async () => (await c.client.state.views({ cwd: c.folder })).views.waiting.map((w) => w.id);
+
+    // A proof other than chat-click is refused on a ruling's card, and nothing is written.
+    const first = await ask('Exports are CSV.');
+    const count = c.events().length;
+    const hookClick = await c.client.cards.chatClick({ cwd: c.folder, card: `ruling-${first.id}`, label: 'Confirm', hash: sha(first.shown), proof: 'hook-click' });
+    assert.equal(hookClick.ok, false);
+    assert.match(hookClick.refused, /chat-click/);
+    assert.equal(c.events().length, count);
+
+    // Not now closes the card by its id and hash; a Confirm after it is refused.
+    const notNow = await c.lean(['click', `ruling-${first.id}`, 'Not now'], { question: first.shown });
+    assert.equal(notNow.ok, true, notNow.refused);
+    assert.deepEqual(c.events().find((e) => e.id === notNow.id).data, { card: first.id, label: 'Not now', hash: sha(first.shown), proof: 'chat-click', tier: 'lean' });
+    assert.ok(!(await waiting()).includes(first.id));
+    const late = await c.lean(['click', `ruling-${first.id}`, 'Confirm'], { question: first.shown });
+    assert.equal(late.ok, false);
+    assert.match(late.refused, /answered already/);
+
+    // Suggest a change… carries the new words and closes the card too.
+    const second = await ask('Exports are CSV, always.');
+    const changed = await c.lean(['click', `ruling-${second.id}`, 'Suggest a change…'], { question: second.shown, text: 'Exports are CSV or Excel.' });
+    assert.equal(changed.ok, true, changed.refused);
+    assert.equal(c.events().find((e) => e.id === changed.id).data.text, 'Exports are CSV or Excel.');
+    assert.ok(!(await waiting()).includes(second.id));
+    // A label the card doesn't have is refused.
+    const third = await ask('Exports are CSV or Excel.');
+    assert.match((await c.lean(['click', `ruling-${third.id}`, 'Approve'], { question: third.shown })).refused, /isn't one of the card's options/);
+
+    // Confirmed, the newest words under the short name stand, and the earlier confirmed ones are replaced.
+    assert.equal((await c.lean(['click', `ruling-${third.id}`, 'Confirm'], { question: third.shown })).ok, true);
+    const fourth = await ask('Exports are Excel.');
+    assert.equal((await c.lean(['click', `ruling-${fourth.id}`, 'Confirm'], { question: fourth.shown })).ok, true);
+    const { views } = await c.client.state.views({ cwd: c.folder });
+    // Every earlier ruling under the short name is replaced, confirmed or not, so none waits as unconfirmed.
+    assert.deepEqual(views.rulebook.map((r) => [r.words, r.status]), [
+      ['Exports are CSV.', 'superseded'], ['Exports are CSV, always.', 'superseded'], ['Exports are CSV or Excel.', 'superseded'], ['Exports are Excel.', 'accepted'],
+    ]);
+    assert.deepEqual(views.unconfirmed, []);
+    const lines = (await view({ client: c.client, cwd: c.folder, name: 'rulebook', now: c.now })).join('\n');
+    assert.match(lines, /Exports are Excel\. \(in force, by a click in the chat, not proven\)/);
+    assert.doesNotMatch(lines, /Exports are CSV or Excel\. \(in force/);
+  } finally {
+    await c.close();
+  }
+});

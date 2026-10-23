@@ -1244,3 +1244,51 @@ test('at Lean a ruling confirmed by a chat click the record names is in force; e
   const otherAnswer = makeEvent({ kind: 'card-answer', data: { card: otherLine.id, label: 'Confirm', hash: sha(question), proof: 'chat-click', tier: 'lean' }, now: at(3) });
   assert.deepEqual(status([ruling, otherLine, otherAnswer], { lean: true }), [['proposed', null]]);
 });
+
+// ---- At Lean, the newest words of a ruling stand, and a ruling's card closes once (ruling P5-53) ----
+
+const leanSha = (text) => crypto.createHash('sha256').update(text).digest('hex');
+// A ruling under a short name, its confirm card and the director's chat click on it, at times n, n+1 and n+2.
+function leanRuling(n, words, card, { label = 'Confirm', click = true } = {}) {
+  const ruling = ev('ruling', n, { words, ...(card === undefined ? {} : { card }) });
+  const question = `A rule you gave, in your words: "${words}"`;
+  const confirmCard = ev('card', n + 1, { question, header: 'Confirm', options: ['Confirm', 'Suggest a change…', 'Show me', 'Not now'], kind: 'confirm', level: 3, line: confirmLine(ruling) });
+  const answer = ev('card-answer', n + 2, { card: confirmCard.id, label, hash: leanSha(question), proof: 'chat-click', tier: 'lean' });
+  return { ruling, card: confirmCard, answer, events: click ? [ruling, confirmCard, answer] : [ruling, confirmCard] };
+}
+
+test('at Lean a later ruling under the same short name, once confirmed, replaces the earlier one', async () => {
+  await withHome(() => {
+    const first = leanRuling(1, 'Exports are CSV.', 'exports');
+    const second = leanRuling(10, 'Exports are CSV or Excel, as the director picks.', 'exports');
+    const rulebook = (events, options = { lean: true }) => build(events, options).rulebook.map((r) => [r.words, r.status]);
+    assert.deepEqual(rulebook([...first.events, ...second.events]), [['Exports are CSV.', 'superseded'], ['Exports are CSV or Excel, as the director picks.', 'accepted']]);
+    // Until the new words are confirmed, the old ones stand.
+    const waiting = leanRuling(10, 'Exports are Excel.', 'exports', { click: false });
+    assert.deepEqual(rulebook([...first.events, ...waiting.events]), [['Exports are CSV.', 'accepted'], ['Exports are Excel.', 'proposed']]);
+    // Another short name, or none, replaces nothing.
+    const other = leanRuling(10, 'Totals are to the cent.', 'totals');
+    const unnamed = leanRuling(20, 'Dates read 23 October 2026.');
+    assert.deepEqual(rulebook([...first.events, ...other.events, ...unnamed.events]).map((r) => r[1]), ['accepted', 'accepted', 'accepted']);
+    // A Claude Code project's signed rulings are as before: a short name in the data replaces nothing.
+    const a = ev('ruling', 1, { words: 'one', card: 'same' });
+    const b = ev('ruling', 3, { words: 'two', card: 'same' });
+    assert.deepEqual(build([a, conf(2, a), b, conf(4, b)]).rulebook.map((r) => r.status), ['accepted', 'accepted']);
+  });
+});
+
+test('at Lean a ruling\'s card closes on its first chat click, whatever it is, and only a first Confirm confirms', async () => {
+  await withHome(() => {
+    for (const label of ['Not now', 'Suggest a change…']) {
+      const r = leanRuling(1, 'Exports are CSV.', 'exports', { label });
+      const v = build(r.events, { lean: true });
+      assert.deepEqual(v.waiting.map((c) => c.id), [], label);
+      assert.equal(v.rulebook[0].status, 'proposed', label);
+      // A Confirm after it confirms nothing.
+      const late = ev('card-answer', 9, { ...r.answer.data, label: 'Confirm' });
+      assert.equal(build([...r.events, late], { lean: true }).rulebook[0].status, 'proposed', label);
+      // Not now leaves a Claude Code card waiting, as it always has.
+      if (label === 'Not now') assert.deepEqual(build(r.events).waiting.map((c) => c.id), [r.card.id]);
+    }
+  });
+});

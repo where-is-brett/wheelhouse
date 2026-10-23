@@ -930,6 +930,32 @@ test('the record\'s git grep reads only the day files, so a design\'s text never
   }
 });
 
+test('new words for a ruling keep its short name, and the brief and the board take the last line for each (ruling P5-53)', () => {
+  const part = intake();
+  assert.match(part, /New words for a ruling are a new `ruling` line under the same `card`/);
+  assert.match(part, /The last `ruling` line with a short name is the ruling/);
+  assert.match(section(playbook, 'Building'), /the last `ruling` line for each short name/);
+  assert.match(playbook.slice(playbook.indexOf('\n## The board\n'), playbook.indexOf('\n## Intake at Lean\n')), /Rulings the last `ruling` line for each short name/);
+  // A merged idea that would pass the limit keeps the newest words, and says where the older ones are.
+  assert.match(part, /would pass 4000 characters/);
+  assert.match(part, /\(The earlier words are in this idea's earlier line\.\)/);
+  // With the helper, the short name goes with the ruling, and every click on its card closes it once.
+  const bullet = /- \*\*Intake\*\*[^\n]*/.exec(section(playbook, 'With Wheelhouse\'s helper'))?.[0] ?? '';
+  assert.match(bullet, /its short name as `card`/);
+  assert.match(bullet, /\*\*Not now\*\* and \*\*Suggest a change…\*\*/);
+  assert.match(bullet, /only the first click on the card counts/);
+  // The words as written in the record's own test: the last line for each short name decides.
+  const r = repo('rulings');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  const line = (at, card, text) => recordLine('ruling', { at, card, choice: 'Confirm', text });
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-22.jsonl`, line('2026-10-22T01:00:00Z', 'exports', 'Exports are CSV.') + line('2026-10-22T02:00:00Z', 'totals', 'Totals to the cent.'), 'Record: rulings');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, line('2026-10-23T01:00:00Z', 'exports', 'Exports are Excel.'), 'Record: ruling exports');
+  const printed = sh(cwd, r.env, command('git grep -h -e \'"kind":"ruling"\' main')).stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const last = new Map(printed.map((e) => [e.card, e.text]));
+  assert.deepEqual([...last.values()], ['Exports are Excel.', 'Totals to the cent.']);
+});
+
 test('Intake at Lean names no Claude Code tool and no cli.js step without the helper', () => {
   const part = intake();
   assert.doesNotMatch(part, /cli\.js/);

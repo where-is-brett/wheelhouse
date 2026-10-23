@@ -219,16 +219,21 @@ const confirmedAfter = (confirmations, record, named) => (named === null ? undef
 // a card-answer the helper's /cards/chat-click wrote, with proof chat-click and tier lean, after a confirm card whose
 // line names that ruling with its words as they are, naming the card by its id and the card's text by its hash. It
 // is not signed, so it counts only in a Lean project's views; the rulebook says the proof it rests on.
+// Only the card's first such click counts (ruling P5-53): a Confirm after Not now or Suggest a change… confirms nothing.
+const isRulingConfirmCard = (card) => card?.kind === 'card' && card.data?.kind === 'confirm' && typeof card.data?.line === 'string'
+  && /^Confirm ruling \S+: "/.test(card.data.line) && typeof card.data?.question === 'string';
+// A click in the chat on a ruling's confirm card at Lean: the card by its id, its text by its hash, proof chat-click.
+const isLeanRulingClick = (card, a) => isRulingConfirmCard(card) && a?.kind === 'card-answer' && byOrder(card, a) < 0 && a.data?.card === card.id
+  && a.data.proof === 'chat-click' && a.data.tier === 'lean' && a.data.hash === textHash(card.data.question);
 function leanRulingClicks(sorted, rulings) {
   const out = new Map();
-  const cards = sorted.filter((e) => e.kind === 'card' && e.data?.kind === 'confirm' && typeof e.data?.line === 'string' && typeof e.data?.question === 'string');
+  const cards = sorted.filter(isRulingConfirmCard);
   for (const ruling of rulings) {
     if (typeof ruling.data?.words !== 'string') continue;
     const line = confirmLine(ruling);
     for (const card of cards.filter((c) => c.data.line === line && byOrder(ruling, c) < 0)) {
-      const click = sorted.find((a) => a.kind === 'card-answer' && byOrder(card, a) < 0 && a.data?.card === card.id && a.data.label === 'Confirm'
-        && a.data.proof === 'chat-click' && a.data.tier === 'lean' && a.data.hash === textHash(card.data.question));
-      if (click && !out.has(ruling.id)) out.set(ruling.id, click);
+      const first = sorted.find((a) => isLeanRulingClick(card, a));
+      if (first?.data.label === 'Confirm' && !out.has(ruling.id)) out.set(ruling.id, first);
     }
   }
   return out;
@@ -259,7 +264,7 @@ export function confirmationTimes(events, enrolled) {
 // but those five decides it. `answers` are all its answers, in order; `explained` the times of its
 // Explain more and Why? answers; `steered` the time of its latest Suggest a change… answer
 // made after the card, or null.
-function outcomesOf(sorted, { confirmations, answeredBy }) {
+function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   const answers = sorted.filter((e) => e.kind === 'card-answer');
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
   // An answer that names the card by its id and the card's text by its hash (a click in an agent's chat, ruling
@@ -276,7 +281,8 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
   };
   return sorted.filter((e) => e.kind === 'card').map((card) => {
     const mine = answersTo(card);
-    const answered = mine.find((a) => decides(card, a.data?.label));
+    // At Lean, a ruling's confirm card is decided by its first chat click, Not now included (ruling P5-53).
+    const answered = mine.find((a) => decides(card, a.data?.label) || (lean && isLeanRulingClick(card, a)));
     const signed = signedFor(card);
     const first = [answered, signed].filter(Boolean).sort(byOrder)[0];
     const label = typeof first?.data?.label === 'string' ? first.data.label : null;
@@ -416,6 +422,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   for (const r of rulings) {
     const target = rulings.find((x) => x.id === r.data?.supersedes);
     if (inForce(r.id) && target && target.id !== r.id && byOrder(target, r) < 0) superseded.add(target.id);
+    // At Lean a ruling's short name is what the director's newer words replace (ruling P5-53): once the newer
+    // ruling under the same short name is in force, the earlier ones are superseded.
+    if (lean && inForce(r.id) && isPlainKey(r.data?.card)) {
+      for (const x of rulings) if (x.id !== r.id && x.data?.card === r.data.card && byOrder(x, r) < 0) superseded.add(x.id);
+    }
   }
   const rulebook = rulings.map((r) => ({
     id: r.id,
@@ -487,7 +498,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const outdated = outdatedBy(sorted, loop.reports);
   const revised = revisedBy(sorted);
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
-  const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
+  const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
   const waiting = [];
   // A card made from a lineage hold that has been lifted is closed, as an answered card is.
   const liftedHolds = liftedHoldIds(sorted);
