@@ -15,7 +15,10 @@ import { loadBoardInputs } from '../../../scripts/board/inputs.js';
 import { numberedWaiting, NO_STATE, NO_SETTINGS, NO_SOURCES } from '../../../scripts/board/model.js';
 import { CANT_ANSWER } from '../../../scripts/mod/buttons.js';
 import { cardNumbered } from '../../../scripts/cards/visit.js';
-import { composeCard } from '../../../scripts/cards/compose.js';
+import { composeCard, textOf } from '../../../scripts/cards/compose.js';
+import { markSeen } from '../../../scripts/briefing/seen.js';
+import { briefingModel } from '../../../scripts/briefing/model.js';
+import { previewFor, previewsFile } from '../../../scripts/mod/previews.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { recordAllowance } from '../../../scripts/usage/store.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -87,11 +90,15 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
   assert.equal(first.hash.length, CARD_HASH_CHARS);
   assert.equal(first.kind, 'approval');
   assert.equal(first.header, 'Approval');
-  assert.deepEqual(first.buttons.map((b) => [b.label, b.does]), [['Approve', 'record'], ['Not now', 'record'], ['Explain more', 'turn'], ['Show me', 'turn']]);
+  assert.deepEqual(first.buttons.map((b) => [b.label, b.does, b.shape]), [
+    ['Approve', 'record', 'filled'], ['Suggest a change…', 'suggest', 'outlined'], ['Not now', 'record', 'small'], ['Why?', 'why', 'small'], ['Show me', 'turn', 'small'],
+  ]);
   assert.equal(first.note, null);
-  assert.deepEqual(third.buttons.map((b) => [b.label, b.does]), [['Comma', 'record'], ['Tab', 'record'], ['Explain more', 'turn']]);
+  assert.deepEqual(third.buttons.map((b) => [b.label, b.does, b.shape]), [
+    ['Comma', 'record', 'filled'], ['Tab', 'record', 'outlined'], ['Suggest a change…', 'suggest', 'outlined'], ['Why?', 'why', 'small'],
+  ]);
   // A question from the build that no card asks yet is one line and no buttons.
-  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false });
+  assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, parts: null, steered: null, waited: null, revised: false });
   assert.equal(QUESTION_WAITS, 'A question from the build waits; the front desk will ask it');
 }));
 
@@ -161,7 +168,7 @@ test('each card says whether the front desk has asked it, and an asked card neve
   assert.deepEqual(model.cards.map((c) => [c.id, c.asked]), [[made.id, true], [putOff.id, true], [fresh.id, false]]);
   const got = await courierOn(model);
   assert.deepEqual(got.sent, [`card:${fresh.id}`]);
-  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Send Claude's notification in one line, then ask any new cards now, once.`);
+  assert.equal(got.submit, `${LEADS.courier} 1 new card (3). Send Claude's notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 3. Then ask any new cards now, once.`);
   // The asked cards stay unwoken on later ticks too, the one put off by Not now included; the card
   // the wake named, still not asked, has its one reminder.
   assert.deepEqual((await courierOn(model, { now: () => new Date(NOW.getTime() + 3600 * 1000) })).sent, [`remind:${fresh.id}`]);
@@ -201,7 +208,8 @@ test('a card that fails the card check and offers no Explain more has no button,
   const broken = { ...approval, question: approval.question.split('\n').filter((l) => !l.startsWith('Reply code:')).join('\n'), options: ['Approve', 'Not now'] };
   view('waiting', [{ id: 'c-broken', at: at(9), data: broken, asked: null }]);
   const [card] = (await paneModel({ project: P, cwd: repo, now: () => NOW })).cards;
-  assert.deepEqual(card.buttons, []);
+  // Only Why?, which asks the front desk.
+  assert.deepEqual(card.buttons, [{ label: 'Why?', does: 'turn', shape: 'small' }]);
   assert.equal(card.note, CANT_ANSWER);
   assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the front desk about it.');
 }));
@@ -247,12 +255,12 @@ test('a card\'s text is kept as written; the other lines are one line each, in p
     assert.equal(model.cards[0].text, written);
     assert.equal(model.cards[0].hash, sha(written));
     assert.equal(model.building.length, PANE_LINES);
-    assert.equal(model.building[0], 'Building Speed up the automatic check run now, piece 1 of 3');
-    assert.equal(model.building.at(-1), 'and 3 more building');
+    assert.equal(model.building[0].text, 'Building Speed up the automatic check run now, piece 1 of 3');
+    assert.equal(model.building.at(-1).text, 'and 3 more building');
     assert.deepEqual(model.health.map((h) => h.level), ['watch', 'stop', 'stop', 'stop']);
     // STOP's own line and an incident's are marked, read before their words are made plain.
     assert.deepEqual(model.health.map((h) => h.of), [null, 'stop', 'stop', 'incident']);
-    for (const line of [...model.building, ...model.health.map((h) => h.text)]) {
+    for (const line of [...model.building.map((b) => b.text), ...model.health.map((h) => h.text)]) {
       assert.doesNotMatch(line, /[\n<>[\]#]|https?:/, line);
     }
     assert.match(model.health[0].text, /^Automatic check run is red/);
@@ -335,4 +343,185 @@ test('the model is kept as status.json, whole, and read back only when it is a v
   assert.throws(() => writePaneStatus(P, { v: 2 }));
   assert.throws(() => writePaneStatus('../escape', model));
   assert.equal(readPaneStatus('../escape'), null);
+}));
+
+test('the model carries each card\'s parts as the composer kept them, and a card with none as null', () => withHome(async (home) => {
+  const repo = register(home);
+  const old = { kind: 'question', header: 'Question', options: ['Yes'], question: 'Plain?', level: 3 };
+  view('waiting', [{ id: 'c-new', at: at(9), data: approval, asked: null }, { id: 'c-old', at: at(10), data: old, asked: null }]);
+  view('work', {});
+  view('features', {});
+  view('questions', {});
+  const [made, plain] = (await paneModel({ project: P, cwd: repo, now: () => NOW })).cards;
+  // Drawn as they are: the set line and the code word for word, and the parts build the text.
+  assert.deepEqual(made.parts, approval.parts);
+  assert.equal(textOf(made.parts), made.text);
+  assert.equal(made.parts.line, approval.line);
+  assert.equal(made.parts.code, approval.code);
+  assert.equal(plain.parts, null);
+}));
+
+test('a steered card carries its time in the computer\'s own time, a revised card is marked, and a card says how long it has waited', () => withHome(async (home) => {
+  const repo = register(home);
+  const revised = composeCard({ ...common, kind: 'approval', recommend: 'Approve', what: 'Pull request #14 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 14, sha: FULL }, revises: 'card-approval', changed: 'The wording is shorter.' }).card;
+  view('waiting', [
+    { id: 'card-approval', at: new Date(NOW.getTime() - 2 * 3600 * 1000).toISOString(), data: approval, asked: null, steered: '2026-10-19T11:40:00.000Z' },
+    { id: 'card-revised', at: new Date(NOW.getTime() - 30 * 1000).toISOString(), data: revised, asked: null, steered: null },
+    { id: 'card-answer', at: new Date(NOW.getTime() - 61 * 60 * 1000).toISOString(), data: answer, asked: null, steered: 'not a time' },
+  ]);
+  view('work', {});
+  view('features', {});
+  view('questions', {});
+  const cards = Object.fromEntries((await paneModel({ project: P, cwd: repo, now: () => NOW })).cards.map((c) => [c.id, c]));
+  const local = new Date('2026-10-19T11:40:00.000Z');
+  assert.equal(cards['card-approval'].steered, `${String(local.getHours()).padStart(2, '0')}:${String(local.getMinutes()).padStart(2, '0')}`);
+  assert.equal(cards['card-revised'].steered, null);
+  assert.equal(cards['card-answer'].steered, null);
+  assert.equal(cards['card-approval'].revised, false);
+  assert.equal(cards['card-revised'].revised, true);
+  assert.equal(cards['card-approval'].waited, 'asked 2 hours ago');
+  assert.equal(cards['card-revised'].waited, 'asked just now');
+  assert.equal(cards['card-answer'].waited, 'asked 1 hour ago');
+}));
+
+test('the model carries the verdict, the since line, launch, health, ideas, building and updated', () => withHome(async (home) => {
+  const repo = register(home);
+  markSeen(P, { briefedAt: '2026-10-19T09:10:00.000Z' });
+  keepWaiting();
+  view('blockers', {
+    a: { key: 'a', id: 'b1', at: at(1), data: { key: 'a', what: 'Payments work', resolved: true } },
+    b: { key: 'b', id: 'b2', at: '2026-10-19T10:00:00.000Z', data: { key: 'b', what: 'Privacy page', resolved: true } },
+    c: { key: 'c', id: 'b3', at: at(3), data: { key: 'c', what: 'Domain name', resolved: false } },
+  });
+  view('ideas', {
+    i1: { key: 'i1', id: 'e1', at: at(2), data: { text: 'Gift cards', when: 'now' } },
+    i2: { key: 'i2', id: 'e2', at: '2026-10-19T10:30:00.000Z', data: { text: 'Loyalty stamps', when: 'later' } },
+  });
+  view('work', {
+    'export-csv': { key: 'export-csv', work: { id: 'w1', at: at(1), data: { id: 'export-csv', title: 'Export', lane: 'feature', shownFirst: true } }, approved: true },
+    'queued-one': { key: 'queued-one', work: { id: 'w2', at: at(2), data: { id: 'queued-one', title: 'Queued one', lane: 'feature' } }, approved: true },
+  });
+  view('features', {
+    f1: { key: 'f1', id: 'f1', at: at(4), data: { work: 'export-csv', step: 'building' } },
+  });
+  const loadInputs = async () => loadBoardInputs({ cwd: repo, now: () => NOW, offline: true });
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW, loadInputs });
+  const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  // Three cards wait (two cards and a question from the build), and nothing is broken.
+  assert.equal(model.verdict, 'Three things need you. Nothing is broken.');
+  // The briefing opens with the same sentence, and the board's table says the same of when the work is seen.
+  const inputs = await loadInputs();
+  assert.equal(briefingModel({ model: inputs.model, usage: inputs.usage, sources: inputs.sources, now: NOW }).verdict, model.verdict);
+  assert.equal(inputs.model.director.inProgress.feature[0].see, model.building[0].see);
+  assert.equal(model.since, `Since you were last here at ${hhmm(new Date('2026-10-19T09:10:00.000Z'))}.`);
+  assert.deepEqual(model.launch, { resolved: 2, total: 3, gained: 1, next: [{ text: 'Gift cards', yours: true }, { text: 'Queued one', yours: false }] });
+  assert.deepEqual(model.ideas, { count: 2, fresh: 1 });
+  assert.deepEqual(model.building, [{ text: 'Building Export', see: 'Before it merges' }]);
+  assert.equal(model.updated, hhmm(NOW));
+  // With no profile backup yet, one line is to watch, so all is not well; the lines stay a list.
+  assert.deepEqual(model.health.map((h) => [h.level, h.text]), [['watch', 'Your profile isn\'t backed up off this computer yet']]);
+  assert.deepEqual(model.healthNote, { allWell: false, protection: 'Standard', week: null });
+}));
+
+test('the verdict counts the health lines at stop level other than STOP\'s own, and healthNote says what is not well', () => withHome(async (home) => {
+  register(home);
+  view('waiting', []);
+  const loadInputs = async () => ({
+    project: P,
+    model: {
+      missing: [],
+      director: { health: [{ level: 'ok', text: 'Protection: Locked' }, { level: 'watch', text: 'CI is red' }, { level: 'stop', text: 'STOP is on' }, { level: 'stop', text: 'Incident i1 is open, so nothing merges: x', incident: 'i1' }] },
+      build: { features: [] },
+    },
+    usage: { week: { share: 34 } },
+  });
+  const model = await paneModel({ project: P, cwd: '/x', now: () => NOW, loadInputs });
+  assert.equal(model.verdict, 'Nothing needs you. One thing is broken.');
+  assert.equal(model.since, null);
+  assert.equal(model.launch, null);
+  assert.deepEqual(model.ideas, { count: 0, fresh: 0 });
+  assert.equal(model.healthNote.allWell, false);
+  // With no line at watch or stop, all is well.
+  const calm = await paneModel({ project: P, cwd: '/x', now: () => NOW, loadInputs: async () => ({ project: P, model: { missing: [], director: { health: [{ level: 'ok', text: 'Protection: Standard' }] }, build: { features: [] } }, usage: null }) });
+  assert.deepEqual(calm.healthNote, { allWell: true, protection: 'Standard', week: null });
+  assert.equal(model.healthNote.protection, 'Locked');
+  assert.match(model.healthNote.week, /34%/);
+  // `health` stays the list of lines at watch or stop.
+  assert.deepEqual(model.health.map((h) => h.level), ['watch', 'stop', 'stop']);
+}));
+
+test('only an approval card is asked for a preview, and Show me links to the address it gets', () => withHome(async (home) => {
+  const repo = register(home);
+  keepWaiting();
+  const asked = [];
+  const previews = async (args) => {
+    asked.push([args.pr, args.sha]);
+    return 'https://preview.example.test/13';
+  };
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW, previews, client: {} });
+  assert.deepEqual(asked, [[13, FULL.slice(0, 12)]]);
+  const shown = model.cards[0].buttons.find((b) => b.label === 'Show me');
+  assert.deepEqual(shown, { label: 'Show me', does: 'turn', shape: 'link', href: 'https://preview.example.test/13' });
+  assert.equal(model.cards[2].buttons.some((b) => b.shape === 'link'), false);
+  // An address that is not https: is none, and a failing lookup is none.
+  const plainHttp = await paneModel({ project: P, cwd: repo, now: () => NOW, previews: async () => 'http://preview.example.test/13' });
+  assert.equal(plainHttp.cards[0].buttons.find((b) => b.label === 'Show me').shape, 'small');
+  const failing = await paneModel({ project: P, cwd: repo, now: () => NOW, previews: async () => { throw new Error('down'); } });
+  assert.equal(failing.cards[0].buttons.find((b) => b.label === 'Show me').shape, 'small');
+}));
+
+test('previewFor keeps an https address ten minutes, asks at most once a tick and never waits past 1.5 seconds', () => withHome(async () => {
+  let calls = 0;
+  let url = 'https://preview.example.test/13';
+  const client = { preview: async () => { calls += 1; return { ok: true, url }; } };
+  const base = { project: P, pr: 13, sha: FULL.slice(0, 12), client };
+  const t0 = NOW;
+  assert.equal(await previewFor({ ...base, now: () => t0 }), 'https://preview.example.test/13');
+  assert.equal(calls, 1);
+  // Kept: asked again nine minutes on, there is no call.
+  assert.equal(await previewFor({ ...base, now: () => new Date(t0.getTime() + 9 * 60 * 1000) }), 'https://preview.example.test/13');
+  assert.equal(calls, 1);
+  // Ten minutes on, it is asked again.
+  url = 'https://preview.example.test/13b';
+  assert.equal(await previewFor({ ...base, now: () => new Date(t0.getTime() + 10 * 60 * 1000) }), 'https://preview.example.test/13b');
+  assert.equal(calls, 2);
+  // Another commit is another key.
+  assert.equal(await previewFor({ ...base, sha: 'fedcba987654', now: () => new Date(t0.getTime() + 10 * 60 * 1000) }), 'https://preview.example.test/13b');
+  assert.equal(calls, 3);
+
+  // An answer of none is kept too.
+  url = null;
+  const later = new Date(t0.getTime() + 30 * 60 * 1000);
+  assert.equal(await previewFor({ ...base, pr: 14, now: () => later }), null);
+  assert.equal(await previewFor({ ...base, pr: 14, now: () => later }), null);
+  assert.equal(calls, 4);
+  // An address that is not https: is kept as none.
+  url = 'http://preview.example.test/15';
+  assert.equal(await previewFor({ ...base, pr: 15, now: () => later }), null);
+  assert.equal(await previewFor({ ...base, pr: 15, now: () => later }), null);
+  assert.equal(calls, 5);
+  const kept = JSON.parse(fs.readFileSync(previewsFile(P), 'utf8'));
+  assert.deepEqual(Object.keys(kept).sort(), ['14:' + FULL.slice(0, 12), '15:' + FULL.slice(0, 12)].sort());
+
+  // At most one call a tick: the second pull request in a tick is not asked.
+  const tick = { asked: false };
+  url = 'https://preview.example.test/16';
+  assert.equal(await previewFor({ ...base, pr: 16, now: () => later, tick }), 'https://preview.example.test/16');
+  assert.equal(await previewFor({ ...base, pr: 17, now: () => later, tick }), null);
+  assert.equal(calls, 6);
+}));
+
+test('a slow or failing preview call counts as none for the tick and is not kept', () => withHome(async () => {
+  const base = { project: P, pr: 13, sha: FULL.slice(0, 12), now: () => NOW };
+  const begun = Date.now();
+  assert.equal(await previewFor({ ...base, client: { preview: () => new Promise(() => {}) } }), null);
+  assert.ok(Date.now() - begun < 2500, 'waited past the limit');
+  assert.equal(fs.existsSync(previewsFile(P)), false);
+  assert.equal(await previewFor({ ...base, client: { preview: async () => { throw new Error('down'); } } }), null);
+  assert.equal(await previewFor({ ...base, client: { preview: async () => ({ ok: false }) } }), null);
+  assert.equal(fs.existsSync(previewsFile(P)), false);
+  // Asked again on the next tick, it can answer.
+  assert.equal(await previewFor({ ...base, client: { preview: async () => ({ ok: true, url: 'https://preview.example.test/13' }) } }), 'https://preview.example.test/13');
+  // With no client, only what is kept is read.
+  assert.equal(await previewFor({ ...base, pr: 99 }), null);
 }));

@@ -25,7 +25,7 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 - **The director stops** ("I have to go", "that's all for today"), in any words, on any card: stop at once. Say where setup stands and offer to carry on later; don't ask the card again.
 - **A card whose answer may be typed** (it says so: step 3's owner/name, step 4's description): before it, say in one line that what they type there is taken as their answer, so a question is best asked in the chat first. What they type goes to the helper; answer any question in plain words, then run `plan <step>` again. When the plan comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken (after a question, whatever they type next on that card is taken). Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again.
 - **Otherwise only a click answers.** Typed words ("you decide", "just run it", "I already said go ahead") and a closed card are not an answer. Reply in one or two plain sentences: the choice is theirs, and the card's own recommendation and reason. Then ask the same card again. If it is closed or put off a second time, stop and offer to carry on later.
-- **Explain more:** plain words and an everyday example, then ask the same card again.
+- **Asked why:** plain words and an everyday example, then ask the same card again.
 - **Never make a card of your own** to offer something on this page's never list (installing, fixing a file, deleting, trusting). Where no card exists, say what the director can do in plain words.
 
 ## Each step
@@ -40,7 +40,7 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
    - **`plan: null`:** every step left is running or done: check `status`.
 3. **After apply.** `{ started: true, done: true }`: the step has finished. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and ask the next card it gives. The next step's questions are asked while a long step runs; its Go-ahead card comes once that step is done.
 4. **While a step runs,** `status` shows its line for the director, such as a sign-in code or a page to click. Check `status` between cards and while you wait, and tell them each new line plainly.
-5. **One plain line of progress a step**: "Step 2 is installing git: click Install in Apple's window when it appears."
+5. **Head each step** with the `progress` lines its `ask` or Go-ahead plan gives, as they are, one to a line: its place and time, what it is, what has happened and, where something runs meanwhile, what carries on. Then at most one plain line, such as "Click Install in Apple's window when it appears."
 6. **Carry on** until `resume` says every step is done, the director stops, or a step can't go on. Then say where it stands and offer to carry on later: next time, "carry on with setup".
 
 ## When something goes wrong
@@ -65,7 +65,7 @@ Its Go-ahead card comes first, like any step. After the click, wait until `statu
 1. `health`, with no lines: it names `trials.pr` and `trials.project`.
 2. The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.
 3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused.
-4. Show the director `lines` and the `board`, as they are. Green: setup is finished; give the `briefing`, as it is. Not green: tell them plainly what failed and what to do (the lines say), and offer to carry on later.
+4. Show the director `lines` (the last is the verdict) and the `board`, as they are. Green: setup is finished; give the `briefing`, as it is. Not green: tell them plainly what failed and what to do (the lines say), and offer to carry on later.
 
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
 

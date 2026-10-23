@@ -68,7 +68,7 @@ export function sayValue(key, value) {
   return String(value);
 }
 
-// A setting and its value in plain words, on one line: "Presence: away, until 18 October 2026,
+// A setting and its value in plain words, on one line: "Availability: away, until 18 October 2026,
 // 18:00 UTC", or "Knows "pull request": yes" for a concept the director knows. A setting's confirm
 // card names it by these words (ruling F30).
 export function settingWords(key, value, until) {
@@ -90,7 +90,7 @@ export function levelWords(topic, level) {
   return `"${topic}": ${LEVEL_WORDS[level]} (level ${level})`;
 }
 
-// One line per setting, everyday then advanced: "Presence: away, until 18 October 2026, 18:00 UTC (yours)".
+// One line per setting, everyday then advanced: "Availability: away, until 18 October 2026, 18:00 UTC (yours)".
 export function settingsText(effective) {
   const lines = [];
   for (const group of ['everyday', 'advanced']) {

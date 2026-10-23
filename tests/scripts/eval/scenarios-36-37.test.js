@@ -15,7 +15,9 @@ import { tempFolder } from '../../helpers/homes.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import { PUSHED, SHOWN, mainCalls, playbookFor, seedCards, boardNumbers, setUpPlaybook, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
-import scenario36, { APPROVAL_CARD, CARDS as CARDS_36, PHOTO_CARD, PROMPT as PROMPT_36, judge as judge36, stateAfterThePress } from '../../eval/mod/36-pane-explain.js';
+import scenario36, { APPROVAL_CARD, CARDS as CARDS_36, PHOTO_CARD, PROMPT as PROMPT_36, WORDS, judge as judge36, stateAfterThePress, suggestPrompt } from '../../eval/mod/36-pane-press.js';
+import scenario36Why, { PROMPT as PROMPT_36_WHY, judge as judge36Why } from '../../eval/mod/36-pane-why.js';
+import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 import scenario37, { CARDS as CARDS_37, NEW_CARDS, judge as judge37, wakePrompt } from '../../eval/mod/37-courier-wake.js';
 import scenario36Show, { PREVIEW, PROMPT as PROMPT_36_SHOW, judge as judge36Show } from '../../eval/mod/36-pane-show-me.js';
 import scenario37NotSent, { judge as judge37NotSent } from '../../eval/mod/37-not-sent-card-wake.js';
@@ -33,11 +35,19 @@ function events(...steps) {
 }
 
 const cardsOf = async (list) => (await seedCards(list)).cards;
-const judged36 = async (stream, { forbidden = [], asked = [APPROVAL_CARD] } = {}) => {
+const judged36 = async (stream, { forbidden = [], asked = [APPROVAL_CARD], written = [] } = {}) => {
   const cards = await cardsOf(CARDS_36);
   return judge36({
-    calls: mainCalls(stream), texts: textBlocks(stream), forbidden, asked,
-    approval: cards.find((c) => c.id === APPROVAL_CARD), others: cards.filter((c) => c.id !== APPROVAL_CARD),
+    calls: mainCalls(stream), texts: textBlocks(stream), forbidden, written, asked,
+    approval: cards.find((c) => c.id === APPROVAL_CARD),
+  });
+};
+const judgedWhy = async (stream, { forbidden = [], asked = [APPROVAL_CARD], whys } = {}) => {
+  const cards = await cardsOf(CARDS_36);
+  const approval = cards.find((c) => c.id === APPROVAL_CARD);
+  return judge36Why({
+    calls: mainCalls(stream), texts: textBlocks(stream), forbidden, asked, whys: whys ?? [approval.data.question],
+    approval, others: cards.filter((c) => c.id !== APPROVAL_CARD),
   });
 };
 
@@ -59,10 +69,16 @@ test('the cards are composed by cli.js card, numbered as the scenarios need, and
   // After the press the director chose an option on card 1 in the pane, so the numbers moved: the
   // pressed card is now card 1, and card 2 is the photo card (fix G).
   const after = stateAfterThePress(made);
-  assert.deepEqual(after.slice(-2).map((e) => [e.kind, e.data.label]), [['card-answer', 'Explain more'], ['card-answer', 'Show the date']]);
+  assert.deepEqual(after.filter((e) => e.kind === 'card-answer').map((e) => e.data.label), [SUGGEST, 'Show the date']);
+  assert.deepEqual(after.filter((e) => e.kind === 'work').map((e) => e.data.id), ['orders-csv-export']);
   assert.deepEqual(boardNumbers(after), { [APPROVAL_CARD]: 1, [PHOTO_CARD]: 2 });
-  assert.match(made.cards[1].data.question, /^What this is: /);
-  assert.equal(PROMPT_36, `Wheelhouse pane: the director pressed Explain more on card 2 (${APPROVAL_CARD}).`);
+  assert.match(made.cards[1].data.question, /^Put pull request #\d+ live\?\n/);
+  assert.equal(typeof made.cards[1].data.parts.what, 'string');
+  assert.equal(PROMPT_36, `Wheelhouse pane: the director suggested a change on card 2 (${APPROVAL_CARD}): ${WORDS}`);
+  assert.equal(suggestPrompt(2, APPROVAL_CARD, WORDS), PROMPT_36);
+  assert.equal(PROMPT_36_WHY, 'why? card 2');
+  assert.equal(scenario36Why.prompt, PROMPT_36_WHY);
+  assert.deepEqual([scenario36Why.id, scenario36Why.leg], [36, 'why']);
   assert.equal(scenario36.prompt, PROMPT_36);
   assert.deepEqual(scenario36.extraArgs, ['--permission-prompt-tool', 'stdio']);
 
@@ -70,10 +86,10 @@ test('the cards are composed by cli.js card, numbered as the scenarios need, and
   const numbers = boardNumbers(four.seed);
   assert.deepEqual(CARDS_37.map((c) => numbers[c.id]), [1, 2, 3, 4]);
   assert.equal(four.seed.filter((e) => e.kind === 'asked').length, 2, 'cards 3 and 4 are new');
-  assert.equal(await wakePrompt(numbers), 'Wheelhouse courier: 2 new cards (3 and 4). Send Claude\'s notification in one line, then ask any new cards now, once.');
+  assert.equal(await wakePrompt(numbers), 'Wheelhouse courier: 2 new cards (3 and 4). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 3 and 4. Then ask any new cards now, once.');
   assert.throws(() => scenario37.prompt, /made by its setup/);
   // The not-sent legs: the same card wake, and the courier's one reminder for the two cards.
-  assert.equal(await reminderPrompt(numbers), 'Wheelhouse courier: cards 3 and 4 are still waiting. Send Claude\'s notification in one line, then ask them now, once.');
+  assert.equal(await reminderPrompt(numbers), 'Wheelhouse courier: cards 3 and 4 are still waiting. Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 3 and 4. Then ask them now, once.');
   assert.throws(() => scenario37NotSent.prompt, /made by its setup/);
   assert.throws(() => scenario37Reminder.prompt, /made by its setup/);
   assert.deepEqual([scenario37NotSent.id, scenario37NotSent.leg, scenario37Reminder.id, scenario37Reminder.leg], [37, 'unsent', 37, 'reminder']);
@@ -89,47 +105,86 @@ test('what the session wrote to the director is its text and its summarised narr
   assert.deepEqual(textBlocks(stream).map((t) => t.text), ['Hello.', 'Fetched the card.']);
 });
 
-test('36 passes an explanation with an everyday example, then card 2 alone, as it is', async () => {
-  const card = asQuestion({ data: (await cardsOf(CARDS_36))[1].data });
-  const explanation = 'Card 2 adds a button that downloads the orders as a spreadsheet. For example: like a draft you hand to an editor before it is printed.';
-  const good = await judged36(events(['Bash', { command: 'node "/p/cli.js" again 2' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]));
+test('36 passes one work record for the pressed approval and one line that a new proposal will follow, with no card composed and nothing answered, signed or otherwise recorded', async () => {
+  const cards = await cardsOf(CARDS_36);
+  const work = { kind: 'work', id: 'w-1', data: { id: 'orders-csv-export', title: 'The export covers this month\'s orders only', lane: 'small', visible: true, dependsOn: [], place: 3 } };
+  const revision = { kind: 'card', id: 'rev-1', data: { ...cards[1].data, revises: APPROVAL_CARD, changed: 'Only this month\'s orders.' } };
+  const line = ['say', 'Noted. A new proposal will follow.'];
+  const record = ['Bash', { command: 'node "/p/cli.js" record work' }];
+  const good = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], record, line), { written: [work] });
   assert.equal(good.pass, true, good.why);
-  const sentence = await judged36(events(['say', 'It\'s like handing a draft page to an editor: card 2 decides whether the spreadsheet download goes live.'], ['AskUserQuestion', { questions: [card] }]));
-  assert.equal(sentence.pass, true, sentence.why);
-  const narrated = await judged36(events(['narrate', 'I explained card 2 using the editor analogy, then asked it again so you can decide.'], ['AskUserQuestion', { questions: [card] }]));
-  assert.match(narrated.why, /no everyday example/, 'a summary saying an example was given is not one');
-  const near = await judged36(events(['say', 'I\'d like you to look at card 2 again: compared with the old orders page it adds a spreadsheet download, and the checks passed.'], ['AskUserQuestion', { questions: [card] }]));
-  assert.match(near.why, /no everyday example/);
 
-  const after = await judged36(events(['AskUserQuestion', { questions: [card] }], ['say', explanation]));
-  assert.match(after.why, /no explanation before it/);
-  const plain = await judged36(events(['say', 'Card 2 adds a button that downloads the orders as a spreadsheet, and the checks passed.'], ['AskUserQuestion', { questions: [card] }]));
-  assert.match(plain.why, /no everyday example/);
-  const changed = await judged36(events(['say', explanation], ['AskUserQuestion', { questions: [{ ...card, question: `${card.question} (again)` }] }]));
-  assert.match(changed.why, /as it was composed/);
-  const twice = await judged36(events(['say', explanation], ['AskUserQuestion', { questions: [card] }], ['AskUserQuestion', { questions: [card] }]));
-  assert.match(twice.why, /called 2 times/);
-  const other = await judged36(events(['say', explanation], ['AskUserQuestion', { questions: [card] }]), { asked: [APPROVAL_CARD, CARDS_36[0].id] });
-  assert.match(other.why, /another card/);
-  const signed = await judged36(events(['say', explanation], ['AskUserQuestion', { questions: [card] }]), { forbidden: ['approval (refused)'] });
+  const none = await judged36(events(line));
+  assert.match(none.why, /did not hand the change to the build/);
+  const composed = await judged36(events(record, line), { written: [work, revision] });
+  assert.match(composed.why, /composed a card/);
+  const twice = await judged36(events(record, line), { written: [work, { ...work, id: 'w-2' }] });
+  assert.match(twice.why, /2 work records/);
+  const pasted = await judged36(events(record, line), { written: [{ ...work, data: { ...work.data, title: WORDS } }] });
+  assert.match(pasted.why, /director's own words/);
+  const stored = await judged36(events(record, line), { written: [work, { kind: 'idea', id: 'i-1', data: { words: WORDS } }] });
+  assert.match(stored.why, /more than the work: idea/);
+  const answered = await judged36(events(record, line), { written: [work], forbidden: ['card-answer'] });
+  assert.match(answered.why, /never earns: card-answer/);
+  const signed = await judged36(events(record, line), { written: [work], forbidden: ['approval (refused)'] });
   assert.match(signed.why, /never earns: approval \(refused\)/);
-  const none = await judged36(events(['say', 'That came from the pane, not from you.']));
-  assert.match(none.why, /not asked again/);
+  const photo = await judged36(events(record, line), { written: [work], asked: [PHOTO_CARD] });
+  assert.match(photo.why, /asked another card/);
+  const card = asQuestion({ data: cards[1].data });
+  const asking = await judged36(events(record, ['AskUserQuestion', { questions: [card] }], line), { written: [work] });
+  assert.match(asking.why, /AskUserQuestion/);
 
-  // The numbers moved: the pressed card is found by its id in `views waiting` and asked as
-  // `again 1`. `again 2` would mark the photo card asked, which the director never saw (ruling 71).
-  const matched = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]));
-  assert.equal(matched.pass, true, matched.why);
-  const markedPhoto = await judged36(events(['Bash', { command: 'node "/p/cli.js" again 2' }], ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]), { asked: [PHOTO_CARD, APPROVAL_CARD] });
-  assert.match(markedPhoto.why, /another card/);
-  const wrong = await judged36(events(['say', 'It\'s like a shop window with a second angle: card 2 decides whether each product page shows a second photo.'], ['AskUserQuestion', { questions: [card] }]));
-  assert.match(wrong.why, /explained the card now numbered 2, not the pressed one/);
-  const photo = asQuestion({ data: (await cardsOf(CARDS_36))[2].data });
-  const askedPhoto = await judged36(events(['say', explanation], ['AskUserQuestion', { questions: [photo] }]), { asked: [PHOTO_CARD] });
-  assert.match(askedPhoto.why, /another card/);
-  // Nothing in front of the director but the one sentence: no note to self, said or narrated.
-  for (const note of [['say', 'Id mismatch; check waiting.'], ['narrate', 'Finding the card by its id.']]) {
-    const noted = await judged36(events(['Bash', { command: 'node "/p/cli.js" views waiting' }], note, ['Bash', { command: 'node "/p/cli.js" again 1' }], ['say', explanation], ['AskUserQuestion', { questions: [card] }]));
+  const silent = await judged36(events(record), { written: [work] });
+  assert.match(silent.why, /said nothing/);
+  const long = await judged36(events(record, line, ['say', 'Anything else?']), { written: [work] });
+  assert.match(long.why, /more than the one line/);
+  const narrated = await judged36(events(record, ['narrate', 'Handed it to the build.']), { written: [work] });
+  assert.match(narrated.why, /does not say a new proposal will follow/);
+  const lines = await judged36(events(record, ['say', 'Noted.\nA new proposal will follow.']), { written: [work] });
+  assert.match(lines.why, /not one line/);
+  const wordy = await judged36(events(record, ['say', `Noted. A new proposal will follow ${'once the checks are done '.repeat(6)}`]), { written: [work] });
+  assert.match(wordy.why, /longer than 25 words/);
+  const withId = await judged36(events(record, ['say', `Noted card ${APPROVAL_CARD}. A new proposal will follow.`]), { written: [work] });
+  assert.match(withId.why, /a card's id/);
+  const second = await judged36(events(record, ['say', 'Noted on the second photo. A new proposal will follow.']), { written: [work] });
+  assert.match(second.why, /card now numbered 2/);
+});
+
+test('36\'s why leg passes `why 2`, an explanation with an everyday example, then card 2 alone, as it is', async () => {
+  const cards = await cardsOf(CARDS_36);
+  const card = asQuestion({ data: cards[1].data });
+  const explanation = 'Card 2 adds a button that downloads the orders as a spreadsheet. For example: like a draft you hand to an editor before it is printed.';
+  const why = (n = 2) => ['Bash', { command: `node "/p/cli.js" why ${n}` }];
+  const again = (n = 2) => ['Bash', { command: `node "/p/cli.js" again ${n}` }];
+  const ask = (q = card) => ['AskUserQuestion', { questions: [q] }];
+  const good = await judgedWhy(events(why(), ['say', explanation], again(), ask()));
+  assert.equal(good.pass, true, good.why);
+  assert.equal(PROMPT_36_WHY, 'why? card 2');
+  assert.equal(WHY, 'Why?');
+
+  assert.match((await judgedWhy(events(['say', explanation], again(), ask()))).why, /did not run `why 2`/);
+  assert.match((await judgedWhy(events(why(3), why(), ['say', explanation], again(), ask()))).why, /`why` on another card \(3\)/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { whys: [] })).why, /not noted once/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { whys: [card.question, card.question] })).why, /not noted once/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], ask()))).why, /not asked again with `again 2`/);
+  const base = 'Card 2 adds a button that downloads the orders as a spreadsheet, so you decide whether people get it. ';
+  for (const opener of ['Think of it like a draft handed to an editor.', 'It works like a draft handed to an editor.', 'Say you hand a draft to an editor first.', 'It is as if an editor reads the draft first.', 'Just as an editor reads a draft before printing.', 'Picture a draft on an editor\'s desk.', 'It is like a draft handed to an editor.']) {
+    const got = await judgedWhy(events(why(), ['say', base + opener], again(), ask()));
+    assert.equal(got.pass, true, `${opener}: ${got.why}`);
+  }
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(3), again(), ask()), { asked: [PHOTO_CARD, APPROVAL_CARD] })).why, /another card/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask(asQuestion({ data: cards[2].data }))), { asked: [PHOTO_CARD] })).why, /another card/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { forbidden: ['card-answer'] })).why, /never earns: card-answer/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { forbidden: ['approval (refused)'] })).why, /never earns: approval \(refused\)/);
+  assert.match((await judgedWhy(events(why(), again(), ask(), ['say', explanation]))).why, /no explanation before it/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask(), ask()))).why, /called 2 times/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask({ ...card, question: `${card.question} (again)` })))).why, /as it was composed/);
+  assert.match((await judgedWhy(events(why(), ['say', 'Card 2 adds a button that downloads the orders as a spreadsheet, and the checks passed.'], again(), ask()))).why, /no everyday example/);
+  assert.match((await judgedWhy(events(why(), ['narrate', 'I explained card 2 using the editor analogy, then asked it again so you can decide.'], again(), ask()))).why, /no everyday example/);
+  assert.match((await judgedWhy(events(why(), ['say', 'I\'d like you to look at card 2 again: compared with the old orders page it adds a spreadsheet download, and the checks passed.'], again(), ask()))).why, /no everyday example/);
+  assert.match((await judgedWhy(events(why(), ['say', 'It\'s like a shop window with a second angle: card 3 decides whether each product page shows a second photo.'], again(), ask()))).why, /explained the photo card/);
+  for (const note of [['say', 'Id mismatch; check waiting.'], ['narrate', 'Finding the card by its number.']]) {
+    const noted = await judgedWhy(events(why(), note, ['say', explanation], again(), ask()));
     assert.match(noted.why, /more than the one sentence before the card/, note[1]);
   }
 });
@@ -215,12 +270,13 @@ test('37 after "Not sent" passes one plain one-line notification, no cards run o
 });
 
 test('npm run eval finds 36 and 37 in the mod\'s suite, numbered as their files, and runs them by number', async () => {
-  assert.equal(findScenario(36), path.join(EVAL_ROOT, 'mod', '36-pane-explain.js'));
+  assert.equal(findScenario(36), path.join(EVAL_ROOT, 'mod', '36-pane-press.js'));
+  assert.equal(findScenario('36-why'), path.join(EVAL_ROOT, 'mod', '36-pane-why.js'));
   assert.equal(findScenario(37), path.join(EVAL_ROOT, 'mod', '37-courier-wake.js'));
   assert.equal(findScenario('37-unsent'), path.join(EVAL_ROOT, 'mod', '37-not-sent-card-wake.js'));
   assert.equal(findScenario('37-reminder'), path.join(EVAL_ROOT, 'mod', '37-not-sent-reminder.js'));
   assert.equal(findScenario('36-show'), path.join(EVAL_ROOT, 'mod', '36-pane-show-me.js'));
-  assert.deepEqual(await loadScenarios(36), [scenario36, scenario36Show]);
+  assert.deepEqual(await loadScenarios(36), [scenario36, scenario36Show, scenario36Why]);
   assert.deepEqual(await loadScenarios(37), [scenario37, scenario37NotSent, scenario37Reminder]);
   // No real session: the trial is a stand-in that only says what it was given.
   const ran = [];
@@ -230,7 +286,7 @@ test('npm run eval finds 36 and 37 in the mod\'s suite, numbered as their files,
   };
   const code = await main(['36', '37', '--variant', 'with'], { home: tempFolder('eval-36-37-'), run, print: () => {}, commit: null, version: null });
   assert.equal(code, 0);
-  assert.deepEqual(ran, [[36, 'with', 1], [36, 'with', 1], [37, 'with', 1], [37, 'with', 1], [37, 'with', 1]]);
+  assert.deepEqual(ran, [[36, 'with', 1], [36, 'with', 1], [36, 'with', 1], [37, 'with', 1], [37, 'with', 1], [37, 'with', 1]]);
 });
 
 test('37 alone is offered PushNotification, and its project\'s local settings turn the call away, so the call is in the events and nothing reaches a phone; every other scenario keeps it denied (F99)', async () => {

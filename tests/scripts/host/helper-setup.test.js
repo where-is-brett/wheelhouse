@@ -87,7 +87,7 @@ test('apply is refused without a fresh click naming this step and this list', as
     assert.match(plan.hash, /^[0-9a-f]{64}$/);
     assert.equal(plan.hash, planHash(plan.changes));
     assert.ok(plan.card.question.includes(setupLine(1, plan.hash)), plan.card.question);
-    assert.deepEqual(plan.card.options.map((o) => o.label).slice(0, 2), ['Go ahead', 'Not now']);
+    assert.deepEqual(plan.card.options.map((o) => o.label).slice(0, 2), ['Go ahead', 'Show me']);
     assert.equal(plan.changes.length, 1);
 
     const apply = () => client.setup.apply({ folder, step: 1, hash: plan.hash });

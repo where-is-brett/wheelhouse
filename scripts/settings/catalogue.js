@@ -34,19 +34,19 @@ export const SETTINGS = {
   autonomy: { label: 'Autonomy', group: 'everyday', levels: ['cautious', 'balanced', 'trusting'], default: 'balanced', home: 'project' },
   showFirst: { label: 'Show before building', group: 'everyday', levels: ['always', 'visual', 'asked'], default: 'visual', home: 'project' },
   milestones: { label: 'Feature milestones', group: 'everyday', levels: ['demos', 'to-the-end', 'ask'], default: 'ask', home: 'project' },
-  efficiency: { label: 'Token efficiency', group: 'everyday', levels: ['lean', 'balanced', 'thorough'], default: 'balanced', home: 'project' },
+  efficiency: { label: 'Thoroughness', group: 'everyday', levels: ['lean', 'balanced', 'thorough'], default: 'balanced', home: 'project' },
   // Only "report" is on offer while budget allocation is in the backlog.
   budget: { label: 'Budget', group: 'everyday', levels: ['report', 'weekly-share', 'per-feature'], only: ['report'], default: 'report', home: 'project' },
   // The build loop's limit of three wins over the main design's two.
-  pace: { label: 'Pace (builders at once)', group: 'everyday', levels: [1, 2, 3], default: 3, home: 'project' },
+  pace: { label: 'Builders at once', group: 'everyday', levels: [1, 2, 3], default: 3, home: 'project' },
   phase: { label: 'Product phase', group: 'everyday', levels: ['before-launch', 'launched'], default: 'before-launch', home: 'project' },
   // Everyday, kept in the director's profile.
-  presence: { label: 'Presence', group: 'everyday', levels: ['here', 'away', 'dnd'], default: 'here', home: 'profile', temporary: true },
+  presence: { label: 'Availability', group: 'everyday', levels: ['here', 'away', 'dnd'], default: 'here', home: 'profile', temporary: true },
   briefing: { label: 'Briefing length', group: 'everyday', levels: ['short', 'standard', 'detailed'], default: 'standard', home: 'profile' },
   briefingGapHours: { label: 'Hours before a new briefing', group: 'everyday', check: wholeBetween(1, 24), default: BRIEFING_GAP_HOURS, home: 'profile' },
   explanations: { label: 'Explanations', group: 'everyday', levels: ['plain', 'some-terms'], default: 'plain', home: 'profile' },
   notifications: { label: 'Notifications', group: 'everyday', check: checkNotifications, default: { channels: ['claude'] }, home: 'profile' },
-  boardTab: { label: 'Board tab shown first', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
+  boardTab: { label: 'Board opens on', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
   hours: { label: 'Working hours', group: 'everyday', check: checkHours, default: null, home: 'profile' },
   // Advanced, kept in the project.
   roundCap: { label: 'Review round cap', group: 'advanced', check: wholeBetween(1, 5), default: 3, home: 'project' },

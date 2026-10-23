@@ -506,7 +506,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // A turn is running: the new card waits.
   assert.equal('submit' in await handle(tickOf(repo, { idle: false }), live({ now: later(1) })), false);
   const woken = await handle(tickOf(repo, { idle: true }), live({ now: later(2) }));
-  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 2. Then ask any new cards now, once.']);
   assert.deepEqual(JSON.parse(lineOf(woken)).submit, woken.submit);
   assert.ok(!woken.submit[0].includes('words'));
   // Once handed back, it isn't handed back again.
@@ -531,7 +531,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // Card 2, which the wake named, was never asked (its notification wasn't sent): its reminder
   // comes with card 3's wake.
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3); card 2 is still waiting. Send Claude\'s notification in one line, then ask them now, once.']);
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3); card 2 is still waiting. Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 2 and 3. Then ask them now, once.']);
   assert.deepEqual(woken3.woken, ['card:c-third', 'remind:c-new']);
 
   // A second front desk opening now marks nothing and wakes for nothing. That wake's turn asked
@@ -540,7 +540,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
-  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 4. Then ask any new cards now, once.']);
 }));
 
 test('the tick names the ids its wake marked; the mod\'s unsent puts them back, so the next idle tick wakes again', () => withHome(async (home) => {
@@ -553,7 +553,7 @@ test('the tick names the ids its wake marked; the mod\'s unsent puts them back, 
   fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify([{
     id: 'c-new', at: '2026-10-19T04:00:00.000Z', data: { kind: 'question', header: 'Question', options: ['Yes'], question: 'Which one?', level: 3 }, asked: null,
   }]));
-  const WAKE = ['Wheelhouse courier: 1 new card (1). Send Claude\'s notification in one line, then ask any new cards now, once.'];
+  const WAKE = ['Wheelhouse courier: 1 new card (1). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 1. Then ask any new cards now, once.'];
   const woken = await handle(tickOf(repo, { idle: true }), live());
   assert.deepEqual(woken.submit, WAKE);
   assert.deepEqual(woken.woken, ['card:c-new']);
@@ -971,4 +971,41 @@ test('a helper that never answers is waited for no longer than HELPER_MS', () =>
   assert.equal(handled.inTime, true, 'still waiting on the helper');
   const got = handled.value;
   assert.ok(got.pane.missing.includes(NO_HELPER));
+}));
+
+test('a pane origin is the only one the bridge takes for why, suggest and setting', () => withHome(async () => {
+  enrolKey();
+  const calls = [];
+  const spy = (name, answer) => async (args) => { calls.push([name, args]); return answer; };
+  const extra = {
+    whyCard: spy('why', { made: true }),
+    suggestCard: spy('suggest', { made: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] }),
+    pressSetting: spy('setting', { made: true, says: 'Pace is now 1, for this project' }),
+  };
+  const requests = [
+    { cmd: 'why', cwd: '/work', card: 'c', hash: 'h' },
+    { cmd: 'suggest', cwd: '/work', card: 'c', hash: 'h', words: 'x' },
+    { cmd: 'setting', cwd: '/work', key: 'pace', choice: 'undo' },
+  ];
+  for (const request of requests) {
+    for (const origin of ['composer', 'bridge', 'sdk', 'peer', 'Pane', '', undefined, ['pane']]) {
+      assert.deepEqual(await handle({ ...request, origin }, deps(extra)), { ok: false, says: 'Only a press in the pane counts as one' });
+    }
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(pendingFiles(), []);
+
+  assert.deepEqual(await handle({ ...requests[0], origin: 'pane' }, deps(extra)), { ok: true });
+  const suggested = await handle({ ...requests[1], origin: 'pane' }, deps(extra));
+  assert.deepEqual(suggested, { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] });
+  assert.deepEqual(JSON.parse(lineOf(suggested)).submit, suggested.submit);
+  assert.equal((await handle({ ...requests[2], origin: 'pane' }, deps(extra))).ok, true);
+  assert.deepEqual(calls.map(([name, args]) => [name, args.project]), [['why', P], ['suggest', P], ['setting', P]]);
+  assert.deepEqual([calls[1][1].card, calls[1][1].hash, calls[1][1].words], ['c', 'h', 'x']);
+  // Outside a project, nothing is pressed.
+  for (const request of requests) assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ ...extra, projectOf: () => null })), { ok: false, says: 'This isn\'t a Wheelhouse project' });
+  assert.equal(calls.length, 3);
+  // A suggestion refused hands no prompt and is not ok.
+  const refused = { suggestCard: spy('suggest', { made: false, says: 'That card changed while you were reading. Here is the new one.' }) };
+  assert.deepEqual(await handle({ ...requests[1], origin: 'pane' }, deps(refused)), { ok: false, says: 'That card changed while you were reading. Here is the new one.' });
 }));

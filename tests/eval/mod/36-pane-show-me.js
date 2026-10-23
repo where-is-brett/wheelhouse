@@ -13,7 +13,7 @@ import { locateMattSkills, locateSuperpowers } from '../../../scripts/eval/harne
 import {
   EXTRA_ARGS, askCalls, askedIds, asItIs, boardNumbers, forbiddenWrites, mainCalls, seedCards, setUpPlaybook, skillsOf, textBlocks, HEAD,
 } from './front-desk-playbook.js';
-import { APPROVAL_CARD, CARDS, PHOTO_CARD, PHOTO_WORDS, README, pressPrompt, stateAfterThePress } from './36-pane-explain.js';
+import { APPROVAL_CARD, CARDS, PHOTO_CARD, PHOTO_WORDS, README, pressPrompt, stateAfterThePress } from './36-pane-press.js';
 
 export const PROMPT = pressPrompt('Show me', 2, APPROVAL_CARD);
 

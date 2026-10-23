@@ -124,11 +124,11 @@ test('an enrolment found in the profile is not trusted until the director clicks
     assert.equal(setLineOf(question.question), line);
     assert.deepEqual(cardProblems(question.question), []);
     assert.doesNotMatch(question.question, /Reply code/, 'only the click on the card itself counts');
-    assert.deepEqual(question.options.map((o) => o.label), [TRUST_LABEL, 'Not now', 'Explain more']);
+    assert.deepEqual(question.options.map((o) => o.label), [TRUST_LABEL, 'Not now']);
     assert.equal(question.header, 'Trust');
 
-    // Not now and Explain more trust nothing, and nothing of the card goes to the project.
-    for (const label of ['Not now', 'Explain more']) {
+    // Not now trusts nothing, and nothing of the card goes to the project.
+    for (const label of ['Not now']) {
       assert.deepEqual(await click(question, label), [], label);
       assert.equal(readEnrolled().some((e) => e.computer === other.computer), false, label);
     }
@@ -278,7 +278,8 @@ test('a trust card is composed only for a whole target, names its computer first
   assert.throws(() => composeCard({ ...input, options: [...input.options, { label: 'Show me', says: 'x' }] }), /can't describe Show me/);
   // The card check judges a card by the same rule: its first part names the computer its line trusts.
   const { question } = composeCard(input);
-  const elsewhere = question.question.replace(`Your computer ${other.computer}`, 'Your computer 99999999');
+  // Every plain line says it, so every plain line changes; the set line stays.
+  const elsewhere = question.question.split('\n').map((l) => (l === setLineOf(question.question) ? l : l.replaceAll(other.computer, '99999999'))).join('\n');
   assert.match(cardProblems(elsewhere).join(' '), /must name the computer 0a1b2c3d/);
   assert.match(cardProblems(`${question.question}\nReply code: ABCD`).join(' '), /a trust card has none/);
 });

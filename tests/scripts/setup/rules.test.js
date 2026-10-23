@@ -159,15 +159,14 @@ test('Confirm all confirms exactly the listed rulings, each by its own confirmat
     const line = confirmAllLine(planHash(rules), 7);
     assert.equal(setLineOf(card.question), line);
     assert.equal(card.header, 'Rules found');
-    assert.deepEqual(card.options.map((o) => o.label), [CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, 'Not now', 'Explain more']);
+    assert.deepEqual(card.options.map((o) => o.label), [CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, 'Not now']);
     assert.ok(!card.question.includes('Reply code:'));
     assert.deepEqual(cardProblems(card.question), []);
     assert.deepEqual(rules.filter((r) => r.original).map((r) => r.words), ['And keep commits small, thanks!']);
     for (const rule of rules) assert.ok(card.question.includes(`"${rule.words}" (${rule.source.file} line ${rule.source.line}, ${rule.original ? 'your words' : 'paraphrase'})`), rule.words);
 
-    // Not now and Explain more record nothing.
+    // Not now records nothing.
     assert.deepEqual(await answer(card, 'Not now'), []);
-    assert.deepEqual(await answer(card, 'Explain more'), []);
     // Confirm all: one ruling per rule listed, each with its own confirmation, then the signed
     // confirm-all action naming the list's hash and the rulings' ids, then the answer.
     const got = await answer(card, CONFIRM_ALL_LABEL);
@@ -227,7 +226,7 @@ test('Let me correct some asks about each rule: kept as found, corrected in type
     const first = (await plan(5)).ask;
     assert.match(first.id, /^rule-[0-9a-f]{10}$/);
     assert.match(first.card.question, /Found in CLAUDE\.md line 1, paraphrase: "Never push straight to main\."/);
-    assert.deepEqual(first.card.options.map((o) => o.label), [RULE_LABELS.keep, RULE_LABELS.leave, 'Explain more']);
+    assert.deepEqual(first.card.options.map((o) => o.label), [RULE_LABELS.keep, RULE_LABELS.leave]);
     const kept = await answer(first.card, RULE_LABELS.keep);
     assert.deepEqual(kept.map((s) => s.body.target.data), [{ words: 'Never push straight to main.', source: { file: 'CLAUDE.md', line: 1 }, original: false }]);
 

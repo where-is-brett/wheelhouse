@@ -7,6 +7,7 @@
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
+import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
@@ -205,11 +206,41 @@ function namesOnly(text, id) {
   return found.length === 1 && found[0][1] === id;
 }
 
-const waitingList = (views, events) => numberedWaiting(views, events).map(({ n, id, what, since }) => ({ n, id, what, since }));
+// The waiting list: each item as numberedWaiting gives it and, for a card, what it says of itself.
+// A card with parts is named by its ask; its `line` is what it is (else why it comes to the director),
+// and `small`, `meanwhile`, `recommendation`, `level` and `optional` (whole minutes) are its own,
+// each only when the card has it. The board and the briefing both read them from here.
+function waitingList(views, events) {
+  const cards = new Map(list(views?.waiting).map((card) => [card.id, card]));
+  return numberedWaiting(views, events).map(({ n, id, what, since, card }) => {
+    const data = card === undefined ? null : cards.get(card)?.data;
+    const parts = isRecord(data?.parts) ? data.parts : {};
+    const ask = oneLine(parts.ask);
+    const said = oneLine(parts.what);
+    const extra = {
+      line: said && said !== ask ? said : oneLine(parts.why),
+      small: oneLine(parts.small),
+      meanwhile: oneLine(parts.meanwhile),
+      recommendation: oneLine(parts.recommendation),
+    };
+    const kept = Object.fromEntries(Object.entries(extra).filter(([, value]) => value !== ''));
+    if ([1, 2, 3, 4].includes(data?.level)) kept.level = data.level;
+    if (Number.isInteger(parts.optional) && parts.optional > 0) kept.optional = parts.optional;
+    return { n, id, what: ask || what, since, ...kept };
+  });
+}
+
+// When the director sees a piece of work, from its entry in the work view: before it merges
+// where it is shown first, else in the briefing. The board's being-built table and the pane say it
+// the same way.
+export function seeOf(entry) {
+  const e = isRecord(entry) ? entry : {};
+  return e.work?.data?.shownFirst === true || e.approval?.shownFirst === true ? SEE_BEFORE_MERGE : SEE_IN_BRIEFING;
+}
 
 function workInfo(work, id) {
   const data = isRecord(work[id]) && isRecord(work[id].work?.data) ? work[id].work.data : {};
-  return { title: oneLine(data.title) || oneLine(id), lane: LANES.includes(data.lane) ? data.lane : null };
+  return { title: oneLine(data.title) || oneLine(id), lane: LANES.includes(data.lane) ? data.lane : null, see: seeOf(work[id]) };
 }
 
 // pull request -> commit -> record, keeping only records with data and a time.
@@ -275,7 +306,8 @@ function part(missing, name, build, fallback) {
   }
 }
 
-export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, now } = {}) {
+// `since` (optional) is the time of the director's last briefing: what is new since it is counted.
+export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, now, since } = {}) {
   const missing = [];
   // A clock that can't be read is named, never replaced by this computer's.
   // Only a Date, a finite number, or a function giving one of those, is a clock.
@@ -321,7 +353,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
     const out = Object.fromEntries(LANES.map((lane) => [lane, []]));
     for (const f of active) {
       const info = workInfo(work, f.data.work);
-      if (info.lane) out[info.lane].push({ title: info.title, step: stepOf(f) });
+      if (info.lane) out[info.lane].push({ title: info.title, step: stepOf(f), see: info.see });
     }
     return out;
   }, Object.fromEntries(LANES.map((lane) => [lane, []])));
@@ -341,14 +373,17 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
     const queued = values(work).filter((w) => w.approved === true && isRecord(w.work?.data) && !started.has(w.work.data.id))
       .sort((a, b) => (a.work.data.place ?? Infinity) - (b.work.data.place ?? Infinity) || oldestFirst(a.work, b.work))
       .map((w) => workInfo(work, w.work.data.id).title);
+    const sinceMs = typeof since === 'string' ? Date.parse(timeOf(since)) : NaN;
     return {
       phase: typeof effective?.phase?.value === 'string' ? effective.phase.value : null,
       resolved: blockers.filter((b) => b.data.resolved === true).length,
+      // How many were cleared after the last briefing; none when there is no briefing to count from.
+      gained: Number.isNaN(sinceMs) ? 0 : blockers.filter((b) => b.data.resolved === true && Date.parse(timeOf(b.at)) > sinceMs).length,
       total: blockers.length,
       blockers: blockers.filter((b) => b.data.resolved !== true).map((b) => oneLine(b.data.what)).filter(Boolean),
       next: [...ideas.now, ...queued],
     };
-  }, { phase: null, resolved: 0, total: 0, blockers: [], next: [] });
+  }, { phase: null, resolved: 0, gained: 0, total: 0, blockers: [], next: [] });
 
   const decisions = list(state?.decisions).filter((d) => isRecord(d.data));
   const week = isRecord(figures?.week) ? figures.week : null;
@@ -361,8 +396,10 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
     waiting: part(missing, 'waiting list', () => waitingList(state, all), []),
     launch,
     inProgress,
+    // A merge with no words for users is kept, marked `behind`: the board counts it as a change behind the scenes.
     changed: part(missing, 'changes for users', () => merges.filter((m) => timeOf(m.at)).sort(newestFirst).slice(0, 20).map((m) => ({
       what: oneLine(m.data.forUsers) || (isPr(m.data.pr) ? `Pull request #${m.data.pr} merged` : 'A pull request merged'), at: timeOf(m.at),
+      ...(oneLine(m.data.forUsers) ? {} : { behind: true }),
     })), []),
     ideas,
     health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'health', () => extraHealth(loop?.incidents, report), [])],

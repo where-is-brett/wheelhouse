@@ -361,8 +361,8 @@ test('a Locked project with only their own app on offer still gets the card', as
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
     assert.deepEqual(card.options.map((o) => o.label), [WAYS.own], 'their own app, agreed to on the card, never by default');
     assert.match(card.what, /Quick is not offered/);
-    const { question } = composeCard({ ...card, kind: 'question' });
-    assert.deepEqual(question.options.map((o) => o.label), [WAYS.own, 'Explain more']);
+    const { question } = composeCard({ ...card, kind: 'question', suggest: false });
+    assert.deepEqual(question.options.map((o) => o.label), [WAYS.own]);
     // A list naming no app is refused by apply too, before it makes anything.
     const list = [{ kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true }, { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` }];
     await assert.rejects(applyStep(step, folder, list, { answers: planned.answers }), { message: NO_APP_LISTED });
