@@ -485,6 +485,27 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
   assert.equal('submit' in answer, false);
 }));
 
+test('a tick that carries a received message appends one received line to the day\'s mod file, and never fails for it', () => withHome(async (home) => {
+  const repo = registered(home);
+  const file = path.join(usageDir(), 'mod', '2026-10-19.jsonl');
+  const answer = await handle(tickOf(repo, { received: { origin: 'sdk', via: 'prompt' } }), live());
+  assert.equal(answer.ok, true);
+  assert.deepEqual(readLines(file), [{ at: NOW.toISOString(), event: 'received', via: 'prompt', origin: 'sdk', session: 'sess-1' }]);
+  await handle(tickOf(repo, { received: { origin: 'peer', via: 'receive' } }), live());
+  assert.deepEqual(readLines(file).at(-1), { at: NOW.toISOString(), event: 'received', via: 'receive', origin: 'peer', session: 'sess-1' });
+  // A tick without one, or with one that isn't one, writes nothing; the pane's answer is the same.
+  for (const received of [undefined, null, 'sdk', { origin: 'sdk' }, { origin: 'sdk', via: 'other' }, { origin: 42, via: 'prompt' }, { origin: 'a'.repeat(99), via: 'prompt' }]) {
+    const got = await handle(tickOf(repo, { received }), live());
+    assert.equal(got.ok, true);
+  }
+  assert.equal(readLines(file).length, 2);
+  // A session ID the store refuses, or a store that can't be written, leaves the tick whole.
+  const bad = await handle(tickOf(repo, { session: '../x', received: { origin: 'sdk', via: 'prompt' } }), live());
+  assert.equal(bad.ok, true);
+  assert.equal(bad.role, 'front-desk');
+  assert.equal(readLines(file).length, 2);
+}));
+
 test('a tick with no hold file and an open hold records one lift; a second tick records none', () => withHome(async (home) => {
   const repo = registered(home);
   const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), computer: computerId(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };

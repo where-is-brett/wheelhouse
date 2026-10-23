@@ -12,11 +12,13 @@
 // director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
-//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
+//   { cmd: 'tick', session, cwd, idle, surface, received? }  what the pane and the status line show now and the
 //                                                   courier's wake, with the ids it marked sent and its
 //                                                   stamp, or a Shape 2 foreman's wakes from one
 //                                                   watcher loop, or nothing while setup runs; it also
 //                                                   records a lineage-lift once a hold file is gone
+//                                                   `received` ({ origin, via }, a kept-out message, never its text)
+//                                                   adds one line to the day's usage/mod file
 //   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped
 //                                                   `at`: its marks are undone, so the next tick wakes
 //                                                   again
@@ -49,7 +51,7 @@ import { recordLift as defaultRecordLift } from '../lineage/check.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
-import { recordModReading, recordSession } from '../usage/store.js';
+import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
 import { isOwnStatusLine } from '../protection/settings.js';
@@ -425,6 +427,16 @@ async function liftingHold(project, d) {
   } catch { /* the next tick tries again */ }
 }
 
+// A tick for a message the mod kept out of the front desk says so in `received`, { origin, via }
+// and never the text: one line in the day's mod file. It never fails the tick.
+function noteReceived(req, d) {
+  const got = req.received;
+  if (!isRecord(got) || (got.via !== 'prompt' && got.via !== 'receive') || typeof got.origin !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(got.origin)) return;
+  try {
+    recordReceived({ session: req.session, via: got.via, origin: got.origin, at: d.now() });
+  } catch { /* the line is a note; the tick goes on */ }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes, with whether the
 // watcher runs (a Shape 1 watcher that has stopped is started again here), and the courier's
@@ -436,6 +448,7 @@ async function liftingHold(project, d) {
 // ticking. In the terminal, when Wheelhouse's own status line is set, `status` is left out so the
 // glance isn't shown twice.
 async function tick(req, d) {
+  noteReceived(req, d);
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
   if (found !== null && role === 'foreman') return foremanTick(found, d);

@@ -9,10 +9,11 @@
 // reading past the app's reminders finds the director's own typed words (ownWords).
 import type { EngineInterface } from 'claude-code'
 import { FOREMAN_LEAD, MESSAGE_LEAD } from './numbers'
-import { isFrontDesk, tick } from './pane'
+import { isFrontDesk, tick, type Received } from './pane'
 
-// The reason the engine logs, and shows for a dropped prompt.
-export const KEPT_OUT = 'Wheelhouse traffic, shown in the pane'
+// The reason the engine shows for a dropped prompt: a hook that answers without passing a prompt on
+// is shown a worse line (probed, check 41-8), so the drop's own words are plain ones.
+export const KEPT_OUT = 'Wheelhouse: an update from another session, shown in the pane'
 
 // The origins another session's message arrives under. The director's (`composer`, `bridge`),
 // a task's notification and a plugin's own prompt are never traffic.
@@ -56,9 +57,10 @@ export function isWheelhouseTraffic(origin: string, text: string): boolean {
 }
 
 // Whether the message is kept out: Wheelhouse traffic reaching the front desk's session. A
-// message kept out starts a tick, or, while one runs, one tick once it ends, as a press does.
-export async function keepOut($: EngineInterface, origin: string, text: string): Promise<boolean> {
+// message kept out starts a tick, or, while one runs, one tick once it ends, as a press does. The
+// tick says that a message was received, by which hook and from which origin, never its text.
+export async function keepOut($: EngineInterface, origin: string, text: string, via: Received['via']): Promise<boolean> {
   if (!isWheelhouseTraffic(origin, text) || !(await isFrontDesk($))) return false
-  void tick($, true).catch(() => undefined)
+  void tick($, true, { origin, via }).catch(() => undefined)
   return true
 }

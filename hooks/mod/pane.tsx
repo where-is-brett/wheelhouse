@@ -6,7 +6,10 @@
 // A tick sends { cmd: 'tick', session, cwd, idle, surface }. In the front desk's session its
 // answer holds the pane's model (scripts/mod/status.js), the glance and the status line; any
 // other session's answer, a session still in setup's included, holds only its role and `every`.
-// One tick runs at a time: a tick a press or traffic asks for while one runs follows it, once.
+// One tick runs at a time: a tick a press asks for while one runs follows it, once. A message
+// kept out as traffic (hooks/mod/messages.ts) asks for a tick that says it was received,
+// { received: { origin, via } } and never its text, so the bridge notes it; each such message
+// gets a tick of its own, in order.
 // Each prompt an answer's `submit` holds (the courier's wake in the front desk's session, the
 // watcher's lines in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it
 // handed, so the next answer doesn't hold it again. A courier's wake that can't be handed on is
@@ -61,9 +64,13 @@ const UNHANDED = { plugin: 'wheelhouse', key: 'unhanded' } as const
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
 let again = false
+const waiting: Received[] = []
 // The ticks' prompts being handed on. A prompt waits behind a running turn, so they are handed
 // on apart from the tick, which goes on ticking, and each tick's after the last tick's.
 let handing: Promise<unknown> = Promise.resolve()
+
+// A message kept out as traffic: the origin it arrived under and the hook that saw it.
+export type Received = { origin: string, via: 'prompt' | 'receive' }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -182,11 +189,11 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
   }
 }
 
-async function runTick($: EngineInterface) {
+async function runTick($: EngineInterface, received?: Received) {
   let every: number | undefined
   try {
     const [session, cwd, busy, surface] = await Promise.all([$.session.id(), $.session.root(), $.state.get(BUSY), $.state.get(SURFACE)])
-    const answer = await ask($, { cmd: 'tick', session, cwd, idle: busy.value !== true, surface: surface.value ?? null }, { timeoutMs: TICK_ASK_MS })
+    const answer = await ask($, { cmd: 'tick', session, cwd, idle: busy.value !== true, surface: surface.value ?? null, ...(received === undefined ? {} : { received }) }, { timeoutMs: TICK_ASK_MS })
     const now = await $.clock.now()
     if (answer === null || !answer.ok) {
       await $.state.set(TICK, { at: now, failed: true })
@@ -235,9 +242,12 @@ async function isOld($: EngineInterface) {
 // runs once that one ends, however many asked; the timer's waits for its next fire. A tick that
 // runs long may leave the figures old: the status line and the title then stop showing them, and
 // the pane is drawn again, so its line saying how old they are comes without a tick's answer.
-export async function tick($: EngineInterface, queued = false) {
+export async function tick($: EngineInterface, queued = false, received?: Received) {
   if (running) {
-    if (queued) again = true
+    if (queued) {
+      if (received === undefined) again = true
+      else waiting.push(received)
+    }
     try {
       if (await isOld($)) {
         await showOld($, await $.session.id())
@@ -250,11 +260,15 @@ export async function tick($: EngineInterface, queued = false) {
   }
   running = true
   try {
-    await runTick($)
+    await runTick($, received)
   } finally {
     running = false
   }
-  if (again) {
+  const next = waiting.shift()
+  if (next !== undefined) {
+    again = false
+    await tick($, false, next)
+  } else if (again) {
     again = false
     await tick($)
   }

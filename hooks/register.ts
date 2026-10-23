@@ -10,9 +10,10 @@
 //                    and starts the pane's ticks (hooks/mod/pane.tsx), which hand on the prompts
 //                    their answers hold
 //   session.measure  sends the usage figures again when the allowance or the cost moved
-//   prompt.submit    keeps Wheelhouse traffic out of the front desk and ticks instead; a phoned
-//                    "stop" sends stop; a reply code and an option sends reply
-//   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead
+//   prompt.submit    keeps Wheelhouse traffic out of the front desk and ticks instead, the tick
+//                    saying one was received; a phoned "stop" sends stop; a reply code and an
+//                    option sends reply
+//   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead, the same
 //   turn.start       marks the session busy, for the tick
 //   turn.complete    marks it idle again
 //   command.run      /wheelhouse-go sends go and answers with the bridge's words; /wheelhouse opens the pane;
@@ -145,7 +146,7 @@ export const register: Register = on => {
 
   // Wheelhouse traffic is kept out before anything else; the director's messages never are.
   on('prompt.submit', async ($, e, next) => {
-    if (await keepOut($, e.origin.kind, e.text)) return { drop: KEPT_OUT }
+    if (await keepOut($, e.origin.kind, e.text, 'prompt')) return { drop: KEPT_OUT }
     const asked = requestFor(e)
     if (asked !== null) {
       try {
@@ -172,7 +173,7 @@ export const register: Register = on => {
 
   // A delivery for one of the session's agents is not the front desk's conversation.
   on('session.receive', async ($, e, next) => {
-    if (e.agentId === undefined && await keepOut($, e.origin.kind, e.text)) return { consumed: KEPT_OUT }
+    if (e.agentId === undefined && await keepOut($, e.origin.kind, e.text, 'receive')) return { consumed: KEPT_OUT }
     return next(e)
   }).catch(($, e, next) => next(e))
 

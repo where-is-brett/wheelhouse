@@ -18,7 +18,7 @@ const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderr
 const PRESENTATION = { isFullscreen: false, columns: 80 }
 const CONTEXT = { window: 200000, tokens: 1000, percent: 0.5 }
 const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
-const KEPT_OUT = 'Wheelhouse traffic, shown in the pane'
+const KEPT_OUT = 'Wheelhouse: an update from another session, shown in the pane'
 
 // Messages another Wheelhouse session sends: each first line starts with MESSAGE_LEAD.
 const TRAFFIC = [
@@ -439,6 +439,46 @@ test('the same message reaches a feature session, the foreman or a session still
   }
 })
 
+test('a kept-out message sends one tick that says it was received, never its text', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, () => frontDesk())
+  await start($, 'desktop')
+  for (const kind of ['sdk', 'peer']) {
+    clear()
+    await submit($, TRAFFIC[0], kind)
+    await clock.settle()
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.ticks[0].received).toEqual({ origin: kind, via: 'prompt' })
+    expect(JSON.stringify(seen.ticks[0])).not.toContain('Wheelhouse:')
+  }
+  clear()
+  await receive($, TRAFFIC[1], { kind: 'peer' })
+  await clock.settle()
+  expect(seen.ticks.map((t: any) => t.received)).toEqual([{ origin: 'peer', via: 'receive' }])
+  // The timer's own tick says nothing was received.
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.ticks).toHaveLength(1)
+  expect('received' in seen.ticks[0]).toBe(false)
+})
+
+test('messages kept out while a tick runs each get a tick that says it was received', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, () => ({ hold: 3000, then: frontDesk() }))
+  await start($, 'desktop')
+  await clock.advance(3000)
+  clear()
+  const first = submit($, TRAFFIC[0], 'sdk')
+  await first
+  await clock.advance(1000)
+  // Two more ask while the first one's tick still runs.
+  await submit($, TRAFFIC[1], 'peer')
+  await receive($, TRAFFIC[1], { kind: 'peer' })
+  await clock.advance(20000)
+  await clock.settle()
+  expect(seen.ticks.map((t: any) => t.received).filter(Boolean)).toEqual([
+    { origin: 'sdk', via: 'prompt' }, { origin: 'peer', via: 'prompt' }, { origin: 'peer', via: 'receive' },
+  ])
+})
+
 // Each surface in a test of its own, so the session's state holds no role from an earlier answer.
 for (const surface of SURFACES) {
   test(`a front desk passes traffic on until its first tick answers (${surface})`, async ($, on) => {
@@ -752,7 +792,7 @@ test('a message whose first line has the lead is traffic, whatever names the for
   }
 })
 
-test('traffic that comes while a tick runs gets its own tick once that one ends, and only one', async ($, on) => {
+test('traffic that comes while a tick runs gets a tick each once that one ends, none at the timer\'s fire', async ($, on) => {
   let reply: Reply = frontDesk()
   const { seen, clear, start, clock } = world(on, () => reply)
   for (const surface of SURFACES) {
@@ -768,13 +808,14 @@ test('traffic that comes while a tick runs gets its own tick once that one ends,
     expect(await receive($, TRAFFIC[1], { kind: 'peer' })).toEqual({ consumed: KEPT_OUT })
     await clock.settle()
     expect(seen.ticks).toHaveLength(1)
-    // It ends, and one tick follows at once, not two, and not at the timer's next fire.
+    // It ends, and a tick follows at once for each message, saying it was received, and none at
+    // the timer's next fire but the timer's own.
     await clock.advance(5000)
-    expect(seen.ticks).toHaveLength(2)
+    expect(seen.ticks.slice(1).map((t: any) => t.received)).toEqual([{ origin: 'peer', via: 'prompt' }, { origin: 'peer', via: 'receive' }])
     await clock.advance(TICK_MS - 5000 - 1)
-    expect(seen.ticks).toHaveLength(2)
-    await clock.advance(1)
     expect(seen.ticks).toHaveLength(3)
+    await clock.advance(1)
+    expect(seen.ticks).toHaveLength(4)
   }
 })
 
