@@ -15,8 +15,13 @@ import { makeAdapter } from '../host/adapter.js';
 import { readProject } from '../lib/projects.js';
 import { stateDir } from '../lib/paths.js';
 import { run as realRun } from '../lib/run.js';
-import { listEvents, SURVEY_MOST, SURVEY_TEXT } from '../state/events.js';
+import { listEvents, SURVEY_MOST, SURVEY_TEXT, SURVEY_PATH, SURVEY_WORDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
+
+// The longest a survey may take, after which it is one that missed the host (setup finishes, and
+// the next briefing looks again); and the longest each of its host and git calls may take.
+export const SURVEY_DEADLINE_MS = 90 * 1000;
+export const SURVEY_HOST_MS = 30 * 1000;
 
 // A survey that found nothing because it couldn't look: the host not reached, every part empty.
 export function missedSurvey() {
@@ -33,6 +38,8 @@ const secretIn = (s) => scanContent(JSON.stringify(String(s))).length > 0;
 // A text kept as the state takes it: cut to SURVEY_TEXT, and empty when it holds a secret.
 const kept = (s) => (typeof s !== 'string' || secretIn(s) ? '' : s.slice(0, SURVEY_TEXT));
 const name = (s) => typeof s === 'string' && s !== '' && s.length <= SURVEY_TEXT && !secretIn(s);
+// A path or a rule's words kept whole or not at all: cut, it would name another file or misquote.
+const wholeText = (s, most) => typeof s === 'string' && s !== '' && s.length <= most && !secretIn(s);
 const whole = (x, least) => Number.isInteger(x) && x >= least;
 
 // The survey as the state takes it: each part in its shape and within its limits, anything not
@@ -57,13 +64,13 @@ export function shapedSurvey(survey) {
     local: items(s.local),
     more: { pushed: more.pushed === true, local: more.local === true },
     instructions: {
-      files: list(ins.files).filter((f) => typeof f === 'string' && f !== '' && !secretIn(f)).slice(0, SURVEY_MOST.files),
+      files: list(ins.files).filter((f) => wholeText(f, SURVEY_PATH)).slice(0, SURVEY_MOST.files),
       sections: list(ins.sections).filter((x) => plain(x) && whole(x.line, 1)).map((x) => ({ heading: kept(x.heading), line: x.line })).slice(0, SURVEY_MOST.sections),
     },
     scheduled: whole(s.scheduled, 0) ? s.scheduled : 0,
     secrets: whole(s.secrets, 0) ? s.secrets : 0,
-    rules: list(s.rules).filter((r) => plain(r) && typeof r.words === 'string' && r.words !== '' && !secretIn(r.words)
-      && plain(r.source) && typeof r.source.file === 'string' && r.source.file !== '' && !secretIn(r.source.file) && whole(r.source.line, 1))
+    rules: list(s.rules).filter((r) => plain(r) && wholeText(r.words, SURVEY_WORDS)
+      && plain(r.source) && wholeText(r.source.file, SURVEY_PATH) && whole(r.source.line, 1))
       .map((r) => ({ words: r.words, source: { file: r.source.file, line: r.source.line } })).slice(0, SURVEY_MOST.rules),
   };
 }
@@ -96,16 +103,29 @@ async function defaultBranchOf(adapter, git) {
   return 'main';
 }
 
-// takeSurvey({ project, record, run, adapter, rules, own, look }) -> the survey, shaped for the
-// state, never a throw. `record` is the project's record (its folder, host, repository and
+// takeSurvey({ project, record, run, adapter, rules, own, look, deadlineMs }) -> the survey,
+// shaped for the state, never a throw, within `deadlineMs` (SURVEY_DEADLINE_MS): past it, a survey
+// that missed the host. `record` is the project's record (its folder, host, repository and
 // address); `adapter()` gives the host's adapter, by default with the director's own sign-in as
-// setup's other steps use it; `own` names Wheelhouse's own lines, by default from the state;
-// `rules` are the rules found (step 5, Task 5 fills them). `look` is surveyOf, for tests.
+// setup's other steps use it, each of its calls given SURVEY_HOST_MS; `own` names Wheelhouse's own
+// lines, by default from the state; `rules` are the rules found (step 5). `look` is surveyOf, for tests.
 export async function takeSurvey({
   project, record = project === undefined ? null : readProject(project), run = realRun,
-  adapter = async (r) => makeAdapter({ host: r.host, repo: r.repo, run, env: {}, base: r.connection?.baseUrl }),
-  rules = [], own = project === undefined ? [] : ownLines(project), look = surveyOf,
+  adapter = async (r) => makeAdapter({
+    host: r.host, repo: r.repo, run: (file, args, options = {}) => run(file, args, { ...options, timeoutMs: SURVEY_HOST_MS }), env: {}, base: r.connection?.baseUrl,
+  }),
+  rules = [], own = project === undefined ? [] : ownLines(project), look = surveyOf, deadlineMs = SURVEY_DEADLINE_MS,
 } = {}) {
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(missedSurvey()), deadlineMs); });
+  try {
+    return await Promise.race([late, surveyNow({ record, run, adapter, rules, own, look })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function surveyNow({ record, run, adapter, rules, own, look }) {
   try {
     const folder = record?.folder;
     if (typeof folder !== 'string' || !fs.existsSync(folder)) return missedSurvey();
@@ -116,7 +136,7 @@ export async function takeSurvey({
     } catch {
       hostFailed = true;
     }
-    const git = setupGit({ run, cwd: folder, workTree: folder });
+    const git = setupGit({ run, cwd: folder, workTree: folder, timeoutMs: SURVEY_HOST_MS });
     const defaultBranch = await defaultBranchOf(host, git);
     // An adapter that couldn't be made is a host that couldn't be reached.
     const missing = { openRequests: async () => { throw new Error('the host adapter could not be made'); } };

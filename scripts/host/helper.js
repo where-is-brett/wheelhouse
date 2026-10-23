@@ -1379,27 +1379,41 @@ export async function startHelper({
   // The survey taken again (design section 15, ruling A1; plan ruling P3): only when the latest
   // survey in the state missed the host and was not itself taken again, so it is taken again once.
   // It reads the project's folder and asks the host for its open requests, through this project's
-  // adapter, and never throws (scripts/survey/take.js); the rules found at setup are carried over.
-  // What it records is a state write like any other, so it is refused under STOP (stateRoute's
-  // write), and secret-scanned as every event is: the survey leaves out what looks like a secret
-  // first, and one the state still refuses is recorded as a survey that missed the host.
+  // adapter, within the survey's own time limit, and never throws (scripts/survey/take.js); the
+  // rules found at setup are carried over. The project's state is held only to read the latest
+  // survey and then to write, never while the survey looks, so a slow host holds nothing up. What
+  // it records is a state write like any other, so it is refused under STOP, read again just
+  // before the write, and secret-scanned as every event is: the survey leaves out what looks like
+  // a secret first, and one the state still refuses is recorded as a survey that missed the host.
+  // A survey taken meanwhile by another request is left as it is.
   async function doSurveyAgain({ project }, ctx) {
     const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-    const latest = listEvents(stateDir(project), { report: () => {} })
+    const latestSurvey = () => listEvents(stateDir(project), { report: () => {} })
       .filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object').sort(byOrder).at(-1);
-    if (!latest || latest.data.hostReached !== false || latest.data.again === true) return { ok: true, taken: false };
-    let survey = null;
-    const got = await recordSurvey({
-      write: async (data) => {
-        const answer = await writeSurvey(project, data, ctx);
-        if (answer.ok) survey = data;
-        return answer;
-      },
-      take: () => takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest.data.rules }).rules }),
-      again: true,
+    if (stopped()) return STOP_REFUSAL;
+    const latest = await oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, ctx);
+      return latestSurvey();
     });
-    if (!got.ok) return got;
-    return { ok: true, taken: true, id: got.id, hostReached: survey.hostReached, pushed: got.pushed };
+    if (!latest || latest.data.hostReached !== false || latest.data.again === true) return { ok: true, taken: false };
+    const taken = await takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest.data.rules }).rules });
+    return oneAtATime(`state:${project}`, async () => {
+      if (stopped()) return STOP_REFUSAL;
+      if (latestSurvey()?.id !== latest.id) return { ok: true, taken: false };
+      let survey = null;
+      const got = await recordSurvey({
+        write: async (data) => {
+          if (stopped()) return STOP_REFUSAL;
+          const answer = await writeSurvey(project, data, ctx);
+          if (answer.ok) survey = data;
+          return answer;
+        },
+        take: async () => taken,
+        again: true,
+      });
+      if (!got.ok) return got;
+      return { ok: true, taken: true, id: got.id, hostReached: survey.hostReached, pushed: got.pushed };
+    });
   }
 
   // The helper's own writer of a survey, the one kind no caller writes (HELPER_ONLY_KINDS): made
@@ -2883,7 +2897,7 @@ export async function startHelper({
       return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
     }),
     '/host/facts': hostFacts,
-    '/survey/again': stateRoute(doSurveyAgain, { write: true }),
+    '/survey/again': doSurveyAgain,
     '/issue/create': writing((a, { title, body, labels }) => a.issue.create({ title, body, labels })),
     '/issue/update': writing((a, { number, body }) => a.issue.update({ number, body })),
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),

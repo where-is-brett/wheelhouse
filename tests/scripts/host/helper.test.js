@@ -1495,3 +1495,26 @@ test('/survey/again is refused under STOP, and takes nothing', async () => {
     }));
   } finally { p.cleanup(); }
 });
+
+test('/survey/again holds the project\'s state only to write: other state requests go on while it looks, and STOP set meanwhile refuses the write', async () => {
+  const p = await surveyedProject();
+  try {
+    let asked;
+    const askedNow = new Promise((resolve) => { asked = resolve; });
+    let answer;
+    const answered = new Promise((resolve) => { answer = resolve; });
+    const adapter = fakeAdapter({ openRequests: async () => { asked(); await answered; return []; } });
+    await as(p.home, () => withHelper(adapter, async (client) => {
+      seedSurvey(SURVEYED);
+      const again = client.survey.again({ project: 'o__p' });
+      await askedNow;
+      // While the survey waits on the host, the state answers.
+      assert.equal((await client.state.views({ project: 'o__p' })).ok, true);
+      // STOP set while it looks: nothing is written.
+      fs.writeFileSync(stopFile(), '');
+      answer();
+      assert.deepEqual(await again, { ok: false, refused: 'STOP is on' });
+      assert.equal(surveysIn().length, 1);
+    }));
+  } finally { p.cleanup(); }
+});

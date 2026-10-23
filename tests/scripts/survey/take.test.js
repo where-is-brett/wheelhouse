@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { takeSurvey, shapedSurvey, missedSurvey, ownLines, recordSurvey } from '../../../scripts/survey/take.js';
+import { takeSurvey, shapedSurvey, missedSurvey, ownLines, recordSurvey, SURVEY_DEADLINE_MS, SURVEY_HOST_MS } from '../../../scripts/survey/take.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeBareRemote, g, push, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -139,4 +139,46 @@ test('recording the survey never throws: a refused one is recorded as a survey t
   // With `again`, the survey says it was taken again.
   await recordSurvey({ write: writer([]), take: async () => data, again: true });
   assert.deepEqual(writes.splice(0), [{ ...data, again: true }]);
+});
+
+test('a survey that takes too long is a survey that missed the host, by its deadline', async () => {
+  const { dir, remote } = await aProject();
+  try {
+    assert.equal(SURVEY_DEADLINE_MS, 90 * 1000);
+    const never = new Promise(() => {});
+    const stalled = async () => ({ defaultBranch: () => never, openRequests: () => never });
+    const began = Date.now();
+    assert.deepEqual(await takeSurvey({ record: record(dir), adapter: stalled, own: [], deadlineMs: 300 }), missedSurvey());
+    assert.ok(Date.now() - began < 5000, 'it gives up at its deadline');
+    assert.deepEqual(await takeSurvey({ record: record(dir), adapter: async () => never, own: [], deadlineMs: 300 }), missedSurvey());
+  } finally { remote.cleanup(); }
+});
+
+test('the survey\'s own adapter asks the host with a time limit on each call', async () => {
+  const { dir, remote } = await aProject();
+  try {
+    const asked = [];
+    const run = async (file, args, options = {}) => {
+      if (file === 'gh' || file.endsWith('gh') || file.endsWith('gh.exe')) {
+        asked.push(options.timeoutMs);
+        return { code: 1, stdout: '', stderr: 'refused' };
+      }
+      const { run: realRun } = await import('../../../scripts/lib/run.js');
+      return realRun(file, args, options);
+    };
+    const got = await takeSurvey({ record: record(dir), run, own: [] });
+    assert.equal(got.hostReached, false);
+    assert.ok(asked.length >= 1, 'the host was asked');
+    assert.ok(asked.every((t) => t === SURVEY_HOST_MS), JSON.stringify(asked));
+  } finally { remote.cleanup(); }
+});
+
+test('the texts kept are short: a rule or file too long to quote whole is left out', () => {
+  const got = shapedSurvey({
+    ...missedSurvey(),
+    instructions: { files: ['AGENTS.md', `${'d/'.repeat(201)}x`], sections: [] },
+    rules: [{ words: 'w'.repeat(1001), source: { file: 'CLAUDE.md', line: 1 } }, { words: 'Short.', source: { file: `${'d/'.repeat(201)}x`, line: 1 } }, { words: 'Kept.', source: { file: 'CLAUDE.md', line: 2 } }],
+  });
+  assert.deepEqual(got.instructions.files, ['AGENTS.md']);
+  assert.deepEqual(got.rules.map((r) => r.words), ['Kept.']);
 });

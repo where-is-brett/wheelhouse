@@ -202,15 +202,19 @@ const PLAIN_SHAPES = {
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
 // The most a survey holds of each part, as scripts/survey/look.js looks at them (the host lists at
-// most 100 requests), and the longest text it keeps of a title, subject or heading.
+// most 100 requests), and the longest text it keeps: of a title, subject, heading, name or time
+// (SURVEY_TEXT), of a file's path (SURVEY_PATH) and of a rule's words (SURVEY_WORDS).
 export const SURVEY_MOST = { requests: 100, lines: 200, files: 200, sections: 200, rules: 500 };
 export const SURVEY_TEXT = 200;
+export const SURVEY_PATH = 400;
+export const SURVEY_WORDS = 1000;
 const SURVEY_HEAD = /^[0-9a-f]{40,64}$/;
 // Whether `x` is an object with exactly the keys named.
 const keysAre = (x, keys) => isPlain(x) && Object.keys(x).length === keys.length && keys.every((k) => Object.hasOwn(x, k));
 const count = (x) => Number.isInteger(x) && x >= 0;
 const lineNumber = (x) => Number.isInteger(x) && x >= 1;
 const shortText = (x) => typeof x === 'string' && x.length <= SURVEY_TEXT;
+const surveyPath = (x) => isText(x) && x.length <= SURVEY_PATH;
 
 function checkPlain(kind, data) {
   const bad = (why) => { throw new Error(`A ${kind} event ${why}`); };
@@ -341,7 +345,7 @@ function checkPlain(kind, data) {
     if (!list(data.requests, SURVEY_MOST.requests, request)) bad(`needs requests, at most ${SURVEY_MOST.requests}, each a number, a title and whether it is a draft`);
     const item = (i) => keysAre(i, ['name', 'head', 'commits', 'subject', 'at']) && isText(i.name) && shortText(i.name)
       && typeof i.head === 'string' && SURVEY_HEAD.test(i.head) && lineNumber(i.commits) && shortText(i.subject)
-      && typeof i.at === 'string' && (i.at === '' || !Number.isNaN(Date.parse(i.at)));
+      && shortText(i.at) && (i.at === '' || !Number.isNaN(Date.parse(i.at)));
     for (const k of ['pushed', 'local']) {
       if (!list(data[k], SURVEY_MOST.lines, item)) bad(`needs ${k}, at most ${SURVEY_MOST.lines}, each a name, its head, its commits, a subject and when`);
     }
@@ -350,12 +354,12 @@ function checkPlain(kind, data) {
     }
     const ins = data.instructions;
     const section = (x) => keysAre(x, ['heading', 'line']) && shortText(x.heading) && lineNumber(x.line);
-    if (!(keysAre(ins, ['files', 'sections']) && list(ins.files, SURVEY_MOST.files, isText) && list(ins.sections, SURVEY_MOST.sections, section))) {
+    if (!(keysAre(ins, ['files', 'sections']) && list(ins.files, SURVEY_MOST.files, surveyPath) && list(ins.sections, SURVEY_MOST.sections, section))) {
       bad('needs instructions to be the files found and the sections of CLAUDE.md, each a heading and its line');
     }
     if (!count(data.scheduled)) bad('needs scheduled to be a count');
     if (!count(data.secrets)) bad('needs secrets to be a count');
-    const rule = (r) => keysAre(r, ['words', 'source']) && isText(r.words) && keysAre(r.source, ['file', 'line']) && isText(r.source.file) && lineNumber(r.source.line);
+    const rule = (r) => keysAre(r, ['words', 'source']) && isText(r.words) && r.words.length <= SURVEY_WORDS && keysAre(r.source, ['file', 'line']) && surveyPath(r.source.file) && lineNumber(r.source.line);
     if (!list(data.rules, SURVEY_MOST.rules, rule)) bad('needs rules, each its words and where it was found');
   }
 }

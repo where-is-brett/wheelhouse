@@ -743,6 +743,9 @@ test('a survey record carries every part of the survey, each in its own shape', 
       { ...SURVEY, scheduled: -1 }, { ...SURVEY, scheduled: 1.5 }, { ...SURVEY, secrets: '2' },
       { ...SURVEY, rules: [{ ...rule, words: '' }] }, { ...SURVEY, rules: [{ ...rule, source: { file: 'CLAUDE.md' } }] },
       { ...SURVEY, rules: [{ ...rule, source: { file: '', line: 1 } }] }, { ...SURVEY, rules: [{ ...rule, extra: 1 }] }, { ...SURVEY, rules: 'none' },
+      // Every text is kept short: a rule's words, its file, an instruction file's name and a time.
+      { ...SURVEY, rules: [{ ...rule, words: 'w'.repeat(1001) }] }, { ...SURVEY, rules: [{ ...rule, source: { file: `${'d/'.repeat(201)}x`, line: 1 } }] },
+      { ...SURVEY, instructions: { files: [`${'d/'.repeat(201)}x`], sections: [] } }, { ...SURVEY, pushed: [{ ...item, at: `${item.at}${' '.repeat(200)}` }] },
     ]) assert.throws(() => makeEvent({ kind: 'survey', data: bad }), /survey event/, JSON.stringify(bad)?.slice(0, 200));
   });
 });

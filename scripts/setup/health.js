@@ -693,11 +693,11 @@ export function removeTrialLeftover(folder) {
 // `start(project)`, `brief(project)`, `look({ rules })` (the survey taken) and `adapterFor(record)` (the
 // host's adapter the survey asks) are for tests. The survey carries the rules step 5 found, as
 // `{ words, source }`, in the director's own words where their sessions from before the run hold
-// them (plan ruling P7).
+// them (plan ruling P7). `surveyDeadlineMs` is the survey's time limit, for tests.
 export async function finishSetup({
   project, client = helperClient({ timeout: BRIEFING_WAIT_MS * 2 }), now = () => new Date(), spawn, load = loadBoardInputs,
-  start, brief, adapterFor, userHome = os.homedir(),
-  look = ({ rules }) => takeSurvey({ project, rules, ...(adapterFor ? { adapter: adapterFor } : {}) }),
+  start, brief, adapterFor, userHome = os.homedir(), surveyDeadlineMs,
+  look = ({ rules }) => takeSurvey({ project, rules, ...(adapterFor ? { adapter: adapterFor } : {}), ...(surveyDeadlineMs ? { deadlineMs: surveyDeadlineMs } : {}) }),
   writeSurvey = async () => ({ ok: false, refused: 'only the helper records a survey' }),
 } = {}) {
   try {
