@@ -226,9 +226,9 @@ function hookText({ body, views, events, seen, usage, home, plugin }) {
   return null;
 }
 
-// The environment variable naming the front desk's model for a run. The front desk runs on the most
-// capable model (design section 8), which the repository never names, so the run is given it; both
-// variants take it, so the two are told apart by Wheelhouse alone.
+// The environment variable that may name the front desk's model for a run; both variants take it,
+// so the two are told apart by Wheelhouse alone. Unset, the front desk runs on the session's own
+// default model, as it does for real users. The repository never names a model.
 export const FRONT_DESK_MODEL = 'WHEELHOUSE_EVAL_FRONT_DESK_MODEL';
 
 // Sets `dir`, the scratch project, up as the project's main checkout for the front desk, and
@@ -249,11 +249,11 @@ export const FRONT_DESK_MODEL = 'WHEELHOUSE_EVAL_FRONT_DESK_MODEL';
 //               time of the director's last prompt, or null for none, and with Wheelhouse the
 //               board context hook's text comes on each prompt (promptContext)
 //   usage       the usage figures the briefing reads, or null
-//   env         the environment the front desk's model is read from (FRONT_DESK_MODEL)
+//   env         the environment the front desk's model may be named in (FRONT_DESK_MODEL)
 // Resolves with the context runScenario takes: { env, pluginDirs, appendSystemPrompt, helper,
 // seededIds, evidence, hooksGave, head, close, model, modelVariable }, with `reload`, the session
 // start's text over the seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added,
-// in order. `model` is null when the environment names none, and runScenario then runs nothing.
+// in order. `model` is undefined when the environment names none: the session's default.
 export async function setUpFrontDesk(dir, variant, {
   files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null, env = process.env,
 } = {}) {
@@ -338,7 +338,7 @@ export async function setUpFrontDesk(dir, variant, {
     return {
       env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
       helper, seededIds, evidence, hooksGave, close, unreadable: [helper.keyFolder],
-      model: env[FRONT_DESK_MODEL]?.trim() || null, modelVariable: FRONT_DESK_MODEL,
+      model: env[FRONT_DESK_MODEL]?.trim() || undefined, modelVariable: FRONT_DESK_MODEL,
     };
   } catch (error) {
     await close();
