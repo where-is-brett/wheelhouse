@@ -7,6 +7,8 @@
 // it loaded at its start. The command is the one the hold lets through: it reads only the
 // installed Wheelhouse's manifest and Claude Code's record of installs, never the Wheelhouse
 // home (a sandboxed command can't), says what still differs, and changes nothing.
+// A hold's card leaves once its hold file is gone: recordLift puts one lineage-lift event in the
+// state for each standing hold, from the session start or the mod's tick (scripts/mod/bridge.js).
 // Reads files only: never git.
 //   node scripts/lineage/check.js [projectDir]
 import crypto from 'node:crypto';
@@ -17,6 +19,7 @@ import { stateDir } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { keep, pendingDir, taken } from '../hooks/pending.js';
 
 // This copy's root, holding lineage/ beside scripts/: the plugin's folder, or Locked's managed copy.
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -32,6 +35,12 @@ const projectHome = (project) => path.dirname(stateDir(project));
 // where `recorded` is the mismatchSet already put in the state as a lineage-hold event.
 export function holdFile(project) {
   return path.join(projectHome(project), 'lineage', 'hold.json');
+}
+
+// Noted when a lift is recorded, and removed when a hold file is written again: a lift is recorded
+// once for each standing hold, though the views still show the hold until they are next synced.
+function liftMark(project) {
+  return path.join(projectHome(project), 'lineage', 'lifted.json');
 }
 
 // Whether the project is held. Anything at the hold file's place counts.
@@ -131,6 +140,7 @@ export function checkLineage({ project, projectDir, root = ROOT, claudeHome = de
     else {
       set = mismatchSet(result.mismatches);
       recorded = readJson(file)?.recorded === set;
+      fs.rmSync(liftMark(project), { force: true });
       writeFileMade(file, { at: now().toISOString(), mismatches: result.mismatches, ...(recorded ? { recorded: set } : {}) });
     }
   } catch {
@@ -149,9 +159,62 @@ export function markRecorded(project, set) {
   return true;
 }
 
-// The lineage-hold event's data for a hold: when, and which upstreams and paths differ.
-export function holdEvent(at, mismatches) {
-  return { at, mismatches: mismatches.map((m) => ({ upstream: m.upstream ?? null, path: m.path })) };
+// The lineage-hold event's data for a hold: when, which upstreams and paths differ, and the
+// computer whose hold file it was (`computer`, when given).
+export function holdEvent(at, mismatches, computer) {
+  return { at, mismatches: mismatches.map((m) => ({ upstream: m.upstream ?? null, path: m.path })), ...(typeof computer === 'string' && computer !== '' ? { computer } : {}) };
+}
+
+// The lineage-lift event's data: when the computer's hold file was found gone.
+export function liftEvent(at, computer) {
+  return { at, computer };
+}
+
+// Whether a lift should be recorded now: this computer has no hold file (`held` false) while the
+// views show a hold of this computer that no lift has lifted. A hold recorded with no computer
+// counts as this computer's, as any lift lifts it.
+export function liftsDue(views, { project, computer, held }) {
+  if (held !== false) return false;
+  const holds = Array.isArray(views?.lineageHolds) ? views.lineageHolds : [];
+  return holds.some((h) => h !== null && typeof h === 'object' && (h.data?.computer === undefined || h.data.computer === computer));
+}
+
+// Whether a lift is recorded for the hold standing now: the mark says so, or a lift is kept for
+// sending and no hold has been kept since (it counts as recorded, though the helper hasn't taken it).
+export function liftKept(project) {
+  if (readJson(liftMark(project)) !== null) return true;
+  let names;
+  try {
+    names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json')).sort();
+  } catch {
+    return false;
+  }
+  let lifted = false;
+  for (const name of names) {
+    const kind = readJson(path.join(pendingDir(project), name))?.body?.kind;
+    if (kind === 'lineage-lift') lifted = true;
+    else if (kind === 'lineage-hold') lifted = false;
+  }
+  return lifted;
+}
+
+// Records a lift, once for each standing hold, when liftsDue says so and none is kept already: kept
+// first, then sent through `client` within `left` (a kept one is sent at a later start otherwise).
+// It informs, so a failure is passed over. Gives whether a lift was kept.
+export async function recordLift({ project, views, computer, now = () => new Date(), client, left = (promise) => promise }) {
+  try {
+    if (!liftsDue(views, { computer, held: isHeld(project) }) || liftKept(project)) return false;
+    const file = keep(project, 'write', { project, kind: 'lineage-lift', data: liftEvent(now().toISOString(), computer) }, now);
+    try {
+      writeFileMade(liftMark(project), { at: now().toISOString() });
+    } catch { /* the kept record still counts until it is sent */ }
+    try {
+      if (taken(await left(client.state.write(readJson(file).body)))) fs.rmSync(file, { force: true });
+    } catch { /* kept for a later send */ }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);

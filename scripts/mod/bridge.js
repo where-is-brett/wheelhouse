@@ -15,7 +15,8 @@
 //   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
 //                                                   courier's wake, with the ids it marked sent and its
 //                                                   stamp, or a Shape 2 foreman's wakes from one
-//                                                   watcher loop, or nothing while setup runs
+//                                                   watcher loop, or nothing while setup runs; it also
+//                                                   records a lineage-lift once a hold file is gone
 //   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped
 //                                                   `at`: its marks are undone, so the next tick wakes
 //                                                   again
@@ -43,7 +44,8 @@ import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
-import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
+import { featureSlug as defaultFeatureSlug, localViews as defaultLocalViews } from '../hooks/session-start.js';
+import { recordLift as defaultRecordLift } from '../lineage/check.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
@@ -115,6 +117,8 @@ const DEFAULTS = {
   settingsRows: defaultRows,
   settingsGroups: defaultGroups,
   computer: computerId,
+  localViews: defaultLocalViews,
+  recordLift: defaultRecordLift,
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
   readChanges: defaultChanges,
@@ -410,6 +414,17 @@ function settingUp(cwd, d) {
   }
 }
 
+// A lineage hold whose hold file is gone has its card closed within a tick: the lift is recorded
+// once for each standing hold (lineage/check.js recordLift), by the tick because the session start
+// can't, the hold file being gone while no session starts. It informs, so a failure is passed over.
+async function liftingHold(project, d) {
+  try {
+    const views = d.localViews(project, ['lineageHolds']);
+    if (!Array.isArray(views?.lineageHolds) || views.lineageHolds.length === 0) return;
+    await d.recordLift({ project, views, computer: d.computer(), now: d.now, client: clientOf(d), left: withinBudget(Date.now() + helperMs()) });
+  } catch { /* the next tick tries again */ }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes, with whether the
 // watcher runs (a Shape 1 watcher that has stopped is started again here), and the courier's
@@ -429,10 +444,12 @@ async function tick(req, d) {
   const started = d.elapsedClock();
   // The watch runs beside the pane, so the two share the time the tick has.
   const watched = watching(found, role, clientOf(d), d);
+  const lifting = liftingHold(found.project, d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
   const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d), client: clientOf(d) });
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
+  await lifting;
   // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.
   const wake = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
   try {

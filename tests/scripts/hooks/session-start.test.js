@@ -941,7 +941,7 @@ test('a hold is recorded in the state once for each set of mismatches, through t
     fixture.put({ LICENSE: 'another licence\n' });
     await lineageRun(f, fixture, folder, at('2026-10-19T02:00:00.000Z'));
     assert.deepEqual(holds(), [{
-      project: P, kind: 'lineage-hold', data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] },
+      project: P, kind: 'lineage-hold', data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: computerId() },
     }]);
     // The same set at the next starts: not recorded again, and the hold still stands.
     await lineageRun(f, fixture, folder, at('2026-10-19T03:00:00.000Z'));
@@ -973,6 +973,42 @@ test('a hold is recorded in the state once for each set of mismatches, through t
     assert.equal(holds().length, 4);
     assert.equal(holds()[3].data.at, '2026-10-19T08:00:00.000Z', 'the kept one, not a second');
     assert.equal(fs.readdirSync(pendingDir(P)).filter((n) => n.endsWith('.json')).length, 0);
+  });
+});
+
+test('a matching check after a hold records a lift, once; a compaction records one when the file is gone', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const standing = { lineageHolds: [{ id: 'h1', at: '2026-10-19T02:00:00.000Z', data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: computerId() }, card: null }] };
+    const f = fake({ views: { ...VIEWS, ...standing } });
+    const lifts = () => f.calls.writes.filter((w) => w.kind === 'lineage-lift');
+    const at = { now: () => new Date('2026-10-19T06:00:00.000Z') };
+    // The hold file stands, so the hold stands.
+    fixture.put({ LICENSE: 'another licence\n' });
+    await lineageRun(f, fixture, folder, at);
+    assert.equal(lifts().length, 0);
+    // A matching check removes the file; the views still show the hold, so one lift is recorded.
+    fixture.restore();
+    await lineageRun(f, fixture, folder, at);
+    assert.deepEqual(lifts(), [{ project: P, kind: 'lineage-lift', data: { at: '2026-10-19T06:00:00.000Z', computer: computerId() } }]);
+    // With the hold lifted in the views, nothing more.
+    const done = fake({ views: { ...VIEWS, lineageHolds: [] } });
+    await lineageRun(done, fixture, folder, at);
+    assert.equal(done.calls.writes.filter((w) => w.kind === 'lineage-lift').length, 0);
+  });
+});
+
+test('a compaction that finds the hold file gone records a lift, and never writes the file', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-project-');
+    const fixture = lineageFixture(folder);
+    const standing = { lineageHolds: [{ id: 'h1', at: '2026-10-19T02:00:00.000Z', data: { at: '2026-10-19T02:00:00.000Z', mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: computerId() }, card: null }] };
+    const f = fake({ views: { ...VIEWS, ...standing } });
+    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
+    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
+    assert.equal(f.calls.writes.filter((w) => w.kind === 'lineage-lift').length, 1);
+    assert.equal(fs.existsSync(holdFile(P)), false);
   });
 });
 

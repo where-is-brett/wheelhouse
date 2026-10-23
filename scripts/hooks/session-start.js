@@ -61,7 +61,7 @@ import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
 } from '../windows/low.js';
-import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
+import { checkLineage, holdEvent, markRecorded, recordLift, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { MARKETPLACE } from '../lineage/manifest.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
@@ -321,7 +321,7 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
 function recordHold(project, result, now) {
   if (result.ok || result.kept !== true || result.recorded === true || typeof result.set !== 'string') return;
   try {
-    keep(project, 'write', { project, kind: 'lineage-hold', data: holdEvent(now().toISOString(), result.mismatches) }, now);
+    keep(project, 'write', { project, kind: 'lineage-hold', data: holdEvent(now().toISOString(), result.mismatches, computerId()) }, now);
     markRecorded(project, result.set);
   } catch { /* the hold stands without it */ }
 }
@@ -563,6 +563,12 @@ export async function decide(input, deps = {}) {
     if (setup === null && trouble === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
+  // A hold whose file is gone (a matching check, or a compaction that finds it removed) has its card
+  // closed by one lift.
+  try {
+    const lineageHolds = views.lineageHolds ?? localViews(project, ['lineageHolds'])?.lineageHolds;
+    await left(recordLift({ project, views: { lineageHolds }, computer: computerId(), now, client: clientNow(), left }));
+  } catch { /* it informs */ }
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const setupLine = setup === null ? null : setupNote(setup);

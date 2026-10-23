@@ -396,6 +396,20 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
   });
 });
 
+test('a lineage-lift record says when and on which computer a hold file was found gone, and a hold may name its computer', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);
+    const data = { at: '2026-10-19T02:00:00.000Z', computer: 'aaaaaaaa' };
+    assert.deepEqual(makeEvent({ kind: 'lineage-lift', data }).data, data);
+    for (const bad of [null, { at: data.at }, { computer: 'aaaaaaaa' }, { ...data, extra: 1 }, { ...data, at: 'yesterday' }, { ...data, computer: '' }, { ...data, computer: 7 }]) {
+      assert.throws(() => makeEvent({ kind: 'lineage-lift', data: bad }), /lineage-lift event/, JSON.stringify(bad));
+    }
+    const hold = { at: data.at, mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] };
+    assert.deepEqual(makeEvent({ kind: 'lineage-hold', data: { ...hold, computer: 'aaaaaaaa' } }).data.computer, 'aaaaaaaa');
+    assert.throws(() => makeEvent({ kind: 'lineage-hold', data: { ...hold, computer: '' } }), /lineage-hold event/);
+  });
+});
+
 test('a lineage-hold record says when a session start held the project, and which upstreams and paths differ (R146)', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-hold'), true);

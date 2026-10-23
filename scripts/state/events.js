@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold',
+  'lineage-hold', 'lineage-lift',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -183,7 +183,12 @@ const PLAIN_SHAPES = {
   // A session start held the project's edits and commands because the installed upstream skills
   // differ from Wheelhouse's manifest (ruling R146): when, and which upstreams and paths. An
   // upstream of null is the manifest itself, which could not be read. The front desk's card.
-  'lineage-hold': { must: ['at', 'mismatches'], may: [] },
+  // `computer` is the computer whose hold file it was (computerId); a hold recorded without one is
+  // lifted by any lift.
+  'lineage-hold': { must: ['at', 'mismatches'], may: ['computer'] },
+  // The hold file of the project is gone on `computer`, so the hold's card is closed: recorded once for
+  // each standing hold, by a session start or the mod's tick.
+  'lineage-lift': { must: ['at', 'computer'], may: [] },
 };
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const GATE_ASKS = ['approval', 'ci-push'];
@@ -296,6 +301,10 @@ function checkPlain(kind, data) {
     if (!Array.isArray(data.mismatches) || data.mismatches.length === 0 || !data.mismatches.every(one)) {
       bad('needs mismatches, each an upstream (or null) and a path');
     }
+    if (data.computer !== undefined && !isText(data.computer)) bad('needs computer to be text');
+  } else if (kind === 'lineage-lift') {
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    if (!isText(data.computer)) bad('needs computer to be text');
   }
 }
 

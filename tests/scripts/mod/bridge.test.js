@@ -16,8 +16,9 @@ import { COURIER_GAP_MS, FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../..
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
-import { keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { computerId, keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
+import { holdFile } from '../../../scripts/lineage/check.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -482,6 +483,42 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
   assert.equal(answer.status, answer.glance);
   assert.ok(answer.glance.length <= 80);
   assert.equal('submit' in answer, false);
+}));
+
+test('a tick with no hold file and an open hold records one lift; a second tick records none', () => withHome(async (home) => {
+  const repo = registered(home);
+  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }], computer: computerId() }, card: null }] };
+  const client = fakeClient();
+  const extra = { client, localViews: () => views };
+  const lifts = () => client.calls.write.filter((w) => w.kind === 'lineage-lift');
+  // The hold file stands: nothing is lifted.
+  fs.mkdirSync(path.dirname(holdFile(P)), { recursive: true });
+  fs.writeFileSync(holdFile(P), '{}');
+  await handle(tickOf(repo), live(extra));
+  assert.equal(lifts().length, 0);
+  // The file is gone: one lift, kept and sent, and no more at the next tick while the views still show the hold.
+  fs.rmSync(holdFile(P));
+  await handle(tickOf(repo), live(extra));
+  assert.deepEqual(lifts(), [{ project: P, kind: 'lineage-lift', data: { at: NOW.toISOString(), computer: computerId() } }]);
+  assert.deepEqual(pendingFiles(), []);
+  await handle(tickOf(repo), live(extra));
+  assert.equal(lifts().length, 1);
+  // A hold of another computer is not this computer's to lift.
+  const other = { lineageHolds: [{ ...views.lineageHolds[0], data: { ...views.lineageHolds[0].data, computer: 'ffffffff' } }] };
+  await handle(tickOf(repo), live({ client, localViews: () => other }));
+  assert.equal(lifts().length, 1);
+}));
+
+test('a lift kept but not yet sent counts as recorded, and a tick whose helper is down keeps one', () => withHome(async (home) => {
+  const repo = registered(home);
+  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
+  const down = fakeClient({ takes: false });
+  down.state.write = async () => { throw new Error('down'); };
+  await handle(tickOf(repo), live({ client: down, localViews: () => views }));
+  assert.equal(pendingFiles().length, 1);
+  await handle(tickOf(repo), live({ client: down, localViews: () => views }));
+  assert.equal(pendingFiles().length, 1, 'not a second');
+  assert.equal(readJson(path.join(pendingDir(P), pendingFiles()[0])).body.kind, 'lineage-lift');
 }));
 
 test('the front desk\'s tick carries the courier\'s wake as submit, after the session\'s first tick marks what waits', () => withHome(async (home) => {
