@@ -7,6 +7,7 @@ import { approvalLine, ciPushLine } from './card-lines.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
+import { SUGGEST, WHY } from '../lib/calm-words.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
@@ -95,12 +96,13 @@ const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit [0-9a-f]{1
 // The line a gate-asks record's card carries, or null.
 const gateLineOf = (d) => (d.ask === 'approval' ? approvalLine(d.pr, d.sha) : d.ask === 'ci-push' && isPlainKey(d.branch) ? ciPushLine(d.branch, d.sha) : null);
 
-// Whether an approval or CI push card no longer waits, because the decision it asks for is gone
-// (ruling F107): its pull request has finished (prFinished), or the gate has since asked about
-// another commit for that pull request and click (the latest gate-asks for them carries another
-// line, and came after the card). An approval card names its pull request; a CI push card's comes
-// from the gate-asks that carries its line. An approval may carry across a clean update, so a CI
-// push asked later leaves an approval card waiting. Any other card is never outdated here.
+// Why an approval or CI push card no longer waits, because the decision it asks for is gone
+// (ruling F107): 'finished' when its pull request has finished (prFinished), 'head' when the gate
+// has since asked about another commit for that pull request and click (the latest gate-asks for
+// them carries another line, and came after the card), and false while it still stands. An
+// approval card names its pull request; a CI push card's comes from the gate-asks that carries its
+// line. An approval may carry across a clean update, so a CI push asked later leaves an approval
+// card waiting. Any other card is never outdated here.
 function outdatedBy(sorted, reports) {
   const asks = sorted.filter((e) => e.kind === 'gate-asks' && Number.isInteger(e.data?.pr) && typeof e.data.sha === 'string')
     .map((e) => ({ e, line: gateLineOf(e.data) })).filter((a) => a.line !== null);
@@ -114,10 +116,40 @@ function outdatedBy(sorted, reports) {
     const mine = asks.filter((a) => a.e.data.pr === pr && a.e.data.ask === ask);
     const own = mine.filter((a) => a.line === line).at(-1);
     const latest = mine.at(-1);
-    if (latest !== undefined && latest.line !== line && byOrder(card, latest.e) < 0) return true;
     const work = (own ?? asks.filter((a) => a.e.data.pr === pr).at(-1))?.e.data.work;
-    return prFinished(reports, { work, pr, at: (own?.e ?? card).at });
+    if (prFinished(reports, { work, pr, at: (own?.e ?? card).at })) return 'finished';
+    return latest !== undefined && latest.line !== line && byOrder(card, latest.e) < 0 ? 'head' : false;
   };
+}
+
+const CI_PUSH_LINE = /^Push the CI change on (.+) at commit [0-9a-f]{12} with your own sign-in$/;
+// What an approval or CI push card's set line is about: its pull request or its branch, or null
+// when the card is of another kind or its line says neither.
+export function gateTargetOf(card) {
+  const line = card.data?.line;
+  if (typeof line !== 'string') return null;
+  if (card.data.kind === 'approval') {
+    const match = APPROVAL_LINE.exec(line);
+    return match ? `pull request #${match[1]}` : null;
+  }
+  const match = card.data.kind === 'ci-push' ? CI_PUSH_LINE.exec(line) : null;
+  return match ? `branch ${match[1]}` : null;
+}
+
+// Whether a later card revises this one, by `data.revises` naming its id (design section 23.3): the
+// revised card replaces it, whatever answer it had. It must be of the same kind and, for an approval
+// or CI push card, about the same pull request or branch, so a revision naming a card of another
+// kind or pull request closes nothing. The revised card carries its own set line, so what was
+// approved of the card before it carries over to nothing. A revised approval or CI push card also
+// takes the place of an earlier card of its kind carrying its own set line (ruling C21): the
+// gate's card for the head the revision was composed at, so one card waits for that head.
+function revisedBy(sorted) {
+  const cards = sorted.filter((e) => e.kind === 'card');
+  const sameGate = (card, later) => !['approval', 'ci-push'].includes(card.data?.kind) || (gateTargetOf(card) !== null && gateTargetOf(card) === gateTargetOf(later));
+  return (card) => cards.some((later) => byOrder(card, later) < 0 && later.data?.kind === card.data?.kind && (
+    (later.data.revises === card.id && sameGate(card, later))
+    || (typeof later.data.revises === 'string' && ['approval', 'ci-push'].includes(card.data?.kind)
+      && typeof card.data?.line === 'string' && later.data.line === card.data.line && sameGate(card, later))));
 }
 
 // The lineage holds the session start recorded (ruling R146), in order, each with the card made for
@@ -180,17 +212,19 @@ export function confirmationTimes(events, enrolled) {
   return out;
 }
 
-// How each card was decided (ruling F33), one entry per card in order: { card, answers, decided, explained }.
+// How each card was decided (ruling F33), one entry per card in order: { card, answers, decided, explained, steered }.
 // An answer names its card by id (data.card) or, as the prompt record writes it, quotes the
 // question shown (data.question): that matches a card's question, or its title when it has none.
 // Two cards asking the same question both close on one answer. A card is decided by an answer
-// whose label is one of its options other than Not now, Explain more and Show me (Keep as is
-// decides, signing nothing), or by a verified signed record after it that carries its question or
-// confirms the event its confirm line names, which is what a reply code earns. `decided` is the
-// first of these, { at, label }: a signed record's label is the one it carries (an answer's), or
-// null when it carries none (an approval, a confirmation). It is null while the card waits. A card
-// written before cards carried options has none to check, so any label but those three decides it.
-// `answers` are all its answers, in order; `explained` the times of its Explain more answers.
+// whose label is one of its options other than Not now, Explain more, Show me, Why? and Suggest a
+// change… (Keep as is decides, signing nothing), or by a verified signed record after it that
+// carries its question or confirms the event its confirm line names, which is what a reply code
+// earns. `decided` is the first of these, { at, label }: a signed record's label is the one it
+// carries (an answer's), or null when it carries none (an approval, a confirmation). It is null
+// while the card waits. A card written before cards carried options has none to check, so any label
+// but those five decides it. `answers` are all its answers, in order; `explained` the times of its
+// Explain more and Why? answers; `steered` the time of its latest Suggest a change… answer
+// made after the card, or null.
 function outcomesOf(sorted, { confirmations, answeredBy }) {
   const answers = sorted.filter((e) => e.kind === 'card-answer');
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
@@ -210,7 +244,8 @@ function outcomesOf(sorted, { confirmations, answeredBy }) {
     const first = [answered, signed].filter(Boolean).sort(byOrder)[0];
     const label = typeof first?.data?.label === 'string' ? first.data.label : null;
     const decided = first === undefined ? null : { at: first.at, label };
-    return { card, answers: mine, decided, explained: mine.filter((a) => a.data?.label === 'Explain more').map((a) => a.at) };
+    const explained = mine.filter((a) => a.data?.label === 'Explain more' || a.data?.label === WHY).map((a) => a.at);
+    return { card, answers: mine, decided, explained, steered: mine.filter((a) => a.data?.label === SUGGEST && byOrder(card, a) < 0).at(-1)?.at ?? null };
   });
 }
 
@@ -379,6 +414,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
         entry.computer = e.computer;
         entry.confirmedOn = signedOn(last);
         entry.line = typeof line === 'string' ? line : null;
+        // When that confirmation was made, or null for a setting counted without one.
+        entry.confirmedAt = typeof last?.at === 'string' ? last.at : null;
       }
       out[e.data.key] = entry;
     }
@@ -399,21 +436,31 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const rejections = latestPerKey(sorted.filter((e) => e.kind === 'rejection'), keyOrId);
 
   // A card waits until it is decided (outcomesOf), or, for an approval or CI push card, until the
-  // decision it asks for is gone (outdatedBy). The latest of its answers is what `asked` marks,
+  // decision it asks for is gone (outdatedBy), or until a card that revises it is in the state
+  // (revisedBy). `steered` is when the director last answered it Suggest a change… (null for none):
+  // it waits meanwhile. The latest of its answers is what `asked` marks,
   // unless an `asked` record naming the card came after it: a visit handed the card out, and it may
   // have been dismissed with no answer at all, so `asked` is then that record's time with no label.
   const loop = buildLoopViews(sorted, enrolled);
   const outdated = outdatedBy(sorted, loop.reports);
+  const revised = revisedBy(sorted);
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy });
   const waiting = [];
-  for (const { card, answers: mine, decided } of outcomes) {
-    if (decided !== null || outdated(card)) continue;
+  // The approval and CI push cards closed only by a later head of their pull request or branch:
+  // undecided and not revised, so a revised card may still name one (ruling C21), with `steered` as a
+  // waiting card has it.
+  const outdatedCards = [];
+  for (const { card, answers: mine, decided, steered } of outcomes) {
+    if (decided !== null || revised(card)) continue;
+    const gone = outdated(card);
+    if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data, steered });
+    if (gone !== false) continue;
     const last = mine.at(-1);
     const shown = handedOut.filter((e) => e.data.cards.includes(card.id)).at(-1);
     const asked = shown && (!last || byOrder(last, shown) < 0) ? { at: shown.at, label: null }
       : last ? { at: last.at, label: last.data?.label ?? null } : null;
-    waiting.push({ id: card.id, at: card.at, data: card.data, asked });
+    waiting.push({ id: card.id, at: card.at, data: card.data, asked, steered });
   }
 
   // The proposals whose confirm card here was decided by Keep as is, by the id its confirm line
@@ -472,6 +519,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     ideas,
     rejections,
     waiting,
+    outdated: outdatedCards,
     approvals,
     reviews,
     ...loop,

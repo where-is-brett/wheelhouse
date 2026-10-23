@@ -31,7 +31,7 @@ import { ATTRIBUTION_OFF, frontDeskCommand } from '../protection/settings.js';
 import { helperAddress } from '../lib/paths.js';
 import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
 import { briefHash } from '../feature/files.js';
-import { reload } from '../hooks/session-start.js';
+import { reload, toolSheetLines } from '../hooks/session-start.js';
 import { HEADINGS, briefingIn, cardsDue, cardsLine } from '../hooks/board-context.js';
 import { boardModel } from '../board/model.js';
 import { effectiveSettings } from '../settings/effective.js';
@@ -216,9 +216,11 @@ export function promptContext({ views, events, seen, at, usage = null, home }) {
 }
 
 // What the scratch plugin's hooks add, asked of the stand-in: the session start's reload, or the
-// board context hook's text when the scenario has it (`seen` not null).
-function hookText({ body, views, events, seen, usage, home }) {
-  if (body.event === 'SessionStart') return reload({ views, stop: null, notes: [], frontDesk: true });
+// board context hook's text when the scenario has it (`seen` not null). The session start's text
+// carries the Claude Code tool sheet and the Wheelhouse command line, named from `plugin`, the
+// scratch plugin's folder, as the real hook's does.
+function hookText({ body, views, events, seen, usage, home, plugin }) {
+  if (body.event === 'SessionStart') return reload({ views, stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) });
   if (body.event === 'UserPromptSubmit' && seen !== null) return promptContext({ views, events, seen, at: new Date(), usage, home });
   return null;
 }
@@ -234,6 +236,9 @@ function hookText({ body, views, events, seen, usage, home }) {
 //               on feature/<work>, its files committed there
 //   pullRequests  { number: 'head' }: pull requests open when the run starts, each at the commit
 //               the feature's worktree branch holds ('head') or a full commit
+//   signed      [{ kind, data }], or a function that makes them from { head }: records the stand-in
+//               signs with its own key as the run starts, such as a review (startStandInHelper's
+//               `state.signed`); they are part of what the run started with
 //   lastPrompt  undefined for no board context hook (the build loop's scenarios); otherwise the
 //               time of the director's last prompt, or null for none, and with Wheelhouse the
 //               board context hook's text comes on each prompt (promptContext)
@@ -242,7 +247,7 @@ function hookText({ body, views, events, seen, usage, home }) {
 // seededIds, evidence, hooksGave, head, close }, with `reload`, the session start's text over the
 // seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added, in order.
 export async function setUpFrontDesk(dir, variant, {
-  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, lastPrompt, usage = null,
+  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null,
 } = {}) {
   assertUnderTmp(dir);
   // By its real path: the command runs nothing when started through a link in its path (the
@@ -282,6 +287,7 @@ export async function setUpFrontDesk(dir, variant, {
       head = git(at, 'rev-parse', 'HEAD');
     }
     if (typeof seed === 'function') seed = seed({ head });
+    if (typeof signed === 'function') signed = signed({ head });
     const pluginDirs = [];
     let appendSystemPrompt = PLAIN_PROMPT;
     let reloadText = null;
@@ -291,7 +297,7 @@ export async function setUpFrontDesk(dir, variant, {
     if (plugin) {
       write(plugin, '.claude-plugin/plugin.json', `${JSON.stringify({ name: 'wheelhouse', version: '0.0.0', description: 'Wheelhouse\'s front desk, for one evaluation run.' }, null, 2)}\n`);
       for (const file of PLUGIN_FILES) write(plugin, file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'));
-      reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true });
+      reloadText = reload({ views: standInViews(seed, approved), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) });
       write(plugin, 'hooks/hooks.json', `${JSON.stringify(hooksFor(lastPrompt !== undefined), null, 2)}\n`);
       pluginDirs.push(plugin);
       appendSystemPrompt = undefined;
@@ -306,10 +312,10 @@ export async function setUpFrontDesk(dir, variant, {
     helper = await startStandInHelper({
       address,
       home,
-      state: { events: seed, approved, pullRequests: prs },
-      onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home }),
+      state: { events: seed, approved, pullRequests: prs, signed },
+      onHook: ({ body, views, events }) => hookText({ body, views, events, seen, usage, home, plugin }),
     });
-    const seededIds = new Set(seed.map((e) => e.id));
+    const seededIds = new Set([...seed.map((e) => e.id), ...helper.events().map((e) => e.id)]);
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
     // What the hooks added, in order: { event, source, text }, and { …, text: null, failed } for a
     // hook that couldn't get its text from the stand-in.
@@ -323,7 +329,7 @@ export async function setUpFrontDesk(dir, variant, {
     };
     return {
       env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
-      helper, seededIds, evidence, hooksGave, close,
+      helper, seededIds, evidence, hooksGave, close, unreadable: [helper.keyFolder],
     };
   } catch (error) {
     await close();
@@ -373,10 +379,11 @@ export function howAsked(events, card) {
     const words = typeof text === 'string' ? text.trim().replace(/[.!?]$/, '') : '';
     return words !== '' && reply.includes(words);
   };
-  const what = String(card.question ?? '').split('\n')[0].replace(/^What this is: /, '');
+  const what = typeof card.parts?.what === 'string' ? card.parts.what : String(card.question ?? '').split('\n')[0].replace(/^What this is: /, '');
   const labels = Array.isArray(card.options) ? card.options.filter((l) => typeof l === 'string') : [];
   const says = Array.isArray(card.descriptions) ? card.descriptions[labels.indexOf(card.recommend)] : undefined;
-  const decides = typeof says === 'string' ? says.replace(/^Recommended: /, '') : null;
+  const meaning = Array.isArray(card.parts?.options) ? card.parts.options.find((o) => o?.recommended === true)?.says : undefined;
+  const decides = typeof meaning === 'string' ? meaning : typeof says === 'string' ? says.replace(/^Recommended: /, '') : null;
   if ((typeof card.line === 'string' && reply.includes(card.line)) || carries(what)
     || (labels.length > 0 && labels.every((l) => reply.includes(l)) && carries(decides))) return 'in its reply';
   return null;

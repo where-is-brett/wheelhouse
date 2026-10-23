@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ask, answer, report, openPr, pull, push, recordPlan, main, CliError } from '../../../scripts/feature/cli.js';
 import { featurePaths, readQuestions } from '../../../scripts/feature/files.js';
+import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { BUILD_QUESTION_OPTIONS } from '../../../scripts/protection/windows-builds.js';
 import { REPORT_WORDS } from '../../../scripts/lib/build-loop.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -200,7 +201,7 @@ test('ask refuses a question the director\'s card could not carry, in the compos
   const asked = (extra) => ['--what', 'Which provider?', '--why', 'It decides what users see', ...extra, '--level', '3'];
   for (const [name, argv, why] of [
     ['five options', asked([...options(['A', 'B', 'C', 'D', 'E']), '--recommend', 'A']), /at most 4/],
-    ['a put-off label', asked([...options(['A', 'Not now']), '--recommend', 'A']), /Not now/],
+    ...PUT_OFF.map((label) => [`the put-off label ${label}`, asked([...options(['A', label]), '--recommend', 'A']), new RegExp(label.replace('?', '\\?'))]),
     ['words past the card\'s length', ['--what', 'w'.repeat(1200), '--why', 'y', ...options(['A', 'B']), '--recommend', 'A', '--level', '3'], /1200 characters/],
   ]) {
     await assert.rejects(ask({ worktree: tree, argv }), (e) => e instanceof CliError && why.test(e.message) && /can't be put to the director as a card/.test(e.message), name);
@@ -507,6 +508,69 @@ test('pull asks the helper for the host\'s copy of the worktree\'s own branch by
   // A detached head has no branch to bring anything into.
   write(path.join(tree, '.git', 'HEAD'), `${'a'.repeat(40)}\n`);
   await assert.rejects(pull({ client: answering({ ok: true, already: true }), worktree: tree }), /branch/);
+});
+
+// A repository with a feature worktree, and a bundle of one more commit made on the main branch.
+function pullFixture() {
+  const base = real(tempFolder('wh-cli-pull-'));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe', env, encoding: 'utf8' }).trim();
+  const mainDir = path.join(base, 'main');
+  fs.mkdirSync(mainDir);
+  git(mainDir, 'init', '-q', '-b', 'main');
+  write(path.join(mainDir, 'a.txt'), 'a');
+  git(mainDir, 'add', '.');
+  git(mainDir, 'commit', '-q', '-m', 'first');
+  const tree = path.join(mainDir, '.claude', 'worktrees', 'login-page');
+  git(mainDir, 'worktree', 'add', '-q', tree, '-b', 'feature/login-page');
+  write(featurePaths(tree).brief, `${fence(brief())}\nThe brief.\n`);
+  // The second commit is made in a copy, so the worktree is one commit behind.
+  const copy = path.join(base, 'copy');
+  git(base, 'clone', '-q', tree, copy);
+  write(path.join(copy, 'b.txt'), 'b');
+  git(copy, 'add', '.');
+  git(copy, 'commit', '-q', '-m', 'second');
+  const sha = git(copy, 'rev-parse', 'HEAD');
+  const from = git(copy, 'rev-parse', 'HEAD~1');
+  git(copy, 'update-ref', 'refs/wheelhouse/pulled', sha);
+  const bundleFile = path.join(base, 'out.bundle');
+  git(copy, 'bundle', 'create', bundleFile, 'refs/wheelhouse/pulled');
+  const answer = { ok: true, already: false, merged: false, sha, from, bundle: fs.readFileSync(bundleFile).toString('base64') };
+  return { tree, git, answer, client: { pull: async () => answer } };
+}
+
+test('a feature\'s pull still brings the bundle\'s commits in', async () => {
+  const { tree, client, answer } = pullFixture();
+  const got = await pull({ client, worktree: tree });
+  assert.deepEqual(got, { branch: 'feature/login-page', already: false, merged: false, sha: answer.sha });
+  assert.equal(fs.readFileSync(path.join(tree, 'b.txt'), 'utf8'), 'b');
+  assert.equal(fs.existsSync(featurePaths(tree).dir + '/pull.bundle'), false);
+});
+
+test('a feature\'s pull refuses, naming it, a worktree whose config holds a key off the list, and its post-merge hook never runs', async () => {
+  const { tree, client, git } = pullFixture();
+  const marker = path.join(tree, 'ran.txt');
+  const script = path.join(tree, '..', '..', '..', '..', 'mark.sh');
+  fs.writeFileSync(script, `#!/bin/sh\necho ran > "${marker}"\n`, { mode: 0o755 });
+  // A hook in .git/hooks is stopped by the null hooks path; a config-declared one and a program-running core setting are refused by the look.
+  const hooks = path.join(tree, '..', '..', '..', '.git', 'hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  fs.copyFileSync(script, path.join(hooks, 'post-merge'));
+  for (const [key, args] of [
+    ['hook.x.command', ['config', 'hook.x.command', script]],
+    ['core.alternateRefsCommand', ['config', 'core.alternateRefsCommand', script]],
+  ]) {
+    git(tree, ...args);
+    if (key === 'hook.x.command') git(tree, 'config', 'hook.x.event', 'post-merge');
+    await assert.rejects(pull({ client, worktree: tree }), (e) => e instanceof CliError && e.message.includes(key.toLowerCase()) && e.message.includes('does not allow') && /run pull again/.test(e.message) && !/setup|Go ahead/i.test(e.message), key);
+    assert.equal(fs.existsSync(marker), false, key);
+    assert.equal(fs.existsSync(path.join(tree, 'b.txt')), false, key);
+    git(tree, 'config', '--unset-all', key);
+    if (key === 'hook.x.command') git(tree, 'config', '--unset-all', 'hook.x.event');
+  }
+  // With the settings gone the pull goes through, and the plain hook in .git/hooks still does not run.
+  await pull({ client, worktree: tree });
+  assert.equal(fs.existsSync(marker), false);
 });
 
 test('open-pr opens nothing when its branch can\'t be pushed', async () => {

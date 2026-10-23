@@ -15,7 +15,7 @@ import {
 import { runScenario, runSession, sessionIdOf } from '../../../scripts/eval/harness.js';
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { FRONT_DESK_LINE, reload } from '../../../scripts/hooks/session-start.js';
+import { FRONT_DESK_LINE, reload, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { HEADINGS, cardsLine, decide } from '../../../scripts/hooks/board-context.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
@@ -172,9 +172,17 @@ test('promptContext gives what the real board context hook gives over the same s
   const blocked = /^- Pull request #17 for [^\n]* is blocked: [^\n]*$/m;
   assert.match(real, blocked);
   assert.match(mine, blocked);
-  const withoutHealth = real.replace(/\nTo watch:\n(?:- [^\n]*\n?)+/, (block) => block.split('\n').filter((line) => !line.startsWith('- ') || blocked.test(line)).join('\n'));
-  assert.notEqual(withoutHealth, real, 'the real text has health lines to take out');
-  assert.equal(withoutHealth, mine);
+  // At the standard length the real hook's health lines cost words, so the parts after the waiting
+  // cards may be cut differently; what the director must see is the same: the verdict, every waiting
+  // card, the blocked pull request and the foot.
+  const block = (text, label) => text.split('\n\n').find((part) => part.startsWith(label));
+  assert.equal(block(real, 'Waiting on you'), block(mine, 'Waiting on you'));
+  assert.ok(block(real, 'Waiting on you').includes('Should Christmas pre-orders close'));
+  for (const text of [real, mine]) {
+    assert.match(text, /\n\nOne thing needs you\. Nothing is broken\.\n\n/);
+    assert.match(text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\./);
+  }
+  assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
 });
 
 test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the reload over the state as it stands, and the board context hook\'s text', async () => {
@@ -194,7 +202,8 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     assert.equal(hooks.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/context.js"');
     const hook = (input) => runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify(input) });
     const start = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'startup' })).out);
-    assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true }));
+    assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) }));
+    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.match(start.hookSpecificOutput.additionalContext, /Changed without the director's confirmation:\n.*Prices show to the cent/);
     // Confirmed between turns, the next reload has it in the rulebook instead.
     context.helper.confirm(context.helper.events()[0].id);

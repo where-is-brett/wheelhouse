@@ -16,7 +16,7 @@ import { parseArgs } from '../../../scripts/eval/harness.js';
 import { loadScenarios } from '../../../scripts/eval/run.js';
 import { standInViews, startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { FRONT_DESK_LINE } from '../../../scripts/hooks/session-start.js';
+import { FRONT_DESK_LINE, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { amendLine, approveWorkLine } from '../../../scripts/state/card-lines.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
@@ -138,12 +138,16 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
   try {
     const [plugin] = context.pluginDirs;
     assert.equal(context.appendSystemPrompt, undefined, 'no line in the system prompt stands in for the playbook');
-    assert.equal(context.reload, FRONT_DESK_LINE);
+    // The front desk's line, then the tool sheet and the command line, as the real session start gives a Claude Code front desk.
+    const given = [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n');
+    assert.ok(given.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+    assert.ok(fs.existsSync(path.join(plugin, 'scripts', 'frontdesk', 'cli.js')), 'the command names a file the scratch plugin holds');
+    assert.equal(context.reload, given);
     const hooks = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8'));
     assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/hooks/context.js"');
     assert.equal(hooks.hooks.UserPromptSubmit, undefined, 'no board context hook for the build loop\'s scenarios');
     const start = await runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }) });
-    assert.deepEqual(JSON.parse(start.out), { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: FRONT_DESK_LINE } });
+    assert.deepEqual(JSON.parse(start.out), { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: given } });
     const allow = JSON.parse(fs.readFileSync(path.join(project.dir, '.claude', 'settings.local.json'), 'utf8')).permissions.allow;
     assert.ok(allow.includes(`Bash(node "${plugin}/scripts/frontdesk/cli.js":*)`), 'the front desk\'s own rule');
     assert.ok(allow.includes('Edit(/.wheelhouse/front-desk.json)'), 'and the one file it writes its input to without a scratchpad');
@@ -260,8 +264,8 @@ test('a card is judged by its card event and how it was put to the director', ()
   assert.equal(howAsked(events(['say', `Here is the card.\n\n${card.line}`]), card), 'in its reply');
   assert.equal(howAsked(events(['say', 'Change export as written. Click below.']), card), 'in its reply', 'its first part counts');
   // Every label counts only with the card's own words: what the option it recommends says (F83).
-  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Not now**, **Explain more** or **Show me**.']), card), 'in its reply');
-  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Not now**, **Explain more** or **Show me**.']), card), null, 'the buttons alone say nothing of the change');
+  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Suggest a change…**, **Show me** or **Not now**.']), card), 'in its reply');
+  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Suggest a change…**, **Show me** or **Not now**.']), card), null, 'the buttons alone say nothing of the change');
   assert.equal(howAsked(events(['say', 'Shall I change it? Not now is fine too.']), card), null, 'some of its labels are not the card');
   assert.equal(howAsked(events(['ToolSearch', { query: 'select:AskUserQuestion' }]), card), null, 'a search for the tool alone is not asking');
   assert.equal(howAsked(events(['say', 'Done.'], ['AskUserQuestion', { questions: [question] }, '', { parent: 'p1' }]), card), null, 'a subagent\'s call is not the session\'s');

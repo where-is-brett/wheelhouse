@@ -46,6 +46,7 @@ import { SESSION_CHECKS } from '../../scripts/setup/health.js';
 import { PUSH_TEST_WAIT_MS } from '../../scripts/lib/setup-numbers.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
 import { decide as sessionStart } from '../../scripts/hooks/session-start.js';
+import claudeCodeSheet from '../../adapters/claude-code/tool-sheet.js';
 import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
 import { decide as lineageHold } from '../../scripts/hooks/lineage-hold.js';
 import { decide as toolGuard } from '../../scripts/hooks/tool-guard.js';
@@ -485,13 +486,15 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     clock.tick();
   });
 
-  // A session start in the product folder, as Claude Code calls the hook: its context lines.
+  // A session start in the product folder, as Claude Code calls the hook: its context lines, without the tool
+  // sheet and the command line (tests/skills/tool-names.test.js pins those), so setup's own lines read as they are.
   c.sessionStart = () => c.act(async () => {
     const got = await sessionStart({ session_id: session, cwd: folder, hook_event_name: 'SessionStart', source: 'startup' }, {
       client: c.client, now: clock.now, dir: managedDir, spawn: () => { throw new Error('nothing is started by the session start here'); },
       background: async () => null, claudeHome: config, lineageRoot: k.lineageRoot,
     });
-    return String(got?.hookSpecificOutput?.additionalContext ?? '').split('\n').filter(Boolean);
+    const sheet = new Set(claudeCodeSheet.split('\n'));
+    return String(got?.hookSpecificOutput?.additionalContext ?? '').split('\n').filter((l) => l !== '' && !sheet.has(l) && !l.startsWith('The Wheelhouse command is '));
   });
 
   // The foreman's watcher, stood in for: a sleeping child process holding the watcher's lock.

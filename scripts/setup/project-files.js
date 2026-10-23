@@ -77,6 +77,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SETUP_FILES } from '../../adapters/claude-code/packaging.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
@@ -103,8 +104,8 @@ import { LIVE_DATA } from './questions.js';
 import { newId, readJournal, SAY_CHARS } from './journal.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
-// The setup commit's files, and only these (ruling R42). This computer's local settings never go in.
-export const SETUP_FILES = Object.freeze(['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md']);
+// The setup commit's files, and only these (ruling R42). The adapter holds the list (packaging.js).
+export { SETUP_FILES };
 const [SETTINGS, CONFIG, CLAUDE] = SETUP_FILES;
 const LOCAL = '.claude/settings.local.json';
 // The line that keeps this computer's settings out of git, in the folder's own .git/info/exclude.

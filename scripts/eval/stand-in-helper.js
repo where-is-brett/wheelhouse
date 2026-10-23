@@ -11,7 +11,10 @@
 // For the front desk's scenarios it also answers the scratch plugin's hooks
 // (`onHook`, route /eval/hook), which a real helper never does, and signs, with a
 // key of its own, the confirmation a director's click on a confirm card would
-// record (`confirm`), since no click is made in an evaluation.
+// record (`confirm`), since no click is made in an evaluation, and the records a run starts with
+// that only a signature makes (`state.signed`, such as a review). It answers /merge with the real
+// merge gate's decision (gateDecision) over what it holds: CI always passed, the branch up to
+// date, no incident, so the review and the approval are what decide.
 // Like the real helper, it refuses a write carrying the baseline card, its click or the private
 // note's figures (scripts/state/events.js, carriesBaseline), and answers /measures/baseline with
 // the real route (scripts/measures/baseline.js). The baseline's files live in the session's
@@ -32,7 +35,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { PLAIN_KINDS, PROTECTED_KINDS, confirmationFor, makeEvent, carriesBaseline } from '../state/events.js';
-import { buildViews } from '../state/views.js';
+import { buildViews, latestFor } from '../state/views.js';
+import { gateDecision } from '../gate/conditions.js';
 import { makeSigningKey } from '../state/signing.js';
 import { baselineRoutes } from '../measures/baseline.js';
 import { CARRIES_BASELINE } from '../lib/measures-clicks.js';
@@ -124,8 +128,10 @@ export function standInViews(events, approved = {}, enrolled = []) {
 // Starts the stand-in on `address` (a socket path, or a pipe on Windows).
 // `answers` maps a question id to the label the director chose; any other
 // question has no answer yet. `state` is what the project's state holds when the
-// run starts: { events, approved, pullRequests } (see standInViews; `pullRequests` maps the number
-// of a pull request already open to its head commit). `onHook({ body, views, events })`, when
+// run starts: { events, approved, pullRequests, signed } (see standInViews; `pullRequests` maps the
+// number of a pull request already open to its head commit; `signed` lists [{ kind, data }] of
+// records the stand-in signs with its own key as the run starts, a review say, which join the
+// events). `onHook({ body, views, events })`, when
 // given, answers /eval/hook with the text a hook adds (`{ text }`, or null for none): the scratch
 // plugin's hooks ask it, with the event and what Claude Code gave them. `home` is the session's
 // scratch WHEELHOUSE_HOME, where the baseline's files are kept and the director's clicks are read;
@@ -148,9 +154,11 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
   const events = [...(state.events ?? [])];
   const approved = { ...(state.approved ?? {}) };
   const own = inHome(scratch, () => makeSigningKey());
+  for (const { kind, data } of state.signed ?? []) events.push(inHome(scratch, () => makeEvent({ kind, data })));
   const enrolled = [{ computer: own.computer, publicKey: own.publicKey, enrolledAt: new Date(0).toISOString() }];
   const views = () => standInViews(events, approved, enrolled);
   const opened = new Map(Object.entries(state.pullRequests ?? {}).map(([number, sha]) => [Number(number), sha]));
+  const merged = new Set();
   let nextPr = Math.max(0, ...opened.keys()) + 1;
   const record = (entry) => {
     records.push({ at: new Date().toISOString(), ...entry });
@@ -158,6 +166,44 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
 
   const routes = {
     'GET /health': () => ({ ok: true, standIn: true }),
+    // The merge: { project, number }. The real gate's decision over the reviews and approvals the
+    // state holds; a merge it allows is recorded as merged, and the pull request is no longer open.
+    'POST /merge': (body) => {
+      const number = body.number;
+      const sha = Number.isInteger(number) ? opened.get(number) : undefined;
+      if (sha === undefined || merged.has(number)) {
+        const refused = `pull request ${number ?? 'none'} is not open`;
+        record({ route: 'merge', number: number ?? null, refused: true });
+        return { ok: false, refused, reasons: [refused], guardrailPaths: [], criticalAreas: [] };
+      }
+      const held = views();
+      // As the real mergeAnswer: the caller may only raise STOP, bypass and the approval and
+      // guardrail conditions; the review is always required.
+      const touchesGuardrails = body.touchesGuardrails === true;
+      const decision = gateDecision({
+        stop: body.stop === true,
+        bypass: body.bypass === true,
+        holdsLock: true,
+        headSha: sha,
+        ci: { sha, state: 'success' },
+        reviewRequired: true,
+        approvalRequired: body.approvalRequired === true || touchesGuardrails,
+        touchesGuardrails,
+        review: latestFor(held.reviews, number),
+        approval: latestFor(held.approvals, number),
+        enrolled,
+        upToDate: true,
+        incident: { open: false },
+        provenance: { ok: true },
+      });
+      if (!decision.allow) {
+        record({ route: 'merge', number, refused: true, reasons: decision.reasons });
+        return { ok: false, refused: decision.reasons.join('; '), reasons: decision.reasons, guardrailPaths: [], criticalAreas: [] };
+      }
+      merged.add(number);
+      record({ route: 'merge', number, sha, merged: true });
+      return { ok: true, merged: true, sha };
+    },
     // cli.js push and open-pr: { cwd, dir, refspec }. Like the real helper, it never pushes the default branch.
     'POST /push': (body) => {
       const branch = typeof body.refspec === 'string' ? body.refspec : null;
@@ -200,7 +246,7 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       record({ route: 'pr/state', number: body.number ?? null, sha });
       return sha === null
         ? { ok: false, refused: `there is no pull request #${body.number}` }
-        : { ok: true, result: { headSha: sha, state: 'open', mergeable: 'clean' } };
+        : { ok: true, result: { headSha: sha, state: merged.has(body.number) ? 'merged' : 'open', mergeable: 'clean' } };
     },
     // cli.js preview, for Show me: { cwd, number } -> the preview's address of a pull request
     // the stand-in knows as open, or null, as the real helper answers one with none.
@@ -326,6 +372,8 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
 
   return {
     address,
+    // The folder holding its signing key: a session's sandbox is told not to read it.
+    keyFolder: scratch,
     records: () => records.map((entry) => ({ ...entry })),
     events: () => events.map((event) => structuredClone(event)),
     views,

@@ -474,6 +474,10 @@ test('a green run gives a green board', async () => {
     assert.ok(session.every((l) => l.startsWith('Passed:')));
     assert.ok(got.lines.includes('Board: Protection: Standard'));
     assert.match(got.board, /Wheelhouse's board/);
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `All ${checks} checks passed. Wheelhouse is ready.`);
+    assert.equal(got.lines.at(-1), got.verdict, 'one verdict ends the lines');
+    assert.equal(got.lines.filter((l) => /checks passed\./.test(l)).length, 1);
     const watched = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'watch', text: 'Your profile isn\'t backed up off this computer yet' }]) });
     assert.equal(watched.green, true);
   });
@@ -491,6 +495,9 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
     assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10 again.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
     assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
+    const every = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `${every - 3} of ${every} checks passed. Here is what to do.`);
+    assert.equal(got.lines.at(-1), got.verdict);
   });
 });
 
@@ -537,6 +544,31 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed, 
     assert.equal(got.green, false);
     assert.equal(got.trials, null);
     assert.match(got.lines[0], /^Not yet: step 10's checks haven't run/);
+  });
+});
+
+test('the verdict counts only the checks that print a line, so its figures match the lines shown', async () => {
+  const sessionChecks = Object.keys(SESSION_CHECKS).length;
+  const every = Object.keys(HELPER_CHECKS).length + sessionChecks;
+  await withProject(async ({ folder }) => {
+    // Step 10 not run: no helper record, so the helper's checks print nothing and are not counted;
+    // the line saying step 10 hasn't run is.
+    const got = await healthCheck({ folder, run: runWith(folder, { upTo: 9 }), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Not yet):/.test(l)).length, sessionChecks + 1, got.lines.join('\n'));
+    assert.equal(got.verdict, `${sessionChecks} of ${sessionChecks + 1} checks passed. Here is what to do.`);
+  });
+  await withProject(async ({ folder }) => {
+    // A STOP line on the board is shown and counted, once.
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'STOP is on' }]) });
+    assert.equal(stopped.verdict, `${every} of ${every + 1} checks passed. Here is what to do.`);
+  });
+  await withProject(async ({ folder }) => {
+    // Step 10 marked done with no record of its checks: one line says so, and it is counted.
+    const got = await healthCheck({ folder, run: runWith(folder), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.green, false);
+    assert.ok(got.lines.some((l) => l.startsWith('Failed: step 10\'s record of its checks is missing.')), got.lines.join('\n'));
+    assert.equal(got.verdict, `${sessionChecks} of ${sessionChecks + 1} checks passed. Here is what to do.`);
   });
 });
 

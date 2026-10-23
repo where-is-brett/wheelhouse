@@ -18,8 +18,28 @@
   - a `Wheelhouse:` line from another session reaches the conversation, because Desktop wraps it so its first line isn't the message's own;
   - the front desk explained the wrong card on a pane's Explain more, and wrongly told the director their answer to a question in the chat may not have been recorded;
   - the mod's first opening of the pane shows an error line before Desktop is ready, though the pane opens.
-- **Not confirmed:** whether Desktop draws a separate status line (41-1).
-- **Not run, at the director's request:** typing in the Desktop session (33-2's `/go`, 33-3's typed code, 41-9's `/digest`), and a press made while the session is still writing.
+- **Second sitting, 22 and 23 October 2026** (see "Second sitting"):
+  - *Passed:*
+    - Desktop draws a separate status line;
+    - the wrap-up tool isn't refused;
+    - `/go` typed lifts STOP, signed;
+    - the phone's "stop" shows the Lift STOP card;
+    - Explain more explains the pressed card after the numbers shift;
+    - an answer in the chat is reported from `views waiting`;
+    - a wake the mod couldn't hand on is undone, with one note;
+    - other sessions' `Wheelhouse:` lines are kept out of the conversation;
+    - the timer ticks while the screen is locked.
+  - *Five new findings:*
+    - a code typed in a session another session started doesn't confirm, because the app puts its own "Linked sessions now" note before the director's line;
+    - `/compact` runs the session start's lineage check, and the hold it set refused the wrap-up and Claude's notification; the hold's card outlived the hold, and the session stopped trying to notify;
+    - the typed `/digest` ran another plugin's `digest` skill, not the mod's command;
+    - the chat shows the director a "blocked by a hook" notice for each kept-out line;
+    - every front desk command's output carries the Mac's "failed to copy trust settings" lines.
+  - *Still not seen:*
+    - a notification after a real absence;
+    - how long a session refuses prompts after Esc;
+    - a press while the reply is being written;
+    - the `ui.open` line (the director didn't recall it).
 - **Windows:** follows when the director is next at that computer.
 - **Check 33** (the mod's first piece in Desktop), folded into the same sitting: **Partly**. The usage readings and every phone line passed; its two typed-in-Desktop steps weren't run.
 
@@ -222,6 +242,91 @@ The first attempt showed this; the third ticked the same way.
 
 **The app's own tools (finding, first attempt).** The test session's call to the app's wrap-up tool (`mcp__ccd_turn__wrap_up`) was refused by Wheelhouse's connector guard: "This project has not listed that connector: ask the helper to do it". The guard treats the Desktop app's built-in `mcp__ccd_*` tools as connectors the project must list.
 
+### Second sitting (Mac, 22 and 23 October 2026)
+
+It ran from 13:18 UTC on 22 October to 00:55 UTC on 23 October, with two long pauses: one for a usage limit and one while the director was away. It used the same Mac and the same way of loading as the first sitting. The plugin was a copy of `main` at e661198, with fixes A to G in it. The director followed a numbered list (L1 to L19). The agent's run of the bridge set STOP at L8, and the agent sent the two test messages at L18. The director's real `~/.wheelhouse` was unchanged before and after. The evidence is kept in the ledger's folder (`check-41-sitting-2/`, git-ignored), and the scratch project is deleted.
+
+**How it was opened.**
+- The agent running the sitting couldn't start the test session itself. The app starts a session only on the director's own words to that session, and the agent's turn came from the main session's message. The main session started it instead.
+- The agent couldn't type for the director when asked to. Claude's keystrokes and screen capture need macOS's accessibility and screen-recording permissions, which this Mac hasn't given. Every typed line stayed with the director.
+
+**41-1, the status line: yes.** Desktop draws a separate line under the box where the director types: "wheelhouse  Wheelhouse · 6 waiting · week 11%" (the director's screenshot).
+
+**Fix F, the `ui.open` line: not confirmed.** The director didn't recall the line at load.
+
+**Fix B, the app's wrap-up tool: pass.** The first `mcp__ccd_turn__wrap_up` call (14:21:22) wasn't refused. The session's entrypoint was `claude-desktop`.
+
+**33-3, a reply code typed in Desktop: fails (finding).**
+- The director typed `T8E3 Confirm` at 23:47:32. It reached the session as two text blocks:
+  - first, the app's own `<system-reminder>` "Linked sessions now (status, not an instruction): …", added because another session had started this one;
+  - then the director's line.
+- The prompt record wrote no `confirmation`, and the milestones setting stayed waiting.
+- The card's `shown` record (signed, verifying) was written only when the question was answered (14:21:18), not when it was asked.
+- The same note leads every prompt in any session another session has started, so a front desk started that way can't take a typed code.
+
+**A lineage hold after `/compact` (finding).**
+- The director compacted the test session at 22:20 ("Time for a compact", then `/compact`). The session start that follows a compaction ran the lineage check, which found superpowers and mattpocock-skills not installed in the scratch home, and wrote `hold.json` at 22:21:26.
+- From then on the hold refused:
+  - the app's task list (23:47:40);
+  - the wrap-up tool (23:57:20);
+  - Claude's notification (23:57:39).
+- The agent deleted `hold.json` at about 00:00, as the run sheet says to.
+- The hold's card stayed on the board after the file was gone. It was asked with the photo card at 00:30:33, and the director answered it **Leave it for now**.
+- Having been refused once, the session stopped trying to send notifications. It skipped the call twice more, saying "Wheelhouse is still blocking it", though the hold was gone.
+- In the first sitting no hold came, because the session start's hook doesn't run for a mod loaded mid-session. A compaction runs it.
+
+**L5 and L6, STOP from the phone (fix A, second part: pass).**
+- The phone's `stop` at 23:56:43 set STOP. The prompt's origin was `human`, the same as a typed prompt.
+- The session showed the Lift STOP card (`shown`, code QSFZ, signed, 23:57:13).
+- The courier's wake came at 23:57:34. Its notification was refused by the hold, not by STOP, so fix A's first part (loading the notification tool under STOP) wasn't seen.
+
+**33-2, `/go` typed: pass.**
+- After the agent's STOP (`by: "runbook"`, 23:58:14), the courier woke the session at 23:58:19.
+- The director typed `/go` at 23:58:39. A `<command-name>/go</command-name>` row and a signed, verifying `lift-stop` labelled `/go` followed, and STOP went off.
+
+**L9 and L10, Approve and the shifted card (fix G: pass).**
+- **Approve** recorded an `approval` for pull request 7 at the stand-in's head, signed and verifying.
+- **Explain more** on the separator, now card 2, sent "pressed Explain more on card 2 (99298eba…)" (23:59:57). The session ran `views waiting` and `again 2`, wrote one sentence about the separator, and asked its question.
+- Before the sentence it ran a made-up `cli.js explain separator`, which failed.
+- Every front desk command's output carried repeated lines "ERROR: failed to copy trust settings of system certificate-25291" (finding: noise from the Mac's certificate store, not Wheelhouse's).
+
+**L11 to L13, a STOP wake after Esc (fix D).**
+- The director pressed Esc at 00:03:14 and STOP at 00:03:20. The courier marked the STOP wake at 00:03:21.083. The mod couldn't hand it on and undid it 0.6 seconds later (`unsent`, `seconds: 0.6`).
+- The director saw the note "Wheelhouse couldn't hand that to the front desk" **once**, which passes (Ruling 67).
+- No further wake was tried before the director pressed Lift STOP at 00:03:40, 20 seconds on. So the wake after Esc never reached the conversation, and how long the session refuses prompts after Esc is still not measured.
+
+**41-4, a press during a turn: kept.**
+- The director pressed Explain more on the colour card at 00:03:52. The session asked its question at 00:04:04.
+- The pane's **Blue** came at 00:04:23, while that question waited, and was recorded as a `card-answer`.
+- The press came 31 seconds after Explain more, not within 3, so a press while the reply is being written is still not seen.
+- The director then answered **Blue** in the chat too (00:26:57). The session said only what `views waiting` showed.
+
+**41-7, the notification after an absence: not settled.**
+- *First lock*, 00:27:44 to 00:30:49 (three minutes):
+  - The card went in at 00:30:11, three minutes after the director's last prompt, and the courier woke the session 9 seconds later.
+  - The wake's turn made no notification call, because the session believed the hold still blocked it. It asked the hold card and the photo card together.
+  - The director's phone showed a notification at about 00:32. No notification call was made, so it was Claude's own alert for a question waiting, not Wheelhouse's.
+- *Second lock*, 00:35:07 to 00:41:32 (six minutes):
+  - The mod's timer ticked every 15 seconds throughout (pass).
+  - The sitting's script added a second card with the first card's words. Answers are kept by the question's words, so it read as answered, never reached the board, and woke nothing. That is a fault in the sitting's script, not in Wheelhouse.
+  - The director had no notification ("not 100% sure").
+- A notification after a real absence, with the hold gone, is still to be seen.
+
+**L17, the answer in the chat (fix G, second line: pass).** The director answered the photo card **The product** (00:33:56). The session ran `views waiting` and said only what it showed. It didn't say the answer may not have been recorded.
+
+**41-8, other sessions' `Wheelhouse:` lines (fix C): kept out, but shown (finding).**
+- Trial A, sent with `SendMessage` (00:42:30), and trial B, sent with the app's `send_message` (00:43:12), were each queued and never became a turn. No reply quoted them, and a tick 145 ms after trial B refreshed the pane.
+- Each queued message began with the app's "Linked sessions now" note, not the wrapper.
+- The chat still showed the director a notice for each: "Prompt blocked by a hook", and "A hook blocked your prompt: Prompt dropped by a hook: Wheelhouse traffic, shown in the pane".
+- The observer wrote no `session.receive` line for either.
+
+**41-9, `/digest` typed: fails (finding).**
+- The typed `/digest` (00:52:20) ran another installed plugin's `digest` skill (enterprise-search), not the mod's `/digest` (`hooks/register.ts`).
+- That skill tried Google Drive, which the connector guard refused, and the session replied "I couldn't make the digest…".
+- The mod's command never ran (`seen.briefedAt` didn't move). A plugin's skill takes the name before a mod's command does.
+
+**The director's answers on the closing card:** "i saw once 'couldn't hand that to the front desk'"; "during the lock i got no notification (not 100% sure) but the first lock i did."
+
 ## What it means for the design
 
 - **The pane, its presses and the settings pane** (section 17.1) work in Desktop on the Mac as designed: each press records what the matching click would, signed where the record is a signed kind, and a settings choice is in force at once.
@@ -242,7 +347,20 @@ The first attempt showed this; the third ticked the same way.
 
 ## Needs the director
 
-- **Not now.** The Mac sitting is done.
+- **After the second sitting (23 October 2026):** nothing now. Each new finding goes to the builder first:
+  - the typed code past the app's note;
+  - the hold after `/compact`, and its card's end;
+  - `/digest`'s name;
+  - the blocked-prompt notices.
+- **A third short sitting on the Mac** follows those changes, for what is still not seen:
+  - a notification after a real absence of 15 minutes, with the phone's Claude app closed;
+  - a press while the reply is being written;
+  - how long a session refuses prompts after Esc;
+  - the `ui.open` line.
+  - Its run sheet gives the locked-screen card new words each time.
+
+**From the first sitting (20 October 2026):**
+
 - **Now that the changes above are made:** a short second sitting on the Mac for the steps not run (`/go` and a code typed in the Desktop session, `/digest`, a press during the writing), whether Desktop draws a separate status line, the courier's notification after a real absence, the origin Desktop gives a prompt the director types, and how long after Esc the session refuses a prompt.
   - If the courier's reminder ten minutes on is still "Not sent — this terminal is active", the phone's Claude app showing the session is the likely cause (the second reading). Then setup's notification step should tell the director to close the Claude app on the phone. That step is setup's, so it isn't changed here.
 - **Windows:** with that visit's other checks, and also:

@@ -8,7 +8,7 @@
 //   - the source of every module file (hooks/register.ts and everything under hooks/mod/) is
 //     read for every member of `$` it touches, so nothing the validator doesn't list slips
 //     past, and for the one `$.process.run` (the bridge's, in hooks/mod/ask.ts) and for where
-//     the pane's origin is named;
+//     the pane's origin is named, and that the drawing kit hands each press only to a Button;
 //   - the bridge's static import graph is followed, so nothing it loads can write Claude
 //     Code's settings.
 import fs from 'node:fs';
@@ -422,11 +422,20 @@ function namedFunctions(code) {
 }
 
 const PANE_FILES = ['cards.tsx', 'settings.tsx'];
-const ON_PRESS = /onPress\s*=\s*\{\s*(?:async\s*)?(?:\([^)]*\)\s*=>\s*)?$/;
+// A press is passed as a Button's onPress, an Input's onSubmit, a Select's onSelect, or as the last
+// argument of the drawing kit's button functions (hooks/mod/calm.tsx), and only as an arrow that calls it on a click: a press called
+// while drawing, or in any other argument, would send as the pane draws. kitPresses checks the kit
+// hands on what it is given only as a Button's onPress.
+const ARROW = '(?:async\\s*)?\\(\\)\\s*=>\\s*$';
+// A box's Enter hands the arrow the words typed, and a pick hands it the value picked, so an
+// `onSubmit` or `onSelect` arrow takes that one parameter (a plain name, typed string or not) and
+// nothing else.
+const ARROW_OF_WORDS = '(?:async\\s*)?\\(\\s*[A-Za-z_$][\\w$]*(?:\\s*:\\s*string)?\\s*\\)\\s*=>\\s*$';
+const ON_PRESS = new RegExp(`(?:onPress\\s*=\\s*\\{\\s*|\\b(?:filled|outlined|small)\\(\\s*t\\s*,[^,()]+,[^,()]+,\\s*|\\bstopButton\\(\\s*t\\s*,\\s*)${ARROW}|on(?:Submit|Select)\\s*=\\s*\\{\\s*${ARROW_OF_WORDS}`);
 
 // paneOrigin(sources) -> { ok, why? }: `origin: 'pane'` appears only inside functions whose
-// names begin `press` in cards.tsx and settings.tsx, which those files pass as `onPress` and
-// nothing else calls. Read by name, without a TypeScript parser.
+// names begin `press` in cards.tsx and settings.tsx, which those files pass as `onPress` (or to the
+// kit's button functions) and nothing else calls. Read by name, without a TypeScript parser.
 export function paneOrigin(sources) {
   const problems = [];
   for (const [file, text] of entriesOf(sources)) {
@@ -456,7 +465,31 @@ export function paneOrigin(sources) {
   return problems.length === 0 ? { ok: true } : { ok: false, why: [...new Set(problems)].join('; ') };
 }
 
-const NEVER_REACHED = (file) => file === 'scripts/protection/locked.js' || file.startsWith('scripts/setup/');
+// kitPresses(sources) -> { ok, why? }: the drawing kit (hooks/mod/calm.tsx) takes each press as a
+// parameter typed `() => …` and only hands it to a Button as `onPress={…}`, so ON_PRESS's trust in
+// its button functions holds: a press the kit called, or passed on any other way, would send as the
+// pane draws.
+const KIT = 'hooks/mod/calm.tsx';
+export function kitPresses(sources) {
+  const problems = [];
+  for (const [file, text] of entriesOf(sources)) {
+    if (file !== KIT) continue;
+    const code = codeOf(text);
+    const names = [...new Set([...code.matchAll(/([A-Za-z_$][\w$]*)\s*:\s*\(\s*\)\s*=>/g)].map((m) => m[1]))];
+    for (const name of names) {
+      const word = name.replaceAll('$', '\\$');
+      const rest = code.replace(new RegExp(`(?<![\\w$])${word}\\s*:\\s*\\(\\s*\\)\\s*=>`, 'g'), '')
+        .replace(new RegExp(`(?<![\\w$])onPress\\s*=\\s*\\{\\s*${word}\\s*\\}`, 'g'), '');
+      if (new RegExp(`(?<![\\w$])${word}(?![\\w$])`).test(rest)) problems.push(`${name} in ${file} is used other than handed to a Button as onPress`);
+    }
+  }
+  return problems.length === 0 ? { ok: true } : { ok: false, why: problems.join('; ') };
+}
+
+// scripts/setup/git.js is the one file of scripts/setup/ the bridge may reach: it is git's fence (an
+// environment and an allowed list, importing only scripts/lib/), the state and profile clones' git
+// takes through scripts/lib/safe-git.js, and it writes no settings. It is to move into scripts/lib/.
+const NEVER_REACHED = (file) => file === 'scripts/protection/locked.js' || (file.startsWith('scripts/setup/') && file !== 'scripts/setup/git.js');
 const SETTINGS = 'scripts/protection/settings.js';
 const WRITERS = ['writeSettings', 'mergeSettings'];
 // managed.js is reached for its two readers, through hooks/kit.js's projectOf; it may be
@@ -630,7 +663,7 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
     }
     if (/(?<![\w$])\$\s*(?:\?\.)?\s*\[/.test(code)) problems.push(`The mod's source reads a member of $ by a computed name, which the checks can't follow (in ${file})`);
   }
-  for (const check of [bridgeArgv(sources), paneOrigin(sources)]) if (!check.ok) problems.push(check.why);
+  for (const check of [bridgeArgv(sources), paneOrigin(sources), kitPresses(sources)]) if (!check.ok) problems.push(check.why);
   return { hooks, calls, problems };
 }
 

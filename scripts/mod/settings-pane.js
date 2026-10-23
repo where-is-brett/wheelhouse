@@ -13,11 +13,16 @@
 // which the views work out from the confirmed events, so a change made in the chat meanwhile is
 // the one handed back to.
 //
-// Under STOP the helper refuses every write, so a press records nothing and says so. Budget
-// allocation is in the backlog (design section 14.1): the budget row offers no choice.
+// A row also offers Undo for UNDO_MS after its latest change was confirmed: the choice `undo`
+// sets the value in force before that change, signed and confirmed as any pick is.
+//
+// Under STOP every pick, Undo included, records nothing and says so. Budget allocation is in the
+// backlog (design section 14.1): the budget row offers no choice.
 import { SETTINGS, definitionOf, checkSetting, say } from '../settings/catalogue.js';
 import { effectiveSettings, sayTime, sayValue } from '../settings/effective.js';
-import { AWAY } from '../lib/mod-numbers.js';
+import { AWAY, UNDO_MS } from '../lib/mod-numbers.js';
+import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_TO_UNDO, awayToast } from '../lib/calm-words.js';
+import { stopState as defaultStopState } from '../lib/stop.js';
 import { confirmationFor, listEvents } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget, BUDGET_MS } from '../hooks/pending.js';
@@ -38,7 +43,8 @@ const DAY_MS = 24 * HOUR_MS;
 
 export const SAYS = {
   notOffered: 'That choice isn\'t offered now',
-  stopOn: 'Settings change once STOP is lifted',
+  stopOn: SETTINGS_UNDER_STOP,
+  nothingToUndo: NOTHING_TO_UNDO,
   notTaken: 'That setting couldn\'t be changed now: the helper didn\'t take it',
   late: 'The helper didn\'t answer in time; if the change lands, it waits for your Confirm',
   failed: 'That setting couldn\'t be changed this time',
@@ -66,17 +72,17 @@ const LEVEL_WORDS = {
 };
 const PANE = {
   autonomy: { label: 'Autonomy', kind: 'levels' },
-  showFirst: { label: 'Show before build', kind: 'levels' },
-  presence: { label: 'Presence', kind: 'presence' },
+  showFirst: { label: 'Show before building', kind: 'levels' },
+  presence: { label: 'Availability', kind: 'presence' },
   milestones: { label: 'Feature milestones', kind: 'levels' },
-  efficiency: { label: 'Token efficiency', kind: 'levels' },
+  efficiency: { label: 'Thoroughness', kind: 'levels' },
   budget: { label: 'Budget', kind: 'none', why: BUDGET_WHY },
-  pace: { label: 'Pace', kind: 'levels' },
-  briefing: { label: 'Briefing', kind: 'levels' },
-  briefingGapHours: { label: 'Briefing gap', kind: 'none', why: ASK },
+  pace: { label: 'Builders at once', kind: 'levels' },
+  briefing: { label: 'Briefing length', kind: 'levels' },
+  briefingGapHours: { label: 'Hours before a new briefing', kind: 'none', why: ASK },
   explanations: { label: 'Explanations', kind: 'levels' },
   notifications: { label: 'Notifications', kind: 'none', why: ASK },
-  boardTab: { label: 'Board tab', kind: 'levels' },
+  boardTab: { label: 'Board opens on', kind: 'levels' },
   hours: { label: 'Working hours', kind: 'none', why: ASK },
   phase: { label: 'Product phase', kind: 'levels' },
   protection: { label: 'Protection', kind: 'none', why: ASK },
@@ -233,7 +239,7 @@ function heldOf(effective, key) {
   return { value: structuredClone(SETTINGS[key].default), from: 'default' };
 }
 
-function rowOf(key, { effective, nowMs, timeZone, locked }) {
+function rowOf(key, { effective, changes, nowMs, timeZone, locked }) {
   const spec = PANE[key];
   const base = { key, label: spec.label };
   if (key === 'protection') {
@@ -243,6 +249,7 @@ function rowOf(key, { effective, nowMs, timeZone, locked }) {
   }
   const held = heldOf(effective, key);
   const out = { ...base, from: FROM[held.from] ?? FROM.default };
+  if (undoOf(key, changes, nowMs) !== null) out.changed = { at: changes[key].at, undo: true };
   if (typeof held.until === 'string') out.until = held.until;
   if (spec.kind === 'presence') {
     const chosen = presenceChosen(held, nowMs, timeZone);
@@ -257,11 +264,64 @@ function rowOf(key, { effective, nowMs, timeZone, locked }) {
   return { ...out, current, choices: [], here: false, why: spec.why };
 }
 
-// settingsRows({ effective, now, timeZone, locked? }) -> Array<SettingsRow>
-// `effective` is effectiveSettings' answer; `locked` is whether the project is Locked, when the
-// caller knows it. Every row is plain data. Never throws.
-export function settingsRows({ effective, now = () => new Date(), timeZone, locked } = {}) {
-  const context = { effective, nowMs: instantOf(now), timeZone, locked };
+// --- the groups ---
+
+const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them.';
+const YOU_NOTE = 'These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you.';
+const WINDOWS_LEVELS = { ask: 'Ask', guarded: 'Guarded', unattended: 'Unattended' };
+// The settings the front desk changes: a value and Change….
+const CHANGE_KEYS = ['protection', 'briefingGapHours', 'notifications', 'hours'];
+
+// A pane row as a group's row: a select for a setting with levels, a change for one the front desk
+// changes, else a value alone. `changed` goes with it while the change can still be undone.
+function groupRow(row) {
+  const out = { key: row.key, label: row.label };
+  if (row.here) {
+    const chosen = row.choices.find((c) => c.chosen);
+    Object.assign(out, { value: chosen ? chosen.id : null, kind: 'select', options: row.choices.map((c) => ({ value: c.id, label: c.label })) });
+    if (!chosen) out.current = row.current;
+  } else {
+    Object.assign(out, { value: row.current, kind: CHANGE_KEYS.includes(row.key) ? 'change' : 'value' });
+  }
+  if (row.changed) out.changed = row.changed;
+  return out;
+}
+
+// settingsGroups({ effective, changes?, now, timeZone, locked?, stop?, windows? }) -> Array<Group>
+// The Settings view's groups, each { id, title, note, rows }, in the order of design section
+// 23.6. `stop` is stopState's answer (Halted since the time it was set, else Working); `windows`
+// is the level this computer runs build commands at. Every row is plain data. Never throws.
+export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows } = {}) {
+  const byKey = new Map(settingsRows({ effective, changes, now, timeZone, locked }).map((row) => [row.key, groupRow(row)]));
+  const pick = (...keys) => keys.map((key) => byKey.get(key));
+  const halted = isRecord(stop) && stop.on === true;
+  const sinceMs = halted && typeof stop.at === 'string' ? Date.parse(stop.at) : NaN;
+  const builders = !halted ? 'Working' : Number.isFinite(sinceMs) ? `Halted since ${hhmmOf(sinceMs, timeZone)}` : 'Halted';
+  const build = { key: 'windowsBuildCommands', label: 'Build commands on Windows', value: WINDOWS_LEVELS[windows] ?? WINDOWS_LEVELS.ask, kind: 'change' };
+  return [
+    { id: 'stop', title: 'STOP', note: `STOP ${lower(STOP_HALTS)} ${ONLY_YOU_LIFT}`, rows: [{ key: 'builders', label: 'Builders', value: builders, kind: 'value' }] },
+    {
+      id: 'project',
+      title: 'This project',
+      note: PROJECT_NOTE,
+      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', 'phase'), build, ...pick('budget', 'protection')],
+    },
+    {
+      id: 'you',
+      title: 'You, in every project',
+      note: YOU_NOTE,
+      rows: pick('presence', 'briefing', 'briefingGapHours', 'explanations', 'boardTab', 'notifications', 'hours'),
+    },
+    { id: 'advanced', title: 'Advanced settings', note: '', rows: [{ key: 'advanced', label: 'Advanced settings', value: '', kind: 'change' }] },
+  ];
+}
+
+// settingsRows({ effective, changes?, now, timeZone, locked? }) -> Array<SettingsRow>
+// `effective` is effectiveSettings' answer; `changes` is changesFor's, which gives a row
+// `changed: { at, undo: true }` while its latest change can still be undone; `locked` is whether
+// the project is Locked, when the caller knows it. Every row is plain data. Never throws.
+export function settingsRows({ effective, changes, now = () => new Date(), timeZone, locked } = {}) {
+  const context = { effective, changes, nowMs: instantOf(now), timeZone, locked };
   return Object.keys(PANE).map((key) => rowOf(key, context));
 }
 
@@ -304,6 +364,45 @@ export function effectiveFor({ project, now }) {
   return effectiveSettings({ project: projectViews, profile: profileViews, now });
 }
 
+// The latest confirmed change of each setting that has a home in the views, for the pane's
+// Undo: { [key]: { at, before } }, where `at` is when the change was confirmed and `before` the
+// value it replaced (null when it replaced none). A setting is read from the view of its home.
+export function changesFor({ project }) {
+  const views = { project: {}, profile: {} };
+  try {
+    const own = localViews(project, ['settings'])?.settings;
+    if (isRecord(own)) views.project = own;
+  } catch {
+    // No change can be undone.
+  }
+  try {
+    const profile = readProfileViews()?.settings;
+    if (isRecord(profile)) views.profile = profile;
+  } catch {
+    // No change can be undone.
+  }
+  const out = {};
+  for (const key of Object.keys(PANE)) {
+    if (!Object.hasOwn(SETTINGS, key)) continue;
+    const view = views[definitionOf(key).home];
+    const entry = Object.hasOwn(view, key) && isRecord(view[key]) ? view[key] : null;
+    if (entry !== null && typeof entry.confirmedAt === 'string') out[key] = { at: entry.confirmedAt, before: isRecord(entry.before) ? entry.before : null };
+  }
+  return out;
+}
+
+// What Undo would set for a setting at `nowMs`: { value, until? }, or null when its latest change
+// was confirmed UNDO_MS or more ago, or isn't known, or the setting offers no choice. A value
+// that had ended, or none before, is the catalogue's default.
+function undoOf(key, changes, nowMs) {
+  if (!isRecord(changes) || !Object.hasOwn(changes, key) || !Object.hasOwn(PANE, key) || !['levels', 'presence'].includes(PANE[key].kind)) return null;
+  const { at, before } = changes[key] ?? {};
+  const age = nowMs - Date.parse(at);
+  if (!Number.isFinite(age) || age >= UNDO_MS || age <= -UNDO_MS) return null;
+  const live = isRecord(before) && (before.until === undefined || Date.parse(before.until) > nowMs);
+  return live ? { value: structuredClone(before.value), ...(before.until === undefined ? {} : { until: before.until }) } : { value: structuredClone(SETTINGS[key].default) };
+}
+
 // The setting event the helper made, read back from the clone it kept it in.
 // It must be the setting that was pressed: the key, the value and the end time all equal, so an
 // answer naming some other event signs nothing.
@@ -314,22 +413,28 @@ function eventOf(home, project, id, data) {
     && e.data?.key === data.key && e.data.value === data.value && e.data.until === data.until) ?? null;
 }
 
-// pressSetting({ project, key, choice, client, now, timeZone, budget })
+// pressSetting({ project, key, choice, client, now, timeZone, budget, changes, stopState })
 //   -> Promise<{ made, says }>
+// `choice` is a choice's id, or `undo`, which sets the value in force before the row's latest
+// change while that change is under UNDO_MS old (`changes` is changesFor's answer, read from the
+// views when not given).
 // `made` is true once the setting is written and its confirmation signed. A setting written but
 // not confirmed is not in force, and the press says it waits for the director's Confirm. Records
 // nothing for a choice that isn't offered or that the catalogue refuses. Never throws.
-export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace() } = {}) {
+export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace(), changes, stopState = defaultStopState } = {}) {
   try {
-    return await press({ project, key, choice, client, now, timeZone, budget });
+    return await press({ project, key, choice, client, now, timeZone, budget, changes, stopState });
   } catch {
     return no(SAYS.failed);
   }
 }
 
-async function press({ project, key, choice, client, now, timeZone, budget }) {
+async function press({ project, key, choice, client, now, timeZone, budget, changes, stopState }) {
   const clock = typeof now === 'function' ? now : () => new Date(now);
-  const picked = choiceOf(key, choice, { now: clock, timeZone });
+  if (stopState().on) return no(SAYS.stopOn);
+  const undoing = choice === 'undo';
+  const picked = undoing ? undoOf(key, changes ?? changesFor({ project }), instantOf(clock)) : choiceOf(key, choice, { now: clock, timeZone });
+  if (picked === null && undoing) return no(SAYS.nothingToUndo);
   if (picked === null) {
     // The evening edge passes while a row is open: say which choice has gone, and why.
     const past = key === 'presence' && choice === 'away-evening' && Number.isFinite(instantOf(clock));
@@ -371,6 +476,10 @@ async function press({ project, key, choice, client, now, timeZone, budget }) {
     sent = await sendKept(api, left, record);
   } catch {
     // Kept in pending/ for the next session start to send.
+  }
+  if (key === 'presence') {
+    const said = awayToast(sayPresence(picked, instantOf(clock), timeZone), !undoing);
+    return { made: true, says: sent ? said : `${said} (kept until the helper takes it)` };
   }
   const where = home === 'profile' ? 'for all your projects' : 'for this project';
   return { made: true, says: `${label} is now ${lower(labelOf(key, choice, picked.value, { nowMs: instantOf(clock), timeZone }))}, ${where}${sent ? '' : ' (kept until the helper takes it)'}` };

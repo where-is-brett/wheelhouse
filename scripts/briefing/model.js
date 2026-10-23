@@ -21,9 +21,18 @@
 import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../board/model.js';
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
+import { brokenCount } from '../board/health.js';
+import { verdict, sinceAbout } from '../lib/calm-words.js';
 
-// Briefing = { first, waiting, changed, progress, watch, usage, raise, weekly }.
-const EMPTY = () => ({ first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, raise: [], weekly: 0 });
+// Briefing = { verdict, since, first, waiting, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
+// `verdict` is the pane's sentence; `since` says when the last briefing was and how long ago ('' when
+// there was none); each `waiting` entry is { title, line, recommendation, optional } (a card's own
+// words, each only when it has them); `onTrack` says usage is as it usually is; `plus` counts what
+// is new since the last briefing, in waiting and changed ({ waiting, changed }, none when there was
+// no last briefing).
+const EMPTY = () => ({
+  verdict: '', since: '', first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
+});
 
 // What the board model says when a merge carried no words for users. It belongs to progress, not
 // to what changed for users.
@@ -187,6 +196,21 @@ function usageLine(usage) {
   return said.length > 0 ? `Usage this week: ${said.join(', ')}.` : null;
 }
 
+// The hour and minute of a time as "09:10", in `timeZone` (this computer's own when it is undefined).
+function clockOf(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms));
+  return `${parts.find((p) => p.type === 'hour').value}:${parts.find((p) => p.type === 'minute').value}`;
+}
+
+// A waiting card as the briefing gives it: its title, and its line, recommendation and optional
+// minutes when it has them.
+function waitingEntry(w) {
+  const entry = { title: oneLine(w.what) || 'A question' };
+  for (const key of ['line', 'recommendation']) if (oneLine(w[key])) entry[key] = oneLine(w[key]);
+  if (Number.isInteger(w.optional) && w.optional > 0) entry.optional = w.optional;
+  return entry;
+}
+
 // briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing, `weeklySince` the time of the last briefing that showed the weekly lines.
@@ -213,9 +237,17 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
 
   // The heading says these aren't confirmed, so each line's own saying of it goes.
   briefing.first = part(() => lines(list(director.first)).map((line) => line.replace(UNCONFIRMED, '')), []);
-  briefing.waiting = part(() => records(director.waiting).map((w) => oneLine(w.what) || 'A question'), []);
+  briefing.waiting = part(() => records(director.waiting).map(waitingEntry), []);
   briefing.changed = part(() => lines(records(director.changed).filter((c) => isNew(c.at)).map((c) => c.what))
     .filter((what) => !BARE_MERGE.test(what)), []);
+  briefing.verdict = part(() => verdict({ waiting: records(director.waiting).length, broken: brokenCount(director.health) }), '');
+  const known = !Number.isNaN(sinceMs);
+  briefing.since = part(() => (known && Number.isFinite(nowMs) ? sinceAbout(clockOf(sinceMs, timeZone), nowMs - sinceMs) : ''), '');
+  // What is new since the last briefing is counted only when there was one.
+  briefing.plus = part(() => ({
+    waiting: known ? records(director.waiting).filter((w) => msOf(w.since) > sinceMs).length : 0,
+    changed: known ? briefing.changed.length : 0,
+  }), { waiting: 0, changed: 0 });
   briefing.progress = part(() => progressLines({ director, build: isRecord(board.build) ? board.build : {} }, isNew), []);
 
   const shown = msOf(weeklySince);
@@ -236,5 +268,8 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   briefing.raise = unusual.map((u) => u.id);
   briefing.weekly = weekly.length;
   briefing.usage = part(() => usageLine(usage), null);
+  // On track: the week's figures are known, nothing in them is unusual and the allowance isn't spent.
+  briefing.onTrack = part(() => briefing.usage !== null && records(usage?.unusual).length === 0
+    && !(isNumber(usage?.week?.share) && usage.week.share >= 100), false);
   return briefing;
 }

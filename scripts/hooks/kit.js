@@ -56,6 +56,9 @@ import { wheelhouseHome } from '../lib/paths.js';
 import { readJournal, firstUnfinished, runClosed } from '../lib/setup-run.js';
 import { readSmallText, SMALL_FILE_BYTES } from '../lib/small-file.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
+import { answer } from '../../adapters/claude-code/answers.js';
+import translateClaudeCode from '../../adapters/claude-code/translate.js';
+import { agentOfInput } from '../agents/of-input.js';
 
 export { managedDir, lockedProjects };
 
@@ -79,11 +82,8 @@ export async function readInput(stream = process.stdin) {
   return parsed;
 }
 
-export const answer = {
-  deny: (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }),
-  context: (event, text) => ({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }),
-  block: (reason) => ({ decision: 'block', reason }),
-};
+// The answers Claude Code's hooks write live in the Claude Code adapter.
+export { answer };
 
 // A small regular file's text, or null, read without waiting (scripts/lib/small-file.js).
 export { readSmallText, SMALL_FILE_BYTES };
@@ -307,11 +307,37 @@ export function lockedByPath(cwd, { dir = managedDir() } = {}) {
 
 const SELF = fileURLToPath(import.meta.url);
 
+// The plugin's own folder and, for the managed copy, the plugin folder recorded when Locked was installed:
+// the folders a plugin command may be run from. The record comes last, so the plugin's folder is
+// `.at(-1)` (the hook's own folder when there is no record).
+export function pluginRoots(dir, self, pluginRoot) {
+  const roots = [pluginRoot];
+  try {
+    const managed = dir ?? managedDir();
+    if (isInside(managed, self)) {
+      const recorded = JSON.parse(fs.readFileSync(path.join(managed, 'wheelhouse', 'installed.json'), 'utf8')).pluginRoot;
+      if (typeof recorded === 'string' && path.isAbsolute(recorded)) roots.push(recorded);
+    }
+  } catch {
+    // No record: only the copy's own folder counts.
+  }
+  return roots;
+}
+
 // Whether `file` lies inside `folder`: the test for a script being the managed copy.
 export function isInside(folder, file) {
   const base = keyOf(realPath(folder));
   const target = keyOf(realPath(file));
   return target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+}
+
+// The translation of each agent's hook input and answers. The adapters' registry (scripts/agents/index.js)
+// reaches the setup and evaluation code, which a hook must not load, so the kit holds each agent's
+// translation on its own. An agent with no entry here has no translation, and its input is refused.
+export const TRANSLATORS = Object.freeze({ 'claude-code': Object.freeze({ translate: translateClaudeCode }) });
+function translators(agent) {
+  if (!Object.hasOwn(TRANSLATORS, agent)) throw new Error(`The hook kit has no translation for the agent ${JSON.stringify(agent)}`);
+  return TRANSLATORS[agent];
 }
 
 // What a guard answers when its check could not run, shaped for its event.
@@ -334,9 +360,17 @@ function failureAnswer(event) {
 // SubagentStop and PreCompact only inform (failClosed: false). So failureAnswer's
 // block answer for those events is kept only for a guard that may one day be added there.
 export async function hookMain(decide, { failClosed, event }, io = {}) {
-  const { stdin = process.stdin, write = (text) => process.stdout.write(text), self = SELF, dir, deps = {}, projectOf: find = projectOf } = io;
+  const { stdin = process.stdin, write = (text) => process.stdout.write(text), self = SELF, dir, deps = {}, projectOf: find = projectOf, adapter: given } = io;
+  // The adapter's translation is applied to what is written, and the refusal goes through it too.
+  let adapter = given ?? translators('claude-code');
   try {
-    const input = await readInput(stdin);
+    const raw = await readInput(stdin);
+    // The agent the input came from; input that names none is Claude Code's, as it always was.
+    const agent = agentOfInput(raw) ?? 'claude-code';
+    if (given === undefined) adapter = translators(agent);
+    const input = adapter.translate.toGuardInput(raw, event);
+    // An input the adapter cannot translate is handled as a hook that could not read its input.
+    if (input === null || input === undefined) throw new Error('The adapter could not translate the hook input');
     const managed = dir ?? managedDir();
     const isManagedCopy = isInside(managed, self);
     if (typeof input.cwd === 'string') {
@@ -352,10 +386,16 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
       if (isManagedCopy && !failClosed && !locked) return;
     }
     const out = await decide(input, { event, dir: managed, ...deps });
-    if (out !== undefined && out !== null) write(`${JSON.stringify(out)}\n`);
+    const shaped = out === undefined || out === null ? out : adapter.translate.fromGuardAnswer(out, event);
+    if (shaped !== undefined && shaped !== null) write(`${JSON.stringify(shaped)}\n`);
   } catch {
-    const refusal = failClosed ? failureAnswer(event) : null;
-    if (refusal) write(`${JSON.stringify(refusal)}\n`);
+    try {
+      const refusal = failClosed ? failureAnswer(event) : null;
+      const shaped = refusal ? adapter.translate.fromGuardAnswer(refusal, event) : null;
+      if (shaped) write(`${JSON.stringify(shaped)}\n`);
+    } catch {
+      // The adapter could not shape the refusal either; nothing more can be said.
+    }
   }
 }
 

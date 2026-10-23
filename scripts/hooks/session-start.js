@@ -40,7 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
+import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, managedMarker, readTailEntries, readSmallText, beingSetUp, removedFrom } from './kit.js';
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
@@ -68,6 +68,9 @@ import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
 import { composeCard } from '../cards/compose.js';
 import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
+import { agentOfInput } from '../agents/of-input.js';
+import claudeCodeSheet from '../../adapters/claude-code/tool-sheet.js';
+import { frontDeskCommand } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 
@@ -106,6 +109,28 @@ export const FOREMAN_HELD_UNREADABLE = 'The foreman is held back because setup\'
 // (check 40). Older than the floor, the mod doesn't load and a guard that fails may let the call through.
 export const GUARD_FLOOR = CLAUDE_CODE_FLOOR.split('.').map(Number);
 export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLOOR}, so Wheelhouse's mod doesn't load and a guard that fails may not stop a tool call: update Claude Code`;
+
+// Each agent's tool sheet. The adapters' registry (scripts/agents/index.js) reaches the setup and
+// evaluation code, which a hook must not load, so the session start holds each sheet on its own, as
+// the kit holds each agent's translation. An agent with no entry here is given no sheet.
+export const TOOL_SHEETS = Object.freeze({ 'claude-code': claudeCodeSheet });
+
+// The lines that tell a session its agent's tools and where the Wheelhouse command is: the agent's
+// tool sheet, then the command line (the front desk's command, which the playbooks' other scripts
+// are named from). The command line is left out when the plugin's folder can't be typed as a command.
+export function toolSheetLines(agent, { pluginRoot, platform = process.platform } = {}) {
+  const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
+  const command = frontDeskCommand(pluginRoot, { platform });
+  if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
+  return lines;
+}
+
+// The folder the Wheelhouse command is named from: the plugin's own folder, which the allow rules written at
+// setup name. In a Locked project this hook is the managed copy, whose folder is not the plugin's, so the
+// plugin folder recorded when Locked was installed is used (kit.js's pluginRoots); with no record, the hook's own.
+function commandRoot({ dir, self = SELF } = {}, pluginRoot) {
+  return pluginRoots(dir, self, pluginRoot).at(-1);
+}
 
 // Claude Code's version as the newest transcript entry that carries one gives it, as three
 // numbers, or null when it is not known.
@@ -342,8 +367,9 @@ const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].so
 // `lineage` is the lineage check's warning lines, which come first after STOP. `windows` adds the
 // Windows line after them; `builds`, the level build commands run at on this computer, adds the
 // Unattended line after that while it is on. All come before the lists, so the cut at MAX_CHARS
-// never takes them.
-export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false }) {
+// never takes them. `sheet` (toolSheetLines) comes after the front desk's line and before the notes and the lists, so
+// a cut takes the briefing and never the tool sheet.
+export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, sheet = [] }) {
   const lines = [];
   if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
@@ -354,6 +380,7 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   const damaged = Array.isArray(views?.damaged) ? views.damaged.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))) : [];
   lines.push(...section('Damaged state:', damaged));
   if (frontDesk) lines.push(FRONT_DESK_LINE);
+  lines.push(...sheet);
   lines.push(...notes);
   const title = (d) => show(d?.title ?? d?.question ?? d?.words ?? d?.value ?? '');
   // A proposal kept as is on its card here is no longer waiting for the director (ruling F49).
@@ -442,7 +469,7 @@ function setupNote(setup) {
 // they speak of a project's deny rules and its build-command level, and a folder with no project
 // record has neither until setup writes them (a registered folder being set up gets the project's
 // reload, Windows lines included).
-async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now }) {
+async function setupStart(input, setup, { given, spawn, pluginRoot, root, platform, startWaitMs, totalMs, pause, stopOf, now }) {
   firstKey(now);
   const end = Date.now() + totalMs;
   const lines = [];
@@ -452,6 +479,8 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs,
   if (version !== null && olderThan(version, GUARD_FLOOR)) lines.push(OLD_CLAUDE_CODE);
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   if (!up) lines.push(NO_HELPER);
+  // The setup playbook runs the Wheelhouse command, so a folder being set up is told where it is.
+  lines.push(...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: root, platform }));
   const note = setupNote(setup);
   if (note !== null) lines.push(note);
   // Once step 3 is done, another computer's key may be trusted here, so its records count.
@@ -485,8 +514,10 @@ export async function decide(input, deps = {}) {
   const found = find(input.cwd, { dir });
   if (!found) {
     const setup = beingSetUp(input.cwd);
-    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, startWaitMs, totalMs, pause, stopOf, now });
-    return removedFrom(input.cwd) === null ? undefined : answer.context('SessionStart', REMOVED);
+    if (setup !== null) return setupStart(input, setup, { given, spawn, pluginRoot, root: commandRoot({ dir, self }, pluginRoot), platform, startWaitMs, totalMs, pause, stopOf, now });
+    if (removedFrom(input.cwd) === null) return undefined;
+    // Setting up again follows the setup playbook, which runs the Wheelhouse command.
+    return answer.context('SessionStart', [REMOVED, ...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform })].join('\n'));
   }
   const { project, locked } = found;
   markManaged(project, input.session_id, { self, dir: dir ?? managedDir(), now });
@@ -577,6 +608,7 @@ export async function decide(input, deps = {}) {
   if (frontDesk) keepOutOfGit(found);
   const text = reload({
     views, stop: stopOf(), lineage, notes, feature: featureSlug(input.cwd), stateRoot, windows, builds, frontDesk,
+    sheet: toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: commandRoot({ dir, self }, pluginRoot), platform }),
   });
   return text === '' ? undefined : answer.context('SessionStart', text);
 }

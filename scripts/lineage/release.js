@@ -16,6 +16,7 @@ import { FEATURE_STEPS } from '../lib/build-loop.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { invocation, resolveClaude, withoutHostVariables } from '../lib/claude.js';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
+import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { MARKETPLACE, MARKETPLACE_PATH, WHEELHOUSE_REPO, WHEELHOUSE_URL, claudeHome as defaultClaudeHome, locateInstalled } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -230,7 +231,16 @@ export async function reinstall({
   // The computer's copy of the marketplace must now be the release's commit.
   const known = readJson(path.join(claudeHome, 'plugins', 'known_marketplaces.json'))?.[marketplace];
   const installLocation = typeof known?.installLocation === 'string' ? known.installLocation : null;
-  const head = installLocation ? await run('git', ['-c', 'core.hooksPath=/dev/null', 'rev-parse', 'HEAD'], { cwd: installLocation, baseEnv: withoutGitVars(process.env), input: '' }) : null;
+  // Claude's installed copy of the marketplace: looked at once, then read under the fence.
+  let head = null;
+  if (installLocation) {
+    try {
+      head = await safeGit({ run, cwd: installLocation, look: 'once', caller: 'reinstall' })(['rev-parse', 'HEAD'], { input: '' });
+    } catch (error) {
+      if (error instanceof LookRefusal) return { ok: false, installed: [], line: error.message };
+      throw error;
+    }
+  }
   const at = head?.code === 0 ? head.stdout.trim() : null;
   if (at !== sha) {
     return {

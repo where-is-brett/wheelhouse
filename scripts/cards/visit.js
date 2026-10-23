@@ -86,10 +86,10 @@ export function cardsForVisit(views, { room = CARD.questions } = {}) {
 
 // The id of the waiting card that already carries this set line, or null: composing a card again
 // gives that card back, not a new one. A card put off with Not now is still waiting. Of two with
-// one line, the oldest.
-export function existingCard(views, line) {
+// one line, the oldest. `except` is the id of a card to pass over: the card a revision replaces.
+export function existingCard(views, line, { except } = {}) {
   if (typeof line !== 'string' || line === '') return null;
-  return waitingOf(views).find((c) => c.data?.line === line)?.id ?? null;
+  return waitingOf(views).find((c) => c.data?.line === line && c.id !== except)?.id ?? null;
 }
 
 // The waiting card the board numbers n, or null: there is no such number, or it names a question

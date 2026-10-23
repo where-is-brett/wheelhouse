@@ -6,10 +6,12 @@ These are the mod plan's two scenarios (`docs/superpowers/plans/2026-10-19-wheel
 
 **Run on** 20 October 2026, on macOS, with Claude Code 2.1.302, Superpowers 7.0.0 loaded from its installed folder, and Matt Pocock's skills, the organisation-synced copy this computer has.
 
+**Calm interface, 23 October 2026.** Scenario 36's main leg is now a press of Suggest a change… in the pane (`tests/eval/mod/36-pane-press.js`), and a new leg `why` (`tests/eval/mod/36-pane-why.js`) is the chat's typed "why?" about card 2; the `show` leg stays. Every counted run below is of the old press, Explain more, so a rerun of 36's legs (`npm run eval -- 36 --variant with --trials 3`) is due and has not been made.
+
 **How they are run.** By `npm run eval -- 36 37 --variant with` and `npm run eval -- 36 37 --variant without`: the runner across suites (`scripts/eval/run.js`) finds them in `tests/eval/mod/`, by their numbers, which no other suite uses, and `npm run eval -- --suite mod` runs both. Since 21 October 2026 each has more than one leg (36 `show`, 37 `unsent` and `reminder`, below), each run alone as `36-show` and so on, and a number runs all of its legs. The counted runs below were made before that runner existed, directly: each was one call of `runScenario` from `scripts/eval/harness.js`, from a script in the session's scratch folder, never committed:
 
 ```js
-const scenario = (await import('<repo>/tests/eval/mod/36-pane-explain.js')).default;
+const scenario = (await import('<repo>/tests/eval/mod/36-pane-press.js')).default;
 const outcome = await runScenario({ scenario, variant: 'with', trial: 1 });
 console.log(outcome.line);
 ```

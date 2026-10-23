@@ -138,9 +138,11 @@ import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { CARD } from '../lib/front-desk.js';
+import { TO_KNOW_MORE } from '../lib/calm-words.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { computerId, wheelhouseHome } from '../lib/paths.js';
-import { run as runProgram, withoutGitVars } from '../lib/run.js';
+import { run as runProgram } from '../lib/run.js';
+import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
 } from '../protection/windows-builds.js';
@@ -155,7 +157,6 @@ import { startedAsScript } from '../lib/started-as-script.js';
 // The first number of the foreman's own question ids.
 export { FOREMAN_QUESTIONS };
 
-const NULL_FILE = '/dev/null';
 const BRIEF_BYTES = 1024 * 1024;
 const REPORT_BYTES = 1024 * 1024;
 const GIT_MS = 2 * 60 * 1000;
@@ -334,6 +335,9 @@ function realFolders(root, parts) {
 // The sections of the repository's own git configuration that could run a
 // program, or read more configuration, when git checks out the worktree
 // (ruling R93): a smudge filter an agent set would run in the foreman's git.
+// This check stays: the look reads the config in the checkout's own context, but an includeIf
+// file is read only on its branch or in its git folder, so the new worktree's git could act on
+// what the look did not see (scripts/lib/safe-git.js says the same).
 const RISKY_SECTIONS = Object.freeze(['filter', 'include', 'includeif']);
 
 // Refuses when <checkout>/.git/config (or its config.worktree) holds a
@@ -362,14 +366,19 @@ function checkRepoConfig(checkout) {
 // was not made by a recorded start (a recorded feature never reaches here), so
 // it is refused, never reused: an agent can make branches in the shared repository.
 async function makeWorktree(ctx, work, checkout, worktree, branch) {
-  const git = (args) => ctx.run('git', ['-c', `core.hooksPath=${NULL_FILE}`, '-c', 'core.fsmonitor=false', ...args], {
-    cwd: checkout,
-    baseEnv: withoutGitVars(process.env),
-    env: {
-      GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, GIT_NO_REPLACE_OBJECTS: '1',
-    },
-    timeoutMs: GIT_MS,
+  // The fenced route, looking at the repository's settings before each call: a setting off the
+  // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
+  const fenced = safeGit({
+    run: ctx.run, cwd: checkout, look: 'each', list: 'project', timeoutMs: GIT_MS, caller: 'foreman',
   });
+  const git = async (args) => {
+    try {
+      return await fenced(args, { env: { GIT_TERMINAL_PROMPT: '0', GIT_NO_REPLACE_OBJECTS: '1' } });
+    } catch (e) {
+      if (e instanceof LookRefusal) return refuse(e.message);
+      return refuse(`${oneLine(e.message, 600)}; no worktree was made: ask the director`);
+    }
+  };
   realFolders(checkout, ['.claude', 'worktrees']);
   if (lstatOf(worktree) !== null) refuse(`${worktree} is there already, but no recorded feature made it: ask the director`);
   checkRepoConfig(checkout);
@@ -736,22 +745,23 @@ function localDay(at) {
   return Number.isNaN(when.getTime()) ? null : `${when.getFullYear()}-${when.getMonth() + 1}-${when.getDate()}`;
 }
 
-// The Unattended card's question: the five parts, each with its words on its label's own line
-// as the composer writes them (the card-check hook refuses a card otherwise), the design's words
-// on the risk as they are, and the line that a Turn on (dangerous) click confirms the setting
-// event `settingId` by. Where Use Guarded is offered, `guarded` is the setting event proposing
-// Guarded, and its confirm line and that line's reply code line follow (ruling 22): a Use Guarded
-// click confirms that event, and the card check asks a card with a set line for its code.
+// The Unattended card's question: its plain lines as the composer writes a question's (the
+// question, the design's words on the risk as they are, why it is the director's, what happens
+// meanwhile), each on a line of its own, then the line that a Turn on (dangerous) click confirms the
+// setting event `settingId` by, then the line that says more is there for the asking. Where Use
+// Guarded is offered, `guarded` is the setting event proposing Guarded, and its confirm line and
+// that line's reply code line follow (ruling 22): a Use Guarded click confirms that event, and the
+// card check asks a card with a set line for its code. What each option says, and which is
+// recommended, are in the options' descriptions.
 function unattendedQuestion(card, settingId, computer, guarded) {
-  const named = (name) => card.options.find((o) => o.name === name);
   const offersGuarded = guarded !== null && card.options.some((o) => o.name === 'guarded');
   return [
-    `What this is: ${card.what} ${card.risk}`,
-    `Why it's coming to you: ${card.why}`,
-    `Options: ${card.options.map((o) => `${o.label}: ${o.says.replace(/[.!?]+$/, '')}`).join('; ')}`,
-    `My recommendation: ${named(card.recommend).label}`,
-    `While you decide: ${card.meanwhile}`,
+    card.what,
+    card.risk,
+    card.why,
+    card.meanwhile,
     unattendedBuildsLine(settingId, computer),
+    TO_KNOW_MORE,
     ...(offersGuarded ? [confirmLine(guarded), replyCodeLine(replyCode(confirmLine(guarded)))] : []),
   ].join('\n');
 }

@@ -3,7 +3,9 @@
 // director gives the note's figures at the front desk. `cli.js baseline` asks the helper, which
 // reads the figures back on a card; only the director's signed click on that card writes
 // <wheelhouseHome()>/measures/baseline.json, and the figures go nowhere else.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +17,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { decide as cardCheck } from '../../../scripts/hooks/card-check.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
+import { TO_KNOW_MORE } from '../../../scripts/lib/calm-words.js';
 import { BASELINE_WAIT_MS } from '../../../scripts/lib/setup-numbers.js';
 import { readPending, holdsFigures, CARRIES_BASELINE } from '../../../scripts/lib/measures-clicks.js';
 import { sendPending, pendingDir } from '../../../scripts/hooks/pending.js';
@@ -23,6 +26,12 @@ import { makeEvent, writeEvent, listEvents, carriesBaseline } from '../../../scr
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { LOCAL_PATHS } from '../../helpers/git-fixture.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const T0 = new Date('2026-10-19T03:00:00.000Z');
 // Made-up figures, each distinctive enough to search a home for.
@@ -87,7 +96,7 @@ async function withHelper(fn) {
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    const helper = await startHelper({ address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
+    const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}), now: () => clock });
     try {
       await fn({ home, client: helperClient({ address: helper.address }), setClock: (at) => { clock = at; } });
     } finally {
@@ -187,7 +196,9 @@ test('the baseline is written only after the director\'s click on the card that 
     const refused = await run(['baseline', '--confirm', again.hash], client);
     assert.equal(refused.code, 1);
     assert.match(refused.err, /click/);
-    const reworded = { ...again.card, question: again.card.question.replace('Record nothing', 'Keep nothing') };
+    // Reworded where the words are: on the option that says what Not now does.
+    const reworded = { ...again.card, options: again.card.options.map((o) => ({ ...o, description: o.description.replace('Record nothing', 'Keep nothing') })) };
+    assert.notDeepEqual(reworded.options, again.card.options);
     await decide(answered([[reworded, 'Record these']], cwd), { client: spy(), now: () => T0, projectOf: () => null });
     assert.equal((await run(['baseline', '--confirm', again.hash], client)).code, 1);
     assert.equal(readBaseline(), null);
@@ -224,7 +235,7 @@ test('the figures reach no state event', async () => {
 
     // cli -> helper -> card -> click -> write, with an ordinary question answered beside the card.
     const { hash, card } = JSON.parse((await run(ARGS, client)).out);
-    const plain = { question: 'What this is: the colour of the export button.', header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }], multiSelect: false };
+    const plain = { question: calm('The colour of the export button.'), header: 'Question', options: calmOptions(['Blue', 'Green']), multiSelect: false };
     const helper = spy();
     await decide(answered([[card, 'Record these'], [plain, 'Blue']], folder), { client: helper, now: () => T0 });
     const recorded = await run(['baseline', '--confirm', hash], client);
@@ -257,7 +268,7 @@ test('the figures reach no state event', async () => {
       makeEvent({ kind: 'note', data: { text: 'Record the private note\u2019s  FIGURES as the baseline' }, now: () => T0 }),
       makeEvent({ kind: 'note', data: { header: 'Baseline', text: `The note: ${COUNTED.toUpperCase()}` }, now: () => T0 }),
     ]) {
-      await assert.rejects(writeEvent({ project: P, event, push: false, now: () => T0 }), /baseline/);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: P, event, push: false, now: () => T0 }), /baseline/);
     }
     // The recorded baseline's account of how the note counted, on its own, is not refused: the net
     // is for a card in flight, not a lasting ban on those words.
@@ -275,6 +286,10 @@ function registered() {
   return { P, folder };
 }
 
+// An ordinary question in Calm's form, as the card check takes it: its plain lines, then "To know more, just ask."
+const calm = (what) => `${what}\nIt is yours.\nNothing changes.\n${TO_KNOW_MORE}`;
+// Its options, the first recommended.
+const calmOptions = (labels) => labels.map((label, i) => ({ label, description: i === 0 ? 'Recommended: it fits.' : 'The other way.' }));
 const asking = (questions, cwd) => ({ cwd, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions } });
 const denied = (got) => got?.hookSpecificOutput?.permissionDecision === 'deny';
 
@@ -289,7 +304,7 @@ test('a reworded, stripped or look-alike baseline card is refused, and its figur
       'the set line removed': { ...card, question: rows.filter((r) => r !== setLine).join('\n') },
       'the set line and reply code removed': { ...card, question: rows.filter((r) => r !== setLine && !r.startsWith('Reply code:')).join('\n') },
       'every fixed word rewritten, the figures kept': {
-        question: `What this is: Your note says $4,127.35 for 37 pull requests.\nWhy it's coming to you: To compare.\nOptions: Record these: keep them; Not now: drop them\nMy recommendation: Record these, because they match.\nWhile you decide: Nothing happens.`,
+        question: calm('Your note says $4,127.35 for 37 pull requests.'),
         header: 'Figures',
         options: [{ label: 'Record these', description: 'Keep them.' }, { label: 'Not now', description: 'Drop them.' }],
         multiSelect: false,
@@ -308,7 +323,7 @@ test('a reworded, stripped or look-alike baseline card is refused, and its figur
       assert.deepEqual(helper.calls, [], name);
       // And the state refuses it, should it ever be sent.
       const event = makeEvent({ kind: 'card-answer', data: { question: variant.question, label: 'Record these' }, now: () => T0 });
-      await assert.rejects(writeEvent({ project: 'o__p', event, push: false, now: () => T0 }), /baseline/, name);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event, push: false, now: () => T0 }), /baseline/, name);
     }
     assert.equal(fs.existsSync(path.join(process.env.WHEELHOUSE_HOME, 'measures', 'clicks')), false);
   });
@@ -326,8 +341,8 @@ test('the baseline card\'s words are refused on any other card', async () => {
       assert.throws(() => composeCard({ ...approval, why: `It is yours to decide. ${words}` }), /baseline card's words/, words);
     }
     // The card check refuses an ordinary card using them, so its click can't be dropped unseen.
-    const five = (what) => `What this is: ${what}\nWhy it's coming to you: It is yours.\nOptions: Blue: blue; Green: green\nMy recommendation: Blue, because it matches.\nWhile you decide: Nothing changes.`;
-    const ordinary = { question: five('The export colour. How the note counted: by hand.'), header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }] };
+    const five = calm;
+    const ordinary = { question: five('The export colour. How the note counted: by hand.'), header: 'Question', options: calmOptions(['Blue', 'Green']) };
     const reason = async (q) => (await cardCheck(asking([q], folder), { now: () => T0 }))?.hookSpecificOutput?.permissionDecisionReason;
     assert.match(await reason(ordinary), /baseline card/);
     // A card merely headed Baseline is not the baseline card.
@@ -390,7 +405,7 @@ test('the net catches the figures only while they wait, and only as the figures'
     for (const text of ['Budget $1,200 for hosting', 'It is US$1200.00', 'Each was $30.00', 'merged PRs only, as before']) {
       assert.equal(holdsFigures(text, { now: waiting }), true, text);
       assert.equal(carriesBaseline(note(text), { now: waiting }), true, text);
-      await assert.rejects(writeEvent({ project: 'o__p', event: note(text), push: false, now: waiting }), /baseline/, text);
+      await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: note(text), push: false, now: waiting }), /baseline/, text);
       // Once they are out of date, nothing is refused.
       assert.equal(holdsFigures(text, { now: later }), false, text);
       assert.equal(carriesBaseline(note(text), { now: later }), false, text);
@@ -398,8 +413,8 @@ test('the net catches the figures only while they wait, and only as the figures'
 
     // The card check: an ordinary card holding a waiting figure is told to leave it out; headed
     // Baseline with a figure, it reads as the baseline card; headed Baseline alone it passes.
-    const five = (what) => `What this is: ${what}\nWhy it's coming to you: It is yours.\nOptions: Blue: blue; Green: green\nMy recommendation: Blue, because it matches.\nWhile you decide: Nothing changes.`;
-    const ordinary = { header: 'Question', options: [{ label: 'Blue' }, { label: 'Green' }] };
+    const five = calm;
+    const ordinary = { header: 'Question', options: calmOptions(['Blue', 'Green']) };
     const reason = async (q, now = waiting) => (await cardCheck(asking([q], folder), { now }))?.hookSpecificOutput?.permissionDecisionReason;
     assert.match(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.') }), /private note.*leave them out/);
     assert.match(await reason({ ...ordinary, question: five('Hosting at $1,200 a year.'), header: 'Baseline' }), /reads as the baseline card/);
@@ -421,7 +436,7 @@ test('a figure that isn\'t whole is caught bare too, but not inside a longer num
   });
 });
 
-const fiveParts = (what) => `What this is: ${what}\nWhy it's coming to you: It is yours.\nOptions: One: one; Two: two\nMy recommendation: One, because it fits.\nWhile you decide: Nothing changes.`;
+const fiveParts = calm;
 
 test('a card showing the figures only in an option is refused, and its answer goes nowhere', async () => {
   await withHelper(async ({ client }) => {

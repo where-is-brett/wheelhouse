@@ -16,7 +16,7 @@ const START = Date.parse('2026-10-19T03:00:50.000Z')
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const PRESENTATION = { isFullscreen: false, columns: 80 }
 const CONTEXT = { window: 200000, tokens: 1000, percent: 0.5 }
-const FAILED = 'Wheelhouse couldn\'t record that'
+const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const KEPT_OUT = 'Wheelhouse traffic, shown in the pane'
 
 // Messages another Wheelhouse session sends: each first line starts with MESSAGE_LEAD.
@@ -591,8 +591,8 @@ test('a Shape 2 foreman\'s tick submits each wake line in order', async ($, on) 
 
 // What a toast says when a tick's prompt can't be handed on: the courier's wake goes to the front
 // desk, a Shape 2 foreman's watcher lines to the foreman.
-const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
-const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
+const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
+const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the foreman.'
 
 test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by role, and the rest are handed on', async ($, on) => {
   const LINES = ['Wheelhouse watcher: CI failed on pull request #4', 'Wheelhouse watcher: pull request #5 merged', 'Wheelhouse watcher: review asked on #6'] as const

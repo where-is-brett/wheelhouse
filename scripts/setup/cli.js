@@ -82,7 +82,7 @@ function stepOf(text) {
 
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
-  const named = { step, title: SETUP_TITLES[step] };
+  const named = { step, title: SETUP_TITLES[step], ...(Array.isArray(got.progress) ? { progress: got.progress } : {}) };
   if (got.ask !== undefined) return { ...named, ask: got.ask, ...(typeof got.unanswered === 'string' ? { unanswered: got.unanswered } : {}) };
   if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why, ...(Number.isInteger(got.waitsFor) ? { waitsFor: got.waitsFor } : {}) };
   // A settled step's line for the director, said at once (rulings R101, R120), on one line as status's are.

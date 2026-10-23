@@ -432,13 +432,22 @@ test('step 2\'s card composes in the worst first run, and the no-checksum warnin
       // the change under the plan hash.
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
       assert.ok(question.question.length <= 1200);
-      assert.ok(!planned.card.what.includes(long));
-      const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
-      assert.ok(planned.card.what.includes(shown), planned.card.what);
-      if (checksums === 'none') {
-        assert.match(planned.card.what, /glab: from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
+      // The calm card's wording is short enough that the source may fit whole; where it does not, the card names it in short.
+      if (planned.card.what.includes(long)) {
+        if (checksums === 'none') assert.match(planned.card.what, /glab, from your company's list at .*; the list gives no checksum, so setup cannot check the file\..*Say Not now if unsure/);
+        else assert.match(planned.card.what, /glab, from your company's list at .*; checked against the checksum the list gives/);
       } else {
-        assert.match(planned.card.what, /glab: from your company's list at .*, checked/);
+        const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
+        assert.ok(planned.card.what.includes(shown), planned.card.what);
+        if (checksums === 'none') {
+          assert.match(planned.card.what, /glab: from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
+        } else {
+          assert.match(planned.card.what, /glab: from your company's list at .*, checked/);
+        }
+      }
+      if (checksums === 'none') {
+        assert.match(planned.card.what, /no checksum/);
+      } else {
         assert.doesNotMatch(planned.card.what, /no checksum/);
       }
       assert.deepEqual(termsIn(planned.card.what, glossaryOf({})), []);

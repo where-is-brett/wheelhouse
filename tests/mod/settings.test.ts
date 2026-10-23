@@ -1,8 +1,11 @@
 // tests/mod/settings.test.ts
-// The pane's settings view, run by `claude plugin test .` (npm run mod-check). The bridge's rows
-// and its answers to a choice come from `$.process.run`, answered here. The rows are the bridge's
+// The pane's settings view, drawn as groups, run by `claude plugin test .` (npm run mod-check). The bridge's rows
+// and its answers to a choice come from `$.process.run`, answered here. The groups are the bridge's
 // (scripts/mod/settings-pane.js): these tests check only that the mod draws them, sends the chosen
-// id under the origin `pane` and passes on what the bridge said.
+// value under the origin `pane` and passes on what the bridge said.
+//
+// A pick is run with ui.select, which settles in this build and runs the Select's own onSelect
+// (ui.input does not settle: see tests/mod/cards.test.ts). A real pick in a live session isn't run.
 import { test, expect, mock } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -17,7 +20,7 @@ const PANE_PROPS = {
   title: 'Wheelhouse', isFocused: false, bodyColumns: 48, placement: 'dock' as const,
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
-const FAILED = 'Wheelhouse couldn\'t record that'
+const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
 const ADVANCED = 'Advanced settings: ask the front desk'
 
 const model = {
@@ -27,21 +30,29 @@ const model = {
 }
 const frontDesk = { ok: true, role: 'front-desk', every: TICK_MS, pane: model, glance: 'Nothing waits', status: 'Nothing waits' }
 
-const rowsWith = (autonomy: string) => [
+const AUTONOMY = [{ value: 'cautious', label: 'Cautious' }, { value: 'balanced', label: 'Balanced' }, { value: 'trusting', label: 'Trusting' }]
+const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute.'
+const YOU_NOTE = 'These follow you to every project.'
+const groupsWith = (autonomy: string, changed?: any) => [
+  { id: 'stop', title: 'STOP', note: 'STOP halts every builder at once. Only you can lift it.', rows: [{ key: 'builders', label: 'Builders', value: 'Working', kind: 'value' }] },
   {
-    key: 'autonomy', label: 'Autonomy', from: 'this project', current: autonomy === 'cautious' ? 'Cautious' : 'Balanced', here: true,
-    choices: [
-      { id: 'cautious', label: 'Cautious', chosen: autonomy === 'cautious' },
-      { id: 'balanced', label: 'Balanced', chosen: autonomy === 'balanced' },
-      { id: 'trusting', label: 'Trusting', chosen: false },
+    id: 'project', title: 'This project', note: PROJECT_NOTE,
+    rows: [
+      { key: 'autonomy', label: 'Autonomy', value: autonomy, kind: 'select', options: AUTONOMY, ...(changed ? { changed } : {}) },
+      { key: 'pace', label: 'Builders at once', value: '2', kind: 'select', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }] },
+      { key: 'protection', label: 'Protection', value: 'Standard', kind: 'change' },
     ],
   },
   {
-    key: 'pace', label: 'Pace', from: 'the default', current: '2', here: true,
-    choices: [{ id: '1', label: '1', chosen: false }, { id: '2', label: '2', chosen: true }, { id: '3', label: '3', chosen: false }],
+    id: 'you', title: 'You, in every project', note: YOU_NOTE,
+    rows: [
+      { key: 'presence', label: 'Availability', value: null, current: 'Away until 18:00', kind: 'select', options: [{ value: 'available', label: 'Available' }, { value: 'away', label: 'Away' }] },
+      { key: 'notifications', label: 'Notifications', value: 'On, quiet 22:00 to 07:00', kind: 'change' },
+    ],
   },
-  { key: 'notifications', label: 'Notifications', from: 'yours', current: 'On, quiet 22:00 to 07:00', choices: [], here: false, why: 'Changed by asking the front desk' },
+  { id: 'advanced', title: 'Advanced settings', note: '', rows: [{ key: 'advanced', label: 'Advanced settings', value: '', kind: 'change' }] },
 ]
+const answerWith = (autonomy: string, changed?: any) => ({ ok: true, rows: [], groups: groupsWith(autonomy, changed), text: ADVANCED })
 
 type Reply = object | { exitCode: number } | { hold: number, then: object }
 
@@ -102,85 +113,209 @@ function world(on: any, bridge: (request: any) => Reply) {
 const mount = ($: any, surface: string) => $.ui.mount({ plugin: 'wheelhouse', surface, component: 'Pane', requestId: PANE_ID, props: PANE_PROPS })
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.key)
-const choiceKey = (key: string, id: string) => `setting:${key}:${id}`
 
-test('the settings view draws each row\'s choices and sends the chosen id', async ($, on) => {
-  let autonomy = 'balanced'
-  const { seen, clear, start } = world(on, (request) => {
-    if (request.cmd === 'settings') return { ok: true, rows: rowsWith(autonomy), text: ADVANCED }
-    if (request.cmd === 'setting') {
-      autonomy = request.choice
-      return { ok: true, says: 'Autonomy is now cautious, for this project' }
-    }
-    return { ok: false }
-  })
+const choiceKey = (key: string, id: string) => `setting:${key}:${id}`
+const textNodes = async (ui: any) => await ui.findAll({ type: 'Text' })
+const STOP_NOTE = 'Settings can\'t change while STOP is on. Lift STOP first.'
+const PICK = { cmd: 'setting', origin: 'pane', cwd: ROOT, key: 'autonomy', choice: 'cautious' }
+const SETTINGS_READ = { cmd: 'settings', cwd: ROOT }
+const readsOf = (seen: any) => seen.requests.filter((r: any) => r.cmd === 'settings')
+const picksOf = (seen: any) => seen.requests.filter((r: any) => r.cmd === 'setting')
+const aGroupedBridge = (state: { autonomy: string, changed?: any }, then: (request: any) => any = () => ({ ok: false })) => (request: any) =>
+  (request.cmd === 'settings' ? answerWith(state.autonomy, state.changed) : then(request))
+
+test('Settings draws its groups with their notes, and Done filled in the header', async ($, on) => {
+  const { seen, clear, start } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
   for (const surface of SURFACES) {
-    autonomy = 'balanced'
     await start($, surface)
     const ui = await mount($, surface)
     clear()
     await ui.press({ key: 'settings' })
-    expect(seen.requests).toEqual([{ cmd: 'settings', cwd: ROOT }])
+    expect(seen.requests).toEqual([SETTINGS_READ])
+    const heading = (await textNodes(ui)).find((n: any) => n.text === 'Settings')
+    expect(heading?.props.size).toBe('title')
+    expect(heading?.props.weight).toBe('semibold')
+    const done = await ui.find({ key: 'done' })
+    expect(done?.props.variant).toBe('primary')
+    expect(done?.props.label).toBe('Done')
     const drawn = await texts(ui)
-    expect(drawn).toContain('Autonomy: Balanced (this project)')
-    expect(drawn).toContain('Pace: 2 (the default)')
-    expect(drawn).toContain(ADVANCED)
-    // One button per choice, in the bridge's order, the chosen one primary, then Board.
-    expect(await buttons(ui)).toEqual([
-      'stop',
-      choiceKey('autonomy', 'cautious'), choiceKey('autonomy', 'balanced'), choiceKey('autonomy', 'trusting'),
-      choiceKey('pace', '1'), choiceKey('pace', '2'), choiceKey('pace', '3'),
-      choiceKey('notifications', 'ask'),
-      'board',
-    ])
-    expect((await ui.find({ key: choiceKey('autonomy', 'balanced') }))?.props.variant).toBe('primary')
-    expect((await ui.find({ key: choiceKey('autonomy', 'cautious') }))?.props.variant).toBeUndefined()
-    expect((await ui.find({ key: choiceKey('autonomy', 'cautious') }))?.props.label).toBe('Cautious')
-
-    clear()
-    await ui.press({ key: choiceKey('autonomy', 'cautious') })
-    expect(seen.requests).toEqual([
-      { cmd: 'setting', origin: 'pane', cwd: ROOT, key: 'autonomy', choice: 'cautious' },
-      { cmd: 'settings', cwd: ROOT },
-    ])
-    expect(seen.toasts).toEqual(['Recording Cautious for Autonomy', 'Autonomy is now cautious, for this project'])
-    // The rows are read again, so the new choice is the primary one.
-    expect((await ui.find({ key: choiceKey('autonomy', 'cautious') }))?.props.variant).toBe('primary')
-    expect(await texts(ui)).toContain('Autonomy: Cautious (this project)')
-
-    // Board goes back to the board view.
-    await ui.press({ key: 'board' })
-    expect(await ui.find({ key: choiceKey('autonomy', 'cautious') })).toBeUndefined()
+    for (const words of ['STOP', 'This project', 'You, in every project', 'Advanced settings', PROJECT_NOTE, YOU_NOTE, 'STOP halts every builder at once. Only you can lift it.']) expect(drawn).toContain(words)
+    // Four groups, each rounded and quiet; the Advanced group has no note, so no empty line under it.
+    const boxes = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.borderStyle !== undefined)
+    expect(boxes).toHaveLength(4)
+    for (const b of boxes) {
+      expect(b.props.borderStyle).toBe('round')
+      expect(b.props.borderColor).toBe('subtle')
+    }
+    expect(drawn).not.toContain('')
+    // A value row is its name and value; a change row its name, its value in footnote and a small Change….
+    expect(drawn).toContain('Builders')
+    expect(drawn).toContain('Working')
+    const standard = (await textNodes(ui)).find((n: any) => n.text === 'Standard')
+    expect(standard?.props.size).toBe('footnote')
+    expect(standard?.props.dimColor).toBe(true)
+    const change = await ui.find({ key: choiceKey('protection', 'change') })
+    expect(change?.props.variant).toBe('secondary')
+    expect(change?.props.label).toBe('Change…')
+    expect((await ui.findAll({ type: 'Text' })).filter((n: any) => n.text === 'Advanced settings')).toHaveLength(2)
+    // Done goes back to the board view.
+    await ui.press({ key: 'done' })
+    expect(await ui.find({ key: 'done' })).toBeUndefined()
     expect((await ui.find({ key: 'settings' }))?.type).toBe('Button')
     await ui.unmount()
   }
 })
 
-test('a row that changes in the chat offers only Ask the front desk', async ($, on) => {
-  const { seen, clear, start } = world(on, (request) => (request.cmd === 'settings' ? { ok: true, rows: rowsWith('balanced'), text: ADVANCED } : { ok: false }))
+test('a level row is a Select with its options and the value in force', async ($, on) => {
+  const { start } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
   for (const surface of SURFACES) {
     await start($, surface)
     const ui = await mount($, surface)
     await ui.press({ key: 'settings' })
-    const drawn = await texts(ui)
-    expect(drawn).toContain('Notifications: On, quiet 22:00 to 07:00 (yours)')
-    expect(drawn).toContain('Changed by asking the front desk')
-    const offered = (await buttons(ui)).filter((key: string) => key.startsWith('setting:notifications:'))
-    expect(offered).toEqual([choiceKey('notifications', 'ask')])
-    expect((await ui.find({ key: choiceKey('notifications', 'ask') }))?.props.label).toBe('Ask the front desk')
-
-    clear()
-    await ui.press({ key: choiceKey('notifications', 'ask') })
-    expect(seen.submits.map((p: any) => p.text)).toEqual(['Wheelhouse pane: the director wants to change Notifications.'])
-    // It asks the front desk, not the bridge, and so carries no origin of its own.
-    expect(seen.requests).toEqual([])
-    await ui.press({ key: 'board' })
+    const select = await ui.find({ key: 'setting:autonomy' })
+    expect(select?.type).toBe('Select')
+    expect(select?.props.value).toBe('balanced')
+    expect(select?.props.options).toEqual(AUTONOMY)
+    // Availability matches no option: no Select, so none can pick of itself; its words stand there.
+    expect((await ui.findAll({ type: 'Select' })).map((n: any) => n.key)).toEqual(['setting:autonomy', 'setting:pace'])
+    expect(await texts(ui)).toContain('Autonomy')
+    expect(await texts(ui)).toContain('Away until 18:00')
+    // No "›" off the phone.
+    expect((await texts(ui)).some((x: string) => x.includes('›'))).toBe(false)
+    await ui.press({ key: 'done' })
     await ui.unmount()
   }
 })
 
-test('a double click on Ask the front desk, a moment apart, asks once', async ($, on) => {
-  const { seen, clear, start, clock, control } = world(on, (request) => (request.cmd === 'settings' ? { ok: true, rows: rowsWith('balanced'), text: ADVANCED } : { ok: false }))
+test('a pick sends the setting press with the origin pane, once, showing Recording…', async ($, on) => {
+  const state = { autonomy: 'balanced' }
+  const { seen, clear, start, clock } = world(on, aGroupedBridge(state, (request) => {
+    if (request.cmd !== 'setting') return { ok: false }
+    return { hold: 2000, then: { ok: true, says: 'Autonomy is now cautious, for this project' } }
+  }))
+  for (const surface of SURFACES) {
+    state.autonomy = 'balanced'
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    clear()
+    const picked = ui.select({ key: 'setting:autonomy', value: 'cautious' })
+    await clock.settle()
+    await ui.redraw()
+    // While it records, the row says so, and every Select is its value in plain dim words.
+    expect(await texts(ui)).toContain('Recording…')
+    expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+    const dim = (await textNodes(ui)).filter((n: any) => n.props.dimColor === true).map((n: any) => n.text)
+    expect(dim).toEqual(expect.arrayContaining(['2', 'Away until 18:00']))
+    // A second pick meanwhile sends nothing.
+    await expect(ui.select({ key: 'setting:pace', value: '3' })).rejects.toThrow()
+    state.autonomy = 'cautious'
+    await clock.advance(2000)
+    await picked
+    expect(picksOf(seen)).toEqual([PICK])
+    expect(seen.toasts).toEqual(['Recording…', 'Autonomy is now cautious, for this project'])
+    // The settings are read again, so the Select shows the new value, live again.
+    expect((await ui.find({ key: 'setting:autonomy' }))?.props.value).toBe('cautious')
+    await ui.press({ key: 'done' })
+    await ui.unmount()
+  }
+})
+
+test('a pick under STOP draws the row back and says Settings can\'t change while STOP is on', async ($, on) => {
+  const state = { autonomy: 'balanced' }
+  const { seen, clear, start, clock } = world(on, aGroupedBridge(state, (request) => (request.cmd === 'setting' ? { ok: false, says: STOP_NOTE } : { ok: false })))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    clear()
+    await ui.select({ key: 'setting:autonomy', value: 'cautious' })
+    await clock.settle()
+    expect(picksOf(seen)).toEqual([PICK])
+    await clock.advance(10)
+    await ui.redraw()
+    expect(seen.toasts).toEqual(['Recording…', STOP_NOTE])
+    // The read after the refusal is the value in force: the row is back at it.
+    expect(readsOf(seen)).toHaveLength(1)
+    expect((await ui.find({ key: 'setting:autonomy' }))?.props.value).toBe('balanced')
+    await ui.press({ key: 'done' })
+    await ui.unmount()
+  }
+})
+
+test('a pick the bridge never answers is a toast, and leaves the Selects live', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, aGroupedBridge({ autonomy: 'balanced' }, () => ({ exitCode: 1 })))
+  await start($, 'desktop')
+  const ui = await mount($, 'desktop')
+  await ui.press({ key: 'settings' })
+  clear()
+  await ui.select({ key: 'setting:pace', value: '3' })
+  await clock.settle()
+  expect(seen.toasts).toEqual(['Recording…', FAILED])
+  expect((await ui.find({ key: 'setting:pace' }))?.type).toBe('Select')
+  await ui.unmount()
+})
+
+test('Change… hands the front desk the row\'s name', async ($, on) => {
+  const { seen, clear, start } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    clear()
+    await ui.press({ key: choiceKey('notifications', 'change') })
+    expect(seen.submits.map((p: any) => p.text)).toEqual(['Wheelhouse pane: the director wants to change Notifications.'])
+    // It asks the front desk, not the bridge, and so carries no origin of its own.
+    expect(seen.requests).toEqual([])
+    expect(picksOf(seen)).toEqual([])
+    await ui.press({ key: 'done' })
+    await ui.unmount()
+  }
+})
+
+test('a row with no value in force draws no Select, and its Change… opens the choices with no tick', async ($, on) => {
+  const { seen, clear, start } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
+  for (const surface of SURFACES) {
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    expect(await ui.find({ key: 'setting:presence' })).toBeUndefined()
+    expect((await ui.find({ key: choiceKey('presence', 'change') }))?.props.label).toBe('Change…')
+    clear()
+    await ui.press({ key: choiceKey('presence', 'change') })
+    await ui.redraw()
+    expect((await ui.find({ key: 'settings-back' }))?.props.label).toBe('‹ Settings')
+    expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.key, b.props.label])).toEqual([
+      ['stop', 'STOP'],
+      ['settings-back', '‹ Settings'],
+      [choiceKey('presence', 'available'), 'Available'],
+      [choiceKey('presence', 'away'), 'Away'],
+    ])
+    expect(seen.requests).toEqual([])
+    await ui.press({ key: 'settings-back' })
+    expect((await ui.find({ key: choiceKey('presence', 'change') }))?.type).toBe('Button')
+    await ui.press({ key: 'done' })
+    await ui.unmount()
+  }
+})
+
+test('a pick equal to the value in force sends no request and no toast', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
+  await start($, 'desktop')
+  const ui = await mount($, 'desktop')
+  await ui.press({ key: 'settings' })
+  clear()
+  await ui.select({ key: 'setting:autonomy', value: 'balanced' })
+  await clock.settle()
+  expect(seen.requests).toEqual([])
+  expect(seen.toasts).toEqual([])
+  expect((await ui.find({ key: 'setting:autonomy' }))?.type).toBe('Select')
+  await ui.press({ key: 'done' })
+  await ui.unmount()
+})
+
+test('a double click on Change…, a moment apart, asks once; a prompt the engine refuses can be asked again', async ($, on) => {
+  const { seen, clear, start, clock, control } = world(on, aGroupedBridge({ autonomy: 'balanced' }))
   const asked = 'Wheelhouse pane: the director wants to change Notifications.'
   for (const surface of SURFACES) {
     control.refuseSubmit = false
@@ -188,70 +323,120 @@ test('a double click on Ask the front desk, a moment apart, asks once', async ($
     const ui = await mount($, surface)
     await ui.press({ key: 'settings' })
     clear()
-    await ui.press({ key: choiceKey('notifications', 'ask') })
-    // The second click comes 200 ms later, after the prompt was handed over and the pane redrawn:
-    // the row's Ask is plain text, so there is nothing to press.
+    await ui.press({ key: choiceKey('notifications', 'change') })
     await clock.advance(200)
     await ui.redraw()
-    expect(await ui.find({ key: choiceKey('notifications', 'ask') })).toBeUndefined()
-    expect(await texts(ui)).toContain('Ask the front desk')
-    await expect(ui.press({ key: choiceKey('notifications', 'ask') })).rejects.toThrow()
+    expect(await ui.find({ key: choiceKey('notifications', 'change') })).toBeUndefined()
+    await expect(ui.press({ key: choiceKey('notifications', 'change') })).rejects.toThrow()
     expect(seen.submits.map((p: any) => p.text)).toEqual([asked])
-    // The other buttons are live meanwhile.
-    expect((await ui.find({ key: choiceKey('pace', '1') }))?.type).toBe('Button')
+    // The other rows' Change… is live meanwhile.
+    expect((await ui.find({ key: choiceKey('protection', 'change') }))?.type).toBe('Button')
 
     // Opening the settings view again makes it live again.
-    await ui.press({ key: 'board' })
+    await ui.press({ key: 'done' })
     await ui.press({ key: 'settings' })
-    expect((await ui.find({ key: choiceKey('notifications', 'ask') }))?.type).toBe('Button')
+    expect((await ui.find({ key: choiceKey('notifications', 'change') }))?.type).toBe('Button')
 
-    // A prompt the engine doesn't take is a toast, and the row can be asked again.
     clear()
     control.refuseSubmit = true
-    await ui.press({ key: choiceKey('notifications', 'ask') })
-    expect(seen.toasts).toEqual(['Wheelhouse couldn\'t hand that to the front desk'])
-    expect((await ui.find({ key: choiceKey('notifications', 'ask') }))?.type).toBe('Button')
+    await ui.press({ key: choiceKey('notifications', 'change') })
+    expect(seen.toasts).toEqual(['That didn\'t reach the front desk. Type it in the chat instead.'])
+    expect((await ui.find({ key: choiceKey('notifications', 'change') }))?.type).toBe('Button')
     control.refuseSubmit = false
-    await ui.press({ key: choiceKey('notifications', 'ask') })
+    await ui.press({ key: choiceKey('notifications', 'change') })
     expect(seen.submits.map((p: any) => p.text)).toEqual([asked])
-    await ui.press({ key: 'board' })
+    await ui.press({ key: 'done' })
     await ui.unmount()
   }
 })
 
-test('a choice the bridge refuses or never answers is a toast, and leaves the choices live', async ($, on) => {
-  let answer: Reply = { ok: false }
-  const { seen, clear, start, clock } = world(on, (request) => (request.cmd === 'settings' ? { ok: true, rows: rowsWith('balanced'), text: ADVANCED } : answer))
+test('a row changed just now shows Undo, which sends undo', async ($, on) => {
+  const state: { autonomy: string, changed?: any } = { autonomy: 'cautious', changed: { at: new Date(START - 20000).toISOString(), undo: true } }
+  const { seen, clear, start, clock } = world(on, aGroupedBridge(state, (request) => (request.cmd === 'setting' ? { ok: true, says: 'Autonomy is back to balanced' } : { ok: false })))
   for (const surface of SURFACES) {
+    state.autonomy = 'cautious'
+    state.changed = { at: new Date(START - 20000).toISOString(), undo: true }
     await start($, surface)
     const ui = await mount($, surface)
     await ui.press({ key: 'settings' })
+    const line = (await textNodes(ui)).find((n: any) => n.text === 'Changed just now')
+    expect(line?.props.size).toBe('footnote')
+    const undo = await ui.find({ key: choiceKey('autonomy', 'undo') })
+    expect(undo?.props.variant).toBe('secondary')
+    expect(undo?.props.label).toBe('Undo')
+    // Only the row that changed has one.
+    expect(await ui.findAll({ type: 'Button' }).then((b: any[]) => b.filter((x) => x.key.endsWith(':undo')))).toHaveLength(1)
     clear()
-    answer = { ok: false, says: 'Settings change once STOP is lifted' }
-    await ui.press({ key: choiceKey('pace', '3') })
-    expect(seen.toasts).toEqual(['Recording 3 for Pace', 'Settings change once STOP is lifted'])
-    clear()
-    answer = { exitCode: 1 }
-    await ui.press({ key: choiceKey('pace', '3') })
-    expect(seen.toasts).toEqual(['Recording 3 for Pace', FAILED])
-    expect((await ui.find({ key: choiceKey('pace', '3') }))?.type).toBe('Button')
-
-    // While a choice is recorded, the others are plain text and a second press sends nothing.
-    clear()
-    answer = { hold: 2000, then: { ok: true, says: 'Pace is now 3, for this project' } }
-    const pressed = ui.press({ key: choiceKey('pace', '3') })
+    state.autonomy = 'balanced'
+    state.changed = undefined
+    await ui.press({ key: choiceKey('autonomy', 'undo') })
     await clock.settle()
-    await ui.redraw()
-    expect(await texts(ui)).toContain('Recording…')
-    expect(await ui.find({ key: choiceKey('pace', '1') })).toBeUndefined()
-    expect(await ui.find({ key: choiceKey('notifications', 'ask') })).toBeUndefined()
-    await clock.advance(2000)
-    await pressed
-    expect(seen.requests.filter((r: any) => r.cmd === 'setting')).toHaveLength(1)
-    expect((await ui.find({ key: choiceKey('pace', '1') }))?.type).toBe('Button')
-    await ui.press({ key: 'board' })
+    expect(picksOf(seen)).toEqual([{ ...PICK, choice: 'undo' }])
+    expect(seen.toasts).toEqual(['Recording…', 'Autonomy is back to balanced'])
+    expect(await ui.find({ key: choiceKey('autonomy', 'undo') })).toBeUndefined()
+    expect(await texts(ui)).not.toContain('Changed just now')
+    await ui.press({ key: 'done' })
     await ui.unmount()
   }
+})
+
+test('a change made over a minute ago, or not undoable, shows no Undo', async ($, on) => {
+  const state: { autonomy: string, changed?: any } = { autonomy: 'cautious', changed: { at: new Date(START - 61000).toISOString(), undo: true } }
+  const { start } = world(on, aGroupedBridge(state))
+  await start($, 'desktop')
+  const ui = await mount($, 'desktop')
+  await ui.press({ key: 'settings' })
+  expect(await ui.find({ key: choiceKey('autonomy', 'undo') })).toBeUndefined()
+  expect(await texts(ui)).not.toContain('Changed just now')
+  await ui.press({ key: 'done' })
+  state.changed = { at: new Date(START).toISOString(), undo: false }
+  await ui.press({ key: 'settings' })
+  expect(await ui.find({ key: choiceKey('autonomy', 'undo') })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('on the phone a row opens its choices on their own page, with a tick on the one in force', async ($, on) => {
+  const state = { autonomy: 'balanced' }
+  const { seen, clear, start, clock } = world(on, aGroupedBridge(state, (request) => (request.cmd === 'setting' ? { ok: true, says: 'Autonomy is now cautious, for this project' } : { ok: false })))
+  await start($, 'mobile')
+  const ui = await mount($, 'mobile')
+  await ui.press({ key: 'settings' })
+  // No Select on the phone: each level row is a Button with its name, value and "›".
+  expect(await ui.findAll({ type: 'Select' })).toHaveLength(0)
+  const row = await ui.find({ key: 'setting:autonomy' })
+  expect(row?.type).toBe('Button')
+  expect(row?.props.label).toBe('Autonomy  Balanced ›')
+  expect((await ui.find({ key: 'setting:presence' }))?.props.label).toBe('Availability  Away until 18:00 ›')
+  // "›" is on the phone only, and on level rows only.
+  expect((await ui.findAll({ type: 'Button' })).filter((b: any) => String(b.props.label).includes('›')).map((b: any) => b.key)).toEqual(['setting:autonomy', 'setting:pace', 'setting:presence'])
+
+  await ui.press({ key: 'setting:autonomy' })
+  await ui.redraw()
+  expect((await ui.find({ key: 'settings-back' }))?.props.label).toBe('‹ Settings')
+  expect(await ui.find({ key: 'done' })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.key, b.props.label])).toEqual([
+    ['stop', 'STOP'],
+    ['settings-back', '‹ Settings'],
+    [choiceKey('autonomy', 'cautious'), 'Cautious'],
+    [choiceKey('autonomy', 'balanced'), 'Balanced ✓'],
+    [choiceKey('autonomy', 'trusting'), 'Trusting'],
+  ])
+  // Back goes to the list without sending anything.
+  clear()
+  await ui.press({ key: 'settings-back' })
+  expect((await ui.find({ key: 'setting:autonomy' }))?.props.label).toBe('Autonomy  Balanced ›')
+  expect(seen.requests).toEqual([])
+
+  // A choice runs the same press, and the list comes back, read again.
+  await ui.press({ key: 'setting:autonomy' })
+  clear()
+  state.autonomy = 'cautious'
+  await ui.press({ key: choiceKey('autonomy', 'cautious') })
+  await clock.settle()
+  expect(picksOf(seen)).toEqual([PICK])
+  expect((await ui.find({ key: 'setting:autonomy' }))?.props.label).toBe('Autonomy  Cautious ›')
+  await ui.press({ key: 'done' })
+  await ui.unmount()
 })
 
 test('settings that can\'t be read say so', async ($, on) => {
@@ -263,8 +448,8 @@ test('settings that can\'t be read say so', async ($, on) => {
     await ui.press({ key: 'settings' })
     expect(await texts(ui)).toContain('Wheelhouse couldn\'t read the settings')
     expect(seen.toasts).toEqual([])
-    expect((await ui.find({ key: 'board' }))?.type).toBe('Button')
-    await ui.press({ key: 'board' })
+    expect((await ui.find({ key: 'done' }))?.type).toBe('Button')
+    await ui.press({ key: 'done' })
     await ui.unmount()
   }
 })

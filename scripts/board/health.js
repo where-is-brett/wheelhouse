@@ -20,6 +20,17 @@ import { QUICK_LINE } from '../lib/host-lines.js';
 
 // The STOP line starts with these words, alone or followed by ", since <date>".
 export const STOP_LINE = 'STOP is on';
+
+// Whose own line a health line is, read before its words are made plain: STOP's, an open
+// incident's (by the incident the board names on it), or neither (null).
+export function ownLineOf(line) {
+  if (typeof line?.incident === 'string') return 'incident';
+  const text = String(line?.text);
+  return text === STOP_LINE || text.startsWith(`${STOP_LINE}, `) ? 'stop' : null;
+}
+// How many of the health lines are broken: at stop level and not STOP's own, which is the
+// director's doing, not a fault. The pane's verdict and the briefing's count them the same way.
+export const brokenCount = (lines) => (Array.isArray(lines) ? lines : []).filter((l) => l?.level === 'stop' && ownLineOf(l) !== 'stop').length;
 // The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
 export { QUICK_LINE };
 // An approval carries over an update only when the pages look the same in Chrome's pictures

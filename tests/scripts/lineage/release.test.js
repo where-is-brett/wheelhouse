@@ -130,6 +130,9 @@ function computer() {
     calls.push([command, ...args].join(' '));
     if (command === 'git') {
       assert.equal(options.cwd, marketplaceDir);
+      // The look at the folder's own config comes first, and finds nothing.
+      if (args[0] === 'config') return ok();
+      assert.equal(options.env.GIT_CONFIG_GLOBAL, '/dev/null', 'git ran under the fence');
       return ok(`${RELEASES[at].sha}\n`);
     }
     assert.equal(command, 'claude');
@@ -209,7 +212,8 @@ test('the undo reinstalls the previous release, including after the clean-up', a
   assert.equal(done.line, `Wheelhouse v1.0.0 is installed for this project: wheelhouse ${'a'.repeat(12)}, superpowers ${'1'.repeat(12)}. Claude Code rewrote the project's settings on the way, so they were put back as the release has them.`);
   assert.deepEqual(pc.calls, [
     'claude plugin marketplace update wheelhouse',
-    'git -c core.hooksPath=/dev/null rev-parse HEAD',
+    'git config --includes --name-only --list -z',
+    'git rev-parse HEAD',
     'claude plugin update wheelhouse@wheelhouse --scope project --json',
     'claude plugin uninstall wheelhouse@wheelhouse --scope project --json',
     'claude plugin install wheelhouse@wheelhouse --scope project --json',
@@ -223,6 +227,20 @@ test('the undo reinstalls the previous release, including after the clean-up', a
   const again = await undo({ ...common, previous, open });
   assert.equal(again.ok, true);
   assert.deepEqual(again.installed.map((one) => one.route), ['already installed', 'already installed']);
+  assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
+});
+
+test('the reinstall answers with a plain refusal, not an error, when the marketplace copy holds a setting off the list', async () => {
+  const pc = computer();
+  const planted = async (command, args, options) => (command === 'git' && args[0] === 'config'
+    ? { code: 0, stdout: 'core.fsmonitor\0', stderr: '' }
+    : pc.run(command, args, options));
+  const done = await undo({ project: 'o__p', projectDir: pc.projectDir, claudeHome: pc.claudeHome, run: planted, resolved: DIRECT, previous: { ref: 'v1.0.0', sha: 'a'.repeat(40) } });
+  assert.equal(done.ok, false);
+  assert.deepEqual(done.installed, []);
+  assert.match(done.line, /core\.fsmonitor/);
+  assert.match(done.line, /Nothing was reinstalled/);
+  assert.doesNotMatch(done.line, /setup|Go ahead/i);
   assert.equal(pc.calls.filter((c) => /plugin (update|install|uninstall) /.test(c)).length, 0);
 });
 

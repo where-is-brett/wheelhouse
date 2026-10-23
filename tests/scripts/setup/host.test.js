@@ -5,7 +5,7 @@
 // a fake system box), protection read back, and the project's record and state clone. Nothing real
 // is signed in, created or pushed: `gh`, `glab`, the browser and the box are fakes, and git runs for
 // real only against bare remotes in temporary folders. Every home is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -34,13 +34,19 @@ import { readProject } from '../../../scripts/lib/projects.js';
 import { profileRemote } from '../../../scripts/profile/store.js';
 import { stateDir, profileDir, wheelhouseHome, computerId } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+
+// Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 import { composeCard, isTooLong } from '../../../scripts/cards/compose.js';
 import { termsIn, glossaryOf } from '../../../scripts/frontdesk/glossary.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { QUICK_LINE } from '../../../scripts/lib/host-lines.js';
 import { QUICK_LINE as BOARD_QUICK_LINE } from '../../../scripts/board/health.js';
 import { FREE_PLAN_LINE } from '../../../scripts/host/protection.js';
-import { g } from '../../helpers/git-fixture.js';
+import { g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
@@ -85,7 +91,7 @@ function standIn(state = {}) {
   w.run = async (file, args = [], options = {}) => {
     const name = path.basename(file).replace(/\.exe$/, '');
     if (name === 'git' && w.gitFails?.(args)) return answer('', 1, 'refused by the test');
-    if (name !== 'gh' && name !== 'glab') return realRun(file, args, options);
+    if (name !== 'gh' && name !== 'glab') return hostGuard(file, args, options);
     const host = name === 'gh' ? 'github' : 'gitlab';
     w.calls.push({ tool: name, args: [...args], env: options.env });
     if (args[0] === 'auth' && args[1] === 'status') {
@@ -364,8 +370,8 @@ test('a Locked project with only their own app on offer still gets the card', as
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
     assert.deepEqual(card.options.map((o) => o.label), [WAYS.own], 'their own app, agreed to on the card, never by default');
     assert.match(card.what, /Quick is not offered/);
-    const { question } = composeCard({ ...card, kind: 'question' });
-    assert.deepEqual(question.options.map((o) => o.label), [WAYS.own, 'Explain more']);
+    const { question } = composeCard({ ...card, kind: 'question', suggest: false });
+    assert.deepEqual(question.options.map((o) => o.label), [WAYS.own]);
     // A list naming no app is refused by apply too, before it makes anything.
     const list = [{ kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true }, { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` }];
     await assert.rejects(applyStep(step, folder, list, { answers: planned.answers }), { message: NO_APP_LISTED });
@@ -1114,8 +1120,9 @@ test('step 3\'s card for a company\'s GitLab behind its own authority, with the 
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, way: WAYS.narrow }));
     assert.ok(planned.changes.some((c) => c.action === 'certificate'));
     assert.equal(planned.changes.find((c) => c.action === 'sign-in').via, 'token');
-    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443, for that address only \(certificate checks stay on\)/);
-    assert.match(planned.card.what, /sign in with a token pasted into your computer's box, never the chat/);
+    // The full wording fits the calm card's length, the shorter one only when the names are longer; both say the same things.
+    assert.match(planned.card.what, /your company's own certificate for https:\/\/git\.example\.org:8443, (?:copied from this computer's own certificate store and given to Node\.js, glab and git )?for that address only \(certificate checks stay on\)/);
+    assert.match(planned.card.what, /sign in (?:to GitLab )?with a token pasted into your computer's box, never the chat/);
     assert.match(planned.card.what, /for your company's GitLab admin/);
     const { question } = composeCard({ ...planned.card, target: { step: 3, hash: planHash(planned.changes) } });
     assert.ok(question.question.length <= 1200, String(question.question.length));
@@ -2062,7 +2069,7 @@ async function applyIn(step, folder, runId, changes, extra = {}) {
   return lines;
 }
 
-const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl, env: {} });
+const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl, env: LOCAL_PATHS });
 
 const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
 

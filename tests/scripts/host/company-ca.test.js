@@ -11,6 +11,8 @@ import {
   caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, withGitConfig, HOST_UNREACHABLE,
   CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog, stageCaFile, certificateRefusal, awayLine,
 } from '../../../scripts/host/company-ca.js';
+import { safeGit, directorSignIn } from '../../../scripts/lib/safe-git.js';
+import { setupGit, setupGitEnv, FENCE } from '../../../scripts/setup/git.js';
 import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
 import { applyCompanyCa } from '../../../scripts/setup/tools.js';
@@ -19,7 +21,7 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, writeEvent, syncState } from '../../../scripts/state/events.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -83,6 +85,8 @@ test('no route ever sets GIT_SSL_NO_VERIFY, NODE_TLS_REJECT_UNAUTHORIZED=0, sslV
   const found = [];
   for (const file of CODE_FOLDERS.flatMap(jsFilesIn)) {
     fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+      // The tool guard's table of `timeout`'s own options (its `-k` is a kill delay in a shell command it reads), not a git or curl flag.
+      if (file.endsWith(path.join('scripts', 'hooks', 'tool-guard.js')) && /\btimeout: \['-s', '-k'\]/.test(line)) return;
       if (CHECKS_OFF.test(line)) found.push(`${path.relative(ROOT, file)}:${i + 1}`);
     });
   }
@@ -137,7 +141,7 @@ test('an unreachable host gives HOST_UNREACHABLE and keeps the push for later', 
   const remote = await makeBareRemote();
   try {
     await as(shortHome(), async () => {
-      const dir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       assert.equal(dir, stateDir('o__p'));
       const event = makeEvent({ kind: 'note', data: { text: 'while away' } });
       const away = async () => ({ ok: false, refused: HOST_UNREACHABLE(BASE) });
@@ -493,4 +497,66 @@ test('git\'s own SSL text is read as the certificate line for a GitLab record, a
   assert.equal(certificateRefusal(record, text), CERTIFICATE_NOT_TRUSTED(BASE));
   assert.equal(certificateRefusal({ host: 'github' }, text), null);
   assert.equal(certificateRefusal(record, 'remote: HTTP Basic: Access denied'), null);
+});
+
+// The seam: the certificate's pairs are added to the call's environment before safeGit (or setup's route)
+// builds the call's settings, and both keep every pair that is not a fence key, so they arrive after the
+// sign-in's pairs, with the count right and the fence whole.
+test('the certificate reaches a git call made through safeGit and through setup\'s route, after the sign-in and with the fence whole', async () => {
+  const home = shortHome();
+  writeCaFile({ home, pem: COMPANY });
+  const key = `http.${BASE}/.sslCAInfo`;
+  const settingsOf = (env) => Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]]);
+  const seen = [];
+  const spy = async (file, args, options) => { seen.push(options.env); return { code: 0, stdout: '', stderr: '' }; };
+  const withCertificate = (env) => companyGitEnv(env, { host: 'gitlab', base: BASE }, { home, platform: 'darwin' });
+  const checkFence = (env) => {
+    const pairs = settingsOf(env);
+    assert.deepEqual(pairs[0], ['credential.helper', ''], 'the clearing of credential helpers is first');
+    for (const [k, v] of FENCE) assert.ok(pairs.some(([pk, pv]) => pk === k && pv === v), `${k} stays set`);
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.equal(pairs.filter(([k]) => k === key).length, 1, 'the certificate pair once');
+    assert.equal(env.GIT_CONFIG_COUNT, String(pairs.length));
+    return pairs;
+  };
+
+  // The director's own sign-in (a credential helper pair) with the certificate after it.
+  const signIn = directorSignIn('gitlab');
+  const before = settingsOf(signIn).length;
+  const signed = withCertificate(signIn);
+  assert.equal(signed.GIT_CONFIG_COUNT, String(before + 1));
+  assert.deepEqual(settingsOf(signIn).length, before, 'the sign-in environment is not changed');
+  await safeGit({ run: spy, cwd: home, look: 'never', env: signed })(['push']);
+  const pairs = checkFence(seen.pop());
+  const helper = pairs.findIndex(([k, v]) => k === 'credential.helper' && v.endsWith('auth git-credential'));
+  assert.ok(helper > 0, 'the sign-in helper is kept');
+  assert.ok(pairs.findIndex(([k]) => k === key) > helper, 'the certificate comes after the sign-in');
+  assert.deepEqual(pairs[pairs.findIndex(([k]) => k === key)], [key, caFile(home)]);
+
+  // A key's own pair (as a narrow connection carries) keeps its place, and the certificate comes after it.
+  const narrow = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraHeader', GIT_CONFIG_VALUE_0: 'PRIVATE-TOKEN: x' };
+  await safeGit({ run: spy, cwd: home, look: 'never', env: withCertificate(narrow) })(['fetch']);
+  const narrowPairs = checkFence(seen.pop());
+  assert.ok(narrowPairs.findIndex(([k]) => k === key) > narrowPairs.findIndex(([k]) => k === 'http.extraHeader') && narrowPairs.some(([k]) => k === 'http.extraHeader'));
+
+  // Windows: git is told to use the system's own store for that address.
+  const windows = companyGitEnv({}, { host: 'gitlab', base: BASE }, { home, platform: 'win32' });
+  await safeGit({ run: spy, cwd: home, look: 'never', env: windows })(['fetch']);
+  assert.ok(settingsOf(seen.pop()).some(([k, v]) => k === `http.${BASE}/.sslBackend` && v === 'schannel'));
+
+  // Setup's own route (directorGitEnv is setupGitEnv plus the certificate).
+  const setupEnv = withCertificate(setupGitEnv({ host: 'gitlab', platform: 'darwin' }));
+  await setupGit({ run: spy, cwd: home, env: setupEnv })(['ls-remote', BASE]);
+  const calls = seen.splice(0).filter((env) => env.GIT_CONFIG_COUNT !== undefined && !env.GIT_CONFIG_COUNT.startsWith('0'));
+  const last = settingsOf(calls.pop());
+  assert.ok(last.some(([k, v]) => k === key && v === caFile(home)));
+  assert.ok(last.findIndex(([k]) => k === key) > last.findIndex(([k, v]) => k === 'credential.helper' && v.endsWith('auth git-credential')));
+
+  // Another address, a public service, and a computer with no file get no pair.
+  const none = [
+    companyGitEnv(signIn, { host: 'gitlab', base: 'https://gitlab.com' }, { home, platform: 'darwin' }),
+    companyGitEnv(signIn, { host: 'github', base: BASE }, { home, platform: 'darwin' }),
+    companyGitEnv(signIn, { host: 'gitlab', base: BASE }, { home: shortHome(), platform: 'darwin' }),
+  ];
+  for (const env of none) assert.equal(env.GIT_CONFIG_COUNT, signIn.GIT_CONFIG_COUNT);
 });

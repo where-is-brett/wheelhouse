@@ -6,7 +6,7 @@
 // clicks copied into the project's state once. Nothing real is pushed or installed: git runs for
 // real only against bare remotes in temporary folders, and `gh`, `claude` and protection are
 // stand-ins. Every home is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,7 +33,13 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { directorGitlabApi, REAL_USERS } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { g, push as fixturePush } from '../../helpers/git-fixture.js';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+
+// Setup's own runs: git and what the test fakes; any other host tool is refused and noted here.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
+import { g, push as fixturePush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
 const T0 = new Date('2026-10-20T03:00:00.000Z');
@@ -175,7 +181,7 @@ async function world({
       }
       return answer('', 1, 'unknown command');
     }
-    return realRun(file, args, options);
+    return hostGuard(file, args, options);
   };
   // Protection as Task 8's switchOnAsDirector gives it: here it notes what the host held when it
   // was asked, so the order can be read.
@@ -772,7 +778,7 @@ test('the setup clicks reach the state branch once', async () => {
     await realRun('git', ['init', '--bare', '-q', bare]);
     const folder = fs.realpathSync.native(tempFolder('wh-proj-'));
     writeProject(SLUG, { folder, remoteUrl: bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
-    await cloneState({ project: SLUG, remoteUrl: bare, env: {} });
+    await cloneState({ project: SLUG, remoteUrl: bare, env: LOCAL_PATHS });
 
     const run = startRun({ folder, now: () => T0 });
     const other = startRun({ folder: tempFolder('wh-other-'), now: () => T0 });

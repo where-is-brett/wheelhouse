@@ -11,7 +11,7 @@ import { STATE_BRANCH } from './clone.js';
 import { CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
-import { CARD, CARD_KINDS } from '../lib/front-desk.js';
+import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 
 export const PLAIN_KINDS = [
@@ -62,8 +62,8 @@ const ACTION_OWN = {
   uninstall: ['project', 'hash'],
 };
 const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
-// Labels that ask for more, or put the card off: a click on one is never an answer.
-const NOT_AN_ANSWER = ['Explain more', 'Not now'];
+// Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
+const NOT_AN_ANSWER = PUT_OFF;
 
 const isSlug = (x) => typeof x === 'string' && SLUG.test(x);
 const isText = (x) => typeof x === 'string' && x !== '';
@@ -169,7 +169,8 @@ const PLAIN_SHAPES = {
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
-  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event'] },
+  // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces.
+  card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
@@ -264,6 +265,11 @@ function checkPlain(kind, data) {
     optionalText('topic');
     optionalText('recommend');
     optionalText('event');
+    optionalText('revises');
+    // The card's parts, as the composer gives them (scripts/cards/compose.js): the pane draws them and the chat's text is built from them.
+    if (data.parts !== undefined && !(isPlain(data.parts) && ['ask', 'what', 'why', 'meanwhile'].every((k) => isText(data.parts[k])) && Array.isArray(data.parts.options))) {
+      bad('has parts that are not a question, what, why, meanwhile and options');
+    }
     if (data.concepts !== undefined && !(Array.isArray(data.concepts) && data.concepts.every(isText))) bad('has concepts that are not a list of text');
   } else if (kind === 'reversal') {
     text('topic');
