@@ -33,9 +33,10 @@ export const HOOKS = [
 // answer holds: the courier's wake in the front desk, the watcher's lines in a Shape 2 foreman.
 // $.session.surfaces reads the surfaces the session has attached, so the pane opens only once there is
 // one. $.ui.invalidate draws the pane again while a tick hangs, so the line saying what is shown is
-// old comes without a tick's answer; it only draws.
+// old comes without a tick's answer; it only draws. $.clock.after draws the settings view again when
+// a change's minute of Undo is up, so Undo leaves then.
 export const CALLS = [
-  '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.prompt.submit', '$.session.id', '$.session.root',
+  '$.clock.after', '$.clock.every', '$.clock.now', '$.command.register', '$.process.run', '$.prompt.submit', '$.session.id', '$.session.root',
   '$.session.surfaces', '$.session.usage', '$.state.get', '$.state.set', '$.ui.close', '$.ui.invalidate', '$.ui.open', '$.ui.panes', '$.ui.resolve',
   '$.ui.status', '$.ui.toast',
 ];
@@ -605,6 +606,9 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
   const notes = parts.filter((p) => p.type === 'hooks').flatMap((p) => (Array.isArray(p.notes) ? p.notes : []));
   const hooks = [];
   const calls = [];
+  // Where the validator cut its calls list short ("$.ui.stat… [+34 chars]"): the cut item's start,
+  // else null. Its list is sorted, so what the cut hides sorts at or after that start.
+  let cutAt = null;
   for (const note of notes) {
     const hooked = /^(\S+) hooks: (.*)$/.exec(note);
     if (hooked) {
@@ -613,7 +617,16 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
     }
     const called = /^(\S+) calls: (.*)$/.exec(note);
     if (called) {
-      calls.push(...listed(called[2]));
+      const items = listed(called[2]);
+      const cut = /^(.*)… \[\+\d+ chars\]$/.exec(items.at(-1) ?? '');
+      if (cut) {
+        items.pop();
+        // A cut inside an item's "(via …)" leaves the item's own name whole.
+        const named = /^(\S+) \(via /.exec(cut[1]);
+        if (named) items.push(named[1]);
+        cutAt = named ? named[1] : cut[1];
+      }
+      calls.push(...items);
       if (called[1] !== ENTRY) problems.push(`claude plugin validate lists calls for ${called[1]}, not ${ENTRY}`);
     }
   }
@@ -635,6 +648,11 @@ export function checkMod({ report, sources, hooksJson, allow = {} }) {
   }
   const allowed = new Set([...allowedCalls, ...VALUES]);
   const files = entriesOf(sources);
+  // A cut list: the members the source uses from the cut on stand for the list's hidden rest.
+  if (cutAt !== null) {
+    const hidden = [...new Set(files.flatMap(([, text]) => membersIn(text)))].filter((m) => m >= cutAt && !VALUES.includes(m) && !calls.includes(m)).sort();
+    calls.push(...hidden);
+  }
   const known = new Set(files.map(([file]) => file));
   for (const [file, text] of files) {
     const code = codeOf(text);

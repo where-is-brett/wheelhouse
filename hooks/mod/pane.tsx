@@ -516,8 +516,8 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     note.allWell === true && status(t, 'All well', 'success'),
     ...watch.map((line) => status(t, 'To watch', 'warning', line.text as string)),
     protection !== null && body(t, `Protection: ${protection}`),
-    week !== null && body(t, week),
-    usage !== null && footnote(t, usage),
+    // The week's share once: the health note's, else the usage line of a model without one.
+    (week ?? usage) !== null && body(t, (week ?? usage) as string),
     ideasCount !== null && ideasCount > 0 && body(t, `${ideasCount} ${ideasCount === 1 ? 'idea' : 'ideas'}${fresh !== null && fresh > 0 ? ` · ${fresh} new since yesterday` : ''}`),
     ...missing.map((line) => footnote(t, line)),
   ].filter((row) => row !== false)

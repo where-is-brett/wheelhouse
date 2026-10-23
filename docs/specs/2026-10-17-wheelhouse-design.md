@@ -1821,7 +1821,7 @@ Settings is a grouped, inset list, like System Settings on the Mac and Settings 
 **How a pick behaves:**
 
 - **A pick is the change and its confirmation,** as a press is today (section 14.4).
-- **The row then shows "Changed just now"** and a small Undo, for a minute. Undo picks the value before, recorded and confirmed the same way.
+- **The row then shows "Changed just now"** and a small Undo, for a minute. Undo picks the value before, recorded and confirmed the same way. The pane is drawn again when the minute is up, so Undo leaves then; one pressed late all the same says "It's too late to undo that. Undo lasts one minute."
 - **Availability's six choices** are its pop-up's options, worked out when the pane is drawn (section 14.4).
 - **Under STOP** a pick records nothing. The pop-up goes back to the value in force, and the pane says "Settings can't change while STOP is on. Lift STOP first."
 
