@@ -28,7 +28,7 @@ export const HELPER_ONLY_KINDS = ['survey'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -64,8 +64,20 @@ const ACTION_OWN = {
   // the list uninstall puts back. Its question is the card's set line alone. It is kept in
   // <wheelhouseHome()>/setup/clicks/, as a setup click is, where the helper reads it.
   uninstall: ['project', 'hash'],
+  // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
+  // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
+  'keep-main': ['from', 'to'],
+  // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
+  // is a runbook step): the merge, in full.
+  'undo-merge': ['merge'],
+  // The director's Undo it, in the helper's window, on the card about a main version moved outside the helper: the
+  // main version the record held and the one the store holds, each in full.
+  'undo-main': ['from', 'to'],
 };
-const ACTION_KEYS = ['action', 'question', 'label', ...new Set(Object.values(ACTION_OWN).flat())];
+// Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
+// window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
+// here, may name one too; the gate and the audit report judge what it names.
+const ACTION_KEYS = ['action', 'question', 'label', 'proof', ...new Set(Object.values(ACTION_OWN).flat())];
 // Labels that ask for more, put the card off or hand the front desk the director's own words: a click on one is never an answer.
 const NOT_AN_ANSWER = PUT_OFF;
 
@@ -82,9 +94,10 @@ function checkAction(data) {
   // A setup answer typed in has no label: its own check below asks for one of the two.
   const labelled = typeof data.label === 'string' || (data.action === 'setup-answer' && data.label === null);
   if (typeof data.question !== 'string' || !labelled) bad('needs the question and the label');
+  if (data.proof !== undefined && !isText(data.proof)) bad('has a proof that is not text');
   // A field that belongs to another action is refused here, before the action's own checks.
   const own = ACTION_OWN[data.action];
-  if (Object.keys(data).some((k) => !['action', 'question', 'label'].includes(k) && !own.includes(k))) {
+  if (Object.keys(data).some((k) => !['action', 'question', 'label', 'proof'].includes(k) && !own.includes(k))) {
     // The runbook's older message about a branch stays what it was.
     if (!(data.action === 'runbook' && data.branch !== undefined)) bad('carries a field that belongs to another action');
   }
@@ -151,6 +164,15 @@ function checkAction(data) {
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the list its card showed');
     if (data.label !== UNINSTALL_LABEL) bad(`needs the ${UNINSTALL_LABEL} label`);
     if (data.question !== uninstallLine(data.project, data.hash)) bad('carries only uninstall\'s card\'s set line as its question');
+  } else if (data.action === 'keep-main') {
+    if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
+    if (data.label !== 'Keep it') bad('needs the Keep it label');
+  } else if (data.action === 'undo-merge') {
+    if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
+    if (data.label !== 'Undo') bad('needs the Undo label');
+  } else if (data.action === 'undo-main') {
+    if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it undoes, from and to, in full');
+    if (data.label !== 'Undo it') bad('needs the Undo it label');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }
@@ -177,6 +199,12 @@ const PLAIN_SHAPES = {
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces.
   card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises'] },
+  // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
+  // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
+  // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
+  // `label` must be there but may be null: a Lean line with no choice has none. Every writer gives one.
+  // Suggest a change… at Lean (ruling P5-27 k) carries the director's own words as `text`.
+  'card-answer': { must: ['label'], may: ['question', 'card', 'hash', 'commit', 'proof', 'tier', 'by', 'clicked', 'source', 'text'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.

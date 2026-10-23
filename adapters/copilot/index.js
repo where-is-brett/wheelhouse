@@ -5,19 +5,22 @@
 // without a cycle.
 import { pendingPart } from '../../scripts/agents/contract.js';
 import { LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.js';
+import hooks from './hooks.js';
 import identity from './identity.js';
 import safetyLine from './safety-line.js';
 import sessions from './sessions.js';
 import tools from './tools.js';
 import toolSheet from './tool-sheet.js';
+import translate from './translate.js';
 
 export default Object.freeze({
   identity,
-  // The parts not built yet, by the plan's part: the hook registration and the guards' translation (Part 5),
-  // the settings writer (Part 7), the session starts above and the evaluation runner (Part 9).
-  hooks: pendingPart('hooks', ['registration', 'file']),
-  translate: pendingPart('translate', ['toGuardInput', 'fromGuardAnswer']),
+  // The person's hook file, written once per computer by setup (Part 5).
+  hooks,
+  translate,
   tools,
+  // The parts not built yet, by the plan's part: the settings writer (Part 7), the session starts below and the
+  // evaluation runner (Part 9).
   settings: pendingPart('settings', ['project', 'local']),
   sessions,
   // On Copilot a chat click can't bind: no hook signs, and a hook runs beside the agent (design section 6.3).
@@ -30,5 +33,5 @@ export default Object.freeze({
   toolSheet,
   safetyLine,
   evalRunner: pendingPart('evalRunner', ['run']),
-  pending: Object.freeze(['hooks', 'translate', 'settings', 'sessions', 'evalRunner']),
+  pending: Object.freeze(['settings', 'sessions', 'evalRunner']),
 });

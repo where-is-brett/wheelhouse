@@ -924,6 +924,33 @@ test('reading those files is still allowed', async () => {
   });
 });
 
+test('a write to a .git file or anything under a .git folder is refused with CONTROL_FILE, in every project (ruling P5-28)', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      // A worktree's pointer file, as a Lean project's folder has into its store.
+      const worktree = path.join(base, 'wt');
+      git(main, 'worktree', 'add', '-q', '-b', 'feature', worktree);
+      const real = fs.realpathSync(worktree);
+      for (const [tool, key] of WRITERS) {
+        for (const target of [path.join(real, '.git'), path.join(main, '.git', 'config'), path.join(main, '.git', 'hooks', 'post-merge'),
+          path.join(main, '.git', 'refs', 'heads', 'main'), path.join(main, 'sub', '.git')]) {
+          assert.equal(REASON(await run(base, home, call(real, tool, { [key]: target }))), CONTROL_FILE, `${tool} ${target}`);
+        }
+        assert.equal(REASON(await run(base, home, call(real, tool, { [key]: '.git' }))), CONTROL_FILE, `${tool} relative`);
+        // Neighbours are left alone, and reading stays allowed.
+        for (const rel of ['.gitignore', '.github/workflows/ci.yml', 'src/.gitkeep', 'git/x']) {
+          assert.equal(await run(base, home, call(real, tool, { [key]: path.join(real, ...rel.split('/')) })), undefined, `${tool} ${rel}`);
+        }
+      }
+      assert.equal(await run(base, home, call(real, 'Read', { file_path: path.join(real, '.git') })), undefined);
+      if (CASE_BLIND) assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: path.join(main, '.GIT', 'config') }))), CONTROL_FILE);
+      // On Windows, trailing dots and stream suffixes don't hide it.
+      assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: `${path.join(main, '.git.')}\\config` }), 'win32')), CONTROL_FILE);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
 import { segments, segmentsWithOperators } from '../../../scripts/hooks/shell-words.js';
 
 test('segments reads quotes and substitutions nested inside each other', () => {

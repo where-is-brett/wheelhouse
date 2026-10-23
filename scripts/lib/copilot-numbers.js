@@ -25,3 +25,8 @@ export const BOARD_FILE = 'wheelhouse/board.md';
 export const HOOK_FILE = 'wheelhouse.json';
 // The version of Copilot CLI the probes install.
 export const COPILOT_VERSION = '1.0.101';
+// How long a Copilot hook waits for the helper's /health before it takes the helper as not running (ruling P5-22).
+export const HELPER_PROBE_MS = 2000;
+// Whether check 59 (C6) has shown a hook can see ask_user's answer, so a click a hook saw can be recorded as
+// `hook-click`. Until it has, a chat click is recorded as `chat-click`, the agent's own account (ruling P5-12).
+export const C6_PASSED = false;

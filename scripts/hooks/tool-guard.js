@@ -205,6 +205,10 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots }) {
       if ((parts.at(-1) === 'settings.local.json' || parts.at(-1) === 'settings.json') && parts.at(-2) === '.claude') return refuse('change Claude\'s settings');
       if (parts.some((part, i) => part === '.claude' && parts[i + 1] === 'hooks' && i + 2 < parts.length)) return refuse('change the project\'s hooks');
     }
+    // Git's own files (ruling P5-28), in every project and for every agent: a `.git` file (a worktree's pointer, as
+    // a Lean project's folder has into its store) or anything under a `.git` folder, by every spelling, so an edit
+    // tool can't move a branch, add a hook or change git's settings.
+    if (spellings(given, input.cwd).some((candidate) => fold(candidate).split(/[\\/]/).includes('.git'))) return answer.deny(CONTROL_FILE);
     // The files that steer an agent (agent-control.js), whichever agent reads them. The home
     // folders are looked at by their real paths too, and a project's by each root's.
     const folders = [home, homeReal].flatMap((h) => homeControlFolders({ home: h, platform, env }));

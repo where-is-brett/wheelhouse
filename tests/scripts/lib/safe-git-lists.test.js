@@ -621,7 +621,7 @@ const NO_PROJECT_WRITES = ['push', 'commit', 'tag', 'rebase', 'am'];
 // option or the value of `-c`/`-C`.
 function subcommandsIn(text) {
   const out = [];
-  for (const m of text.matchAll(/(?:\b\w*[gG]it\w*|\bfenced|\bkeyed|\bunkeyed|\bmust|\bcall|\bg|\bgitIn\([^)]*\)|\brun)\(\s*(?:'git',\s*|[\w.]+,\s*)?\[/g)) {
+  for (const m of text.matchAll(/(?:\b\w*[gG]it\w*|\bfenced|\bkeyed|\bunkeyed|\bmust|\bcall|\bok|\bg|\bgitIn\([^)]*\)|\brun)\(\s*(?:'git',\s*|[\w.]+,\s*)?\[/g)) {
     const array = arrayAt(text, m.index + m[0].length - 1);
     if (array === null) continue;
     const words = [...array.matchAll(/'([^']*)'|"([^"]*)"|`([^`]*)`/g)].map((w) => w[1] ?? w[2] ?? w[3]);
@@ -635,7 +635,8 @@ function subcommandsIn(text) {
 
 test('10: scan - no route whose look is the project list pushes, commits, tags, rebases or applies', () => {
   const read = (file) => withoutComments(fs.readFileSync(path.join(ROOT, file), 'utf8'));
-  const routes = ['scripts/foreman/act.js', 'scripts/feature/cli.js', 'scripts/install/survey.js'];
+  // The Lean store's every call takes the project list too (ruling P5-25), so it is scanned with them (ruling P5-50).
+  const routes = ['scripts/foreman/act.js', 'scripts/feature/cli.js', 'scripts/install/survey.js', 'scripts/lean/store.js'];
   const subs = routes.flatMap((file) => subcommandsIn(read(file)).map((s) => [file, s]));
   assert.ok(subs.length >= 10, 'the scan sees the routes\' calls');
   for (const [, s] of subs) assert.ok(s !== '', 'every call has a subcommand the scan can read');
@@ -651,6 +652,21 @@ test('10: scan - no route whose look is the project list pushes, commits, tags, 
   // The row stands or falls with this scan.
   assert.equal(PROJECT_CONDITIONS.noPushFromProject, bad.length === 0 && inCopy.length === 0,
     `PROJECT_CONDITIONS.noPushFromProject must match the scan; found ${JSON.stringify([...bad, ...inCopy])}`);
+});
+
+test('10: the Lean store sends nothing out: its copy fetches from it, naming the store by its path', () => {
+  const store = withoutComments(fs.readFileSync(path.join(ROOT, 'scripts/lean/store.js'), 'utf8'));
+  const subs = subcommandsIn(store);
+  assert.ok(subs.includes('fetch'), 'the scan sees the copy\'s fetch');
+  assert.deepEqual(subs.filter((s) => s === 'push'), [], 'no push from the store');
+  // Each fetch names where it fetches from by a path, never by a remote's name, so no remote's settings are read.
+  const fetches = [...store.matchAll(/\[\s*'fetch',([^\]]*)\]/g)].map((m) => m[1]);
+  assert.ok(fetches.length > 0);
+  for (const args of fetches) {
+    const plain = [...args.matchAll(/'([^']*)'/g)].map((w) => w[1]).filter((w) => !w.startsWith('-'));
+    assert.deepEqual(plain, [], `a fetch names no remote: ${args}`);
+    assert.match(args, /\bfrom\b|storeDir\(|stateDir\(/, `a fetch names a path: ${args}`);
+  }
 });
 
 test('10: the scan finds a push in a route', () => {

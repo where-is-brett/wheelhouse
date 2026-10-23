@@ -2,7 +2,9 @@
 // Builds the Lean kit for Copilot: the skills, agents and instructions that the chat copies into a person's
 // ~/.copilot/ where no Node.js runs for them (design sections 6.4 and 8.2). It is built from the same
 // playbooks as Claude Code's, so there is one text: the skills and agent prompts are read from skills/ and agents/,
-// given Copilot's names and front matter, and have Claude Code's tool words mapped to Copilot's by one table.
+// given Copilot's names and front matter, and have Claude Code's tool words mapped to Copilot's by one table. It also
+// holds Lean's shell guard for a Mac without Node.js and the hook file that runs it (adapters/copilot/lean-hooks.js), built
+// here so every copy has the same bytes and MANIFEST.txt lists them; setup only copies them.
 //
 //   node scripts/agents/copilot/home.js           prints the paths that differ from adapters/copilot/home/, exit 1 if any
 //   node scripts/agents/copilot/home.js --write   replaces adapters/copilot/home/ with what buildHome gives
@@ -15,7 +17,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readSheet } from '../../../adapters/copilot/tool-sheet.js';
 import tools from '../../../adapters/copilot/tools.js';
-import { BOARD_FILE } from '../../lib/copilot-numbers.js';
+import { GUARD_SCRIPT, TEMPLATE as GUARD_TEMPLATE, leanGuardScript, leanHookFile } from '../../../adapters/copilot/lean-hooks.js';
+import { BOARD_FILE, HOOK_FILE } from '../../lib/copilot-numbers.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -64,8 +67,9 @@ const PLAYBOOK_SKILLS = Object.freeze([
 // The words a source holds back for the kit to fill in, so the source stays in general words (the core never names an
 // agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js);
 // `{{agent-id}}` is the same word as it is written in a file's name (`.github/copilot-instructions.md`), where the playbook lists the
-// files that steer an agent.
-const KIT_WORDS = Object.freeze({ agent: 'Copilot', 'agent-id': 'copilot' });
+// files that steer an agent. `{{agent-hooks}}` is the person's hook folder as a shell finds it (adapters/copilot/hooks.js),
+// where the board asks whether the shell guard runs.
+const KIT_WORDS = Object.freeze({ agent: 'Copilot', 'agent-id': 'copilot', 'agent-hooks': '${COPILOT_HOME:-$HOME/.copilot}/hooks' });
 const AGENT_SOURCES = Object.freeze(['builder', 'reviewer', 'tester']);
 const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 
@@ -73,7 +77,7 @@ const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 // Lean to give the front desk's own views (the description is the command's).
 const LEAN = '`wheelhouse-lean`';
 const COMMAND_SKILLS = Object.freeze({
-  board: `Show the director the board: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the board couldn't be read.\n\nLean's playbook (${LEAN}) keeps the board up to date; its section "The board" says how and when.`,
+  board: `Show the director the board: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the board couldn't be read.\n\nLean's playbook (${LEAN}) keeps the board up to date; its section "The board" says how and when. Its parts include "Ideas" and "Rulings", the ideas kept for later and the rulings the director confirmed, with "Nothing" when there are none.`,
   briefing: `Give the director the briefing now, as ${LEAN} gives it (its section "The briefing"), with nothing added. If you can't build it, say only that the briefing couldn't be read.`,
   settings: `Show the director the settings in force, and where each comes from, as ${LEAN} gives them (its section "Settings"), with nothing added: at Lean they are the tier and its lines at the top of the board, and the folder the copy goes to. If they can't be read, say only that the settings couldn't be read.`,
   sources: `Lean has no weekly check of the sources: it is a Wheelhouse program, and none runs here. Say so in one line, as ${LEAN} does (its section "Sources"), and show nothing else.`,
@@ -84,6 +88,10 @@ const COMMAND_SKILLS = Object.freeze({
 // source stays without it and the kit adds it, straight before the heading that opens the steps that need Node.js.
 const FRONT_DESK_LEAN_LINE = 'At Lean, follow wheelhouse-lean for the record, the board, building and merging.';
 const FRONT_DESK_LEAN_ANCHOR = '\n## The command\n';
+// The intake's Lean line (ruling P5-38), after its overview, so a Lean chat with no Wheelhouse command takes each
+// `cli.js` step from Lean's playbook; skills/intake stays Claude Code's, word for word, and the kit adds it.
+const INTAKE_LEAN_LINE = 'At Lean, where no Wheelhouse command runs, follow wheelhouse-lean\'s Intake at Lean in place of each `cli.js` step.';
+const INTAKE_LEAN_ANCHOR = '\n## Every message, in this order\n';
 
 const INSTRUCTIONS_LINE = 'In VS Code\'s Local harness Wheelhouse doesn\'t run: say so and ask the director to switch the chat to Copilot.';
 
@@ -159,17 +167,19 @@ function assemble({ file, source, front, rest }) {
   return text.endsWith('\n') ? text : `${text}\n`;
 }
 
-// The Lean line, put in before the front desk's "## The command" heading. A source without that heading is an error.
-function withLeanLine(text, rel) {
-  if (text.split(FRONT_DESK_LEAN_ANCHOR).length !== 2) throw new Error(`${rel} has no single "## The command" heading to put the Lean line before`);
-  return text.replace(FRONT_DESK_LEAN_ANCHOR, () => `\n${FRONT_DESK_LEAN_LINE}\n${FRONT_DESK_LEAN_ANCHOR}`);
+// A Lean line, put in before a heading of the source: the front desk's "## The command", the intake's "## Every
+// message, in this order". A source without that heading, once, is an error.
+function withLeanLine(text, rel, { line, anchor }) {
+  if (text.split(anchor).length !== 2) throw new Error(`${rel} has no single "${anchor.trim()}" heading to put the Lean line before`);
+  return text.replace(anchor, () => `\n${line}\n${anchor}`);
 }
 
 function skillFrom(root, { name, source }) {
   const { front, body } = parse(readSource(root, source), source);
   const file = `skills/wheelhouse-${name}/SKILL.md`;
   let rest = fillKitWords(renameSkills(mapToolWords(withoutPathComment(body, source), source)), source);
-  if (name === 'front-desk') rest = withLeanLine(rest, source);
+  if (name === 'front-desk') rest = withLeanLine(rest, source, { line: FRONT_DESK_LEAN_LINE, anchor: FRONT_DESK_LEAN_ANCHOR });
+  if (name === 'intake') rest = withLeanLine(rest, source, { line: INTAKE_LEAN_LINE, anchor: INTAKE_LEAN_ANCHOR });
   return [file, assemble({ file, source, front: { name: `wheelhouse-${name}`, description: front.description }, rest })];
 }
 
@@ -269,6 +279,9 @@ export function buildHome({ root = REPO } = {}) {
     foremanFrom(root),
     instructionsFrom(root),
   ]) files.set(entry[0], entry[1]);
+  // Lean's shell guard and its hook file (check 69). JSON has no comments; the script's path comment is its second line.
+  files.set(`hooks/${HOOK_FILE}`, `${JSON.stringify(leanHookFile({ platform: 'darwin' }), null, 2)}\n`);
+  files.set(`hooks/${GUARD_SCRIPT}`, leanGuardScript({ root, comment: `${HOME_DIR}/hooks/${GUARD_SCRIPT} (built from ${GUARD_TEMPLATE} by ${BUILD_COMMAND})` }));
   files.set('MANIFEST.txt', manifestOf(files));
   return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
 }

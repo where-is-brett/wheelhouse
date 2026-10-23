@@ -113,12 +113,14 @@ Ask the computer, once, in the project's terminal: `git --version`, `node --vers
 - **Copilot's command line** (`copilot --version`) is not needed at Lean either. Say what was found, in a line, and move on.
 - **A remote** (`origin`): note it in a line. Lean keeps everything on this computer and in the copy folder; the record never goes to the remote. The `wheelhouse-lean` skill says how work goes up to a code host as a merge request.
 
-Then say which tier this is, in one sentence: "This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat". If Node.js 22 or later runs, add one more sentence: Wheelhouse's helper can add more here (guards and a record the helper writes), and it comes in a later part of Wheelhouse's build.
+Then say which tier this is, in one sentence: "This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat". If Node.js 22 or later runs on a Mac or Windows, add one more sentence: Wheelhouse's helper can add more here (guards and a record the helper writes), and you offer it later on this page (Wheelhouse's helper, where Node.js runs).
 
-**Which board case applies.** The board's first lines say what holds on this computer, so choose by what is running now, not what could run. The helper isn't installed by this setup, so no Wheelhouse guard runs even where Node.js does. Until the helper is installed, the board shows the lines for a computer without Node.js, even where Node.js runs:
+**Which board case applies.** The board's first lines say what holds on this computer, so choose by what is running now, not what could run. Where Node.js runs, no Wheelhouse guard runs until the helper is installed and answering. Until the helper is installed, the board shows the lines for a computer with no guard, even where Node.js runs; on a Mac without Node.js, Step 4 puts Wheelhouse's shell guard in place, and the board shows its lines:
 
-- **A Mac:** the lines for a Mac without Node.js. Its guard line is "No Wheelhouse guards run on this computer yet".
-- **Windows:** the lines for Windows without Node.js. Its guard line is "No Wheelhouse guards run on Windows without Node.js, until a way is found".
+- **A Mac without Node.js:** the lines for a Mac where Wheelhouse's shell guard runs, once Step 4 has put it in place. Its guard line is "Wheelhouse's shell guard runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn't know". If Step 4 couldn't put it in place, the lines for a Mac with no helper, whose guard line is "No Wheelhouse guards run on this computer yet".
+- **A Mac where Node.js runs:** the lines for a Mac with no helper. Its guard line is "No Wheelhouse guards run on this computer yet".
+- **Windows without Node.js:** the lines for Windows without Node.js. Its guard line is "No Wheelhouse guards run on Windows without Node.js, until a way is found".
+- **Windows where Node.js runs:** the same lines as a Mac with no helper, whose guard line is "No Wheelhouse guards run on this computer yet".
 - **Linux:** the board has no lines for it yet. Say that Wheelhouse at Lean is built for a Mac or Windows, and stop after this step with nothing more to do; the kit is in place.
 
 ## Step 4: set up the project
@@ -177,7 +179,34 @@ Start in the project's folder: the folder VS Code has open, which the terminal o
 
    If it stops with "The record is ignored", the project's own `.gitignore` ignores all of `.wheelhouse/` (a line `.wheelhouse/`), and the record has to be tracked. Don't change that line yourself: ask a card (what: the project's `.gitignore` hides Wheelhouse's record from git; why: the record is how the director sees who approved what; options **Change it** and **Not now**; recommend **Change it**; meanwhile nothing is written). On **Change it**, replace that one line with `.wheelhouse/*`, then run the block again.
 
-3. Write the board, `wheelhouse/board.md` (make the `wheelhouse` folder first), **only if there is none.** If the file is already there, setup has run before and the board holds the director's live state (STOP, cards waiting, lines waiting to be recorded, what is building, what was copied): keep it as it is. Change only its tier lines, the `Tier: Lean` line and the dash lines straight under it up to the first blank line, and only if they differ from this computer's case now; replace those lines and nothing below them. Otherwise the board is untouched, and a run of setup never turns STOP off. A new board's first line is `Tier: Lean`, and its next lines are the safety lines for this computer's case, from Step 3. Take them from `wheelhouse-lean` (now in `~/.copilot/skills/wheelhouse-lean/SKILL.md`), the block in its section "The board" for a Mac without Node.js or for Windows without Node.js: copy each line exactly, with a dash in front. The rest of the board follows, in this order, with "Nothing" in each part that is empty and "No copy yet" under The copy:
+3. **On a Mac where `node --version` finds nothing, put Wheelhouse's shell guard in place** (check 69). It is a guard that runs without Node.js: `hooks/wheelhouse-lean-guard.sh`, and `hooks/wheelhouse.json`, the hook file that has Copilot run it before each tool. Both are built when the kit is built, not on this computer, so they come in `adapters/copilot/home/` and are listed in `MANIFEST.txt`; Step 2 left them for here. Run this block, with the tag in place of `<tag>`. It copies the guard, then the hook file, into Copilot's hook folder, each checked with `git hash-object --no-filters` against its line before and after, and stops at the first that doesn't match:
+
+```sh
+# copy-guard
+(
+  TAG='<tag>'
+  KIT="$HOME/.copilot/wheelhouse/$TAG/adapters/copilot/home"
+  HOOKS="${COPILOT_HOME:-$HOME/.copilot}/hooks"
+  if command -v node >/dev/null 2>&1; then echo 'Node.js runs here, so no shell guard is copied'; exit 1; fi
+  mkdir -p "$HOOKS" || exit 1
+  # the guard first, so the hook file never names a guard that isn't there
+  for file in hooks/wheelhouse-lean-guard.sh hooks/wheelhouse.json; do
+    hash=$(awk -v f="$file" '$2 == f { print $1 }' "$KIT/MANIFEST.txt")
+    [ -n "$hash" ] || { echo "MANIFEST.txt does not list $file"; exit 1; }
+    [ "$(git hash-object --no-filters "$KIT/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
+    cp "$KIT/$file" "$HOOKS/${file#hooks/}.new" || exit 1
+    [ "$(git hash-object --no-filters "$HOOKS/${file#hooks/}.new")" = "$hash" ] || { rm -f "$HOOKS/${file#hooks/}.new"; echo "Does not match MANIFEST.txt: $file"; exit 1; }
+    mv -f "$HOOKS/${file#hooks/}.new" "$HOOKS/${file#hooks/}" || exit 1
+  done
+  echo "Wheelhouse's shell guard is in place"
+)
+```
+
+   - **It prints "Wheelhouse's shell guard is in place":** tell the director in a line: "Wheelhouse's shell guard now runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn't know. A command you allow can still change them." The board takes the lines for a Mac where the shell guard runs.
+   - **It stops:** say what it printed in a line, and that no Wheelhouse guard runs here yet. The board takes the lines for a Mac with no helper. Don't copy the files by another route.
+   - **On Windows, and where Node.js runs,** copy no hook file: on Windows no guard runs without Node.js yet, and where Node.js runs Wheelhouse's helper registers its own (Wheelhouse's helper, where Node.js runs).
+
+4. Write the board, `wheelhouse/board.md` (make the `wheelhouse` folder first), **only if there is none.** If the file is already there, setup has run before and the board holds the director's live state (STOP, cards waiting, lines waiting to be recorded, what is building, what was copied): keep it as it is. Change only its tier lines, the `Tier: Lean` line and the dash lines straight under it up to the first blank line, and only if they differ from this computer's case now; replace those lines and nothing below them. Otherwise the board is untouched, and a run of setup never turns STOP off. A new board's first line is `Tier: Lean`, and its next lines are the safety lines for this computer's case, from Step 3. Take them from `wheelhouse-lean` (now in `~/.copilot/skills/wheelhouse-lean/SKILL.md`), the block in its section "The board" for this computer: on a Mac where item 3 put the shell guard in place, the block for a Mac where the shell guard runs; on any other Mac, or on Windows where Node.js runs, the block for a Mac or Windows with no helper answering; on Windows without Node.js, its own block. Copy each line exactly, with a dash in front. The rest of the board follows, in this order, with "Nothing" in each part that is empty and "No copy yet" under The copy:
 
 ```
 ## Waiting on you
@@ -197,9 +226,13 @@ Off
 
 ## Waiting to be recorded
 Nothing
-```
 
-4. **On a Mac where `node --version` finds nothing,** the kit may also hold a guard that runs without Node.js (check 69): `hooks/wheelhouse.json` and the shell guard it runs. Both are built when the kit is built, not on this computer, so they come in `adapters/copilot/home/` and are listed in `MANIFEST.txt`. If `MANIFEST.txt` lists lines that start `hooks/`, copy each one into `~/.copilot/` the same way as in Step 2 (make the folder first, check it with `git hash-object --no-filters` against its line, stop at the first that doesn't match), and tell the director in a line that a Wheelhouse guard now runs on this Mac. If it lists none, which is so until the guards are built, copy nothing and say nothing about guards beyond what the board's first lines say: no Wheelhouse guards run. On Windows, and where Node.js runs, copy no hook file.
+## Ideas
+Nothing
+
+## Rulings
+Nothing
+```
 
 5. **The first commit.** It holds only the files setup made, never anything of the director's own, and leaves out a path the project ignores (a project may ignore `.vscode`). A change the director already made, staged or not, stays exactly as it was.
 
@@ -291,13 +324,26 @@ VS Code and Copilot's runtime update every week, and Wheelhouse can't pin them. 
 3. **There is one:** say in a line that these versions have been tested.
 4. **There isn't:** say plainly, "Your versions of VS Code and Copilot aren't tested yet: Wheelhouse hasn't run its safety scenarios on them. It still works, and the board's lines say what to rely on." At first the table has no passed rows, so this is expected. Setup doesn't stop for it.
 
+## Wheelhouse's helper, where Node.js runs
+
+Only where Step 3 found Node.js 22 or later on a Mac or Windows; otherwise leave this out and go on. Wheelhouse's helper is Wheelhouse's own program, in the release you copied: it enforces STOP and the guards as Copilot hooks, writes the record, keeps the project's git in Wheelhouse's own folder so only it moves the main version, runs the tests on the approved commit, and confirms the steps that matter most in its own window. Installing it fetches nothing: everything it needs came with the release. It changes this computer, so it is the director's call, on a card.
+
+The helper's command is the full path of Node.js and of its script, each in double quotes: `"<node>" "<root>/scripts/agents/copilot/start-helper.js"`, where `<node>` is what `node -p "process.execPath"` prints and `<root>` is the release's folder, `$HOME/.copilot/wheelhouse/<tag>`, written out in full. Call it `<start>`. It is the same pair the session start's Lean command gives, so the director allows the same command each time. Run it in the project's folder.
+
+1. **Ask two cards first.** "Is this a work computer?" (what: whether a company looks after this computer; why: a company's security software may treat a program that starts at sign-in as suspicious, so on a work computer the helper doesn't start at sign-in and runs once the director allows its start command; options **Yes, a work computer** and **No, my own**; no recommendation, it is theirs to say; meanwhile nothing changes). Then "Does the product have real users?" (why: with real users a merge is approved only in Wheelhouse's own window, never by a click in the chat; options **Yes** and **Not yet**; meanwhile nothing changes). Ask, in a line, for the command that tests the product, such as `npm test`, if it has one; none is an answer.
+2. **The plan.** Run `<start> plan --work-computer yes|no --real-users yes|no`, adding `--test '<the command>'` when there is one. It changes nothing, and prints the changes, one line each, and a last line `Hash: <hash>`. If it prints one line and no hash, the project's git can't move into Wheelhouse's own folder as it is (changes not committed, a folder off the main version, a hooks folder such as husky's, worktrees or submodules): nothing was changed. Say that line to the director in plain words, ask no card, and offer the helper again once it is put right.
+3. **The card.** Ask one card with those lines, as they are: what (these changes to this computer and this project), why (the helper is what makes STOP and the guards hold here), options **Approve** and **Not now**, recommend **Approve**, meanwhile (Lean as it is now: approvals are chat clicks and no guard runs).
+4. **On Approve,** run `<start> install --hash <hash>` with the same answers. That is the one command the director allows in Copilot's own prompt for it. It prints "Wheelhouse's helper is installed for <project>" and "Wheelhouse's helper is running"; between them, when this folder's record leaves STOP on, a line saying STOP stays on with the helper, which only Lift STOP in Wheelhouse's own window lifts. If it prints anything else, say it in a line; nothing more is changed, and the project isn't registered with the helper. On **Not now**, carry on without it; asking for the helper later brings this back.
+5. **After it,** the board uses the helper's block once the helper answers (`wheelhouse-lean`, The board), and `wheelhouse-lean` takes over with the helper's own section. On a work computer, say plainly: "The helper doesn't start by itself here. When you open VS Code, I'll ask you to allow its start command once."
+
 ## What setup leaves behind
 
 Say it in a short list at the end, in plain words, and that "set up Wheelhouse" again is safe: each step checks first.
 
-- In `~/.copilot/`: Wheelhouse's skills, agents and instructions (every name starts `wheelhouse`), and `wheelhouse/<tag>/`, the release it came from. Nothing outside it changed.
+- In `~/.copilot/`: Wheelhouse's skills, agents and instructions (every name starts `wheelhouse`), and `wheelhouse/<tag>/`, the release it came from; on a Mac without Node.js, also Wheelhouse's shell guard and its hook file in `hooks/`. Nothing outside it changed.
 - In the project: `.vscode/settings.json` (Wheelhouse's settings added, if the director approved), `.gitignore` (the three ignore lines), `.wheelhouse/record/` (empty, tracked), `wheelhouse/board.md` (not committed), and one commit, "Set up Wheelhouse at Lean".
 - The remote `wheelhouse-copy`, and a bare copy of the project in the folder the director chose, if they chose one.
+- Where the director approved Wheelhouse's helper: the hook file in `~/.copilot/hooks/`, the sign-in start (none on a work computer), and the project's git in Wheelhouse's own folder, with this folder a worktree of it. Taking the project off the helper is a card too, as installing it is: `<start> uninstall-plan --remove-state yes|no` prints the changes and their hash, and on the click `<start> uninstall --hash <hash> --remove-state yes|no` makes them. Its git moves back into the folder with the main version checked out, the hook file and the sign-in start go when no other project needs them, and the project's Wheelhouse state goes only if the director chose it; the record files in the project stay (`wheelhouse-lean`, With Wheelhouse's helper).
 
 Then point to the next step: "Tell me what you'd like built, or say 'show me the board'." From here the chat follows `wheelhouse-lean`.
 
@@ -312,4 +358,5 @@ Then point to the next step: "Tell me what you'd like built, or say 'show me the
 | "I'll stage everything for the first commit" | Only the three files named. The director's own work stays theirs. |
 | "They typed 'yes' to the folder card" | Only a click answers. Ask it again. |
 | "They gave me their password so I can push" | Stop them. It goes in git's sign-in window, once, never in the chat. |
-| "Node.js is here, so the board can show the lines for Node.js" | The helper isn't installed by this setup. Show the lines for what runs now. |
+| "Node.js is here, so the board can show the lines for Node.js" | Only the helper answering changes the lines, and only once the director approved it. Show the lines for what runs now. |
+| "The director said yes in the chat, so I'll run the install" | Only a click on **Approve** on the helper's card. Ask it. |

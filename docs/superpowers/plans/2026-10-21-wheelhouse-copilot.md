@@ -691,6 +691,8 @@ test('every skill and agent name starts wheelhouse-', ...)
 
 Copilot's hooks run beside the agent, so here they only read: the helper writes and signs. This part's hooks also serve Middle and Full.
 
+_Tasks 2b and 9 were added when Part 5 began (23 October 2026): 2b because a Lean project could not be registered on a computer, and 9 by the main session's ruling, from spec section 6.4 (intake, ideas and rulings work in every tier). Part 5 runs in the order 1, 2, 2b, 3, 4, 5, 6, 9, 7, 8. The part's rulings are in the ledger._
+
 ### Task 1: Copilot's hook input, translated
 
 **Safety: yes** (the guards)
@@ -744,6 +746,30 @@ test('in the Local harness only reading is let through', ...)
 ```
 
 - [ ] **Step 2: Run, implement, run `npm test`:** PASS. **Step 3: Commit** (`"Register Wheelhouse's Copilot hooks once per computer, with a deadline"`).
+
+### Task 2b: A Lean project on this computer, with its own state
+
+**Safety: yes** (the record and approvals at Lean live here)
+
+**Files:**
+- Create: `scripts/lean/project.js`, `tests/scripts/lean/project.test.js`
+- Modify: `scripts/lib/projects.js` (`projectForFolder` reads `lean.json`), `scripts/host/helper.js` (Lean requests before `contextFor`; local state), `scripts/lib/safe-git.js` (`NEXT`/`UNREAD_NEXT` gain `lean`)
+
+**Interfaces:**
+- Produces: `registerLean({ project, folder, now }) -> record`, `readLean(project) -> record | null`; `projectForFolder` gives `{ project, record, lean: true }` for a Lean folder; `/state/write`, `/state/views`, `/state/answer`, `/state/record`, `/state/sync` work on a local state repository for a Lean project; every route that needs a host refuses with "a Lean project has no code host".
+
+- [ ] **Step 1: Write the failing tests.**
+
+```js
+test('a Lean project is found by its folder and has no project.json', ...)
+test('readProject gives null for a Lean project, so host routes refuse it', ...)
+test('a Lean project\'s state is a local repository that is never pushed', ...)
+test('state/write and state/views work for a Lean project with no connection', ...)
+test('a host route for a Lean project refuses and names why', ...)
+test('a Claude Code project\'s record and routes are unchanged', ...)
+```
+
+- [ ] **Step 2: Run, implement, run `npm test`:** PASS. **Step 3: Commit** (`"Register a Lean project on this computer, with state of its own"`).
 
 ### Task 3: On Copilot, hooks read and the helper writes
 
@@ -869,6 +895,61 @@ test('the entry runs the guard from a home with a space and an apostrophe', ...)
 ```
 
 - [ ] **Step 2: Run, implement, run `npm test`:** PASS. **Step 3: Commit** (`"Add Lean's guards in shell, for a Mac with no Node.js"`).
+
+### Task 9: Intake, ideas and rulings at Lean
+
+Follows Task 6 (it needs Task 2b's local state and Task 6's helper start and Lean command for its helper half); comes before Task 7, which covers it.
+
+**Safety: yes** (rulings steer every later piece of work, and a ruling's confirmation is a click the record shows; at Lean without the helper the record is the agent's own account, so the playbook's honesty rules are the control)
+
+**Files:**
+- Modify: `adapters/copilot/skills/lean/SKILL.md` (a section "Intake at Lean"), `scripts/state/lean-record.js` (kinds `idea`, `ruling`, `design` and the `text` key), `scripts/agents/copilot/home.js` (the Lean line in the kit's `wheelhouse-intake`, after its overview, as P4-34 does for the front desk), `tests/skills/lean.test.js`, `tests/scripts/state/lean-record.test.js`, `tests/scripts/agents/copilot-home.test.js`; then `npm run copilot-home`
+
+**Interfaces:**
+- Consumes: `skills/intake/SKILL.md`'s nine questions and routes (one text: the kit's `wheelhouse-intake` is built from it and is not rewritten); `LEAN_KINDS`, `LEAN_KEYS`, `parseLeanRecord`, `leanToEvents` (Part 4 Task 4); P4-13's line rules; P4-22's record-only commits on main; P4-31's "the board is a view"; Task 2b's local state; Task 6's "helper answering" (`/lean/status`).
+- Produces:
+  - **Without the helper (git alone):** "Intake at Lean" in the Lean playbook. It says, in general words:
+    - **Split** each message into its requests, as the intake does.
+    - **Check for a match** with `git grep -h -e '"kind":"idea"' -e '"kind":"ruling"' main -- .wheelhouse/record/` and the board's "Building now" and "Set aside". A match with an idea merges: a new `idea` line with the same `card` (short name), carrying the old words with the new. Never two ideas for one thing.
+    - **The nine questions in order, with Lean's routes:**
+      - Incident: the runbook's "Looking at an incident", and **Undo** by card where a merge is the cause.
+      - Answer: the waiting card.
+      - Running work: a change to the feature in hand goes into its brief, read back as "Doing: X. Not doing: Y. Done when: Z.", with a card to confirm; a ruling is below.
+      - Bug: a brief for a fix, as Building.
+      - Question: answered, then "Want me to go ahead?".
+      - Runbook: Lean's local steps.
+      - Chore: the quick lane.
+      - Later: an idea.
+      - Change: shaped by Lean's questions (P5-38).
+    - **The route said in one line,** so the director can correct it.
+    - **An idea** is written at once, with no card, as a line `{"at","kind":"idea","card":"<short name>","choice":null,"commit":null,"proof":"chat-click","by":"chat","tier":"lean","text":"<the director's words, verbatim>"}`. It is committed alone on main (P4-22), or waits on the board while a feature is in hand. The board gains a part "## Ideas" listing them, with "Nothing" when empty.
+    - **A ruling** is written only after a confirm card: what this is (a standing rule for every feature), why it comes to them (it steers the builder from now on), the options **Confirm**, **Change the words** and **Not now**, the recommendation, and what happens meanwhile (nothing changes until they confirm). The line is kind `ruling`, `choice` `Confirm`, `text` the director's own words, never narrowed. The board gains "## Rulings".
+    - **The builder's brief names the confirmed rulings,** and the reviewer's dispatch says to check the change against them.
+    - **A design** (feature size) is written to `.wheelhouse/record/designs/<slug>.md` and committed alone on main. Its approval card names its git blob hash (`git hash-object --no-filters`). The `design` line carries the path and hash in `text`. Building's brief points at it, and a changed design needs a new card.
+  - **Where the helper answers (Node.js):** the same nine questions, with the front desk's own command, as the intake already says (`cli.js similar`, `cli.js record idea`, `cli.js record ruling`, `cli.js card`). It writes to the Lean project's local state through the helper (Task 2b), and the chat writes no record lines. The ruling's confirm card is clicked in the chat, and the Lean command's `click` records it with proof `chat-click` (Task 3's route). A ruling's confirmation never goes to the helper's window, since it isn't one of `CONFIRMED_STEPS`.
+  - `lean-record.js`: `LEAN_KINDS` gains `idea`, `ruling` and `design`; `text` is required (a string of at most 4000 characters) on those three and refused on the other kinds; `leanToEvents` maps them as P5-37 says.
+  - The kit's `wheelhouse-intake` gains one line after its overview: "At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Lean in place of each `cli.js` step." The command skill `wheelhouse-board` lists the two new board parts.
+
+- [ ] **Step 1: Write the failing tests.**
+
+```js
+test('an idea line has the eight keys and the director\'s words in text', ...)
+test('a ruling line is written only with choice Confirm and keeps the words verbatim', ...)
+test('text on a kind other than idea, ruling or design is a problem, not lost', ...)
+test('an idea, a ruling and a design become the matching state events, none signed', ...)
+test('Intake at Lean routes each of the nine questions to a Lean step', ...)
+test('a matching idea is merged under the same short name, never a second idea', ...)
+test('a design\'s approval card names its git blob hash', ...)
+test('Intake at Lean names no Claude Code tool and no cli.js step without the helper', ...)
+test('where the helper answers, intake uses the front desk\'s command and writes no record line', ...)
+test('the kit\'s intake carries the Lean line and is otherwise built from skills/intake', ...)
+test('the board lists ideas and rulings, with Nothing when there are none', ...)
+```
+
+- [ ] **Step 2: Run `npm test`:** FAIL. **Step 3: Write the section and the parser's kinds,** then `npm run copilot-home`. **Step 4: Run `npm test`:** PASS.
+- [ ] **Step 5: Commit** (`"Take ideas, rulings and designs at Lean, with git alone or through the helper"`).
+
+**If the answer differs (check 70, sitting S1):** if Copilot's clickable question in VS Code can't carry a ruling's **Change the words**, the card's options become **Confirm** and **Not now**, and new words are a new ruling.
 
 ## Part 6: Middle on GitLab on a company's own servers: the host's side
 

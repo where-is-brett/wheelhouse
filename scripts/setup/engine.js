@@ -86,6 +86,7 @@ import { caEnv } from '../host/company-ca.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
+import { LEAN_FOLDER } from '../lean/project.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
@@ -181,6 +182,8 @@ export function admitFolder(folder, { userHome = os.homedir() } = {}) {
     refuse('the folder was not found');
   }
   if (!fs.statSync(real).isDirectory()) refuse('the folder given is not a folder');
+  // A folder in a Lean project has no host's record for setup or uninstall to read (ruling P5-47).
+  if (projectForFolder(real)?.lean === true) refuse(LEAN_FOLDER);
   if (atOrAboveHome(real, userHome)) refuse(HOME_FOLDER);
   let projects = null;
   try {

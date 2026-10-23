@@ -43,7 +43,11 @@ export function setStop({ by, now = () => new Date() }) {
   }
 }
 
-// Turns STOP off. Only the prompt record's lift and the mod call this.
+// Turns STOP off. Only the prompt record's lift, the mod and the helper's window (a Lift STOP clicked there) call this.
 export function liftStop() {
   fs.rmSync(stopFile(), { recursive: true, force: true });
 }
+
+// What a hook says when the helper isn't answering on an agent whose hooks only read (ruling P5-22): writes are
+// refused as under STOP, reading carries on, and the STOP word can't set STOP until the helper runs.
+export const NO_HELPER_STOP = 'Wheelhouse\'s helper isn\'t running, so writes, pushes, merges and new agents are refused until it is. Start it with the Wheelhouse command.';

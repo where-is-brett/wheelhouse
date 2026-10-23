@@ -71,10 +71,14 @@ function heldAt(cwd, find, dir) {
   return Boolean(byPath) && isHeld(byPath);
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform } = {}) {
+// The tools that only read, halt or notify come from `deps`, defaulting to Claude Code's, as in stop-guard.js.
+export async function decide(input, {
+  dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
+  readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS,
+} = {}) {
   if (!heldAt(input.cwd, find, dir)) return undefined;
   const tool = input.tool_name;
-  if (READ_TOOLS.includes(tool) || HALT_TOOLS.includes(tool) || NOTIFY_TOOLS.includes(tool) || APP_TURN_TOOLS.includes(tool)) return undefined;
+  if (readTools.includes(tool) || haltTools.includes(tool) || notifyTools.includes(tool) || APP_TURN_TOOLS.includes(tool)) return undefined;
   if (input.tool_name === 'Bash') {
     const roots = pluginRoots(dir, self, pluginRoot);
     const command = input.tool_input?.command;

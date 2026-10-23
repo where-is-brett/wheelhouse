@@ -264,6 +264,7 @@ const WHAT = {
   survey: "the project's repository",
   feature: "the feature's worktree",
   reinstall: "Claude Code's copy of the marketplace",
+  lean: "the Lean project's repository",
 };
 // How each caller tells it that the look refused, in plain words and with its own next step. None
 // of them holds a phrase the helper reads as a failure to sign in.
@@ -273,6 +274,7 @@ const NEXT = {
   survey: (them) => `The survey went no further. Remove ${them} from that repository's .git/config, then run the survey again.`,
   feature: (them) => `The pull ran no git there. Remove ${them} from that worktree's repository, then run pull again.`,
   reinstall: (them) => `Nothing was reinstalled. Remove ${them} from that copy's .git/config, then run the reinstall again.`,
+  lean: (them) => `Nothing was changed there. Remove ${them} from that repository's .git/config, then try again.`,
 };
 const UNREAD_NEXT = {
   helper: 'The helper ran no git there. Try the request again.',
@@ -280,9 +282,10 @@ const UNREAD_NEXT = {
   survey: 'The survey went no further. Run the survey again.',
   feature: 'The pull ran no git there. Run pull again.',
   reinstall: 'Nothing was reinstalled. Run the reinstall again.',
+  lean: 'Nothing was changed there. Try again.',
 };
 
-// The refusal line for `caller` ('helper', 'foreman', 'survey', 'feature' or 'reinstall') after a
+// The refusal line for `caller` ('helper', 'foreman', 'survey', 'feature', 'reinstall' or 'lean') after a
 // look that gave `found` (from lookAtSettings). `what` names the repository where the caller knows
 // better than the default.
 export function lookRefusalLine(caller, found, { what = null } = {}) {
@@ -325,7 +328,7 @@ function refuseFenceOverride(args) {
 // why). `workTree` makes that folder git's working tree (not for `init`). `options.env` is added
 // before the fence, so a caller cannot lift it. Nor can the arguments: one that sets a fence key
 // with `-c` or `--config-env` (git applies it after the environment) is refused, bar a short named list. With
-// `caller` ('helper', 'foreman', 'survey', 'feature' or 'reinstall'), a refused look throws a
+// `caller` ('helper', 'foreman', 'survey', 'feature', 'reinstall' or 'lean'), a refused look throws a
 // LookRefusal worded for that caller (and `what` names the repository); without it, setup's line.
 export function safeGit({
   run = realRun, gitPath = 'git', cwd, env = {}, reach = 'https', look = 'each', list = 'own', workTree = null, timeoutMs = GIT_WAIT_MS,
