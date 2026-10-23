@@ -808,3 +808,12 @@ test('buildHome throws when the Lean playbook is missing, and builds nothing fro
 test('none of gh, glab or copilot ran', () => {
   assert.deepEqual(stand.calls(), []);
 });
+
+test('taking the project off the helper is a card with the plan\'s lines, then the uninstall the card hashes (ruling P5-51)', () => {
+  const part = section(playbook, 'With Wheelhouse\'s helper');
+  assert.match(part, /<start> uninstall-plan --remove-state yes\|no/);
+  assert.match(part, /<start> uninstall --hash <hash> --remove-state yes\|no/);
+  assert.match(part, /\*\*Leave the helper\*\*/);
+  assert.match(part, /\*\*Remove it too\*\*|--remove-state yes/);
+  assert.match(part, /git switch --detach main/);
+});

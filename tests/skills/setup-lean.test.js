@@ -741,3 +741,16 @@ test('the README keeps its Claude Code install, unchanged in what it says', () =
 test('none of gh, glab or copilot ran', () => {
   assert.deepEqual(stand.calls(), []);
 });
+
+// Ruling P5-51: the helper's command is the full-path pair the person allows, the same as the Lean playbook's, and
+// taking a project off the helper is a card first, as installing it is.
+test('the helper\'s section gives its command as the full-path pair, and its removal goes through a card', () => {
+  const part = section('Wheelhouse\'s helper, where Node.js runs');
+  assert.ok(part.includes('`"<node>" "<root>/scripts/agents/copilot/start-helper.js"`'), 'the full-path pair');
+  assert.ok(!part.includes('node "$HOME'), 'not a bare node');
+  assert.match(part, /node -p "process\.execPath"/);
+  const left = section('What setup leaves behind');
+  assert.match(left, /<start> uninstall-plan --remove-state yes\|no/);
+  assert.match(left, /<start> uninstall --hash <hash> --remove-state yes\|no/);
+  assert.match(left, /git moves back into the folder/);
+});

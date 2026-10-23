@@ -155,14 +155,14 @@ test('no entry on a work computer', async () => {
     assert.ok(plan.lines.some((l) => /No start-up entry/.test(l) && /work computer/.test(l)), plan.lines.join('\n'));
     assert.ok(!plan.lines.some((l) => /LaunchAgents/.test(l)));
     const done = await install({ folder, hash: plan.hash, ...answers }, deps);
-    assert.equal(done.ok, true, done.line);
+    assert.equal(done.ok, true, done.lines.join('\n'));
     assert.deepEqual(started, [true], 'the helper is started by the command itself');
     assert.equal(fs.existsSync(path.join(userHome, 'Library', 'LaunchAgents')), false, 'no launch agent');
     assert.deepEqual(reg.calls, [], 'no registry call');
     assert.equal(loginStartRecord(), null, 'no sign-in start recorded');
     // The hook file and the project are still installed.
     assert.equal(fs.existsSync(path.join(userHome, '.copilot', 'hooks', 'wheelhouse.json')), true);
-    assert.equal(readLean('shop').helper, true);
+    assert.equal(readLean('shop').agent, 'copilot');
 
     // Not a work computer on Windows: the start-up entry is added, through `reg` alone.
     const plan2 = await planInstall({ folder, workComputer: false, realUsers: false, test: null }, { ...deps, platform: 'win32', node: WIN_NODE, root: WIN_ROOT });

@@ -368,7 +368,7 @@ test('a Lean project\'s board has its agent\'s Lean lines and says when an agent
     const folder = path.join(home, 'shop');
     fs.mkdirSync(path.join(folder, '.git'), { recursive: true });
     registerLean({ project: 'shop', folder, now: () => NOW });
-    updateLean('shop', { agent: 'copilot', helper: true });
+    updateLean('shop', { agent: 'copilot' });
     put(path.join(stateDir('shop'), 'events', '2026', 'u1.json'), {
       v: 1, id: 'u1', at: '2026-10-19T11:00:00.000Z', computer: 'c1', kind: 'note', data: { mark: 'unknown-tool', name: 'apply_patch_v2' },
     });
@@ -381,7 +381,7 @@ test('a Lean project\'s board has its agent\'s Lean lines and says when an agent
     assert.ok(down.includes('Approvals are clicks in the chat, recorded as not proven'), down.join('\n'));
     assert.ok(!down.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'));
     // A Lean record that names no agent gives no agent line.
-    updateLean('shop', { helper: true, agent: undefined });
+    updateLean('shop', { agent: undefined });
     const none = texts(await loadBoardInputs({ cwd: folder, client: fakeClient(), now: () => NOW }));
     assert.ok(!none.some((t) => /^Copilot/.test(t)), none.join('\n'));
   });

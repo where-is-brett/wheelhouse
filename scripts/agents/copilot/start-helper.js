@@ -17,9 +17,14 @@
 //        sessions part is built (none at Lean, so the waker is never made for one); the usage receiver only with
 //        such a watcher (design section 6.4: nothing runs in the background at Lean). Prints one plain line:
 //        "Wheelhouse's helper is running", or why not.
-//   uninstall
-//        the Lean removal setup's LEAN_FOLDER line points to: the hook file and the sign-in start go when no other
-//        project on this computer needs them; the store and the project's state stay where they are.
+//   uninstall-plan --remove-state yes|no
+//        prints what taking the project off the helper does, one plain line each, and their hash (ruling P5-51);
+//        the chat asks the card with them.
+//   uninstall --hash <hash> --remove-state yes|no
+//        on the card's click, the Lean removal setup's LEAN_FOLDER line points to: the project's git moves back into
+//        its folder with the main version checked out, its Lean record goes, the hook file and the sign-in start go
+//        when no other project on this computer needs them, and its Wheelhouse state goes only when the director
+//        chose it. Refused under STOP, and for a hash that isn't the card's.
 //
 // Each prints its lines and exits 0, or prints why not and exits 1. Nothing here is run by an agent or a hook
 // (design section 8.2: registered by setup, once per computer).
@@ -38,7 +43,8 @@ import { stopState } from '../../lib/stop.js';
 import { projectForFolder, readProject, registeredProjects } from '../../lib/projects.js';
 import { loginEntry, installLoginStart, removeLoginStart, loginStartRecord } from '../../lib/login-start.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
-import { readLean, registerLean, registeredLeanProjects, updateLean } from '../../lean/project.js';
+import { readLean, registerLean, registeredLeanProjects, unregisterLean, updateLean } from '../../lean/project.js';
+import { releaseProject } from '../../lean/release.js';
 import { LeanRefusal, adoptProject, storeDir, withLocalLock } from '../../lean/store.js';
 import { ownKey, makeSigningKey, enrol } from '../../state/signing.js';
 import { helperClient } from '../../host/helper-client.js';
@@ -64,7 +70,7 @@ export const NOT_STARTED = `Wheelhouse's helper didn't start within ${START_WAIT
 export const CHANGED = 'The changes are no longer the ones the card showed, so nothing was installed. Ask for the plan again, and the card with it';
 export const STOP_ON = 'STOP is on, so nothing was changed. Lift STOP first, then try again';
 const NOT_LEAN = 'This folder isn\'t a Lean project on this computer, so there is nothing to remove';
-const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | uninstall';
+const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
 
 export class StartRefusal extends Error {}
 const refuse = (line) => { throw new StartRefusal(line); };
@@ -115,6 +121,7 @@ const defaults = (deps) => ({
   root: ROOT,
   now: () => new Date(),
   start: () => startAll(),
+  makeKey: (make) => make(),
   ...deps,
 });
 
@@ -178,14 +185,19 @@ export async function install(answers, deps = {}) {
     }
     updateLean(project, { test, realUsers, agent: AGENT });
     await adoptProject({ project, folder, run: d.run, now: d.now });
+    // Made inside the lock, so a second install of this project finds it; an install of another project that made
+    // it a moment before is taken as made.
+    if (plan.needsKey && ownKey() === null) {
+      try {
+        const own = d.makeKey(makeSigningKey);
+        enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: d.now().toISOString() });
+      } catch (error) {
+        if (ownKey() === null) throw error;
+      }
+    }
   }, d.lockWaitMs === undefined ? {} : { waitMs: d.lockWaitMs });
-  if (plan.needsKey && ownKey() === null) {
-    const own = makeSigningKey();
-    enrol({ computer: own.computer, publicKey: own.publicKey, enrolledAt: d.now().toISOString() });
-  }
   writeRegistration({ home: copilotHome({ env: d.env, homedir: d.userHome }), node: d.node, root: d.root, platform: d.platform });
   if (plan.entry !== null) await installLoginStart({ entry: plan.entry, run: d.regRun, now: d.now });
-  updateLean(project, { helper: true });
   const started = await d.start();
   return { ok: started.ok === true, lines: [`Wheelhouse's helper is installed for ${project}`, started.line] };
 }
@@ -248,10 +260,10 @@ export async function startAll({
   return { ok: true, line: RUNNING, watchers };
 }
 
-// Which other projects on this computer need the hook file and the sign-in start: the other Lean projects whose
-// helper is installed, and the projects on a code host that run on this agent here.
+// Which other projects on this computer need the hook file and the sign-in start: the other Lean projects, and the
+// projects on a code host that run on this agent here.
 function othersNeeding(project) {
-  const lean = registeredLeanProjects().filter((p) => p.project !== project && p.record.helper === true).map((p) => p.project);
+  const lean = registeredLeanProjects().filter((p) => p.project !== project).map((p) => p.project);
   let id;
   try {
     id = computerId();
@@ -262,57 +274,94 @@ function othersNeeding(project) {
   return [...lean, ...hosted];
 }
 
-// uninstall({ folder }, deps) -> { ok, lines }
-export async function uninstall({ folder: given } = {}, deps = {}) {
-  const d = defaults(deps);
+const leanProjectOf = (given) => {
   const folder = realOrNull(given ?? process.cwd());
   const found = folder === null ? null : projectForFolder(folder);
   if (found?.lean !== true) refuse(NOT_LEAN);
-  if (stopState().on) refuse(STOP_ON);
-  const { project } = found;
-  const lines = [];
-  await withLocalLock(project, async () => {
-    const others = othersNeeding(project);
-    const hooks = hookFile({ home: copilotHome({ env: d.env, homedir: d.userHome }) });
-    if (others.length > 0) {
-      const n = others.length;
-      lines.push(`Wheelhouse's guards stay registered with ${LABEL}, and its sign-in start stays: ${n} other project${n === 1 ? '' : 's'} on this computer use${n === 1 ? 's' : ''} them`);
-    } else {
-      const had = fs.existsSync(hooks);
-      fs.rmSync(hooks, { force: true });
-      lines.push(had ? `Wheelhouse's guards are no longer registered with ${LABEL}: ${hooks} is removed` : `Wheelhouse's guards weren't registered with ${LABEL}`);
-      if (loginStartRecord() === null) lines.push('There was no sign-in start to remove');
-      else {
-        const got = await removeLoginStart({ run: d.regRun, platform: d.platform });
-        lines.push(got.removed ? 'What starts Wheelhouse\'s helper when you sign in is removed' : `What starts Wheelhouse's helper when you sign in is not removed: ${got.why}`);
-      }
-    }
-    updateLean(project, { helper: false });
-  }, d.lockWaitMs === undefined ? {} : { waitMs: d.lockWaitMs });
-  const record = readLean(project);
-  lines.push(record?.store
-    ? `The project's history and record stay in Wheelhouse's own folder, ${record.store}, and this folder still works with git as a worktree of it`
-    : 'The project\'s record stays in Wheelhouse\'s own folder');
-  return { ok: true, lines };
+  return { folder, project: found.project };
+};
+
+// planUninstall({ folder, removeState }, deps) -> { project, folder, changes, lines, hash }: what taking the project
+// off the helper does (ruling P5-51), for the card the chat asks before `uninstall`.
+export async function planUninstall({ folder: given, removeState } = {}, deps = {}) {
+  const d = defaults(deps);
+  if (typeof removeState !== 'boolean') refuse('Say whether the project\'s Wheelhouse state goes too: --remove-state yes or no');
+  const { folder, project } = leanProjectOf(given);
+  const others = othersNeeding(project);
+  const hooks = hookFile({ home: copilotHome({ env: d.env, homedir: d.userHome }) });
+  const start = loginStartRecord();
+  const state = path.join(wheelhouseHome(), 'projects', project);
+  const changes = [
+    { change: 'leave-helper', project },
+    { change: 'git-back', folder },
+    others.length > 0 ? { change: 'keep-guards', others } : { change: 'remove-hook-file', path: hooks, start: start === null ? null : start.path },
+    { change: removeState ? 'remove-state' : 'keep-state', path: state },
+  ];
+  const n = others.length;
+  const lines = [
+    `This project, ${project}, leaves Wheelhouse's helper: its guards, its record and its merges by the helper stop for it`,
+    `Its git moves back into this folder, ${folder}, with the main version checked out, so you work with git alone, as Lean does without the helper`,
+    ...(n > 0
+      ? [`Wheelhouse's guards stay registered with ${LABEL}, and its sign-in start stays: ${n} other project${n === 1 ? '' : 's'} on this computer use${n === 1 ? 's' : ''} them`]
+      : [
+        `Wheelhouse's guards are no longer registered with ${LABEL}: ${hooks} is removed`,
+        start === null
+          ? 'There is no sign-in start to remove'
+          : `What starts Wheelhouse's helper when you sign in is removed: ${start.kind === 'launch-agent' ? start.path : 'the start-up entry named Wheelhouse helper'}`,
+      ]),
+    removeState
+      ? `Its Wheelhouse state, ${state}, is removed: what the helper recorded there goes, and the record files in the project stay`
+      : `Its Wheelhouse state stays in ${state}`,
+  ];
+  const hash = crypto.createHash('sha256').update(canonicalJson({ folder, project, changes })).digest('hex');
+  return { project, folder, changes, lines, hash, others, hooks, state, removeState };
 }
 
-// The command line's flags: --work-computer, --real-users and --hash take a value; --test takes the rest of its
-// argument as one command.
-function parseFlags(rest) {
+// uninstall({ folder, hash, removeState }, deps) -> { ok, lines } after the card's click: the project's git goes
+// back into its folder and its Lean record goes, so the session start, the board and the guards treat it as Lean
+// with git alone; the hook file and the sign-in start go when no other project needs them; the state goes only when
+// the director chose it. Refused under STOP, and for a hash that isn't the card's.
+export async function uninstall(answers = {}, deps = {}) {
+  const d = defaults(deps);
+  const plan = await planUninstall(answers, d);
+  if (typeof answers.hash !== 'string' || answers.hash !== plan.hash) refuse(CHANGED);
+  if (stopState().on) refuse(STOP_ON);
+  const { project, folder } = plan;
+  await withLocalLock(project, async () => {
+    await releaseProject({ project, folder, run: d.run });
+    unregisterLean(project);
+    if (othersNeeding(project).length === 0) {
+      fs.rmSync(plan.hooks, { force: true });
+      if (loginStartRecord() !== null) {
+        const got = await removeLoginStart({ run: d.regRun, platform: d.platform });
+        if (!got.removed) refuse(`The project's git is back in its folder, but what starts Wheelhouse's helper when you sign in was not removed: ${got.why}`);
+      }
+    }
+  }, d.lockWaitMs === undefined ? {} : { waitMs: d.lockWaitMs });
+  // The lock's own file is in the state's folder, so the folder goes once the lock is freed.
+  if (plan.removeState) fs.rmSync(plan.state, { recursive: true, force: true });
+  return { ok: true, lines: plan.lines };
+}
+
+// The command line's flags, each with one value: --work-computer, --real-users and --remove-state take yes or no,
+// --hash the card's hash, and --test the test command as one argument. `allowed` names the ones a command takes.
+function parseFlags(rest, allowed) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 2) {
     const [name, value] = [rest[i], rest[i + 1]];
-    if (!['--work-computer', '--real-users', '--test', '--hash'].includes(name) || value === undefined || Object.hasOwn(flags, name)) refuse(USAGE);
+    if (!allowed.includes(name) || value === undefined || Object.hasOwn(flags, name)) refuse(USAGE);
     flags[name] = value;
   }
   const yesNo = (value) => (value === 'yes' ? true : value === 'no' ? false : undefined);
   return {
     workComputer: yesNo(flags['--work-computer']),
     realUsers: yesNo(flags['--real-users']),
+    removeState: yesNo(flags['--remove-state']),
     test: flags['--test'] ?? null,
     hash: flags['--hash'],
   };
 }
+const INSTALL_FLAGS = ['--work-computer', '--real-users', '--test'];
 
 export async function main(argv = process.argv.slice(2), { stdout = process.stdout, cwd = process.cwd(), deps = {} } = {}) {
   const say = (lines) => stdout.write(`${lines.join('\n')}\n`);
@@ -324,21 +373,26 @@ export async function main(argv = process.argv.slice(2), { stdout = process.stdo
       say([got.line]);
       return got.ok ? 0 : 1;
     }
+    if (command === 'uninstall-plan') {
+      const { removeState } = parseFlags(rest, ['--remove-state']);
+      const plan = await planUninstall({ folder: cwd, removeState }, deps);
+      say([...plan.lines.map((l) => `- ${l}`), `Hash: ${plan.hash}`]);
+      return 0;
+    }
     if (command === 'uninstall') {
-      if (rest.length !== 0) refuse(USAGE);
-      const got = await uninstall({ folder: cwd }, deps);
+      const { removeState, hash } = parseFlags(rest, ['--remove-state', '--hash']);
+      const got = await uninstall({ folder: cwd, removeState, hash }, deps);
       say(got.lines);
       return 0;
     }
     if (command === 'plan') {
-      const { hash, ...answers } = parseFlags(rest);
-      if (hash !== undefined) refuse(USAGE);
+      const answers = parseFlags(rest, INSTALL_FLAGS);
       const plan = await planInstall({ folder: cwd, ...answers }, deps);
       say([...plan.lines.map((l) => `- ${l}`), `Hash: ${plan.hash}`]);
       return 0;
     }
     if (command === 'install') {
-      const flags = parseFlags(rest);
+      const flags = parseFlags(rest, [...INSTALL_FLAGS, '--hash']);
       const got = await install({ folder: cwd, ...flags }, deps);
       say(got.lines);
       return got.ok ? 0 : 1;

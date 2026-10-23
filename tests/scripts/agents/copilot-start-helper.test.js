@@ -19,8 +19,10 @@ import { readLean, registerLean } from '../../../scripts/lean/project.js';
 import { storeDir } from '../../../scripts/lean/store.js';
 import { loginStartRecord } from '../../../scripts/lib/login-start.js';
 import { ownKey, readEnrolled } from '../../../scripts/state/signing.js';
+import { projectForFolder } from '../../../scripts/lib/projects.js';
+import { registeredLeanProjects, leanState } from '../../../scripts/lean/project.js';
 import {
-  planInstall, install, startAll, uninstall, main, CHANGED, STOP_ON, RUNNING, NOT_STARTED,
+  planInstall, install, startAll, planUninstall, uninstall, main, CHANGED, STOP_ON, RUNNING, NOT_STARTED,
 } from '../../../scripts/agents/copilot/start-helper.js';
 
 const shims = standInTools();
@@ -138,7 +140,7 @@ test('install registers the project, moves its git into the store and writes not
     assert.equal(record.realUsers, true);
     assert.equal(record.test, 'npm test');
     assert.equal(record.agent, 'copilot');
-    assert.equal(record.helper, true);
+    assert.equal(Object.hasOwn(record, 'helper'), false, 'no helper flag is kept');
     assert.match(record.main, /^[0-9a-f]{40}$/);
     // The folder's .git is a pointer into the store.
     assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isFile(), true);
@@ -184,6 +186,19 @@ test('two installs at once register once, one after the other', async () => {
     assert.equal(fs.readFileSync(path.join(c.folder, '.git'), 'utf8').includes(storeDir('shop-front')), true);
     assert.equal(fs.existsSync(path.join(storeDir('shop-front'), '..', 'lean.lock')), false, 'the lock is freed');
     assert.equal(fs.readdirSync(path.join(c.home, 'projects')).length, 1, 'one project');
+  });
+});
+
+test('the signing key is made while the project\'s lock is held', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    const lock = path.join(c.home, 'projects', 'shop-front', 'lean.lock');
+    const seen = [];
+    const deps = { ...c.deps, makeKey: (make) => { seen.push(fs.existsSync(lock)); return make(); } };
+    const plan = await planInstall({ folder: c.folder, ...ANSWERS }, deps);
+    assert.equal((await install({ folder: c.folder, ...ANSWERS, hash: plan.hash }, deps)).ok, true);
+    assert.deepEqual(seen, [true], 'made once, inside the lock');
+    assert.ok(ownKey() !== null);
   });
 });
 
@@ -236,47 +251,136 @@ test('start starts the helper, and a watcher only for a project whose agent has 
   });
 });
 
-test('uninstall keeps what another project needs, removes the rest, and leaves the store and the state', async () => {
+// A second project folder, a git repository on main, with a record file of the chat's own.
+async function secondFolder(name) {
+  const folder = path.join(fs.realpathSync.native(shortHome()), name);
+  fs.mkdirSync(folder);
+  await git(folder, ['init', '-q', '-b', 'main']);
+  fs.writeFileSync(path.join(folder, 'README.md'), `${name}\n`);
+  await git(folder, ['add', '-A']);
+  await git(folder, ['commit', '-q', '-m', 'Start']);
+  return folder;
+}
+async function installed(c, folder) {
+  const plan = await planInstall({ folder, ...ANSWERS }, c.deps);
+  assert.equal((await install({ folder, ...ANSWERS, hash: plan.hash }, c.deps)).ok, true);
+}
+
+test('uninstall-plan lists what leaving the helper does, and uninstall takes only that card\'s hash', async () => {
   const c = await computer();
-  const second = path.join(fs.realpathSync.native(shortHome()), 'books');
-  fs.mkdirSync(second);
-  await git(second, ['init', '-q', '-b', 'main']);
-  fs.writeFileSync(path.join(second, 'README.md'), 'books\n');
-  await git(second, ['add', '-A']);
-  await git(second, ['commit', '-q', '-m', 'Start']);
   await c.as(async () => {
-    for (const folder of [c.folder, second]) {
-      const plan = await planInstall({ folder, ...ANSWERS }, c.deps);
-      assert.equal((await install({ folder, ...ANSWERS, hash: plan.hash }, c.deps)).ok, true);
-    }
+    await installed(c, c.folder);
+    const hooks = path.join(c.userHome, '.copilot', 'hooks', 'wheelhouse.json');
+    const keep = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
+    assert.deepEqual(keep.lines, [
+      'This project, shop-front, leaves Wheelhouse\'s helper: its guards, its record and its merges by the helper stop for it',
+      `Its git moves back into this folder, ${c.folder}, with the main version checked out, so you work with git alone, as Lean does without the helper`,
+      `Wheelhouse's guards are no longer registered with Copilot: ${hooks} is removed`,
+      `What starts Wheelhouse's helper when you sign in is removed: ${path.join(c.userHome, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist')}`,
+      `Its Wheelhouse state stays in ${path.join(c.home, 'projects', 'shop-front')}`,
+    ]);
+    const drop = await planUninstall({ folder: c.folder, removeState: true }, c.deps);
+    assert.notEqual(drop.hash, keep.hash, 'the answer is in the hash');
+    assert.match(drop.lines.at(-1), /^Its Wheelhouse state, .+, is removed: what the helper recorded there goes, and the record files in the project stay$/);
+    await assert.rejects(planUninstall({ folder: c.folder }, c.deps), /--remove-state/);
+    // Planning changed nothing.
+    assert.ok(readLean('shop-front') !== null);
+    assert.equal(fs.existsSync(hooks), true);
+    // A hash that isn't the card's changes nothing, and nor does STOP.
+    await assert.rejects(uninstall({ folder: c.folder, removeState: false, hash: drop.hash }, c.deps), (e) => e.message === CHANGED);
+    await assert.rejects(uninstall({ folder: c.folder, removeState: false }, c.deps), (e) => e.message === CHANGED);
+    setStop({ by: 'helper', now: () => T0 });
+    await assert.rejects(uninstall({ folder: c.folder, removeState: false, hash: keep.hash }, c.deps), (e) => e.message === STOP_ON);
+    liftStop();
+    assert.ok(readLean('shop-front') !== null);
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isFile(), true, 'still in the store');
+    // A folder that isn't a Lean project has nothing to plan.
+    await assert.rejects(planUninstall({ folder: c.userHome, removeState: false }, c.deps), /isn't a Lean project/);
+  });
+});
+
+test('uninstall gives the project\'s git back to its folder and removes its Lean registration', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const record = path.join(c.folder, '.wheelhouse', 'record');
+    fs.mkdirSync(record, { recursive: true });
+    fs.writeFileSync(path.join(record, '2026-10-22.jsonl'), '{"kind":"stop"}\n');
+    const main = readLean('shop-front').main;
+    const store = storeDir('shop-front');
+    await leanState('shop-front', { run: hostGuard });
+    const plan = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
+    const done = await uninstall({ folder: c.folder, removeState: false, hash: plan.hash }, c.deps);
+    assert.deepEqual(done, { ok: true, lines: plan.lines });
+    // A .git folder again, on main, at the same commit, nothing changed in the files; the store is gone.
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isDirectory(), true);
+    assert.equal(await git(c.folder, ['symbolic-ref', 'HEAD']), 'refs/heads/main');
+    assert.equal(await git(c.folder, ['rev-parse', 'HEAD']), main);
+    assert.equal(await git(c.folder, ['status', '--porcelain', '--untracked-files=no']), '');
+    assert.equal(await git(c.folder, ['rev-parse', '--is-bare-repository']), 'false');
+    assert.equal(await git(c.folder, ['worktree', 'list', '--porcelain']).then((t) => t.split('\n').filter((l) => l.startsWith('worktree ')).length), 1);
+    assert.equal(fs.existsSync(store), false);
+    // No Lean registration is left for the session start, the board or the guards to read.
+    assert.equal(readLean('shop-front'), null);
+    assert.equal(projectForFolder(c.folder), null);
+    assert.deepEqual(registeredLeanProjects(), []);
+    // The hook file and the sign-in start are gone; the state and the record files stay.
+    assert.equal(fs.existsSync(path.join(c.userHome, '.copilot', 'hooks', 'wheelhouse.json')), false);
+    assert.equal(loginStartRecord(), null);
+    assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front', 'state')), true);
+    assert.equal(fs.readFileSync(path.join(record, '2026-10-22.jsonl'), 'utf8'), '{"kind":"stop"}\n');
+    // Installing again works from here.
+    await installed(c, c.folder);
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isFile(), true);
+    // And removing the state, when the director chose it, takes Wheelhouse's folder for the project away.
+    const drop = await planUninstall({ folder: c.folder, removeState: true }, c.deps);
+    assert.equal((await uninstall({ folder: c.folder, removeState: true, hash: drop.hash }, c.deps)).ok, true);
+    assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front')), false);
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isDirectory(), true);
+    assert.equal(await git(c.folder, ['rev-parse', 'HEAD']), main);
+  });
+});
+
+test('uninstall refuses a folder with uncommitted changes or off the main version, and changes nothing', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const plan = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
+    fs.writeFileSync(path.join(c.folder, 'README.md'), 'changed\n');
+    await assert.rejects(uninstall({ folder: c.folder, removeState: false, hash: plan.hash }, c.deps), /changes that aren't committed/);
+    await git(c.folder, ['checkout', '--', 'README.md']);
+    await git(c.folder, ['switch', '-q', '-c', 'feature/x']);
+    await assert.rejects(uninstall({ folder: c.folder, removeState: false, hash: plan.hash }, c.deps), /isn't on the main version/);
+    // Still in the store, still registered, the guards still registered.
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isFile(), true);
+    assert.equal(fs.existsSync(storeDir('shop-front')), true);
+    assert.ok(readLean('shop-front') !== null);
+    assert.equal(fs.existsSync(path.join(c.userHome, '.copilot', 'hooks', 'wheelhouse.json')), true);
+    // Back at the main version, detached as the helper leaves it: it goes ahead.
+    await git(c.folder, ['switch', '-q', '--detach', 'main']);
+    assert.equal((await uninstall({ folder: c.folder, removeState: false, hash: plan.hash }, c.deps)).ok, true);
+    assert.equal(await git(c.folder, ['symbolic-ref', 'HEAD']), 'refs/heads/main');
+    assert.match(await git(c.folder, ['branch', '--list', 'feature/x']), /feature\/x/, 'the feature\'s branch is kept');
+  });
+});
+
+test('uninstall keeps the guards and the sign-in start while another project uses them', async () => {
+  const c = await computer();
+  const second = await secondFolder('books');
+  await c.as(async () => {
+    await installed(c, c.folder);
+    await installed(c, second);
     const hooks = path.join(c.userHome, '.copilot', 'hooks', 'wheelhouse.json');
     const plist = loginStartRecord().path;
-    // Under STOP nothing is removed: the guards are what hold it.
-    setStop({ by: 'helper', now: () => T0 });
-    await assert.rejects(uninstall({ folder: c.folder }, c.deps), (e) => e.message === STOP_ON);
-    liftStop();
-
-    const first = await uninstall({ folder: c.folder }, c.deps);
-    assert.match(first.lines[0], /stay registered with Copilot, and its sign-in start stays: 1 other project on this computer uses them/);
+    const first = await planUninstall({ folder: c.folder, removeState: false }, c.deps);
+    assert.ok(first.lines.includes('Wheelhouse\'s guards stay registered with Copilot, and its sign-in start stays: 1 other project on this computer uses them'), first.lines.join('\n'));
+    assert.equal((await uninstall({ folder: c.folder, removeState: false, hash: first.hash }, c.deps)).ok, true);
     assert.equal(fs.existsSync(hooks), true);
     assert.equal(fs.existsSync(plist), true);
-    assert.equal(readLean('shop-front').helper, false);
-    // The store and the state stay, and the folder still reads its history from the store.
-    assert.equal(fs.existsSync(storeDir('shop-front')), true);
-    assert.match(first.lines.at(-1), /history and record stay in Wheelhouse's own folder/);
-    assert.match(await git(c.folder, ['log', '--oneline', '-1', 'main']), /Start/);
-
-    const last = await uninstall({ folder: second }, c.deps);
-    assert.deepEqual(last.lines.slice(0, 2), [
-      `Wheelhouse's guards are no longer registered with Copilot: ${hooks} is removed`,
-      'What starts Wheelhouse\'s helper when you sign in is removed',
-    ]);
+    const last = await planUninstall({ folder: second, removeState: false }, c.deps);
+    assert.equal((await uninstall({ folder: second, removeState: false, hash: last.hash }, c.deps)).ok, true);
     assert.equal(fs.existsSync(hooks), false);
     assert.equal(fs.existsSync(plist), false);
-    assert.equal(loginStartRecord(), null);
-    assert.equal(fs.existsSync(storeDir('books')), true);
-    // A folder that isn't a Lean project has nothing to remove.
-    await assert.rejects(uninstall({ folder: c.userHome }, c.deps), /isn't a Lean project/);
   });
 });
 
@@ -302,5 +406,12 @@ test('the command line prints the plan with its hash, and install takes the same
     out.length = 0;
     assert.equal(await main(['launch'], { stdout, cwd: c.folder, deps: c.deps }), 1);
     assert.match(out.join(''), /^Usage/);
+    out.length = 0;
+    assert.equal(await main(['uninstall-plan', '--remove-state', 'no'], { stdout, cwd: c.folder, deps: c.deps }), 0);
+    const off = /^Hash: ([0-9a-f]{64})$/m.exec(out.join(''))[1];
+    assert.match(out.join(''), /^- This project, shop, leaves Wheelhouse's helper/m);
+    out.length = 0;
+    assert.equal(await main(['uninstall', '--hash', off, '--remove-state', 'no'], { stdout, cwd: c.folder, deps: c.deps }), 0, out.join(''));
+    assert.equal(readLean('shop'), null);
   });
 });

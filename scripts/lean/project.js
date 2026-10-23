@@ -13,12 +13,10 @@
 //                               project's git is in the store (scripts/lean/store.js)
 //     realUsers?: boolean,      whether the product has real users, so a chat click never approves a merge
 //     agent?: string,           the coding agent the project runs on here, set by the helper's install
-//     helper?: boolean,         whether Wheelhouse's helper is installed for the project: true from its install,
-//                               false once its uninstall has run (the store and the state stay)
 //   }
 //
-// `main`, `realUsers`, `agent` and `helper` are optional: a record without them reads as it did, with none
-// carried.
+// `main`, `realUsers` and `agent` are optional: a record without them reads as it did, with none carried. The
+// helper's uninstall removes the record (unregisterLean), so nothing reads a project it has left.
 //
 // readProject stays strict (scripts/lib/projects.js), so every caller that needs a host finds no
 // record and refuses. projectForFolder reads this record too, so the hooks place a Lean folder.
@@ -61,7 +59,6 @@ const OPTIONAL = [
   ['main', (x) => x === null || (typeof x === 'string' && FULL_COMMIT.test(x))],
   ['realUsers', (x) => typeof x === 'boolean'],
   ['agent', (x) => typeof x === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(x)],
-  ['helper', (x) => typeof x === 'boolean'],
 ];
 
 // stateDir refuses a name that is not a folder name.
@@ -133,6 +130,12 @@ export function updateLean(project, changes) {
   const held = readLean(project);
   if (held === null) throw new Error('This project is not registered as a Lean project');
   return writeLean(project, { ...held, ...changes });
+}
+
+// Removes the project's Lean record, so the hooks, the session start and the board no longer place its folder
+// (ruling P5-51). Its state, beside the record, is left as it is.
+export function unregisterLean(project) {
+  fs.rmSync(leanFile(project), { force: true });
 }
 
 const realOrNull = (p) => {
