@@ -36,9 +36,16 @@
 // such as gh in a body are still seen and a body the command scanner cannot read
 // (an apostrophe, for one) makes the whole command unreadable.
 //
+// Bodies are read again in full (comments and heredocs inside them too), to a
+// depth of MAX_BODY_LEVEL.
+//
+// Also unreadable: $[ ] arithmetic, a < inside an unquoted ${ }, a carriage
+// return outside single quotes, and on Windows a backslash before a quote, $, a
+// backtick, < > | ; & ( ) #, a blank or a newline (Git Bash reads an escape).
+//
 // Comments. A "#" that starts a word, outside quotes, begins a comment to the end
 // of the line. Its words are still read; a comment holding a quote, a backtick, a
-// parenthesis or a backslash is unreadable, since the shell ignores what the
+// parenthesis, a < or a backslash is unreadable, since the shell ignores what the
 // scanner would read as structure.
 //
 // A ")" with only the top frame open ends a segment, as in "case x in a) ...".
@@ -57,10 +64,11 @@
 const OPERATORS = new Set([';', '&', '|', '<', '>', '\n', '\r']);
 const SPACES = new Set([' ', '\t', '\f', '\v']);
 const MAX_DEPTH = 32;
+const MAX_BODY_LEVEL = 4;
 const CODE = new Set(['top', 'group', 'paren', 'tick']);
 
-// mode 'body' reads the text of a heredoc body on its own: no heredocs, no comment rule.
-function scan(command, windows, strict, operators = [], mode = '') {
+// level counts the heredoc bodies being read again inside one another.
+function scan(command, windows, strict, operators = [], level = 0) {
   const segments = [[]];
   operators.push(null);
   let current = null;
@@ -120,7 +128,7 @@ function scan(command, windows, strict, operators = [], mode = '') {
   // A body's text is scanned again as a command of its own; its segments follow.
   const reread = (text) => {
     const subOperators = [];
-    const found = scan(text, windows, false, subOperators, 'body');
+    const found = level >= MAX_BODY_LEVEL ? null : scan(text, windows, false, subOperators, level + 1);
     if (found === null) {
       unreadable = true;
       return false;
@@ -216,7 +224,7 @@ function scan(command, windows, strict, operators = [], mode = '') {
       if (stack.includes('tick')) return null; // \` and \" mean something else inside backticks
       if (top === 'hd') {
         if (['$', '`', '\\', '\n'].includes(next)) i += 1;
-      } else if (windows && code && ['\'', '"', '$', '`'].includes(next)) {
+      } else if (windows && code && ['\'', '"', '$', '`', '<', '>', '|', ';', '&', '(', ')', '#', ' ', '\t', '\n'].includes(next)) {
         return null; // Git Bash reads these as escapes
       } else if (top === 'sq' || (code && windows)) {
         add(windows ? '/' : ch);
@@ -231,6 +239,10 @@ function scan(command, windows, strict, operators = [], mode = '') {
         add(next);
         i += 1;
       }
+    } else if (!strict && ch === '\r' && top !== 'sq') {
+      return null; // a carriage return is part of a word to the shell, and of a heredoc delimiter
+    } else if (!strict && top !== 'sq' && ch === '$' && next === '[') {
+      return null; // $[ ] is arithmetic, which can hold <<
     } else if (code && ch === '$' && (next === '\'' || next === '"')) {
       return null; // $'...' and $"..." quote in ways this splitter does not follow
     } else if (top === 'sq') {
@@ -272,6 +284,17 @@ function scan(command, windows, strict, operators = [], mode = '') {
       } else {
         add(ch);
       }
+    } else if (!strict && ch === '$' && next === '{') {
+      // Outside quotes ${ } is read as plain characters; a < inside it could be a
+      // heredoc to the scanner and not to the shell, so none is allowed.
+      let open = 1;
+      for (let j = i + 2; j < chars.length && open > 0; j += 1) {
+        if (chars[j] === '{') open += 1;
+        else if (chars[j] === '}') open -= 1;
+        else if (chars[j] === '<') return null;
+      }
+      add('${');
+      i += 1;
     } else if (ch === '"' || ch === '\'') {
       push(ch === '"' ? 'dq' : 'sq');
       current ??= '';
@@ -305,7 +328,7 @@ function scan(command, windows, strict, operators = [], mode = '') {
     } else if (ch === '<' && next === '<' && chars[i + 2] === '<') {
       endSegment(ch); // a here-string
       i += 2;
-    } else if (ch === '<' && next === '<' && mode !== 'body') {
+    } else if (ch === '<' && next === '<') {
       const strip = chars[i + 2] === '-';
       let j = i + (strip ? 3 : 2);
       while (chars[j] === ' ' || chars[j] === '\t') j += 1;
@@ -319,10 +342,10 @@ function scan(command, windows, strict, operators = [], mode = '') {
         if (pending.some((h) => h.depth !== stack.length)) return null;
         if (!startBodies(i + 1, pending.splice(0))) return null;
       }
-    } else if (ch === '#' && current === null && mode !== 'body') {
+    } else if (ch === '#' && current === null) {
       // A comment: the shell skips it, so nothing in it may look like structure.
       const { text: comment } = lineAt(i);
-      if (/['"`()\\]/.test(comment)) return null;
+      if (/['"`()<\\]/.test(comment)) return null;
       add(ch);
     } else {
       add(ch);

@@ -1014,7 +1014,7 @@ test('Bash reads heredoc bodies as the shell does, and keeps refusing what they 
     const allowed = [
       'cat <<EOF\nIt\\\'s fine, $(echo hi) and ${HOME} (see 1)\nEOF',
       'cat <<\'EOF\'\nit "quoted" (a)\nEOF',
-      'git commit -m "$(cat <<\'EOF\'\nTidy (a) and b\n\nCloses #12 (partial)\n1) first\nEOF\n)"',
+      'git commit -m "$(cat <<\'EOF\'\nTidy (a) and b\n\nCloses #12\n1) first\nEOF\n)"',
       'cat <<EOF\nhello $(echo "a b")\nEOF\necho done',
     ];
     for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
@@ -1042,6 +1042,28 @@ test('on Windows a backslash before a quote, $ or a backtick is refused', async 
     for (const command of ['echo \\\'; gh pr list; echo \\\'', 'echo \\"; gh pr list; echo \\"', 'echo \\$x', 'echo \\`x']) {
       assert.ok(denied(await withWin(ctx, command)), command);
     }
+    assert.equal(await withWin(ctx, 'dir C:\\Users\\x'), undefined);
+  });
+});
+
+test('Bash refuses where the guard and the shell could disagree about a heredoc', async () => {
+  await inProject(async (ctx) => {
+    const refused = [
+      'echo x # <<EOF\n# \'\ngh pr list\n# \'\nEOF',
+      'echo x # <<E\ncat <<\'X\'\n\'\nX\ngh pr list\n\'\nE',
+      'echo $[1<<E]\n# \'\ngh pr list\n# \'\nE]',
+      'echo ${x:-<<E}\n# \'\ngh pr list\n# \'\nE}',
+      'echo ${x:-${y}<<E}\n# \'\ngh pr list\n# \'\nE}',
+      'cat <<EOF\r\nEOF\n\'\n$(gh pr list)\n\'\nEOF\r\n',
+      'echo "$(echo x)"\r\ngh pr list',
+      'cat <<A\ncat <<B\n\'\nB\nA\ngh pr list',
+      'cat <<A\n# (a\nA',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+    const windows = ['echo \\<<EOF\n# \'\ngh pr list\n# \'\nEOF', 'echo \;gh pr list', 'echo a\\ b', 'echo \\#x', 'echo \\|x'];
+    for (const command of windows) assert.ok(denied(await withWin(ctx, command)), command);
+    const allowed = ['echo "a < b" \'<<x\'', 'echo ${x:-y} ${#x}', 'cat <<EOF\nhello\nEOF\necho done', 'echo \'a\rb\''];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
     assert.equal(await withWin(ctx, 'dir C:\\Users\\x'), undefined);
   });
 });
