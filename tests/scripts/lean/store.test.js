@@ -696,3 +696,69 @@ test('Undo it on a main version moved by a merge reverts the merge only', async 
 test('the tests run with the person\'s SSH agent and password prompt cleared', () => {
   assert.deepEqual(testEnv({ PATH: '/bin', SSH_AUTH_SOCK: '/tmp/agent', SSH_ASKPASS: '/usr/bin/ask' }), { PATH: '/bin' });
 });
+
+// --- Fix round 2 (the re-review of ee7c2c7) ---
+
+test('a copy folder that isn\'t a repository is not updated, and nothing lands in a repository above it', async () => {
+  const c = await computer();
+  try {
+    const outer = path.join(c.home, 'outer');
+    fs.mkdirSync(outer);
+    await git(outer, ['init', '-q', '-b', 'trunk']);
+    const copy = path.join(outer, 'copy');
+    fs.mkdirSync(copy);
+    updateLean(PROJECT, { copy });
+    const head = await c.feature('login', { 'login.txt': 'login\n' });
+    await c.approve('login', head);
+    const got = await mergeApproved(c.ask({ branch: 'feature/login', commit: head }));
+    assert.equal(got.copy.pushed, false);
+    assert.equal(c.events().filter((e) => e.kind === 'note' && e.data?.lean === 'copy').at(-1).data.choice, 'failed');
+    for (const ref of ['refs/heads/main', 'refs/heads/wheelhouse-state']) {
+      assert.equal((await git(outer, ['rev-parse', '--verify', '-q', ref], { ok: true })).code, 1, `${ref} stays out of the repository above`);
+    }
+  } finally {
+    c.close();
+  }
+});
+
+test('a signed click on Undo is used once', async () => {
+  const c = await computer();
+  try {
+    const login = await c.feature('login', { 'login.txt': 'login\n' });
+    await c.approve('login', login);
+    const merged = await mergeApproved(c.ask({ branch: 'feature/login', commit: login }));
+    const click = await c.undoClick(merged.merge);
+    const first = await undoMerge(c.ask({ merge: merged.merge }));
+    const note = c.events().find((e) => e.kind === 'note' && e.data?.lean === 'undo');
+    assert.equal(note.data.click, click.id);
+    // The undo undone by hand, so the merge's work is back: the old click undoes nothing again.
+    await git(c.folder, ['switch', '-q', '--detach', first.undo]);
+    await git(c.folder, ['revert', '--no-edit', first.undo]);
+    const back = await git(c.folder, ['rev-parse', 'HEAD']);
+    await git(c.folder, ['switch', '-q', '--detach', first.undo]);
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', back]);
+    updateLean(PROJECT, { main: back });
+    await assert.rejects(undoMerge(c.ask({ merge: merged.merge })), (error) => error.extra?.needs === 'window');
+    assert.equal(await c.main(), back);
+    // A new click undoes it again.
+    await c.undoClick(merged.merge);
+    assert.ok(FULL.test((await undoMerge(c.ask({ merge: merged.merge }))).undo));
+  } finally {
+    c.close();
+  }
+});
+
+test('the helper\'s card is reused only with its own recommendation, kind and level', async () => {
+  const c = await computer();
+  try {
+    const recorded = await c.main();
+    const sneak = await c.feature('sneak', { 'sneak.txt': 'sneak\n' });
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', sneak]);
+    const fake = await c.put('card', { ...mainMovedCard(recorded, sneak), recommend: 'Keep it' });
+    const status = await leanStatus(c.ask());
+    assert.notEqual(status.card, fake.id);
+    assert.equal(c.events().find((e) => e.id === status.card).data.recommend, 'Undo it');
+  } finally {
+    c.close();
+  }
+});

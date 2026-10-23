@@ -409,6 +409,26 @@ test('under STOP the window serves only the Lift STOP card', async () => {
   }
 });
 
+test('under STOP a card of a project that isn\'t Lean is refused before it is looked up', async () => {
+  let asked = 0;
+  const adapter = { defaultBranch: async () => 'main', prState: async () => { asked += 1; return { headSha: HEAD, mergeable: 'mergeable', state: 'open' }; } };
+  const c = await computer(() => said('Approve'), { adapter });
+  try {
+    const shown = await c.card({
+      question: `Merge the login page?\n${approvalLine(7, HEAD.slice(0, 12))}`, header: 'Approve', options: ['Approve', 'Not now'], kind: 'approval', level: 3,
+    });
+    assert.equal((await c.client.stop({})).ok, true);
+    // Nothing is looked at: not the state, nor the code host's pull request.
+    assert.deepEqual(await c.client.confirm({ project: c.project, ...shown }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ project: c.project, card: '00000000-0000-4000-8000-000000000000', hash: 'a'.repeat(64) }), { ok: false, refused: 'STOP is on' });
+    assert.equal(asked, 0, 'the code host was not asked');
+    assert.equal(c.windows.length, 0);
+  } finally {
+    liftStop();
+    await c.close();
+  }
+});
+
 test('a window-signed approval takes its card out of waiting, with the plain answer beside it', async () => {
   const adapter = { defaultBranch: async () => 'main', prState: async () => ({ headSha: HEAD, mergeable: 'mergeable', state: 'open' }) };
   const c = await computer(() => said('Approve'), { adapter });

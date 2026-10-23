@@ -1601,6 +1601,9 @@ export async function startHelper({
   async function doConfirm({ project, card, hash }, ctx) {
     if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
     if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
+    // Under STOP a card of a project that isn't Lean is refused before it is looked up (no read of the code host);
+    // a Lean card is looked at, and only its undo offered.
+    if (card !== LIFT_STOP_NAME && stopped() && !ctx.lean) return STOP_REFUSAL;
     const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
     const shown = await look();
     if (card !== LIFT_STOP_NAME && stopped()) {

@@ -247,11 +247,13 @@ const recorderFor = (record, { run, now }) => record ?? ((project, kind, data, {
 
 const eventsOf = (project) => listEvents(stateDir(project), { report: () => {} });
 
-// Whether a card's data is the helper's own composed card: its question, options and header the same (ruling P5-50),
-// so a card anyone wrote with the helper's line but other words is never taken for it.
+// Whether a card's data is the helper's own composed card: its question, options, header, kind, level and
+// recommendation the same (ruling P5-50), so a card anyone wrote with the helper's line but other words, or another
+// recommendation for the board to show, is never taken for it.
 export function sameCard(data, composed) {
   return data !== null && typeof data === 'object'
     && data.question === composed.question && data.header === composed.header
+    && data.kind === composed.kind && data.level === composed.level && data.recommend === composed.recommend
     && Array.isArray(data.options) && data.options.length === composed.options.length && data.options.every((o, i) => o === composed.options[i]);
 }
 
@@ -577,11 +579,16 @@ export async function mergeApproved({
 
 // The latest signed record of a click in the helper's window on `action` whose data `matches`: made and signed on this
 // computer, by an enrolled key, naming the window's proof. Or null.
+// Each click is used once: one an undo's own signed record names (`click`) counts no more, so a later undo needs a
+// new click. Only signed undo records count as using one, so a plain note can't use up the director's click.
 function windowClick(project, action, matches) {
   const me = computerId();
   const enrolled = readEnrolled();
-  return eventsOf(project).filter((e) => e.kind === 'action' && e.data?.action === action && e.data?.proof === 'window'
-    && e.computer === me && e.sig?.computer === me && matches(e.data) && verify(e, enrolled)).at(-1) ?? null;
+  const events = eventsOf(project);
+  const ownSigned = (e) => e.computer === me && e.sig?.computer === me && verify(e, enrolled);
+  const used = new Set(events.filter((e) => e.kind === 'note' && e.data?.lean === 'undo' && typeof e.data?.click === 'string' && ownSigned(e)).map((e) => e.data.click));
+  return events.filter((e) => e.kind === 'action' && e.data?.action === action && e.data?.proof === 'window'
+    && !used.has(e.id) && matches(e.data) && ownSigned(e)).at(-1) ?? null;
 }
 
 // Whether `merge` is a merge commit (two parents) in the store's main version: for the helper's window, which offers
@@ -628,11 +635,13 @@ export async function undoMerge({ project, merge, moved = false, now = () => new
     let commits;
     let data;
     let current;
+    let click;
     if (moved) {
       const main = await lookAtMain(project, lean, { run, record: write });
       ({ current } = main);
       if (!main.moved) refuse('The main version is where the helper last moved it, so there is nothing to undo');
-      if (windowClick(project, 'undo-main', (d) => d.from === main.recorded && d.to === current) === null) refuse(UNDO_NEEDS_WINDOW, { needs: 'window', card: main.card });
+      click = windowClick(project, 'undo-main', (d) => d.from === main.recorded && d.to === current);
+      if (click === null) refuse(UNDO_NEEDS_WINDOW, { needs: 'window', card: main.card });
       if (!(await store.ok(['merge-base', '--is-ancestor', main.recorded, current]))) refuse('The main version\'s history was rewritten, not added to, so it can\'t be undone here: look into it');
       commits = (await store.must(['rev-list', '--first-parent', `${main.recorded}..${current}`], 'The changes to undo could not be read')).split('\n').filter(Boolean);
       data = { lean: 'undo', moved: true, from: main.recorded, to: current };
@@ -643,7 +652,8 @@ export async function undoMerge({ project, merge, moved = false, now = () => new
       const parents = await store.call(['rev-list', '--parents', '-n', '1', merge]);
       if (parents.code !== 0 || parents.stdout.trim().split(' ').length !== 3) refuse('That commit is not a merge, so there is nothing to undo with it');
       if (!(await store.ok(['merge-base', '--is-ancestor', merge, MAIN]))) refuse('That merge is not in the main version');
-      if (windowClick(project, 'undo-merge', (d) => d.merge === merge) === null) {
+      click = windowClick(project, 'undo-merge', (d) => d.merge === merge);
+      if (click === null) {
         refuse(UNDO_NEEDS_WINDOW, { needs: 'window', card: await raiseCard(project, undoCard(merge), write) });
       }
       commits = [merge];
@@ -656,6 +666,7 @@ export async function undoMerge({ project, merge, moved = false, now = () => new
       ...data,
       commit: undo,
       proof: 'window',
+      click: click.id,
       text: moved ? 'The changes made to the main version without an approval were undone, on the director\'s click in Wheelhouse\'s window.' : 'A merge was undone with a new commit, on the director\'s click in Wheelhouse\'s window; later work stays.',
     }, { signed: true });
     const copy = await updateCopy(project, { run, now, record: write });
@@ -694,9 +705,16 @@ async function updateCopy(project, { run, now, record }) {
   if (fs.existsSync(lean.copy)) {
     await leanState(project, { run });
     const copy = gitAt(lean.copy, { run, reach: 'local', what: COPY_WHAT });
+    // The copy folder must be a repository itself (a bare one, or one with its own .git): git looks upwards from a
+    // folder that isn't one, and the fetch would land in whatever repository holds it.
+    const own = async () => {
+      const got = await copy.call(['rev-parse', '--absolute-git-dir']);
+      const dir = got.code === 0 ? realOrNull(String(got.stdout ?? '').trim()) : null;
+      return dir !== null && [realOrNull(lean.copy), realOrNull(path.join(lean.copy, '.git'))].includes(dir);
+    };
     const fetch = (from, ref) => copy.ok(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', from, `${ref}:${ref}`]);
     try {
-      pushed = (await fetch(storeDir(project), MAIN)) && (await fetch(stateDir(project), `refs/heads/${STATE_BRANCH}`));
+      pushed = (await own()) && (await fetch(storeDir(project), MAIN)) && (await fetch(stateDir(project), `refs/heads/${STATE_BRANCH}`));
     } catch {
       pushed = false;
     }
