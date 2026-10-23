@@ -415,13 +415,15 @@ async function openRequests({ originUrl, host, run }) {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
   let result;
   try {
-    // A host other than the tool's own public one is named only when the director is signed in to it.
-    // The token variables are cleared, so a planted origin cannot make the tool send them anywhere.
+    // A host other than the tool's own public one is named only when the director is signed in to it,
+    // and with the token variables cleared, so a planted origin cannot make the tool send them anywhere.
+    // The tool's own public host keeps them: a director may sign in to it by a token variable alone.
+    const env = named.hostname === null ? { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } : withoutTokens();
     if (named.hostname !== null) {
-      const auth = await run(tool, ['auth', 'status', '--hostname', named.hostname], { cwd: outside, env: withoutTokens(), timeoutMs: GIT_WAIT_MS });
+      const auth = await run(tool, ['auth', 'status', `--hostname=${named.hostname}`], { cwd: outside, env, timeoutMs: GIT_WAIT_MS });
       if (auth.code !== 0) throw new Error(`${tool} is not signed in to ${named.hostname}, so the open ${host === 'gitlab' ? 'merge' : 'pull'} requests were not listed`);
     }
-    result = await run(file, args, { cwd: outside, env: withoutTokens(), timeoutMs: GIT_WAIT_MS });
+    result = await run(file, args, { cwd: outside, env, timeoutMs: GIT_WAIT_MS });
   } finally {
     fs.rmSync(outside, { recursive: true, force: true });
   }

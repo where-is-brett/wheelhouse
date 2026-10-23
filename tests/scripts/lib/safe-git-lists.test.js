@@ -791,7 +791,7 @@ test('survey: a planted foreign host is named only when the director is signed i
   const refusing = await surveyWith('https://evil.example/o/p.git', 'github', (file, args) => (args[0] === 'auth' ? { code: 1, stdout: '', stderr: 'not logged in' } : { code: 0, stdout: '[]', stderr: '' }));
   await assert.rejects(refusing.survey(), /not signed in to evil\.example/);
   assert.deepEqual(refusing.calls.map((c) => c.args.slice(0, 2).join(' ')), ['auth status']);
-  assert.deepEqual(refusing.calls[0].args.slice(2), ['--hostname', 'evil.example']);
+  assert.deepEqual(refusing.calls[0].args.slice(2), ['--hostname=evil.example']);
   // Signed in: auth status first, then the list, both with the token variables cleared and outside the project.
   const signed = await surveyWith('https://ghe.corp.example/o/p.git', 'github', () => ({ code: 0, stdout: '[]', stderr: '' }));
   await signed.survey();
@@ -812,6 +812,8 @@ test('survey: a planted foreign host is named only when the director is signed i
   const own = await surveyWith('https://github.com/o/p.git', 'github', () => ({ code: 0, stdout: '[]', stderr: '' }));
   await own.survey();
   assert.deepEqual(own.calls.map((c) => c.args[0]), ['pr']);
+  // and keeps the token variables, since a director may sign in to it by one alone.
+  assert.equal('GITLAB_TOKEN' in own.calls[0].env || 'GH_ENTERPRISE_TOKEN' in own.calls[0].env, false);
 });
 
 // --- Test 12: built-ins only ---
