@@ -15,7 +15,7 @@ import { AGENT_CONTROL, CONTROL_FILE } from '../../../scripts/lib/agent-control.
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { KNOWN_TOOLS, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
 import { registration, file, writeRegistration } from '../../../adapters/copilot/hooks.js';
-import { leanHookFile, leanGuardScript, GUARD_SCRIPT, LEAN_HOOK_COMMAND } from '../../../adapters/copilot/lean-hooks.js';
+import { leanHookFile, leanGuardScript, GUARD_SCRIPT, LEAN_HOOK_COMMAND, PLUTIL_MISSING } from '../../../adapters/copilot/lean-hooks.js';
 import { buildHome } from '../../../scripts/agents/copilot/home.js';
 import { COULD_NOT_RUN, DEADLINE } from '../../../scripts/agents/copilot/hook-entry.js';
 
@@ -199,15 +199,20 @@ test('unreadable input, a field that can\'t be read and a missing parser each re
   ]) refused(runGuard(input), what);
   assert.equal(refused(runGuard('not json'), 'the words'), COULD_NOT_RUN);
   const fine = call('view', { path: path.join(PROJECT, 'README.md') });
-  // The parser missing, failing, or answering nonsense.
+  // The parser missing, without the options the guard needs (an older Mac's), failing, or answering nonsense: each is
+  // refused with the plain line that says why (ruling P5-56).
   const missing = guardFile({ plutil: path.join(base, 'no-such-plutil') }, 'missing-plutil.sh');
-  refused(runGuard(fine, { guard: missing }), 'with no parser', COULD_NOT_RUN);
+  refused(runGuard(fine, { guard: missing }), 'with no parser', PLUTIL_MISSING);
+  const older = path.join(base, 'older-plutil');
+  fs.writeFileSync(older, '#!/bin/sh\ncase "$1 $3" in "-extract xml1") exec /usr/bin/plutil "$@" ;; esac\necho "plutil: unrecognized option: $1" >&2\nexit 1\n', { mode: 0o755 });
+  refused(runGuard(fine, { guard: guardFile({ plutil: older }, 'older-plutil.sh') }), 'with a parser without -type and raw', PLUTIL_MISSING);
   const failing = path.join(base, 'failing-plutil');
   fs.writeFileSync(failing, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  refused(runGuard(fine, { guard: guardFile({ plutil: failing }, 'failing-plutil.sh') }), 'with a parser that fails', COULD_NOT_RUN);
+  refused(runGuard(fine, { guard: guardFile({ plutil: failing }, 'failing-plutil.sh') }), 'with a parser that fails', PLUTIL_MISSING);
   const nonsense = path.join(base, 'nonsense-plutil');
   fs.writeFileSync(nonsense, '#!/bin/sh\necho dictionary\n', { mode: 0o755 });
-  refused(runGuard(fine, { guard: guardFile({ plutil: nonsense }, 'nonsense-plutil.sh') }), 'with a parser that answers nonsense', COULD_NOT_RUN);
+  refused(runGuard(fine, { guard: guardFile({ plutil: nonsense }, 'nonsense-plutil.sh') }), 'with a parser that answers nonsense', PLUTIL_MISSING);
+  assert.match(PLUTIL_MISSING, /plutil/);
   // The same input with the real parser is let through, so it was the parser that refused.
   allowed(runGuard(fine), 'the same read');
   // No HOME: the credential folders can't be placed.
@@ -215,6 +220,35 @@ test('unreadable input, a field that can\'t be read and a missing parser each re
   refused(runGuard(fine, { env: noHome }), 'with no home folder', COULD_NOT_RUN);
   // Its temporary file is removed, whether it allowed or refused.
   assert.deepEqual(fs.readdirSync(ENV.TMPDIR), []);
+});
+
+test('outside a Lean project the guard lets everything through, and inside one it guards every subfolder (ruling P5-56)', onMac, () => {
+  // A repository with no record folder, and a plain folder: neither is a Lean project.
+  const plain = path.join(HOME, 'Projects', 'other');
+  fs.mkdirSync(path.join(plain, '.git'), { recursive: true });
+  const loose = path.join(HOME, 'Downloads', 'notes');
+  fs.mkdirSync(loose, { recursive: true });
+  for (const folder of [plain, loose]) {
+    allowed(runGuard(call('create', { path: path.join(folder, 'AGENTS.md') }, folder), { cwd: folder }), `${folder}: a control-file name`);
+    allowed(runGuard(call('apply_patch_v2', 'x', folder), { cwd: folder }), `${folder}: a tool Wheelhouse doesn't know`);
+  }
+  // A record folder with no .git beside it isn't one either.
+  const half = path.join(HOME, 'Projects', 'half');
+  fs.mkdirSync(path.join(half, '.wheelhouse', 'record'), { recursive: true });
+  allowed(runGuard(call('create', { path: path.join(half, 'AGENTS.md') }, half), { cwd: half }), 'a record folder without git');
+  // Inside a Lean project's subfolder, the same write is refused.
+  const deep = path.join(PROJECT, 'src', 'deep');
+  fs.mkdirSync(deep, { recursive: true });
+  refused(runGuard(call('create', { path: path.join(deep, 'AGENTS.md') }, deep), { cwd: deep }), 'a Lean project\'s subfolder', CONTROL_FILE);
+  // A folder that can't be read or placed is refused, not let through.
+  const shut = path.join(HOME, 'Projects', 'shut');
+  fs.mkdirSync(path.join(shut, 'inner'), { recursive: true });
+  fs.chmodSync(shut, 0o000);
+  try {
+    refused(runGuard(call('view', { path: 'x' }, path.join(shut, 'inner')), { cwd: HOME }), 'a folder that can\'t be read', COULD_NOT_RUN);
+  } finally {
+    fs.chmodSync(shut, 0o755);
+  }
 });
 
 test('the guard answers well inside the hook\'s timeoutSec', onMac, async () => {
@@ -287,6 +321,7 @@ test('the entry runs the guard from a home with a space and an apostrophe', onMa
     for (const name of [HOOK_FILE, GUARD_SCRIPT]) put(path.join(copilotHome, 'hooks', name), kit.get(`hooks/${name}`));
     put(path.join(person, 'shop', 'README.md'));
     fs.mkdirSync(path.join(person, 'shop', '.git'));
+    fs.mkdirSync(path.join(person, 'shop', '.wheelhouse', 'record'), { recursive: true });
     const env = { PATH: NO_NODE_PATH, HOME: person, TMPDIR: ENV.TMPDIR, ...(where === 'COPILOT_HOME' ? { COPILOT_HOME: copilotHome } : {}) };
     const run = (input) => spawnSync('/bin/sh', ['-c', entry], { input: JSON.stringify(input), env, cwd: path.join(person, 'shop'), encoding: 'utf8' });
     allowed(run(call('view', { path: path.join(person, 'shop', 'README.md') }, path.join(person, 'shop'))), `${where}: a read`);

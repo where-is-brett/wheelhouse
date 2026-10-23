@@ -126,13 +126,13 @@ test('the record is one file a day in the record folder, written on the main ver
 test('merging uses --no-ff and undo uses revert -m 1', () => {
   assert.ok(playbook.includes('git -c core.hooksPath=/dev/null merge --no-verify --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"'));
   assert.ok(playbook.includes('git -c core.hooksPath=/dev/null revert -m 1 <merge>'));
-  assert.ok(playbook.includes('git switch -c feature/<slug>'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null switch -c feature/<slug>'));
   assert.doesNotMatch(playbook, /git push [^\n]*--force|git reset --hard|git branch -D\b/, 'nothing that rewrites or discards history');
   assert.doesNotMatch(playbook, /git merge (?!--no-ff|--abort)[^\n]*feature/, 'every merge is --no-ff');
 });
 
 test('the copy push names wheelhouse-copy', () => {
-  assert.ok(playbook.includes('git push wheelhouse-copy main'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null push --no-verify wheelhouse-copy main'));
   const copy = section(playbook, 'The copy');
   assert.match(copy, /git init --bare/);
   assert.match(copy, /setup/i);
@@ -211,16 +211,16 @@ const commitFile = (r, cwd, file, text, message) => {
 
 test('a feature is in hand from the branch until the director says it is built, and the chat never switches meanwhile', () => {
   const record = section(playbook, 'The record');
-  assert.match(record, /A feature is in hand\*\* from `git switch -c feature\/<slug>`/);
+  assert.match(record, /A feature is in hand\*\* from `git -c core\.hooksPath=\/dev\/null switch -c feature\/<slug>`/);
   assert.match(record, /never switch branches, whether the folder looks clean or not/);
   assert.match(record, /shares this folder/);
   assert.match(record, /no feature is in hand/);
   assert.match(record, /Waiting to be recorded/);
   assert.match(record, /own `at` date/);
   // Every line that switches to the main version says why it may: a branch is made at once, the review was clean, the feature was set aside, or it is waiting on the code host.
-  const switches = playbook.split('\n').filter((l) => l.includes('git switch main'));
+  const switches = playbook.split('\n').filter((l) => l.includes('git -c core.hooksPath=/dev/null switch main'));
   assert.ok(switches.length >= 3);
-  for (const line of switches) assert.match(line, /git switch -c|CLEAN|\*\*Not now\*\*|git fetch origin|origin\/main/, `a switch to main without a reason: ${line}`);
+  for (const line of switches) assert.match(line, /switch -c|CLEAN|\*\*Not now\*\*|git fetch origin|origin\/main/, `a switch to main without a reason: ${line}`);
   const reviewing = section(playbook, 'Reviewing');
   assert.match(reviewing, /`FINDINGS`[^\n]*\*\*stay on `feature\/<slug>`\*\*[^\n]*in hand again/);
   assert.match(section(playbook, 'Building'), /stay on `feature\/<slug>` for the review/);
@@ -256,7 +256,7 @@ test('the code-host steps work against a bare origin, over two features, and the
   for (const command of [
     'git fetch origin',
     'git diff --name-only origin/main...feature/<slug> -- .wheelhouse wheelhouse',
-    'git switch -c feature/<slug> origin/main',
+    'git -c core.hooksPath=/dev/null switch -c feature/<slug> origin/main',
     'git rev-parse --short=12 origin/main^2',
     'git merge-base --is-ancestor origin/main^1 feature/<slug>',
     'git -c core.hooksPath=/dev/null merge --no-verify --no-ff origin/main -m "Take the code host\'s main version"',
@@ -535,18 +535,18 @@ test('a rules file the change adds or alters is never rules for its review (ruli
   assert.doesNotMatch(read('agents/reviewer.md'), /A rules file this change adds or alters/);
 });
 
-test('the playbook\'s own commits, merges and reverts run with the project\'s git hooks off (ruling P5-36 j)', { skip: !unix && 'a shell script' }, () => {
+test('the playbook\'s own commits, merges, reverts, switches and pushes run with the project\'s git hooks off (rulings P5-36 j and P5-56)', { skip: !unix && 'a shell script' }, () => {
   const own = section(playbook, 'Your own git commands');
   assert.ok(own.includes('`git -c core.hooksPath=/dev/null`'));
   assert.match(own, /`NUL` takes the place of `\/dev\/null`/);
-  assert.match(own, /`--no-verify` after `commit` and `merge`/);
+  assert.match(own, /`--no-verify` after `commit`, `merge` and `push`/);
   // Every commit, merge and revert the playbook gives turns hooks off; aborts and reads are left as they are.
   const commands = [...playbook.matchAll(/`(git [^`]+)`/g)].map((m) => m[1]);
   const subcommand = (c) => c.replace(/^git (-c \S+ )?/, '').split(' ');
-  const making = commands.filter((c) => ['commit', 'merge', 'revert'].includes(subcommand(c)[0]) && subcommand(c)[1] !== '--abort');
-  assert.ok(making.length >= 8, making.join('\n'));
+  const making = commands.filter((c) => ['commit', 'merge', 'revert', 'switch', 'push'].includes(subcommand(c)[0]) && subcommand(c)[1] !== '--abort');
+  assert.ok(making.length >= 25, making.join('\n'));
   for (const c of making) assert.ok(c.startsWith('git -c core.hooksPath=/dev/null '), c);
-  for (const c of making.filter((x) => / (commit|merge) /.test(x) && !/ revert /.test(x))) assert.match(c, /(commit|merge) --no-verify /, c);
+  for (const c of making.filter((x) => ['commit', 'merge', 'push'].includes(subcommand(x)[0]))) assert.equal(subcommand(c)[1], '--no-verify', c);
   // Run as written, in a repository whose hooks would leave a mark, no hook runs.
   const r = repo('hooks-off');
   const { cwd } = r.make('project');
@@ -554,7 +554,7 @@ test('the playbook\'s own commits, merges and reverts run with the project\'s gi
   commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
   const mark = path.join(cwd, '..', 'hook-ran');
   fs.mkdirSync(path.join(cwd, '.hooks'));
-  for (const hook of ['pre-commit', 'commit-msg', 'pre-merge-commit', 'prepare-commit-msg', 'post-commit', 'post-merge']) {
+  for (const hook of ['pre-commit', 'commit-msg', 'pre-merge-commit', 'prepare-commit-msg', 'post-commit', 'post-merge', 'post-checkout', 'pre-push']) {
     fs.writeFileSync(path.join(cwd, '.hooks', hook), `#!/bin/sh\necho ${hook} >> '${mark}'\n`, { mode: 0o755 });
   }
   r.run(cwd, 'config', 'core.hooksPath', '.hooks');
@@ -565,14 +565,20 @@ test('the playbook\'s own commits, merges and reverts run with the project\'s gi
   const revert = commands.find((c) => c.includes('revert -m 1 HEAD --no-edit'));
   const run = (script) => spawnSync('sh', ['-c', script], { cwd, env: r.env, encoding: 'utf8' });
   assert.equal(run(`git add .wheelhouse/record/2026-10-24.jsonl && ${recordCommit}`).status, 0);
-  r.run(cwd, 'switch', '-q', '-c', 'feature/x');
+  const branch = commands.find((c) => c.endsWith('switch -c feature/<slug>')).replace('<slug>', 'x');
+  const toMain = commands.find((c) => c.endsWith('switch main'));
+  const push = commands.find((c) => c.endsWith('push --no-verify wheelhouse-copy main'));
+  assert.equal(run(branch).status, 0);
   fs.writeFileSync(path.join(cwd, 'x.txt'), 'x\n');
   r.run(cwd, 'add', 'x.txt');
-  fs.rmSync(mark, { force: true });
   r.run(cwd, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'x');
-  r.run(cwd, 'switch', '-q', 'main');
+  assert.equal(run(toMain).status, 0);
   assert.equal(run(merge).status, 0);
   assert.equal(run(revert).status, 0);
+  const copy = path.join(r.dir, 'copy.git');
+  r.run(r.dir, 'init', '-q', '--bare', '-b', 'main', copy);
+  r.run(cwd, 'remote', 'add', 'wheelhouse-copy', copy);
+  assert.equal(run(push).status, 0);
   assert.ok(!fs.existsSync(mark), fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '');
 });
 
@@ -680,8 +686,8 @@ test('on a code host the approved commit is what is pushed, and Undo is the host
   assert.match(host, /Write no `undo` line yet/);
   assert.match(host, /Only when both hold, and so the host's main has the revert/);
   assert.match(section(playbook, 'Undo'), /On a code host this is the host's step/);
-  const pushFeature = command('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>');
-  const pushUndo = command('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full revert hash>');
+  const pushFeature = command('git -c core.hooksPath=/dev/null push --no-verify -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>');
+  const pushUndo = command('git -c core.hooksPath=/dev/null push --no-verify -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full revert hash>');
 
   const r = repo('hostundo');
   const origin = r.make('origin.git');
@@ -773,7 +779,7 @@ test('STOP is said to be unenforced', () => {
 
 test('the key is never asked for in the chat', () => {
   // The push names the approved commit's full hash, not the branch (M1); the options are the host's.
-  assert.ok(playbook.includes('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>:refs/heads/feature/<slug>'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null push --no-verify -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>:refs/heads/feature/<slug>'));
   const host = section(playbook, 'On a code host, without Node.js');
   assert.match(host, /never typed into the chat/i);
   assert.match(host, /sign-in window/);
@@ -1119,7 +1125,7 @@ test('taking the project off the helper is a card with the plan\'s lines, then t
   assert.match(part, /<start> uninstall --hash <hash> --remove-state yes\|no/);
   assert.match(part, /\*\*Leave the helper\*\*/);
   assert.match(part, /\*\*Remove it too\*\*|--remove-state yes/);
-  assert.match(part, /git switch --detach main/);
+  assert.match(part, /git -c core\.hooksPath=\/dev\/null switch --detach main/);
   // The card about the state has every part a card has (CLAUDE.md): what, why, options, a recommendation, meanwhile.
   const stateCard = /"Keep this project's Wheelhouse state\?"[^\n]*?Then run/.exec(part)[0];
   for (const bit of [/what \(/, /why \(/, /\*\*Keep it\*\*/, /\*\*Remove it too\*\*/, /recommend/, /meanwhile \(/]) assert.match(stateCard, bit);

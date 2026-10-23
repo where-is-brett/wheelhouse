@@ -565,6 +565,8 @@ test('the copy-guard block puts the kit\'s guard in place on a Mac without Node.
   for (const name of ['wheelhouse.json', 'wheelhouse-lean-guard.sh']) assert.equal(fs.readFileSync(path.join(hooks, name), 'utf8'), kit.get(`hooks/${name}`));
   // The hook file's entry runs the guard, which refuses a write to a file that steers an agent.
   const entry = JSON.parse(fs.readFileSync(path.join(hooks, 'wheelhouse.json'), 'utf8')).hooks.preToolUse[0].bash;
+  // The guard guards a Lean project: the record folder beside git (ruling P5-56).
+  fs.mkdirSync(path.join(project, '.wheelhouse', 'record'), { recursive: true });
   const input = JSON.stringify({ sessionId: 's', timestamp: 0, cwd: project, toolName: 'create', toolArgs: { path: path.join(project, 'AGENTS.md') } });
   const guard = spawnSync('/bin/sh', ['-c', entry], { cwd: project, env, input, encoding: 'utf8' });
   assert.equal(guard.status, 2, guard.stdout + guard.stderr);

@@ -2,7 +2,9 @@
 # adapters/copilot/lean-guard.sh
 # Lean's guard on a Mac where Node.js doesn't run (check 69; Part 5 Task 8, rulings P5-33 and P5-34): Copilot's
 # preToolUse hook, in /bin/sh, reading its input with /usr/bin/plutil, which every Mac has. It decides on what is being
-# done, never on a tool's name alone (check 58), and keeps no state and asks nothing (ruling P5-33):
+# done, never on a tool's name alone (check 58), and keeps no state and asks nothing (ruling P5-33). It guards only a
+# Lean project, a folder holding `.git` and `.wheelhouse/record/` that the input's folder is in or under, and lets
+# everything through elsewhere, as the Node.js hook entry does outside a project (ruling P5-56). In a Lean project:
 #   - a file tool's write to a file that steers an agent, in the project or the home folder, to git's own files or to
 #     a record file already there is refused;
 #   - a file tool's read or write of the credential folders, Wheelhouse's keys or a .env file is refused, as is a
@@ -10,8 +12,8 @@
 #   - a tool Copilot's lists don't hold, and the parallel wrapper, are refused as unknown;
 #   - a shell command is let through, since it can't be parsed here (the board's lines say so);
 #   - anything else is let through, with no answer.
-# It fails closed: input it can't read, a field it can't extract, a parser that is missing or fails, a path it can't
-# place, or no answer by its deadline each refuse. A refusal is Copilot's deny answer and exit 2 (check 58).
+# It fails closed: input it can't read, a field it can't extract, a parser that is missing, fails or lacks the options
+# it needs, a folder it can't read or place, or no answer by its deadline each refuse. A refusal is Copilot's deny answer and exit 2 (check 58).
 #
 # This file is the template. adapters/copilot/lean-hooks.js writes the lists into the @…@ words when the kit is built,
 # from agent-control.js, credentials.js and the adapter's tool lists, so each is named once. Every program is run by
@@ -45,6 +47,7 @@ SAY_SEARCH=@SAY_SEARCH@
 SAY_RECORD=@SAY_RECORD@
 SAY_PLACE=@SAY_PLACE@
 SAY_COULD_NOT_RUN=@SAY_COULD_NOT_RUN@
+SAY_PLUTIL=@SAY_PLUTIL@
 SAY_DEADLINE=@SAY_DEADLINE@
 SAY_UNKNOWN_BEFORE=@SAY_UNKNOWN_BEFORE@
 SAY_UNKNOWN_AFTER=@SAY_UNKNOWN_AFTER@
@@ -189,19 +192,9 @@ ready_places() {
     _list=$_list$PLACED$NL
   fi
   control_places=$(lower "$_list")
-  # The project's roots: the folder Copilot runs in, and the nearest folder above it that holds `.git`.
-  place "$cwd" || deny_it "$SAY_COULD_NOT_RUN"
-  roots=$PLACED
-  _up=$PLACED
-  while :; do
-    if [ -e "$_up/.git" ] || [ -L "$_up/.git" ]; then
-      [ "$_up" = "$PLACED" ] || roots=$roots$NL$_up
-      break
-    fi
-    [ "$_up" = / ] && break
-    _up=${_up%/*}
-    [ -n "$_up" ] || _up=/
-  done
+  # The project's roots: the folder Copilot runs in, and the Lean project's own folder.
+  roots=$cwd_real
+  [ "$lean_root" = "$cwd_real" ] || roots=$roots$NL$lean_root
   roots=$(lower "$roots")
   places_ready=yes
 }
@@ -313,11 +306,29 @@ patch_paths() {
 decide() {
   input=$work/input
   /bin/cat >"$input" || deny_it "$SAY_COULD_NOT_RUN"
-  case ${HOME:-} in /*) ;; *) deny_it "$SAY_COULD_NOT_RUN" ;; esac
+  # The parser is asked once whether it has the options the guard reads with (an older Mac's may not).
+  printf '{"a":"b"}' >"$work/probe" || deny_it "$SAY_COULD_NOT_RUN"
+  [ "$("$PLUTIL" -type a "$work/probe" 2>/dev/null)" = string ] || deny_it "$SAY_PLUTIL"
+  [ "$("$PLUTIL" -extract a raw -o - "$work/probe" 2>/dev/null)" = b ] || deny_it "$SAY_PLUTIL"
   read_field cwd || deny_it "$SAY_COULD_NOT_RUN"
   cwd=$FIELD
   case $cwd in /*) ;; *) deny_it "$SAY_COULD_NOT_RUN" ;; esac
   [ -d "$cwd" ] || deny_it "$SAY_COULD_NOT_RUN"
+  # The Lean project the folder is in: the nearest folder at or above it holding `.git` and the record folder. None,
+  # and the guard lets everything through; a folder on the way it can't read is refused.
+  place "$cwd" || deny_it "$SAY_COULD_NOT_RUN"
+  cwd_real=$PLACED
+  lean_root=
+  _up=$cwd_real
+  while :; do
+    [ -x "$_up" ] || deny_it "$SAY_COULD_NOT_RUN"
+    if { [ -e "$_up/.git" ] || [ -L "$_up/.git" ]; } && [ -d "$_up/$RECORD_DIR" ]; then lean_root=$_up; break; fi
+    [ "$_up" = / ] && break
+    _up=${_up%/*}
+    [ -n "$_up" ] || _up=/
+  done
+  [ -n "$lean_root" ] || allow_it
+  case ${HOME:-} in /*) ;; *) deny_it "$SAY_COULD_NOT_RUN" ;; esac
   read_field toolName || deny_it "$SAY_COULD_NOT_RUN"
   tool=$FIELD
   [ -n "$tool" ] || deny_it "$SAY_COULD_NOT_RUN"
