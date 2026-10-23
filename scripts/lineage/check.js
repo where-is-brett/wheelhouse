@@ -15,9 +15,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { computerId, stateDir } from '../lib/paths.js';
-import { readProject } from '../lib/projects.js';
-import { agentInFolder } from '../agents/names.js';
+import { stateDir } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -45,29 +43,21 @@ function liftMark(project) {
   return path.join(projectHome(project), 'lineage', 'lifted.json');
 }
 
-// An agent's own hold, beside the session start's (rulings P8-13, P8-23, P8-32): `lineage/hold-<name>.json`, written
-// and removed by that agent's own starter (its kits, or a new version of the agent that hasn't passed the safety
-// checks), never by the session start's check, so a matching check can't lift it. `name` is a plain name. The file is
-// { agent, at, mismatches, why?, lifts?, recorded?, ...what the starter keeps }: `agent` is the agent whose starter
-// wrote it, `why` what holds the work and `lifts` what lifts it, each one line, which the hook and the card say.
+// An agent's own hold, beside the session start's (rulings P8-13, P8-23, P8-32, P8-33): `lineage/hold-<name>.json`,
+// written and removed by that agent's own starter (its kits, or a new version of the agent that hasn't passed the
+// safety checks), never by the session start's check, so a matching check can't lift it. `name` is a plain name. The
+// file is { agent, at, mismatches, why?, lifts?, recorded?, ...what the starter keeps }: `agent` is the agent whose
+// starter wrote it, `why` what holds the work and `lifts` what lifts it, each one line, which the hook and the card say.
 //
-// An agent's hold counts only while the project runs on that agent on this computer, so a project switched back to
-// Claude Code isn't held by a hold only another agent's starter could lift; recordLift then removes it. When the
-// project's agent can't be told (its record or its configuration can't be read), every hold counts.
+// Every agent's hold counts here, whatever the project runs on: which agent that is is read in one place only, the
+// project's configuration on its default branch, which the watcher holds (ruling P8-33), and nothing here can read
+// it without git. A hold of an agent the project no longer runs is removed by the watcher (clearOtherAgentHolds),
+// and only when that configuration and the main checkout's say the same other agent; until then it stands.
 const AGENT_HOLD_NAME = /^[a-z0-9-]{1,64}$/;
 const AGENT_HOLD_FILE = /^hold-[a-z0-9-]{1,64}\.json$/;
 export function agentHoldFile(project, name) {
   if (typeof name !== 'string' || !AGENT_HOLD_NAME.test(name)) throw new Error(`An agent's hold needs a plain name: ${JSON.stringify(name)}`);
   return path.join(projectHome(project), 'lineage', `hold-${name}.json`);
-}
-
-// The agent the project runs on this computer, or null when it can't be told.
-export function projectAgentHere(project) {
-  try {
-    return agentInFolder(readProject(project)?.folder, { computerId: computerId() });
-  } catch {
-    return null;
-  }
 }
 
 // The agents' holds in the project's lineage folder, each { file, held } (held null when it can't be read), or null
@@ -86,19 +76,8 @@ function agentHolds(project) {
   });
 }
 
-// The agents' holds that count for the project now: those of the agent it runs here (all of them when that can't be
-// told, and any that can't be read), or null when the lineage folder can't be read.
-function standingAgentHolds(project) {
-  const holds = agentHolds(project);
-  if (holds === null) return null;
-  // The project's agent is read only when an agent's hold is there.
-  if (holds.length === 0) return [];
-  const here = projectAgentHere(project);
-  return holds.filter(({ held }) => here === null || held === null || typeof held.agent !== 'string' || held.agent === here);
-}
-
-// Whether the project is held: by the session start's hold file, or by an agent's own that counts (above). Anything
-// at the hold file's place counts, and so does a lineage folder that can't be read.
+// Whether the project is held: by the session start's hold file, or by any agent's own. Anything at the hold file's
+// place counts, and so does a lineage folder that can't be read.
 export function isHeld(project) {
   try {
     fs.lstatSync(holdFile(project));
@@ -106,27 +85,29 @@ export function isHeld(project) {
   } catch (error) {
     if (error?.code !== 'ENOENT') return true;
   }
-  const standing = standingAgentHolds(project);
-  return standing === null || standing.length > 0;
+  const holds = agentHolds(project);
+  return holds === null || holds.length > 0;
 }
 
 // What holds the project, for the hook to say: null when the session start's hold stands, it isn't held, or nothing
 // better than the hook's own words can be said; otherwise an agent's hold's `why` and `lifts`.
 export function agentHoldWords(project) {
   if (fs.lstatSync(holdFile(project), { throwIfNoEntry: false }) !== undefined) return null;
-  const held = (standingAgentHolds(project) ?? []).map((h) => h.held).find((h) => h !== null && typeof h.lifts === 'string');
+  const held = (agentHolds(project) ?? []).map((h) => h.held).find((h) => h !== null && typeof h.lifts === 'string');
   if (held === undefined) return null;
   return `${typeof held.why === 'string' ? held.why.replace(/\.+$/, '') : 'the skill kits kept for its sessions differ from its manifest'}. ${held.lifts}`;
 }
 
-// Removes the holds of agents other than the one the project runs here, when that one is known: no starter of theirs
-// runs for it now, so nothing else would lift them. Gives how many were removed.
-export function clearOtherAgentHolds(project) {
-  const here = projectAgentHere(project);
-  if (here === null) return 0;
+// Removes the holds of agents other than the one the project runs here, for the watcher (ruling P8-33): `agent` is
+// the agent its default branch's configuration names for this computer, the one the watcher starts sessions with, and
+// `checkoutAgent` the one the main checkout's configuration names. Only when both are known and say the same is a
+// hold of another agent removed: where they differ (a change not yet pulled, a local edit) or either can't be read,
+// every hold stands. A hold that can't be read, or names no agent, stands. Gives how many were removed.
+export function clearOtherAgentHolds(project, { agent, checkoutAgent }) {
+  if (typeof agent !== 'string' || agent === '' || agent !== checkoutAgent) return 0;
   let removed = 0;
   for (const { file, held } of agentHolds(project) ?? []) {
-    if (held === null || typeof held.agent !== 'string' || held.agent === here) continue;
+    if (held === null || typeof held.agent !== 'string' || held.agent === agent) continue;
     fs.rmSync(file, { force: true });
     removed += 1;
   }
@@ -321,8 +302,6 @@ export function liftedIds(project) {
 // otherwise). It informs, so a failure is passed over. Gives whether a lift was kept.
 export async function recordLift({ project, views, computer, now = () => new Date(), client, left = (promise) => promise }) {
   try {
-    // A hold of an agent the project no longer runs here goes first (ruling P8-32).
-    clearOtherAgentHolds(project);
     // A standing hold costs one stat per tick: nothing is read until the hold file is gone.
     if (isHeld(project)) return false;
     const have = liftedIds(project);

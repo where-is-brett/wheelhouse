@@ -38,13 +38,11 @@ export function agentOfProject(project, options = {}) {
   return agentOfConfig(folderConfig(project), options);
 }
 
-// The agent the project in `folder` runs on this computer, as agentOfProject reads it, but null when the
-// configuration can't be read (a missing file is a project with no `agents` map: 'claude-code'). For a caller that
-// must fail closed when it can't tell.
+// The agent the project in `folder` runs on this computer, as its working copy's configuration names it, or null
+// when that can't be told: a configuration that is missing or can't be read is null here, not 'claude-code', for a
+// caller that must fail closed (ruling P8-33).
 export function agentInFolder(folder, options = {}) {
   if (typeof folder !== 'string' || folder === '') return null;
-  const file = path.join(folder, '.claude', 'wheelhouse.json');
-  if (fs.lstatSync(file, { throwIfNoEntry: false }) === undefined) return 'claude-code';
   const config = folderConfig(folder);
   return config === null ? null : agentOfConfig(config, options);
 }

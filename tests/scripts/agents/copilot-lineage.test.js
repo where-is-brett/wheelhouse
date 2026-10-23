@@ -290,35 +290,89 @@ test('a failing subset holds Copilot work and raises one card', () => withHome(a
   assert.deepEqual(buildViews(listState(), []).lineageHolds, []);
 }));
 
-test('an agent\'s hold counts only while the project runs on that agent, and Claude Code\'s lift clears it (P8-32)', () => withHome(async () => {
+// A waker for the project as its default branch's configuration has it on this computer (`agent`), with the stand-ins
+// above: what a switch of agent leaves is looked at by its prune.
+function wakerOn(agent, { raised, started = [] }) {
+  return makeWaker({
+    shape: 1,
+    project: P,
+    config: readConfig(JSON.stringify(projectConfig({ agents: { [computerId()]: agent } }))),
+    sessions: partWith(),
+    run: (...args) => { started.push(args); return { pid: 100, exited: new Promise(() => {}) }; },
+    alive: () => false,
+    startTimeOf: async () => null,
+    now: () => new Date(T0),
+    bootedAt: () => 0,
+    baseEnv: { PATH: process.env.PATH ?? '', HOME: '/Users/someone' },
+    foremanTools: ['Bash(node:*)'],
+    print: () => {},
+    raise: async (record) => { raised.push(record); putInState(record); },
+    onError: () => {},
+    windowsBuilds: () => ({ level: 'ask', grants: [], guardedCommand: null }),
+  });
+}
+
+// A Copilot version hold standing for the project, its file and its record in the state.
+function copilotHold() {
+  const data = { at: new Date(T0).toISOString(), mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], why: versionWhy(V2), lifts: VERSION_LIFTS };
+  holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: data.mismatches, why: data.why, lifts: data.lifts, now: () => new Date(T0) });
+  return putInState({ kind: 'lineage-hold', data });
+}
+
+test('an agent\'s hold stands until the default branch and the checkout both put the project on another agent (P8-32, P8-33)', () => withHome(async () => {
   const checkout = await projectOn('copilot');
-  holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], why: versionWhy(V2), lifts: VERSION_LIFTS, now: () => new Date(T0) });
-  const hold = putInState({ kind: 'lineage-hold', data: { at: new Date(T0).toISOString(), mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], why: versionWhy(V2), lifts: VERSION_LIFTS } });
-  assert.equal(isHeld(P), true);
+  const hold = copilotHold();
+  const input = { cwd: checkout, tool_name: 'Write', tool_input: {} };
+  const tick = async () => {
+    const lifted = [];
+    const client = { state: { write: async (body) => { lifted.push(body); return { ok: true }; } } };
+    await recordLift({ project: P, views: buildViews(listState(), []), computer: computerId(), now: () => new Date(T0), client });
+    return lifted;
+  };
 
   // The hook says what holds the work and what lifts it.
-  const input = { cwd: checkout, tool_name: 'Write', tool_input: {} };
   const denied = await lineageHold(input, { projectOf: () => ({ project: P }) });
   const reason = denied.hookSpecificOutput.permissionDecisionReason;
   assert.match(reason, /^Wheelhouse is holding edits and commands: Copilot CLI 7\.0\.2 .*so Copilot work is held\. No click here lifts the hold: .*runs on Claude Code on this computer again\.$/);
   assert.notEqual(reason, HELD);
 
-  // The project goes back to Claude Code here: the hold no longer counts, and Claude Code's lift removes its file and
-  // closes its card.
+  // The checkout says Claude Code, the default branch still Copilot (a local edit): the hold stands at the hook, and
+  // neither a Claude Code tick nor the watcher removes it.
   onAgent(checkout, 'claude-code');
+  assert.equal(isHeld(P), true);
+  assert.notEqual(await lineageHold(input, { projectOf: () => ({ project: P }) }), undefined);
+  assert.deepEqual(await tick(), []);
+  const raised = [];
+  await wakerOn('copilot', { raised }).prune();
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), true);
+
+  // The default branch says Claude Code, the checkout still Copilot (a change not yet pulled): it stands too.
+  onAgent(checkout, 'copilot');
+  await wakerOn('claude-code', { raised }).prune();
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), true);
+  // And with the checkout's configuration missing or unreadable.
+  fs.rmSync(path.join(checkout, '.claude', 'wheelhouse.json'));
+  await wakerOn('claude-code', { raised }).prune();
+  fs.mkdirSync(path.join(checkout, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.claude', 'wheelhouse.json'), '{ not json');
+  await wakerOn('claude-code', { raised }).prune();
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), true);
+  assert.deepEqual(raised, [], 'no lift is recorded while the hold stands');
+
+  // Both say Claude Code: the watcher removes the hold and records its lift, and the card closes.
+  onAgent(checkout, 'claude-code');
+  await wakerOn('claude-code', { raised }).prune();
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), false);
   assert.equal(isHeld(P), false);
   assert.equal(await lineageHold(input, { projectOf: () => ({ project: P }) }), undefined);
-  const lifted = [];
-  const client = { state: { write: async (body) => { lifted.push(body); return { ok: true }; } } };
-  assert.equal(await recordLift({ project: P, views: buildViews(listState(), []), computer: computerId(), now: () => new Date(T0), client }), true);
-  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), false);
-  assert.deepEqual(lifted.map((b) => [b.kind, b.data.holds]), [['lineage-lift', [hold.id]]]);
+  assert.deepEqual(raised.map((r) => [r.kind, r.data.holds]), [['lineage-lift', [hold.id]]]);
+  assert.deepEqual(buildViews(listState(), []).lineageHolds, []);
 
-  // A configuration that can't be read holds, failing closed.
+  // A watcher on Copilot never removes Copilot's own hold.
+  copilotHold();
   onAgent(checkout, 'copilot');
-  holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], now: () => new Date(T0) });
-  fs.writeFileSync(path.join(checkout, '.claude', 'wheelhouse.json'), '{ not json');
-  assert.equal(isHeld(P), true);
+  await wakerOn('copilot', { raised }).prune();
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), true);
 }));
 
 test('a kit that differs writes the project\'s kit hold, so no tick lifts its card early', () => withHome(async () => {

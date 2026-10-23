@@ -133,7 +133,8 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
-import { recordLift } from '../lineage/check.js';
+import { clearOtherAgentHolds, recordLift } from '../lineage/check.js';
+import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
@@ -1479,6 +1480,17 @@ export function makeWaker({
         if (typeof checkout === 'string') {
           const dir = path.join(checkout, '.wheelhouse', 'foreman', 'wakes');
           if (lstatOf(dir)?.isDirectory() && realOf(dir) === path.join(realOf(checkout) ?? '', '.wheelhouse', 'foreman', 'wakes')) pruneFolder(dir, keep, t);
+        }
+        // A hold of an agent the project no longer runs on here goes, and its card closes (ruling P8-33): the agent is
+        // read from the default branch's configuration this waker runs on, and the hold goes only when the main
+        // checkout's names the same agent; otherwise it stands.
+        try {
+          const id = computerId();
+          const agent = agentOfConfig(config, { computerId: id });
+          const checkoutAgent = typeof checkout === 'string' ? agentInFolder(checkout, { computerId: id }) : null;
+          if (clearOtherAgentHolds(project, { agent, checkoutAgent }) > 0) await liftHolds();
+        } catch (error) {
+          onError(`Another agent's hold couldn't be looked at: ${error instanceof Error ? error.message : 'unknown error'}`);
         }
         // And the sessions' kept output past its days, when the adapter keeps any (ruling P8-2).
         let adapter = null;
