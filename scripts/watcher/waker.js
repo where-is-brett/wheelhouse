@@ -601,7 +601,24 @@ export function makeWaker({
   try {
     wakeCommand = foremanCommands(pluginRoot, { platform }).wake;
   } catch { /* the prompt names the playbook alone */ }
-  sessionModeOf(config);
+  // The sessions part of the adapter for the agent this computer runs for the project (the `agents` map of the
+  // configuration from the default branch, which the mode and the models come from too; Claude Code when it
+  // names none), unless one was given.
+  const sessionsOf = () => sessions ?? sessionsOfProject(config);
+  // Asks that adapter whether its sessions may start under `config` (`check` is checkForeman or checkFeature): a
+  // throw refuses the wake. When there is no adapter to ask (the project names an agent that has none, or this
+  // computer's id can't be read), nothing is asked here: the call that would start the session refuses it, and
+  // the wake is kept.
+  const mayStart = (check) => {
+    let adapter;
+    try {
+      adapter = sessionsOf();
+    } catch {
+      return;
+    }
+    adapter[check](config);
+  };
+  mayStart('checkForeman');
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
     throw new Error("The foreman's tools are a list of tool rules");
   }
@@ -733,11 +750,6 @@ export function makeWaker({
     }
   }
 
-  // The sessions part of the adapter for the agent this computer runs for the project (the `agents` map of the
-  // configuration from the default branch, which the mode and the models come from too; Claude Code when it
-  // names none), unless one was given.
-  const sessionsOf = () => sessions ?? sessionsOfProject(config);
-
   // Starts the session `call` describes (the adapter's { file, args, env, input, verbatim }) for `target`,
   // recording it as starting first and as running after. Resolves with the pid; the exit code settles `entries`.
   async function launch({ target, cwd, call, file, entries = [] }) {
@@ -865,7 +877,7 @@ export function makeWaker({
 
   // Delivers what can go now and keeps the rest. Returns what was delivered.
   async function deliver() {
-    sessionModeOf(config);
+    mayStart('checkForeman');
     if (stopped()) return [];
     return shape === 2 ? deliverByLine() : deliverByStart();
   }
@@ -987,18 +999,18 @@ export function makeWaker({
   const api = {
     // Wakes a fresh foreman for the wake whose record is `file`, now or once the running one ends.
     async wakeForeman(file) {
-      sessionModeOf(config);
+      mayStart('checkForeman');
       return enqueue({ to: 'foreman', file });
     },
     // Wakes the feature's own session with the wake whose record is `file`.
     async wakeFeature(work, file) {
-      featureModeOf(config);
+      mayStart('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       return enqueue({ to: 'feature', work, file });
     },
     // Starts the feature's session in its worktree, reading its brief.
     async startFeature({ work, worktree, briefFile } = {}) {
-      featureModeOf(config);
+      mayStart('checkFeature');
       if (typeof work !== 'string' || !SLUG.test(work)) throw new Error('A work id is lower-case letters, digits and hyphens');
       if (!featureWorktreeOk(project, worktree)) throw new Error("This isn't a feature worktree of the project");
       const brief = featurePaths(worktree).brief;

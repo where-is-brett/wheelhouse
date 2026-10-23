@@ -62,6 +62,12 @@ export function foremanCall({
   return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman' } };
 }
 
+// Whether a foreman session can be started under `config`: throws, in plain words, when its mode is bypass or
+// not one Wheelhouse starts sessions in. The waker asks before it wakes the foreman; the answer is ignored.
+export function checkForeman(config) {
+  sessionModeOf(config);
+}
+
 // Whether a feature session can be started under `config`: throws, in plain words, when its mode or its
 // builder's model can't be passed. The waker asks before it does anything for the session (labelling its
 // worktree, recording grants), so a refusal leaves nothing behind.
@@ -110,4 +116,4 @@ export function finalAnswer(stdout) {
   return last;
 }
 
-export default Object.freeze({ checkFeature, foremanCall, featureStartCall, featureResumeCall, finalAnswer });
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, finalAnswer });

@@ -32,3 +32,28 @@ You need Claude Desktop, signed in, and about 15 minutes. A GitHub or GitLab acc
 Setup goes one step at a time. Each step shows you a card listing exactly what it will change, and nothing changes until you click **Go ahead**. You can stop at any card and carry on later: setup picks up where it left off. To take Wheelhouse out of a project again, type `/wheelhouse:uninstall` in a session on it.
 
 Where your conversations, transcripts and records go, and what uninstall removes and keeps, is in [`docs/data.md`](docs/data.md).
+
+## On GitHub Copilot
+
+Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.
+
+**Status:** no release has been published yet, so the line below has no release to fetch until the first one is. Where this page says `v0.0.0`, use the latest release's name when there is one.
+
+Open your product's folder in VS Code, open Copilot's chat in agent mode, and paste this line:
+
+```text
+Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.0.0
+```
+
+Copilot asks you before it runs each command, as it always does. What the line does, one step at a time:
+
+1. **Checks git is here.** Without it, setup stops and tells you where to get it. Nothing has changed.
+2. **Gets Wheelhouse with git.** It fetches the release into `~/.copilot/wheelhouse/<tag>/`, copies Wheelhouse's skills, agents and instructions into `~/.copilot/`, and checks every copied file against the fingerprint the release lists for it. A file that doesn't match stops setup.
+3. **Asks the computer what it can run,** and says in one sentence which tier this is.
+4. **Sets up your project.** It adds Wheelhouse's VS Code settings to `.vscode/settings.json` (your own file is only changed after you click **Approve**), makes the record folder `.wheelhouse/record/` and the board `wheelhouse/board.md`, and makes one commit of the files it added.
+5. **Asks where the copy goes:** a folder you choose, such as a company drive, holding a bare copy of your project's history.
+6. **Compares your versions of VS Code and Copilot** with the list of versions Wheelhouse has tested, and says when yours haven't been tested yet.
+
+Then the chat follows Wheelhouse's own playbook for Lean: the record, the board, cards, building, merging, undo and the copy, all with git. The board's first lines say plainly what is and isn't enforced on your computer. At Lean nothing enforces STOP, an approval is a click in the chat that the chat records itself, and the VS Code settings are conveniences, not controls. **Lean is not for projects with real users.**
+
+**For the chat reading this:** check `git --version` first; then `git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME/.copilot/wheelhouse/<tag>"`, and follow `adapters/copilot/skills/setup-lean/SKILL.md` in that clone, step by step.

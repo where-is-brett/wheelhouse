@@ -5,12 +5,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import claudeSessions from '../../adapters/claude-code/sessions.js';
+import copilotSessions from '../../adapters/copilot/sessions.js';
 import { computerId } from '../lib/paths.js';
 
-// Copilot joins in Part 4.
-export const AGENTS = Object.freeze(['claude-code']);
+export const AGENTS = Object.freeze(['claude-code', 'copilot']);
 
-const SESSIONS = Object.freeze({ 'claude-code': claudeSessions });
+// Copilot's sessions part is not built yet: its members throw NOT_BUILT_YET (adapters/copilot/sessions.js).
+const SESSIONS = Object.freeze({ 'claude-code': claudeSessions, copilot: copilotSessions });
 
 // The sentence for a name that is no agent's.
 export function noAdapter(name) {

@@ -10,7 +10,7 @@ const SHAPES = Object.freeze({
   translate: { type: 'object', members: { toGuardInput: 'function', fromGuardAnswer: 'function' } },
   tools: { type: 'object', members: { read: 'array', halt: 'array', notify: 'array', ask: 'string', shell: 'array' } },
   settings: { type: 'object', members: { project: 'function', local: 'function' } },
-  sessions: { type: 'object', members: { checkFeature: 'function', foremanCall: 'function', featureStartCall: 'function', featureResumeCall: 'function', finalAnswer: 'function' } },
+  sessions: { type: 'object', members: { checkForeman: 'function', checkFeature: 'function', foremanCall: 'function', featureStartCall: 'function', featureResumeCall: 'function', finalAnswer: 'function' } },
   cards: { type: 'object', members: { binding: 'array' } },
   packaging: { type: 'object', members: { files: 'function' } },
   toolSheet: { type: 'string' },
@@ -19,6 +19,30 @@ const SHAPES = Object.freeze({
 });
 
 export const ADAPTER_PARTS = Object.freeze(Object.keys(SHAPES));
+
+// The code a stub throws for a part that is not built yet.
+export const NOT_BUILT_YET = 'NOT_BUILT_YET';
+// What marks a stub made by pendingPart, so checkAdapter can tell one from a part that was built.
+const PENDING = Symbol('pending part');
+
+// A part that is not built yet: an object whose `members` are functions, each throwing an Error with
+// the code NOT_BUILT_YET that names the part. An adapter holding one lists the part in its `pending`.
+export function pendingPart(part, members) {
+  if (!ADAPTER_PARTS.includes(part)) throw new Error(`${JSON.stringify(part)} is not a part of an adapter`);
+  if (!Array.isArray(members) || members.length === 0 || !members.every((m) => typeof m === 'string' && m !== '')) {
+    throw new Error(`The ${part} part's members must be a list of names`);
+  }
+  const stub = { [PENDING]: part };
+  for (const member of members) {
+    stub[member] = () => {
+      throw Object.assign(new Error(`The ${part} part (${member}) is not built yet`), { code: NOT_BUILT_YET, part });
+    };
+  }
+  return Object.freeze(stub);
+}
+
+// Whether `value` is a stub made by pendingPart.
+export const isPendingPart = (value) => value !== null && typeof value === 'object' && Object.hasOwn(value, PENDING);
 
 function kindOf(value) {
   if (Array.isArray(value)) return 'array';
@@ -35,10 +59,17 @@ function fits(value, type) {
 const article = (type) => (type === 'object' || type === 'array' ? 'an' : 'a');
 
 // The problems with `adapter`, each a plain sentence naming the missing or wrongly typed part. An
-// adapter with none returns an empty list.
+// adapter with none returns an empty list. A part built by pendingPart is accepted only when the
+// adapter's `pending` list names it, and `pending` may name nothing but parts.
 export function checkAdapter(adapter) {
   if (kindOf(adapter) !== 'object') return ['The adapter is not an object, so it has none of its parts'];
   const problems = [];
+  let pending = [];
+  if (adapter.pending !== undefined) {
+    if (fits(adapter.pending, 'array')) pending = adapter.pending;
+    else problems.push(`The adapter's pending list must be an array of part names, and it is ${kindOf(adapter.pending)}`);
+  }
+  for (const name of pending) if (!ADAPTER_PARTS.includes(name)) problems.push(`The adapter lists ${JSON.stringify(name)} as pending, and that is not a part`);
   for (const part of ADAPTER_PARTS) {
     const shape = SHAPES[part];
     const value = adapter[part];
@@ -50,6 +81,7 @@ export function checkAdapter(adapter) {
       problems.push(`The ${part} part must be ${article(shape.type)} ${shape.type}, and it is ${kindOf(value)}`);
       continue;
     }
+    if (isPendingPart(value) && !pending.includes(part)) problems.push(`The ${part} part is not built yet, and the adapter does not list it as pending`);
     if (shape.members === undefined) continue;
     for (const [member, type] of Object.entries(shape.members)) {
       if (value[member] === undefined) problems.push(`The ${part} part has no ${member}`);

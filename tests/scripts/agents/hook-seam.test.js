@@ -84,8 +84,9 @@ test('an input shaped like another agent\'s, which the kit has no translation fo
   assert.deepEqual(h.out, []);
 });
 
-test('every agent has a kit translation, and Claude Code\'s is the adapter\'s own', () => {
-  for (const name of AGENTS) assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);
+test('every agent whose translation is built has a kit translation, and Claude Code\'s is the adapter\'s own', () => {
+  // An adapter lists a translation it has not built in `pending`; its kit translation comes with the build (Part 5).
+  for (const name of AGENTS.filter((agent) => !(adapterFor(agent).pending ?? []).includes('translate'))) assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);
   assert.equal(TRANSLATORS['claude-code'].translate, adapterFor('claude-code').translate);
 });
 

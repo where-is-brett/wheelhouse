@@ -144,8 +144,8 @@ scripts/audit/report.js                   the audit report, checked against the 
 scripts/review/clean-session.js           the clean checkout, the prompt from trusted state, the verdict
 scripts/watcher/control-files.js          agent-control files read directly before every wake
 scripts/health/own-files.js               changes to Wheelhouse's and Copilot's own files
-skills/lean/SKILL.md                      Lean's playbook, with no Node.js
-skills/setup-lean/SKILL.md                setup from one request in the chat, with git alone
+adapters/copilot/skills/lean/SKILL.md           Lean's playbook, with no Node.js
+adapters/copilot/skills/setup-lean/SKILL.md     setup from one request in the chat, with git alone
 docs/copilot/                             tested-versions.md, it-note.md, baseline/ (managed settings, policy hooks)
 vscode/                                   the add-on: package.json, extension.cjs, pane/, README.md
 scripts/addon/                            validate.js (the static proof), pack.js (the .vsix)
@@ -262,7 +262,7 @@ git commit -m "Record check 58: what Copilot gives a guard, and how its answer l
 - [ ] **Step 1: Probe:** hooks answering with a marker sentence through each documented field (`additionalContext`, and the PascalCase forms); a prompt asking the agent to repeat any marker it was given; a long session forced to compact with `/compact`; a `task` call to a custom agent named `probe-agent`.
 - [ ] **Step 2: Run (agent, Mac),** undo, write the note, run `npm test`, commit (`"Record check 60: what Copilot's other hooks can do"`).
 
-**If the answer differs:** if `userPromptSubmitted` can't add text, the STOP word's reply and the briefing come from the front desk's own skill (`wheelhouse-briefing`), as `/digest` does without the mod; Part 5 Task 3 leaves the STOP word's text to the helper's answer, which the playbook tells the front desk to read.
+**If the answer differs:** if `userPromptSubmitted` can't add text, the STOP word's reply and the briefing come from the front desk's own skill (`wheelhouse-briefing`), as `/wheelhouse-digest` does without the mod; Part 5 Task 3 leaves the STOP word's text to the helper's answer, which the playbook tells the front desk to read.
 
 ### Task 5: Check 61, sessions from a script (C8), on the Mac
 
@@ -601,7 +601,7 @@ test('a Claude Code project\'s health line is unchanged', ...)
 - Modify: `package.json` (`"copilot-home": "node scripts/agents/copilot/home.js --write"`)
 
 **Interfaces:**
-- Consumes: `skills/*/SKILL.md`, `agents/*.md`, `skills/lean/SKILL.md` and `skills/setup-lean/SKILL.md` (Tasks 3 and 5), `adapters/copilot/tool-sheet.md`.
+- Consumes: `skills/*/SKILL.md`, `agents/*.md`, `adapters/copilot/skills/lean/SKILL.md` and `adapters/copilot/skills/setup-lean/SKILL.md` (Tasks 3 and 5), `adapters/copilot/tool-sheet.md`.
 - Produces: `buildHome({ root }) -> Map<string, string>` (relative path to text) for this tree:
   - `skills/wheelhouse-front-desk/`, `wheelhouse-intake/`, `wheelhouse-lean/`, `wheelhouse-setup/`, and one skill per command the director calls by name: `wheelhouse-board`, `wheelhouse-briefing`, `wheelhouse-settings`, `wheelhouse-stop`, `wheelhouse-sources` (each a short skill pointing to the front desk's section for it);
   - `agents/wheelhouse-builder.agent.md`, `wheelhouse-reviewer.agent.md`, `wheelhouse-tester.agent.md`, `wheelhouse-foreman.agent.md`: the same prompt text as `agents/*.md`, with Copilot's front matter (`name`, `description`, `tools`); the reviewer's `tools` are `view`, `glob` and `rg` and nothing else (check 66's route b; not the whole of `tools.read`, which may name `skill`, `sql` and others);
@@ -629,7 +629,7 @@ test('every skill and agent name starts wheelhouse-', ...)
 **Safety: yes** (approvals and records at Lean)
 
 **Files:**
-- Create: `skills/lean/SKILL.md`, `tests/skills/lean.test.js`
+- Create: `adapters/copilot/skills/lean/SKILL.md`, `tests/skills/lean.test.js`
 - Modify: `skills/front-desk/SKILL.md` (one line: "At Lean, follow wheelhouse-lean for the record, the board, building and merging")
 
 **Interfaces:**
@@ -643,6 +643,7 @@ test('every skill and agent name starts wheelhouse-', ...)
   - **STOP:** the word "stop" ends work and is recorded; nothing enforces it, and the skill says so to the director once per session.
   - **The runbook's local steps:** STOP, looking at an incident, undoing a merge, and (where the helper runs) a new signing key.
   - **On a code host, without Node.js:** `git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin feature/<slug>` on GitLab; the project key given to git's own sign-in window once, never typed into the chat.
+  - **Guardrail changes (design section 6.5):** before a review and again before the approval card, a `git diff --name-only <base>...feature/<slug>` over the agent-control paths (`scripts/lib/agent-control.js`, written out in the playbook, with `.gitignore`, `.claude` and `CLAUDE.md`); if any path prints, the approval card says plainly that the change alters what steers the agents or VS Code (card name `guardrail-<slug>`), and the reviewer reads the project's rules from the main version, not the feature.
 
 - [ ] **Step 1: Write the failing tests:** `the record line for each kind has every field`, `merging uses --no-ff and undo uses revert -m 1`, `the copy push names wheelhouse-copy`, `STOP is said to be unenforced`, `the key is never asked for in the chat`, `no Claude Code tool is named`.
 - [ ] **Step 2: Run `npm test`:** FAIL. **Step 3: Write the playbook,** then `npm run copilot-home`. **Step 4: Run `npm test`:** PASS.
@@ -668,11 +669,11 @@ test('every skill and agent name starts wheelhouse-', ...)
 **Safety: no**
 
 **Files:**
-- Create: `skills/setup-lean/SKILL.md`, `adapters/copilot/vscode-settings.json`, `docs/copilot/tested-versions.md`, `scripts/agents/copilot/versions.js`, `tests/skills/setup-lean.test.js`, `tests/scripts/agents/copilot-versions.test.js`
+- Create: `adapters/copilot/skills/setup-lean/SKILL.md`, `adapters/copilot/vscode-settings.json`, `docs/copilot/tested-versions.md`, `scripts/agents/copilot/versions.js`, `tests/skills/setup-lean.test.js`, `tests/scripts/agents/copilot-versions.test.js`
 - Modify: `README.md` (an "On GitHub Copilot" section), then `npm run copilot-home`
 
 **Interfaces:**
-- `skills/setup-lean/SKILL.md`, the steps the chat takes:
+- `adapters/copilot/skills/setup-lean/SKILL.md`, the steps the chat takes:
   1. Check `git --version`; without git, stop kindly.
   2. Clone Wheelhouse's public repository at the release tag into `~/.copilot/wheelhouse/<tag>/`, then copy `adapters/copilot/home/` into `~/.copilot/` (skills, agents, instructions; not `hooks/`, which step 4 handles), and check each copied file against `MANIFEST.txt` with `git hash-object`.
   3. "Can Wheelhouse run here?" at Lean: git, `node --version`, `copilot --version`, the project's remote; say in one sentence which tier this is ("This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat"), and if Node.js runs, that Part 5's helper can add more.

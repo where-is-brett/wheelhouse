@@ -15,6 +15,9 @@ const TOOLING_FOLDERS = ['node_modules/', '.git/', '.superpowers/', '.claude/'];
 const ALLOWED_CORE_FILES = {
   'scripts/lib/copilot-numbers.js': 'the numbers of the Copilot design, named once',
   'scripts/lib/agent-control.js': 'the guardrail list names the folders and files that steer each agent, Copilot\'s among them (design section 6.5)',
+  'package.json': 'the copilot-home script, which builds the Lean kit for Copilot',
+  'scripts/state/lean-record.js': 'reads Lean\'s record with the Copilot design\'s numbers, named once in copilot-numbers.js',
+  'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
   'scripts/audit/report.js': 'imports the levels, proofs and review kinds from the design\'s numbers file, copilot-numbers.js, and names no agent otherwise',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
 };
@@ -38,4 +41,11 @@ test('no file outside the allowed folders names Copilot', () => {
     if (/copilot/i.test(text) || /copilot/i.test(file)) offenders.push(file);
   }
   assert.deepEqual(offenders, [], 'These core files name Copilot; move that into an adapter');
+});
+
+test('the board\'s model and the session start get Copilot\'s lines from the adapters and never name it', () => {
+  for (const file of ['scripts/board/model.js', 'scripts/hooks/session-start.js', 'scripts/hooks/kit.js']) {
+    assert.ok(!Object.hasOwn(ALLOWED_CORE_FILES, file), `${file} is on the allowed list`);
+    assert.doesNotMatch(fs.readFileSync(path.join(REPO, file), 'utf8'), /copilot/i, `${file} names Copilot`);
+  }
 });
