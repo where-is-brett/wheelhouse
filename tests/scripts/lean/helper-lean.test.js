@@ -20,8 +20,9 @@ import { stateDir } from '../../../scripts/lib/paths.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { decide as sessionStart } from '../../../scripts/hooks/session-start.js';
+import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { registerLean, readLean, updateLean } from '../../../scripts/lean/project.js';
-import { storeDir, adoptProject, leanApprovalLine, MAIN_MOVED } from '../../../scripts/lean/store.js';
+import { storeDir, adoptProject, leanApprovalLine, mainMovedLine, MAIN_MOVED } from '../../../scripts/lean/store.js';
 import { leanCommand, main as leanMain } from '../../../scripts/lean/cli.js';
 
 // No real gh, glab, copilot or curl runs (P5-44).
@@ -99,6 +100,7 @@ async function computer({ realUsers = false, choose = () => null } = {}) {
     events: () => listEvents(stateDir(PROJECT), { report: () => {} }),
     main: () => git(storeDir(PROJECT), ['rev-parse', 'refs/heads/main']),
     close: async () => {
+      liftStop();
       await helper.close();
       if (before === undefined) delete process.env.WHEELHOUSE_HOME;
       else process.env.WHEELHOUSE_HOME = before;
@@ -107,7 +109,7 @@ async function computer({ realUsers = false, choose = () => null } = {}) {
 }
 
 test('the chat merges, undoes and copies only through the Lean command, on clicks it records as chat clicks', async () => {
-  const c = await computer();
+  const c = await computer({ choose: (card) => (card.options.includes('Undo') ? 'Undo' : null) });
   try {
     const status = await c.lean(['status']);
     assert.equal(status.ok, true, status.refused);
@@ -129,12 +131,14 @@ test('the chat merges, undoes and copies only through the Lean command, on click
     assert.equal(await c.main(), merged.merge);
     assert.equal(merged.copy.pushed, true);
     assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), merged.merge);
-    // Undo, on its click.
-    assert.match((await c.lean(['undo', merged.merge])).refused, /no click on Undo/);
+    // Undo, on its click in the helper's window (ruling P5-50): a click in the chat undoes nothing.
     assert.equal((await c.lean(['click', 'undo-login', 'Undo', merged.merge], { question: 'Undo login?' })).ok, true);
-    const undone = await c.lean(['undo', merged.merge]);
+    const asked = await c.lean(['undo', merged.merge]);
+    assert.deepEqual([asked.ok, asked.needs], [false, 'window']);
+    const undone = await c.lean(['confirm', asked.card]);
     assert.equal(undone.ok, true, undone.refused);
-    assert.equal(await c.main(), undone.undo);
+    assert.deepEqual([undone.kind, undone.step, undone.undone?.ok], ['action', 'runbook-step', true]);
+    assert.equal(await c.main(), undone.undone.undo);
     assert.equal((await c.lean(['copy'])).pushed, true);
     // The command's own refusals, and the process's exit code and lines.
     await assert.rejects(c.lean(['merge', 'login', head.slice(0, 12)]), /in full/);
@@ -239,6 +243,72 @@ test('a main version moved outside the helper is said at the session\'s start, a
     assert.equal(readLean(PROJECT).main, sneak);
     assert.equal((await c.lean(['status'])).moved, false);
     assert.equal((await c.lean(['merge', 'login', head])).ok, true);
+  } finally {
+    await c.close();
+  }
+});
+
+// --- The Task 5 fix round (ruling P5-50) ---
+
+test('undo is confirmed in the helper\'s window and works under STOP, where only the undo is offered', async () => {
+  const c = await computer({ choose: (card) => card.options.find((o) => o === 'Undo' || o === 'Undo it') ?? null });
+  try {
+    const head = await c.feature('login', { 'login.txt': 'login\n' });
+    assert.equal((await c.lean(['click', 'merge-login', 'Approve', head], { question: 'Add login?' })).ok, true);
+    const merged = await c.lean(['merge', 'login', head]);
+    assert.equal(merged.ok, true, merged.refused);
+    setStop({ by: 'prompt', now: () => new Date(T0) });
+    const asked = await c.lean(['undo', merged.merge]);
+    assert.deepEqual([asked.ok, asked.needs], [false, 'window']);
+    const undone = await c.lean(['confirm', asked.card]);
+    assert.equal(undone.ok, true, undone.refused);
+    assert.deepEqual(c.windows.at(-1).options, ['Undo']);
+    assert.equal(await c.main(), undone.undone.undo);
+    const click = c.events().find((e) => e.kind === 'action' && e.data.action === 'undo-merge');
+    assert.deepEqual([click.data.merge, click.data.proof], [merged.merge, 'window']);
+    assert.ok(verify(click, readEnrolled()));
+    // The card about a main version moved outside the helper offers only Undo it while STOP is on.
+    await git(c.folder, ['switch', '-q', '--detach', 'main']);
+    const sneak = await c.feature('sneak', { 'sneak.txt': 'sneak\n' });
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', sneak]);
+    const status = await c.lean(['status']);
+    assert.equal(status.moved, true);
+    const reverted = await c.lean(['confirm', status.card]);
+    assert.equal(reverted.ok, true, reverted.refused);
+    assert.deepEqual(c.windows.at(-1).options, ['Undo it']);
+    assert.equal(reverted.undone?.ok, true, reverted.undone?.refused);
+    assert.equal(await git(storeDir(PROJECT), ['rev-parse', `${reverted.undone.undo}^`]), sneak);
+    assert.equal((await c.lean(['status'])).moved, false);
+  } finally {
+    await c.close();
+  }
+});
+
+test('the window never signs a card written with the helper\'s line but other words', async () => {
+  const c = await computer({ realUsers: true, choose: (card) => card.options[0] ?? null });
+  try {
+    const recorded = await c.main();
+    const sneak = await c.feature('sneak', { 'sneak.txt': 'sneak\n' });
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', sneak]);
+    const line = mainMovedLine(recorded, sneak);
+    const fake = await c.client.state.write({ project: PROJECT, kind: 'card', data: { question: `All is well. Recommended: Keep it.\n${line}`, header: 'Main moved', options: ['Keep it', 'Not now'], kind: 'question', level: 4, line } });
+    assert.equal(fake.ok, true, fake.refused);
+    const kept = await c.lean(['confirm', fake.id]);
+    assert.equal(kept.ok, false);
+    assert.match(kept.refused, /not one the window confirms/);
+    assert.equal(readLean(PROJECT).main, recorded);
+    // The helper's own card is still asked for, word for word, and not the one written.
+    const status = await c.lean(['status']);
+    assert.notEqual(status.card, fake.id);
+    // The same for an approval card on a project with real users.
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', recorded]);
+    const head = await c.feature('login', { 'login.txt': 'login\n' });
+    const approve = leanApprovalLine('feature/login', head);
+    const forged = await c.client.state.write({ project: PROJECT, kind: 'card', data: { question: `Approve this, nothing to see.\n${approve}`, header: 'Approve', options: ['Approve', 'Not now'], kind: 'approval', level: 3, line: approve } });
+    const approved = await c.lean(['confirm', forged.id]);
+    assert.equal(approved.ok, false);
+    assert.match(approved.refused, /not one the window confirms/);
+    assert.equal(c.events().filter((e) => e.kind === 'approval').length, 0);
   } finally {
     await c.close();
   }

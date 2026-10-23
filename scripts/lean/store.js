@@ -4,7 +4,8 @@
 // the project's folder is left as a worktree of it, detached, so the main version is checked out nowhere: an
 // agent's edit tools can't move it, add a git hook to it or change its settings. Only the helper moves `main`,
 // and only to a merge of a commit the director approved, after that commit's tests passed, or to an undo the
-// director clicked. After each change the store's `main` and the state's branch go to the copy folder.
+// director clicked in the helper's window. After each change the copy folder fetches the store's `main` and the
+// state's branch, in a git run in the copy, so no hook of the copy's runs (ruling P5-50).
 //
 // Every git call goes through safeGit with the project list and the `lean` caller (ruling P5-25): the fence
 // shuts out the person's own git config and points hooks at the null file, so no hook in the store or the
@@ -18,13 +19,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
-import { safeGit } from '../lib/safe-git.js';
-import { stateDir } from '../lib/paths.js';
+import { safeGit, lookRefusalLine } from '../lib/safe-git.js';
+import { computerId, stateDir } from '../lib/paths.js';
 import { stopState } from '../lib/stop.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { listEvents, makeEvent, writeEvent } from '../state/events.js';
 import { writeViews } from '../state/views.js';
-import { readEnrolled } from '../state/signing.js';
+import { readEnrolled, sign, verify } from '../state/signing.js';
 import { readLeanRecord, leanToEvents } from '../state/lean-record.js';
 import { leanMergeDecision } from '../gate/conditions.js';
 import { readLean, updateLean, leanState } from './project.js';
@@ -79,6 +80,9 @@ export const LEAN_APPROVE = /Approve (feature\/[a-z0-9][a-z0-9-]{0,39}) at commi
 // The line the card about a main version moved outside the helper carries (ruling P5-27 f).
 export const mainMovedLine = (from, to) => `The main version moved from ${from} to ${to} without an approval`;
 export const MAIN_MOVED_LINE = /The main version moved from ([0-9a-f]{40}) to ([0-9a-f]{40}) without an approval/g;
+// The line the card asking to undo a merge carries (ruling P5-50): undo is a runbook step, confirmed in the window.
+export const undoLine = (merge) => `Undo the merge ${merge} on the main version`;
+export const UNDO_LINE = /Undo the merge ([0-9a-f]{40}) on the main version/g;
 
 // --- git, fenced ---
 
@@ -229,24 +233,36 @@ export async function withLocalLock(project, fn, { waitMs = LOCK_WAIT_MS, pollMs
 
 // Writes a plain event into the project's local state, as the helper does when it isn't the one asking: made
 // here, committed and never pushed, with the views written again. Gives its id.
-async function writeHere(project, kind, data, { run, now }) {
+async function writeHere(project, kind, data, { run, now, signed = false }) {
   await leanState(project, { run });
-  const event = makeEvent({ kind, data, now });
+  const made = makeEvent({ kind, data, now });
+  const event = signed ? sign(made) : made;
   await writeEvent({ project, event, push: async () => ({ ok: false }), env: {}, now });
   try { await writeViews(project, { now }); } catch { /* the next write brings them up to date */ }
   return event.id;
 }
-const recorderFor = (record, { run, now }) => record ?? ((project, kind, data) => writeHere(project, kind, data, { run, now }));
+// A recorder is called as (project, kind, data, { signed }): `signed` for the record of a merge or an undo whose proof is
+// the window's, which this computer signs (ruling P5-24).
+const recorderFor = (record, { run, now }) => record ?? ((project, kind, data, { signed = false } = {}) => writeHere(project, kind, data, { run, now, signed }));
 
 const eventsOf = (project) => listEvents(stateDir(project), { report: () => {} });
 
-// The card carrying `line`, raised once: the id of the one the state holds, else of one written now.
+// Whether a card's data is the helper's own composed card: its question, options and header the same (ruling P5-50),
+// so a card anyone wrote with the helper's line but other words is never taken for it.
+export function sameCard(data, composed) {
+  return data !== null && typeof data === 'object'
+    && data.question === composed.question && data.header === composed.header
+    && Array.isArray(data.options) && data.options.length === composed.options.length && data.options.every((o, i) => o === composed.options[i]);
+}
+
+// The helper's card, raised once: the id of the one the state holds, if it is that card word for word, else of one
+// written now.
 async function raiseCard(project, data, record) {
-  const held = eventsOf(project).find((e) => e.kind === 'card' && e.data?.line === data.line);
+  const held = eventsOf(project).find((e) => e.kind === 'card' && e.data?.line === data.line && sameCard(e.data, data));
   return held ? held.id : record(project, 'card', data);
 }
 
-function mainMovedCard(from, to) {
+export function mainMovedCard(from, to) {
   const line = mainMovedLine(from, to);
   return {
     question: [
@@ -264,7 +280,25 @@ function mainMovedCard(from, to) {
   };
 }
 
-function approvalCard(branch, commit, testCommand) {
+// The card asking to undo a merge: Undo adds a commit that reverses it, confirmed in the helper's window, and works
+// while STOP is on (a runbook step, spec section 6.4).
+export function undoCard(merge) {
+  const line = undoLine(merge);
+  return {
+    question: [
+      'Take this merge back out of the main version?',
+      'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while STOP is on.',
+      line,
+    ].join('\n'),
+    header: 'Undo',
+    options: ['Undo', 'Not now'],
+    kind: 'runbook',
+    level: 3,
+    line,
+  };
+}
+
+export function approvalCard(branch, commit, testCommand) {
   const line = leanApprovalLine(branch, commit);
   const slug = branch.slice('feature/'.length);
   return {
@@ -285,14 +319,20 @@ function approvalCard(branch, commit, testCommand) {
 
 // Compares the main version the record holds with the store's. When they differ, nothing is added until the
 // director decides, and the card asking is raised once. Gives { recorded, current, moved, card? }.
+// The record is read again after the store, so a status asked while another window moves the main version (the
+// store first, then the record) never sees the new head against the old record.
 async function lookAtMain(project, lean, { run, record }) {
   const current = await storeMain(project, run);
-  if (current === lean.main) return { recorded: lean.main, current, moved: false };
-  const card = await raiseCard(project, mainMovedCard(lean.main, current), record);
-  return { recorded: lean.main, current, moved: true, card };
+  const recorded = readLean(project)?.main ?? lean.main;
+  if (current === recorded) return { recorded, current, moved: false };
+  const card = await raiseCard(project, mainMovedCard(recorded, current), record);
+  return { recorded, current, moved: true, card };
 }
 
 // --- adopting a project ---
+
+// The settings refused at adoption beyond the project list: `core.hooksPath`, `include.*` and `includeIf.*`.
+const HOOKS_OR_INCLUDES = /^(?:core\.hookspath|include\..+|includeif\..+)$/i;
 
 const realOrNull = (p) => {
   try {
@@ -332,6 +372,13 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
   const main = await here.must(['rev-parse', '--verify', '-q', `${MAIN}^{commit}`], 'The main version could not be read');
   const trees = await here.must(['worktree', 'list', '--porcelain'], 'The project\'s worktrees could not be read');
   if (trees.split('\n').filter((l) => l.startsWith('worktree ')).length !== 1) refuse('The project has worktrees of its own, so it was left alone');
+  // On top of the project list (ruling P5-25): a hooks folder of the project's own, or an include that reads a file
+  // outside the store, would apply to every plain git command run in the folder after the move.
+  const own = await here.must(['config', '--local', '--no-includes', '--name-only', '--list', '-z'], 'The project\'s git settings could not be read');
+  const kept = [...new Set(own.split('\0').map((k) => k.trim()).filter((k) => HOOKS_OR_INCLUDES.test(k)))];
+  if (kept.length > 0) refuse(lookRefusalLine('lean', { keys: kept }, { what: FOLDER_WHAT }));
+  // A submodule's .git file points into .git/modules, which no longer resolves once .git is a pointer file.
+  if (fs.existsSync(path.join(dotGit, 'modules'))) refuse('The project has submodules, which can\'t move into the store yet, so it was left alone');
   const copyUrl = await here.call(['remote', 'get-url', 'wheelhouse-copy']);
   const copy = copyUrl.code === 0 && path.isAbsolute(copyUrl.stdout.trim()) ? copyUrl.stdout.trim() : null;
 
@@ -344,12 +391,17 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
       ? 'The project\'s folder and Wheelhouse\'s folder are on different drives, so the project\'s git could not be moved'
       : 'The project\'s git could not be moved into the store');
   }
+  // The repository goes back where it was, without the worktree entry the move made, so the next adoption isn't
+  // refused for worktrees of its own.
   const putBack = () => {
     try {
       if (!fs.existsSync(dotGit) || fs.lstatSync(dotGit).isFile()) {
         fs.rmSync(dotGit, { force: true });
         fs.renameSync(store, dotGit);
       }
+      fs.rmSync(path.join(dotGit, 'worktrees', 'tree'), { recursive: true, force: true });
+      const worktrees = path.join(dotGit, 'worktrees');
+      if (fs.existsSync(worktrees) && fs.readdirSync(worktrees).length === 0) fs.rmdirSync(worktrees);
     } catch { /* left for the director: the refusal says what happened */ }
   };
   const parent = fs.mkdtempSync(path.join(projectFolder(project), 'adopt-'));
@@ -386,8 +438,10 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
 
 // --- the project's tests ---
 
-// Wheelhouse's own variables, the code hosts' and the coding agents' are cleared from the tests' environment.
-const CLEARED = /^(?:WHEELHOUSE_|GIT_|GH_|GITHUB_|GITLAB_|GLAB_)|^CI_JOB_TOKEN$/i;
+// Wheelhouse's own variables, the code hosts', the coding agents' and the SSH agent's are cleared from the tests'
+// environment.
+// The person's SSH agent and password prompt too, so the approved code's tests can't push with their keys.
+const CLEARED = /^(?:WHEELHOUSE_|GIT_|GH_|GITHUB_|GITLAB_|GLAB_)|^(?:CI_JOB_TOKEN|SSH_AUTH_SOCK|SSH_ASKPASS)$/i;
 export function testEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([name]) => !CLEARED.test(name) && !AGENT_VARIABLES.test(name)));
 }
@@ -503,26 +557,41 @@ export async function mergeApproved({
     await moveMain(project, run, merge, main.current);
 
     const approval = after.approval;
+    const proof = proofOf(approval);
     await write(project, 'merge', {
       commit: merge,
       approved: commit,
       branch,
       card: `merge-${slug}`,
       tests: tests.ran ? 'passed' : 'none',
-      proof: proofOf(approval),
+      proof,
       approval: approval?.id ?? null,
       forUsers: `${slug.replace(/-/g, ' ')} was added to the main version${tests.ran ? '' : '; no tests ran, as none are set for this project'}`,
-    });
-    const copy = await pushCopy(project, { run, now, record: write });
+    }, { signed: SIGNED_LEAN_PROOFS.includes(proof) });
+    const copy = await updateCopy(project, { run, now, record: write });
     return { merge, tests: tests.ran ? 'passed' : 'none', copy };
   }, { waitMs: lockWaitMs, now });
 }
 
 // --- undoing ---
 
-// The latest click on `label` naming `commit` in full, or null.
-function clickOn(project, label, commit) {
-  return eventsOf(project).filter((e) => e.kind === 'card-answer' && e.data?.label === label && e.data?.commit === commit && typeof e.data?.proof === 'string').at(-1) ?? null;
+// The latest signed record of a click in the helper's window on `action` whose data `matches`: made and signed on this
+// computer, by an enrolled key, naming the window's proof. Or null.
+function windowClick(project, action, matches) {
+  const me = computerId();
+  const enrolled = readEnrolled();
+  return eventsOf(project).filter((e) => e.kind === 'action' && e.data?.action === action && e.data?.proof === 'window'
+    && e.computer === me && e.sig?.computer === me && matches(e.data) && verify(e, enrolled)).at(-1) ?? null;
+}
+
+// Whether `merge` is a merge commit (two parents) in the store's main version: for the helper's window, which offers
+// Undo only for one.
+export async function mergeOnMain({ project, merge, run = realRun }) {
+  if (typeof merge !== 'string' || !FULL_COMMIT.test(merge) || !fs.existsSync(storeDir(project))) return false;
+  const store = gitAt(storeDir(project), { run });
+  const parents = await store.call(['rev-list', '--parents', '-n', '1', merge]);
+  if (parents.code !== 0 || parents.stdout.trim().split(' ').length !== 3) return false;
+  return store.ok(['merge-base', '--is-ancestor', merge, MAIN]);
 }
 
 // Reverts `commits` (newest first) in a fresh worktree at `at`, and gives the new head.
@@ -541,34 +610,42 @@ async function revertIn(project, lean, { run, now, at, commits }) {
   });
 }
 
+export const UNDO_NEEDS_WINDOW = 'Undo is confirmed in Wheelhouse\'s own window, not by a click in the chat: show the director the card there';
+
 // Undoes `merge`, a merge on the main version, with a new commit that reverses it: nothing is deleted and later
-// work stays. Needs STOP off, the main version where the helper last moved it, and the director's click on Undo
-// naming `merge`. Gives { undo, copy }. With `moved: true` in place of `merge`, it undoes every commit the main
-// version gained outside the helper (ruling P5-27 f: Undo it), on the director's click on Undo it naming the main
-// version's head as it stands.
+// work stays. Undo is a runbook step (ruling P5-50): it needs the signed record of the director's click on Undo in
+// the helper's window naming `merge`, and it carries on under STOP. Without that record the helper raises the card
+// for the window once, and the refusal names it with `needs: 'window'`. With `moved: true` in place of `merge`, it
+// undoes what the main version gained outside the helper (ruling P5-27 f: Undo it), on the window's signed record
+// of Undo it naming the move as it stands; only the main line's own commits are reverted (a merge with `-m 1`, never
+// the commits it brought in again). The record of the undo is signed. Gives { undo, copy }.
 export async function undoMerge({ project, merge, moved = false, now = () => new Date(), run = realRun, record, lockWaitMs = LOCK_WAIT_MS } = {}) {
   if (!moved && (typeof merge !== 'string' || !FULL_COMMIT.test(merge))) refuse('The merge to undo must be written in full');
   const write = recorderFor(record, { run, now });
   return withLocalLock(project, async () => {
     const lean = adopted(project);
-    if (stopState().on) refuse(STOPPED);
-    const current = await storeMain(project, run);
     const store = gitAt(storeDir(project), { run });
     let commits;
     let data;
+    let current;
     if (moved) {
-      if (current === lean.main) refuse('The main version is where the helper last moved it, so there is nothing to undo');
-      if (clickOn(project, 'Undo it', current) === null) refuse('There is no click on Undo it for the main version as it stands');
-      if (!(await store.ok(['merge-base', '--is-ancestor', lean.main, current]))) refuse('The main version\'s history was rewritten, not added to, so it can\'t be undone here: look into it');
-      commits = (await store.must(['rev-list', `${lean.main}..${current}`], 'The changes to undo could not be read')).split('\n').filter(Boolean);
-      data = { lean: 'undo', moved: true, from: lean.main, to: current };
+      const main = await lookAtMain(project, lean, { run, record: write });
+      ({ current } = main);
+      if (!main.moved) refuse('The main version is where the helper last moved it, so there is nothing to undo');
+      if (windowClick(project, 'undo-main', (d) => d.from === main.recorded && d.to === current) === null) refuse(UNDO_NEEDS_WINDOW, { needs: 'window', card: main.card });
+      if (!(await store.ok(['merge-base', '--is-ancestor', main.recorded, current]))) refuse('The main version\'s history was rewritten, not added to, so it can\'t be undone here: look into it');
+      commits = (await store.must(['rev-list', '--first-parent', `${main.recorded}..${current}`], 'The changes to undo could not be read')).split('\n').filter(Boolean);
+      data = { lean: 'undo', moved: true, from: main.recorded, to: current };
     } else {
       const main = await lookAtMain(project, lean, { run, record: write });
       if (main.moved) refuse(MAIN_MOVED, { card: main.card });
+      ({ current } = main);
       const parents = await store.call(['rev-list', '--parents', '-n', '1', merge]);
       if (parents.code !== 0 || parents.stdout.trim().split(' ').length !== 3) refuse('That commit is not a merge, so there is nothing to undo with it');
       if (!(await store.ok(['merge-base', '--is-ancestor', merge, MAIN]))) refuse('That merge is not in the main version');
-      if (clickOn(project, 'Undo', merge) === null) refuse('There is no click on Undo naming that merge');
+      if (windowClick(project, 'undo-merge', (d) => d.merge === merge) === null) {
+        refuse(UNDO_NEEDS_WINDOW, { needs: 'window', card: await raiseCard(project, undoCard(merge), write) });
+      }
       commits = [merge];
       data = { lean: 'undo', merge };
     }
@@ -578,9 +655,10 @@ export async function undoMerge({ project, merge, moved = false, now = () => new
     await write(project, 'note', {
       ...data,
       commit: undo,
-      text: moved ? 'The changes made to the main version without an approval were undone, on the director\'s click.' : 'A merge was undone with a new commit, on the director\'s click; later work stays.',
-    });
-    const copy = await pushCopy(project, { run, now, record: write });
+      proof: 'window',
+      text: moved ? 'The changes made to the main version without an approval were undone, on the director\'s click in Wheelhouse\'s window.' : 'A merge was undone with a new commit, on the director\'s click in Wheelhouse\'s window; later work stays.',
+    }, { signed: true });
+    const copy = await updateCopy(project, { run, now, record: write });
     return { undo, copy };
   }, { waitMs: lockWaitMs, now });
 }
@@ -599,21 +677,29 @@ export async function keepMain({ project, from, to, run = realRun, now = () => n
 
 // --- the copy ---
 
-// Pushes the store's main version and the state's branch to the copy folder, as `main` and `wheelhouse-state`
-// (ruling P5-24), never with force, by the copy's path and never by a remote's name, so no push setting in the
-// store is read. A push that fails is recorded and the work carries on. Gives { pushed, commit, refused? }.
-async function pushCopy(project, { run, now, record }) {
+const COPY_WHAT = 'the Lean project\'s copy folder';
+
+// Brings the copy folder up to the store's main version and the state's branch, as `main` and `wheelhouse-state`
+// (ruling P5-24), never with force. The copy fetches them, in a git run in the copy through safeGit, naming the store
+// and the state repository by their paths (ruling P5-50): nothing is pushed into the copy, so its receive hooks never
+// run, the fence's hooks setting covers the one process that writes its refs, and the look reads the copy's own
+// settings first. No remote's name is read, so no push or fetch setting anywhere is followed. A copy that can't take
+// it is recorded and the work carries on. Gives { pushed, commit, refused? } (`pushed`: the copy holds them now).
+async function updateCopy(project, { run, now, record }) {
   const lean = readLean(project);
   if (lean?.copy === null || lean?.copy === undefined) return { pushed: false, refused: NO_COPY };
   if (!path.isAbsolute(lean.copy)) return { pushed: false, refused: 'The copy folder is not a full path' };
   const commit = await storeMain(project, run);
-  const fromStore = await gitAt(storeDir(project), { run, reach: 'local' }).call(['push', '--porcelain', '--no-verify', lean.copy, `${MAIN}:${MAIN}`]);
-  let pushed = fromStore.code === 0;
-  if (pushed) {
+  let pushed = false;
+  if (fs.existsSync(lean.copy)) {
     await leanState(project, { run });
-    const state = gitAt(stateDir(project), { run, reach: 'local', list: 'own', what: 'the Lean project\'s state repository' });
-    const fromState = await state.call(['push', '--porcelain', '--no-verify', lean.copy, `refs/heads/${STATE_BRANCH}:refs/heads/${STATE_BRANCH}`]);
-    pushed = fromState.code === 0;
+    const copy = gitAt(lean.copy, { run, reach: 'local', what: COPY_WHAT });
+    const fetch = (from, ref) => copy.ok(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', from, `${ref}:${ref}`]);
+    try {
+      pushed = (await fetch(storeDir(project), MAIN)) && (await fetch(stateDir(project), `refs/heads/${STATE_BRANCH}`));
+    } catch {
+      pushed = false;
+    }
   }
   await record(project, 'note', {
     lean: 'copy',
@@ -621,16 +707,19 @@ async function pushCopy(project, { run, now, record }) {
     commit,
     text: pushed ? `The copy was updated to ${commit.slice(0, 12)}.` : `The copy was not updated at ${commit.slice(0, 12)}: the folder wasn't there or couldn't take it. The next copy brings everything.`,
   });
-  return pushed ? { pushed: true, commit } : { pushed: false, commit, refused: 'The copy folder wasn\'t there or couldn\'t take the push; the next copy brings everything' };
+  return pushed ? { pushed: true, commit } : { pushed: false, commit, refused: 'The copy folder wasn\'t there or couldn\'t take the update; the next copy brings everything' };
 }
 
-// Pushes the copy now, on its own (the Lean command's `copy`). Refused under STOP.
+// Updates the copy now, on its own (the Lean command's `copy`). Refused under STOP, and while the main version has
+// moved outside the helper (ruling P5-27 f), so an unapproved main version never reaches the copy.
 export async function copyNow({ project, now = () => new Date(), run = realRun, record, lockWaitMs = LOCK_WAIT_MS } = {}) {
   const write = recorderFor(record, { run, now });
   return withLocalLock(project, async () => {
-    adopted(project);
+    const lean = adopted(project);
     if (stopState().on) refuse(STOPPED);
-    return pushCopy(project, { run, now, record: write });
+    const main = await lookAtMain(project, lean, { run, record: write });
+    if (main.moved) refuse(MAIN_MOVED, { card: main.card });
+    return updateCopy(project, { run, now, record: write });
   }, { waitMs: lockWaitMs, now });
 }
 

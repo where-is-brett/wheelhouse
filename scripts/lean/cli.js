@@ -11,11 +11,14 @@
 //                                   card's text as the director saw it, "text": the director's own words, with
 //                                   Suggest a change… only }. Recorded as a chat click, never more
 //   merge <slug> <commit>           adds the approved <commit> of feature/<slug> to the main version, after its tests
-//   undo <merge>                    undoes the merge <merge> (in full) with a new commit, on the click on Undo
+//   undo <merge>                    undoes the merge <merge> (in full) with a new commit, on the click on Undo in the
+//                                   helper's window; without one it answers `needs: window` with the card to confirm
 //   undo moved                      undoes what the main version gained outside the helper, on the click on Undo it
-//   copy                            pushes the main version and the record to the copy folder
+//                                   in the helper's window
+//   copy                            brings the copy folder up to the main version and the record
 //   confirm <card>                  shows the card (its id in the state, or lift-stop) in the helper's own window,
-//                                   where the director's click is the stronger proof; waits for it
+//                                   where the director's click is the stronger proof; waits for it, and for the undo
+//                                   an Undo or Undo it there makes
 // Each prints the helper's answer as one JSON line and exits 0; a refusal also goes to standard error, in its
 // own words, with exit 1.
 import crypto from 'node:crypto';

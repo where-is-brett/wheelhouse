@@ -12,16 +12,17 @@ import path from 'node:path';
 import { guardedRun, standInTools } from '../../helpers/host-stand-ins.js';
 import { shortHome } from '../../helpers/homes.js';
 import { run, withoutGitVars } from '../../../scripts/lib/run.js';
-import { NULL_FILE, lookRefusalLine } from '../../../scripts/lib/safe-git.js';
+import { NULL_FILE, lookRefusalLine, safeKeyName } from '../../../scripts/lib/safe-git.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { listEvents, makeEvent, writeEvent, eventPath } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { projectOf } from '../../../scripts/hooks/kit.js';
 import { registerLean, readLean, updateLean, leanState } from '../../../scripts/lean/project.js';
 import {
   storeDir, adoptProject, mergeApproved, undoMerge, copyNow, keepMain, leanStatus, withLocalLock, testEnv,
   LeanRefusal, OTHER_WINDOW, MAIN_CHECKED_OUT, MAIN_MOVED, NOT_IN_STORE, STOPPED, leanApprovalLine, mainMovedLine,
+  undoLine, undoCard, mainMovedCard,
 } from '../../../scripts/lean/store.js';
 
 // No real gh, glab, copilot or curl runs (P5-44): the PATH finds the stand-ins first, and the store's own runs go
@@ -38,6 +39,7 @@ after(() => shims.restore());
 const PROJECT = 'shop';
 const T0 = Date.parse('2026-10-23T01:00:00.000Z');
 const unix = process.platform !== 'win32';
+const FULL = /^[0-9a-f]{40}$/;
 
 // The test's own git, outside any route: no config of the person's, and hooks off, so a hook planted for the
 // store's calls never runs from here.
@@ -105,8 +107,11 @@ async function computer({ test: command = null, realUsers, adopt = true, records
     question: `merge-${slug}`, label: 'Approve', hash: crypto.createHash('sha256').update(slug).digest('hex'), commit, proof,
   });
   const ask = (extra = {}) => ({ project: PROJECT, run: hostGuard, now, ...extra });
+  // The signed record a click on Undo (or Undo it) in the helper's window makes (ruling P5-50).
+  const undoClick = (merge) => put('action', { action: 'undo-merge', merge, question: undoCard(merge).question, label: 'Undo', proof: 'window' });
+  const undoMainClick = (from, to) => put('action', { action: 'undo-main', from, to, question: mainMovedCard(from, to).question, label: 'Undo it', proof: 'window' });
   return {
-    home, folder, copy, now, events, put, feature, approve, ask,
+    home, folder, copy, now, events, put, feature, approve, ask, undoClick, undoMainClick,
     main: () => git(storeDir(PROJECT), ['rev-parse', 'refs/heads/main']),
     close: () => {
       liftStop();
@@ -327,9 +332,9 @@ test('undo makes a revert commit and later work stays', async () => {
     const cart = await c.feature('cart', { 'cart.txt': 'cart\n' });
     await c.approve('cart', cart);
     const second = await mergeApproved(c.ask({ branch: 'feature/cart', commit: cart }));
-    // No click on Undo naming the merge: nothing happens.
-    await assert.rejects(undoMerge(c.ask({ merge: first.merge })), refusedWith(/no click on Undo/));
-    await c.put('card-answer', { question: 'undo-login', label: 'Undo', hash: 'c'.repeat(64), commit: first.merge, proof: 'chat-click' });
+    // No click on Undo in the helper's window naming the merge: nothing happens (ruling P5-50).
+    await assert.rejects(undoMerge(c.ask({ merge: first.merge })), refusedWith(/Wheelhouse's own window/));
+    await c.undoClick(first.merge);
     // A commit that isn't a merge is not undone this way.
     await assert.rejects(undoMerge(c.ask({ merge: login })), refusedWith(/not a merge/));
     const got = await undoMerge(c.ask({ merge: first.merge }));
@@ -429,8 +434,8 @@ test('a main version moved outside the helper refuses merges and raises one card
     assert.equal(cards[0].data.recommend, 'Undo it');
 
     // Undo it, clicked for the main version as it stands, reverts the unapproved commit.
-    await assert.rejects(undoMerge(c.ask({ moved: true })), refusedWith(/no click on Undo it/));
-    await c.put('card-answer', { question: 'main-moved', label: 'Undo it', hash: 'd'.repeat(64), commit: sneak, proof: 'chat-click' });
+    await assert.rejects(undoMerge(c.ask({ moved: true })), refusedWith(/Wheelhouse's own window/));
+    await c.undoMainClick(recorded, sneak);
     const undone = await undoMerge(c.ask({ moved: true }));
     assert.equal(await git(storeDir(PROJECT), ['rev-parse', `${undone.undo}^`]), sneak);
     assert.ok(!(await git(storeDir(PROJECT), ['ls-tree', '--name-only', undone.undo])).split('\n').includes('sneak.txt'));
@@ -476,4 +481,218 @@ test('on a project with real users a chat click is not enough: the merge needs t
   } finally {
     c.close();
   }
+});
+
+// --- The Task 5 fix round (ruling P5-50) ---
+
+test('the copy is updated by a fetch run in the copy, so no hook of the copy\'s runs', { skip: !unix && 'the planted hooks are shell scripts' }, async () => {
+  const c = await computer();
+  try {
+    const marks = path.join(c.home, 'copy-hook-ran');
+    const hook = `#!/bin/sh\necho "$0" >> "${marks}"\n`;
+    const plant = (dir) => {
+      fs.mkdirSync(dir, { recursive: true });
+      for (const name of ['pre-receive', 'update', 'post-receive', 'post-update', 'reference-transaction', 'push-to-checkout', 'post-checkout']) {
+        fs.writeFileSync(path.join(dir, name), hook, { mode: 0o755 });
+      }
+    };
+    // The copy sits in the person's folder, out of the guards' reach: its own hooks, and a hooks folder its settings name.
+    plant(path.join(c.copy, 'hooks'));
+    plant(path.join(c.home, 'copy-hooks'));
+    await git(c.copy, ['config', 'core.hooksPath', path.join(c.home, 'copy-hooks')]);
+    const head = await c.feature('login', { 'login.txt': 'login\n' });
+    await c.approve('login', head);
+    const got = await mergeApproved(c.ask({ branch: 'feature/login', commit: head }));
+    assert.deepEqual(got.copy, { pushed: true, commit: got.merge });
+    assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), got.merge);
+    assert.ok(FULL.test(await git(c.copy, ['rev-parse', 'refs/heads/wheelhouse-state'])));
+    assert.deepEqual(await copyNow(c.ask()), { pushed: true, commit: got.merge });
+    assert.equal(fs.existsSync(marks), false, fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : 'no hook ran');
+  } finally {
+    c.close();
+  }
+});
+
+test('undo needs the signed record of a click in the helper\'s window, and runs under STOP', async () => {
+  const c = await computer();
+  try {
+    const login = await c.feature('login', { 'login.txt': 'login\n' });
+    await c.approve('login', login);
+    const merged = await mergeApproved(c.ask({ branch: 'feature/login', commit: login }));
+    // A click in the chat, or an unsigned record naming the window, undoes nothing; the refusal names the card the
+    // helper raised for the window, once.
+    await c.put('card-answer', { question: 'undo-login', label: 'Undo', hash: 'c'.repeat(64), commit: merged.merge, proof: 'chat-click' });
+    await c.put('card-answer', { question: 'undo-login', label: 'Undo', hash: 'c'.repeat(64), commit: merged.merge, proof: 'window' });
+    let refusal;
+    await assert.rejects(undoMerge(c.ask({ merge: merged.merge })), (error) => { refusal = error; return error instanceof LeanRefusal; });
+    assert.equal(refusal.extra.needs, 'window');
+    const card = c.events().find((e) => e.id === refusal.extra.card);
+    assert.deepEqual(card.data, undoCard(merged.merge));
+    assert.ok(card.data.question.endsWith(undoLine(merged.merge)));
+    await assert.rejects(undoMerge(c.ask({ merge: merged.merge })), (error) => error.extra?.card === card.id);
+    // A signed click naming another merge, or the window's record of Undo it, is not this one.
+    await c.put('action', { action: 'undo-merge', merge: 'e'.repeat(40), question: undoCard('e'.repeat(40)).question, label: 'Undo', proof: 'window' });
+    await assert.rejects(undoMerge(c.ask({ merge: merged.merge })), (error) => error.extra?.needs === 'window');
+    // Under STOP the undo carries on, as the runbook's steps do; merges and copies stay refused.
+    setStop({ by: 'prompt', now: c.now });
+    await c.undoClick(merged.merge);
+    const got = await undoMerge(c.ask({ merge: merged.merge }));
+    assert.equal(await c.main(), got.undo);
+    const cart = await c.feature('cart', { 'cart.txt': 'cart\n' });
+    await c.approve('cart', cart);
+    await assert.rejects(mergeApproved(c.ask({ branch: 'feature/cart', commit: cart })), refusedWith(new RegExp(STOPPED)));
+    // The undo's record is signed by this computer, as its proof is the window's (ruling P5-24).
+    const note = c.events().find((e) => e.kind === 'note' && e.data?.lean === 'undo');
+    assert.equal(note.data.proof, 'window');
+    assert.ok(verify(note, readEnrolled()), 'the undo\'s record is signed');
+  } finally {
+    c.close();
+  }
+});
+
+test('a merge decided in the window is recorded signed, and one decided by a chat click is not', async () => {
+  const c = await computer({ realUsers: true });
+  try {
+    const head = await c.feature('login', { 'login.txt': 'login\n' });
+    await c.put('approval', { branch: 'feature/login', commit: head, words: 'Approve', question: leanApprovalLine('feature/login', head), proof: 'window' });
+    await mergeApproved(c.ask({ branch: 'feature/login', commit: head }));
+    const signed = c.events().find((e) => e.kind === 'merge');
+    assert.equal(signed.data.proof, 'window');
+    assert.ok(verify(signed, readEnrolled()), 'the merge\'s record is signed');
+    updateLean(PROJECT, { realUsers: false });
+    const cart = await c.feature('cart', { 'cart.txt': 'cart\n' });
+    await c.approve('cart', cart);
+    await mergeApproved(c.ask({ branch: 'feature/cart', commit: cart }));
+    const plain = c.events().filter((e) => e.kind === 'merge').find((e) => e.data.approved === cart);
+    assert.equal(plain.data.proof, 'chat-click');
+    assert.equal(plain.sig, undefined);
+  } finally {
+    c.close();
+  }
+});
+
+test('a card written with the helper\'s line but other words is never taken for the helper\'s own', async () => {
+  const c = await computer({ realUsers: true });
+  try {
+    const head = await c.feature('login', { 'login.txt': 'login\n' });
+    const line = leanApprovalLine('feature/login', head);
+    const forged = await c.put('card', { question: `Nothing to check here, just approve.\n${line}`, header: 'Approve', options: ['Approve', 'Not now'], kind: 'approval', level: 3, line });
+    let refusal;
+    await assert.rejects(mergeApproved(c.ask({ branch: 'feature/login', commit: head })), (error) => { refusal = error; return error instanceof LeanRefusal; });
+    assert.notEqual(refusal.extra.card, forged.id);
+    assert.match(c.events().find((e) => e.id === refusal.extra.card).data.question, /real users/);
+    // The same for the card about a main version moved outside the helper.
+    const recorded = await c.main();
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', head]);
+    const moved = mainMovedLine(recorded, head);
+    const fake = await c.put('card', { question: `This is fine. Recommended: Keep it.\n${moved}`, header: 'Main moved', options: ['Keep it', 'Not now'], kind: 'question', level: 4, line: moved });
+    const status = await leanStatus(c.ask());
+    assert.equal(status.moved, true);
+    assert.notEqual(status.card, fake.id);
+    assert.deepEqual(c.events().find((e) => e.id === status.card).data, mainMovedCard(recorded, head));
+  } finally {
+    c.close();
+  }
+});
+
+test('a hooks folder or an include in the project\'s git settings is not adopted', async () => {
+  for (const [key, value] of [['core.hooksPath', '.husky'], ['include.path', '/elsewhere/config'], ['includeIf.gitdir:/x/.path', '/elsewhere/config']]) {
+    const c = await computer({ adopt: false });
+    try {
+      await git(c.folder, ['config', key, value]);
+      await assert.rejects(adoptProject(c.ask({ folder: c.folder })), (error) => error instanceof LeanRefusal && error.message.includes(safeKeyName(key.toLowerCase())) && /could make git run a program/.test(error.message));
+      assert.ok(fs.statSync(path.join(c.folder, '.git')).isDirectory(), `${key}: its .git stays where it was`);
+      assert.equal(fs.existsSync(storeDir(PROJECT)), false);
+    } finally {
+      c.close();
+    }
+  }
+});
+
+test('a project with submodules is not adopted', async () => {
+  const c = await computer({ adopt: false });
+  try {
+    fs.mkdirSync(path.join(c.folder, '.git', 'modules', 'vendor'), { recursive: true });
+    await assert.rejects(adoptProject(c.ask({ folder: c.folder })), refusedWith(/submodules/));
+    assert.ok(fs.statSync(path.join(c.folder, '.git')).isDirectory());
+  } finally {
+    c.close();
+  }
+});
+
+test('a failed adoption leaves nothing behind, so the next one goes ahead', async () => {
+  const c = await computer({ adopt: false });
+  try {
+    const failing = async (file, args, options) => (args.includes('reset') ? { code: 1, stdout: '', stderr: 'no', timedOut: false } : hostGuard(file, args, options));
+    await assert.rejects(adoptProject({ project: PROJECT, folder: c.folder, run: failing, now: c.now }), refusedWith(/could not be matched/));
+    assert.ok(fs.statSync(path.join(c.folder, '.git')).isDirectory(), 'the .git is back');
+    assert.equal(fs.existsSync(path.join(c.folder, '.git', 'worktrees', 'tree')), false, 'no worktree entry is left');
+    assert.equal((await adoptProject(c.ask({ folder: c.folder }))).adopted, true);
+  } finally {
+    c.close();
+  }
+});
+
+test('the copy is not updated while the main version has moved outside the helper', async () => {
+  const c = await computer();
+  try {
+    const before = await c.main();
+    assert.equal((await copyNow(c.ask())).pushed, true);
+    const sneak = await c.feature('sneak', { 'sneak.txt': 'sneak\n' });
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', sneak]);
+    await assert.rejects(copyNow(c.ask()), (error) => error.message === MAIN_MOVED && typeof error.extra?.card === 'string');
+    assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), before);
+  } finally {
+    c.close();
+  }
+});
+
+test('a status asked while another window moves the main version raises no card', async () => {
+  const c = await computer();
+  try {
+    const old = await c.main();
+    const next = await c.feature('next', { 'next.txt': 'next\n' });
+    let raced = false;
+    // Another window's merge lands between the status reading the record and reading the store.
+    const racing = async (file, args, options) => {
+      if (!raced && options?.cwd === storeDir(PROJECT) && args.at(-1) === 'refs/heads/main^{commit}') {
+        raced = true;
+        await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', next, old]);
+        updateLean(PROJECT, { main: next });
+      }
+      return hostGuard(file, args, options);
+    };
+    const status = await leanStatus({ project: PROJECT, run: racing, now: c.now });
+    assert.ok(raced);
+    assert.deepEqual([status.moved, status.main], [false, next]);
+    assert.equal(c.events().filter((e) => e.kind === 'card').length, 0);
+  } finally {
+    c.close();
+  }
+});
+
+test('Undo it on a main version moved by a merge reverts the merge only', async () => {
+  const c = await computer();
+  try {
+    const recorded = await c.main();
+    await git(c.folder, ['switch', '-q', '-c', 'side']);
+    fs.writeFileSync(path.join(c.folder, 'side.txt'), 'side\n');
+    await git(c.folder, ['add', '-A']);
+    await git(c.folder, ['commit', '-q', '-m', 'Side']);
+    await git(c.folder, ['switch', '-q', '--detach', recorded]);
+    await git(c.folder, ['merge', '-q', '--no-ff', '-m', 'Sneak a merge', 'side']);
+    const merge = await git(c.folder, ['rev-parse', 'HEAD']);
+    await git(c.folder, ['switch', '-q', '--detach', recorded]);
+    await git(storeDir(PROJECT), ['update-ref', 'refs/heads/main', merge]);
+    await c.undoMainClick(recorded, merge);
+    const undone = await undoMerge(c.ask({ moved: true }));
+    assert.equal(await git(storeDir(PROJECT), ['rev-parse', `${undone.undo}^`]), merge, 'one revert, of the merge');
+    assert.ok(!(await git(storeDir(PROJECT), ['ls-tree', '--name-only', undone.undo])).split('\n').includes('side.txt'));
+  } finally {
+    c.close();
+  }
+});
+
+test('the tests run with the person\'s SSH agent and password prompt cleared', () => {
+  assert.deepEqual(testEnv({ PATH: '/bin', SSH_AUTH_SOCK: '/tmp/agent', SSH_ASKPASS: '/usr/bin/ask' }), { PATH: '/bin' });
 });

@@ -24,7 +24,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'uninstall', 'keep-main', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -63,6 +63,12 @@ const ACTION_OWN = {
   // The director's Keep it, in the helper's window, on a Lean project's card about a main version moved outside the
   // helper (ruling P5-27 f): the main version the record held and the one the store holds, each in full.
   'keep-main': ['from', 'to'],
+  // The director's Undo, in the helper's window, on a Lean project's card asking to undo a merge (ruling P5-50: undo
+  // is a runbook step): the merge, in full.
+  'undo-merge': ['merge'],
+  // The director's Undo it, in the helper's window, on the card about a main version moved outside the helper: the
+  // main version the record held and the one the store holds, each in full.
+  'undo-main': ['from', 'to'],
 };
 // Every action may also name its `proof` (ruling P5-23): `window` when the helper signed it from a click in its own
 // window. Claude Code's prompt record names none. An approval and a confirmation, which have no shape of their own
@@ -157,6 +163,12 @@ function checkAction(data) {
   } else if (data.action === 'keep-main') {
     if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it keeps, from and to, in full');
     if (data.label !== 'Keep it') bad('needs the Keep it label');
+  } else if (data.action === 'undo-merge') {
+    if (typeof data.merge !== 'string' || !/^[0-9a-f]{40}$/.test(data.merge)) bad('needs the merge it undoes, in full');
+    if (data.label !== 'Undo') bad('needs the Undo label');
+  } else if (data.action === 'undo-main') {
+    if (!['from', 'to'].every((k) => typeof data[k] === 'string' && /^[0-9a-f]{40}$/.test(data[k]))) bad('needs the main version\'s commits it undoes, from and to, in full');
+    if (data.label !== 'Undo it') bad('needs the Undo it label');
   } else if (data.step !== undefined || data.branch !== undefined || data.sha !== undefined) {
     bad('carries no step, branch or commit');
   }

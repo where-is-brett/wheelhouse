@@ -42,13 +42,14 @@ import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
-import { readEnrolled, verify } from '../state/signing.js';
+import { readEnrolled, verify, sign } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import {
-  mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, SIGNED_LEAN_PROOFS,
+  mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
+  SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCard,
 } from '../lean/store.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
 import { SIGNED_LABELS, earned } from '../hooks/prompt-record.js';
@@ -1476,8 +1477,13 @@ export async function startHelper({
   // a CI push (an action), Unattended (the confirmation of a level or setting proposing it), or an approval, which
   // is how a guardrail change and a real-user merge are decided.
   // Keep it, on the card about a Lean project's main version moved outside the helper (ruling P5-27 f), is confirmed
-  // here too.
-  const ACTION_STEPS = { 'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main' };
+  // here too, and so are a Lean undo and Undo it, which are runbook steps (ruling P5-50).
+  const ACTION_STEPS = {
+    'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
+  };
+  // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
+  const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
+  const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
   function windowStep(project, made) {
@@ -1495,7 +1501,7 @@ export async function startHelper({
     const question = card.data?.question;
     if (typeof question !== 'string' || PUT_OFF.includes(label)) return null;
     if (ctx.lean) {
-      const lean = await leanEarned(project, question, label);
+      const lean = await leanEarned(project, card.data, label);
       if (lean !== undefined) return lean;
     }
     const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
@@ -1510,26 +1516,46 @@ export async function startHelper({
     return step === null ? null : { made: got.made, step, lift: got.lift === true };
   }
 
-  // What a click in the window on a Lean card's Approve or Keep it records (scripts/lean/store.js), or null; undefined
-  // for any other label. Approve: the card holds exactly one line naming a feature's branch and its head in full,
-  // and the store's branch is still at that head, so the approval is for that code and no other. Keep it: the card
-  // holds exactly one line naming the main version's move, and the record and the store still say so.
-  async function leanEarned(project, question, label) {
+  // What a click in the window on a Lean card's Approve, Keep it, Undo it or Undo records (scripts/lean/store.js), or
+  // null; undefined for any other label. Each card is the helper's own, word for word: its question, options and
+  // header equal the card the helper composes from the line's values (ruling P5-50), so a card anyone wrote with the
+  // right line but other words is never signed. Approve: the card names a feature's branch and its head in full,
+  // and the store's branch is still at that head, so the approval is for that code and no other. Keep it and Undo
+  // it: the card names the main version's move, and the record and the store still say so. Undo: the card names a
+  // merge on the main version.
+  async function leanEarned(project, data, label) {
+    const question = data?.question;
+    const one = (pattern) => {
+      const lines = typeof question === 'string' ? [...question.matchAll(pattern)] : [];
+      return lines.length === 1 ? lines[0] : null;
+    };
     if (label === 'Approve') {
-      const lines = [...question.matchAll(LEAN_APPROVE)];
-      if (lines.length !== 1) return null;
-      const [, branch, commit] = lines[0];
+      const line = one(LEAN_APPROVE);
+      if (line === null) return null;
+      const [, branch, commit] = line;
+      if (!sameCard(data, approvalCard(branch, commit, readLean(project)?.test ?? null))) return null;
       if ((await storeHead({ project, branch, run })) !== commit) return null;
       const made = { kind: 'approval', data: { branch, commit, words: 'Approve', question } };
       return { made, step: 'approval', lift: false };
     }
-    if (label === 'Keep it') {
-      const lines = [...question.matchAll(MAIN_MOVED_LINE)];
-      if (lines.length !== 1) return null;
-      const [, from, to] = lines[0];
+    if (label === 'Keep it' || label === 'Undo it') {
+      const line = one(MAIN_MOVED_LINE);
+      if (line === null) return null;
+      const [, from, to] = line;
+      if (!sameCard(data, mainMovedCard(from, to))) return null;
       if (readLean(project)?.main !== from || (await storeHead({ project, branch: 'main', run })) !== to) return null;
-      const made = { kind: 'action', data: { action: 'keep-main', from, to, question, label } };
-      return { made, step: 'keep-main', lift: false };
+      const action = label === 'Keep it' ? 'keep-main' : 'undo-main';
+      const made = { kind: 'action', data: { action, from, to, question, label } };
+      return { made, step: ACTION_STEPS[action], lift: false };
+    }
+    if (label === 'Undo') {
+      const line = one(UNDO_LINE);
+      if (line === null) return null;
+      const [, merge] = line;
+      if (!sameCard(data, undoCard(merge))) return null;
+      if (!(await mergeOnMain({ project, merge, run }))) return null;
+      const made = { kind: 'action', data: { action: 'undo-merge', merge, question, label } };
+      return { made, step: ACTION_STEPS['undo-merge'], lift: false };
     }
     return undefined;
   }
@@ -1568,22 +1594,25 @@ export async function startHelper({
   // with proof `window`, as the record the step already has: an approval, a confirmation or an action. The card is
   // looked at again after the click, so a card decided or changed meanwhile records nothing. A confirmed Lift STOP
   // lifts STOP: the window is the one place a click lifts it on an agent whose hooks only read. Not now, or no click
-  // before the window closes, records nothing. Under STOP only the Lift STOP card is served (ruling P5-49). A card
+  // before the window closes, records nothing. Under STOP only the Lift STOP card and a Lean undo are served, with only
+  // their undo offered (rulings P5-49 and P5-50). A card
   // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
   // no longer waits.
   async function doConfirm({ project, card, hash }, ctx) {
     if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
     if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
-    if (card !== LIFT_STOP_NAME && stopped()) return STOP_REFUSAL;
     const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
     const shown = await look();
+    if (card !== LIFT_STOP_NAME && stopped()) {
+      shown.deciding = servedUnderStop(shown.deciding);
+      if (shown.deciding.length === 0) return STOP_REFUSAL;
+    }
     const lines = String(shown.event.data.question).split(/\r?\n/);
     const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
     const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label) });
     const picked = shown.deciding.find((d) => d.label === choice);
     if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
     const answer = await stateRoute(async () => {
-      if (card !== LIFT_STOP_NAME && stopped()) return STOP_REFUSAL;
       const CHANGED = 'that card changed while the window was open, so nothing was recorded';
       let again;
       try {
@@ -1593,29 +1622,40 @@ export async function startHelper({
       }
       const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
       if (!still) refuse(CHANGED);
+      if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
       const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label } }, ctx);
       if (still.lift) liftStop();
       if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
-      const keep = event.kind === 'action' && event.data?.action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
-      return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, keep };
+      const action = event.kind === 'action' ? event.data?.action : null;
+      const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
+      const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
+      return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, keep, undo };
     })({ project, card, hash }, ctx);
-    const { keep = null, ...said } = answer;
-    if (keep === null) return said;
-    // Keep it: the record's main version becomes the one the card named, if nothing moved it since. Outside the state's
-    // queue, since the store's lock is taken before it by a merge.
-    return { ...said, kept: await keepMain({ project, ...keep, run, now }) };
+    const { keep = null, undo = null, ...said } = answer;
+    // Keep it: the record's main version becomes the one the card named, if nothing moved it since. Undo and Undo it:
+    // the undo is made now, on the record just signed. Both outside the state's queue, since the store's lock is taken
+    // before it by a merge.
+    if (keep !== null) return { ...said, kept: await keepMain({ project, ...keep, run, now }) };
+    if (undo !== null) return { ...said, undone: await leanAnswer(() => undoMerge({ project, ...undo, now, run, record: leanRecorder(ctx) })) };
+    return said;
   }
 
   // --- a Lean project's git store (scripts/lean/store.js, rulings P5-24 to P5-27) ---
 
   // How the store records: a plain event written through this helper's state queue, so it takes its turn with
-  // every other write. Gives the event's id.
-  const leanRecorder = (ctx) => (project, kind, data) => oneAtATime(`state:${project}`, async () => {
+  // every other write. A merge or an undo whose proof is the window's is signed here (ruling P5-24): it is made as
+  // doWrite makes a plain event, and signed by this computer before it is written. Gives the event's id.
+  const leanRecorder = (ctx) => (project, kind, data, { signed = false } = {}) => oneAtATime(`state:${project}`, async () => {
     await leanState(project, { run });
-    return (await doWrite({ project, kind, data }, ctx)).id;
+    if (!signed) return (await doWrite({ project, kind, data }, ctx)).id;
+    if (!PLAIN_KINDS.includes(kind) || !data || typeof data !== 'object' || Array.isArray(data)) refuse('only a plain record is signed this way');
+    const event = sign(makeEvent({ kind, data, now }));
+    await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await freshViews(() => writeViews(project, { now }));
+    return event.id;
   });
   // The store's answer, or its refusal in the helper's shape with what it adds (`card`, `needs`, `reasons`).
   async function leanAnswer(fn) {
