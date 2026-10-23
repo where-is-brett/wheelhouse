@@ -780,6 +780,22 @@ test('the waker prints Shape 2\'s lines through the printer it is given', () => 
   assert.deepEqual(written.filter((text) => /WAKE|START/.test(text)), []);
 }));
 
+test('every session the waker starts keeps Claude Code\'s sign-in, spelt exactly, the switches that start "CLAUDE" too', () => withHome(async () => {
+  checkout();
+  const signIn = {
+    CLAUDE_CODE_OAUTH_TOKEN: 'oauth', CLAUDE_CODE_USE_BEDROCK: '1', CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_SKIP_VERTEX_AUTH: '1',
+    CLAUDE_CODE_USE_FOUNDRY: '1', AWS_PROFILE: 'work', VERTEX_REGION_CLAUDE_MODEL_A: 'us-east5',
+  };
+  const host = { PATH: '/bin', ...signIn, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_code_use_bedrock: 'a spelling not kept', ANTHROPIC_BASE_URL: 'http://gateway' };
+  assert.deepEqual(sessionEnv(host), { PATH: '/bin', ...signIn });
+  const fake = fakeRun();
+  await waker(fake, { baseEnv: host }).wakeForeman(writeWake(P, bundle('e1')));
+  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', ...signIn, WHEELHOUSE_ROLE: 'foreman' });
+  const features = fakeRun();
+  await waker(features, { baseEnv: host }).startFeature({ work: 'search-box', worktree: worktree() });
+  assert.deepEqual(features.calls[0].env, { PATH: '/bin', ...signIn });
+}));
+
 test('the foreman, and only the foreman, is told it is the foreman; no session gets the host session\'s variables', () => withHome(async () => {
   checkout();
   const host = { PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'x', claude_lower: 'y', ANTHROPIC_BASE_URL: 'http://gateway', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' };

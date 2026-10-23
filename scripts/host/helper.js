@@ -414,6 +414,7 @@ export const PUSH_REFUSALS = {
   ciFile: 'the branch changes a CI file, so it needs the director\'s click on its card',
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
   outsideProject: 'the folder to push from is not inside the project',
+  notOwn: 'that is not the branch this folder is on: a push sends only the folder\'s own branch',
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   movedOn: 'the host\'s branch has moved on since this one was taken from it',
   notJson: 'a file in the state push is not JSON, so nothing is pushed',
@@ -1177,7 +1178,7 @@ export async function startHelper({
     return answer.ok ? { ok: true } : answer;
   }
 
-  async function doPush({ project, dir, refspec }, ctx) {
+  async function doPush({ project, dir, refspec, byFolder = false }, ctx) {
     if (stopped()) return STOP_REFUSAL;
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
@@ -1191,6 +1192,11 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to push from was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PUSH_REFUSALS.outsideProject };
+    // A feature session's push (placed by its folder, `byFolder`): the worktrees of one repository
+    // share its branches, so the folder's own branch is the only one it sends, as /pull brings in
+    // only that one. Like /pull's, this reads the folder's HEAD, which a session can rewrite, so it
+    // keeps a session's commands to their own branch, but holds no hostile agent.
+    if (byFolder && branchOf(dir) !== branch) return { ok: false, refused: PUSH_REFUSALS.notOwn };
     try {
       if (isPartialClone(dir)) return { ok: false, refused: PUSH_REFUSALS.partialClone };
     } catch {
@@ -1235,6 +1241,32 @@ export async function startHelper({
       return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, ({ mirror, keyed }) => pullIn({ project, mirror, keyed, dir, branch, ctx })));
     } finally {
       await oneAtATime(`mirror:${project}`, () => dropRequestRefs(project, ctx));
+      tidyAfterAnswer(project, ctx);
+    }
+  }
+
+  // The foreman's start (scripts/foreman/act.js, fetchBase): the host's default branch fetched into
+  // the project's mirror's BASE_REF with the connection's key, in the mirror, which no session can
+  // reach. The foreman's child then copies it into the main checkout from the mirror with no key,
+  // so no key or sign-in is used in a repository an agent can write. The host is only read.
+  async function doFetchBase({ project }, ctx) {
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    if (!plainBranch(defaultBranch)) return { ok: false, refused: PUSH_REFUSALS.unknownDefault };
+    try {
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+        const refusal = await mirrorRefusal(mirror, keyed);
+        if (refusal) return { ok: false, refused: refusal };
+        const fetched = await keyed('git', [
+          ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', REMOTE, `+refs/heads/${defaultBranch}:${BASE_REF}`,
+        ], { cwd: mirror, input: '' });
+        if (fetched.code !== 0) return { ok: false, refused: 'the host\'s default branch could not be fetched' };
+        const read = await local(mirror)([...NO_HOOKS, 'rev-parse', '--verify', '-q', `${BASE_REF}^{commit}`]);
+        const sha = read.stdout.trim();
+        if (read.code !== 0 || !FULL_SHA.test(sha)) return { ok: false, refused: 'the host\'s default branch could not be read' };
+        return { ok: true, branch: defaultBranch, sha };
+      }));
+    } finally {
       tidyAfterAnswer(project, ctx);
     }
   }
@@ -2679,6 +2711,7 @@ export async function startHelper({
     '/runbook/candidates': signedIn(doCandidates),
     '/push': (body, ctx) => oneAtATime(`push:${body.project}`, () => doPush(body, ctx)),
     '/pull': (body, ctx) => doPull(body, ctx),
+    '/base/fetch': (body, ctx) => doFetchBase(body, ctx),
     '/merge': (body, ctx) => oneAtATime(`merge:${body.project}`, () => doMerge(body, ctx)),
     '/state/clone': stateRoute(async ({ project }, ctx) => {
       await ensureStateClone(project, ctx);
@@ -2917,6 +2950,8 @@ export async function startHelper({
       // runbook.js, a feature session's commands and the front desk run inside the sandbox, which
       // cannot read ~/.wheelhouse: they send their folder, and the project is placed here.
       if ((runbookRoute || FOLDER_ROUTES.includes(url.pathname) || PLACED_ROUTES.includes(url.pathname)) && body.cwd !== undefined) body = placed(body);
+      // Whether a push was placed by its folder is the helper's to say, never the caller's.
+      if (url.pathname === '/push') body = { ...body, byFolder: body.cwd !== undefined };
       // The foreman's commands send their folder, which must be the main checkout (ruling R156).
       if (url.pathname === '/foreman/run') body = { ...body, project: placeMainCheckout(body.folder) };
       // The profile's routes, and the backup into it, wait for setup to name the profile's repository.

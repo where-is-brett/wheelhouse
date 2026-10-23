@@ -4,7 +4,7 @@
 // project's adapter for these calls; this is the Claude Code adapter's answer. It imports no module that
 // reaches the hook kit or the waker, so the waker and the registry can both load it without a cycle.
 import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../../scripts/gate/guardrails.js';
-import { invocation, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
+import { invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 
 // The variable that tells a hook the session is the foreman's.
@@ -37,9 +37,14 @@ function modelOf(config, role) {
 }
 
 // The environment a started session gets: the host session's variables and
-// every spelling of WHEELHOUSE_ROLE taken out.
+// every spelling of WHEELHOUSE_ROLE taken out, but for Claude Code's sign-in
+// variables (scripts/lib/claude.js), spelt exactly, so a session signs in as the
+// one that started the watcher or the foreman did: CLAUDE_CODE_USE_BEDROCK,
+// CLAUDE_CODE_OAUTH_TOKEN and the like start "CLAUDE", as the host session's do.
 export function sessionEnv(env) {
-  return Object.fromEntries(Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE));
+  const kept = Object.entries(env).filter(([name]) => isClaudeSignIn(name));
+  const rest = Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE);
+  return Object.fromEntries([...rest, ...kept]);
 }
 
 // The foreman's session. Two kinds:
