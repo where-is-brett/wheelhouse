@@ -253,6 +253,9 @@ const NESTED = 'Wheelhouse does not let an agent start another coding agent from
 // The package runners (npx, pnpx, bunx), and the package managers with the subcommands that run a package or its
 // program (npm exec, pnpm dlx, yarn dlx and kin): the package they run is the first plain word after, or --package's.
 const PACKAGE_RUNNERS = new Set(['npx', 'pnpx', 'bunx']);
+// xargs's options whose value is the next word when not joined to it.
+const XARGS_VALUES = new Set(['-a', '-E', '-I', '-L', '-n', '-P', '-s', '-d', '--arg-file', '--eof', '--replace', '--max-lines', '--max-args',
+  '--max-procs', '--max-chars', '--delimiter', '--process-slot-var']);
 const PACKAGE_RUNS = { npm: ['exec', 'x'], pnpm: ['dlx', 'exec'], yarn: ['dlx', 'exec'], bun: ['x'] };
 // The commands that start a program named in their words, besides the runners: PowerShell's Start-Process and
 // cmd's start.
@@ -563,19 +566,16 @@ function bashRefused(command, ctx, depth = 0) {
     } else if (!PACKAGE_RUNNERS.has(manager)) {
       return false;
     }
+    // The package anywhere in its words, whatever option values come before it; the command a --call (or -c)
+    // value runs, read as a shell's -c string; and the agent's program as the first plain word.
+    if (rest.some(isPackage)) return true;
     for (let i = 0; i < rest.length; i += 1) {
-      const w = rest[i];
-      if (w === '--') continue;
-      if (/^(-p|--package)$/i.test(w)) {
-        if (isPackage(rest[i + 1] ?? '')) return true;
-        i += 1;
-      } else if (/^--package=/i.test(w)) {
-        if (isPackage(w)) return true;
-      } else if (!OPTION.test(w)) {
-        return isPackage(w) || isAgent(w);
-      }
+      const call = /^--call=(.*)$/is.exec(rest[i]);
+      if (call && again(call[1])) return true;
+      if (/^(--call|-c)$/i.test(rest[i]) && i + 1 < rest.length && again(rest[i + 1])) return true;
     }
-    return false;
+    const first = rest.find((w) => w !== '--' && !OPTION.test(w));
+    return first !== undefined && isAgent(first);
   };
   const startsNested = ({ words }) => {
     const names = words.map(nameOf);
@@ -585,7 +585,17 @@ function bashRefused(command, ctx, depth = 0) {
     // The command a runner or a starter runs: its first plain word, past the wrappers before it.
     const runner = RUNNERS.has(names[k]) || STARTERS.has(names[k].toLowerCase()) ? k : words.findIndex((w) => RUNNER_FLAGS.has(w));
     if (runner < 0) return false;
-    const started = words.findIndex((w, j) => j > runner && !OPTION.test(w) && !DURATION.test(w) && w !== '{}');
+    // xargs's options that take a separate value are read past it, so the value is not taken for the command.
+    let started = -1;
+    for (let j = runner + 1; j < words.length; j += 1) {
+      const w = words[j];
+      if (names[runner] === 'xargs' && XARGS_VALUES.has(w)) {
+        j += 1;
+      } else if (!OPTION.test(w) && !DURATION.test(w) && w !== '{}') {
+        started = j;
+        break;
+      }
+    }
     if (started < 0) return false;
     const inner = words.slice(started);
     const at = commandAt(inner, inner.map(nameOf), ctx);

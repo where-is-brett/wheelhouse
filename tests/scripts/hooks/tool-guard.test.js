@@ -1194,6 +1194,9 @@ const NESTED_FORMS = [
   // A command word made at run time, held as a host tool's is (ruling P8-31).
   '`echo copilot` -p x', 'x=`echo copilot`; $x -p y', '$(echo copilot) -p x', 'x=$(printf copilot); $x -p y', '"$(echo copilot)" -p x',
   'pnpx @github/copilot', 'bun x @github/copilot', 'npm exec -p @github/copilot -- copilot -p x', 'xargs sudo copilot -p', 'npx -c "copilot -p x"',
+  // An option's separate value doesn't hide the program or the package (re-review 1).
+  'npx --registry https://r.example @github/copilot', 'xargs -a list copilot', 'npm exec --call "copilot -p x"', 'npm exec --call="copilot -p x"',
+  'xargs -I {} -n 1 copilot -p {}', 'xargs --max-procs 4 copilot', 'pnpm dlx --silent --reporter x @github/copilot@1.2.3', 'yarn dlx -q @github/copilot',
 ];
 for (const command of NESTED_FORMS) {
   test(`the tool guard refuses a nested agent: ${command}`, async () => {
