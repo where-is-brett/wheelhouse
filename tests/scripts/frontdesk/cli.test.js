@@ -1097,6 +1097,65 @@ test('card with revises may name an approval card closed by a later head, and th
   });
 });
 
+// X at the first head, closed by the gate's card A at the next head; the suggestion and the gate's record
+// come at the times given (null for no suggestion). The revision is composed at the next head.
+async function outdatedRevision({ at }) {
+  const target = { pr: 7, sha: FULL };
+  const old = cardEvent({ ...APPROVAL, target }, 2);
+  const plain = cardEvent({ ...APPROVAL, target: { pr: 7, sha: LATER } }, 6);
+  const suggestion = (card) => makeEvent({ kind: 'card-answer', data: { card: card.id, label: SUGGEST }, now: () => T(at) });
+  const events = [EXPORT, gateAsks(APPROVE_ASK, () => T(1)), old, gateAsks({ ask: 'approval', sha: LATER }, () => T(5)), plain];
+  const revision = { ...APPROVAL, because: 'the banner is bigger now', revises: old.id, changed: 'The banner is in bigger type.', target: { pr: 7 } };
+  return { old, plain, events, suggestion, revision };
+}
+const MUST_FOLLOW = 'a revised approval must follow a suggested change on that card\n';
+
+test('card with revises naming an outdated card is refused when the suggestion was on the gate\'s card only', async () => {
+  await inHome(async () => {
+    const { plain, events, suggestion, revision } = await outdatedRevision({ at: 7 });
+    const helper = fakeHelper({ events: [...events, suggestion(plain)], head: LATER });
+    const refused = await run(helper, ['card'], JSON.stringify(revision));
+    assert.equal(refused.err, MUST_FOLLOW);
+    assert.equal(refused.code, 1);
+    assert.deepEqual(helper.writes(), []);
+  });
+});
+
+test('card with revises naming an outdated card is refused when the card has no suggestion at all', async () => {
+  await inHome(async () => {
+    const { events, revision } = await outdatedRevision({ at: 4 });
+    const helper = fakeHelper({ events, head: LATER });
+    const refused = await run(helper, ['card'], JSON.stringify(revision));
+    assert.equal(refused.err, MUST_FOLLOW);
+    assert.deepEqual(helper.writes(), []);
+  });
+});
+
+test('card with revises naming an outdated card is refused when the suggestion came after the gate\'s record for the head', async () => {
+  await inHome(async () => {
+    const { old, events, suggestion, revision } = await outdatedRevision({ at: 8 });
+    const helper = fakeHelper({ events: [...events, suggestion(old)], head: LATER });
+    const refused = await run(helper, ['card'], JSON.stringify(revision));
+    assert.equal(refused.err, MUST_FOLLOW);
+    assert.deepEqual(helper.writes(), []);
+  });
+});
+
+test('card with revises naming an outdated card is accepted when the suggestion came before the gate\'s record for the head', async () => {
+  await inHome(async () => {
+    const { old, plain, events, suggestion, revision } = await outdatedRevision({ at: 3 });
+    const helper = fakeHelper({ events: [...events, suggestion(old)], head: LATER });
+    const done = await run(helper, ['card'], JSON.stringify(revision));
+    assert.equal(done.code, 0, done.err);
+    assert.notEqual(done.json.id, plain.id);
+    assert.deepEqual(helper.views().waiting.map((c) => c.id), [done.json.id]);
+    const recorded = helper.held.find((e) => e.id === done.json.id);
+    assert.equal(recorded.data.line, approvalLine(7, LATER));
+    assert.equal(recorded.data.parts.changed, 'The banner is in bigger type.');
+    assert.match(done.json.question.question, /What changed:/);
+  });
+});
+
 test('views waiting shows a steered card\'s time', async () => {
   await inHome(async () => {
     const steered = cardEvent(PRODUCT(1), 1);
