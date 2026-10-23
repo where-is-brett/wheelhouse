@@ -29,8 +29,9 @@ import copilotSheet from '../../../adapters/copilot/tool-sheet.js';
 import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-// The sessions part left the list in Part 8 Task 1 (ruling P8-1): built, and switched off by its own switch.
-const PENDING = ['settings', 'evalRunner'];
+// The sessions part left the list in Part 8 Task 1 (ruling P8-1): built, and switched off by its own switch. The
+// evaluation runner left it in Part 8 Task 3 (ruling P8-25).
+const PENDING = ['settings'];
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();

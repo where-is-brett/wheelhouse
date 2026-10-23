@@ -228,7 +228,9 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     byId.get(run.id).push(run);
   }
   const rows = [...byId.entries()].map(([id, scenarioRuns]) => rowFor(id, scenarioRuns));
-  const written = writtenScenarios(root);
+  // The scenarios that don't run on the run's agent (run.js, `agents`) are no rows of its report.
+  const leftOut = new Set(Array.isArray(record?.leftOut) ? record.leftOut : []);
+  const written = writtenScenarios(root).filter((scenario) => !leftOut.has(scenario.number));
   for (const scenario of written) {
     if (!rows.some((row) => row.id === scenario.number)) rows.push(notRun(scenario.number, scenario.file, scenario.suite, 'not in this run'));
   }
@@ -251,6 +253,7 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     // The day the run's results are filed under (the computer's own date), else the day it began.
     date: record?.date ?? (typeof record?.at === 'string' ? record.at.slice(0, 10) : null),
     how: record?.how ?? null,
+    agent: typeof record?.agent === 'string' ? record.agent : null,
     carried: record?.carried ?? null,
     tokens: sum(runs),
     // A run cut short (no `finished` in its record) never passes, whatever it holds (ruling E25).
@@ -296,7 +299,8 @@ export function summaryText(summary) {
     `on Wheelhouse ${summary.version ?? '(version unknown)'}`,
     summary.commit ? `build ${summary.commit}` : null,
   ].filter(Boolean);
-  lines.push(`${facts.join(', ')}. Each scenario runs in real \`claude -p\` sessions, in a throwaway copy, with and without Wheelhouse; the end-to-end tests run with \`node --test\`.`, '');
+  const sessions = summary.agent ? `sessions of the ${summary.agent} agent, through its adapter's runner` : '`claude -p` sessions';
+  lines.push(`${facts.join(', ')}. Each scenario runs in real ${sessions}, in a throwaway copy, with and without Wheelhouse; the end-to-end tests run with \`node --test\`.`, '');
 
   if (summary.carried) {
     const c = summary.carried;

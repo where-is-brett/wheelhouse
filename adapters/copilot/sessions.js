@@ -70,7 +70,7 @@ export const CMD_LINE_MOST = 8191;
 
 // The flags no call ever carries, at any level: a level's "the shell allowed" is `--allow-tool=shell`, a rule,
 // never a flag that lifts every rule (ruling P7-3).
-const WIDE_FLAGS = ['--trust-folder', '--allow-all', '--yolo', '--allow-all-tools', '--allow-all-paths', '--allow-all-urls', '--add-dir'];
+export const WIDE_FLAGS = Object.freeze(['--trust-folder', '--allow-all', '--yolo', '--allow-all-tools', '--allow-all-paths', '--allow-all-urls', '--add-dir']);
 
 // The most of a command an activity summary keeps, the most commands, and the kinds of refusal it names.
 // scripts/state/events.js holds the same two (ACTIVITY_COMMANDS, REFUSAL_KINDS) without this file importing the
@@ -647,8 +647,9 @@ export const GRANT_PROOFS = Object.freeze(['window']);
 // The sessions part. `ready` is the switch (BACKGROUND_SESSIONS_READY unless a test builds the part switched on);
 // `kits` ({ manifest, fetchTo }) and `home` ({ signedInFrom, node, root }) are for tests, which never fetch from the
 // network or read the person's Copilot home. `versions` ({ run, env, home, runSubset }) is how the versions are read
-// and a new one checked: `run` starts `copilot --version`, and `runSubset` is the safety subset's runner, which Part 8
-// Task 3 builds (until then noSubsetRunner, which fails, so a new version holds Copilot work).
+// and a new one checked: `run` starts `copilot --version`, and `runSubset` is the safety subset's runner. Given none,
+// it is noSubsetRunner, which fails, so a new version holds Copilot work; the part as shipped is given the
+// evaluation's (safetySubset, below).
 export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, home = {}, versions: versionsFrom = {} } = {}) {
   const { runSubset = noSubsetRunner, run = realRun, ...readFrom } = versionsFrom;
   // The versions read before this part's latest start, for that run's provenance.
@@ -684,4 +685,26 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, hom
   });
 }
 
-export default sessionsPart();
+// The safety subset (ruling P8-20): scenario 6 and the four Copilot scenarios, in the `with` variant, one trial each.
+// Scenario 11 and the other end-to-end safety tests need no agent, so they are not in it.
+export const SUBSET = Object.freeze([6, 38, 39, 40, 41]);
+// The evaluation's own command, and the longest the subset may take: five sessions of at most 20 minutes each.
+const EVAL_COMMAND = path.join(PLUGIN_ROOT, 'scripts', 'eval', 'run.js');
+const SUBSET_MS = 2 * 60 * 60 * 1000;
+
+// The safety subset as shipped (Part 8 Task 3): `npm run eval`'s command run in a process of its own,
+// `node scripts/eval/run.js 6 38 39 40 41 --variant with --agent copilot`, whose sessions go through the Copilot
+// adapter's evaluation runner. It passes only when that command exits 0, which it does only when
+// every trial ran and passed; a throw fails it. Started as a program, never imported, so nothing that loads this part
+// loads the evaluation's code (rulings F102 and the bridge's import checks). It runs only from `prepare`, which
+// refuses while the sessions aren't switched on (ruling P8-1). `run`, `node` and `timeoutMs` are for tests.
+export async function safetySubset({ versions = null, run = realRun, node = process.execPath, timeoutMs = SUBSET_MS } = {}) {
+  try {
+    const result = await run(node, [EVAL_COMMAND, ...SUBSET.map(String), '--variant', 'with', '--agent', 'copilot'], { cwd: PLUGIN_ROOT, input: '', timeoutMs });
+    return { ok: result?.code === 0 && result?.timedOut !== true, versions, code: result?.code ?? null };
+  } catch {
+    return { ok: false, versions, code: null };
+  }
+}
+
+export default sessionsPart({ versions: { runSubset: safetySubset } });

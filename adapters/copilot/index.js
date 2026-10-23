@@ -19,8 +19,7 @@ export default Object.freeze({
   hooks,
   translate,
   tools,
-  // The parts not built yet, by the plan's part: the settings writer (Part 9, ruling P7-21) and the evaluation
-  // runner (Part 9).
+  // The part not built yet: the settings writer (Part 9, ruling P7-21).
   settings: pendingPart('settings', ['project', 'local']),
   // The session starts (sessions.js): built, and the waker keeps a session's output and reads its outcome, id and
   // refusals from it (ruling P8-2), but their checks refuse while BACKGROUND_SESSIONS_READY is false (ruling P8-1).
@@ -34,6 +33,8 @@ export default Object.freeze({
   packaging: Object.freeze({ files: () => ['.gitignore', '.vscode/settings.json', `${LEAN_RECORD_DIR}/.gitkeep`] }),
   toolSheet,
   safetyLine,
-  evalRunner: pendingPart('evalRunner', ['run']),
-  pending: Object.freeze(['settings', 'evalRunner']),
+  // One evaluation session through `copilot -p` (eval-runner.js, ruling P8-25), for `npm run eval -- --agent copilot`.
+  // Loaded only when a session is asked for, so nothing that loads the adapter loads the evaluation runner.
+  evalRunner: Object.freeze({ run: async (options) => (await import('./eval-runner.js')).run(options) }),
+  pending: Object.freeze(['settings']),
 });
