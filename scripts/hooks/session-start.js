@@ -4,7 +4,8 @@
 // starts the watcher when the project's shape is 1 and it isn't running
 // (ruling R62), checks the installed upstream skills against Wheelhouse's
 // manifest (holding edits and commands on a mismatch, and recording the hold
-// in the state once) and records the session's provenance, and adds a short
+// in the state once) and records the session's provenance (all but when the session
+// starts from a compaction, which leaves lineage alone), and adds a short
 // reload as context. The reload names things; it never pastes whole files
 // (design section 19.1, point 5). In the project's main folder it also keeps
 // `.wheelhouse/` in the main checkout's local git exclusions, as the foreman does.
@@ -536,7 +537,9 @@ export async function decide(input, deps = {}) {
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
   // installed are setup's own state, not drift, and write no hold (ruling R136).
   const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
-  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
+  // A compaction installs nothing, so the check belongs to the session's real start: no check, no
+  // hold written or lifted, no provenance rewritten, and a hold already standing stands.
+  const lineage = input.source === 'compact' ? [] : lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);

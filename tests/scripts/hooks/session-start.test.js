@@ -1502,3 +1502,46 @@ test('a helper that answers nothing about enrolments costs the session start not
     assert.doesNotMatch(text(out), /different key|trusted/);
   });
 });
+
+test('a compaction\'s start writes no hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-compact-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    let checks = 0;
+    const counting = (args) => { checks += 1; return checkLineage(args); };
+    const said = text(await lineageRun(fake(), fixture, folder, { lineage: counting }, { source: 'compact' }));
+    assert.equal(checks, 0, 'the check is not called');
+    assert.equal(fs.existsSync(holdFile(P)), false);
+    assert.doesNotMatch(said, /Lineage/);
+  });
+});
+
+test('a compaction\'s start leaves a standing hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-compact-held-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    const f = fake();
+    await lineageRun(f, fixture, folder, {}, { source: 'startup' });
+    assert.ok(fs.existsSync(holdFile(P)), 'held before');
+    const before = fs.readFileSync(holdFile(P), 'utf8');
+    // Put right, yet a compaction still leaves the hold standing, untouched.
+    fixture.restore();
+    await lineageRun(f, fixture, folder, {}, { source: 'compact' });
+    assert.equal(fs.readFileSync(holdFile(P), 'utf8'), before, 'held after, unchanged');
+  });
+});
+
+test('a startup still writes the hold', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-ss-startup-held-');
+    const fixture = lineageFixture(folder);
+    fixture.put({ LICENSE: 'another licence\n' });
+    for (const source of ['startup', 'resume', 'clear', 'fork']) {
+      if (fs.existsSync(holdFile(P))) fs.rmSync(holdFile(P));
+      await lineageRun(fake(), fixture, folder, {}, { source });
+      assert.ok(fs.existsSync(holdFile(P)), source);
+    }
+  });
+});
