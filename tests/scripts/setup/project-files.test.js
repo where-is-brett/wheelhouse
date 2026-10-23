@@ -12,11 +12,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  projectFilesStep, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
+  projectFilesStep, yoursAsk, NEGATED_LINE, starterConfig, projectFilesChange, projectFilesCard, commitAuthor, COMMIT_MESSAGE, SETUP_FILES, COMPACT_HEADING,
   EXCLUDE_LINE, WHEELHOUSE_LINE, putYoursIn, LEAVE_YOURS, leftYoursLine,
 } from '../../../scripts/setup/project-files.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
-import { runApply } from '../../../scripts/setup/engine.js';
+import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
+import { fileURLToPath } from 'node:url';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
@@ -1403,22 +1404,63 @@ test('an uncommitted .gitignore over a HEAD that covers .env, with an unrelated 
   });
 });
 
-test('on a joining computer, a negation in the root .gitignore is not answered with an exclude line, and the step says so', async () => {
+const ONE_STEP = fileURLToPath(new URL('../../helpers/setup-project-files-steps.js', import.meta.url));
+
+// A joining computer whose project's committed .gitignore lets .env.local in by a negation, planned through the engine's routes.
+async function negatedWorld() {
+  const w = await world();
+  const first = await w.apply((await w.plan()).changes);
+  assert.equal(first.ok, true, first.reason);
+  fs.writeFileSync(path.join(w.folder, '.gitignore'), '.env\n.env.*\n!.env.local\n');
+  await g(w.folder, 'commit', '-q', '-am', 'Let .env.local in');
+  await g(w.folder, 'push', '-q', w.bare, 'main');
+  const run = await secondComputer(w);
+  globalThis.wheelhouseProjectFilesStep = w.step;
+  const routes = setupRoutes({ now: () => T0, stepsModule: ONE_STEP, userHome: w.user, platform: 'darwin' });
+  return { w, run, plan: () => routes['/setup/plan']({ folder: w.folder, step: 7 }) };
+}
+
+test('on a joining computer, a negation in the root .gitignore gets no exclude line, and the card and the settling line say so', async () => {
   await withHome(async () => {
-    const w = await world();
-    const first = await w.apply((await w.plan()).changes);
-    assert.equal(first.ok, true, first.reason);
-    fs.writeFileSync(path.join(w.folder, '.gitignore'), '.env\n.env.*\n!.env.local\n');
-    await g(w.folder, 'commit', '-q', '-am', 'Let .env.local in');
-    await g(w.folder, 'push', '-q', w.bare, 'main');
-    const run = await secondComputer(w);
-    const heard = [];
-    const planned = await w.step.plan(w.ctx({ runId: run.id, say: (line) => heard.push(line) }));
-    assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
-    assert.ok(!planned.changes.some((c) => c.line === '.env' || c.line === '.env.*'), 'no exclude line offered');
-    assert.doesNotMatch(cardText(planned), /\.env files/);
-    assert.ok(heard.some((l) => /\.gitignore lets some \.env files into git/.test(l) && /take it up on the computer that set the project up/.test(l)), JSON.stringify(heard));
+    // With changes to list: the card names it.
+    const { w, plan } = await negatedWorld();
+    fs.rmSync(excludeFile(w));
+    const planned = await plan();
+    assert.equal(planned.ok, true, JSON.stringify(planned));
+    assert.ok(planned.changes.length > 0 && !planned.changes.some((c) => c.line === '.env' || c.line === '.env.*'), 'no exclude line offered');
+    assert.match(planned.card.question, /\.gitignore lets some \.env files into git \(a line starting with !\)/);
+    assert.match(planned.card.question, /take it up on the computer that set the project up/);
+    assert.doesNotMatch(planned.card.question, /\.env files, which hold secrets, kept out of git on this computer/);
   });
+  await withHome(async () => {
+    // Everything of this computer's in place, then a fresh run: a shared file differing and the
+    // negation are said in one line.
+    const { w, plan } = await negatedWorld();
+    const planned = await plan();
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const again = startRun({ folder: w.folder, now: () => T0 });
+    addChanges(again.id, [{ id: newId('chg'), step: 3, kind: 'answer', target: 'step 3', before: null, after: { joined: REPO, found: true } }]);
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- A note on the laptop.\n');
+    const settled = await plan();
+    assert.equal(settled.done, true, JSON.stringify(settled));
+    assert.ok(settled.said.includes(NEGATED_LINE) && /CLAUDE\.md differs from what is committed/.test(settled.said), settled.said);
+  });
+});
+
+test('the joining card with a negation, in both sizes, stays within the composer\'s limit', () => {
+  const folder = '/p';
+  const mine = [
+    { kind: 'file', target: `${folder}/.claude/settings.local.json`, line: undefined, key: ['a'], after: 1 },
+    { kind: 'file', target: `${folder}/.git/info/exclude`, line: EXCLUDE_LINE }, { kind: 'file', target: `${folder}/.git/info/exclude`, line: '.env' },
+    { kind: 'process', target: `superpowers@${MARKETPLACE}` }, { kind: 'process', target: `mattpocock-skills@${MARKETPLACE}` },
+  ];
+  const text = (release, differ) => composeCard({ ...projectFilesCard({ changes: mine, host: 'gitlab', branch: null, release, joining: true, differ, negated: ['.env.*'] }), target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+  const plain = text({ ref: 'v1.4.0' }, []);
+  assert.match(plain, /some \.env files, which hold secrets, kept out of git on this computer, but \.gitignore lets some/);
+  const long = text({ ref: `v${'9'.repeat(150)}` }, ['.claude/settings.json', '.claude/wheelhouse.json', 'CLAUDE.md', `${'y'.repeat(300)}.md`]);
+  assert.ok(long.length <= 1200);
+  assert.match(long, /\.gitignore lets some \.env files in/);
 });
 
 test('a deleted .gitignore has its own question, naming what setup would put back', async () => {
@@ -1455,4 +1497,15 @@ test('Put them in with a .gitignore of the director\'s, a failed push, then a re
     assert.equal(done.ok, true, done.reason);
     assert.equal(await g(w.bare, 'show', 'main:.gitignore'), 'node_modules\ndist\n.env\n.env.*');
   });
+});
+
+test('the questions about .gitignore compose as the engine composes a question, for the deleted and the changed wording', () => {
+  for (const text of [null, 'node_modules\ndist\n']) {
+    for (const isNew of [true, false]) {
+      const asked = yoursAsk({ rel: '.gitignore', text, isNew });
+      const card = composeCard({ ...asked.card, kind: 'question', suggest: false }).question;
+      assert.ok(card.question.length > 0 && card.question.length <= 1200, `${text === null ? 'deleted' : 'changed'}: ${card.question.length}`);
+      assert.match(card.question, text === null ? /has been deleted here/ : /has changes of yours/);
+    }
+  }
 });

@@ -394,6 +394,8 @@ export const leftYoursLine = (rel) => `${rel} holds changes of yours not yet com
 // What step 7 says on a joining computer when the root .gitignore lets some .env files into git
 // through a line starting with !, which nothing in this computer's own list can override.
 export const NEGATED_LINE = '.gitignore lets some .env files into git (a line starting with !); this computer can\'t override that, so take it up on the computer that set the project up';
+// The same on the card, where the .env cover is claimed only for what this computer's list can cover.
+const NEGATED_PART = '.gitignore lets some .env files into git (a line starting with !), which this computer can\'t override: take it up on the computer that set the project up';
 
 // ---- The host and git ----
 
@@ -680,7 +682,7 @@ const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0
 // shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
 // that nothing is committed and protection stays as it is, and names each shared file in
 // `differ`, which differs from what is committed and is left as it is.
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [] }) {
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [] }) {
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
   // computer, in this computer's own list.
@@ -698,7 +700,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
-  else if (secrets === 'here') parts.push('.env files, which hold secrets, kept out of git on this computer');
+  else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
+  if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
   if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
@@ -735,7 +738,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const cut = (text) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
   if (joining) {
     const mine = [
-      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? ['.env files kept out of git'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
+      ...(files.length > 0 || excluded || ours ? ['this computer\'s settings'] : []), ...(secrets ? [negated.length > 0 ? 'some .env files kept out of git' : '.env files kept out of git'] : []), ...(negated.length > 0 ? ['.gitignore lets some .env files in: raise it on the computer that set the project up'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []),
       'nothing committed', ...(differ.length > 0 ? [`${listed(differ)} left as ${differ.length === 1 ? 'it is' : 'they are'}`] : []),
     ];
     return card(`Setup step 7, ${SETUP_TITLES[7]}, for this computer: ${mine.join(', ')}. Wheelhouse never updates itself.`);
@@ -843,12 +846,15 @@ export function projectFilesStep({
       ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home } }),
       ...(await computerParts(git, folder, { joining: true, blocked })),
     ];
-    if (blocked.length > 0) ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: ${NEGATED_LINE}.`);
     if (changes.length === 0) {
-      if (differ.length > 0) ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place; ${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}.`);
+      // One line: the engine keeps only the last one a settling says.
+      if (differ.length > 0 || blocked.length > 0) {
+        const notes = [...(blocked.length > 0 ? [NEGATED_LINE] : []), ...(differ.length > 0 ? [`${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}`] : [])];
+        ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place; ${notes.join('; ')}.`);
+      }
       return { settled: { record: { nothing: true, ...(differ.length > 0 ? { differ } : {}) } } };
     }
-    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ }), director: 'One click' };
+    return { changes, card: projectFilesCard({ changes, host, branch: null, release, joining: true, differ, negated: blocked }), director: 'One click' };
   };
 
   return {
