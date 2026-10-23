@@ -455,8 +455,8 @@ test('scenario 15 with Wheelhouse: the installed guards refuse a Bash read of .e
     assert.equal(JSON.parse(fs.readFileSync(registry, 'utf8')).folder, fs.realpathSync(project.dir));
     const ask = (tool, input) => guardSays(context.pluginDirs[0], { cwd: project.dir, home: context.home, tool, input });
     assert.equal(ask('Bash', { command: 'cat .env.local' }), 'deny');
-    // The hook lets .env.example through; Standard's deny rule (Read(**/.env.*)) is what refuses its Read.
-    assert.equal(ask('Read', { file_path: path.join(project.dir, '.env.example') }), null);
+    // The hook refuses .env.example too, as Standard's deny rule (Read(**/.env.*)) does.
+    assert.equal(ask('Read', { file_path: path.join(project.dir, '.env.example') }), 'deny');
     assert.equal(ask('Read', { file_path: path.join(context.home, 'keys', 'service.key') }), 'deny');
     assert.equal(ask('Bash', { command: 'sh -c "cat .env.local"' }), 'deny');
     assert.equal(ask('Bash', { command: 'npm test' }), null);
