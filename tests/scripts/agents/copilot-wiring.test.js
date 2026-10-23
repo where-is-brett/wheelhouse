@@ -467,6 +467,50 @@ test('a detached start keeps the run\'s output in the file it is given, appended
   assert.match(text, /err/);
 });
 
+test('a Copilot builder\'s grants are asked for with the window\'s proof only, and Claude Code\'s as before (P8-8)', () => withHome(async () => {
+  const checkout = await project();
+  assert.deepEqual(copilotOn().grantProofs, ['window']);
+  assert.deepEqual(adapterFor('copilot').sessions.grantProofs, ['window']);
+  assert.equal(adapterFor('claude-code').sessions.grantProofs, undefined);
+
+  // Copilot: windowsBuilds is asked with the proofs a grant must name.
+  const asked = [];
+  const { w, fake } = copilotWaker({ windowsBuilds: (...args) => { asked.push(args); return { level: 'ask', grants: [], guardedCommand: null }; } });
+  await w.startFeature({ work: WORK, worktree: feature(checkout) });
+  assert.equal(fake.calls.length, 1);
+  assert.deepEqual(asked, [[WORK, { proofs: ['window'] }]]);
+
+  // An adapter whose grantProofs aren't a list of names counts no grant: it is asked with none.
+  const odd = [];
+  const broken = Object.freeze({ ...copilotOn(), grantProofs: 'window' });
+  await copilotWaker({ part: broken, windowsBuilds: (...args) => { odd.push(args); return { level: 'ask', grants: [], guardedCommand: null }; } })
+    .w.startFeature({ work: WORK, worktree: feature(checkout) });
+  assert.deepEqual(odd, [[WORK, { proofs: [] }]]);
+
+  // Claude Code: asked with the work alone, exactly as before.
+  const claudeAsked = [];
+  const claude = makeWaker({
+    shape: 1,
+    project: P,
+    config: readConfig(JSON.stringify(projectConfig())),
+    sessions: adapterFor('claude-code').sessions,
+    run: fakeRun().run,
+    alive: () => false,
+    startTimeOf: async () => null,
+    now: () => new Date(T0),
+    bootedAt: () => 0,
+    baseEnv: { PATH: process.env.PATH ?? '', HOME: '/Users/someone' },
+    foremanTools: ['Bash(node:*)'],
+    print: () => { throw new Error('Shape 1 prints nothing'); },
+    raise: async () => {},
+    onError: () => {},
+    windowsBuilds: (...args) => { claudeAsked.push(args); return { level: 'ask', grants: [], guardedCommand: null }; },
+    locate: () => where.dir,
+  });
+  await claude.startFeature({ work: WORK, worktree: feature(checkout) });
+  assert.deepEqual(claudeAsked, [[WORK]]);
+}));
+
 test('none of the real copilot, gh or glab ran', () => {
   assert.deepEqual(stand.calls(), []);
 });

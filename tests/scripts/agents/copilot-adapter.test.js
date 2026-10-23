@@ -56,9 +56,9 @@ test('a part not built yet throws NOT_BUILT_YET naming the part', () => {
       assert.throws(() => fn(), (error) => error.code === NOT_BUILT_YET && error.part === part && error.message.includes(`The ${part} part`) && error.message.includes(member), `${part}.${member}`);
     }
   }
-  // The sessions part is built: the contract's six members, and the three the waker asks for when they are there.
+  // The sessions part is built: the contract's six members, and the four the waker asks for when they are there.
   assert.equal(isPendingPart(copilot.sessions), false);
-  assert.deepEqual(Object.keys(copilot.sessions).sort(), ['afterRun', 'checkFeature', 'checkForeman', 'featureResumeCall', 'featureStartCall', 'finalAnswer', 'foremanCall', 'prepare', 'pruneActivity']);
+  assert.deepEqual(Object.keys(copilot.sessions).sort(), ['afterRun', 'checkFeature', 'checkForeman', 'featureResumeCall', 'featureStartCall', 'finalAnswer', 'foremanCall', 'grantProofs', 'prepare', 'pruneActivity']);
 });
 
 test('sessionsFor gives the very object the Copilot adapter holds', () => {

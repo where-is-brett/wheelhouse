@@ -62,7 +62,10 @@
 //     (ruling P8-3). A run whose exit this watcher didn't see (one the
 //     foreman's command started, or one from before a restart) is read the same
 //     way once its record ends;
-//   - `pruneActivity({ project, now })`, called by prune.
+//   - `pruneActivity({ project, now })`, called by prune;
+//   - `grantProofs`, the proofs an answer must name for its build-command grant to count (buildGrants'
+//     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only a click in the helper's own window.
+//     Without it, every verified answer counts, as before.
 // A feature call that says the level it runs at (`level`) has it recorded as a
 // `level` record when it changes (ruling P8-5).
 //
@@ -309,9 +312,10 @@ function recordGrantsUsed(project, ids) {
 // worked out from on every system (ruling P8-4): whether the project has real
 // users (its `phase` setting is `launched`), whether the self-test found the
 // helper's keys unreadable to builds, and whether the host's approval is ready.
-// Anything that can't be read is Ask with no grants, and real users.
+// Anything that can't be read is Ask with no grants, and real users. With `proofs`, a grant counts only from an
+// answer naming one of them (buildGrants).
 export function windowsBuildsOf(project, { pluginRoot = PLUGIN_ROOT, now = () => new Date(), platform = process.platform } = {}) {
-  return (work) => {
+  return (work, { proofs } = {}) => {
     try {
       const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
       const computer = computerId();
@@ -324,7 +328,7 @@ export function windowsBuildsOf(project, { pluginRoot = PLUGIN_ROOT, now = () =>
       } catch { /* no runner to name: Guarded gives the grants alone */ }
       return {
         level: buildsLevel({ views, computer, locked, guardedReady: guardedReady({ home, now, platform }) }),
-        grants: buildGrants({ views, work, used: readGrantsUsed(project), computer }),
+        grants: buildGrants({ views, work, used: readGrantsUsed(project), computer, ...(proofs === undefined ? {} : { proofs }) }),
         guardedCommand: runner,
         realUsers: views.settings?.phase?.value === 'launched',
         keysUnreadable: readSelfTest({ home, now, platform })?.keysReadHeld === true,
@@ -992,11 +996,12 @@ export function makeWaker({
     file: gathered.entry.file,
     entries: [gathered.entry.id],
   });
-  // What windowsBuilds answers for `work`, or Ask with no grants and real users when it can't answer.
-  const windowsAnswer = (work) => {
+  // What windowsBuilds answers for `work`, or Ask with no grants and real users when it can't answer. `proofs` is
+  // the adapter's grantProofs, passed only when the adapter has them.
+  const windowsAnswer = (work, proofs) => {
     let answer;
     try {
-      answer = buildsOf(work);
+      answer = proofs === undefined ? buildsOf(work) : buildsOf(work, { proofs });
     } catch {
       answer = null;
     }
@@ -1026,8 +1031,12 @@ export function makeWaker({
   // At Guarded the worktree is labelled first (Windows only); if it can't be, the run gets the Ask rules (failing
   // closed) and says so. Anything that can't be read is Ask with no grants and real users.
   const levelInputs = async (work, worktree) => {
-    sessionsOf().checkFeature(config); // before anything is labelled or recorded
-    const answer = windowsAnswer(work);
+    const sessions = sessionsOf();
+    sessions.checkFeature(config); // before anything is labelled or recorded
+    // An adapter's grantProofs that aren't a list of names count no grant (failing closed).
+    const named = sessions.grantProofs;
+    const proofs = named === undefined ? undefined : Array.isArray(named) && named.every((p) => typeof p === 'string') ? [...named] : [];
+    const answer = windowsAnswer(work, proofs);
     const { grants, guardedCommand } = answer;
     let { level } = answer;
     if (platform === 'win32' && level === 'guarded') {

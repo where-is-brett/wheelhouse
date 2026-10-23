@@ -15,8 +15,9 @@ export const PROOFS = Object.freeze(['chat-click', 'hook-click', 'policy-hook', 
 export const REVIEW_KINDS = Object.freeze(['chat-review', 'clean-session', 'subagent']);
 // How many days a session's activity is kept.
 export const ACTIVITY_DAYS = 30;
-// The steps that need the director's confirmed click.
-export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push']);
+// The steps that need the director's confirmed click. `ask-allowance` is an Ask build question's Allow this time or
+// Allow for this feature (ruling P8-8).
+export const CONFIRMED_STEPS = Object.freeze(['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance']);
 // Where Lean keeps its records, inside the project.
 export const LEAN_RECORD_DIR = '.wheelhouse/record';
 // The board's file, inside the project's Copilot folder.

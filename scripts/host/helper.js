@@ -87,6 +87,7 @@ import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from
 import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
 import { runReview } from '../review/clean-session.js';
 import { reviewsFor } from '../agents/reviews.js';
+import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
@@ -1734,18 +1735,34 @@ export async function startHelper({
   const ACTION_STEPS = {
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
     'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
+    // An Ask allowance (ruling P8-8): Allow this time or Allow for this feature on a build question, and only there
+    // (allowanceQuestion); an answer to any other question is no step the window confirms.
+    answer: 'ask-allowance',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
-  function windowStep(project, made) {
+  function windowStep(project, made, shownAt) {
     if (made.kind === 'approval') return 'approval';
+    if (made.kind === 'action' && made.data?.action === 'answer') return allowanceQuestion(project, made.data, shownAt) === null ? null : ACTION_STEPS.answer;
     if (made.kind === 'action') return Object.hasOwn(ACTION_STEPS, made.data?.action) ? ACTION_STEPS[made.data.action] : null;
     if (made.kind !== 'confirmation') return null;
     const target = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === made.data?.confirms);
     return ['level', 'setting'].includes(target?.kind) && target.data?.value === 'unattended' ? 'unattended' : null;
+  }
+
+  // The build question an answer allows commands of, as the state holds it now, when the answer is an Ask allowance:
+  // its label is Allow this time or Allow for this feature, and it names the question's latest record (as the views
+  // read it) by its hash, which is a build question, word for word (isBuildQuestion), recorded no later than the
+  // card was (`shownAt`), so a card made from an earlier version of the question allows nothing. Else null.
+  function allowanceQuestion(project, data, shownAt) {
+    if (!ALLOWANCE_LABELS.includes(data?.label) || typeof data.questionId !== 'string' || typeof shownAt !== 'string') return null;
+    const asked = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === data.questionId).at(-1);
+    if (!asked || !isBuildQuestion(asked.data) || dataHash(asked.data) !== data.questionHash) return null;
+    if (typeof asked.at !== 'string' || asked.at > shownAt) return null;
+    return asked.data;
   }
 
   // What a click on `label` in the window would record for `card`: the signed record the same click earns in a
@@ -1766,7 +1783,7 @@ export async function startHelper({
       return null;
     }
     if (!got?.made || got.profile) return null;
-    const step = windowStep(project, got.made);
+    const step = windowStep(project, got.made, card.at);
     return step === null ? null : { made: got.made, step, lift: got.lift === true };
   }
 
@@ -1839,7 +1856,7 @@ export async function startHelper({
       const got = await windowEarned(project, event, label, ctx);
       if (got) deciding.push({ label, ...got });
     }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push or an approval');
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
     return { event, deciding };
   }
 
@@ -1865,6 +1882,10 @@ export async function startHelper({
       if (shown.deciding.length === 0) return STOP_REFUSAL;
     }
     const lines = String(shown.event.data.question).split(/\r?\n/);
+    // An Ask allowance's window also says what allowing the commands means (allowanceWindowLines), from the question
+    // the state holds, never the caller's words.
+    const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);
+    if (allowance) lines.push(...allowanceWindowLines(allowanceQuestion(project, allowance.made.data, shown.event.at)?.commands));
     const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
     const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label) });
     const picked = shown.deciding.find((d) => d.label === choice);

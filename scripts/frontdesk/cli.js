@@ -32,6 +32,10 @@
 //   archive         makes ready the change that moves another agent setup's instructions into
 //                   .wheelhouse-archive/ (A4), and `restore` the one that puts them back; each prints
 //                   the work id, the `from` and the files it moves
+//   confirm <card>  shows the card (its id in the state, or lift-stop) in the helper's own window,
+//                   where the director's click is the binding one, and waits for it; prints the
+//                   helper's answer, `"recorded":true` when the click was recorded (ruling P8-7). For
+//                   an agent whose chat clicks can't bind: Claude Code's front desk never needs it
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
 // a request to the helper, naming this folder for the helper to place the project. Nothing here
 // writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
@@ -43,6 +47,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
+import { WINDOW_MS } from '../confirm/window.js';
+import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
@@ -71,7 +77,9 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore'];
+const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore', 'confirm'];
+// How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
+const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
@@ -1004,6 +1012,26 @@ export async function preview({ client, cwd, n }) {
   return [`Pull request #${n} has no preview to show: it isn't open, or the host has no finished preview of its latest commit.`];
 }
 
+// --- The helper's own window ---
+
+// What the helper's window answers for `card`: `lift-stop` for the Lift STOP card the helper composes itself, or a
+// card's id in the state, named with the hash of its data as the state holds it, so the window shows that card and
+// no other (the caller's own text is never shown). Posts /confirm as the Lean command does; a refusal is said as is.
+export async function confirm({ client, cwd, card }) {
+  if (typeof card !== 'string' || card === '') throw new CliError('Give the card\'s id, or lift-stop: confirm <card>');
+  let got;
+  if (card === 'lift-stop') {
+    got = await client.confirm({ cwd, card });
+  } else {
+    const { cards } = await viewsOf(client, cwd, { cards: true });
+    const found = cards.filter((e) => isPlain(e) && e.id === card);
+    if (found.length !== 1) throw new CliError('That card is not in this project\'s state');
+    got = await client.confirm({ cwd, card, hash: dataHash(found[0].data) });
+  }
+  if (got?.ok !== true) throw new CliError(said(got, 'The host helper gave no answer from its window'));
+  return got;
+}
+
 // --- Ready-made changes ---
 
 // What the helper made ready, as it answered (scripts/survey/ready.js): the work id it chose, the
@@ -1053,7 +1081,7 @@ export async function main(argv, {
   try {
     const [command, ...rest] = argv;
     if (!COMMANDS.includes(command)) throw new CliError(`Commands: ${COMMANDS.join(', ')}`);
-    const helper = client ?? helperClient();
+    const helper = client ?? helperClient(command === 'confirm' ? { timeout: CONFIRM_WAIT_MS } : {});
     const here = path.resolve(cwd);
     const stdin = async () => (input === undefined ? readInput() : input);
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
@@ -1095,6 +1123,9 @@ export async function main(argv, {
     } else if (command === 'archive' || command === 'restore') {
       only(rest, 0, `${command} takes no arguments`);
       json(await ready(helper.survey[command], { cwd: here }, command === 'archive' ? 'archive' : 'putting back'));
+    } else if (command === 'confirm') {
+      only(rest, 1, 'Give the card\'s id, or lift-stop: confirm <card>');
+      json(await confirm({ client: helper, cwd: here, card: rest[0] }));
     } else if (command === 'views') {
       only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
       lines(await view({ client: helper, cwd: here, name: rest[0], now }));

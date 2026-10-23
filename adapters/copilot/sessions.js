@@ -571,6 +571,9 @@ function activityFolder(project) {
   return dir;
 }
 
+// The proofs an answer must name for its build-command grant to count (the waker's buildGrants).
+export const GRANT_PROOFS = Object.freeze(['window']);
+
 // The sessions part. `ready` is the switch (BACKGROUND_SESSIONS_READY unless a test builds the part switched on);
 // `kits` ({ manifest, fetchTo }) and `home` ({ signedInFrom, node, root }) are for tests, which never fetch from the
 // network or read the person's Copilot home.
@@ -593,6 +596,9 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, hom
     },
     afterRun,
     pruneActivity,
+    // A build-command grant counts only from a click in the helper's own window (ruling P8-8): no Copilot hook
+    // signs, so no other answer binds.
+    grantProofs: GRANT_PROOFS,
   });
 }
 

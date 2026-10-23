@@ -1662,7 +1662,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1722,6 +1722,6 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm\n');
   assert.equal(done.stdout, '');
 });

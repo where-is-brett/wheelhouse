@@ -220,7 +220,7 @@ test('the numbers are the design\'s, exactly', () => {
   assert.deepEqual(numbers.PROOFS, ['chat-click', 'hook-click', 'policy-hook', 'window', 'add-on', 'host', 'signed-hook']);
   assert.deepEqual(numbers.REVIEW_KINDS, ['chat-review', 'clean-session', 'subagent']);
   assert.equal(numbers.ACTIVITY_DAYS, 30);
-  assert.deepEqual(numbers.CONFIRMED_STEPS, ['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push']);
+  assert.deepEqual(numbers.CONFIRMED_STEPS, ['lift-stop', 'guardrail-change', 'unattended', 'runbook-step', 'ci-push', 'ask-allowance']);
   assert.equal(numbers.LEAN_RECORD_DIR, '.wheelhouse/record');
   assert.equal(numbers.BOARD_FILE, 'wheelhouse/board.md');
   assert.equal(numbers.HOOK_FILE, 'wheelhouse.json');
