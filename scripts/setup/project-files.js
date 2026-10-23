@@ -81,7 +81,7 @@ import { SETUP_FILES } from '../../adapters/claude-code/packaging.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
-import { helperAddress, wheelhouseHome } from '../lib/paths.js';
+import { helperAddress, projectsDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.js';
@@ -492,20 +492,21 @@ async function installPin({ id, folder, run, claude }) {
 
 // ---- The front desk's model ----
 
-// Where a setup run keeps what Claude Code said its most capable model is.
-const bestFile = () => path.join(wheelhouseHome(), 'setup', 'front-desk-model.json');
+// Where a setup run keeps what Claude Code said its most capable model is: in the project's own
+// folder of this computer's, which uninstall removes with the project.
+const bestFile = (project) => path.join(projectsDir(), project, 'setup-best-model.json');
 
-// What `best()` gives, asked once in a setup run (`runId`) and kept, so every plan of the run (the
+// What `best()` gives, asked once in a setup run (`runId`) of `project` and kept, so every plan of the run (the
 // card's, the click's, the step's own) gives the same list and the card's hash holds. A run with no
 // id asks every time; a new run asks again, so one that found nothing tries again.
-async function bestOnce(runId, best) {
+async function bestOnce(project, runId, best) {
   if (typeof runId !== 'string') return best();
-  const kept = readJson(bestFile());
+  const kept = readJson(bestFile(project));
   if (kept?.runId === runId) return isModelName(kept.model) ? kept.model : null;
   const model = await best();
   try {
-    fs.mkdirSync(path.dirname(bestFile()), { recursive: true });
-    fs.writeFileSync(bestFile(), `${JSON.stringify({ runId, model })}\n`);
+    fs.mkdirSync(path.dirname(bestFile(project)), { recursive: true });
+    fs.writeFileSync(bestFile(project), `${JSON.stringify({ runId, model })}\n`);
   } catch { /* asked again at the next plan */ }
   return model;
 }
@@ -731,7 +732,7 @@ export function projectFilesStep({
 
       // The front desk's model (design section 8): the pin the configuration holds, else what Claude
       // Code's alias for its most capable model stands for now, asked only while there is no pin.
-      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(ctx.runId, best);
+      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(found.project, ctx.runId, best);
       const config = starterConfig({ answers: ctx.answers, frontDesk: pin });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
