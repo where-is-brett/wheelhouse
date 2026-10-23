@@ -7,7 +7,7 @@ ea1cf1c6f038511d6374061dd8a12e30cca136ac instructions/wheelhouse.instructions.md
 9e6473b087be157e4c31c5177f1b737b44aaf1bf skills/wheelhouse-briefing/SKILL.md
 e959e59ee82d4756aac53b79fc175a8021fea01e skills/wheelhouse-front-desk/SKILL.md
 01fbfc0cb1f344072c60f0154ff9b105eef4d4fd skills/wheelhouse-intake/SKILL.md
-db034b330567b33356900e73e84d99a99bf15275 skills/wheelhouse-lean/SKILL.md
+200fbe0cd4e8eab4ed77b5cf7db4c9815fdddfb0 skills/wheelhouse-lean/SKILL.md
 8d71e35d5aa4cee020a9df6e074e467467a5c4ff skills/wheelhouse-settings/SKILL.md
 02ef8878d401f6481f7480263363eeedfb59b853 skills/wheelhouse-sources/SKILL.md
 51d3313231876723a0782ec39e94e91189191877 skills/wheelhouse-stop/SKILL.md

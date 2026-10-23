@@ -147,6 +147,7 @@ test('the git steps work as written, in a repository of the test\'s own', () => 
   git('switch', 'main');
   git('merge', '--no-ff', 'feature/export-orders', '-m', `Export orders (approved ${approved})`);
   const merge = git('rev-parse', '--short=12', 'HEAD');
+  assert.equal(git('rev-parse', '--short=12', 'HEAD^2'), approved, 'the merge added the approved head (the playbook checks HEAD^2)');
   assert.equal(git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').length, 3, 'a merge commit has two parents');
   assert.match(git('log', '-1', '--format=%s'), new RegExp(`\\(approved ${approved}\\)$`));
   // The record: a line appended on main, committed alone.
@@ -166,6 +167,132 @@ test('the git steps work as written, in a repository of the test\'s own', () => 
   assert.ok(fs.existsSync(recordFile), 'the record stays');
   git('push', 'wheelhouse-copy', 'main');
   assert.equal(execFileSync('git', ['rev-parse', 'main'], { cwd: copy, env, encoding: 'utf8' }).trim(), git('rev-parse', 'main'));
+});
+
+
+// ---- What a feature may carry, and where the folder stays ----
+
+// A repository of the test's own, with git's identity set by the environment and nothing read from the real home.
+function repo(name) {
+  const dir = tempFolder(`wh-lean-${name}-`);
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: path.join(dir, 'none'), GIT_CONFIG_SYSTEM: path.join(dir, 'none'), GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const run = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim();
+  const make = (rel, ...args) => {
+    const cwd = path.join(dir, rel);
+    fs.mkdirSync(cwd, { recursive: true });
+    return { cwd, git: (...more) => run(cwd, ...args, ...more) };
+  };
+  return { dir, env, run, make };
+}
+const commitFile = (r, cwd, file, text, message) => {
+  fs.mkdirSync(path.dirname(path.join(cwd, file)), { recursive: true });
+  fs.writeFileSync(path.join(cwd, file), text);
+  r.run(cwd, 'add', file);
+  r.run(cwd, 'commit', '-m', message);
+};
+
+test('a feature is in hand from the branch until the director says it is built, and the chat never switches meanwhile', () => {
+  const record = section(playbook, 'The record');
+  assert.match(record, /A feature is in hand\*\* from `git switch -c feature\/<slug>`/);
+  assert.match(record, /never switch branches, whether the folder looks clean or not/);
+  assert.match(record, /shares this folder/);
+  assert.match(record, /no feature is in hand/);
+  assert.match(record, /Waiting to be recorded/);
+  assert.match(record, /own `at` date/);
+  // Switching to the main version happens in two places only: before making a branch, and after a clean review.
+  const switches = playbook.split('\n').filter((l) => l.includes('git switch main'));
+  assert.equal(switches.length, 3, 'building (before the branch), reviewing (clean) and the code host (after the merge)');
+  assert.ok(switches.some((l) => l.includes('git switch -c feature/<slug>')), 'the branch is made right after switching to a clean main');
+  assert.ok(switches.some((l) => /CLEAN/.test(l)), 'after a clean review');
+  assert.ok(switches.some((l) => l.includes('git fetch origin')), 'on the code host, after the merge');
+  const reviewing = section(playbook, 'Reviewing');
+  assert.match(reviewing, /`FINDINGS`[^\n]*\*\*stay on `feature\/<slug>`\*\*[^\n]*in hand again/);
+  assert.match(section(playbook, 'Building'), /stay on `feature\/<slug>` for the review/);
+});
+
+test('a feature that writes into the record or the board is caught before an approval card', () => {
+  const check = 'git diff --name-only main...feature/<slug> -- .wheelhouse wheelhouse';
+  assert.equal(playbook.split(check).length, 3, 'in Reviewing and in Merging');
+  assert.match(section(playbook, 'Reviewing'), new RegExp(check.replaceAll('.', '\\.')));
+  assert.match(section(playbook, 'Merging'), /don't offer \*\*Approve\*\*/);
+  // The command, as written, in a repository: silent for a clean feature, naming the file for one that touches the record or the board.
+  const r = repo('guard');
+  const { cwd } = r.make('project');
+  r.run(cwd, 'init', '-b', 'main');
+  commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
+  const diff = () => r.run(cwd, 'diff', '--name-only', 'main...feature/export', '--', '.wheelhouse', 'wheelhouse');
+  r.run(cwd, 'switch', '-c', 'feature/export');
+  commitFile(r, cwd, 'b.txt', 'two\n', 'Add the export');
+  assert.equal(diff(), '', 'nothing printed for an ordinary feature');
+  commitFile(r, cwd, '.wheelhouse/record/2026-10-23.jsonl', '{"kind":"approval"}\n', 'Builder writes an approval');
+  assert.equal(diff(), '.wheelhouse/record/2026-10-23.jsonl');
+  r.run(cwd, 'switch', '-c', 'feature/board', 'main');
+  commitFile(r, cwd, 'wheelhouse/board.md', 'Tier: Lean\n', 'Builder writes the board');
+  assert.equal(r.run(cwd, 'diff', '--name-only', 'main...feature/board', '--', '.wheelhouse', 'wheelhouse'), 'wheelhouse/board.md');
+});
+
+test('the code-host steps work against a bare origin, with no pull, no rebase and no force', () => {
+  const host = section(playbook, 'On a code host, without Node.js');
+  for (const command of [
+    'git fetch origin',
+    'git merge --no-ff origin/main -m "Take the code host\'s main version"',
+    'git rev-parse --short=12 origin/main^2',
+    'git rev-parse --short=12 origin/main',
+    'git push origin main:wheelhouse-record',
+  ]) assert.ok(host.includes(command), command);
+  assert.doesNotMatch(host, /git pull origin main|--force|--rebase/);
+  assert.match(host, /don't `git pull`/);
+  assert.match(host, /No rebase, no force/);
+
+  const r = repo('host');
+  const origin = r.make('origin.git');
+  r.run(origin.cwd, 'init', '--bare', '-b', 'main');
+  r.run(origin.cwd, 'config', 'receive.advertisePushOptions', 'true');
+  const copy = r.make('copy.git');
+  r.run(copy.cwd, 'init', '--bare', '-b', 'main');
+  const { cwd: mine } = r.make('mine');
+  r.run(mine, 'init', '-b', 'main');
+  r.run(mine, 'remote', 'add', 'origin', origin.cwd);
+  r.run(mine, 'remote', 'add', 'wheelhouse-copy', copy.cwd);
+  commitFile(r, mine, 'a.txt', 'one\n', 'Start');
+  r.run(mine, 'push', 'origin', 'main');
+  // Building and approving: the feature, then the approval line, committed on the local main version.
+  r.run(mine, 'switch', '-c', 'feature/export');
+  commitFile(r, mine, 'b.txt', 'two\n', 'Add the export');
+  const approved = r.run(mine, 'rev-parse', '--short=12', 'feature/export');
+  r.run(mine, 'switch', 'main');
+  commitFile(r, mine, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, '{"kind":"approval"}\n', 'Record: approval merge-export');
+  // The push with the host's options, exactly as the playbook gives it.
+  r.run(mine, 'push', '-o', 'merge_request.create', '-o', 'merge_request.target=main', '-o', 'merge_request.remove_source_branch', 'origin', 'feature/export');
+  // The host merges the request, with a merge commit, in its own copy.
+  const { cwd: hostSide } = r.make('host-side');
+  r.run(hostSide, 'init', '-b', 'main');
+  r.run(hostSide, 'remote', 'add', 'origin', origin.cwd);
+  r.run(hostSide, 'fetch', 'origin');
+  r.run(hostSide, 'switch', '-c', 'main', 'origin/main');
+  r.run(hostSide, 'merge', '--no-ff', 'origin/feature/export', '-m', 'Merge request !1');
+  r.run(hostSide, 'push', 'origin', 'main');
+  // The local main version has now diverged from origin/main: a pull would be asked how to reconcile them.
+  r.run(mine, 'fetch', 'origin');
+  assert.notEqual(r.run(mine, 'rev-parse', 'main'), r.run(mine, 'rev-parse', 'origin/main'));
+  assert.equal(r.run(mine, 'rev-list', '--count', 'origin/main..main'), '1', 'the record commit is ahead');
+  assert.equal(r.run(mine, 'rev-list', '--count', 'main..origin/main'), '2', 'the host\'s merge and the feature are behind');
+  // The playbook's steps.
+  r.run(mine, 'merge', '--no-ff', 'origin/main', '-m', 'Take the code host\'s main version');
+  assert.equal(r.run(mine, 'rev-parse', '--short=12', 'origin/main^2'), approved, 'the host added the approved head');
+  const hostMerge = r.run(mine, 'rev-parse', '--short=12', 'origin/main');
+  assert.match(hostMerge, /^[0-9a-f]{12}$/);
+  assert.notEqual(hostMerge, r.run(mine, 'rev-parse', '--short=12', 'HEAD'), 'the merge line takes the host\'s merge, not the local one');
+  commitFile(r, mine, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, '{"kind":"approval"}\n{"kind":"merge"}\n', 'Record: merge export');
+  r.run(mine, 'push', 'origin', 'main:wheelhouse-record');
+  assert.equal(r.run(origin.cwd, 'rev-parse', 'wheelhouse-record'), r.run(mine, 'rev-parse', 'HEAD'), 'the record reached origin');
+  assert.equal(r.run(origin.cwd, 'rev-parse', 'main'), r.run(mine, 'rev-parse', 'origin/main'), 'origin\'s main version is the host\'s alone');
+  r.run(mine, 'push', 'wheelhouse-copy', 'main');
+  assert.equal(r.run(copy.cwd, 'rev-parse', 'main'), r.run(mine, 'rev-parse', 'HEAD'));
+  // A second round pushes the record again with no force.
+  commitFile(r, mine, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, '{"kind":"approval"}\n{"kind":"merge"}\n{"kind":"copy"}\n', 'Record: copy');
+  r.run(mine, 'push', 'origin', 'main:wheelhouse-record');
+  assert.equal(r.run(origin.cwd, 'rev-parse', 'wheelhouse-record'), r.run(mine, 'rev-parse', 'HEAD'));
 });
 
 // ---- STOP ----
