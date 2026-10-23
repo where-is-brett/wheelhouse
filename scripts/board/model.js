@@ -6,6 +6,7 @@
 // reaches the board through oneLine, as one capped line with no Markdown of its own.
 import { LINE_CHARS, WEEK_MS } from '../lib/core-numbers.js';
 import { latestFor } from '../state/views.js';
+import { SAFETY_LINES } from '../agents/safety-lines.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
@@ -265,6 +266,20 @@ function extraHealth(incidents, sources) {
   return lines;
 }
 
+// How many of the agent's safety lines the board shows; the full view and the data note show them all.
+const AGENT_LINES_SHOWN = 2;
+
+// The health lines for the agent a project runs on: its name with its first safety lines, each from the agent's
+// own adapter. `agent` is the agent's name, or { name, ...what the adapter's safetyLine reads } (the tier, the
+// level, the system and what is added). An agent with no safety line adds none, so a project on such an agent
+// reads as it always has. An agent that isn't known, or options the adapter refuses, throw.
+function agentHealth(agent) {
+  const { name, ...options } = typeof agent === 'string' ? { name: agent } : agent;
+  if (typeof name !== 'string' || !Object.hasOwn(SAFETY_LINES, name)) throw new Error(`The board has no safety line for the agent ${JSON.stringify(name)}`);
+  const { label, safetyLine } = SAFETY_LINES[name];
+  return safetyLine(options).slice(0, AGENT_LINES_SHOWN).map((line, i) => ({ level: 'watch', text: cap(i === 0 ? `${label}: ${line}` : line) }));
+}
+
 // Builds one part, or names it in `missing` when its inputs are too damaged to build it.
 function part(missing, name, build, fallback) {
   try {
@@ -275,7 +290,7 @@ function part(missing, name, build, fallback) {
   }
 }
 
-export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, now } = {}) {
+export function boardModel({ project, views, profileUnconfirmed, events, usage, health, settings, sources, agent, now } = {}) {
   const missing = [];
   // A clock that can't be read is named, never replaced by this computer's.
   // Only a Date, a finite number, or a function giving one of those, is a clock.
@@ -365,7 +380,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       what: oneLine(m.data.forUsers) || (isPr(m.data.pr) ? `Pull request #${m.data.pr} merged` : 'A pull request merged'), at: timeOf(m.at),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'health', () => extraHealth(loop?.incidents, report), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report), [])],
     budget: {
       week: week ? { from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd) } : null,
       share: numberOrNull(week?.share),

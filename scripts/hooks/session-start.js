@@ -68,7 +68,7 @@ import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/s
 import { composeCard } from '../cards/compose.js';
 import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 import { agentOfInput } from '../agents/of-input.js';
-import claudeCodeSheet from '../../adapters/claude-code/tool-sheet.js';
+import { TOOL_SHEETS } from '../agents/tool-sheets.js';
 import { frontDeskCommand } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -109,10 +109,11 @@ export const FOREMAN_HELD_UNREADABLE = 'The foreman is held back because setup\'
 export const GUARD_FLOOR = CLAUDE_CODE_FLOOR.split('.').map(Number);
 export const OLD_CLAUDE_CODE = `This Claude Code is older than ${CLAUDE_CODE_FLOOR}, so Wheelhouse's mod doesn't load and a guard that fails may not stop a tool call: update Claude Code`;
 
-// Each agent's tool sheet. The adapters' registry (scripts/agents/index.js) reaches the setup and
-// evaluation code, which a hook must not load, so the session start holds each sheet on its own, as
-// the kit holds each agent's translation. An agent with no entry here is given no sheet.
-export const TOOL_SHEETS = Object.freeze({ 'claude-code': claudeCodeSheet });
+// Each agent's tool sheet, from scripts/agents/tool-sheets.js: the adapters' registry
+// (scripts/agents/index.js) reaches the setup and evaluation code, which a hook must not load, so the
+// sheets come from a file that imports only each adapter's tool-sheet module. An agent with no entry
+// there is given no sheet.
+export { TOOL_SHEETS };
 
 // The lines that tell a session its agent's tools and where the Wheelhouse command is: the agent's
 // tool sheet, then the command line (the front desk's command, which the playbooks' other scripts

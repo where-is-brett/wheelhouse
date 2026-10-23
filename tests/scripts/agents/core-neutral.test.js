@@ -38,3 +38,10 @@ test('no file outside the allowed folders names Copilot', () => {
   }
   assert.deepEqual(offenders, [], 'These core files name Copilot; move that into an adapter');
 });
+
+test('the board\'s model and the session start get Copilot\'s lines from the adapters and never name it', () => {
+  for (const file of ['scripts/board/model.js', 'scripts/hooks/session-start.js', 'scripts/hooks/kit.js']) {
+    assert.ok(!Object.hasOwn(ALLOWED_CORE_FILES, file), `${file} is on the allowed list`);
+    assert.doesNotMatch(fs.readFileSync(path.join(REPO, file), 'utf8'), /copilot/i, `${file} names Copilot`);
+  }
+});

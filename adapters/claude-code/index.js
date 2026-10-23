@@ -5,6 +5,7 @@
 import identity from './identity.js';
 import hooks from './hooks.js';
 import packaging from './packaging.js';
+import safetyLine from './safety-line.js';
 import settings from './settings.js';
 import sessions from './sessions.js';
 import tools from './tools.js';
@@ -25,6 +26,6 @@ export default Object.freeze({
   packaging,
   // The playbooks' general words, mapped to Claude Code's tools (tool-sheet.md); the session start hands it over.
   toolSheet,
-  safetyLine: () => [],
+  safetyLine,
   evalRunner: Object.freeze({ run: ({ argv = [], ...options } = {}) => runEvals(argv, options) }),
 });

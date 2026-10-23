@@ -41,9 +41,9 @@ test('checkAdapter names a missing part in plain words', () => {
 });
 
 test('adapterFor throws for an agent it does not know', () => {
-  assert.deepEqual(AGENTS, ['claude-code']);
+  assert.deepEqual(AGENTS, ['claude-code', 'copilot']);
   assert.equal(adapterFor('claude-code'), claudeCode);
-  assert.throws(() => adapterFor('copilot'), /no adapter for the agent "copilot"/);
+  assert.throws(() => adapterFor('model-x'), /no adapter for the agent "model-x"/);
   assert.throws(() => adapterFor('toString'), /no adapter/);
   assert.throws(() => adapterFor(undefined), /no adapter/);
 });
