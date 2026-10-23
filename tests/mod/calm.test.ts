@@ -256,3 +256,18 @@ test('the foot has Settings alone on the board view, and Done takes the settings
     await ui.unmount()
   }
 })
+
+test('the week\'s usage line shows once in Health and this week', async ($, on) => {
+  const { drawn } = setup(on)
+  const WEEK = 'Usage this week: 1% of your weekly allowance.'
+  for (const surface of SURFACES) {
+    // The bridge gives the same line as the health note's week and as the usage line.
+    const both = await drawn($, surface, model({ usage: WEEK, healthNote: { allWell: true, protection: 'Standard', week: WEEK } }))
+    expect((await texts(both)).filter((t: string) => t === WEEK)).toHaveLength(1)
+    await both.unmount()
+    // A model with no week in its health note still shows the usage line, once.
+    const older = await drawn($, surface, model({ usage: WEEK, healthNote: { allWell: true, protection: 'Standard', week: null } }))
+    expect((await texts(older)).filter((t: string) => t === WEEK)).toHaveLength(1)
+    await older.unmount()
+  }
+})

@@ -64,8 +64,10 @@ export const sinceLine = (hhmm) => `Since you were last here at ${hhmm}.`;
 
 // The note shown when Suggest a change… is sent with nothing written in it.
 export const WRITE_FIRST = 'Write what you\'d change first';
-// The note shown when Undo is pressed after its minute has passed.
+// The note shown when Undo is pressed for a setting with no change to undo.
 export const NOTHING_TO_UNDO = 'There\'s nothing to undo now';
+// The note shown when Undo is pressed after its minute has passed.
+export const TOO_LATE_TO_UNDO = 'It\'s too late to undo that. Undo lasts one minute.';
 // What Undo is offered as, said after a setting's pick that can be undone.
 export const UNDO_IN_PANE = 'Undo in the pane for a minute.';
 // How long ago a card was asked: "asked just now", "asked 2 hours ago".

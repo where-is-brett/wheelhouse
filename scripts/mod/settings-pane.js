@@ -21,7 +21,7 @@
 import { SETTINGS, definitionOf, checkSetting, say } from '../settings/catalogue.js';
 import { effectiveSettings, sayTime, sayValue } from '../settings/effective.js';
 import { AWAY, UNDO_MS } from '../lib/mod-numbers.js';
-import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_TO_UNDO, awayToast } from '../lib/calm-words.js';
+import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_TO_UNDO, TOO_LATE_TO_UNDO, awayToast } from '../lib/calm-words.js';
 import { stopState as defaultStopState } from '../lib/stop.js';
 import { confirmationFor, listEvents } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
@@ -45,6 +45,7 @@ export const SAYS = {
   notOffered: 'That choice isn\'t offered now',
   stopOn: SETTINGS_UNDER_STOP,
   nothingToUndo: NOTHING_TO_UNDO,
+  tooLateToUndo: TOO_LATE_TO_UNDO,
   notTaken: 'That setting couldn\'t be changed now: the helper didn\'t take it',
   late: 'The helper didn\'t answer in time; if the change lands, it waits for your Confirm',
   failed: 'That setting couldn\'t be changed this time',
@@ -403,6 +404,13 @@ function undoOf(key, changes, nowMs) {
   return live ? { value: structuredClone(before.value), ...(before.until === undefined ? {} : { until: before.until }) } : { value: structuredClone(SETTINGS[key].default) };
 }
 
+// Whether a setting that offers Undo has a change confirmed UNDO_MS or more before `nowMs`: an
+// Undo pressed then is too late, not one with nothing to undo.
+function undoPast(key, changes, nowMs) {
+  if (!isRecord(changes) || !Object.hasOwn(changes, key) || !Object.hasOwn(PANE, key) || !['levels', 'presence'].includes(PANE[key].kind)) return false;
+  return nowMs - Date.parse(changes[key]?.at) >= UNDO_MS;
+}
+
 // The setting event the helper made, read back from the clone it kept it in.
 // It must be the setting that was pressed: the key, the value and the end time all equal, so an
 // answer naming some other event signs nothing.
@@ -417,7 +425,7 @@ function eventOf(home, project, id, data) {
 //   -> Promise<{ made, says }>
 // `choice` is a choice's id, or `undo`, which sets the value in force before the row's latest
 // change while that change is under UNDO_MS old (`changes` is changesFor's answer, read from the
-// views when not given).
+// views when not given); pressed later, it says it is too late.
 // `made` is true once the setting is written and its confirmation signed. A setting written but
 // not confirmed is not in force, and the press says it waits for the director's Confirm. Records
 // nothing for a choice that isn't offered or that the catalogue refuses. Never throws.
@@ -433,8 +441,9 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
   const clock = typeof now === 'function' ? now : () => new Date(now);
   if (stopState().on) return no(SAYS.stopOn);
   const undoing = choice === 'undo';
-  const picked = undoing ? undoOf(key, changes ?? changesFor({ project }), instantOf(clock)) : choiceOf(key, choice, { now: clock, timeZone });
-  if (picked === null && undoing) return no(SAYS.nothingToUndo);
+  const known = undoing ? changes ?? changesFor({ project }) : null;
+  const picked = undoing ? undoOf(key, known, instantOf(clock)) : choiceOf(key, choice, { now: clock, timeZone });
+  if (picked === null && undoing) return no(undoPast(key, known, instantOf(clock)) ? SAYS.tooLateToUndo : SAYS.nothingToUndo);
   if (picked === null) {
     // The evening edge passes while a row is open: say which choice has gone, and why.
     const past = key === 'presence' && choice === 'away-evening' && Number.isFinite(instantOf(clock));

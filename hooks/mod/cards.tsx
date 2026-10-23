@@ -32,6 +32,8 @@ const LIFT = 'lift-stop'
 const WHY_OPEN = { plugin: 'wheelhouse', key: 'why' } as const
 const SUGGESTING = { plugin: 'wheelhouse', key: 'suggesting' } as const
 const SUGGEST_BOX = (id: string) => `suggest:${id}`
+// How many lines tall the Suggest a change… box is, so a sentence or two stays in sight.
+const SUGGEST_ROWS = 4
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -275,7 +277,7 @@ function drawButton($: EngineInterface, t: Table, card: Card, id: string, b: Giv
   return why ? small(t, key, label, () => pressWhy($, card, turn)) : small(t, key, label, () => pressButton($, card, b.label, after))
 }
 
-// The box for a suggested change: the words typed so far, Send (plain while there are none or
+// The box for a suggested change, a few lines tall: the words typed so far, Send (plain while there are none or
 // another press is recorded) and Cancel. Where the surface has no Input, the note says to type it
 // in the chat instead.
 function drawSuggest($: EngineInterface, t: Table, typeable: boolean, card: Card, id: string, words: string, pressing: Pressing, after: After) {
@@ -288,6 +290,7 @@ function drawSuggest($: EngineInterface, t: Table, typeable: boolean, card: Card
         key={SUGGEST_BOX(id)}
         label={WHAT_WOULD_YOU_CHANGE}
         value={words}
+        rows={SUGGEST_ROWS}
         autoFocus
         onInput={(v: string) => keepWords($, id, v)}
         onSubmit={(v: string) => pressSuggest($, card, after, v)}
