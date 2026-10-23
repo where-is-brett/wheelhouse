@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "/bin/sh -c 'exec /bin/sh \"${COPILOT_HOME:-$HOME/.copilot}/hooks/wheelhouse-lean-guard.sh\"'",
+        "bash": "/bin/sh -c 'exec /bin/sh \"${COPILOT_HOME:-$HOME/.copilot}/hooks/wheelhouse-lean-guard.sh\"'",
+        "timeoutSec": 120
+      }
+    ]
+  }
+}

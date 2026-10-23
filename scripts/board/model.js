@@ -314,6 +314,27 @@ function agentHealth(agent) {
   return safetyLine(options).slice(0, AGENT_LINES_SHOWN).map((line, i) => ({ level: 'watch', text: cap(i === 0 ? `${label}: ${line}` : line) }));
 }
 
+// How long a session's mark of a tool Wheelhouse doesn't know keeps the board's line (ruling P5-19).
+const UPDATE_WAITING_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The board's lines for the tools the agent has that Wheelhouse doesn't know yet (ruling P5-19, Review Focus 1):
+// one per tool named by an `unknown-tool` mark (a plain note) in the last UPDATE_WAITING_DAYS, in the agent's own
+// words (scripts/agents/safety-lines.js). No agent, an agent the board doesn't know (the agent line names that),
+// or no clock adds none.
+function updateLines(events, agent, nowMs) {
+  const name = typeof agent === 'string' ? agent : agent?.name;
+  if (typeof name !== 'string' || !Object.hasOwn(SAFETY_LINES, name) || !Number.isFinite(nowMs)) return [];
+  const tools = new Set();
+  for (const e of events) {
+    const at = Date.parse(e?.at);
+    if (e?.kind !== 'note' || e.data?.mark !== 'unknown-tool' || typeof e.data.name !== 'string' || e.data.name === '') continue;
+    if (!(at <= nowMs && nowMs - at <= UPDATE_WAITING_DAYS * DAY_MS)) continue;
+    tools.add(oneLine(e.data.name));
+  }
+  return [...tools].sort().map((tool) => ({ level: 'watch', text: cap(SAFETY_LINES[name].updateWaiting(tool)) }));
+}
+
 // Builds one part, or names it in `missing` when its inputs are too damaged to build it.
 function part(missing, name, build, fallback) {
   try {
@@ -421,7 +442,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       ...(oneLine(m.data.forUsers) ? {} : { behind: true }),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
       week: week ? { from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd) } : null,
       share: numberOrNull(week?.share),

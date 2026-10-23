@@ -67,8 +67,9 @@ const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views',
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
 // recorded as a card, since under STOP the helper writes nothing; the click on it is signed by the
-// prompt record from its set line, and only while STOP is on (ruling F25).
-const LIFT_STOP_CARD = Object.freeze({
+// prompt record from its set line, and only while STOP is on (ruling F25). The helper's own window composes
+// the same card for a Lift STOP confirmed there (scripts/host/helper.js, /confirm).
+export const LIFT_STOP_CARD = Object.freeze({
   kind: 'lift-stop',
   level: 3,
   what: 'STOP is on: every agent has halted, and nothing is written, pushed or merged.',
@@ -786,7 +787,9 @@ export async function view({ client, cwd, name, now }) {
   const { views, cards: events, answers } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels', answers: name === 'work' });
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
-    return listed(rules.map((r) => `${flat(r.words)} (${r.status === 'accepted' ? 'in force' : 'waiting for the director to confirm it'})`), 'The rulebook is empty.');
+    // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.
+    const status = (r) => (r.status !== 'accepted' ? 'waiting for the director to confirm it' : r.proof === 'chat-click' ? 'in force, by a click in the chat, not proven' : 'in force');
+    return listed(rules.map((r) => `${flat(r.words)} (${status(r)})`), 'The rulebook is empty.');
   }
   if (name === 'waiting') {
     // Numbered as the board numbers them; a composed card is named by its `what`, and each card by

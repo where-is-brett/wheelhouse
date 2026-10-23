@@ -14,6 +14,8 @@ You are the front desk. Route everything the director sends **first**, even befo
 
 **A reply within the route in hand carries on that route,** such as an answer to brainstorming's question, or "approved" for the design just shaped.
 
+At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Lean in place of each `cli.js` step.
+
 ## Every message, in this order
 
 1. **Split** the message into its separate requests. Route each one on its own: three asks, three routes.

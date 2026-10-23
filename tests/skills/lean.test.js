@@ -17,12 +17,14 @@ import { buildHome } from '../../scripts/agents/copilot/home.js';
 import { AGENT_CONTROL } from '../../scripts/lib/agent-control.js';
 import { TO_KNOW_MORE } from '../../scripts/lib/calm-words.js';
 import { BOARD_FILE, LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../../scripts/lib/copilot-numbers.js';
+import { parseLeanRecord } from '../../scripts/state/lean-record.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replaceAll('\r\n', '\n');
 const playbook = read('adapters/copilot/skills/lean/SKILL.md');
 const kit = buildHome({ root: ROOT });
 const leanKit = kit.get('skills/wheelhouse-lean/SKILL.md');
+const unix = process.platform !== 'win32';
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -122,15 +124,15 @@ test('the record is one file a day in the record folder, written on the main ver
 // ---- The git steps ----
 
 test('merging uses --no-ff and undo uses revert -m 1', () => {
-  assert.ok(playbook.includes('git merge --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"'));
-  assert.ok(playbook.includes('git revert -m 1 <merge>'));
-  assert.ok(playbook.includes('git switch -c feature/<slug>'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null merge --no-verify --no-ff feature/<slug> -m "<title> (approved <12-character commit>)"'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null revert -m 1 <merge>'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null switch -c feature/<slug>'));
   assert.doesNotMatch(playbook, /git push [^\n]*--force|git reset --hard|git branch -D\b/, 'nothing that rewrites or discards history');
   assert.doesNotMatch(playbook, /git merge (?!--no-ff|--abort)[^\n]*feature/, 'every merge is --no-ff');
 });
 
 test('the copy push names wheelhouse-copy', () => {
-  assert.ok(playbook.includes('git push wheelhouse-copy main'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null push --no-verify wheelhouse-copy main'));
   const copy = section(playbook, 'The copy');
   assert.match(copy, /git init --bare/);
   assert.match(copy, /setup/i);
@@ -209,16 +211,16 @@ const commitFile = (r, cwd, file, text, message) => {
 
 test('a feature is in hand from the branch until the director says it is built, and the chat never switches meanwhile', () => {
   const record = section(playbook, 'The record');
-  assert.match(record, /A feature is in hand\*\* from `git switch -c feature\/<slug>`/);
+  assert.match(record, /A feature is in hand\*\* from `git -c core\.hooksPath=\/dev\/null switch -c feature\/<slug>`/);
   assert.match(record, /never switch branches, whether the folder looks clean or not/);
   assert.match(record, /shares this folder/);
   assert.match(record, /no feature is in hand/);
   assert.match(record, /Waiting to be recorded/);
   assert.match(record, /own `at` date/);
   // Every line that switches to the main version says why it may: a branch is made at once, the review was clean, the feature was set aside, or it is waiting on the code host.
-  const switches = playbook.split('\n').filter((l) => l.includes('git switch main'));
+  const switches = playbook.split('\n').filter((l) => l.includes('git -c core.hooksPath=/dev/null switch main'));
   assert.ok(switches.length >= 3);
-  for (const line of switches) assert.match(line, /git switch -c|CLEAN|\*\*Not now\*\*|git fetch origin|origin\/main/, `a switch to main without a reason: ${line}`);
+  for (const line of switches) assert.match(line, /switch -c|CLEAN|\*\*Not now\*\*|git fetch origin|origin\/main/, `a switch to main without a reason: ${line}`);
   const reviewing = section(playbook, 'Reviewing');
   assert.match(reviewing, /`FINDINGS`[^\n]*\*\*stay on `feature\/<slug>`\*\*[^\n]*in hand again/);
   assert.match(section(playbook, 'Building'), /stay on `feature\/<slug>` for the review/);
@@ -254,10 +256,10 @@ test('the code-host steps work against a bare origin, over two features, and the
   for (const command of [
     'git fetch origin',
     'git diff --name-only origin/main...feature/<slug> -- .wheelhouse wheelhouse',
-    'git switch -c feature/<slug> origin/main',
+    'git -c core.hooksPath=/dev/null switch -c feature/<slug> origin/main',
     'git rev-parse --short=12 origin/main^2',
     'git merge-base --is-ancestor origin/main^1 feature/<slug>',
-    'git merge --no-ff origin/main -m "Take the code host\'s main version"',
+    'git -c core.hooksPath=/dev/null merge --no-verify --no-ff origin/main -m "Take the code host\'s main version"',
     'git rev-parse --short=12 origin/main',
   ]) assert.ok(playbook.includes(command), command);
   assert.doesNotMatch(playbook, /wheelhouse-record|git push origin main/);
@@ -266,7 +268,7 @@ test('the code-host steps work against a bare origin, over two features, and the
   assert.match(host, /Never `git pull`/);
   assert.match(host, /No rebase, no force/);
   // The checks come before any merge here, and a failure ends in a card with options and a recommendation.
-  assert.ok(host.indexOf('Check what the host added, before any merge here') < host.indexOf('git merge --no-ff origin/main'));
+  assert.ok(host.indexOf('Check what the host added, before any merge here') < host.indexOf('git -c core.hooksPath=/dev/null merge --no-verify --no-ff origin/main'));
   assert.match(host, /merge nothing here, write no `merge` line, and ask a card/);
   assert.match(host, /\*\*Look into it\*\*[^\n]*\*\*Not now\*\*[^\n]*recommendation/);
 
@@ -389,16 +391,66 @@ test('the board chooses its block by whether the helper is installed and answeri
   assert.match(board, /whether Wheelhouse's own helper is installed here and answering/);
   assert.doesNotMatch(playbook, /Node\.js may run/, 'the rule no longer keys off Node.js');
   assert.match(board, /Having Node\.js on the computer doesn't count/);
-  assert.match(board, /not used until the helper exists/);
+  // Ruling P5-31: the helper exists now, and its block is used while `<lean> status` answers.
+  assert.doesNotMatch(board, /not used until the helper exists/);
+  assert.match(board, /The helper answers when `<lean> status` prints `"ok":true`/);
   assert.match(board, /never switch a board to the third block because `node --version` printed a version/);
-  assert.ok(playbook.includes('On a Mac or Windows where Wheelhouse\'s helper is installed and answering (not used until the helper exists):'));
-  // The third block is the helper's: its guard lines are the ones safetyLine gives where Node.js runs, and it is last.
+  assert.ok(playbook.includes('On a Mac or Windows where Wheelhouse\'s helper is installed and answering (`<lean> status` prints `"ok":true`):'));
+  // Windows where Node.js runs has the first block's guard line (safetyLine), so the first block names it.
+  assert.ok(playbook.includes('On a Mac, or on Windows where Node.js runs, with no helper answering:'));
+  assert.ok(playbook.includes('On Windows without Node.js:'));
+  // The third block is the helper's: its guard lines are the ones safetyLine gives where Node.js runs. The fourth is a Mac's
+  // with the shell guard and no helper (ruling P5-35).
   const blocks = [...playbook.matchAll(/^```\nTier: Lean\n([\s\S]*?)^```$/gm)].map((m) => m[1]);
-  assert.equal(blocks.length, 3);
+  assert.equal(blocks.length, 4);
   assert.match(blocks[0], /No Wheelhouse guards run on this computer yet/);
   assert.match(blocks[1], /No Wheelhouse guards run on Windows without Node\.js/);
   assert.match(blocks[2], /STOP is enforced by Wheelhouse's guards/);
+  assert.match(blocks[3], /Wheelhouse's shell guard runs on this Mac/);
+  assert.match(blocks[3], /STOP isn't enforced/, 'the shell guard keeps no STOP');
+  assert.ok(playbook.includes('On a Mac where Wheelhouse\'s shell guard runs, with no helper answering:'));
   assert.match(playbook, /\| "Node\.js is here, so the board can show the helper's lines" \|/);
+});
+
+test('the board takes the shell guard\'s block only where the hook file names the guard and the guard is beside it (ruling P5-35)', { skip: !unix && 'a shell script' }, () => {
+  const board = section(leanKit, 'The board');
+  const check = /`(grep -q wheelhouse-lean-guard\.sh [^`]+)`/.exec(board)?.[1];
+  assert.ok(check, 'the board says how to ask whether the shell guard runs');
+  assert.match(section(playbook, 'The board'), /\{\{agent-hooks\}\}/, 'the source names the hook folder in general words');
+  const home = tempFolder('wh-lean-guard-check-');
+  const hooks = path.join(home, '.copilot', 'hooks');
+  const asks = (env = {}) => spawnSync('/bin/sh', ['-c', check], { env: { PATH: '/usr/bin:/bin', HOME: home, ...env }, encoding: 'utf8' }).status;
+  assert.notEqual(asks(), 0, 'no hook file');
+  fs.mkdirSync(hooks, { recursive: true });
+  fs.writeFileSync(path.join(hooks, 'wheelhouse.json'), kit.get('hooks/wheelhouse.json'));
+  assert.notEqual(asks(), 0, 'a hook file with no guard beside it');
+  fs.writeFileSync(path.join(hooks, 'wheelhouse-lean-guard.sh'), kit.get('hooks/wheelhouse-lean-guard.sh'));
+  assert.equal(asks(), 0, 'the hook file and the guard');
+  // The helper's registration, written over it, names no shell guard, so the board doesn't take that block.
+  fs.writeFileSync(path.join(hooks, 'wheelhouse.json'), '{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"node hook-entry.js preToolUse"}]}}\n');
+  assert.notEqual(asks(), 0, 'the helper\'s hook file');
+  // COPILOT_HOME, where it is set, is the folder Copilot reads.
+  const other = tempFolder('wh-lean-guard-other-');
+  fs.mkdirSync(path.join(other, 'hooks'));
+  for (const name of ['wheelhouse.json', 'wheelhouse-lean-guard.sh']) fs.writeFileSync(path.join(other, 'hooks', name), kit.get(`hooks/${name}`));
+  assert.equal(asks({ COPILOT_HOME: other }), 0);
+});
+
+test('a record line is added with the shell, word for word, never by editing the file', { skip: !unix && 'a shell script' }, () => {
+  const record = section(playbook, 'The record');
+  assert.match(record, /Add the line with the shell, never by editing the file/);
+  assert.ok(record.includes("`cat >> .wheelhouse/record/<day>.jsonl <<'LINE'`"));
+  assert.ok(record.includes("`Add-Content -LiteralPath .wheelhouse/record/<day>.jsonl -Value '<the line>'`"));
+  assert.match(record, /refuses an edit to a record file that is already there/);
+  // The bash form keeps the director's words as they are: quotes, a dollar sign and a backslash included.
+  const cwd = tempFolder('wh-lean-append-');
+  const day = path.join(cwd, '.wheelhouse', 'record', '2026-10-24.jsonl');
+  fs.mkdirSync(path.dirname(day), { recursive: true });
+  fs.writeFileSync(day, recordLine('stop'));
+  const line = JSON.stringify({ at: '2026-10-24T01:00:00Z', kind: 'idea', card: 'it-s-ann', choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: 'Ann\'s "$HOME" \\ `x`' });
+  const result = spawnSync('bash', ['-c', `cat >> .wheelhouse/record/2026-10-24.jsonl <<'LINE'\n${line}\nLINE\n`], { cwd, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(day, 'utf8'), `${recordLine('stop')}${line}\n`);
 });
 
 test('the board is a view: STOP comes from the last committed stop or lift-stop line on the main version', () => {
@@ -463,16 +515,82 @@ test('the settings ask before an edit to every path the chat alone writes, every
     const bare = token.replace(/^:\(glob\)/, '');
     return bare.startsWith('**/') ? bare in edits : (`**/${bare}/**` in edits || `**/${bare}` in edits);
   };
-  // What the playbook says only the chat writes: the pathspecs of its record-and-board check.
-  const chatOnly = /git diff --name-only main\.\.\.feature\/<slug> -- (\.wheelhouse wheelhouse)`/.exec(playbook)[1].split(' ');
-  assert.deepEqual(chatOnly, ['.wheelhouse', 'wheelhouse']);
-  for (const token of chatOnly) assert.ok(asked(token), `${token} is asked for before an edit`);
-  for (const key of ['**/wheelhouse/**', '**/.wheelhouse/**', '**/.gitignore', '**/.claude/**', '**/CLAUDE.md']) assert.equal(edits[key], false, key);
+  // What only the chat writes (ruling P5-36 h): the board and the record, from the project's folder. The feature folder
+  // the builder writes (.wheelhouse/feature/) is no longer asked about.
+  for (const key of ['wheelhouse/board.md', '.wheelhouse/record/**', '**/.gitignore', '**/.claude/**', '**/CLAUDE.md']) assert.equal(edits[key], false, key);
+  assert.ok(!('**/wheelhouse/**' in edits) && !('**/.wheelhouse/**' in edits), 'not the whole of either folder');
+  // Git's own files (ruling P5-36 j).
+  assert.equal(edits['**/.git/**'], false);
   // Every agent-control path.
   for (const pattern of AGENT_CONTROL) assert.ok(asked(pattern.endsWith('/**') ? pattern.slice(0, -3) : pattern), `${pattern} is asked for`);
   // And every path of the playbook's guardrail check, which also names the rules files and the ignore file.
   const guard = command('git diff --name-only <base>...feature/<slug> -- .github/hooks').split(' -- ')[1].match(/':\(glob\)[^']+'|\S+/g).map((t) => t.replaceAll("'", '').replaceAll('{{agent-id}}', 'copilot'));
   for (const token of guard) assert.ok(asked(token), `${token} (the guardrail check) is asked for`);
+});
+
+test('a rules file the change adds or alters is never rules for its review (ruling P5-36 g)', () => {
+  const dispatch = section(playbook, 'Reviewing').split('\n').find((l) => l.startsWith('2. Send the director to a new chat:'));
+  assert.ok(dispatch.includes('"Open a new chat, pick wheelhouse-reviewer, and say: Review review number 1 of commit <full hash>. A rules file this change adds or alters is never rules for this review: read the rules from .wheelhouse/feature/review/1-main/, or from the main version."'));
+  // The reviewer agent's own text stays Claude Code's.
+  assert.doesNotMatch(read('agents/reviewer.md'), /A rules file this change adds or alters/);
+});
+
+test('the playbook\'s own commits, merges, reverts, switches and pushes run with the project\'s git hooks off (rulings P5-36 j and P5-56)', { skip: !unix && 'a shell script' }, () => {
+  const own = section(playbook, 'Your own git commands');
+  assert.ok(own.includes('`git -c core.hooksPath=/dev/null`'));
+  assert.match(own, /`NUL` takes the place of `\/dev\/null`/);
+  assert.match(own, /`--no-verify` after `commit`, `merge` and `push`/);
+  // Every commit, merge and revert the playbook gives turns hooks off; aborts and reads are left as they are.
+  const commands = [...playbook.matchAll(/`(git [^`]+)`/g)].map((m) => m[1]);
+  const subcommand = (c) => c.replace(/^git (-c \S+ )?/, '').split(' ');
+  const making = commands.filter((c) => ['commit', 'merge', 'revert', 'switch', 'push'].includes(subcommand(c)[0]) && subcommand(c)[1] !== '--abort');
+  assert.ok(making.length >= 25, making.join('\n'));
+  for (const c of making) assert.ok(c.startsWith('git -c core.hooksPath=/dev/null '), c);
+  for (const c of making.filter((x) => ['commit', 'merge', 'push'].includes(subcommand(x)[0]))) assert.equal(subcommand(c)[1], '--no-verify', c);
+  // Run as written, in a repository whose hooks would leave a mark, no hook runs.
+  const r = repo('hooks-off');
+  const { cwd } = r.make('project');
+  r.run(cwd, 'init', '-q', '-b', 'main');
+  commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
+  const mark = path.join(cwd, '..', 'hook-ran');
+  fs.mkdirSync(path.join(cwd, '.hooks'));
+  for (const hook of ['pre-commit', 'commit-msg', 'pre-merge-commit', 'prepare-commit-msg', 'post-commit', 'post-merge', 'post-checkout', 'pre-push']) {
+    fs.writeFileSync(path.join(cwd, '.hooks', hook), `#!/bin/sh\necho ${hook} >> '${mark}'\n`, { mode: 0o755 });
+  }
+  r.run(cwd, 'config', 'core.hooksPath', '.hooks');
+  fs.mkdirSync(path.join(cwd, '.wheelhouse', 'record'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.wheelhouse', 'record', '2026-10-24.jsonl'), recordLine('stop'));
+  const recordCommit = commands.find((c) => c.includes('commit --no-verify -m "Record: <kind> <card>"')).replace('<kind> <card>', 'stop');
+  const merge = commands.find((c) => c.includes('merge --no-verify --no-ff feature/<slug>')).replace('<slug>', 'x').replace('<title> (approved <12-character commit>)', 'X');
+  const revert = commands.find((c) => c.includes('revert -m 1 HEAD --no-edit'));
+  const run = (script) => spawnSync('sh', ['-c', script], { cwd, env: r.env, encoding: 'utf8' });
+  assert.equal(run(`git add .wheelhouse/record/2026-10-24.jsonl && ${recordCommit}`).status, 0);
+  const branch = commands.find((c) => c.endsWith('switch -c feature/<slug>')).replace('<slug>', 'x');
+  const toMain = commands.find((c) => c.endsWith('switch main'));
+  const push = commands.find((c) => c.endsWith('push --no-verify wheelhouse-copy main'));
+  assert.equal(run(branch).status, 0);
+  fs.writeFileSync(path.join(cwd, 'x.txt'), 'x\n');
+  r.run(cwd, 'add', 'x.txt');
+  r.run(cwd, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'x');
+  assert.equal(run(toMain).status, 0);
+  assert.equal(run(merge).status, 0);
+  assert.equal(run(revert).status, 0);
+  const copy = path.join(r.dir, 'copy.git');
+  r.run(r.dir, 'init', '-q', '--bare', '-b', 'main', copy);
+  r.run(cwd, 'remote', 'add', 'wheelhouse-copy', copy);
+  assert.equal(run(push).status, 0);
+  assert.ok(!fs.existsSync(mark), fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '');
+});
+
+test('with the helper, Lift STOP is the Lean command\'s confirm lift-stop, decided in the helper\'s window', () => {
+  const helper = section(playbook, 'With Wheelhouse\'s helper');
+  const line = helper.split('\n').find((l) => l.startsWith('- **Lifting STOP**'));
+  assert.ok(line, 'the helper\'s section says how STOP is lifted');
+  assert.ok(line.includes('`<lean> confirm lift-stop`'));
+  assert.match(line, /the director's click on \*\*Lift STOP\*\* in the helper's own window, never by a click in the chat/);
+  assert.match(line, /`"recorded":true`/);
+  assert.match(line, /lifts nothing while the helper answers/);
+  assert.ok(leanKit.includes('`<lean> confirm lift-stop`'), 'the kit holds it');
 });
 
 test('Approve is offered only for the head a clean review line names, and the reviewer\'s block is checked against what was sent', () => {
@@ -568,8 +686,8 @@ test('on a code host the approved commit is what is pushed, and Undo is the host
   assert.match(host, /Write no `undo` line yet/);
   assert.match(host, /Only when both hold, and so the host's main has the revert/);
   assert.match(section(playbook, 'Undo'), /On a code host this is the host's step/);
-  const pushFeature = command('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>');
-  const pushUndo = command('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full revert hash>');
+  const pushFeature = command('git -c core.hooksPath=/dev/null push --no-verify -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>');
+  const pushUndo = command('git -c core.hooksPath=/dev/null push --no-verify -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full revert hash>');
 
   const r = repo('hostundo');
   const origin = r.make('origin.git');
@@ -661,7 +779,7 @@ test('STOP is said to be unenforced', () => {
 
 test('the key is never asked for in the chat', () => {
   // The push names the approved commit's full hash, not the branch (M1); the options are the host's.
-  assert.ok(playbook.includes('git push -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>:refs/heads/feature/<slug>'));
+  assert.ok(playbook.includes('git -c core.hooksPath=/dev/null push --no-verify -o merge_request.create -o merge_request.target=main -o merge_request.remove_source_branch origin <full approved hash>:refs/heads/feature/<slug>'));
   const host = section(playbook, 'On a code host, without Node.js');
   assert.match(host, /never typed into the chat/i);
   assert.match(host, /sign-in window/);
@@ -678,14 +796,17 @@ test('the board is the file the design names, rewritten whole, and starts with t
   assert.match(board, /rewrite/i);
   assert.match(board, /first line/i);
   assert.ok(playbook.includes('```\nTier: Lean\n- Nothing is held off'), 'the board starts with the tier, then the safety lines');
-  assert.equal(playbook.split('\nTier: Lean\n').length, 4, 'one block for each case');
+  assert.equal(playbook.split('\nTier: Lean\n').length, 5, 'one block for each case');
 });
 
 test('every safety line safetyLine gives for Lean is in the playbook exactly, for each case it names', () => {
   const cases = [
     { name: 'a Mac without Node.js', options: { platform: 'darwin', node: false } },
     { name: 'Windows without Node.js', options: { platform: 'win32', node: false } },
-    { name: 'a computer where Node.js may run', options: { platform: 'darwin', node: true } },
+    { name: 'a computer where the helper answers', options: { platform: 'darwin', node: true, helper: true } },
+    { name: 'Windows where Node.js runs and the helper doesn\'t answer', options: { platform: 'win32', node: true, helper: false } },
+    // Ruling P5-35: a Mac where setup put the kit's shell guard in place.
+    { name: 'a Mac where the shell guard runs', options: { platform: 'darwin', node: false, shellGuard: true } },
   ];
   // The source says "{{agent}}" where the line names the product, so the source stays free of its name (the kit says it).
   const inSource = (line) => line.replaceAll('Copilot', '{{agent}}');
@@ -697,8 +818,8 @@ test('every safety line safetyLine gives for Lean is in the playbook exactly, fo
       assert.ok(leanKit.includes(`- ${line}\n`), `${name}: the kit lacks "${line}"`);
     }
   }
-  // Windows with Node.js says what the Mac does.
-  assert.deepEqual(safetyLine({ tier: 'lean', platform: 'win32', node: true }), safetyLine({ tier: 'lean', platform: 'darwin', node: true }));
+  // Windows with the helper says what the Mac does.
+  assert.deepEqual(safetyLine({ tier: 'lean', platform: 'win32', node: true, helper: true }), safetyLine({ tier: 'lean', platform: 'darwin', node: true, helper: true }));
 });
 
 test('the playbook names a case for the board by what the computer allows, not by guessing', () => {
@@ -729,8 +850,11 @@ test('the playbook speaks in plain words to the director and names the options o
   for (const option of ['Approve', 'Show me', 'Not now', 'Why?']) assert.ok(cards.includes(`**${option}**`), option);
   assert.ok(!playbook.includes('Explain more'), 'Explain more is not offered');
   assert.ok(cards.includes(TO_KNOW_MORE), 'the last line a card ends with');
-  // Ruling P4-38: Lean cannot carry a suggested change safely yet, so no card offers one.
-  assert.ok(!playbook.replace(/Lean offers no \*\*Suggest a change…\*\* on any card/, '').includes('Suggest a change'), 'no card at Lean offers Suggest a change…');
+  // Ruling P4-38: without the helper Lean cannot carry a suggested change safely, so no card offers one; with the
+  // helper answering, its own section offers it (ruling P5-27 k), and nowhere else does.
+  const withoutHelper = playbook.replace(section(playbook, 'With Wheelhouse\'s helper'), '');
+  assert.ok(!withoutHelper.replace(/Lean offers no \*\*Suggest a change…\*\* on any card/, '').replace(/With the helper answering, approval and merge cards offer it/, '').includes('Suggest a change'), 'no card at Lean offers Suggest a change… without the helper');
+  assert.match(section(playbook, 'With Wheelhouse\'s helper'), /\*\*Suggest a change…\*\* is offered on approval and merge cards while the helper answers/);
   assert.match(cards, /Lean offers no \*\*Suggest a change…\*\* on any card/);
   assert.match(cards, /\*\*Why\?\*\* is for learning only: it is never an answer, never an approval, and it writes no `card` or `approval` line/);
   assert.match(cards, /12 characters/);
@@ -786,6 +910,8 @@ test('buildHome throws when the Lean playbook is missing, and builds nothing fro
   fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
   fs.cpSync(path.join(ROOT, 'adapters', 'copilot', 'skills'), path.join(root, 'adapters', 'copilot', 'skills'), { recursive: true });
+  // The kit's shell guard is built from its template beside the adapter (Part 5 Task 8).
+  fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'lean-guard.sh'), path.join(root, 'adapters', 'copilot', 'lean-guard.sh'));
   assert.doesNotThrow(() => buildHome({ root }));
   const file = path.join(root, 'adapters', 'copilot', 'skills', 'lean', 'SKILL.md');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('{{agent}}', '{{somebody}}'));
@@ -794,8 +920,213 @@ test('buildHome throws when the Lean playbook is missing, and builds nothing fro
   assert.throws(() => buildHome({ root }), /skills[\\/]lean[\\/]SKILL\.md/);
 });
 
+// ---- Intake at Lean (ruling P5-37, P5-38) ----
+
+const intake = () => section(playbook, 'Intake at Lean');
+// The intake section's own example lines, each in backticks on a line of its own (so the eight kinds' examples stay eight).
+const intakeExamples = () => intake().split('\n').filter((l) => l.startsWith('`{"at"')).map((l) => JSON.parse(l.slice(1, -1)));
+
+test('Intake at Lean routes each of the nine questions to a Lean step', () => {
+  const part = intake();
+  // The questions are the intake's own, in its order; each row names the step at Lean.
+  const rows = part.split('\n').filter((l) => /^\| [1-9] \|/.test(l));
+  assert.equal(rows.length, 9, 'nine questions');
+  rows.forEach((row, i) => assert.ok(row.startsWith(`| ${i + 1} |`), `question ${i + 1} in order`));
+  const routes = [
+    [/Incident/, /Looking at an incident/, /\*\*Undo\*\*/],
+    [/Answer/, /card/],
+    [/Running work/],
+    [/Bug/, /brief/, /Building/],
+    [/Question/, /Want me to go ahead\?/],
+    [/Runbook/, /local steps/],
+    [/Chore/, /quick/],
+    [/Later/, /idea/],
+    [/Change/, /shaping questions/],
+  ];
+  routes.forEach((bits, i) => { for (const bit of bits) assert.match(rows[i], bit, `question ${i + 1}`); });
+  // The steps the intake sets around them.
+  for (const bit of [/\*\*Split\*\*/, /Say the route in one line/, /Doing: X\. Not doing: Y\. Done when: Z\./, /what it does, who sees it, (and )?what done means/]) assert.match(part, bit);
+  // Route 9 doesn't start the brainstorming skill, which the kit doesn't carry.
+  assert.match(part, /brainstorming/);
+  assert.match(part, /isn't installed/);
+  // The playbook sends every message here first.
+  assert.match(section(playbook, 'Overview'), /Intake at Lean/);
+});
+
+test('a matching idea is merged under the same short name, never a second idea', () => {
+  const part = intake();
+  const grep = 'git grep -h -e \'"kind":"idea"\' -e \'"kind":"ruling"\' main -- \':(glob).wheelhouse/record/*.jsonl\'';
+  assert.ok(part.includes(`\`${grep}\``), 'the check names the ideas and rulings on the main version');
+  assert.match(part, /"Building now"/);
+  assert.match(part, /"Set aside"/);
+  assert.match(part, /same `card`/);
+  assert.match(part, /old words with the new|the old words, then the new/);
+  assert.match(part, /Never two ideas for one thing/);
+  // The command works as written: the main version's ideas and rulings, oldest first, and not a line left in the folder.
+  const r = repo('intake');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  const line = (o) => `${JSON.stringify({ at: o.at, kind: o.kind, card: o.card, choice: o.choice ?? null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', ...(o.text ? { text: o.text } : {}) })}\n`;
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-22.jsonl`, line({ at: '2026-10-22T01:00:00Z', kind: 'idea', card: 'orders-spreadsheet', text: 'A spreadsheet of orders' }) + line({ at: '2026-10-22T01:05:00Z', kind: 'card', card: 'something', choice: 'Not now' }), 'Record: idea');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, line({ at: '2026-10-23T01:00:00Z', kind: 'ruling', card: 'exports-are-csv', choice: 'Confirm', text: 'Exports are CSV' }), 'Record: ruling');
+  fs.appendFileSync(path.join(cwd, LEAN_RECORD_DIR, '2026-10-23.jsonl'), line({ at: '2026-10-23T02:00:00Z', kind: 'idea', card: 'not-committed', text: 'x' }));
+  const args = grep.split(' ').slice(1).map((a) => a.replace(/^'|'$/g, ''));
+  const printed = r.run(cwd, ...args).split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(printed.map((e) => [e.kind, e.card]), [['idea', 'orders-spreadsheet'], ['ruling', 'exports-are-csv']]);
+});
+
+test('an idea is written at once and a ruling only after its confirm card, each with the director\'s words', () => {
+  const part = intake();
+  const examples = intakeExamples();
+  assert.deepEqual(examples.map((e) => e.kind), ['idea', 'ruling', 'design'], 'one example for each intake kind');
+  // Each example is a good Lean line, with the eight keys and text after them.
+  const { entries, problems } = parseLeanRecord(examples.map((e) => JSON.stringify(e)).join('\n'), { file: `${LEAN_RECORD_DIR}/2026-10-23.jsonl` });
+  assert.deepEqual(problems, []);
+  assert.equal(entries.length, 3);
+  for (const e of examples) assert.deepEqual(Object.keys(e), [...KEYS, 'text'], e.kind);
+  assert.match(part, /\*\*An idea\*\* is written at once, with no card/);
+  assert.match(part, /verbatim|as they wrote them/);
+  assert.match(part, /never narrowed/);
+  // The ruling's card has every part a card has, and the three options.
+  const ruling = /\*\*A ruling\*\*[\s\S]*?(?=\n- \*\*Confirm|\n\n)/.exec(part)?.[0] ?? '';
+  for (const bit of [/what this is \(a standing rule for every feature/, /why it comes to them \(it steers the builder from now on\)/, /\*\*Confirm\*\*/, /\*\*Change the words\*\*/, /\*\*Not now\*\*/, /recommend/, /meanwhile \(nothing changes until they confirm\)/]) assert.match(ruling, bit);
+  assert.match(part, /only after/);
+  // The board shows them; the builder's brief names the confirmed rulings, and the reviewer checks against them.
+  assert.match(section(playbook, 'Building'), /"Rulings"/);
+  assert.match(section(playbook, 'Building'), /"kind":"ruling"/);
+  assert.match(section(playbook, 'Reviewing'), /Check the change against the rulings/);
+  // The record section knows the three kinds and their ninth key.
+  const record = section(playbook, 'The record');
+  for (const kind of ['idea', 'ruling', 'design']) assert.ok(record.includes(`\`${kind}\``), kind);
+  assert.match(record, /`text`/);
+});
+
+test('a design\'s approval card names its git blob hash', () => {
+  const part = intake();
+  assert.ok(part.includes('`.wheelhouse/record/designs/<slug>.md`'));
+  assert.ok(part.includes('`git hash-object --no-filters .wheelhouse/record/designs/<slug>.md`'));
+  assert.ok(part.includes('git -c core.hooksPath=/dev/null commit --no-verify -m "Record: design <slug>"'));
+  assert.match(part, /names (that|the) hash in full/);
+  assert.match(part, /new card/);
+  assert.match(part, /\*\*Build it\*\*/);
+  // The design is committed alone on the main version, and the hash the card names is git's own for the file.
+  const r = repo('design');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  commitFile(r, cwd, 'a.txt', 'one\n', 'Start');
+  // A line-ending rule that would change the file on the way in: --no-filters hashes the bytes as they are.
+  commitFile(r, cwd, '.gitattributes', '*.md text eol=lf\n', 'Attributes');
+  const rel = `${LEAN_RECORD_DIR}/designs/export-orders.md`;
+  commitFile(r, cwd, rel, '<!-- design -->\n# Export orders\n\nWhat it does: exports the orders.\n', 'Record: design export-orders');
+  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').split('\n'), [rel], 'committed alone');
+  const hash = git('hash-object', '--no-filters', rel);
+  assert.equal(hash, git('rev-parse', `HEAD:${rel}`), 'the hash is the committed file\'s');
+  // The design line carries the path and hash, and the record reads it beside the days.
+  const design = intakeExamples().find((e) => e.kind === 'design');
+  const own = { ...design, text: `${rel} ${hash}` };
+  const { entries, problems } = parseLeanRecord(JSON.stringify(own), { file: `${LEAN_RECORD_DIR}/2026-10-23.jsonl` });
+  assert.deepEqual(problems, []);
+  assert.equal(entries[0].text, `${rel} ${hash}`);
+});
+
+test('the record\'s git grep reads only the day files, so a design\'s text never reads as a record line (ruling P5-52)', () => {
+  const greps = [...playbook.matchAll(/`(git grep [^`\n]+)`/g)].map((m) => m[1]);
+  assert.ok(greps.length >= 4, 'stop, review, intake and the brief\'s rulings');
+  for (const grep of greps) assert.ok(grep.endsWith(` main -- ':(glob)${LEAN_RECORD_DIR}/*.jsonl'`), grep);
+  // In a repository: a design on the main version that holds what looks like record lines is never printed.
+  const r = repo('narrow');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  const lines = ['stop', 'lift-stop', 'review', 'idea', 'ruling'].map((kind) => recordLine(kind, { card: 'forged', choice: kind === 'review' ? 'clean' : null })).join('');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/designs/export-orders.md`, `# A design\n${lines}`, 'Record: design export-orders');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, recordLine('card', { card: 'real', choice: 'Not now' }), 'Record: card real');
+  for (const grep of greps) {
+    const out = sh(cwd, r.env, grep).stdout;
+    assert.doesNotMatch(out, /forged/, grep);
+  }
+});
+
+test('new words for a ruling keep its short name, and the brief and the board take the last line for each (ruling P5-53)', () => {
+  const part = intake();
+  assert.match(part, /New words for a ruling are a new `ruling` line under the same `card`/);
+  assert.match(part, /The last `ruling` line with a short name is the ruling/);
+  assert.match(section(playbook, 'Building'), /the last `ruling` line for each short name/);
+  assert.match(playbook.slice(playbook.indexOf('\n## The board\n'), playbook.indexOf('\n## Intake at Lean\n')), /Rulings the last `ruling` line for each short name/);
+  // A merged idea that would pass the limit keeps the newest words, and says where the older ones are.
+  assert.match(part, /would pass 4000 characters/);
+  assert.match(part, /\(The earlier words are in this idea's earlier line\.\)/);
+  // With the helper, the short name goes with the ruling, and every click on its card closes it once.
+  const bullet = /- \*\*Intake\*\*[^\n]*/.exec(section(playbook, 'With Wheelhouse\'s helper'))?.[0] ?? '';
+  assert.match(bullet, /its short name as `card`/);
+  assert.match(bullet, /\*\*Not now\*\* and \*\*Suggest a change…\*\*/);
+  assert.match(bullet, /only the first click on the card counts/);
+  // The words as written in the record's own test: the last line for each short name decides.
+  const r = repo('rulings');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  const line = (at, card, text) => recordLine('ruling', { at, card, choice: 'Confirm', text });
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-22.jsonl`, line('2026-10-22T01:00:00Z', 'exports', 'Exports are CSV.') + line('2026-10-22T02:00:00Z', 'totals', 'Totals to the cent.'), 'Record: rulings');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, line('2026-10-23T01:00:00Z', 'exports', 'Exports are Excel.'), 'Record: ruling exports');
+  const printed = sh(cwd, r.env, command('git grep -h -e \'"kind":"ruling"\' main')).stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const last = new Map(printed.map((e) => [e.card, e.text]));
+  assert.deepEqual([...last.values()], ['Exports are Excel.', 'Totals to the cent.']);
+});
+
+test('Intake at Lean names no Claude Code tool and no cli.js step without the helper', () => {
+  const part = intake();
+  assert.doesNotMatch(part, /cli\.js/);
+  assert.doesNotMatch(part, /superpowers:/);
+  assert.doesNotMatch(part, CLAUDE_CODE_TOOL_WORDS);
+  for (const name of TOOL_NAMES) assert.ok(!part.includes(name), name);
+  for (const tool of ['Write', 'Read', 'Edit', 'Bash', 'Grep', 'Glob']) assert.ok(!part.includes(`\`${tool}\``), tool);
+  // Where the helper answers, its own section says how intake goes instead.
+  assert.match(part, /With Wheelhouse's helper/);
+});
+
+test('where the helper answers, intake uses the front desk\'s command and writes no record line', () => {
+  const helper = section(playbook, 'With Wheelhouse\'s helper');
+  const bullet = /- \*\*Intake\*\*[^\n]*/.exec(helper)?.[0] ?? '';
+  for (const step of ['`cli.js similar`', '`cli.js record idea`', '`cli.js record ruling`', '`cli.js card`']) assert.ok(bullet.includes(step), step);
+  assert.match(bullet, /wheelhouse[:-]intake/);
+  assert.match(bullet, /no record lines?|writes? no/);
+  // The ruling's confirm card is a click in the chat, recorded by the Lean command, never the window.
+  assert.match(bullet, /`<lean> click ruling-<card id> Confirm`/);
+  assert.match(bullet, /in force, by a click in the chat, not proven/);
+  assert.match(bullet, /chat click/);
+  assert.match(bullet, /never goes to the helper's window/);
+  assert.doesNotMatch(bullet, /<lean> confirm/);
+  // The shaping questions still take brainstorming's place.
+  assert.match(bullet, /shaping questions/);
+});
+
+test('the board lists ideas and rulings, with Nothing when there are none', () => {
+  const board = playbook.slice(playbook.indexOf('\n## The board\n'), playbook.indexOf('\n## Intake at Lean\n'));
+  const at = (h) => board.indexOf(`\n## ${h}\n`);
+  assert.ok(at('Ideas') > at('Waiting to be recorded') && at('Rulings') > at('Ideas'), 'Ideas, then Rulings, after the lines waiting');
+  assert.ok(at('What the record\'s marks mean') > at('Rulings'));
+  assert.match(board, /say "Nothing" where a part is empty/);
+  assert.match(section(playbook, 'The board'), /Ideas/);
+  // A new board from setup has them, with Nothing.
+  const setup = read('adapters/copilot/skills/setup-lean/SKILL.md');
+  assert.ok(setup.includes('## Ideas\nNothing\n'));
+  assert.ok(setup.includes('## Rulings\nNothing\n'));
+  assert.match(kit.get('skills/wheelhouse-board/SKILL.md'), /"Ideas" and "Rulings"/);
+});
+
 // ---- No host program ran ----
 
 test('none of gh, glab or copilot ran', () => {
   assert.deepEqual(stand.calls(), []);
+});
+
+test('taking the project off the helper is a card with the plan\'s lines, then the uninstall the card hashes (ruling P5-51)', () => {
+  const part = section(playbook, 'With Wheelhouse\'s helper');
+  assert.match(part, /<start> uninstall-plan --remove-state yes\|no/);
+  assert.match(part, /<start> uninstall --hash <hash> --remove-state yes\|no/);
+  assert.match(part, /\*\*Leave the helper\*\*/);
+  assert.match(part, /\*\*Remove it too\*\*|--remove-state yes/);
+  assert.match(part, /git -c core\.hooksPath=\/dev\/null switch --detach main/);
+  // The card about the state has every part a card has (CLAUDE.md): what, why, options, a recommendation, meanwhile.
+  const stateCard = /"Keep this project's Wheelhouse state\?"[^\n]*?Then run/.exec(part)[0];
+  for (const bit of [/what \(/, /why \(/, /\*\*Keep it\*\*/, /\*\*Remove it too\*\*/, /recommend/, /meanwhile \(/]) assert.match(stateCard, bit);
 });

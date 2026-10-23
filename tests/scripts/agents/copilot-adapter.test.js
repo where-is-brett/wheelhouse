@@ -29,7 +29,7 @@ import copilotSheet from '../../../adapters/copilot/tool-sheet.js';
 import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const PENDING = ['hooks', 'translate', 'settings', 'sessions', 'evalRunner'];
+const PENDING = ['settings', 'sessions', 'evalRunner'];
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -65,7 +65,7 @@ test('sessionsFor gives the very object the Copilot adapter holds', () => {
 });
 
 test('checkAdapter accepts a not-built-yet part only when the adapter lists it as pending', () => {
-  assert.deepEqual(checkAdapter({ ...copilot, pending: PENDING.filter((p) => p !== 'hooks') }), ['The hooks part is not built yet, and the adapter does not list it as pending']);
+  assert.deepEqual(checkAdapter({ ...copilot, pending: PENDING.filter((p) => p !== 'settings') }), ['The settings part is not built yet, and the adapter does not list it as pending']);
   const { pending, ...unlisted } = copilot;
   assert.equal(checkAdapter(unlisted).length, PENDING.length);
   assert.ok(checkAdapter(unlisted).every((line) => /is not built yet, and the adapter does not list it as pending$/.test(line)));
@@ -233,7 +233,8 @@ test('at Lean without Node.js the guard line follows the system and whether the 
   const mac = lines({ tier: 'lean', platform: 'darwin' });
   assert.ok(mac.includes('No Wheelhouse guards run on this computer yet'));
   const macGuard = lines({ tier: 'lean', platform: 'darwin', shellGuard: true });
-  assert.ok(macGuard.includes('Wheelhouse\'s shell guard runs on this Mac, and refuses a command it can\'t check'));
+  // Ruling P5-35: what the shell guard keeps, in the line's own words.
+  assert.ok(macGuard.includes('Wheelhouse\'s shell guard runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn\'t know'));
   assert.ok(!macGuard.includes('No Wheelhouse guards run on this computer yet'));
   // The shell guard still answers inside the time Copilot allows, so the time-out sentence is there.
   assert.ok(macGuard.includes(`Copilot lets a guard through if it runs past ${GUARD_TIMEOUT_SEC} seconds, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`));
@@ -246,8 +247,8 @@ test('at Lean without Node.js the guard line follows the system and whether the 
   assert.ok(lines({ tier: 'lean', platform: 'linux' }).includes('No Wheelhouse guards run on this computer without Node.js'));
 });
 
-test('at Lean with Node.js or the add-on, approvals and STOP are no longer the bare chat\'s', () => {
-  const node = lines({ tier: 'lean', platform: 'darwin', node: true });
+test('at Lean with the helper or the add-on, approvals and STOP are no longer the bare chat\'s', () => {
+  const node = lines({ tier: 'lean', platform: 'darwin', node: true, helper: true });
   assert.equal(node[0], 'Nothing is held off this computer except the copy in your folder');
   assert.ok(!node.includes('Approvals are clicks in the chat, recorded as not proven'));
   assert.ok(node.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'));
@@ -262,6 +263,25 @@ test('at Lean with Node.js or the add-on, approvals and STOP are no longer the b
   for (const out of [node, addOn]) {
     for (const line of ['Copilot\'s command prompts aren\'t a control', 'Tests and second looks at a change aren\'t independent of the agent that built it', 'Not for projects with real users']) assert.ok(out.includes(line), line);
   }
+});
+
+test('at Lean the helper\'s lines follow whether the helper answers, never whether Node.js runs (ruling P5-31)', () => {
+  const helperBlock = lines({ tier: 'lean', platform: 'darwin', node: true, helper: true });
+  assert.ok(helperBlock.includes('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks'));
+  // Node.js runs but no helper answers: the lines of a computer with no guard, on either system.
+  const macNode = lines({ tier: 'lean', platform: 'darwin', node: true, helper: false });
+  assert.deepEqual(macNode, lines({ tier: 'lean', platform: 'darwin', node: false }));
+  const winNode = lines({ tier: 'lean', platform: 'win32', node: true });
+  assert.ok(winNode.includes('No Wheelhouse guards run on this computer yet'), 'where Node.js runs, Windows waits only for the helper');
+  assert.ok(!winNode.some((line) => /without Node\.js/.test(line)));
+  assert.ok(winNode.includes('Approvals are clicks in the chat, recorded as not proven'));
+  assert.ok(winNode.includes('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
+  assert.ok(!winNode.some((line) => /time-out|seconds/.test(line)));
+  // Without Node.js the Windows line stays as it was.
+  assert.ok(lines({ tier: 'lean', platform: 'win32', node: false }).includes('No Wheelhouse guards run on Windows without Node.js, until a way is found'));
+  // The helper answering is the helper's block whatever `node` says, on Windows as on the Mac.
+  assert.deepEqual(lines({ tier: 'lean', platform: 'win32', node: true, helper: true }), helperBlock);
+  assert.deepEqual(lines({ tier: 'lean', platform: 'darwin', helper: true }), helperBlock);
 });
 
 // Spec section 6.6's ten items, by the first words each line must begin or contain.

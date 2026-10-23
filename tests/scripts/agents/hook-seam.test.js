@@ -65,18 +65,18 @@ test('READ_TOOLS, HALT_TOOLS and NOTIFY_TOOLS keep their values', () => {
   assert.deepEqual([...tools.shell], ['Bash', 'PowerShell']);
 });
 
-// The real route a Copilot-shaped input takes today: no hook_event_name, so the kit has no translation for it.
+// A Copilot-shaped input with no folder: the Copilot translation can't place it, so it is not translated.
 const COPILOT_SHAPED = { toolName: 'bash', sessionId: 's' };
 
-test('an input shaped like another agent\'s, which the kit has no translation for, makes a guard refuse', async () => {
+test('an input shaped like another agent\'s that its translation cannot read makes a guard refuse in that agent\'s shape', async () => {
   let called = false;
   const h = harness(COPILOT_SHAPED);
   await hookMain(() => { called = true; }, { failClosed: true, event: 'PreToolUse' }, h.io);
   assert.equal(called, false);
-  assert.deepEqual(h.out, [`${JSON.stringify(answer.deny('Wheelhouse\'s check could not run'))}\n`]);
+  assert.deepEqual(h.out, [`${JSON.stringify(TRANSLATORS.copilot.translate.fromGuardAnswer(answer.deny('Wheelhouse\'s check could not run'), 'PreToolUse'))}\n`]);
 });
 
-test('an input shaped like another agent\'s, which the kit has no translation for, makes an informing hook write nothing', async () => {
+test('an input shaped like another agent\'s that its translation cannot read makes an informing hook write nothing', async () => {
   let called = false;
   const h = harness(COPILOT_SHAPED);
   await hookMain(() => { called = true; }, { failClosed: false, event: 'SessionStart' }, h.io);
@@ -84,10 +84,11 @@ test('an input shaped like another agent\'s, which the kit has no translation fo
   assert.deepEqual(h.out, []);
 });
 
-test('every agent whose translation is built has a kit translation, and Claude Code\'s is the adapter\'s own', () => {
-  // An adapter lists a translation it has not built in `pending`; its kit translation comes with the build (Part 5).
-  for (const name of AGENTS.filter((agent) => !(adapterFor(agent).pending ?? []).includes('translate'))) assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);
-  assert.equal(TRANSLATORS['claude-code'].translate, adapterFor('claude-code').translate);
+test('every agent has a kit translation, and it is the adapter\'s own', () => {
+  for (const name of AGENTS) {
+    assert.ok(Object.hasOwn(TRANSLATORS, name), `the kit has no translation for ${name}`);
+    assert.equal(TRANSLATORS[name].translate, adapterFor(name).translate, `the kit holds a different translation for ${name}`);
+  }
 });
 
 test('every agent has a session-start tool sheet, and it is the adapter\'s own', () => {

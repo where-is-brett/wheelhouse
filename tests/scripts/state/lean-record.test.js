@@ -8,7 +8,8 @@ import { standInTools } from '../../helpers/host-stand-ins.js';
 import { PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { gateDecision } from '../../../scripts/gate/conditions.js';
 import { verify } from '../../../scripts/state/signing.js';
-import { parseLeanRecord, readLeanRecord, leanToEvents } from '../../../scripts/state/lean-record.js';
+import { parseLeanRecord, readLeanRecord, leanToEvents, leanStopOpen, LEAN_KINDS, LEAN_KEYS, LEAN_TEXT_CHARS } from '../../../scripts/state/lean-record.js';
+import { buildViews } from '../../../scripts/state/views.js';
 
 // The lines the Lean playbook shows for each kind (adapters/copilot/skills/lean/SKILL.md, "The record").
 const LINES = {
@@ -248,4 +249,172 @@ test('an approval names its 12-character commit', () => {
       assert.throws(() => leanToEvents([{ ...LINES.approval, commit }], { project: 'owner-name' }), /cannot become an event/, String(commit));
     }
   });
+});
+
+// ---- Intake at Lean: ideas, rulings and designs (ruling P5-37) ----
+
+const HASH = '5d41402abc4b2a76b9719d911017c592ae0f3b1e';
+const WORDS = {
+  idea: 'Could the orders go into a spreadsheet,  each week? "Not urgent".',
+  ruling: 'Every export is a CSV file — never Excel, and "never" means never.',
+};
+const INTAKE = {
+  idea: { at: '2026-10-23T02:00:00Z', kind: 'idea', card: 'orders-spreadsheet', choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: WORDS.idea },
+  ruling: { at: '2026-10-23T02:05:00Z', kind: 'ruling', card: 'exports-are-csv', choice: 'Confirm', commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: WORDS.ruling },
+  design: { at: '2026-10-23T02:10:00Z', kind: 'design', card: 'design-export-orders', choice: 'Build it', commit: null, proof: 'chat-click', by: 'chat', tier: 'lean', text: `.wheelhouse/record/designs/export-orders.md ${HASH}` },
+};
+
+test('an idea line has the eight keys and the director\'s words in text', () => {
+  const { entries, problems } = parseLeanRecord(text(INTAKE.idea), { file: FILE });
+  assert.deepEqual(problems, []);
+  const [entry] = entries;
+  assert.deepEqual(Object.keys(entry).filter((k) => !['file', 'line'].includes(k)), [...LEAN_KEYS, 'text']);
+  assert.equal(entry.text, WORDS.idea, 'the words as the director gave them, spaces and quotes kept');
+  assert.ok(LEAN_KINDS.includes('idea'));
+  assert.deepEqual(LEAN_KEYS, ['at', 'kind', 'card', 'choice', 'commit', 'proof', 'by', 'tier'], 'the eight keys stay eight (ruling P4-13)');
+  const broken = [
+    [{ ...INTAKE.idea, text: undefined }, /lacks text/],
+    [{ ...INTAKE.idea, text: '' }, /text/],
+    [{ ...INTAKE.idea, text: '   ' }, /text/],
+    [{ ...INTAKE.idea, text: 42 }, /text/],
+    [{ ...INTAKE.idea, text: 'x'.repeat(LEAN_TEXT_CHARS + 1) }, /4000 characters/],
+    [{ ...INTAKE.idea, choice: 'Not now' }, /an idea/],
+    [{ ...INTAKE.idea, card: null }, /an idea/],
+    [{ ...INTAKE.idea, commit: '3f9a1c7d02be' }, /an idea/],
+    [{ ...INTAKE.idea, proof: 'chat-review' }, /proof of idea must be chat-click/],
+  ];
+  const got = parseLeanRecord(text(...broken.map(([l]) => l)), { file: FILE });
+  assert.deepEqual(got.entries, []);
+  assert.equal(got.problems.length, broken.length);
+  broken.forEach(([, why], i) => assert.match(got.problems[i].why, why, got.problems[i].text));
+  // At the limit is fine.
+  assert.equal(parseLeanRecord(text({ ...INTAKE.idea, text: 'x'.repeat(LEAN_TEXT_CHARS) }), { file: FILE }).problems.length, 0);
+});
+
+test('a ruling line is written only with choice Confirm and keeps the words verbatim', () => {
+  const { entries, problems } = parseLeanRecord(text(INTAKE.ruling), { file: FILE });
+  assert.deepEqual(problems, []);
+  assert.equal(entries[0].text, WORDS.ruling);
+  for (const choice of [null, 'Not now', 'Change the words', 'Approve']) {
+    const got = parseLeanRecord(text({ ...INTAKE.ruling, choice }), { file: FILE });
+    assert.deepEqual(got.entries, [], String(choice));
+    assert.match(got.problems[0].why, /a ruling names its short name and Confirm/, String(choice));
+  }
+  withStandIns(() => {
+    const [ruling] = leanToEvents(entries, { project: 'owner-name' });
+    assert.equal(ruling.kind, 'ruling');
+    assert.equal(ruling.data.words, WORDS.ruling, 'never narrowed');
+  });
+});
+
+test('text on a kind other than idea, ruling or design is a problem, not lost', () => {
+  const lines = Object.values(LINES).map((l) => ({ ...l, text: 'some words' }));
+  const { entries, problems } = parseLeanRecord(text(...lines), { file: FILE });
+  assert.deepEqual(entries, []);
+  assert.equal(problems.length, lines.length);
+  problems.forEach((p, i) => {
+    assert.equal(p.line, i + 1);
+    assert.equal(p.text, JSON.stringify(lines[i]));
+    assert.match(p.why, /only an idea, a ruling or a design carries text/);
+  });
+  // Nor does a key past the ninth slip through on the three that carry text.
+  assert.match(parseLeanRecord(text({ ...INTAKE.idea, extra: 1 }), { file: FILE }).problems[0].why, /has extra/);
+  // leanToEvents refuses an entry not read through the parser as well.
+  withStandIns(() => assert.throws(() => leanToEvents([{ ...LINES.card, text: 'x' }], { project: 'owner-name' }), /cannot become an event/));
+});
+
+test('a design line names its file under the designs folder and its git blob hash', () => {
+  const bad = [
+    'export-orders.md',
+    `.wheelhouse/record/designs/export-orders.md ${HASH.slice(0, 12)}`,
+    `.wheelhouse/record/designs/Export Orders.md ${HASH}`,
+    `.wheelhouse/record/designs/../board.md ${HASH}`,
+    `.wheelhouse/feature/brief.md ${HASH}`,
+    `.wheelhouse/record/designs/export-orders.md ${HASH.toUpperCase()}`,
+  ];
+  for (const t of bad) {
+    const got = parseLeanRecord(text({ ...INTAKE.design, text: t }), { file: FILE });
+    assert.deepEqual(got.entries, [], t);
+    assert.match(got.problems[0].why, /a design names/, t);
+  }
+  for (const choice of [null, 'Approve', 'Not now']) {
+    assert.match(parseLeanRecord(text({ ...INTAKE.design, choice }), { file: FILE }).problems[0].why, /a design names/, String(choice));
+  }
+});
+
+test('an idea, a ruling and a design become the matching state events, none signed', () => {
+  withStandIns(() => {
+    const entries = entriesOf(INTAKE.idea, INTAKE.ruling, INTAKE.design);
+    const events = leanToEvents(entries, { project: 'owner-name' });
+    // A ruling is the ruling, plain and unconfirmed, and a note of its confirm click.
+    assert.deepEqual(events.map((e) => [e.kind, e.data.lean ?? null]), [['idea', null], ['ruling', null], ['note', 'ruling-confirm'], ['note', 'design']]);
+    const [idea, ruling, confirm, design] = events;
+    assert.equal(idea.data.key, 'orders-spreadsheet', 'the short name is the key, so a merged idea replaces the old');
+    assert.equal(idea.data.text, WORDS.idea);
+    assert.equal(idea.data.clicked, false);
+    assert.equal(ruling.data.words, WORDS.ruling);
+    assert.equal(ruling.data.card, 'exports-are-csv');
+    assert.equal(confirm.data.ruling, ruling.id, 'the confirm note names the ruling');
+    assert.equal(confirm.data.choice, 'Confirm');
+    assert.equal(confirm.data.clicked, true);
+    assert.match(confirm.data.text, /by a click in the chat, not proven/);
+    assert.equal(design.data.path, '.wheelhouse/record/designs/export-orders.md');
+    assert.equal(design.data.hash, HASH);
+    assert.equal(design.data.choice, 'Build it');
+    assert.equal(design.data.clicked, true);
+    for (const e of events) {
+      assert.equal(e.sig, undefined, e.kind);
+      assert.equal(PROTECTED_KINDS.includes(e.kind), false, e.kind);
+      assert.equal(e.data.tier, 'lean');
+      assert.equal(e.data.proof, 'chat-click');
+      assert.equal(e.data.by, 'chat');
+    }
+    assert.equal(fs.existsSync(path.join(process.env.WHEELHOUSE_HOME, 'keys')), false);
+    // In the views: the idea is kept under its short name, the ruling waits for a signed confirmation.
+    const views = buildViews(events, []);
+    assert.equal(views.ideas['orders-spreadsheet'].data.text, WORDS.idea);
+    assert.deepEqual(views.rulebook.map((r) => [r.words, r.status]), [[WORDS.ruling, 'proposed']]);
+    // A later idea line under the same short name replaces the earlier one.
+    const merged = { ...INTAKE.idea, at: '2026-10-23T04:00:00Z', text: `${WORDS.idea} And by supplier.` };
+    const again = buildViews(leanToEvents(entriesOf(INTAKE.idea, merged), { project: 'owner-name' }), []);
+    assert.deepEqual(Object.keys(again.ideas), ['orders-spreadsheet']);
+    assert.equal(again.ideas['orders-spreadsheet'].data.text, merged.text);
+  });
+});
+
+test('readLeanRecord leaves the designs folder to the designs, and reads the days beside it', () => {
+  const folder = tempFolder('wh-lean-project-');
+  const dir = path.join(folder, '.wheelhouse', 'record');
+  fs.mkdirSync(path.join(dir, 'designs'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'designs', 'export-orders.md'), '# Export orders\n');
+  fs.writeFileSync(path.join(dir, '2026-10-23.jsonl'), text(INTAKE.idea, INTAKE.design));
+  const got = readLeanRecord(folder);
+  assert.deepEqual(got.problems, []);
+  assert.deepEqual(got.entries.map((e) => e.kind), ['idea', 'design']);
+  // A file named designs is not the folder, and is a problem as before.
+  const other = tempFolder('wh-lean-project-');
+  fs.mkdirSync(path.join(other, '.wheelhouse', 'record'), { recursive: true });
+  fs.writeFileSync(path.join(other, '.wheelhouse', 'record', 'designs'), 'x');
+  assert.equal(readLeanRecord(other).problems.length, 1);
+});
+
+test('an idea, a ruling or a design written back from the helper keeps the proof its record named; other kinds don\'t', () => {
+  for (const kind of ['idea', 'ruling', 'design']) {
+    for (const proof of ['window', 'signed-hook', 'chat-click']) {
+      assert.deepEqual(parseLeanRecord(text({ ...INTAKE[kind], proof }), { file: FILE }).problems, [], `${kind} ${proof}`);
+    }
+    const bad = parseLeanRecord(text({ ...INTAKE[kind], proof: 'made-up' }), { file: FILE });
+    assert.match(bad.problems[0].why, new RegExp(`proof of ${kind} must be chat-click, or the one the helper recorded`));
+  }
+  const stop = { at: '2026-10-23T02:00:00Z', kind: 'stop', card: null, choice: null, commit: null, proof: 'window', by: 'chat', tier: 'lean' };
+  assert.match(parseLeanRecord(text(stop), { file: FILE }).problems[0].why, /proof of stop must be chat-click/);
+});
+
+test('the record leaves STOP on when its last stop or lift-stop line is a stop', () => {
+  const line = (kind) => ({ kind });
+  assert.equal(leanStopOpen([]), false);
+  assert.equal(leanStopOpen([line('stop')]), true);
+  assert.equal(leanStopOpen([line('stop'), line('idea'), line('lift-stop')]), false);
+  assert.equal(leanStopOpen([line('lift-stop'), line('stop'), line('merge')]), true);
+  assert.equal(leanStopOpen([line('card'), line('merge')]), false);
 });

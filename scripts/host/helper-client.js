@@ -44,7 +44,26 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
   const post = (path) => (args = {}) => ask(address, 'POST', path, args, timeout);
   return {
     health: () => ask(address, 'GET', '/health', undefined, timeout),
-    stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
+    stop: post('/stop/set'), //      { by? } -> { ok }: turns STOP on; nothing here lifts it. `by: 'prompt'` records that the director's word set it
+    session: {
+      mark: post('/session/mark'), // { project | cwd, mark, data } -> { ok, id }: a session's mark, as a plain note: 'unknown-tool' ({ name }), 'compaction' ({ trigger }) or 'deadline' ({ event })
+    },
+    cards: {
+      chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit?, text? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed. `text`, the director's words, only with Suggest a change…
+    },
+    // A Lean project's git store (scripts/lean/store.js). A refusal may add `card` (the id of a card the helper raised:
+    // the main version moved outside the helper, or an approval the window must confirm), `needs` and `reasons`.
+    // A merge runs the project's tests and may wait for another window's merge: give the client a long timeout.
+    lean: {
+      status: post('/lean/status'), // { project | cwd } -> { ok, adopted, main?, moved?, recorded?, card?, stop, copy, test, realUsers }; answered under STOP
+      merge: post('/lean/merge'), //   { project | cwd, branch, commit } -> { ok, merge, tests: 'passed' | 'none', copy }: only an approved commit, after its tests pass
+      undo: post('/lean/undo'), //     { project | cwd, merge } or { project | cwd, moved: true } -> { ok, undo, copy }: on the director's click on Undo (or Undo it)
+      copy: post('/lean/copy'), //     { project | cwd } -> { ok, pushed, commit, refused? }: the main version and the state's branch to the copy folder
+    },
+    // { project | cwd, card, hash } -> { ok, recorded, choice, id?, kind?, step? }: the card, by its id in the state and the
+    // sha256 of its data, shown in the helper's own window; a deciding click there is signed by the helper with proof
+    // `window`. One window at a time on this computer, so this may wait for a click: give the client a long timeout.
+    confirm: post('/confirm'),
     push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
     pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
     fetchBase: post('/base/fetch'), // { project } -> { ok, branch, sha } or { ok: false, refused }: the foreman's start has the host's default branch fetched into the project's mirror (refs/wheelhouse/base), which its child then copies into the main checkout with no key

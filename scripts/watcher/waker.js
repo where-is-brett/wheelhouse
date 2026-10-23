@@ -607,14 +607,16 @@ export function makeWaker({
   const sessionsOf = () => sessions ?? sessionsOfProject(config);
   // Asks that adapter whether its sessions may start under `config` (`check` is checkForeman or checkFeature): a
   // throw refuses the wake. When there is no adapter to ask (the project names an agent that has none, or this
-  // computer's id can't be read), nothing is asked here: the call that would start the session refuses it, and
-  // the wake is kept.
+  // computer's id can't be read), nothing is asked here at Shape 1: the call that would start the session asks
+  // again and refuses it, and the wake is kept. At Shape 2 the waker prints a line for the director's own session,
+  // with no call after it to refuse, so there the missing adapter refuses (ruling P5-30).
   const mayStart = (check) => {
     let adapter;
     try {
       adapter = sessionsOf();
-    } catch {
-      return;
+    } catch (error) {
+      if (shape === 1) return;
+      throw error;
     }
     adapter[check](config);
   };
@@ -782,10 +784,14 @@ export function makeWaker({
     return started.pid;
   }
 
-  // The call that starts a fresh foreman to read `prompt`'s wake.
-  const foremanCall = (prompt) => sessionsOf().foremanCall({
-    config, prompt, tools: foremanTools, env: baseEnv, claude,
-  });
+  // The call that starts a fresh foreman to read `prompt`'s wake, asked of the adapter right after its check.
+  const foremanCall = (prompt) => {
+    const adapter = sessionsOf();
+    adapter.checkForeman(config);
+    return adapter.foremanCall({
+      config, prompt, tools: foremanTools, env: baseEnv, claude,
+    });
+  };
   // What windowsBuilds answers for `work`, or Ask with no grants when it can't answer.
   const windowsAnswer = (work) => {
     let answer;
@@ -1026,6 +1032,8 @@ export function makeWaker({
         const state = await stateOf(target);
         if (state?.live) throw new Error(`The ${work} session is already running`);
         if (state?.ended) endRecord(target, state);
+        // Checked before the session's id is written, so a refused start leaves nothing behind.
+        sessionsOf().checkFeature(config);
         const sessionId = crypto.randomUUID();
         watcherFolder(project, 'sessions');
         writeJsonFile(sessionFile(project, work), { sessionId, worktree, at: now().toISOString() });

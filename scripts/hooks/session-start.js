@@ -37,6 +37,8 @@
 // yet gets a trust card, composed here, for the session to ask as it is; a computer it trusts whose
 // enrolment holds another key gets a line saying nothing was trusted, never a card. It informs, so a
 // failure is passed over, within the budget.
+//
+// On an agent whose hooks only read (`writeVia: 'helper'`) it does none of the writing above: readOnlyStart.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
@@ -46,12 +48,13 @@ import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
 import { caEnv } from '../host/company-ca.js';
-import { stopState } from '../lib/stop.js';
+import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents } from '../state/events.js';
 import { buildViews } from '../state/views.js';
+import { isLeanProject } from '../lean/project.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
@@ -74,6 +77,7 @@ import { TOOL_SHEETS } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
+import { MAIN_MOVED } from '../lean/store.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -243,7 +247,7 @@ function fallbackViews(project) {
   const views = localViews(project);
   let built = null;
   try {
-    built = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    built = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { lean: isLeanProject(project) });
   } catch {
     return views;
   }
@@ -505,7 +509,60 @@ function keepOutOfGit(found) {
   } catch { /* the session carries on without it */ }
 }
 
+// The line naming the Lean command, the chat's way to the helper at Lean (scripts/lean/cli.js).
+export function leanCommandLine(root, { node = process.execPath } = {}) {
+  return `The Lean command is "${node}" "${root}/scripts/lean/cli.js"`;
+}
+
+// The session start on an agent whose hooks only read (`writeVia: 'helper'`, ruling P5-20). It writes nothing
+// under the Wheelhouse home and never opens the keys folder: no managed marker, no helper started, no watcher,
+// no usage receiver, no lineage hold, no key made, no records sent. It answers with the briefing from the
+// helper's views (the views on disk when the helper isn't answering, with NO_HELPER_STOP), the agent's tool sheet
+// and, in a Lean project, the Lean command line. `helperUp` is the hook's own ask of /health, when it made one.
+async function readOnlyStart(input, { dir, find, client, helperUp, agent, pluginRoot, self, platform, stopOf, totalMs }) {
+  const root = commandRoot({ dir, self }, pluginRoot);
+  const sheet = (lean) => [...toolSheetLines(agent, { pluginRoot: root, platform }), ...(lean ? [leanCommandLine(root)] : [])];
+  const end = Date.now() + totalMs;
+  const left = withinBudget(end);
+  const api = client ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) });
+  const up = helperUp ?? (await left(api.health()))?.ok === true;
+  const found = find(input.cwd, { dir });
+  if (!found) {
+    const setup = beingSetUp(input.cwd);
+    if (setup === null) return undefined;
+    const stop = stopOf();
+    const lines = [];
+    if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+    if (!up) lines.push(NO_HELPER_STOP);
+    lines.push(...sheet(false));
+    const note = setupNote(setup);
+    if (note !== null) lines.push(note);
+    return lines.length === 0 ? undefined : answer.context('SessionStart', lines.join('\n'));
+  }
+  const { project } = found;
+  const notes = [];
+  let views = null;
+  if (!up) notes.push(NO_HELPER_STOP);
+  else {
+    // A Lean project's main version, compared by the helper with the one it last moved (ruling P5-27 f): a move
+    // made outside it is said here, and the helper raises the card that asks the director.
+    if (found.lean === true && typeof api.lean?.status === 'function') {
+      const status = await left(api.lean.status({ project }));
+      if (status?.ok === true && status.moved === true) notes.push(MAIN_MOVED);
+    }
+    const got = await left(api.state.views({ project }));
+    if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
+  }
+  views ??= localViews(project);
+  const text = reload({ views, stop: stopOf(), notes, feature: featureSlug(input.cwd), stateRoot: stateDir(project), sheet: sheet(found.lean === true) });
+  return text === '' ? undefined : answer.context('SessionStart', text);
+}
+
 export async function decide(input, deps = {}) {
+  if (deps.writeVia !== undefined && deps.writeVia !== 'self') {
+    const { dir, projectOf: find = projectOf, client, helperUp, agent, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform, stopState: stopOf = stopState, totalMs = TOTAL_MS + helperGrace() } = deps;
+    return readOnlyStart(input, { dir, find, client, helperUp, agent: agent ?? agentOfInput(input) ?? 'claude-code', pluginRoot, self, platform, stopOf, totalMs });
+  }
   const {
     dir, projectOf: find = projectOf, client: given, spawn = nodeSpawn,
     platform = process.platform, now = () => new Date(), stopState: stopOf = stopState,

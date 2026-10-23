@@ -28,7 +28,8 @@
     "**/.gitignore": false,
     "**/.claude/**": false,
     "**/CLAUDE.md": false,
-    "**/wheelhouse/**": false,
-    "**/.wheelhouse/**": false
+    "**/.git/**": false,
+    "wheelhouse/board.md": false,
+    ".wheelhouse/record/**": false
   }
 }

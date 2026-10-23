@@ -63,6 +63,8 @@ function copyOfSources() {
   for (const part of ['skills', 'agents', 'commands']) fs.cpSync(path.join(ROOT, part), path.join(root, part), { recursive: true });
   fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
+  // Lean's shell guard, the template the kit's guard is built from (Part 5 Task 8).
+  fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'lean-guard.sh'), path.join(root, 'adapters', 'copilot', 'lean-guard.sh'));
   // Lean's playbooks sit beside the adapter, not in skills/ (ruling P4-30).
   fs.cpSync(path.join(ROOT, 'adapters', 'copilot', 'skills'), path.join(root, 'adapters', 'copilot', 'skills'), { recursive: true });
   return root;
@@ -92,13 +94,15 @@ test('the kit is byte-stable: LF only, sorted, the same on every build', () => {
   }
 });
 
-test('the kit holds exactly the files Tasks 2, 3 and 5 build', () => {
+test('the kit holds exactly the files Tasks 2, 3 and 5 build, and Lean\'s shell guard from Part 5 Task 8', () => {
   assert.deepEqual([...kit.keys()], [
     'MANIFEST.txt',
     'agents/wheelhouse-builder.agent.md',
     'agents/wheelhouse-foreman.agent.md',
     'agents/wheelhouse-reviewer.agent.md',
     'agents/wheelhouse-tester.agent.md',
+    'hooks/wheelhouse-lean-guard.sh',
+    'hooks/wheelhouse.json',
     'instructions/wheelhouse.instructions.md',
     'skills/wheelhouse-board/SKILL.md',
     'skills/wheelhouse-briefing/SKILL.md',
@@ -110,8 +114,8 @@ test('the kit holds exactly the files Tasks 2, 3 and 5 build', () => {
     'skills/wheelhouse-sources/SKILL.md',
     'skills/wheelhouse-stop/SKILL.md',
   ]);
-  // The hook files come with Part 5 Task 8.
-  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/')));
+  // The hook files came with Part 5 Task 8: the hook file and the guard it runs, and nothing else under hooks/.
+  assert.deepEqual([...kit.keys()].filter((f) => f.startsWith('hooks/')), ['hooks/wheelhouse-lean-guard.sh', 'hooks/wheelhouse.json']);
 });
 
 // ---- The agents ----
@@ -239,7 +243,15 @@ test('the instructions file holds the tool sheet and says where Wheelhouse does 
 
 test('every file starts with its path comment, after front matter', () => {
   for (const [file, text] of kit) {
-    if (file === 'MANIFEST.txt') continue;
+    // JSON has no comments (the repository's rule exempts it).
+    if (file === 'MANIFEST.txt' || file.endsWith('.json')) continue;
+    // A shell script's comment is its second line, after the line that names its shell.
+    if (file.endsWith('.sh')) {
+      const [shebang, comment] = text.split('\n');
+      assert.equal(shebang, '#!/bin/sh', file);
+      assert.equal(comment, `# ${HOME_DIR}/${file} (built from adapters/copilot/lean-guard.sh by npm run copilot-home)`, file);
+      continue;
+    }
     const { body } = split(text);
     const first = body.replace(/^\n/, '').split('\n')[0];
     assert.match(first, new RegExp(`^<!-- ${HOME_DIR}/${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(built from [^ ]+ by npm run copilot-home\\) -->$`), `${file}: ${first}`);
@@ -289,6 +301,37 @@ test('MANIFEST.txt lists every file with its git blob hash', () => {
 });
 
 // ---- Building, checking and writing ----
+
+// Ruling P5-38: the kit's intake sends a Lean session without a Wheelhouse command to wheelhouse-lean's Intake at Lean,
+// as P4-34 does for the front desk; the rest is skills/intake as it stands, under Copilot's names.
+const INTAKE_LEAN_LINE = 'At Lean, where no Wheelhouse command runs, follow wheelhouse-lean\'s Intake at Lean in place of each `cli.js` step.';
+
+test('the kit\'s intake carries the Lean line and is otherwise built from skills/intake', () => {
+  const built = kit.get('skills/wheelhouse-intake/SKILL.md');
+  assert.equal(built.split(INTAKE_LEAN_LINE).length, 2, 'the line is there once');
+  const at = built.indexOf(INTAKE_LEAN_LINE);
+  assert.ok(at > built.indexOf('## Overview\n'), 'after the overview\'s heading');
+  assert.ok(at < built.indexOf('## Every message, in this order\n'), 'before the steps');
+  // Without the line, the body is the source's, with skills named as Copilot names them.
+  const source = split(lf(fs.readFileSync(path.join(ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8'))).body.replace(/^\n?<!--[^\n]*-->\n/, '');
+  const body = split(built).body.replace(/^<!--[^\n]*-->\n/, '');
+  assert.equal(body.replace(`\n${INTAKE_LEAN_LINE}\n`, ''), source.replace(/\bwheelhouse:([a-z][a-z-]*)/g, 'wheelhouse-$1'));
+  // Claude Code's own intake is not edited.
+  assert.ok(!fs.readFileSync(path.join(ROOT, 'skills', 'intake', 'SKILL.md'), 'utf8').includes('wheelhouse-lean'));
+});
+
+test('buildHome throws when the intake source has no "## Every message, in this order" heading to put the Lean line before', () => {
+  const root = copyOfSources();
+  const file = path.join(root, 'skills', 'intake', 'SKILL.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('\n## Every message, in this order\n', '\n## Each message\n'));
+  assert.throws(() => buildHome({ root }), /## Every message, in this order/);
+});
+
+test('the kit\'s board skill names the board\'s Ideas and Rulings parts', () => {
+  const board = kit.get('skills/wheelhouse-board/SKILL.md');
+  assert.match(board, /"Ideas"/);
+  assert.match(board, /"Rulings"/);
+});
 
 test('buildHome throws when a source is missing, and never skips one silently', () => {
   const root = copyOfSources();

@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { computerId, helperAddress, profileDir, stateDir, wheelhouseHome } from '../lib/paths.js';
-import { stopState, setStop } from '../lib/stop.js';
+import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { gateDecision } from '../gate/conditions.js';
@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -42,10 +42,20 @@ import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
-import { readEnrolled, verify } from '../state/signing.js';
+import { readEnrolled, verify, sign } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
+import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
+import {
+  mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
+  SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCard,
+} from '../lean/store.js';
+import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
+import { SIGNED_LABELS, earned } from '../hooks/prompt-record.js';
+import { askInWindow, NOT_NOW } from '../confirm/window.js';
+import { composeCard } from '../cards/compose.js';
+import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
@@ -59,7 +69,7 @@ import { ROOT as OWN_ROOT } from '../lineage/check.js';
 import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
-import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
 import { CLICK_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
@@ -683,6 +693,7 @@ function placeMainCheckout(folder) {
     }
   };
   const record = readProject(project);
+  if (record === null && readLean(project) !== null) refuse(LEAN_NO_HOST);
   const here = real(folder);
   if (here === null || typeof record?.folder !== 'string' || here !== real(record.folder)) refuse(NOT_MAIN_CHECKOUT);
   return project;
@@ -707,7 +718,38 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
-const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
+const PLACED_ROUTES = [
+  '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
+  '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
+];
+
+// A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
+// its local state repository, before any connection is made. Every other route refuses it.
+const LEAN_ROUTES = [
+  '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/session/mark', '/cards/chat-click', '/confirm',
+  '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
+];
+// The Lean project's own routes (scripts/lean/store.js), served for a Lean project only.
+const LEAN_ONLY = 'that project is not a Lean project';
+const isLean = (project) => readProject(project) === null && readLean(project) !== null;
+
+// The marks a session sends (ruling P5-19), each with its fields and what each must be.
+const MARK_TEXT_CHARS = 200;
+const markText = (v) => typeof v === 'string' && v !== '' && v.length <= MARK_TEXT_CHARS && !/[\u0000-\u001f]/.test(v);
+const SESSION_MARKS = Object.freeze({
+  'unknown-tool': { name: markText },
+  compaction: { trigger: (v) => v === undefined || markText(v) },
+  deadline: { event: markText },
+});
+// The longest card name or label a chat click carries, and the longest of the director's own words with one.
+const CHAT_TEXT_CHARS = 500;
+const CHAT_WORDS_CHARS = 4000;
+// The option that hands the builder the director's own words (ruling P5-27 k): the only click that carries them.
+const SUGGEST = 'Suggest a change…';
+// A ruling's confirm card, as a click in the chat names it at Lean (ruling P5-52): `ruling-` and the card's id.
+const RULING_CARD = /^ruling-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+// The fields of a card-answer that only the helper's click routes write.
+const CLICK_FIELDS = ['proof', 'commit', 'hash', 'text'];
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -804,6 +846,9 @@ export async function startHelper({
   // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
   // exits.
   onStop = (close) => close(),
+  // How the helper's own window is opened (scripts/confirm/window.js): given { title, lines, options }, it resolves
+  // with { choice }. By default askInWindow on this system, with the helper's `run`.
+  askWindow = (card) => askInWindow({ ...card, run }),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -886,6 +931,22 @@ export async function startHelper({
         adapter ??= Promise.resolve(adapterFor(project, { env, envFor: async () => env, now }));
         return adapter;
       },
+    };
+  }
+
+  // A Lean project's request: no connection, no secret, no transport beyond this computer, and no
+  // adapter (ruling P5-9). Its state's git calls carry no key.
+  function leanContext() {
+    return {
+      lean: true,
+      mode: 'lean',
+      env: {},
+      signedOut: false,
+      looked: new Map(),
+      gitEnv: {},
+      reach: 'https',
+      secrets: [],
+      adapter: async () => refuse(LEAN_NO_HOST),
     };
   }
 
@@ -1353,10 +1414,14 @@ export async function startHelper({
   }
 
   const pushFor = (project, ctx) => (_dir, branch) => pushOwn(project, branch, ctx);
+  // A Lean project's state stays on this computer: its events are committed and never pushed.
+  const keptHere = async () => ({ ok: false });
+  const statePush = (project, ctx) => (ctx.lean ? keptHere : pushFor(project, ctx));
 
   const stateRoute = (fn, { clone = true, write = false } = {}) => (body, ctx) => oneAtATime(`state:${body.project}`, async () => {
     if (write && stopped()) return STOP_REFUSAL;
-    if (clone) await ensureStateClone(body.project, ctx);
+    if (clone && ctx.lean) await leanState(body.project, { run });
+    else if (clone) await ensureStateClone(body.project, ctx);
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
   });
@@ -1384,8 +1449,12 @@ export async function startHelper({
   // made here too, unless the caller made it (the foreman's act command does,
   // to record the id as handled before the event exists, ruling R86): then it
   // must be shaped as a random UUID and not one the state holds already.
-  async function doWrite({ project, kind, data, id }, ctx) {
+  // A card-answer naming a proof, a commit or a card's hash is a click record only the helper's own routes make
+  // (/cards/chat-click): `own` is theirs. From /state/write, which anyone who reaches the helper may call, it is
+  // refused, so no caller can name a proof the gate would read.
+  async function doWrite({ project, kind, data, id }, ctx, { own = false } = {}) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
+    if (!own && kind === 'card-answer' && data && typeof data === 'object' && CLICK_FIELDS.some((k) => Object.hasOwn(data, k))) refuse('a click\'s proof, commit, hash and words are recorded only by the helper\'s own routes');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
@@ -1401,10 +1470,271 @@ export async function startHelper({
     }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
+
+  // A session's mark (ruling P5-19), from a hook that only reads: a plain note naming the mark. A tool the agent
+  // has that Wheelhouse doesn't know (`unknown-tool`, the board's line), a compaction, or a hook past its deadline.
+  async function doSessionMark({ project, mark, data }, ctx) {
+    if (!Object.hasOwn(SESSION_MARKS, mark)) refuse('that kind of session mark is not known');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the mark\'s data must be an object');
+    const fields = SESSION_MARKS[mark];
+    if (Object.keys(data).some((k) => !Object.hasOwn(fields, k)) || Object.entries(fields).some(([k, ok]) => !ok(data[k]))) refuse('the mark\'s data is not what that mark carries');
+    return doWrite({ project, kind: 'note', data: { mark, ...data } }, ctx);
+  }
+
+  // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
+  // decides a signed step is taken only on a card a chat click may decide: a merge card, or a guardrail card at
+  // Lean; never one of the confirmed steps (a card named for the step, or `<step>-…`), which need the window.
+  // Suggest a change… (ruling P5-27 k) carries the director's own words as `text`, and no other click does.
+  async function doChatClick({ project, card, hash, label, proof, commit, text }, ctx) {
+    if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
+    if (text !== undefined && label !== SUGGEST) refuse(`only a click on ${SUGGEST} carries the director's words`);
+    if (text !== undefined && (typeof text !== 'string' || text.trim() === '' || text.length > CHAT_WORDS_CHARS)) refuse('the director\'s words must be text');
+    if (typeof card !== 'string' || card === '' || card.length > CHAT_TEXT_CHARS) refuse('the card must be named');
+    if (typeof label !== 'string' || label === '' || label.length > CHAT_TEXT_CHARS) refuse('the click must name the option chosen');
+    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) refuse('the card\'s hash must be its sha256, in lower case');
+    if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
+    const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
+    if (confirmed && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
+    // A ruling's confirm card at Lean (rulings P5-52, P5-53): one click in the chat, unsigned, with proof chat-click,
+    // on the card named `ruling-<its id>`, when the state holds that card as a ruling's confirm card, the click names
+    // its text as the state holds it, the label is one of its options and nothing has answered it yet. Confirm puts the
+    // ruling in force in a Lean project's rulebook; Not now or Suggest a change… (with the new words) closes the card.
+    // On any other project Confirm stays signed and is refused below.
+    const rulingCard = RULING_CARD.exec(card);
+    if (ctx.lean === true && rulingCard) {
+      if (proof !== 'chat-click') refuse('a click on a ruling\'s card is recorded as chat-click');
+      if (commit !== undefined) refuse('a click on a ruling\'s card names no commit');
+      const events = listEvents(stateDir(project), { report: () => {} });
+      const held = events.find((e) => e.id === rulingCard[1] && e.kind === 'card');
+      if (!held || held.data?.kind !== 'confirm' || !/^Confirm ruling \S+: "/.test(held.data?.line ?? '') || typeof held.data?.question !== 'string') refuse('that is not a ruling\'s confirm card in this project');
+      if (hash !== crypto.createHash('sha256').update(held.data.question).digest('hex')) refuse('the click must name the card\'s text as the state holds it');
+      if (!Array.isArray(held.data.options) || !held.data.options.includes(label)) refuse('that label isn\'t one of the card\'s options');
+      if (events.some((e) => e.kind === 'card-answer' && e.data?.card === held.id)) refuse('that ruling\'s card has been answered already');
+      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
+    }
+    const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
+    if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');
+    const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof };
+    return doWrite({ project, kind: 'card-answer', data }, ctx, { own: true });
+  }
+
+  // --- the helper's own window (design section 6.3, ruling P5-23) ---
+
+  // The step a signed record decides, when it is one the window confirms, else null: Lift STOP, a runbook step or
+  // a CI push (an action), Unattended (the confirmation of a level or setting proposing it), or an approval, which
+  // is how a guardrail change and a real-user merge are decided.
+  // Keep it, on the card about a Lean project's main version moved outside the helper (ruling P5-27 f), is confirmed
+  // here too, and so are a Lean undo and Undo it, which are runbook steps (ruling P5-50).
+  const ACTION_STEPS = {
+    'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
+  };
+  // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
+  const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
+  const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
+  // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
+  const LIFT_STOP_NAME = 'lift-stop';
+  function windowStep(project, made) {
+    if (made.kind === 'approval') return 'approval';
+    if (made.kind === 'action') return Object.hasOwn(ACTION_STEPS, made.data?.action) ? ACTION_STEPS[made.data.action] : null;
+    if (made.kind !== 'confirmation') return null;
+    const target = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === made.data?.confirms);
+    return ['level', 'setting'].includes(target?.kind) && target.data?.value === 'unattended' ? 'unattended' : null;
+  }
+
+  // What a click on `label` in the window would record for `card`: the signed record the same click earns in a
+  // hook that signs (prompt-record.js's earned, from the card's own question in the state), when it decides a
+  // step the window confirms; else null. A pull request's head is read through this helper's own route.
+  async function windowEarned(project, card, label, ctx) {
+    const question = card.data?.question;
+    if (typeof question !== 'string' || PUT_OFF.includes(label)) return null;
+    if (ctx.lean) {
+      const lean = await leanEarned(project, card.data, label);
+      if (lean !== undefined) return lean;
+    }
+    const client = { prState: ({ number }) => routes['/pr/state']({ project, number }, ctx) };
+    let got;
+    try {
+      got = await earned({ project, question, label, client, now, left: (p) => p, shownAt: card.at });
+    } catch {
+      return null;
+    }
+    if (!got?.made || got.profile) return null;
+    const step = windowStep(project, got.made);
+    return step === null ? null : { made: got.made, step, lift: got.lift === true };
+  }
+
+  // What a click in the window on a Lean card's Approve, Keep it, Undo it or Undo records (scripts/lean/store.js), or
+  // null; undefined for any other label. Each card is the helper's own, word for word: its question, options and
+  // header equal the card the helper composes from the line's values (ruling P5-50), so a card anyone wrote with the
+  // right line but other words is never signed. Approve: the card names a feature's branch and its head in full,
+  // and the store's branch is still at that head, so the approval is for that code and no other. Keep it and Undo
+  // it: the card names the main version's move, and the record and the store still say so. Undo: the card names a
+  // merge on the main version.
+  async function leanEarned(project, data, label) {
+    const question = data?.question;
+    const one = (pattern) => {
+      const lines = typeof question === 'string' ? [...question.matchAll(pattern)] : [];
+      return lines.length === 1 ? lines[0] : null;
+    };
+    if (label === 'Approve') {
+      const line = one(LEAN_APPROVE);
+      if (line === null) return null;
+      const [, branch, commit] = line;
+      if (!sameCard(data, approvalCard(branch, commit, readLean(project)?.test ?? null))) return null;
+      if ((await storeHead({ project, branch, run })) !== commit) return null;
+      const made = { kind: 'approval', data: { branch, commit, words: 'Approve', question } };
+      return { made, step: 'approval', lift: false };
+    }
+    if (label === 'Keep it' || label === 'Undo it') {
+      const line = one(MAIN_MOVED_LINE);
+      if (line === null) return null;
+      const [, from, to] = line;
+      if (!sameCard(data, mainMovedCard(from, to))) return null;
+      if (readLean(project)?.main !== from || (await storeHead({ project, branch: 'main', run })) !== to) return null;
+      const action = label === 'Keep it' ? 'keep-main' : 'undo-main';
+      const made = { kind: 'action', data: { action, from, to, question, label } };
+      return { made, step: ACTION_STEPS[action], lift: false };
+    }
+    if (label === 'Undo') {
+      const line = one(UNDO_LINE);
+      if (line === null) return null;
+      const [, merge] = line;
+      if (!sameCard(data, undoCard(merge))) return null;
+      if (!(await mergeOnMain({ project, merge, run }))) return null;
+      const made = { kind: 'action', data: { action: 'undo-merge', merge, question, label } };
+      return { made, step: ACTION_STEPS['undo-merge'], lift: false };
+    }
+    return undefined;
+  }
+
+  // The card the request names, as the state holds it: there once, still waiting, its data hashing to `hash` (what
+  // the caller was shown), with the options a click in the window would decide it by. Refuses otherwise. The Lift
+  // STOP card is never in the state (the front desk composes it on each visit, since under STOP nothing is written:
+  // ruling F25), so `lift-stop` names the one the helper composes itself, while STOP is on, shown at `shownAt` (now,
+  // on the first look): the look after the click passes the time the window opened, so a click on a window shown
+  // during one STOP never lifts a later one (earned()'s rule).
+  async function windowCard({ project, card, hash }, ctx, { shownAt } = {}) {
+    let event;
+    if (card === LIFT_STOP_NAME) {
+      if (!stopped()) refuse('STOP is not on, so there is nothing to lift');
+      event = { at: shownAt ?? now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
+    } else {
+      const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
+      if (found.length !== 1) refuse('that card is not in this project\'s state');
+      [event] = found;
+      if (dataHash(event.data) !== hash) refuse('that card is not the one shown: its hash differs');
+      const { waiting } = await writeViews(project, { now });
+      if (!(waiting ?? []).some((w) => w.id === card)) refuse('that card no longer waits for a click');
+    }
+    const options = (Array.isArray(event.data?.options) ? event.data.options : []).filter((o) => typeof o === 'string');
+    const deciding = [];
+    for (const label of options) {
+      const got = await windowEarned(project, event, label, ctx);
+      if (got) deciding.push({ label, ...got });
+    }
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push or an approval');
+    return { event, deciding };
+  }
+
+  // POST /confirm { project | cwd, card, hash }: the card is looked up in the state (the caller's own text is never
+  // shown), or is `lift-stop`, with no hash, for the Lift STOP card the helper composes itself; the window shows its words with its deciding options and Not now, and a deciding click is signed here,
+  // with proof `window`, as the record the step already has: an approval, a confirmation or an action. The card is
+  // looked at again after the click, so a card decided or changed meanwhile records nothing. A confirmed Lift STOP
+  // lifts STOP: the window is the one place a click lifts it on an agent whose hooks only read. Not now, or no click
+  // before the window closes, records nothing. Under STOP only the Lift STOP card and a Lean undo are served, with only
+  // their undo offered (rulings P5-49 and P5-50). A card
+  // in the state gets the plain card-answer beside its signed record, as a hook that signs writes one, so the card
+  // no longer waits.
+  async function doConfirm({ project, card, hash }, ctx) {
+    if (card !== LIFT_STOP_NAME && (typeof card !== 'string' || !RANDOM_UUID.test(card))) refuse('the card must be named by its id, or be lift-stop');
+    if (card !== LIFT_STOP_NAME && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) refuse('the card\'s hash must be its sha256, in lower case');
+    // Under STOP a card of a project that isn't Lean is refused before it is looked up (no read of the code host);
+    // a Lean card is looked at, and only its undo offered.
+    if (card !== LIFT_STOP_NAME && stopped() && !ctx.lean) return STOP_REFUSAL;
+    const look = () => stateRoute((body) => windowCard(body, ctx))({ project, card, hash }, ctx);
+    const shown = await look();
+    if (card !== LIFT_STOP_NAME && stopped()) {
+      shown.deciding = servedUnderStop(shown.deciding);
+      if (shown.deciding.length === 0) return STOP_REFUSAL;
+    }
+    const lines = String(shown.event.data.question).split(/\r?\n/);
+    const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
+    const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label) });
+    const picked = shown.deciding.find((d) => d.label === choice);
+    if (!picked) return { ok: true, choice: choice === NOT_NOW ? NOT_NOW : null, recorded: false };
+    const answer = await stateRoute(async () => {
+      const CHANGED = 'that card changed while the window was open, so nothing was recorded';
+      let again;
+      try {
+        again = await windowCard({ project, card, hash }, ctx, { shownAt: shown.event.at });
+      } catch {
+        refuse(CHANGED);
+      }
+      const still = again.deciding.find((d) => d.label === picked.label && d.step === picked.step && d.made.kind === picked.made.kind);
+      if (!still) refuse(CHANGED);
+      if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
+      const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
+      const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+      await freshViews(() => writeViews(project, { now }));
+      if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label } }, ctx);
+      if (still.lift) liftStop();
+      if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
+      const action = event.kind === 'action' ? event.data?.action : null;
+      const keep = action === 'keep-main' ? { from: event.data.from, to: event.data.to } : null;
+      const undo = action === 'undo-merge' ? { merge: event.data.merge } : action === 'undo-main' ? { moved: true } : null;
+      return { ...written({ event, result }), choice: still.label, kind: event.kind, step: still.step, recorded: true, keep, undo };
+    })({ project, card, hash }, ctx);
+    const { keep = null, undo = null, ...said } = answer;
+    // Keep it: the record's main version becomes the one the card named, if nothing moved it since. Undo and Undo it:
+    // the undo is made now, on the record just signed. Both outside the state's queue, since the store's lock is taken
+    // before it by a merge.
+    if (keep !== null) return { ...said, kept: await keepMain({ project, ...keep, run, now }) };
+    if (undo !== null) return { ...said, undone: await leanAnswer(() => undoMerge({ project, ...undo, now, run, record: leanRecorder(ctx) })) };
+    return said;
+  }
+
+  // --- a Lean project's git store (scripts/lean/store.js, rulings P5-24 to P5-27) ---
+
+  // How the store records: a plain event written through this helper's state queue, so it takes its turn with
+  // every other write. A merge or an undo whose proof is the window's is signed here (ruling P5-24): it is made as
+  // doWrite makes a plain event, and signed by this computer before it is written. Gives the event's id.
+  const leanRecorder = (ctx) => (project, kind, data, { signed = false } = {}) => oneAtATime(`state:${project}`, async () => {
+    await leanState(project, { run });
+    if (!signed) return (await doWrite({ project, kind, data }, ctx)).id;
+    if (!PLAIN_KINDS.includes(kind) || !data || typeof data !== 'object' || Array.isArray(data)) refuse('only a plain record is signed this way');
+    const event = sign(makeEvent({ kind, data, now }));
+    await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await freshViews(() => writeViews(project, { now }));
+    return event.id;
+  });
+  // The store's answer, or its refusal in the helper's shape with what it adds (`card`, `needs`, `reasons`).
+  async function leanAnswer(fn) {
+    try {
+      return { ok: true, ...(await fn()) };
+    } catch (error) {
+      if (error instanceof LeanRefusal) return { ok: false, refused: error.message, ...error.extra };
+      throw error;
+    }
+  }
+  // POST /lean/status { project | cwd }: how the store stands, raising the card when the main version moved
+  // outside the helper. Answered under STOP.
+  const doLeanStatus = ({ project }, ctx) => leanAnswer(() => leanStatus({ project, run, now, record: leanRecorder(ctx) }));
+  // POST /lean/merge { project | cwd, branch, commit }: the approved commit of `feature/<slug>` merged, after its
+  // tests pass. The proofs taken are the chat's own and the window's.
+  const doLeanMerge = ({ project, branch, commit }, ctx) => leanAnswer(() => mergeApproved({
+    project, branch, commit, now, run, record: leanRecorder(ctx), approvalProofs: [...CHAT_PROOFS, ...SIGNED_LEAN_PROOFS],
+  }));
+  // POST /lean/undo { project | cwd, merge } or { project | cwd, moved: true }: a merge undone, or the main version's
+  // changes made outside the helper undone, each on the director's click.
+  const doLeanUndo = ({ project, merge, moved }, ctx) => leanAnswer(() => undoMerge({
+    project, merge, moved: moved === true, now, run, record: leanRecorder(ctx),
+  }));
+  // POST /lean/copy { project | cwd }: the main version and the state's branch pushed to the copy folder.
+  const doLeanCopy = ({ project }, ctx) => leanAnswer(() => copyNow({ project, now, run, record: leanRecorder(ctx) }));
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
   const TARGET_KEYS = ['v', 'id', 'at', 'computer', 'kind', 'data'];
@@ -1442,16 +1772,17 @@ export async function startHelper({
       const there = events.filter((e) => e.id === target.id);
       if (there.some((e) => canonicalJson(e) !== canonicalJson(target))) refuse('another event in the state carries the confirmed event\'s id, so neither was recorded');
       if (there.length === 0) {
-        await writeEvent({ project, event: target, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+        await writeEvent({ project, event: target, push: statePush(project, ctx), env: ctx.gitEnv, now });
         if (held.length > 0) await freshViews(() => writeViews(project, { now }));
       }
     }
     // The same record again has been taken (a hook sending its kept copy); another
     // event under its id has not, and says so in words a hook does not count as taken.
     if (held.length > 0) refuse('the state already holds an event with that id');
-    const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
-    if (event.kind === 'approval') photographApproved(project, event.data?.commit, ctx);
+    // A Lean project has no preview to photograph.
+    if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
@@ -2718,8 +3049,18 @@ export async function startHelper({
       return { ok: true };
     }, { clone: false }),
     '/state/write': stateRoute(doWrite, { write: true }),
+    '/session/mark': stateRoute(doSessionMark, { write: true }),
+    '/cards/chat-click': stateRoute(doChatClick, { write: true }),
+    // One window at a time on this computer: a second request waits for the first window to close.
+    '/confirm': (body, ctx) => oneAtATime('window', () => doConfirm(body, ctx)),
+    // A Lean project's store: one change at a time, by the store's own lock.
+    '/lean/status': doLeanStatus,
+    '/lean/merge': doLeanMerge,
+    '/lean/undo': doLeanUndo,
+    '/lean/copy': doLeanCopy,
     '/state/record': signedIn(stateRoute(doRecord)),
-    '/state/sync': stateRoute(async ({ project }, ctx) => ({
+    // A Lean project's state has no remote, so there is nothing to pull or push.
+    '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
     })),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
@@ -2916,9 +3257,10 @@ export async function startHelper({
       return send(res, 400, { ok: false, refused: 'the request must be a JSON object' });
     }
     if (url.pathname === '/stop/set') {
-      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it.
+      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but /confirm, on the director's click in the helper's own window. `by: 'prompt'` records that
+      // the director's STOP word set it, from a hook that only reads (ruling P5-18); anything else is the helper.
       try {
-        setStop({ by: 'helper', now });
+        setStop({ by: body.by === 'prompt' ? 'prompt' : 'helper', now });
         return send(res, 200, { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'STOP could not be recorded' });
@@ -2960,7 +3302,14 @@ export async function startHelper({
         ctx = await profileContext();
       } else {
         const project = checkProject(body.project);
-        ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+        // A Lean project is served before any connection is made, on its state routes alone.
+        if (isLean(project)) {
+          if (!LEAN_ROUTES.includes(url.pathname)) refuse(LEAN_NO_HOST);
+          ctx = leanContext();
+        } else {
+          if (url.pathname.startsWith('/lean/')) refuse(LEAN_ONLY);
+          ctx = await contextFor(project, { fallBack: runbookRoute || FALL_BACK_ROUTES.includes(url.pathname) });
+        }
       }
       onArrive(url.pathname); // for tests: the request is about to enter its queue
       const answer = await route(body, ctx);
