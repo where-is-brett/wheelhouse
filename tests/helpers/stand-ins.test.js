@@ -36,6 +36,20 @@ for (const form of ['script', 'node']) {
       s.restore();
     }
   });
+
+  test(`${form} form: an answered call prints its answer, exits 0 and is logged`, () => {
+    const listed = `${JSON.stringify([{ number: 7, title: 'It\'s "quoted" $HOME' }])}\n`;
+    const s = standInTools({ form, answer: { gh: [{ args: ['pr', 'list'], stdout: listed }] } });
+    try {
+      const out = spawnSync('gh', ['pr', 'list', '--state', 'open'], { encoding: 'utf8' });
+      assert.equal(out.status, 0);
+      assert.equal(out.stdout, listed);
+      assert.equal(spawnSync('gh', ['pr', 'close', '7'], { encoding: 'utf8' }).status, 1);
+      assert.deepEqual(s.calls(), ['gh pr list --state open', 'gh pr close 7']);
+    } finally {
+      s.restore();
+    }
+  });
 }
 
 test('node form: an ordinary node child is unaffected by the preload', () => {
