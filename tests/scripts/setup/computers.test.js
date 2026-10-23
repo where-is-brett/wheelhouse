@@ -5,7 +5,8 @@
 // after the director's Trust it on a card naming that computer, the day its key was added and the
 // key's fingerprint. Git runs for real only against bare remotes in temporary folders; every home
 // is a scratch folder.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -30,8 +31,13 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import { ensureProfileClone, profileRemote, PROFILE_BRANCH } from '../../../scripts/profile/store.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { makeBareRemote, g } from '../../helpers/git-fixture.js';
+import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { withHome, as, shortHome, testAddress } from '../../helpers/homes.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const NOW = new Date('2026-10-20T03:00:00.000Z');
 const ADDED = '2026-10-19T22:30:00.000Z';
@@ -124,11 +130,11 @@ test('an enrolment found in the profile is not trusted until the director clicks
     assert.equal(setLineOf(question.question), line);
     assert.deepEqual(cardProblems(question.question), []);
     assert.doesNotMatch(question.question, /Reply code/, 'only the click on the card itself counts');
-    assert.deepEqual(question.options.map((o) => o.label), [TRUST_LABEL, 'Not now', 'Explain more']);
+    assert.deepEqual(question.options.map((o) => o.label), [TRUST_LABEL, 'Not now']);
     assert.equal(question.header, 'Trust');
 
-    // Not now and Explain more trust nothing, and nothing of the card goes to the project.
-    for (const label of ['Not now', 'Explain more']) {
+    // Not now trusts nothing, and nothing of the card goes to the project.
+    for (const label of ['Not now']) {
       assert.deepEqual(await click(question, label), [], label);
       assert.equal(readEnrolled().some((e) => e.computer === other.computer), false, label);
     }
@@ -154,7 +160,7 @@ test('an enrolment found in the profile is not trusted until the director clicks
     // Trusted, it is offered no more.
     assert.deepEqual(trustOffers({ enrolments: readSeen().enrolments, enrolled: readEnrolled(), own: ownKey() }), { offers: [], clashes: [] });
     // The state never takes a trust click.
-    await assert.rejects(writeEvent({ project: P, event, push: async () => ({ ok: true }) }), { message: TRUST_KEPT_HERE });
+    await assert.rejects(writeEvent({ env: LOCAL_PATHS, project: P, event, push: async () => ({ ok: true }) }), { message: TRUST_KEPT_HERE });
   });
 });
 
@@ -278,7 +284,8 @@ test('a trust card is composed only for a whole target, names its computer first
   assert.throws(() => composeCard({ ...input, options: [...input.options, { label: 'Show me', says: 'x' }] }), /can't describe Show me/);
   // The card check judges a card by the same rule: its first part names the computer its line trusts.
   const { question } = composeCard(input);
-  const elsewhere = question.question.replace(`Your computer ${other.computer}`, 'Your computer 99999999');
+  // Every plain line says it, so every plain line changes; the set line stays.
+  const elsewhere = question.question.split('\n').map((l) => (l === setLineOf(question.question) ? l : l.replaceAll(other.computer, '99999999'))).join('\n');
   assert.match(cardProblems(elsewhere).join(' '), /must name the computer 0a1b2c3d/);
   assert.match(cardProblems(`${question.question}\nReply code: ABCD`).join(' '), /a trust card has none/);
 });
@@ -318,7 +325,7 @@ async function profileHere() {
   fs.writeFileSync(path.join(wheelhouseHome(), 'profile.json'), JSON.stringify({
     remoteUrl: remote.url, host: 'github', repo: PROFILE_REPO, connection: { host: 'github', mode: 'quick', project: PROFILE_REPO },
   }));
-  await ensureProfileClone({ remote: profileRemote(), env: {} });
+  await ensureProfileClone({ remote: profileRemote(), env: LOCAL_PATHS });
   return remote;
 }
 
@@ -333,7 +340,7 @@ function watched({ before } = {}) {
   const run = async (file, args, options = {}) => {
     calls.push({ args: [...args], cwd: options.cwd, env: options.env });
     await before?.(callOf(args));
-    return realRun(file, args, options);
+    return hostGuard(file, args, options);
   };
   return { calls, run };
 }
@@ -427,8 +434,8 @@ test('step 3\'s publish puts this computer\'s key in the profile by commit-tree,
       assert.equal(fs.existsSync(mark), false);
 
       // A key not the one the card named is not published.
-      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, fingerprint: '000000000000' }, env, run: realRun, now: () => NOW }), { message: KEY_CHANGED });
-      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, computer: '99999999' }, env, run: realRun, now: () => NOW }), { message: KEY_CHANGED });
+      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, fingerprint: '000000000000' }, env, run: hostGuard, now: () => NOW }), { message: KEY_CHANGED });
+      await assert.rejects(publishEnrolment({ profile: profileRemote(), listed: { ...listed, computer: '99999999' }, env, run: hostGuard, now: () => NOW }), { message: KEY_CHANGED });
     } finally {
       remote.cleanup();
     }
@@ -515,20 +522,21 @@ test('a failed push of the key leaves the helper\'s profile branch as it was, an
       }));
       let tick = 0;
       helper = await startHelper({
+        run: hostGuard,
         address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({ mode: 'quick', env: {} }),
         now: () => new Date(NOW.getTime() + 1000 * (tick += 1)),
       });
       const client = helperClient({ address: helper.address });
       assert.deepEqual(await client.profile.clone({}), { ok: true, made: true });
       const before = await clean();
-      const failing = async (file, args, options) => (callOf(args)[0] === 'push' ? { code: 1, stdout: '', stderr: 'denied' } : realRun(file, args, options));
+      const failing = async (file, args, options) => (callOf(args)[0] === 'push' ? { code: 1, stdout: '', stderr: 'denied' } : hostGuard(file, args, options));
       await assert.rejects(publishEnrolment({ profile: profileRemote(), env: {}, run: failing, now: () => NOW }), { message: NOT_PUBLISHED });
       assert.deepEqual(await clean(), before, 'nothing on the helper\'s branch for its push rules to refuse');
       const wrote = await client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep the briefing short' } });
       assert.equal(wrote.ok, true, JSON.stringify(wrote));
       assert.equal(wrote.pushed, true);
       // Published after all, the helper's next push still goes through, carrying the key along.
-      assert.equal((await publishEnrolment({ profile: profileRemote(), env: {}, run: realRun, now: () => NOW })).published, true);
+      assert.equal((await publishEnrolment({ profile: profileRemote(), env: {}, run: hostGuard, now: () => NOW })).published, true);
       const next = await client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'detailed', words: 'Keep the briefing detailed' } });
       assert.equal(next.pushed, true, JSON.stringify(next));
       const files = (await g(remote.url, 'ls-tree', '-r', '--name-only', PROFILE_BRANCH)).split('\n');
@@ -550,7 +558,7 @@ test('the last uninstall takes this computer\'s key back out of the profile by i
       const own = ownKey();
       const env = directorGitEnv({ host: 'github', gitPath: 'git', platform: 'darwin' });
       const recorded = [];
-      await publishEnrolment({ profile: profileRemote(), env, run: realRun, record: (c) => recorded.push(c), now: () => NOW });
+      await publishEnrolment({ profile: profileRemote(), env, run: hostGuard, record: (c) => recorded.push(c), now: () => NOW });
       const { target, after } = recorded[0];
       const tipBefore = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
       const git = watched();
@@ -562,7 +570,7 @@ test('the last uninstall takes this computer\'s key back out of the profile by i
       assert.deepEqual(pushes.map((c) => callOf(c.args)), [['push', '--no-verify', '--porcelain', remote.url, `${tip}:refs/heads/${PROFILE_BRANCH}`]]);
       assert.ok(git.calls.every((c) => path.basename(c.cwd).startsWith('withdraw-')) && !fs.existsSync(git.calls[0].cwd));
       // Gone already: nothing to do.
-      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: realRun }), { put: true });
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: hostGuard }), { put: true });
       assert.equal(await g(remote.url, 'rev-parse', PROFILE_BRANCH), tip);
       // A key this computer's id holds since, not setup's, stays.
       const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-withdraw-'));
@@ -578,11 +586,11 @@ test('the last uninstall takes this computer\'s key back out of the profile by i
         fs.rmSync(work, { recursive: true, force: true });
       }
       const moved = await g(remote.url, 'rev-parse', PROFILE_BRANCH);
-      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: realRun }), { put: false, why: 'it holds another key since setup, so it stays' });
+      assert.deepEqual(await withdrawEnrolment({ profile: profileRemote(), target, after, env, run: hostGuard }), { put: false, why: 'it holds another key since setup, so it stays' });
       assert.equal(await g(remote.url, 'rev-parse', PROFILE_BRANCH), moved);
       // A host that can't be reached says so.
-      await assert.rejects(withdrawEnrolment({ profile: { ...profileRemote(), remoteUrl: path.join(os.tmpdir(), 'wh-no-such-remote.git') }, target, after, env, run: realRun }), { message: NOT_WITHDRAWN });
-      await assert.rejects(withdrawEnrolment({ profile: profileRemote(), target: 'github:o/p:keys/x.json', after, env, run: realRun }));
+      await assert.rejects(withdrawEnrolment({ profile: { ...profileRemote(), remoteUrl: path.join(os.tmpdir(), 'wh-no-such-remote.git') }, target, after, env, run: hostGuard }), { message: NOT_WITHDRAWN });
+      await assert.rejects(withdrawEnrolment({ profile: profileRemote(), target: 'github:o/p:keys/x.json', after, env, run: hostGuard }));
     } finally {
       remote.cleanup();
     }

@@ -29,6 +29,9 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
+import { caFile } from '../../../scripts/host/company-ca.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import { withProject, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
 // The session's seven trial lines, every one as expected.
@@ -181,6 +184,73 @@ const stepWith = (adapter, client, extra = {}) => healthStep({
   adapterFor: () => adapter, client, findGit: GIT, trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match', readProtection: async () => 'on', ...extra,
 });
 const cleanups = (recorded) => recorded.filter((c) => c.kind === 'answer' && c.after?.cleanup).map((c) => c.after.cleanup);
+
+test('step 10 reads the host\'s protection knowing whether the project has real users', async () => {
+  for (const launched of [false, true]) {
+    await withProject(async ({ folder }) => {
+      if (launched) {
+        const file = path.join(stateDir(SLUG), 'events', '2026', 'phase.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ v: 1, id: '0f1e2d3c-0000-4000-8000-000000000009', at: '2026-10-19T00:00:00.000Z', computer: 'c-first', kind: 'setting', data: { key: 'phase', value: 'launched' } }));
+      }
+      const { remote } = await productOnRemote(folder);
+      const { adapter } = standIn(remote);
+      const { client } = merges(REFUSED);
+      const seen = [];
+      const step = stepWith(adapter, client, { readProtection: async (asked) => { seen.push(asked); return 'on'; } });
+      const { changes } = await step.plan({ folder });
+      const { ctx } = ctxFor(folder, remote);
+      await step.apply(ctx, changes);
+      assert.deepEqual(seen, [{ host: 'github', repo: REPO, realUsers: launched }]);
+    });
+  }
+});
+
+test('step 10 on a company GitLab uses the company address for the adapter, git\'s certificate pair and the protection read', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  await withProject(async ({ folder }) => {
+    const { remote } = await productOnRemote(folder);
+    writeProject(SLUG, { folder, remoteUrl: remote, host: 'gitlab', repo: REPO, connection: { baseUrl: COMPANY } });
+    const file = caFile(wheelhouseHome());
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'CERTIFICATES\n');
+    const { adapter } = standIn(remote);
+    const bases = [];
+    const glab = [];
+    const gitEnvs = [];
+    const run = async (command, args = [], options = {}) => {
+      const name = path.basename(command);
+      if (name === 'git') { gitEnvs.push(options.env ?? {}); return realRun(command, args, options); }
+      if (name === 'glab') {
+        glab.push({ args: [...args], env: options.env });
+        return { code: 0, stdout: 'Token found: glpat-made-up-0001\n', stderr: '' };
+      }
+      return { code: 1, stdout: '', stderr: 'not run in this test' };
+    };
+    const asked = [];
+    const fetched = globalThis.fetch;
+    globalThis.fetch = async (url) => { asked.push(String(url)); return new Response('{}', { status: 404 }); };
+    try {
+      const step = healthStep({
+        run, adapterFor: ({ base }) => { bases.push(base); return adapter; }, client: merges(REFUSED).client, findGit: GIT,
+        trySTOP: async () => ({ write: 'refused', read: 'allowed' }), checkPins: () => 'match',
+      });
+      const { changes } = await step.plan({ folder });
+      const { ctx } = ctxFor(folder, remote);
+      await step.apply(ctx, changes).catch(() => null);
+    } finally {
+      globalThis.fetch = fetched;
+    }
+    // The adapter is made for the company's address (here and for the leftover trial's closing).
+    assert.ok(bases.length >= 1 && bases.every((b) => b === COMPANY), JSON.stringify(bases));
+    // Git carries the certificate for that address, and no check is switched off.
+    const pairs = gitEnvs.flatMap((env) => Object.entries(env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([, key]) => key));
+    assert.ok(gitEnvs.length > 0 && pairs.includes(`http.${COMPANY}/.sslCAInfo`), JSON.stringify(pairs));
+    // The protection read is made at the company's address, with glab told the host.
+    assert.ok(asked.length > 0 && asked.every((u) => u.startsWith(`${COMPANY}/api/v4/`)), JSON.stringify(asked));
+    assert.ok(glab.length > 0 && glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab));
+  });
+});
 
 test('the helper\'s part: an empty commit on main\'s tip, the gate refuses it, STOP holds, and the pull request is left open for the session', async () => {
   await withProject(async ({ folder }) => {
@@ -404,6 +474,10 @@ test('a green run gives a green board', async () => {
     assert.ok(session.every((l) => l.startsWith('Passed:')));
     assert.ok(got.lines.includes('Board: Protection: Standard'));
     assert.match(got.board, /Wheelhouse's board/);
+    const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `All ${checks} checks passed. Wheelhouse is ready.`);
+    assert.equal(got.lines.at(-1), got.verdict, 'one verdict ends the lines');
+    assert.equal(got.lines.filter((l) => /checks passed\./.test(l)).length, 1);
     const watched = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'watch', text: 'Your profile isn\'t backed up off this computer yet' }]) });
     assert.equal(watched.green, true);
   });
@@ -421,6 +495,9 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
     assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10 again.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
     assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
+    const every = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `${every - 3} of ${every} checks passed. Here is what to do.`);
+    assert.equal(got.lines.at(-1), got.verdict);
   });
 });
 
@@ -467,6 +544,31 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed, 
     assert.equal(got.green, false);
     assert.equal(got.trials, null);
     assert.match(got.lines[0], /^Not yet: step 10's checks haven't run/);
+  });
+});
+
+test('the verdict counts only the checks that print a line, so its figures match the lines shown', async () => {
+  const sessionChecks = Object.keys(SESSION_CHECKS).length;
+  const every = Object.keys(HELPER_CHECKS).length + sessionChecks;
+  await withProject(async ({ folder }) => {
+    // Step 10 not run: no helper record, so the helper's checks print nothing and are not counted;
+    // the line saying step 10 hasn't run is.
+    const got = await healthCheck({ folder, run: runWith(folder, { upTo: 9 }), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.lines.filter((l) => /^(Passed|Failed|Not yet):/.test(l)).length, sessionChecks + 1, got.lines.join('\n'));
+    assert.equal(got.verdict, `${sessionChecks} of ${sessionChecks + 1} checks passed. Here is what to do.`);
+  });
+  await withProject(async ({ folder }) => {
+    // A STOP line on the board is shown and counted, once.
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'STOP is on' }]) });
+    assert.equal(stopped.verdict, `${every} of ${every + 1} checks passed. Here is what to do.`);
+  });
+  await withProject(async ({ folder }) => {
+    // Step 10 marked done with no record of its checks: one line says so, and it is counted.
+    const got = await healthCheck({ folder, run: runWith(folder), reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.green, false);
+    assert.ok(got.lines.some((l) => l.startsWith('Failed: step 10\'s record of its checks is missing.')), got.lines.join('\n'));
+    assert.equal(got.verdict, `${sessionChecks} of ${sessionChecks + 1} checks passed. Here is what to do.`);
   });
 });
 

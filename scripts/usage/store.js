@@ -17,7 +17,8 @@
 //   series.json            for a cumulative series its last value, and for a delta one its
 //                          recent export times, so a repeat adds nothing
 //   records/<date>.jsonl   increases: { at, session, model, type?, source?, tokens? | usd? }
-//   mod/<date>.jsonl       the mod's readings of a session's running cost: { at, session, usd }
+//   mod/<date>.jsonl       the mod's readings of a session's running cost: { at, session, usd }, and each
+//                          message it kept out of the front desk: { at, event: 'received', via, origin, session }
 //   allowance.json         the latest rate-limit windows: { at, windows }
 //   sessions/<id>.json     what a session is for, written once
 //   days/<date>.json       a day's summary, from the two raw folders
@@ -255,6 +256,15 @@ export function recordModReading({ session, usd, windows, at, now }) {
     appendLines('mod', new Map([[dateOf(time), [{ at: time, session, usd }]]]));
   }
   writeAllowance(windows, time, now);
+}
+
+// A message from another session that the mod kept out of the front desk: one line in the day's
+// mod file, { at, event: 'received', via, origin, session }. It holds no cost, so the day's figures
+// pass over it. Never the message's text.
+export function recordReceived({ session, via, origin, at }) {
+  checkSession(session);
+  const time = timeOf(at);
+  appendLines('mod', new Map([[dateOf(time), [{ at: time, event: 'received', via, origin, session }]]]));
 }
 
 // The allowance as the terminal's status line reports it: the same file.

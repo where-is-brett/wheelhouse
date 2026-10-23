@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decide, MAX_CHARS, toolSheetLines } from '../../scripts/hooks/session-start.js';
-import { frontDeskCommand } from '../../scripts/protection/settings.js';
+import { frontDeskCommand, knowsNoSystemCa } from '../../scripts/protection/settings.js';
 import claudeCode from '../../adapters/claude-code/index.js';
 import claudeCodeTools from '../../adapters/claude-code/tools.js';
 import claudeCodeSheet from '../../adapters/claude-code/tool-sheet.js';
@@ -61,8 +61,8 @@ test('the Claude Code tool sheet names every one of them', () => {
 
 test('the tool sheet lines are the sheet, then the Wheelhouse command', () => {
   const lines = toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
-  assert.deepEqual(lines, [...claudeCodeSheet.split('\n'), `The Wheelhouse command is ${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}`]);
-  assert.equal(lines.at(-1), 'The Wheelhouse command is node "/plugin/root/scripts/frontdesk/cli.js"');
+  assert.deepEqual(lines, [...claudeCodeSheet.split('\n'), `The Wheelhouse command is ${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: knowsNoSystemCa() })}`]);
+  assert.equal(lines.at(-1), `The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"/plugin/root/scripts/frontdesk/cli.js"`);
   // A plugin folder that can't be typed as a command gives the sheet alone.
   assert.deepEqual(toolSheetLines('claude-code', { pluginRoot: '/plugin/$root', platform: 'darwin' }), claudeCodeSheet.split('\n'));
 });
@@ -102,7 +102,7 @@ test('the session start gives the tool sheet and the command line before the bri
     assert.ok(t.includes(SHEET()), t);
     assert.ok(t.indexOf(SHEET()) < t.indexOf('Waiting on the director:'), 'the sheet comes before the lists');
     assert.ok(t.indexOf(SHEET()) < t.indexOf('Levels:'));
-    assert.ok(t.includes('The Wheelhouse command is node "/plugin/root/scripts/frontdesk/cli.js"'));
+    assert.ok(t.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"/plugin/root/scripts/frontdesk/cli.js"`));
   });
 });
 
@@ -135,15 +135,15 @@ test('in a Locked project the managed copy names the plugin folder recorded in i
     const ownRoot = path.join(managed, 'wheelhouse');
     fs.writeFileSync(path.join(managed, 'wheelhouse', 'installed.json'), JSON.stringify({ version: '1', pluginRoot: plugin }));
     const named = textOf(await start(BASE, { deps: { dir: managed, self, pluginRoot: ownRoot } }));
-    assert.ok(named.includes(`The Wheelhouse command is ${frontDeskCommand(plugin, { platform: 'darwin' })}`), named);
+    assert.ok(named.includes(`The Wheelhouse command is ${frontDeskCommand(plugin, { platform: 'darwin', noSystemCa: knowsNoSystemCa() })}`), named);
     assert.ok(!named.includes(ownRoot), 'the managed copy\'s own folder is not named');
     // With no record, the hook's own folder.
     fs.rmSync(path.join(managed, 'wheelhouse', 'installed.json'));
     const own = textOf(await start(BASE, { deps: { dir: managed, self, pluginRoot: ownRoot } }));
-    assert.ok(own.includes(`The Wheelhouse command is ${frontDeskCommand(ownRoot, { platform: 'darwin' })}`), own);
+    assert.ok(own.includes(`The Wheelhouse command is ${frontDeskCommand(ownRoot, { platform: 'darwin', noSystemCa: knowsNoSystemCa() })}`), own);
     // The plugin's own copy (not inside the managed folder) names its own folder even when a record exists.
     fs.writeFileSync(path.join(managed, 'wheelhouse', 'installed.json'), JSON.stringify({ version: '1', pluginRoot: plugin }));
     const pluginCopy = textOf(await start(BASE, { deps: { dir: managed, self: '/plugin/root/scripts/hooks/session-start.js' } }));
-    assert.ok(pluginCopy.includes(`The Wheelhouse command is ${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}`), pluginCopy);
+    assert.ok(pluginCopy.includes(`The Wheelhouse command is ${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: knowsNoSystemCa() })}`), pluginCopy);
   });
 });

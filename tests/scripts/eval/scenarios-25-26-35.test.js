@@ -2,6 +2,7 @@
 // The front desk scenarios' set-up pieces and judgements: the stand-in helper's state, the scratch
 // plugin that holds the real front desk, the readers, and the judgements of scenarios 25, 26, 35
 // and 27's route leg, on made-up streams and events.
+import { knowsNoSystemCa } from '../../../scripts/protection/settings.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -140,7 +141,7 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
     assert.equal(context.appendSystemPrompt, undefined, 'no line in the system prompt stands in for the playbook');
     // The front desk's line, then the tool sheet and the command line, as the real session start gives a Claude Code front desk.
     const given = [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n');
-    assert.ok(given.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+    assert.ok(given.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.ok(fs.existsSync(path.join(plugin, 'scripts', 'frontdesk', 'cli.js')), 'the command names a file the scratch plugin holds');
     assert.equal(context.reload, given);
     const hooks = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8'));
@@ -264,8 +265,8 @@ test('a card is judged by its card event and how it was put to the director', ()
   assert.equal(howAsked(events(['say', `Here is the card.\n\n${card.line}`]), card), 'in its reply');
   assert.equal(howAsked(events(['say', 'Change export as written. Click below.']), card), 'in its reply', 'its first part counts');
   // Every label counts only with the card's own words: what the option it recommends says (F83).
-  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Not now**, **Explain more** or **Show me**.']), card), 'in its reply');
-  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Not now**, **Explain more** or **Show me**.']), card), null, 'the buttons alone say nothing of the change');
+  assert.equal(howAsked(events(['say', 'In my words: **Change it**: It goes ahead. Or, **Suggest a change…**, **Show me** or **Not now**.']), card), 'in its reply');
+  assert.equal(howAsked(events(['say', 'Pick one: **Change it**, **Suggest a change…**, **Show me** or **Not now**.']), card), null, 'the buttons alone say nothing of the change');
   assert.equal(howAsked(events(['say', 'Shall I change it? Not now is fine too.']), card), null, 'some of its labels are not the card');
   assert.equal(howAsked(events(['ToolSearch', { query: 'select:AskUserQuestion' }]), card), null, 'a search for the tool alone is not asking');
   assert.equal(howAsked(events(['say', 'Done.'], ['AskUserQuestion', { questions: [question] }, '', { parent: 'p1' }]), card), null, 'a subagent\'s call is not the session\'s');

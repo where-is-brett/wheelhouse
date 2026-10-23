@@ -175,7 +175,8 @@ test('a new product: every step\'s card, its click, and a green board at the end
     // The board is green, setup's ending ran, and the journal says the run is finished.
     const { health } = log.at(-1);
     assert.equal(health.green, true, health.lines.join('\n'));
-    assert.ok(health.lines.every((l) => /^(Passed|Board):/.test(l)), health.lines.join('\n'));
+    assert.ok(health.lines.slice(0, -1).every((l) => /^(Passed|Board):/.test(l)), health.lines.join('\n'));
+    assert.match(health.lines.at(-1), /^All \d+ checks passed\. Wheelhouse is ready\.$/);
     assert.match(health.board, /Wheelhouse's board for a-director__Cafe-Menu/);
     assert.match(health.board, /Phase: before launch/);
     assert.match(health.started, /watcher is running/);

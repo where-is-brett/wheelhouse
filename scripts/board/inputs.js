@@ -10,7 +10,7 @@
 //
 // With `offline` (the status line, which has half a second and whose reads can't be interrupted)
 // only what the glance needs is read, each a file of known size or a view by name: the waiting,
-// questions, work and features views, STOP, the weekly share from the allowance file alone, and
+// questions, work, features and blockers views, STOP, the weekly share from the allowance file alone, and
 // the small files health reads (the host facts' cache, the profile's address). No raw events,
 // other views, settings, usage days, sources, key files, setup journal or the project's
 // configuration are read, no browser is looked for, and nothing is asked of the helper, so the
@@ -36,13 +36,14 @@ import { helperClient } from '../host/helper-client.js';
 import { HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { phonePushResult } from '../lib/setup-run.js';
+import { readSeen } from '../briefing/seen.js';
 
 export const NOT_A_PROJECT = 'This folder isn\'t part of a Wheelhouse project';
 // readHostFacts keeps its own limit this far inside HELPER_WAIT_MS, so it has given up, and marked
 // the helper as tried, before the reading as a whole stops waiting.
 const FACTS_MARGIN_MS = 150;
 // The views the glance counts from.
-const GLANCE_VIEWS = ['waiting', 'questions', 'work', 'features'];
+const GLANCE_VIEWS = ['waiting', 'questions', 'work', 'features', 'blockers'];
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const LATE = Symbol('late');
@@ -101,6 +102,8 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
   const facts = asked === LATE ? await readHostFacts(project, { now, ask: false }).catch(() => null) : asked;
   return {
     helperUp: health?.ok === true,
+    // The GitLab address, while the helper says it could not lately be reached for this project.
+    away: typeof health?.away?.[project] === 'string' ? health.away[project] : undefined,
     lock: lock !== LATE && lock?.ok === true ? (isRecord(lock.result) ? lock.result : null) : undefined,
     facts,
   };
@@ -168,6 +171,8 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     phonePush: offline ? null : attempt(() => phonePushResult()),
   }));
 
-  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, now: clock });
+  // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.
+  const since = offline ? null : attempt(() => readSeen(project, { now: clock }).briefedAt);
+  const model = boardModel({ project, views, profileUnconfirmed: profileViews?.unconfirmed, events, usage, health, settings, sources, hostUnreachable: known.away, now: clock, since });
   return { project, model, usage, sources, settings };
 }

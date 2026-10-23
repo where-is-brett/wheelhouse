@@ -3,6 +3,7 @@
 // helper and the scratch plugin (the hooks asking the stand-in, the board context hook's text, a
 // confirmation made as a click would make it, an open pull request), the harness's sessions over
 // several turns, the readers, and each scenario's judgement on made-up streams and events.
+import { knowsNoSystemCa } from '../../../scripts/protection/settings.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -172,9 +173,17 @@ test('promptContext gives what the real board context hook gives over the same s
   const blocked = /^- Pull request #17 for [^\n]* is blocked: [^\n]*$/m;
   assert.match(real, blocked);
   assert.match(mine, blocked);
-  const withoutHealth = real.replace(/\nTo watch:\n(?:- [^\n]*\n?)+/, (block) => block.split('\n').filter((line) => !line.startsWith('- ') || blocked.test(line)).join('\n'));
-  assert.notEqual(withoutHealth, real, 'the real text has health lines to take out');
-  assert.equal(withoutHealth, mine);
+  // At the standard length the real hook's health lines cost words, so the parts after the waiting
+  // cards may be cut differently; what the director must see is the same: the verdict, every waiting
+  // card, the blocked pull request and the foot.
+  const block = (text, label) => text.split('\n\n').find((part) => part.startsWith(label));
+  assert.equal(block(real, 'Waiting on you'), block(mine, 'Waiting on you'));
+  assert.ok(block(real, 'Waiting on you').includes('Should Christmas pre-orders close'));
+  for (const text of [real, mine]) {
+    assert.match(text, /\n\nOne thing needs you\. Nothing is broken\.\n\n/);
+    assert.match(text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\./);
+  }
+  assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
 });
 
 test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the reload over the state as it stands, and the board context hook\'s text', async () => {
@@ -195,7 +204,7 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     const hook = (input) => runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify(input) });
     const start = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'startup' })).out);
     assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) }));
-    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node "${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.match(start.hookSpecificOutput.additionalContext, /Changed without the director's confirmation:\n.*Prices show to the cent/);
     // Confirmed between turns, the next reload has it in the rulebook instead.
     context.helper.confirm(context.helper.events()[0].id);

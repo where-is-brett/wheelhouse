@@ -2,7 +2,9 @@
 // The helper stamps every pull request it opens or updates with what built it, from the
 // session's provenance on this computer, and its merge gate refuses a pull request whose
 // block does not match the installed Wheelhouse's manifest.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,7 +18,7 @@ import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { BEGIN, END, WHY, parseProvenance, provenanceBlock, removeProvenance, stampProvenance } from '../../../scripts/lineage/provenance.js';
-import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { lineageFixture } from '../../helpers/lineage.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
@@ -28,6 +30,11 @@ import { provenanceFile } from '../../../scripts/lineage/check.js';
 import { readManifest } from '../../../scripts/lineage/manifest.js';
 import { projectOf } from '../../../scripts/hooks/kit.js';
 import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
@@ -50,6 +57,7 @@ function fakeAdapter(overrides = {}) {
 
 async function withHelper(adapter, fn, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), ...extra,
   });
   try {
@@ -68,8 +76,8 @@ async function project({ folder = os.tmpdir() } = {}) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return { remote, home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }

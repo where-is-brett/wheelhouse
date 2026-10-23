@@ -1,7 +1,10 @@
 // scripts/cards/compose.js
-// Writes every question card the director sees from one input: the five plain-language parts,
-// the set line the prompt record signs against, and the reply code. The card's text and its
-// set line come from the same target, so a card can't read as one decision and sign another.
+// Writes every question card the director sees from one input: its parts (the question, what it
+// is, why it is the director's, what happens meanwhile, its options and its recommendation), the
+// set line the prompt record signs against, and the reply code. The chat's text is built from the
+// parts by `textOf`, in the order of design section 23.4, and the options carry the recommendation
+// and what each means. The card's text and its set line come from the same target, so a card can't
+// read as one decision and sign another.
 // The front desk asks only what this returns (`cli.js card`), never a card it wrote itself. The
 // baseline card is composed by the helper and comes to the front desk from `scripts/measures/cli.js`;
 // a trust card is composed by the session start, which hands it to the front desk as it is, and
@@ -12,15 +15,11 @@ import {
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
+import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS } from '../lib/calm-words.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
 import { BUILD_QUESTION_OPTIONS } from '../protection/windows-builds.js';
 import { baselineWording } from '../lib/measures-clicks.js';
-
-// The labels the five parts start with, in order, then the one for a level 4 card.
-export const PART_LABELS = Object.freeze([
-  'What this is:', "Why it's coming to you:", 'Options:', 'My recommendation:', 'While you decide:', 'What this does to the checks:',
-]);
 
 // The kind in plain words, at most CARD.header characters; the director reads these.
 export const HEADERS = Object.freeze({
@@ -68,31 +67,52 @@ export const DECIDING = Object.freeze({
 // is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
 export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall']);
 
-// The put-off buttons a kind's card offers, where it isn't all of them: the baseline card reads
-// figures back, and there is nothing more to explain or show; a trust card has nothing to show, nor
-// has uninstall's card, whose whole list `cli.js uninstall status` gives.
-const PUT_OFF_OF = Object.freeze({
-  baseline: Object.freeze(['Not now']),
-  trust: Object.freeze(['Not now', 'Explain more']),
-  uninstall: Object.freeze(['Not now', 'Explain more']),
+// The buttons a kind's card offers after its deciding label, in the order they are shown, where it
+// isn't the usual Suggest a change…, Show me and Not now (design section 23.4). STOP is lifted or it
+// isn't, and the kinds answered only in setup's or the session start's own chat take no change to
+// suggest. The baseline card reads figures back, so there is nothing to show; a trust card has
+// nothing to show, nor has uninstall's card, whose whole list `cli.js uninstall status` gives. The
+// card of the rules found offers its second answer in place of Show me (ruling R35). Explain more
+// is offered by none: the director asks why in the typed answer.
+const OFFERED_AFTER = Object.freeze({
+  'lift-stop': Object.freeze([SHOW_ME, NOT_NOW]),
+  setup: Object.freeze([SHOW_ME, NOT_NOW]),
+  'confirm-all': Object.freeze([CORRECT_SOME_LABEL, NOT_NOW]),
+  baseline: Object.freeze([NOT_NOW]),
+  trust: Object.freeze([NOT_NOW]),
+  uninstall: Object.freeze([NOT_NOW]),
 });
+const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
 
 // What an answer card says happens while the director decides.
 export const MEANWHILE = 'that feature waits; the others carry on';
 // The checks line of a level 4 question's card when the build didn't say what answering does to the checks (ruling F18).
-// A card with four options of its own has no Explain more button, so the line also says it can be typed.
-export const CHECKS_UNSAID = 'The build didn\'t say. Choose or type Explain more and I\'ll find out before you answer.';
+export const CHECKS_UNSAID = 'The build didn\'t say. Ask me why and I\'ll find out before you answer.';
 
 // A confirm card for a proposal offers Keep as is in place of Show me (ruling F48); learning.js
 // holds the proposal back for TURNED_DOWN_DAYS after it.
 export { KEEP_AS_IS };
 
-// What the buttons that put a card off do, and what Keep as is does.
+// What the buttons that put a card off or steer it do, and what Keep as is does.
 const PUT_OFF_SAYS = Object.freeze({
-  'Not now': 'Leave this waiting; nothing changes yet.',
-  'Explain more': 'I explain it in plainer words, with an everyday example, and ask again.',
-  'Show me': 'I show you what it looks like, then ask again.',
+  [NOT_NOW]: 'Leave this waiting; nothing changes yet.',
+  [SHOW_ME]: 'I show you what it looks like, then ask again.',
+  [SUGGEST]: SUGGEST_SAYS,
   [KEEP_AS_IS]: 'Things stay as they are, and this isn\'t asked again for a while.',
+});
+
+// The question a kind's card asks when its input gives none (design section 23.3). A kind with no
+// entry here asks its `what`: an answer, a product question and each of setup's kinds.
+const ASKS = Object.freeze({
+  approval: (t) => `Put pull request #${t.pr} live?`,
+  confirm: () => 'Confirm this?',
+  'lift-stop': () => 'Lift STOP?',
+  'ci-push': () => 'Push this change to the checks?',
+  runbook: (t) => `${RUNBOOK_TITLES[t.step]}?`,
+  'approve-work': () => 'Approve this work as written?',
+  amend: () => 'Change the approved work to this?',
+  'lift-incident': () => 'End the incident?',
+  'incident-fix': () => 'Merge this fix?',
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -116,6 +136,9 @@ const buildOptions = (list) => list.length === BUILD_QUESTION_OPTIONS.length
 const bare = (text) => text.replace(/[.!?]+$/, '');
 // A reason read as a clause after "because": no closing full stop, and its first word in lower case unless it is a name or acronym.
 const clause = (text) => bare(text).replace(/^([A-Z])(?=[a-z])/, (c) => c.toLowerCase());
+
+// Whether an error from composeCard is its length refusal (and not another fault in the card).
+export const isTooLong = (error) => /^A \w+ card text would pass \d+ characters/.test(String(error?.message));
 
 function fail(kind, part, why) {
   throw new Error(`A ${kind} card ${why === undefined ? `needs its ${part}` : `${part} ${why}`}`);
@@ -254,10 +277,11 @@ function sameThing(kind, what, target) {
   if (why !== null) fail(kind, 'what', why);
 }
 
-// The buttons a card offers, each { label, says }, in the order they are shown. `build` says the
-// card answers a build-command question (one that names its `commands`). A confirm card for a
-// proposal (its `target`) offers Keep as is in place of Show me.
-function offered(kind, given, { build = false, target } = {}) {
+// The buttons a card offers, each { label, says }, in the order they are shown (design section
+// 23.4). `build` says the card answers a build-command question (one that names its `commands`). A
+// confirm card for a proposal (its `target`) offers Keep as is in place of Show me. A question's
+// own options come first, then Suggest a change… unless it has four of its own.
+function offered(kind, given, { build = false, target, suggest = true } = {}) {
   if (!Array.isArray(given) || given.length === 0) fail(kind, 'options');
   const seen = new Set();
   const list = given.map((o) => {
@@ -273,14 +297,12 @@ function offered(kind, given, { build = false, target } = {}) {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
     const own = kind === 'answer' && build && buildOptions(list);
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
-    return [...list, ...(list.length < CARD.options ? [{ label: 'Explain more', says: PUT_OFF_SAYS['Explain more'] }] : [])];
+    return [...list, ...(list.length < CARD.options && suggest ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);
-  const putOff = PUT_OFF_OF[kind] ?? PUT_OFF;
-  // The card of the rules found offers its second answer in place of Show me (ruling R35).
-  const allowed = kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL, 'Not now', 'Explain more']
-    : [deciding, ...putOff.map((label) => (proposal && label === 'Show me' ? KEEP_AS_IS : label))];
+  const after = OFFERED_AFTER[kind] ?? USUAL_AFTER.map((label) => (proposal && label === SHOW_ME ? KEEP_AS_IS : label));
+  const allowed = [deciding, ...after];
   for (const o of list) if (!allowed.includes(o.label)) fail(kind, 'options', `can't describe ${o.label}; the card offers ${allowed.join(', ')}`);
   for (const must of kind === 'confirm-all' ? [deciding, CORRECT_SOME_LABEL] : [deciding]) {
     if (!list.some((o) => o.label === must)) fail(kind, 'options', `must describe ${must}`);
@@ -288,13 +310,44 @@ function offered(kind, given, { build = false, target } = {}) {
   return allowed.map((label) => ({ label, says: list.find((o) => o.label === label)?.says ?? PUT_OFF_SAYS[label] }));
 }
 
+// Whether a card's question has only its own options to offer, with a change left to the typed
+// answer: an answer or a product question that offers no Suggest a change… and was not composed
+// without it (`suggest: false`), which leaves nothing to type.
+const typesChange = (parts) => (parts.kind === 'answer' || parts.kind === 'question') && parts.suggest !== false
+  && !parts.options.some((o) => o.label === SUGGEST);
+
+// The chat's text from a card's parts, in the order of design section 23.4: the question; what it
+// is (once, where the question is the same words); why it is the director's; what happens
+// meanwhile; the checks line of a level 4 card; what changed on a revised card; the line that says
+// more is there for the asking, or, for a question with four options of its own, that a change is
+// typed; then the set line and the reply code, each on a line of its own. No part has a label.
+export function textOf(parts) {
+  return [
+    parts.ask,
+    ...(parts.what === parts.ask ? [] : [parts.what]),
+    parts.why,
+    parts.meanwhile,
+    ...(parts.checks === undefined ? [] : [parts.checks]),
+    ...(parts.changed === undefined ? [] : [`${WHAT_CHANGED} ${parts.changed}`]),
+    typesChange(parts) ? TO_CHANGE_IT : TO_KNOW_MORE,
+    ...(parts.line === null ? [] : [parts.line]),
+    ...(parts.code === null ? [] : [replyCodeLine(parts.code)]),
+  ].join('\n');
+}
+
 // Composes one card from its input. Returns { question, card }: `question` is one entry of
 // AskUserQuestion's questions, `card` is the event data the state keeps. Throws, naming the
 // part, when the input can't make a card the prompt record would read as the input says.
 // `because` is a clause after "because" ("the checks passed"); a trailing full stop is dropped.
-// `what` must name what the set line names (see sameThing). `glossary` (optional) is the glossary
-// whose terms found in the five parts and the checks line become the card's concepts when
-// `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
+// `what` must name what the set line names (see sameThing), and so must the card's plain lines
+// together. `ask` (optional) is the question as a heading, on one line; a kind with no `ask` asks
+// the words ASKS gives, or its `what`. `size` (optional) is a few words such as "Small feature";
+// `optional` (optional) is the whole minutes an optional card takes. `revises` (optional) is the id
+// of the card a revised proposal replaces, and then `changed` says in one line what changed.
+// `suggest` (optional) is false for a question or an answer that offers no Suggest a change….
+
+// `glossary` (optional) is the glossary whose terms found in the card's words become the card's
+// concepts when `concepts` isn't given; it defaults to the starter's. `event` (optional) is the id of the record
 // the card is made from, which the card keeps so it is made once: a card with no set line (a
 // lineage hold's) is tied to its record by it, as an answer card is by its line.
 export function composeCard(input) {
@@ -308,6 +361,14 @@ export function composeCard(input) {
   const why = words(kind, 'why', input.why);
   const because = words(kind, 'because', input.because);
   const meanwhile = words(kind, 'meanwhile', input.meanwhile);
+  const ask = input.ask === undefined ? undefined : words(kind, 'ask', input.ask);
+  const size = input.size === undefined ? undefined : words(kind, 'size', input.size);
+  if (input.suggest !== undefined && typeof input.suggest !== 'boolean') fail(kind, 'suggest', 'must be true or false');
+  if (input.suggest === false && kind !== 'answer' && kind !== 'question') fail(kind, 'suggest', 'can be left off a question or an answer card only: the others decide what they offer');
+  if (input.optional !== undefined && !isCount(input.optional)) fail(kind, 'optional', 'must be whole minutes, from 1');
+  if (input.revises !== undefined && !(typeof input.revises === 'string' && /^\S+$/.test(input.revises))) fail(kind, 'revises', 'must be the id of the card it replaces');
+  if (input.revises === undefined && input.changed !== undefined) fail(kind, 'changed', 'belongs to a revised card only');
+  const changed = input.revises === undefined ? undefined : words(kind, 'changed', input.changed);
   const recommend = words(kind, 'recommend', input.recommend);
   let checks;
   if (level === 4) checks = words(kind, 'checks', input.checks);
@@ -323,30 +384,48 @@ export function composeCard(input) {
   const line = kind === 'question' ? null : lineFor(kind, input.target);
   sameThing(kind, what, input.target);
   const build = Array.isArray(input.commands) && input.commands.length > 0;
-  const buttons = offered(kind, input.options, { build, target: input.target });
+  const buttons = offered(kind, input.options, { build, target: input.target, suggest: input.suggest !== false });
   if (!buttons.some((b) => b.label === recommend)) fail(kind, 'recommend', `must be one of the card's options: ${buttons.map((b) => b.label).join(', ')}`);
 
   const code = line === null || NO_REPLY_CODE.includes(kind) ? null : replyCode(line);
-  // What the director reads as explanation: the five parts and the checks line, not the set line or the code.
-  const explained = [
-    `${PART_LABELS[0]} ${what}`,
-    `${PART_LABELS[1]} ${why}`,
-    `${PART_LABELS[2]} ${buttons.map((b) => `${b.label}: ${bare(b.says)}`).join('; ')}`,
-    `${PART_LABELS[3]} ${recommend}, because ${clause(because)}.`,
-    `${PART_LABELS[4]} ${meanwhile}`,
-    ...(checks === undefined ? [] : [`${PART_LABELS[5]} ${checks}`]),
-  ];
-  const text = [...explained, ...(line === null ? [] : [line]), ...(code === null ? [] : [replyCodeLine(code)])].join('\n');
+  const target = isPlain(input.target) ? input.target : {};
+  const asked = ask ?? (Object.hasOwn(ASKS, kind) ? ASKS[kind](target) : what);
+  const parts = {
+    kind,
+    header: HEADERS[kind],
+    ask: asked,
+    what,
+    small: [size, why].filter(Boolean).join(' · '),
+    recommendation: `${recommend}, because ${clause(because)}.`,
+    options: buttons.map((b) => ({ label: b.label, says: b.says, recommended: b.label === recommend })),
+    why,
+    meanwhile,
+    ...(checks === undefined ? {} : { checks }),
+    ...(changed === undefined ? {} : { changed }),
+    line,
+    code,
+    ...(input.suggest === false ? { suggest: false } : {}),
+    ...(input.optional === undefined ? {} : { optional: input.optional }),
+    ...(input.revises === undefined ? {} : { revises: input.revises }),
+  };
+  // The card's plain lines name what the set line names between them, and no other pull request or commit.
+  const plain = [asked, what, why, meanwhile, ...(checks === undefined ? [] : [checks]), ...(changed === undefined ? [] : [`${WHAT_CHANGED} ${changed}`])];
+  const named = whatProblem(kind, plain.join(' '), input.target);
+  if (named !== null) fail(kind, 'text', named);
+  // What the director reads as explanation: the card's words, its options' meanings and its recommendation.
+  const explained = [...plain, ...buttons.map((b) => b.says), parts.recommendation];
+  const text = textOf(parts);
   if (text.length > CARD.chars) fail(kind, 'text', `would pass ${CARD.chars} characters (it is ${text.length})`);
   if (setLineOf(text) !== line) fail(kind, 'target', 'does not give a set line the prompt record reads');
+  const descriptions = buttons.map((b) => (b.label === recommend ? `Recommended: ${bare(b.says)}, because ${clause(because)}.` : b.says));
   // The baseline card's own words belong to it alone: on another card they would read as the
   // private note's figures, and the card check and the prompt record would treat it as one.
-  if (kind !== 'baseline' && baselineWording(text)) fail(kind, 'text', 'must not use the baseline card\'s words');
+  if (kind !== 'baseline' && baselineWording([text, ...descriptions].join('\n'))) fail(kind, 'text', 'must not use the baseline card\'s words');
 
   const question = {
     question: text,
     header: HEADERS[kind],
-    options: buttons.map((b) => ({ label: b.label, description: b.label === recommend ? `Recommended: ${b.says}` : b.says })),
+    options: buttons.map((b, i) => ({ label: b.label, description: descriptions[i] })),
     multiSelect: false,
   };
   const card = {
@@ -354,11 +433,14 @@ export function composeCard(input) {
     header: question.header,
     options: buttons.map((b) => b.label),
     // What each button says, as AskUserQuestion shows it, so the card can be asked again as composed.
-    descriptions: question.options.map((o) => o.description),
+    descriptions,
     kind,
     level,
     line,
     code,
+    // Every part of the card, so the pane draws them separately and the text can be built from them again (textOf).
+    parts,
+    ...(input.revises === undefined ? {} : { revises: input.revises }),
     // The option recommended, so the delegation review can tell a choice made as recommended.
     recommend,
     ...(input.importance === undefined ? {} : { importance: input.importance }),

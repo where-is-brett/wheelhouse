@@ -34,6 +34,7 @@
 // again keeps its id and words: the old Ready only asks it again, and the director's new Ready is
 // then the newest answer under that id, so the wait starts again from it.
 import { SETUP_TITLES } from '../state/card-lines.js';
+import { PHONE_REACHES } from '../lib/calm-words.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUSH_TEST_STEP, phonePushResult } from '../lib/setup-run.js';
 
@@ -61,7 +62,7 @@ function readyAsk() {
     id: READY_ID,
     card: {
       level: 2,
-      what: `Setup step ${PUSH_TEST_STEP}, phone notifications, so agents can reach you when they need you. `
+      what: `Setup step ${PUSH_TEST_STEP}, phone notifications, so agents can reach you when they need you. ${PHONE_REACHES} `
         + 'In Claude Desktop\'s settings, switch on Remote Control. '
         + 'Check both push options are on: Push when Claude decides (setup switched it on at step 6) and Push when actions required. '
         + 'On your phone, allow the Claude app\'s notifications. '

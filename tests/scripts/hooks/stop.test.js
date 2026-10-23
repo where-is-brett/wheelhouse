@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { decide as guard, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED } from '../../../scripts/hooks/stop-guard.js';
+import { decide as guard, scriptArguments, READ_TOOLS, HALT_TOOLS, NOTIFY_TOOLS, DENIED, SANDBOX_NEEDED } from '../../../scripts/hooks/stop-guard.js';
 import { decide as word, CONTEXT } from '../../../scripts/hooks/stop-word.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stopState, setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -306,6 +306,26 @@ test('under STOP, a worktree whose .git file was rewritten is still held by its 
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
+  });
+});
+
+test('"stop" after the app\'s reminder block sets STOP; a block alone, or a tag left after it, does not', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      const d = { event: 'UserPromptSubmit', dir: path.join(base, 'managed') };
+      const block = '<system-reminder>\nLinked sessions now: x\n</system-reminder>';
+      for (const prompt of [`${block}\n\nstop`, `${block}\nStop.`, `${block}\n\n${block}\n\nstop`]) {
+        liftStop();
+        assert.ok(await word({ cwd: main, prompt }, d), prompt);
+        assert.equal(stopState().on, true, prompt);
+      }
+      liftStop();
+      for (const prompt of [block, `${block}\n\n`, `${block}\nstop\n<system-reminder>\nmore\n</system-reminder>\n\nhello`, `${block}\n\nstop </system-reminder>`]) {
+        assert.equal(await word({ cwd: main, prompt }, d), undefined, prompt);
+        assert.equal(stopState().on, false, prompt);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
 
@@ -759,6 +779,44 @@ test('the managed copy lets the plugin\'s runbook through under STOP, by the roo
       const plugin = { pluginRoot: '/plugin/root', self: pluginSelf };
       assert.ok(denied(await ask('node /real/plugin/scripts/runbook/runbook.js status', plugin)));
       assert.equal(await ask('node /plugin/root/scripts/runbook/runbook.js status', plugin), undefined);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+test('scriptArguments takes the one flag that turns the system certificate store off between node and the script, and no other', () => {
+  const roots = [PLUGIN];
+  const desk = `${PLUGIN}/scripts/frontdesk/cli.js`;
+  const args = (command, platform = 'linux') => scriptArguments(command, roots, platform, 'scripts/frontdesk/cli.js');
+  assert.deepEqual(args(`node --no-use-system-ca ${desk} cards`), ['cards']);
+  assert.deepEqual(args(`node --no-use-system-ca "${desk}" views waiting`), ['views', 'waiting']);
+  assert.deepEqual(args(`node --no-use-system-ca ${desk} cards 2>/dev/null`), ['cards']);
+  assert.deepEqual(args(`node ${desk} cards`), ['cards']);
+  for (const bad of [
+    `node --use-system-ca ${desk} cards`,
+    `node --no-use-system-ca --inspect ${desk} cards`,
+    `node --no-use-system-ca --no-use-system-ca ${desk} cards`,
+    `node --require x ${desk} cards`,
+    `node --no-use-system-ca=1 ${desk} cards`,
+    `node --NO-USE-SYSTEM-CA ${desk} cards`,
+    `node --no-use-system-ca`,
+  ]) assert.equal(args(bad), null, bad);
+  assert.deepEqual(args(`node --no-use-system-ca ${desk} cards`, 'win32'), ['cards']);
+});
+
+test('under STOP, the front desk\'s reads may carry the flag that turns the system certificate store off', async () => {
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      setStop({ by: 'prompt' });
+      const ask = (command) => guard(bash(main, command), { ...deps(base), platform: 'linux' });
+      assert.equal(await ask(`node --no-use-system-ca "${PLUGIN}/scripts/frontdesk/cli.js" cards`), undefined);
+      assert.equal(await ask(`node --no-use-system-ca "${PLUGIN}/scripts/frontdesk/cli.js" cards 2>/dev/null`), undefined);
+      assert.ok(await ask(`node --no-use-system-ca "${PLUGIN}/scripts/frontdesk/cli.js" record idea`), 'a write is still held');
+      assert.ok(await ask(`node --no-use-system-ca --inspect "${PLUGIN}/scripts/frontdesk/cli.js" cards`));
+      assert.ok(await ask(`node --use-system-ca "${PLUGIN}/scripts/frontdesk/cli.js" cards`));
+      liftStop();
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

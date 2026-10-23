@@ -8,6 +8,20 @@ import { cardLines, cloneUpstreams, main, NOT_READ, USAGE } from '../../../scrip
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 
+// Points HOME and XDG_CONFIG_HOME at a scratch folder whose .gitconfig sends `from` to a place that
+// holds nothing, for the length of `body`; never the real home.
+async function withGlobalRewrite(from, body) {
+  const home = tempFolder('wh-gitconfig-home-');
+  fs.writeFileSync(path.join(home, '.gitconfig'), `[url "${tempFolder('wh-nowhere-').replace(/\\/g, '/')}"]\n\tinsteadOf = ${from.replace(/\\/g, '/')}\n`);
+  const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.XDG_CONFIG_HOME = home;
+  process.env.USERPROFILE = home;
+  try { return await body(); } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
 function brief(folder) {
   return {
     v: 1,
@@ -59,6 +73,17 @@ test('the upstreams are cloned bare into temporary folders and removed after', a
   assert.equal(await g(clones['kit-a'], 'rev-parse', '--is-bare-repository'), 'true');
   remove();
   assert.equal(fs.existsSync(clones['kit-a']), false);
+});
+
+test('the upstream clone never reads the director\'s global git config', async () => {
+  const upstream = tempFolder('wh-kit-');
+  await g(upstream, 'init', '--quiet', '-b', 'main');
+  await g(upstream, 'commit', '--quiet', '--allow-empty', '-m', 'one');
+  await withGlobalRewrite(upstream, async () => {
+    const { clones, remove } = await cloneUpstreams({ upstreams: [{ name: 'kit-a', repo: upstream }] });
+    assert.equal(await g(clones['kit-a'], 'log', '--format=%s'), 'one');
+    remove();
+  });
 });
 
 test('cli survey prints scheduled as null and says to pass --scheduled when no list is given', async () => {

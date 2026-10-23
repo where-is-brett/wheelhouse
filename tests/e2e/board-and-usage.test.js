@@ -35,9 +35,14 @@ import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { approvalLine, confirmLine, replyCode, replyCodeLine } from '../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
-import { standInTools } from '../helpers/host-stand-ins.js';
+import { standInTools, guardedRun } from '../helpers/host-stand-ins.js';
 import { matchingBody } from '../helpers/provenance.js';
 import { waitLongerOnTheHelper, until, WAIT_MS } from '../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(run, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // These tests run the real helper and check what reaches it, however loaded the computer is.
 waitLongerOnTheHelper();
@@ -142,7 +147,7 @@ async function setUp({ prFiles } = {}) {
     }));
     freshFacts(T0);
   });
-  const helper = await as(home, () => startHelper({ address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), now }));
+  const helper = await as(home, () => startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), now }));
   const client = helperClient({ address: helper.address });
   await as(home, async () => assert.deepEqual(await client.state.clone({ project: PROJECT }), { ok: true }));
   const c = {
@@ -287,7 +292,7 @@ test('telemetry posted to the receiver shows as this week\'s usage on the board 
     c.time(3 * HOUR);
     const briefing = await prompt(c, 'Good morning');
     assert.ok(briefing.startsWith(`${HEADINGS.briefing}\n\n`), briefing);
-    assert.ok(bodyOf(briefing).endsWith('Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance.'), briefing);
+    assert.ok(bodyOf(briefing).endsWith('Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance. On track.\n\nAsk me anything. For the full board, type /wheelhouse:board.'), briefing);
   } finally {
     if (receiver) {
       receiver.kill();
@@ -423,13 +428,16 @@ test('a profile setting confirmed by a click changes the briefing\'s length; a p
     // The front desk writes the director's wish into the profile; it has no effect until confirmed.
     const wrote = await c.act(() => c.client.profile.write({ kind: 'setting', data: { key: 'briefing', value: 'short', words: 'Keep my briefings short' } }));
     assert.equal(wrote.ok, true, JSON.stringify(wrote));
-    assert.equal(numbered(bodyOf(await prompt(c, '/wheelhouse:briefing'))).length, shownStandard);
+    // Still the standard length: the line saying when the last briefing was costs it an entry or so.
+    const unconfirmed = bodyOf(await prompt(c, '/wheelhouse:briefing'));
+    assert.ok(wordsIn(unconfirmed) <= BRIEFING_WORDS.standard, unconfirmed);
+    assert.ok(Math.abs(numbered(unconfirmed).length - shownStandard) <= 1, unconfirmed);
 
     const setting = await c.act(() => eventsOf('setting', profileDir()).find((e) => e.id === wrote.id));
     await click(c, { question: `${confirmLine(setting)}?`, options: ['Confirm', 'Not now'], label: 'Confirm' });
     const short = bodyOf(await prompt(c, '/wheelhouse:briefing'));
     assert.ok(wordsIn(short) <= BRIEFING_WORDS.short, short);
-    assert.ok(numbered(short).length < shownStandard, short);
+    assert.ok(numbered(short).length < numbered(unconfirmed).length, short);
 
     // A project setting, confirmed the same way, wins over the profile's.
     const project = await write(c, 'setting', { key: 'briefing', value: 'detailed', words: 'Give this project the detailed briefing' });
@@ -511,7 +519,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: `STOP is off. ${SAYS.nothingBuilding}` });
     assert.equal(await c.act(() => stopState().on), false);
     const lifts = await c.act(() => eventsOf('action').filter((e) => e.data.action === 'lift-stop'));
-    assert.deepEqual(lifts.map((e) => e.data.label), ['/go']);
+    assert.deepEqual(lifts.map((e) => e.data.label), ['/wheelhouse-go']);
     assert.ok(lifts[0].sig, 'the lift is signed');
     assert.deepEqual(await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))), [], 'the helper took it');
 
@@ -557,17 +565,20 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     assert.ok(wordsIn(body) <= BRIEFING_WORDS.standard, `${wordsIn(body)} words:\n${body}`);
     assert.ok(!body.includes('Cards to ask'), body);
 
-    const parts = body.split('\n\n');
+    // The verdict opens it, then when the last briefing was; the foot is usage and the way to the board.
+    const [verdictPart, sincePart, ...parts] = body.split('\n\n');
+    assert.equal(verdictPart, '14 things need you. Nothing is broken.');
+    assert.match(sincePart, /^Since \d\d:\d\d, about 3 hours$/);
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [
-      'Not in effect until you confirm:', 'Waiting on you:', 'Changed for users:', 'Progress:', 'To watch:', 'Usage this week: 300K tokens.',
+      'Not in effect until you confirm:', 'Waiting on you (+14):', 'Changed for users (+1):', 'Progress:', 'To watch:',
+      'Usage this week: 300K tokens. On track.', 'Ask me anything. For the full board, type /wheelhouse:board.',
     ]);
-    assert.deepEqual(parts[0].split('\n').slice(1), ['- A ruling: Prices show two decimal places']);
+    // Fourteen cards wait and the waiting cards are the last thing cut, so the other parts give way first.
+    assert.deepEqual(parts[0].split('\n').slice(1), ['and 1 more']);
     const waiting = parts[1].split('\n').slice(1);
     assert.deepEqual(waiting.slice(0, -1), titles.slice(0, waiting.length - 1).map((title, i) => `${i + 1}. ${title}`), 'oldest first, numbered');
     assert.equal(waiting.at(-1), `and ${titles.length - (waiting.length - 1)} more`);
-    assert.deepEqual(parts[2].split('\n').slice(1), ['- Sign-in now remembers you for thirty days']);
-    assert.deepEqual(parts[3].split('\n').slice(1), ['- 1 proposed change added to the product']);
-    assert.match(parts[4], /\n- Agents act with your full GitHub or GitLab access, across all your projects\./);
+    for (const part of parts.slice(2, 5)) assert.deepEqual(part.split('\n').slice(1), ['and 1 more']);
   } finally {
     await c.close();
   }

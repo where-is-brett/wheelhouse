@@ -82,6 +82,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { caEnv } from '../host/company-ca.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
@@ -92,7 +93,7 @@ import { hide, cleanDeep } from '../lib/clean.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
-import { planHash, firstUnfinished } from './steps.js';
+import { planHash, firstUnfinished, stepProgress } from './steps.js';
 import {
   noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedRefused,
 } from './clicks.js';
@@ -377,6 +378,11 @@ export function setupRoutes({
     return runningSince(entry, now);
   };
 
+  // The lines that head step n in the chat, from the run as it stands now.
+  const progressOf = (run, n, folder) => stepProgress({
+    n, run: run ? runById(run.id) ?? run : null, running: (m) => (run ? runningIn(run, m) !== null : false), host: projectForFolder(folder)?.record.host,
+  });
+
   async function stepOf(n) {
     if (!Number.isInteger(n)) refuse(`the step must be a number from 1 to ${Object.keys(SETUP_TITLES).length}`);
     const step = (await steps()).find((s) => s.n === n);
@@ -477,7 +483,7 @@ export function setupRoutes({
     if (got.ask?.card.kind === 'confirm-all') {
       const { rules } = got.ask;
       card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'confirm-all', target: { count: rules.length, hash: planHash(rules) } }).question;
-    } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question' }).question;
+    } else if (got.ask) card = composeCard({ ...cleanDeep(got.ask.card, []), kind: 'question', suggest: false }).question;
     else if (got.changes) card = composeCard({ ...cleanDeep(got.card, []), kind: 'setup', target: { step: step.n, hash: got.hash } }).question;
     if (card !== null && JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step.n}'s card could not be cleaned as it is sent`);
     // Read again: the step may have been started while its plan was worked out.
@@ -487,7 +493,7 @@ export function setupRoutes({
       // What was typed on this card since it was last asked was not taken: said why, before it is asked again.
       const refused = typedRefused(run.id, step.n, got.ask.id);
       noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
-      return { ok: true, ask: { step: step.n, id: got.ask.id, card }, ...(refused === null ? {} : { unanswered: NOT_AN_ANSWER[refused] }) };
+      return { ok: true, ask: { step: step.n, id: got.ask.id, card }, progress: progressOf(run, step.n, folder), ...(refused === null ? {} : { unanswered: NOT_AN_ANSWER[refused] }) };
     }
     if (got.settled) {
       // R19 widened (R32): a done mark the director's signed answers earned, with no Go ahead. The
@@ -509,7 +515,7 @@ export function setupRoutes({
     }
     noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card, now });
     mark(run.id, step.n, 'shownAt', { now });
-    return { ok: true, changes: got.changes, hash: got.hash, card, director: hide(typeof got.director === 'string' ? got.director : '', []) };
+    return { ok: true, changes: got.changes, hash: got.hash, card, progress: progressOf(run, step.n, folder), director: hide(typeof got.director === 'string' ? got.director : '', []) };
   }
 
   async function apply(body) {
@@ -583,7 +589,7 @@ export function setupRoutes({
     };
     try {
       const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome], {
-        cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
+        cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);
       child?.unref?.();

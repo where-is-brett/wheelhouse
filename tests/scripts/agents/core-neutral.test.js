@@ -18,6 +18,7 @@ const ALLOWED_CORE_FILES = {
   'package.json': 'the copilot-home script, which builds the Lean kit for Copilot',
   'scripts/state/lean-record.js': 'reads Lean\'s record with the Copilot design\'s numbers, named once in copilot-numbers.js',
   'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
+  'scripts/audit/report.js': 'imports the levels, proofs and review kinds from the design\'s numbers file, copilot-numbers.js, and names no agent otherwise',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
 };
 

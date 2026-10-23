@@ -1,7 +1,7 @@
 // tests/scripts/board/model.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boardModel, numberedWaiting, oneLine } from '../../../scripts/board/model.js';
+import { boardModel, numberedWaiting, oneLine, seeOf } from '../../../scripts/board/model.js';
 import { LINE_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, settingKey } from '../../../scripts/protection/windows-builds.js';
 
@@ -207,7 +207,7 @@ test('a feature held by Not now to its build commands reads as waiting on the di
     share: 'building',
     help: 'building',
   });
-  assert.deepEqual(m.director.inProgress.feature[0], { title: 'Work login', step: 'waiting on you to allow its build commands' });
+  assert.deepEqual(m.director.inProgress.feature[0], { title: 'Work login', step: 'waiting on you to allow its build commands', see: 'In your briefing when it is done' });
 });
 
 test('launch progress counts resolved blockers', () => {
@@ -231,7 +231,7 @@ test('launch progress counts resolved blockers', () => {
   };
   const m = model({ views, settings: settingsWith('launched') });
   assert.deepEqual(m.director.launch, {
-    phase: 'launched', resolved: 1, total: 3, blockers: ['No terms page', 'No help page'], next: ['Dark mode', 'Billing', 'Sign-up page'],
+    phase: 'launched', resolved: 1, gained: 0, total: 3, blockers: ['No terms page', 'No help page'], next: ['Dark mode', 'Billing', 'Sign-up page'],
   });
   assert.deepEqual(m.director.ideas, { now: ['Dark mode'], next: ['Share links'], later: ['Maps'] });
 });
@@ -254,10 +254,10 @@ test('work in progress is grouped by lane from the build loop\'s views', () => {
   const events = [ev('report', at(3), { work: 'login', outcome: 'blocked', pr: 12, summary: 'Waiting on CI', rulings: [] })];
   const m = model({ views, events });
   assert.deepEqual(m.director.inProgress, {
-    quick: [{ title: 'Fix the footer typo', step: 'started' }],
+    quick: [{ title: 'Fix the footer typo', step: 'started', see: 'In your briefing when it is done' }],
     small: [],
-    feature: [{ title: 'Log in', step: 'building' }],
-    bug: [{ title: 'Crash on save', step: 'paused' }],
+    feature: [{ title: 'Log in', step: 'building', see: 'In your briefing when it is done' }],
+    bug: [{ title: 'Crash on save', step: 'paused', see: 'In your briefing when it is done' }],
   });
   assert.deepEqual(m.build.features, [
     { work: 'login', title: 'Log in', lane: 'feature', step: 'building', slice: { n: 2, m: 4 }, pr: 12 },
@@ -362,7 +362,7 @@ test('text from events becomes one capped line, with links and headings taken ou
   assert.deepEqual(m.build.risks, [{ what: 'Rates typed in by hand', costLater: 'A day' }]);
   assert.equal(m.director.rulings[0].what, 'Kept *the* list');
   assert.equal(m.build.decisions[0].why.length, LINE_CHARS);
-  assert.deepEqual(m.director.changed, [{ what: 'Pull request #8 merged', at: at(4) }, { what: 'New: dark mode', at: at(3) }]);
+  assert.deepEqual(m.director.changed, [{ what: 'Pull request #8 merged', at: at(4), behind: true }, { what: 'New: dark mode', at: at(3) }]);
 });
 
 test('with no build-loop views, no state and no usage, the model is built and names each missing piece', () => {
@@ -503,4 +503,53 @@ test('build decisions join the decisions and the rulings from build-loop reports
   assert.ok(m.build.decisions.some((d) => d.what === 'Kept the old URL'));
   assert.equal(m.director.rulings.length, 7);
   assert.equal(m.director.rulings[0].what, 'd13');
+});
+
+test('a piece of work is seen before it merges where it is shown first, else in the briefing', () => {
+  assert.equal(seeOf({ work: { data: { shownFirst: true } } }), 'Before it merges');
+  assert.equal(seeOf({ approval: { shownFirst: true } }), 'Before it merges');
+  assert.equal(seeOf({ work: { data: { shownFirst: false } } }), 'In your briefing when it is done');
+  for (const odd of [undefined, null, 'x', {}, { work: 5 }]) assert.equal(seeOf(odd), 'In your briefing when it is done');
+  const views = { ...emptyViews(), ...buildLoop({
+    work: [
+      { ...ev('work', at(1), { id: 'login', title: 'Log in', lane: 'feature', visible: true, dependsOn: [], shownFirst: true }) },
+      { ...ev('work', at(1), { id: 'typo', title: 'Fix a typo', lane: 'quick', visible: true, dependsOn: [] }) },
+    ],
+    features: [ev('feature', at(2), { work: 'login', step: 'building' }), ev('feature', at(3), { work: 'typo', step: 'building' })],
+  }) };
+  const m = model({ views });
+  assert.equal(m.director.inProgress.feature[0].see, 'Before it merges');
+  assert.equal(m.director.inProgress.quick[0].see, 'In your briefing when it is done');
+});
+
+test('launch counts the blockers cleared since the last briefing', () => {
+  const views = emptyViews();
+  const done = (key, day) => latest(ev('blocker', at(day), { key, what: key, resolved: true }), key);
+  views.blockers = { a: done('a', 2), b: done('b', 5), c: done('c', 6), d: latest(ev('blocker', at(7), { key: 'd', what: 'd' }), 'd') };
+  assert.equal(model({ views }).director.launch.gained, 0);
+  assert.equal(model({ views, since: at(4) }).director.launch.gained, 2);
+  assert.equal(model({ views, since: at(6) }).director.launch.gained, 0);
+  assert.equal(model({ views, since: 'not a time' }).director.launch.gained, 0);
+});
+
+test('a waiting card with parts is named by its ask and carries its own words', () => {
+  const parts = {
+    ask: 'Approve the sign-in page?', what: 'Sign-in works on phones.', small: 'Small feature', why: 'it changes what users see',
+    meanwhile: 'If not now, it waits; nothing else is held up.', recommendation: 'Approve, because the checks passed.', optional: 3,
+  };
+  const views = emptyViews();
+  views.waiting = [
+    { id: 'c1', at: at(1), data: { question: 'The whole card text, long', parts, level: 3 } },
+    { id: 'c2', at: at(2), data: { title: 'Plain card' } },
+    { id: 'c3', at: at(3), data: { title: 'Same words', parts: { ask: 'Same', what: 'Same', why: 'because' } } },
+  ];
+  const m = model({ views });
+  assert.deepEqual(m.director.waiting, [
+    {
+      n: 1, id: 'c1', what: 'Approve the sign-in page?', since: at(1), line: 'Sign-in works on phones.', small: 'Small feature',
+      meanwhile: 'If not now, it waits; nothing else is held up.', recommendation: 'Approve, because the checks passed.', level: 3, optional: 3,
+    },
+    { n: 2, id: 'c2', what: 'Plain card', since: at(2) },
+    { n: 3, id: 'c3', what: 'Same', since: at(3), line: 'because' },
+  ]);
 });

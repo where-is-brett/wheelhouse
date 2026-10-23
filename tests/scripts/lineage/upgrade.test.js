@@ -230,14 +230,23 @@ test('a tag is resolved to a commit by git ls-remote through run, an annotated t
   const calls = [];
   const lsRemote = (stdout, code = 0) => async (file, args, options) => {
     calls.push({ file, args, options });
+    if (args[0] === 'init') return { code: 0, stdout: '', stderr: '' };
     return { code, stdout, stderr: code === 0 ? '' : 'fatal: no\n' };
   };
   const tagObject = 'c'.repeat(40);
   const upstream = { name: 'superpowers', repo: KIT.repo };
   const sha = await resolveTag(upstream, 'v1.1.0', { run: lsRemote(`${tagObject}\trefs/tags/v1.1.0\n${NEW_SHA}\trefs/tags/v1.1.0^{}\n`) });
   assert.equal(sha, NEW_SHA);
+  // It asks from a temporary bare repository made through the fence, never from the process's own folder, and removes it.
   assert.equal(calls[0].file, 'git');
-  assert.deepEqual(calls[0].args.slice(0, 3), ['ls-remote', '--tags', KIT.repo]);
+  assert.deepEqual(calls[0].args, ['init', '--bare', '-q']);
+  assert.equal(calls[1].file, 'git');
+  assert.deepEqual(calls[1].args.slice(0, 3), ['ls-remote', '--tags', KIT.repo]);
+  assert.equal(typeof calls[1].options.cwd, 'string');
+  assert.equal(calls[1].options.cwd, calls[0].options.cwd);
+  assert.notEqual(path.resolve(calls[1].options.cwd), path.resolve(process.cwd()));
+  assert.equal(calls[1].options.env.GIT_CONFIG_GLOBAL.length > 0, true);
+  assert.equal(fs.existsSync(calls[1].options.cwd), false);
   assert.equal(await resolveTag(upstream, 'v1.1.0', { run: lsRemote(`${NEW_SHA}\trefs/tags/v1.1.0\n`) }), NEW_SHA);
   await assert.rejects(resolveTag(upstream, 'v9', { run: lsRemote('') }), /no tag v9/);
   await assert.rejects(resolveTag(upstream, 'v9', { run: lsRemote('', 128) }), /ls-remote failed/);

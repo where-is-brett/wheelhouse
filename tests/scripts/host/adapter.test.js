@@ -691,3 +691,26 @@ test('only an https address counts as a preview, a failed read is thrown, and th
     assert.equal(calls.length, 0);
   }
 });
+
+// --- a company's GitLab is named to glab ---
+
+test('an adapter for a company GitLab tells glab its host; the default address and GitHub add nothing', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  const asked = async (host, base, env) => {
+    const { run, calls } = fakeRun({ stdout: JSON.stringify({ default_branch: 'main' }) });
+    await makeAdapter({ host, repo: REPO, run, env, base }).defaultBranch().catch(() => null); // the answer's shape is not the point
+    return calls[0].env;
+  };
+  // A company's address: the host with its port, under the environment the caller gave.
+  assert.deepEqual(await asked('gitlab', COMPANY, {}), { GITLAB_HOST: 'git.example.org:8443' });
+  assert.deepEqual(await asked('gitlab', COMPANY, { GITLAB_TOKEN: ENV.GITLAB_TOKEN }), { GITLAB_HOST: 'git.example.org:8443', GITLAB_TOKEN: ENV.GITLAB_TOKEN });
+  // A host the caller already named stays as it named it.
+  assert.deepEqual(await asked('gitlab', COMPANY, { GITLAB_HOST: 'git.example.org/gitlab' }), { GITLAB_HOST: 'git.example.org/gitlab' });
+  // The public service, no base, and GitHub: the environment as given.
+  assert.deepEqual(await asked('gitlab', 'https://gitlab.com', {}), {});
+  assert.deepEqual(await asked('gitlab', undefined, {}), {});
+  assert.deepEqual(await asked('github', COMPANY, {}), {});
+  // The host name is no secret: an error that quotes it still says it.
+  const { run } = fakeRun({ code: 1, stderr: 'ERROR Get "https://git.example.org:8443/api/v4/x": 500' });
+  await assert.rejects(makeAdapter({ host: 'gitlab', repo: REPO, run, env: {}, base: COMPANY }).defaultBranch(), /git\.example\.org:8443/);
+});

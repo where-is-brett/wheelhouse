@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UPGRADE } from '../lib/build-loop.js';
 import { run as defaultRun, withoutGitVars } from '../lib/run.js';
+import { reachFor, safeGit } from '../lib/safe-git.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, MARKETPLACE_PATH, buildManifest, fetchUpstream, readManifest } from './manifest.js';
 import { REGISTER_PATH, checkAnchors, checkCarried, readRegister } from './register.js';
@@ -125,9 +126,22 @@ export function parseTo(words) {
 // The commit a tag of an upstream's repository points at, by `git ls-remote` through `run`.
 // An annotated tag gives its commit, not the tag object's own id.
 export async function resolveTag(upstream, tag, { run = defaultRun } = {}) {
-  const result = await run('git', ['ls-remote', '--tags', upstream.repo, `refs/tags/${tag}`, `refs/tags/${tag}^{}`], {
-    baseEnv: withoutGitVars(), env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: 120000,
-  });
+  // ls-remote asks the remote, but git sets up a repository when it finds one from the process's
+  // folder, and that repository's config would apply. So it runs in a temporary folder made a bare
+  // repository by the fenced route (discovery stops there, and its config is empty), removed after.
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelhouse-ls-remote-'));
+  try {
+    const made = await safeGit({ run, cwd: folder, look: 'never', timeoutMs: 120000 })(['init', '--bare', '-q']);
+    if (made.code !== 0) throw new Error(`${upstream.name}: git could not make a folder to ask from: ${String(made.stderr).trim().split('\n').pop()}`);
+    const git = safeGit({ run, cwd: folder, reach: reachFor(upstream.repo), look: 'never', timeoutMs: 120000 });
+    return await tagCommit(git, upstream, tag);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+async function tagCommit(git, upstream, tag) {
+  const result = await git(['ls-remote', '--tags', upstream.repo, `refs/tags/${tag}`, `refs/tags/${tag}^{}`]);
   if (result.code !== 0) throw new Error(`${upstream.name}: git ls-remote failed: ${result.stderr.trim().split('\n').pop()}`);
   const found = {};
   for (const line of result.stdout.split('\n')) {
@@ -248,6 +262,8 @@ export class UpgradeStopped extends Error {
   }
 }
 
+// `land` is the maintainer's deliberate exception to the fenced git route: it commits in the
+// maintainer's own checkout with their identity and hooks, on purpose.
 // Plans the upgrade and, unless it is stopped, writes the new pins, manifest and register version
 // on a new branch of the repository at `root` and commits them. It never pushes: the branch goes
 // out as a pull request, by hand. The working tree must be clean, and nothing changes if the plan

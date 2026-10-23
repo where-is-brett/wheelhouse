@@ -1,7 +1,9 @@
 // tests/scripts/host/helper-setup.test.js
 // The helper's setup routes: a step's list is worked out by the helper, shown on a card named by
 // its hash, and applied only after the director's signed click on that card (design section 15).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,8 +21,14 @@ import { setupRoutes, stepsBefore, asksDuring } from '../../../scripts/setup/eng
 import { keepClick, clicksDir, answersFor } from '../../../scripts/setup/clicks.js';
 import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { planHash } from '../../../scripts/setup/steps.js';
+import { caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const STEPS_MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-steps.js');
 const T0 = new Date('2026-10-19T03:00:00.000Z');
@@ -33,6 +41,7 @@ function setWorld(home, world) {
 
 async function startOne(home, user, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(home), adapterFor: async () => ({}), envFor: async () => ({}),
     now: () => T0, setupSteps: STEPS_MODULE, userHome: user, ...extra,
   });
@@ -87,7 +96,7 @@ test('apply is refused without a fresh click naming this step and this list', as
     assert.match(plan.hash, /^[0-9a-f]{64}$/);
     assert.equal(plan.hash, planHash(plan.changes));
     assert.ok(plan.card.question.includes(setupLine(1, plan.hash)), plan.card.question);
-    assert.deepEqual(plan.card.options.map((o) => o.label).slice(0, 2), ['Go ahead', 'Not now']);
+    assert.deepEqual(plan.card.options.map((o) => o.label).slice(0, 2), ['Go ahead', 'Show me']);
     assert.equal(plan.changes.length, 1);
 
     const apply = () => client.setup.apply({ folder, step: 1, hash: plan.hash });
@@ -229,6 +238,25 @@ test('two applies in flight together, on two Go aheads on one card, start the st
       else assert.equal(runOf(folder).changes.length, 1);
       // The other click was not used: it can start the step again once this attempt has failed.
       assert.equal(fs.readdirSync(path.join(home, 'setup', 'clicks-used')).length, 1);
+    }, { spawn });
+  }
+});
+
+test('a long step\'s own process starts with the company\'s certificate for Node.js once setup has made the file, and not before', async () => {
+  const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
+  for (const made of [false, true]) {
+    const spawned = [];
+    const spawn = (...args) => { spawned.push(args); return { on() {}, unref() {} }; };
+    await withSetup(async ({ client, home, folder }) => {
+      setWorld(home, { 2: [KEY(1)] });
+      if (made) writeCaFile({ home, pem });
+      const card = await client.setup.plan({ folder, step: 2 });
+      click(2, card.hash);
+      assert.equal((await client.setup.apply({ folder, step: 2, hash: card.hash })).ok, true);
+      assert.equal(spawned.length, 1);
+      const { env } = spawned[0][2];
+      assert.equal(env.NODE_EXTRA_CA_CERTS, made ? caFile(home) : process.env.NODE_EXTRA_CA_CERTS);
+      assert.equal(env.PATH, process.env.PATH, 'the rest of the environment is carried on');
     }, { spawn });
   }
 });

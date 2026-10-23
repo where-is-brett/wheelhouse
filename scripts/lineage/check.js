@@ -7,6 +7,8 @@
 // it loaded at its start. The command is the one the hold lets through: it reads only the
 // installed Wheelhouse's manifest and Claude Code's record of installs, never the Wheelhouse
 // home (a sandboxed command can't), says what still differs, and changes nothing.
+// A hold's card leaves once its hold file is gone: recordLift puts one lineage-lift event in the
+// state for each standing hold, from the session start or the mod's tick (scripts/mod/bridge.js).
 // Reads files only: never git.
 //   node scripts/lineage/check.js [projectDir]
 import crypto from 'node:crypto';
@@ -17,6 +19,7 @@ import { stateDir } from '../lib/paths.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { MANIFEST_PATH, UPSTREAMS, checkInstalled, claudeHome as defaultClaudeHome, locateInstalled, readManifest } from './manifest.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { keep, pendingDir, taken } from '../hooks/pending.js';
 
 // This copy's root, holding lineage/ beside scripts/: the plugin's folder, or Locked's managed copy.
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -32,6 +35,12 @@ const projectHome = (project) => path.dirname(stateDir(project));
 // where `recorded` is the mismatchSet already put in the state as a lineage-hold event.
 export function holdFile(project) {
   return path.join(projectHome(project), 'lineage', 'hold.json');
+}
+
+// The ids of the holds whose lift has been recorded: a lift is recorded once for each standing hold,
+// though the views still show the hold until they are next synced. It covers those holds only.
+function liftMark(project) {
+  return path.join(projectHome(project), 'lineage', 'lifted.json');
 }
 
 // Whether the project is held. Anything at the hold file's place counts.
@@ -149,9 +158,69 @@ export function markRecorded(project, set) {
   return true;
 }
 
-// The lineage-hold event's data for a hold: when, and which upstreams and paths differ.
+// The lineage-hold event's data for a hold: when, and which upstreams and paths differ. The
+// computer whose hold file it was is the event's own (every event is stamped with it).
 export function holdEvent(at, mismatches) {
   return { at, mismatches: mismatches.map((m) => ({ upstream: m.upstream ?? null, path: m.path })) };
+}
+
+// The lineage-lift event's data: when the hold file was found gone, and the ids of the holds it lifts.
+export function liftEvent(at, holds) {
+  return { at, holds };
+}
+
+// The ids of the holds in the views that are this computer's (by the hold event's own computer),
+// which a lift should lift if their hold file is gone (`held` false).
+export function holdsToLift(views, { computer, held }) {
+  if (held !== false || typeof computer !== 'string') return [];
+  const holds = Array.isArray(views?.lineageHolds) ? views.lineageHolds : [];
+  return holds.filter((h) => h !== null && typeof h === 'object' && typeof h.id === 'string' && h.computer === computer).map((h) => h.id);
+}
+
+// Whether a lift should be recorded now: this computer has no hold file while the views show a hold
+// of this computer that no lift has lifted.
+export function liftsDue(views, { computer, held }) {
+  return holdsToLift(views, { computer, held }).length > 0;
+}
+
+// The ids of the holds whose lift is recorded: by the mark, or kept for sending (it counts as
+// recorded though the helper hasn't taken it yet).
+export function liftedIds(project) {
+  const ids = new Set(Array.isArray(readJson(liftMark(project))?.holds) ? readJson(liftMark(project)).holds : []);
+  let names = [];
+  try {
+    names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
+  } catch { /* none kept */ }
+  for (const name of names) {
+    const body = readJson(path.join(pendingDir(project), name))?.body;
+    if (body?.kind === 'lineage-lift' && Array.isArray(body.data?.holds)) body.data.holds.forEach((id) => ids.add(id));
+  }
+  return ids;
+}
+
+// Records a lift of the holds due and not yet lifted, once for each hold, when their hold file is
+// gone: kept first, then sent through `client` within `left` (a kept one is sent at a later start
+// otherwise). It informs, so a failure is passed over. Gives whether a lift was kept.
+export async function recordLift({ project, views, computer, now = () => new Date(), client, left = (promise) => promise }) {
+  try {
+    // A standing hold costs one stat per tick: nothing is read until the hold file is gone.
+    if (isHeld(project)) return false;
+    const have = liftedIds(project);
+    if (holdsToLift(views, { computer, held: isHeld(project) }).filter((id) => !have.has(id)).length === 0) return false;
+    // Looked at again just before keeping: a hold file written meanwhile is a hold this lift is not for.
+    const ids = holdsToLift(views, { computer, held: isHeld(project) }).filter((id) => !have.has(id));
+    if (ids.length === 0) return false;
+    const file = keep(project, 'write', { project, kind: 'lineage-lift', data: liftEvent(now().toISOString(), ids) }, now);
+    try {
+      writeFileMade(liftMark(project), { holds: [...have, ...ids] });
+    } catch { /* the kept record still counts until it is sent */ }
+    try {
+      if (taken(await left(client.state.write(readJson(file).body)))) fs.rmSync(file, { force: true });
+    } catch { /* kept for a later send */ }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const shown = (relative) => ({ '*': 'not installed', '@commit': 'another commit' }[relative] ?? relative);

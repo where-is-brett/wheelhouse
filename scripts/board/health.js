@@ -13,13 +13,24 @@ import { findBrowser as realFindBrowser, isChrome } from '../screens/browser.js'
 import { readSmallText } from '../hooks/kit.js';
 import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
-import { FREE_PLAN_LINE } from '../host/protection.js';
+import { FREE_PLAN_LINE, fakedTestsGap } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { QUICK_LINE } from '../lib/host-lines.js';
 
 // The STOP line starts with these words, alone or followed by ", since <date>".
 export const STOP_LINE = 'STOP is on';
+
+// Whose own line a health line is, read before its words are made plain: STOP's, an open
+// incident's (by the incident the board names on it), or neither (null).
+export function ownLineOf(line) {
+  if (typeof line?.incident === 'string') return 'incident';
+  const text = String(line?.text);
+  return text === STOP_LINE || text.startsWith(`${STOP_LINE}, `) ? 'stop' : null;
+}
+// How many of the health lines are broken: at stop level and not STOP's own, which is the
+// director's doing, not a fault. The pane's verdict and the briefing's count them the same way.
+export const brokenCount = (lines) => (Array.isArray(lines) ? lines : []).filter((l) => l?.level === 'stop' && ownLineOf(l) !== 'stop').length;
 // The quick connection's line, shared with setup's step 3 (scripts/lib/host-lines.js).
 export { QUICK_LINE };
 // An approval carries over an update only when the pages look the same in Chrome's pictures
@@ -39,6 +50,7 @@ export function phonePushLine(at) {
 const TRIED_FOR_MS = 10 * 60 * 1000;
 const PROTECTION = ['on', 'none', 'unknown'];
 const CI = ['present', 'none', 'unknown'];
+const PLANS = ['free', 'premium', 'unknown'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // "18 October 2026" for a date or a time in UTC, or null when it isn't one.
@@ -53,7 +65,11 @@ function dayMonthYear(value) {
 function factsFrom(found) {
   if (!found || typeof found !== 'object') return null;
   if (!PROTECTION.includes(found.protection) || !CI.includes(found.ci)) return null;
-  return { protection: found.protection, ci: found.ci };
+  // On GitLab the helper also says the plan and the gaps it could read, in plain words.
+  const more = {};
+  if (PLANS.includes(found.plan)) more.plan = found.plan;
+  if (Array.isArray(found.gaps)) more.gaps = found.gaps.filter((g) => typeof g === 'string' && g !== '' && g.length <= 400).slice(0, 20);
+  return { protection: found.protection, ci: found.ci, ...more };
 }
 
 function cacheFile(project) {
@@ -185,6 +201,10 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     if (builds?.lockedUnattended === true) add('watch', LOCKED_UNATTENDED_LINE);
   }
   if (facts?.protection === 'none') add('watch', FREE_PLAN_LINE);
+  // GitLab: a project with real users whose plan is not Premium, and each gap the helper read.
+  const faked = realUsers ? fakedTestsGap(facts?.plan) : null;
+  if (faked) add('watch', faked);
+  for (const gap of facts?.gaps ?? []) add('watch', gap);
   if (facts?.ci === 'none') add('watch', 'This project has no CI, so nothing can merge');
   if (screens?.pages === true && screens.chrome === false) add('ok', NO_CHROME_LINE);
   if (lock && lock.computer !== computerId()) add('watch', 'Another computer holds this project, so this one is read-only');

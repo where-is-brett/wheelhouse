@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
 import { loadBoardInputs } from '../board/inputs.js';
-import { numberedWaiting, oneLine, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
+import { boardModel, numberedWaiting, oneLine, seeOf, NO_SETTINGS, NO_SOURCES } from '../board/model.js';
 import { glanceLine } from '../board/render.js';
 import { NO_HELPER } from '../hooks/session-start.js';
 import { sayTime } from '../settings/effective.js';
@@ -22,26 +22,24 @@ import { listEvents } from '../state/events.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../lib/mod-numbers.js';
 import { importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { answerLine } from '../state/card-lines.js';
-import { STOP_LINE } from '../board/health.js';
+import { ownLineOf, brokenCount } from '../board/health.js';
 import { cardButtons, kindOf } from './buttons.js';
+import { previewFor } from './previews.js';
+import { readSeen } from '../briefing/seen.js';
+import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 
 const VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
 // The views the pane reads: the glance's, the reports and glossary, and the open incidents.
-const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents'];
+const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas'];
+// The line of an approval card's set line, from which its preview is asked for.
+const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
 const NO_INPUTS = 'The board\'s inputs couldn\'t be read this time';
 const NO_CLOCK = 'The pane\'s clock couldn\'t be read';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// Whose own line a health line is, read before its words are made plain: STOP's, as the glance
-// reads it, an open incident's, by the incident the board names on it, or neither (null).
-function ownLineOf(line) {
-  if (typeof line.incident === 'string') return 'incident';
-  const text = String(line.text);
-  return text === STOP_LINE || text.startsWith(`${STOP_LINE}, `) ? 'stop' : null;
-}
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 
 function attempt(read, fallback) {
@@ -97,20 +95,28 @@ const answerCardFor = (id, views) => ({ data: { kind: 'answer', line: answerLine
 // The first CARD_HASH_CHARS of the SHA-256 of a card's whole text: what a press names the card by.
 export const hashOf = (text) => crypto.createHash('sha256').update(text).digest('hex').slice(0, CARD_HASH_CHARS);
 
+// A time as HH:MM in the computer's own time, or null when it isn't a time.
+function clockTime(value) {
+  const time = typeof value === 'string' ? new Date(value) : null;
+  if (time === null || Number.isNaN(time.getTime())) return null;
+  return `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`;
+}
+
 function clockOf(now) {
   const value = attempt(() => (typeof now === 'function' ? now() : now), null);
   const time = value instanceof Date ? value : new Date(value ?? Number.NaN);
   return Number.isNaN(time.getTime()) ? null : time;
 }
 
-// paneModel({ project, cwd, now }) -> Promise<PaneModel>. Reads files only and never throws: what
+// paneModel({ project, cwd, now, helperUp, client, previews }) -> Promise<PaneModel>. Reads files only and never throws: what
 // can't be read becomes a line of `missing`. A card's text is kept exactly as written, for the
 // mod to draw as plain text; every other line from an event is one line of plain words.
 // `helperUp` is whether the host helper answered the caller (true, false, or undefined when it
 // wasn't asked). The inputs are read from files alone, so the cards and lines come from the last
 // sync; when the helper is down the model says so, and when that sync was, so old figures are
-// never taken for current ones. `loadInputs` is for tests.
-export async function paneModel({ project, cwd, now = () => new Date(), helperUp, loadInputs = loadBoardInputs } = {}) {
+// never taken for current ones. `client` is the helper's, asked for an approval card's preview
+// address; `previews` (previewFor by default) and `loadInputs` are for tests.
+export async function paneModel({ project, cwd, now = () => new Date(), helperUp, client, previews = previewFor, loadInputs = loadBoardInputs } = {}) {
   const clock = clockOf(now);
   const missing = [];
   if (clock === null) missing.push(NO_CLOCK);
@@ -144,6 +150,25 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
   const stop = attempt(() => stopState(), { on: true });
   const cardEvents = attempt(() => listEvents(stateDir(project), { report: () => {}, skipped: [] }).filter((e) => e.kind === 'card'), []);
   const waiting = new Map(list(views?.waiting).map((card) => [card.id, card]));
+  const seen = attempt(() => readSeen(project, clock === null ? {} : { now: () => clock }), { briefedAt: null });
+  const sinceAt = seen.briefedAt;
+  const sinceMs = sinceAt === null ? Number.NaN : Date.parse(sinceAt);
+  const after = (at) => !Number.isNaN(sinceMs) && typeof at === 'string' && Date.parse(at) > sinceMs;
+
+  // An approval card's preview address, asked for once a tick at most. Only a card that offers
+  // Show me, with the set line of an approval, is asked about.
+  const tick = { asked: false };
+  const previewOf = new Map();
+  for (const item of attempt(() => numberedWaiting(views, cardEvents), [])) {
+    const data = waiting.get(item.card)?.data;
+    const found = isRecord(data) && data.kind === 'approval' && Array.isArray(data.options) && data.options.includes(SHOW_ME)
+      ? APPROVAL_LINE.exec(String(data.line)) : null;
+    if (found === null) continue;
+    const address = await Promise.resolve().then(() => previews({
+      project, pr: Number(found[1]), sha: found[2], client: helperUp === false ? undefined : client, now: () => clock ?? new Date(), tick,
+    })).catch(() => null);
+    previewOf.set(item.card, typeof address === 'string' && address.startsWith('https:') ? address : null);
+  }
   // The board's own numbering: a card is shown by the number the board and the front desk give it.
   const cards = part('cards', () => numberedWaiting(views, cardEvents).flatMap((item) => {
     // A question from the build no card asks yet: the front desk asks it when it makes its card,
@@ -151,33 +176,80 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
     if (item.card === undefined) {
       return [{
         id: item.id, n: item.n, header: HEADERS.question, kind: 'question', text: QUESTION_WAITS, hash: hashOf(QUESTION_WAITS), buttons: [], note: null, blocking: blocks(answerCardFor(item.question, views), views), asked: false,
+        parts: null, steered: null, waited: null, revised: false,
       }];
     }
     const card = waiting.get(item.card);
     const data = card?.data;
     if (!isRecord(data)) return [];
     const text = cardTextOf(data);
-    const { buttons, note } = cardButtons(data);
+    const { buttons, note } = cardButtons(data, { preview: previewOf.get(item.card) ?? null });
     // Asked: the front desk has handed the card out, or it was put off with no answer.
     const asked = card.asked !== null && card.asked !== undefined;
-    return [{ id: item.id, n: item.n, header: plain(data.header) || HEADERS[kindOf(data)], kind: kindOf(data), text, hash: hashOf(text), buttons, note, blocking: blocks(card, views), asked }];
+    return [{
+      id: item.id,
+      n: item.n,
+      header: plain(data.header) || HEADERS[kindOf(data)],
+      kind: kindOf(data),
+      text,
+      hash: hashOf(text),
+      buttons,
+      note,
+      blocking: blocks(card, views),
+      asked,
+      // The card's parts as the composer kept them, already in plain words; null for a card with none, which is drawn as its text.
+      parts: isRecord(data.parts) ? data.parts : null,
+      steered: clockTime(card.steered),
+      waited: askedSince(card.at, clock),
+      revised: typeof data.revises === 'string',
+    }];
   }), []);
 
   const building = part('list of what is building', () => {
     const lines = list(model?.build?.features).filter((f) => f.step === 'building').map((f) => {
       const slice = isRecord(f.slice) && Number.isInteger(f.slice.n) && Number.isInteger(f.slice.m) ? `, slice ${f.slice.n} of ${f.slice.m}` : '';
-      return plain(`Building ${oneLine(f.title) || oneLine(f.work) || 'untitled work'}${slice}`);
+      return { text: plain(`Building ${oneLine(f.title) || oneLine(f.work) || 'untitled work'}${slice}`), see: seeOf(isRecord(views?.work) ? views.work[f.work] : undefined) };
     });
-    return lines.length <= PANE_LINES ? lines : [...lines.slice(0, PANE_LINES - 1), `and ${lines.length - PANE_LINES + 1} more building`];
+    return lines.length <= PANE_LINES ? lines : [...lines.slice(0, PANE_LINES - 1), { text: `and ${lines.length - PANE_LINES + 1} more building`, see: null }];
   }, []);
 
-  const health = part('health lines', () => list(model?.director?.health)
+  const healthLines = list(model?.director?.health);
+  const health = part('health lines', () => healthLines
     .filter((l) => l.level === 'watch' || l.level === 'stop')
     .map((l) => ({ level: l.level, text: plain(l.text), of: ownLineOf(l) }))
     .filter((l) => l.text !== ''), []);
 
   const usage = part('usage line', () => (model === null ? null
     : briefingModel({ model, usage: inputs.usage, sources: inputs.sources, now: clock ?? undefined }).usage), null);
+
+  // The pane's health group: whether all is well, the protection level and the week's share line.
+  const healthNote = part('health note', () => ({
+    allWell: model !== null && !healthLines.some((l) => l.level === 'watch' || l.level === 'stop'),
+    protection: /^Protection: (Locked|Standard)$/.exec(healthLines.map((l) => String(l.text)).find((t) => t.startsWith('Protection: ')) ?? '')?.[1] ?? null,
+    week: typeof usage === 'string' ? usage : null,
+  }), { allWell: false, protection: null, week: null });
+
+  // The offline model leaves out the blockers and the ideas, which the glance doesn't need and its
+  // reading may not open; the pane has them in its own views, so the board model is built again
+  // from those for its launch and ideas.
+  const fuller = part('launch and ideas', () => (clock === null ? null : boardModel({ project, views, events: [], now: () => clock, since: sinceAt })?.director), null);
+
+  const launch = part('progress to launch', () => {
+    const progress = fuller?.launch;
+    if (!isRecord(progress) || !Number.isInteger(progress.total) || progress.total < 1) return null;
+    const mine = new Set(Array.isArray(fuller.ideas?.now) ? fuller.ideas.now : []);
+    const gained = Number.isInteger(progress.gained) ? progress.gained : 0;
+    const next = (Array.isArray(progress.next) ? progress.next : []).filter((t) => typeof t === 'string' && t !== '').slice(0, PANE_LINES)
+      .map((t) => ({ text: plain(t), yours: mine.has(t) }));
+    return { resolved: Number.isInteger(progress.resolved) ? progress.resolved : 0, total: progress.total, gained: Math.min(gained, progress.total), next };
+  }, null);
+
+  const ideas = part('ideas', () => {
+    const given = isRecord(fuller?.ideas) ? fuller.ideas : {};
+    const count = ['now', 'next', 'later'].reduce((sum, when) => sum + (Array.isArray(given[when]) ? given[when].length : 0), 0);
+    const fresh = Object.values(isRecord(views?.ideas) ? views.ideas : {}).filter((i) => isRecord(i) && isRecord(i.data) && after(i.at)).length;
+    return { count, fresh: Math.min(fresh, count) };
+  }, { count: 0, fresh: 0 });
 
   const finished = part('list of finished work', () => Object.entries(isRecord(views?.reports) ? views.reports : {})
     .filter(([, report]) => isRecord(report) && report.data?.outcome === 'merged')
@@ -191,6 +263,10 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
     return list(views.incidents.open).map((i) => i.id).filter((id) => typeof id === 'string' && id !== '');
   }, []);
 
+  // Broken is a line at stop level that isn't STOP's own: STOP is the director's doing, not a fault.
+  const broken = brokenCount(healthLines);
+  const sinceHour = clockTime(sinceAt);
+
   return {
     v: VERSION,
     project,
@@ -198,8 +274,14 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
     glance: model === null ? 'Wheelhouse' : glanceLine(model),
     stop: { on: stop.on === true, since: typeof stop.at === 'string' ? stop.at : null },
     cards,
+    verdict: verdict({ waiting: cards.length, broken }),
+    since: sinceHour === null ? null : sinceLine(sinceHour),
+    launch,
     building,
     health,
+    healthNote,
+    ideas,
+    updated: clockTime(clock === null ? null : clock.toISOString()),
     usage: typeof usage === 'string' ? usage : null,
     finished,
     incidents,

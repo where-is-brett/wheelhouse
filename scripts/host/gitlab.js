@@ -3,6 +3,7 @@
 // the adapter's values. Values the caller supplies are passed as `--flag=value`,
 // so one that starts with "-" cannot be read as a flag; descriptions go on
 // standard input. Commands that would otherwise ask for confirmation get --yes.
+import { gitlabHistory } from './gitlab-history.js';
 
 // Mergeability comes from `detailed_merge_status`. The recorded merge request
 // (tests/fixtures/host/gitlab/mr-view-closed.json) has this field and no
@@ -45,10 +46,16 @@ const PIPELINE = {
   skipped: 'none',
 };
 
+// A pipeline whose source is `external` is a commit status someone posted with a key, not a run
+// (check 71, step 4): at Free the project key can post one for a commit that has no pipeline, so it
+// stands for no run of the project's tests and reads as none. This narrows Wheelhouse's own gate
+// only; GitLab's own page still shows such a merge request as mergeable.
+const stateOf = (pipeline) => (pipeline.source === 'external' ? 'none' : (PIPELINE[pipeline.status] ?? 'pending'));
+
 const MR_ADDRESS = /(https?:\/\/\S+\/-\/merge_requests\/(\d+))/;
 const ISSUE_ADDRESS = /(https?:\/\/\S+\/-\/(?:issues|work_items)\/(\d+))/;
 
-export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly }) {
+export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal, settle, httpsOnly, hostFault, read }) {
   const R = ['-R', repo];
   const project = `projects/${encodeURIComponent(repo)}`;
   const ask = async (args, input) => json(args, await call(args, input));
@@ -74,10 +81,10 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       const open = (Array.isArray(requests) ? requests : []).filter((r) => r?.state === 'opened' && Number.isInteger(r.iid));
       for (const request of open.slice(0, 5)) {
         const full = await ask(['api', `${project}/merge_requests/${request.iid}`]);
-        if (await ranOnHead(full?.head_pipeline, sha)) return PIPELINE[full.head_pipeline.status] ?? 'pending';
+        if (await ranOnHead(full?.head_pipeline, sha)) return stateOf(full.head_pipeline);
         const list = await ask(['api', `${project}/merge_requests/${request.iid}/pipelines?per_page=5`]);
         for (const pipeline of (Array.isArray(list) ? list : []).filter((p) => MERGE_REF.test(String(p?.ref)))) {
-          if (await ranOnHead(pipeline, sha)) return PIPELINE[pipeline.status] ?? 'pending';
+          if (await ranOnHead(pipeline, sha)) return stateOf(pipeline);
           break; // the newest merged-results pipeline is the one that counts
         }
       }
@@ -89,6 +96,9 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
   }
 
   return {
+    // The read-only calls of the audit report (gitlab-history.js).
+    ...gitlabHistory({ ask, read, project }),
+
     async defaultBranch() {
       const answer = await ask(['api', project]);
       if (typeof answer?.default_branch !== 'string') throw new Error('GitLab did not say which branch is the default');
@@ -140,7 +150,7 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     async ciState(sha) {
       const pipelines = await ask(['api', `${project}/pipelines?sha=${sha}&per_page=1&order_by=id&sort=desc`]);
       const newest = Array.isArray(pipelines) ? pipelines[0] : undefined;
-      if (newest) return { sha, state: PIPELINE[newest.status] ?? 'pending' };
+      if (newest) return { sha, state: stateOf(newest) };
       return { sha, state: await mergedResults(sha) };
     },
 
@@ -164,7 +174,15 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     // answer, not an error.
     async merge({ number, sha }) {
       const { code, stdout, stderr } = await attempt(['mr', 'merge', String(number), ...R, '--sha', sha, '--auto-merge=false', '--yes']);
-      if (code !== 0) return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitLab did not merge the merge request') };
+      if (code !== 0) {
+        // A merge that could not reach the host, or did not trust its certificate, is not a refusal:
+        // it says so, and its own flag tells the caller why.
+        // glab's standard error is its own words. A command that waited and gave up may have
+        // reached the host before it did, so that is said as not confirmed, as settle does.
+        const fault = hostFault(stderr);
+        if (fault !== null) return { merged: false, [fault.kind]: true, reason: `${fault.timedOut ? 'The merge could not be confirmed.' : 'Not merged.'} ${fault.line}` };
+        return { merged: false, reason: refusal(`${stderr}\n${stdout}`, 'GitLab did not merge the merge request') };
+      }
       return settle({
         state: async () => (await ask(['mr', 'view', String(number), ...R, '--output', 'json'])).state,
         merged: 'merged',

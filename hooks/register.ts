@@ -6,26 +6,29 @@
 //
 // This file only wires the hooks, each passing on with next(e) and never changing the message,
 // but for Wheelhouse traffic in the front desk's session (hooks/mod/messages.ts):
-//   session.start    registers /go, /wheelhouse and /digest, sends the session's usage figures
+//   session.start    registers /wheelhouse-go, /wheelhouse and /wheelhouse-digest, sends the session's usage figures
 //                    and starts the pane's ticks (hooks/mod/pane.tsx), which hand on the prompts
 //                    their answers hold
 //   session.measure  sends the usage figures again when the allowance or the cost moved
-//   prompt.submit    keeps Wheelhouse traffic out of the front desk and ticks instead; a phoned
-//                    "stop" sends stop; a reply code and an option sends reply
-//   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead
+//   prompt.submit    keeps Wheelhouse traffic out of the front desk and ticks instead, the tick
+//                    saying one was received; a phoned "stop" sends stop; a reply code and an
+//                    option sends reply
+//   session.receive  keeps Wheelhouse traffic out of the front desk and ticks instead, the same
 //   turn.start       marks the session busy, for the tick
 //   turn.complete    marks it idle again
-//   command.run      /go sends go and answers with the bridge's words; /wheelhouse opens the pane;
-//                    /digest answers with the bridge's briefing
+//   command.run      /wheelhouse-go sends go and answers with the bridge's words; /wheelhouse opens the pane;
+//                    /wheelhouse-digest answers with the bridge's briefing
 //   ui.render        draws the pane, with each card's buttons, STOP or Lift STOP and the settings
 //                    view (hooks/mod/cards.tsx, hooks/mod/settings.tsx)
+// A typed reply or "stop" is read past any reminder blocks the app puts before it (ownWords),
+// and the bridge is sent what follows them.
 // A message counts as the director's only when it came from the prompt (`composer`) or the
 // phone (`bridge`); every other origin never reaches the bridge. A press counts as the
 // director's under the origin `pane`, which only a button's press handler sends.
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
 import { ask, send, FAILED, type Answer } from './mod/ask'
 import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'
-import { keepOut, KEPT_OUT } from './mod/messages'
+import { keepOut, KEPT_OUT, ownWords } from './mod/messages'
 
 const DIRECTOR = ['composer', 'bridge']
 // The options a reply code can answer: the signed labels of scripts/hooks/prompt-record.js,
@@ -80,18 +83,22 @@ function codedReply(text: string): boolean {
 function requestFor(e: PromptSubmitInput): { request: Record<string, unknown>, quiet: boolean } | null {
   const origin = e.origin.kind
   if (!DIRECTOR.includes(origin) || e.isMeta || e.command) return null
-  const text = e.text.trim()
+  // The app's reminder blocks before the typed line are read past; a remainder that still holds
+  // a reminder tag is not the director's own words.
+  const own = ownWords(e.text)
+  if (own === null) return null
+  const text = own.trim()
   // A typed "stop" is the stop-word hook's; only a phoned one is sent.
   if (STOP.test(text)) return origin === 'bridge' ? { request: { cmd: 'stop', origin }, quiet: false } : null
-  if (REPLY.test(text)) return { request: { cmd: 'reply', origin, text: e.text }, quiet: false }
-  if (codedReply(text)) return { request: { cmd: 'reply', origin, text: e.text }, quiet: true }
+  if (REPLY.test(text)) return { request: { cmd: 'reply', origin, text: own }, quiet: false }
+  if (codedReply(text)) return { request: { cmd: 'reply', origin, text: own }, quiet: true }
   return null
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
-      await $.command.register({ name: 'go', description: 'Lift STOP' })
+      await $.command.register({ name: 'wheelhouse-go', description: 'Lift STOP' })
     } catch {
       // Without the command, a reply code still lifts STOP.
     }
@@ -101,7 +108,7 @@ export const register: Register = on => {
       // Without the command, the pane still opens at the session's start.
     }
     try {
-      await $.command.register({ name: 'digest', description: 'Show the briefing, with no Claude turn' })
+      await $.command.register({ name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' })
     } catch {
       // Without the command, the front desk still gives the briefing.
     }
@@ -139,7 +146,7 @@ export const register: Register = on => {
 
   // Wheelhouse traffic is kept out before anything else; the director's messages never are.
   on('prompt.submit', async ($, e, next) => {
-    if (await keepOut($, e.origin.kind, e.text)) return { drop: KEPT_OUT }
+    if (await keepOut($, e.origin.kind, e.text, 'prompt')) return { drop: KEPT_OUT }
     const asked = requestFor(e)
     if (asked !== null) {
       try {
@@ -153,7 +160,7 @@ export const register: Register = on => {
 
   // The bridge's words, refusals included, are the command's output; only no answer at all
   // is a toast too.
-  on('command.run', { command: 'go' }, async ($, e) => {
+  on('command.run', { command: 'wheelhouse-go' }, async ($, e) => {
     let answer: Answer | null = null
     try {
       answer = await ask($, { cmd: 'go', origin: e.origin.kind, cwd: await $.session.root() })
@@ -166,7 +173,7 @@ export const register: Register = on => {
 
   // A delivery for one of the session's agents is not the front desk's conversation.
   on('session.receive', async ($, e, next) => {
-    if (e.agentId === undefined && await keepOut($, e.origin.kind, e.text)) return { consumed: KEPT_OUT }
+    if (e.agentId === undefined && await keepOut($, e.origin.kind, e.text, 'receive')) return { consumed: KEPT_OUT }
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -174,7 +181,7 @@ export const register: Register = on => {
 
   // The bridge's text is the command's output, its own words when it has no briefing included
   // (or its refusal's, should it refuse); only no answer at all is a toast too.
-  on('command.run', { command: 'digest' }, async ($, e) => {
+  on('command.run', { command: 'wheelhouse-digest' }, async ($, e) => {
     let answer: Answer | null = null
     try {
       answer = await ask($, { cmd: 'digest', origin: e.origin.kind, cwd: await $.session.root() })

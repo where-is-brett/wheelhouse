@@ -9,6 +9,8 @@ import { githubCommands } from './github.js';
 import { gitlabCommands } from './gitlab.js';
 import { toolPath } from '../lib/host-tools.js';
 import { publicHttps } from '../screens/pages.js';
+import { parseRemote, listed, isDefaultHost, hostWords, DEFAULT_GITLAB } from './gitlab-base.js';
+import { hostFailure, outputKind, lineFor, timedOut } from './company-ca.js';
 
 const HOSTS = { github: githubCommands, gitlab: gitlabCommands };
 
@@ -63,7 +65,8 @@ export function scrub(text, env = {}) {
 // What a refused merge says, in the adapter's own words: the host's text is read
 // to tell the kinds apart and is never repeated.
 function refusalOf(output, fallback) {
-  const text = String(output ?? '');
+  // glab wraps its error over lines, so a phrase can break between words ("SHA does not\n  match HEAD").
+  const text = String(output ?? '').replace(/\s+/g, ' ');
   if (/head branch was modified|sha does not match|match-head-commit|head commit/i.test(text)) return 'the head of the pull request has moved since it was checked';
   if (/conflict/i.test(text)) return 'the pull request has a merge conflict';
   if (/status check|required check|checks? .*(?:fail|pending|expected|not pass)|pipeline|ci must|must succeed/i.test(text)) return 'the host\'s required checks have not passed';
@@ -77,27 +80,18 @@ function refusalOf(output, fallback) {
 // a page on this computer or its local network.
 const httpsOnly = publicHttps;
 
+// What the history calls say on a host whose history they do not read yet.
+export const HISTORY_GITLAB_ONLY = 'The audit report reads the history of a GitLab host; for GitHub it is not available in this version';
+
 const QUEUE_LINE = 'This project\'s host queues merges; Wheelhouse merges only directly for now';
 
-function hostOf(remoteUrl) {
-  const text = String(remoteUrl ?? '').trim();
-  const scp = /^[^@/\s]+@([^:/\s]+):/.exec(text); // git@host:owner/name.git
-  if (scp) return scp[1].toLowerCase();
-  try {
-    const url = new URL(text);
-    if (url.hostname) return url.hostname.toLowerCase();
-  } catch { /* not a URL */ }
-  throw new Error('That is not a repository address this can read');
-}
-
-// 'github' for github.com; 'gitlab' for gitlab.com, or for another address when
-// the project setting `gitlabHosts` names it.
+// 'github' for github.com; 'gitlab' for the public GitLab service, or for another address when
+// the project setting `gitlabHosts` names it (a host name, with its port when it has one).
 export function detectHost(remoteUrl, { gitlabHosts = [] } = {}) {
-  const host = hostOf(remoteUrl);
-  if (host === 'github.com') return 'github';
-  if (host === 'gitlab.com') return 'gitlab';
-  if (gitlabHosts.map((h) => String(h).toLowerCase()).includes(host)) return 'gitlab';
-  throw new Error(`The repository is at ${host}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`);
+  const parts = parseRemote(remoteUrl);
+  if (parts.hostname === 'github.com') return 'github';
+  if (isDefaultHost(parts) || listed(parts, gitlabHosts)) return 'gitlab';
+  throw new Error(`The repository is at ${hostWords(parts)}, which is not GitHub or GitLab. If it is a GitLab address, name it in the project settings`);
 }
 
 const REPO = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*(\/[A-Za-z0-9_.][A-Za-z0-9_.-]*)+$/;
@@ -111,18 +105,34 @@ function commit(sha) {
   if (typeof sha !== 'string' || !SHA.test(sha)) throw new Error('The commit must be a full commit ID');
   return sha;
 }
+// An ISO 8601 time, as a UTC ISO string.
+function when(value, what) {
+  const ms = typeof value === 'string' || value instanceof Date ? Date.parse(value instanceof Date ? value.toISOString() : value) : NaN;
+  if (Number.isNaN(ms)) throw new Error(`The ${what} must be a time`);
+  return new Date(ms).toISOString();
+}
+// The protection reading the last report kept: an object, or null when there is none.
+function earlier(value) {
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('The earlier protection reading must be an object or null');
+  return value;
+}
 function text(value, what, { optional = false, empty = false } = {}) {
   if (optional && value === undefined) return undefined;
   if (typeof value !== 'string' || (!empty && value.trim() === '')) throw new Error(`The ${what} must be text`);
   return value;
 }
 
-export function makeAdapter({ host, repo, run, env }) {
+// `base` is the GitLab address: for a company's own, glab is told its host (GITLAB_HOST, under any the
+// given `env` already names), and it is the address in the line said when it cannot be reached
+// (company-ca.js).
+export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB }) {
   const commands = HOSTS[host];
   if (!commands) throw new Error('The host must be github or gitlab');
   if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error('The repository must be written owner/name');
   if (typeof run !== 'function') throw new Error('The adapter needs a run function');
   const file = host === 'github' ? 'gh' : 'glab';
+  const env = host === 'gitlab' && base !== DEFAULT_GITLAB && given?.GITLAB_HOST === undefined ? { GITLAB_HOST: new URL(base).host, ...given } : given;
 
   // Runs one command, with the copy setup fetched into Wheelhouse's tools folder when there is one
   // (scripts/lib/host-tools.js). Resolves with the exit code and output.
@@ -134,6 +144,10 @@ export function makeAdapter({ host, repo, run, env }) {
   async function call(args, input) {
     const { code, stdout, stderr } = await attempt(args, input);
     if (code !== 0) {
+      // A server that is not there, or a certificate not trusted, is said in our own words, with a code.
+      // Read from glab's standard error alone: its standard output is the host's answer, not its own words.
+      const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
+      if (failure !== null) throw failure;
       const said = scrub(stderr || stdout, env);
       throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
     }
@@ -161,8 +175,34 @@ export function makeAdapter({ host, repo, run, env }) {
     }
     return { merged: false, queued: true, reason: QUEUE_LINE };
   }
-  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly };
+  // What a failed command says about reaching the host: null, or { kind, line } for a server that is
+  // not there or a certificate not trusted, which a merge reports apart from a refusal (`timedOut`:
+  // the command waited and gave up, so whether it took effect is not known).
+  function hostFault(output) {
+    const kind = host === 'gitlab' ? outputKind(output) : null;
+    return kind === null ? null : { kind, line: lineFor(kind, base), timedOut: kind === 'unreachable' && timedOut(output) };
+  }
+  // A read whose refusal is an answer: { status, body }, with status 200 when it exited 0 and the
+  // HTTP status glab named when it did not. A host that cannot be reached, or a certificate not
+  // trusted, is thrown in our own words with its code, as `call` does; so is a failure that names no
+  // status.
+  async function read(args) {
+    const { code, stdout, stderr } = await attempt(args);
+    if (code === 0) return { status: 200, body: json(args, stdout) };
+    const failure = host === 'gitlab' ? hostFailure(stderr, base) : null;
+    if (failure !== null) throw failure;
+    const named = /\(HTTP (\d{3})\)/.exec(stderr);
+    if (named) return { status: Number(named[1]), body: null };
+    const said = scrub(stderr || stdout, env);
+    throw new Error(`${file} ${args.slice(0, 2).join(' ')} failed${said ? `: ${said}` : ''}`);
+  }
+  const tools = { call, settle, attempt, json, repo, fromAddress, refusal: refusalOf, httpsOnly, hostFault, read };
   const c = commands(tools);
+
+  async function history(name, ...args) {
+    if (typeof c[name] !== 'function') throw new Error(HISTORY_GITLAB_ONLY);
+    return c[name](...args);
+  }
 
   return {
     defaultBranch: () => c.defaultBranch(),
@@ -186,6 +226,16 @@ export function makeAdapter({ host, repo, run, env }) {
     // of it, or null when there is none or its address is not https. A failed read is thrown.
     previewUrl: async (sha) => c.previewUrl(commit(sha)),
     merge: async ({ number, sha } = {}) => c.merge({ number: wholeNumber(number), sha: commit(sha) }),
+    // The history calls of the audit report. They only read. The host's own history is the second
+    // record the report checks the computer's against (scripts/audit/report.js).
+    mergedRequests: async ({ since } = {}) => history('mergedRequests', { since: when(since, 'time to read from') }),
+    // `number` names the request that merged the commit, whose own head pipeline is the one that counts.
+    pipelinesFor: async (sha, { number } = {}) => history('pipelinesFor', commit(sha), number === undefined ? undefined : wholeNumber(number)),
+    protectionEvents: async ({ since, last = null, now = new Date() } = {}) => history('protectionEvents', {
+      since: when(since, 'time to read from'),
+      last: earlier(last),
+      now: new Date(when(now, 'time now')),
+    }),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({
         title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),

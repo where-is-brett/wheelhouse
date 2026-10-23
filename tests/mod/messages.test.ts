@@ -6,6 +6,7 @@
 // instead, that every other message passes on as it came, that each prompt a tick's answer holds
 // is handed on once and in order, and that /digest answers with the bridge's text.
 import { test, expect, mock } from 'claude-code/testing'
+import { ownWords } from '../../hooks/mod/messages'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
@@ -16,8 +17,8 @@ const START = Date.parse('2026-10-19T03:00:50.000Z')
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const PRESENTATION = { isFullscreen: false, columns: 80 }
 const CONTEXT = { window: 200000, tokens: 1000, percent: 0.5 }
-const FAILED = 'Wheelhouse couldn\'t record that'
-const KEPT_OUT = 'Wheelhouse traffic, shown in the pane'
+const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
+const KEPT_OUT = 'Wheelhouse: an update from another session, shown in the pane'
 
 // Messages another Wheelhouse session sends: each first line starts with MESSAGE_LEAD.
 const TRAFFIC = [
@@ -438,6 +439,46 @@ test('the same message reaches a feature session, the foreman or a session still
   }
 })
 
+test('a kept-out message sends one tick that says it was received, never its text', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, () => frontDesk())
+  await start($, 'desktop')
+  for (const kind of ['sdk', 'peer']) {
+    clear()
+    await submit($, TRAFFIC[0], kind)
+    await clock.settle()
+    expect(seen.ticks).toHaveLength(1)
+    expect(seen.ticks[0].received).toEqual({ origin: kind, via: 'prompt' })
+    expect(JSON.stringify(seen.ticks[0])).not.toContain('Wheelhouse:')
+  }
+  clear()
+  await receive($, TRAFFIC[1], { kind: 'peer' })
+  await clock.settle()
+  expect(seen.ticks.map((t: any) => t.received)).toEqual([{ origin: 'peer', via: 'receive' }])
+  // The timer's own tick says nothing was received.
+  clear()
+  await clock.advance(TICK_MS)
+  expect(seen.ticks).toHaveLength(1)
+  expect('received' in seen.ticks[0]).toBe(false)
+})
+
+test('messages kept out while a tick runs share one follow-up tick that lists them, at most 50', async ($, on) => {
+  const { seen, clear, start, clock } = world(on, () => ({ hold: 3000, then: frontDesk() }))
+  await start($, 'desktop')
+  await clock.advance(3000)
+  clear()
+  await submit($, TRAFFIC[0], 'sdk')
+  await clock.advance(1000)
+  // 60 more ask while the first one's tick still runs.
+  for (let i = 0; i < 60; i++) await submit($, TRAFFIC[1], i === 59 ? 'sdk' : 'peer')
+  await clock.advance(2000)
+  await clock.settle()
+  const withReceipts = seen.ticks.filter((t: any) => t.received !== undefined)
+  expect(withReceipts).toHaveLength(2)
+  expect(withReceipts[0].received).toEqual({ origin: 'sdk', via: 'prompt' })
+  expect(withReceipts[1].received).toHaveLength(50)
+  expect(withReceipts[1].received.at(-1)).toEqual({ origin: 'sdk', via: 'prompt' })
+})
+
 // Each surface in a test of its own, so the session's state holds no role from an earlier answer.
 for (const surface of SURFACES) {
   test(`a front desk passes traffic on until its first tick answers (${surface})`, async ($, on) => {
@@ -591,8 +632,8 @@ test('a Shape 2 foreman\'s tick submits each wake line in order', async ($, on) 
 
 // What a toast says when a tick's prompt can't be handed on: the courier's wake goes to the front
 // desk, a Shape 2 foreman's watcher lines to the foreman.
-const NOT_HANDED = 'Wheelhouse couldn\'t hand that to the front desk'
-const NOT_HANDED_FOREMAN = 'Wheelhouse couldn\'t hand the watcher\'s news to the foreman'
+const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
+const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the foreman.'
 
 test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by role, and the rest are handed on', async ($, on) => {
   const LINES = ['Wheelhouse watcher: CI failed on pull request #4', 'Wheelhouse watcher: pull request #5 merged', 'Wheelhouse watcher: review asked on #6'] as const
@@ -751,7 +792,7 @@ test('a message whose first line has the lead is traffic, whatever names the for
   }
 })
 
-test('traffic that comes while a tick runs gets its own tick once that one ends, and only one', async ($, on) => {
+test('traffic that comes while a tick runs gets one tick between them once that one ends, none at the timer\'s fire', async ($, on) => {
   let reply: Reply = frontDesk()
   const { seen, clear, start, clock } = world(on, () => reply)
   for (const surface of SURFACES) {
@@ -767,9 +808,11 @@ test('traffic that comes while a tick runs gets its own tick once that one ends,
     expect(await receive($, TRAFFIC[1], { kind: 'peer' })).toEqual({ consumed: KEPT_OUT })
     await clock.settle()
     expect(seen.ticks).toHaveLength(1)
-    // It ends, and one tick follows at once, not two, and not at the timer's next fire.
+    // It ends, and a tick follows at once for each message, saying it was received, and none at
+    // the timer's next fire but the timer's own.
     await clock.advance(5000)
     expect(seen.ticks).toHaveLength(2)
+    expect(seen.ticks[1].received).toEqual([{ origin: 'peer', via: 'prompt' }, { origin: 'peer', via: 'receive' }])
     await clock.advance(TICK_MS - 5000 - 1)
     expect(seen.ticks).toHaveLength(2)
     await clock.advance(1)
@@ -777,22 +820,22 @@ test('traffic that comes while a tick runs gets its own tick once that one ends,
   }
 })
 
-test('/digest answers with the bridge\'s briefing', async ($, on) => {
+test('/wheelhouse-digest answers with the bridge\'s briefing', async ($, on) => {
   const BRIEFING = 'Since you were last here\n\nThe banner change merged. 2 cards wait.'
   let answer: Reply = { ok: true, text: BRIEFING }
   const { seen, clear, start } = world(on, () => feature(), () => answer)
   for (const surface of SURFACES) {
     await start($, surface)
     expect(seen.registered).toEqual([
-      { name: 'go', description: 'Lift STOP' },
+      { name: 'wheelhouse-go', description: 'Lift STOP' },
       { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
-      { name: 'digest', description: 'Show the briefing, with no Claude turn' },
+      { name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' },
     ])
 
     for (const kind of ['composer', 'bridge'] as const) {
       answer = { ok: true, text: BRIEFING }
       clear()
-      const result = await $.command.run({ command: 'digest', args: '', origin: { kind }, presentation: PRESENTATION })
+      const result = await $.command.run({ command: 'wheelhouse-digest', args: '', origin: { kind }, presentation: PRESENTATION })
       expect(result).toMatchObject({ text: BRIEFING })
       expect(seen.runs).toHaveLength(1)
       expect(seen.runs[0].argv[0]).toBe('node')
@@ -806,7 +849,7 @@ test('/digest answers with the bridge\'s briefing', async ($, on) => {
     // The bridge's own words when it has no briefing are the answer, and nothing else.
     answer = { ok: false, text: 'This folder isn\'t a Wheelhouse project.' }
     clear()
-    expect(await $.command.run({ command: 'digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
+    expect(await $.command.run({ command: 'wheelhouse-digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
       .toMatchObject({ text: 'This folder isn\'t a Wheelhouse project.' })
     expect(seen.toasts).toHaveLength(0)
 
@@ -814,10 +857,36 @@ test('/digest answers with the bridge\'s briefing', async ($, on) => {
     for (const failure of ['no-start', { exitCode: 1 }, { stdout: 'not json\n' }, { stdout: '{"text":"no ok"}\n' }] as Reply[]) {
       answer = failure
       clear()
-      expect(await $.command.run({ command: 'digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
+      expect(await $.command.run({ command: 'wheelhouse-digest', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION }))
         .toMatchObject({ text: FAILED })
       expect(seen.toasts).toEqual([FAILED])
       expect(seen.commands).toHaveLength(0)
     }
   }
+})
+
+// The same table as tests/scripts/lib/own-words.test.js, run against the mod's copy.
+test('ownWords reads past whole leading reminder blocks and nothing else', () => {
+  const B = '<system-reminder>\nLinked sessions now: x\n</system-reminder>'
+  const cases: [string, string | null][] = [
+    ['stop', 'stop'],
+    ['  K7QD Approve ', '  K7QD Approve '],
+    ['', ''],
+    [`${B}\n\nstop`, 'stop'],
+    [`${B}\nstop`, 'stop'],
+    [`${B}\n\n\n\nstop`, 'stop'],
+    [`${B}\n\n${B}\n\nstop`, 'stop'],
+    [`${B}\n${B}\nstop`, 'stop'],
+    [B, ''],
+    [`${B}\n\n`, ''],
+    ['<system-reminder>\n</system-reminder>\nstop', 'stop'],
+    [`${B}\n\nstop\n<system-reminder>\nmore\n</system-reminder>`, null],
+    [`${B}\nT8E3 Confirm\n<system-reminder>\nmore\n</system-reminder>\n\nhello`, null],
+    [`${B}\n\nstop </system-reminder>`, null],
+    [`${B}\n\n<system-reminder>`, null],
+    [`hello\n${B}`, `hello\n${B}`],
+    ['<system-reminder> inline </system-reminder>\nstop', '<system-reminder> inline </system-reminder>\nstop'],
+    ['<system-reminder>\nunclosed\nstop', '<system-reminder>\nunclosed\nstop'],
+  ]
+  for (const [text, want] of cases) expect(ownWords(text)).toBe(want)
 })

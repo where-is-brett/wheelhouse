@@ -238,6 +238,8 @@ const askId = (target) => `uninstall-delete-${crypto.createHash('sha256').update
 function deleteCard({ what, why, deletes, keeps, because }) {
   return {
     kind: 'question',
+    // Answered in setup's own chat, where there is no front-desk turn to take a suggested change.
+    suggest: false,
     level: 4,
     what,
     why,
@@ -972,7 +974,7 @@ export function uninstallRoutes({
     noteUninstallShown({ project: got.card.target.project, folder, hash: got.hash, card, now });
     const open = openRunOf(folder);
     const asks = open === null ? [] : got.asks.map((a) => {
-      const asked = composeCard({ ...cleanDeep(a.card, []), kind: 'question' }).question;
+      const asked = composeCard({ ...cleanDeep(a.card, []), kind: 'question', suggest: false }).question;
       noteAsked({ runId: open.id, folder: open.folder, step: ASK_STEP, id: a.id, card: asked, now });
       return { id: a.id, about: a.about, card: asked };
     });

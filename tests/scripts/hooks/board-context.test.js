@@ -110,14 +110,14 @@ test('the gap follows the briefingGapHours setting', async () => {
   });
 });
 
-test('a briefing /digest gave restarts the gap: a prompt within two hours of it brings none', async () => {
+test('a briefing /wheelhouse-digest gave restarts the gap: a prompt within two hours of it brings none', async () => {
   await withProject(async ({ repo }) => {
-    // The last prompt three hours ago, and /digest an hour ago, which marks only the briefing given.
+    // The last prompt three hours ago, and /wheelhouse-digest an hour ago, which marks only the briefing given.
     markSeen(P, { promptAt: new Date('2026-10-19T09:00:00.000Z'), briefedAt: new Date('2026-10-19T11:00:00.000Z') });
     assert.equal(await run(repo, 'Thanks', NOW), undefined);
     assert.equal(readSeen(P, { now: at(NOW) }).briefedAt, '2026-10-19T11:00:00.000Z', 'no briefing was given');
 
-    // /digest over two hours ago: the next prompt brings the briefing.
+    // /wheelhouse-digest over two hours ago: the next prompt brings the briefing.
     markSeen(P, { promptAt: new Date('2026-10-19T08:00:00.000Z'), briefedAt: new Date('2026-10-19T09:30:00.000Z') });
     assert.ok(contextOf(await run(repo, 'Back again', NOW)).startsWith(HEADINGS.briefing));
   });
@@ -153,7 +153,7 @@ test('each command adds its text, and the board command takes build', async () =
 
     const settings = contextOf(await run(repo, '/WHEELHOUSE:SETTINGS', NOW));
     assert.ok(settings.startsWith(`${HEADINGS.settings}\n\n`), settings);
-    assert.match(settings, /Board tab shown first: build \(yours\)/);
+    assert.match(settings, /Board opens on: build \(yours\)/);
 
     const sources = contextOf(await run(repo, '/wheelhouse:sources', NOW));
     assert.ok(sources.startsWith(`${HEADINGS.sources}\n\n`), sources);
@@ -402,7 +402,7 @@ test('a work title is kept as written, and the words around it go through', asyn
       return inputs;
     };
     const board = contextOf(await run(repo, '/wheelhouse:board build', NOW, { load }));
-    assert.match(board, /\n- Fix CI on slice 2 \(feature process level\): building, slice 1 of 3, proposed change #12\n/);
+    assert.match(board, /\n- Fix CI on slice 2 \(feature process level\): building, piece 1 of 3, proposed change #12\n/);
     // The term's first mention was replaced above, so this one stays and the end gives its meaning.
     assert.match(board, /\n- Pull request #12 for Review the PR page: its independent check found nothing to fix\n/);
     assert.match(board, /\n\nTerms: [^]*pull request means a proposed change[^]*\.$/);
@@ -670,19 +670,19 @@ test('the role comes from the session\'s first prompt and is kept: the wake line
   });
 });
 
-test('the board-context hook records nothing for /go, /digest or /wheelhouse', async () => {
+test('the board-context hook records nothing for /wheelhouse-go, /wheelhouse-digest or /wheelhouse', async () => {
   await withProject(async ({ repo }) => {
     // Cards no visit has asked would bring their line, and the gap a briefing, if the prompt counted.
     put(viewFile('waiting'), unasked(2));
     const seen = { promptAt: '2026-10-18T12:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
     markSeen(P, seen);
-    for (const command of ['/go', '/digest', '/wheelhouse', '  /GO  ', '/wheelhouse now']) {
+    for (const command of ['/wheelhouse-go', '/wheelhouse-digest', '/wheelhouse', '  /WHEELHOUSE-GO  ', '/wheelhouse now']) {
       assert.equal(await run(repo, command, NOW), undefined, command);
       assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null }, command);
     }
     // The plugin's own commands are different commands, and a line with more after it is a prompt.
     assert.match(contextOf(await run(repo, '/wheelhouse:settings', NOW)), /^Cards to ask this visit: 2/);
-    assert.ok(contextOf(await run(repo, '/go\nand then some', NOW)).includes(HEADINGS.briefing));
+    assert.ok(contextOf(await run(repo, '/wheelhouse-go\nand then some', NOW)).includes(HEADINGS.briefing));
   });
 });
 
@@ -816,7 +816,7 @@ test('learning never runs under STOP, and a helper that never answers holds the 
 
 test('a setting waiting for its confirmation whose card was not written gets its card on the next visit', async () => {
   await withProject(async ({ repo }) => {
-    const data = { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you opened the build tab first on each of your last three visits' };
+    const data = { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you opened the build tab first on each of your last three visits' };
     // One the director set themselves, whose card wasn't written when `record setting` wrote it.
     const own = { key: 'briefing', value: 'short', words: 'Briefing length: short' };
     put(path.join(profileViewsDir(), 'unconfirmed.json'), [
@@ -850,8 +850,8 @@ test('a level waiting for its confirmation whose card was not written gets its c
     await run(repo, 'Hello', NOW, { client: learnt });
     assert.deepEqual(stateWrites.map((w) => w.data.line), [confirmLine({ kind: 'level', id: 'l-old', data })]);
     assert.equal(stateWrites[0].cwd, repo);
-    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Not now', 'Explain more', 'Keep as is']);
-    assert.ok(stateWrites[0].data.question.includes(data.because));
+    assert.deepEqual(stateWrites[0].data.options, ['Confirm', 'Suggest a change…', 'Keep as is', 'Not now']);
+    assert.ok(stateWrites[0].data.descriptions[0].includes(data.because.replace(/[.!?]+$/, '')), 'the reason is on the recommended option');
     // Once a card in this project carries its line, none is written again.
     store(stateDir(P), stateWrites.map((w) => makeEvent({ kind: 'card', data: w.data, now: () => new Date(NOW) })));
     await run(repo, 'Hello again', '2026-10-19T18:00:00.000Z', { client: learnt });

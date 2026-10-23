@@ -4,7 +4,8 @@
 // starts the watcher when the project's shape is 1 and it isn't running
 // (ruling R62), checks the installed upstream skills against Wheelhouse's
 // manifest (holding edits and commands on a mismatch, and recording the hold
-// in the state once) and records the session's provenance, and adds a short
+// in the state once) and records the session's provenance (all but when the session
+// starts from a compaction, which leaves lineage alone), and adds a short
 // reload as context. The reload names things; it never pastes whole files
 // (design section 19.1, point 5). In the project's main folder it also keeps
 // `.wheelhouse/` in the main checkout's local git exclusions, as the foreman does.
@@ -44,6 +45,7 @@ import { answer, runAndExit, projectOf, pluginRoots, isInside, managedDir, manag
 import { keep, sendPending, withinBudget } from './pending.js';
 import { startWatcher, watcherRunning } from '../foreman/start.js';
 import { helperClient } from '../host/helper-client.js';
+import { caEnv } from '../host/company-ca.js';
 import { stopState } from '../lib/stop.js';
 import { wheelhouseHome, stateDir, computerId } from '../lib/paths.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
@@ -60,7 +62,7 @@ import { run as runProgram } from '../lib/run.js';
 import {
   LOW_NODE_SCRIPT, guardedReady, lowNodeReady, needsSelfTest, selfTest, SELF_TEST_MS,
 } from '../windows/low.js';
-import { checkLineage, holdEvent, markRecorded, warningLines, writeProvenance } from '../lineage/check.js';
+import { checkLineage, holdEvent, markRecorded, recordLift, warningLines, writeProvenance } from '../lineage/check.js';
 import { claudeCodeOf } from '../lineage/provenance.js';
 import { MARKETPLACE } from '../lineage/manifest.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
@@ -69,7 +71,7 @@ import { composeCard } from '../cards/compose.js';
 import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { TOOL_SHEETS } from '../agents/tool-sheets.js';
-import { frontDeskCommand } from '../protection/settings.js';
+import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
 
@@ -117,10 +119,11 @@ export { TOOL_SHEETS };
 
 // The lines that tell a session its agent's tools and where the Wheelhouse command is: the agent's
 // tool sheet, then the command line (the front desk's command, which the playbooks' other scripts
-// are named from). The command line is left out when the plugin's folder can't be typed as a command.
-export function toolSheetLines(agent, { pluginRoot, platform = process.platform } = {}) {
+// are named from). The command line carries --no-use-system-ca when this Node.js knows it, so the sandbox's certificate
+// lines don't fill the output. It is left out when the plugin's folder can't be typed as a command.
+export function toolSheetLines(agent, { pluginRoot, platform = process.platform, allowedFlags = process.allowedNodeEnvironmentFlags } = {}) {
   const lines = Object.hasOwn(TOOL_SHEETS, agent) && TOOL_SHEETS[agent] !== '' ? TOOL_SHEETS[agent].split('\n') : [];
-  const command = frontDeskCommand(pluginRoot, { platform });
+  const command = frontDeskCommand(pluginRoot, { platform, noSystemCa: knowsNoSystemCa(allowedFlags) });
   if (command !== null) lines.push(`The Wheelhouse command is ${command}`);
   return lines;
 }
@@ -298,7 +301,7 @@ async function ensureHelper(client, { spawn, pluginRoot, waitMs, pause, end }) {
     // Started in Wheelhouse's own folder, never in the session's.
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: home, detached: true, windowsHide: true, stdio: 'ignore' });
+    const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], { cwd: home, detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...caEnv(home) } });
     child?.unref?.();
     child?.on?.('error', () => {});
   } catch {
@@ -537,7 +540,10 @@ export async function decide(input, deps = {}) {
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not
   // installed are setup's own state, not drift, and write no hold (ruling R136).
   const pinsPending = setup?.run != null && !stepDone(setup.run, 7);
-  const lineage = lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
+  // A compaction installs nothing, so the check belongs to the session's real start: no check,
+  // the hold file neither written nor removed (a lift may still be recorded, elsewhere, for a hold
+  // whose file is gone), no provenance rewritten, and a hold already standing stands.
+  const lineage = input.source === 'compact' ? [] : lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
   // Records what this session is for and starts the usage receiver, alongside the sync below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
@@ -561,6 +567,12 @@ export async function decide(input, deps = {}) {
     if (setup === null && trouble === null) await left(ensureWatcher(project, clientNow(), { spawn, pluginRoot }));
   }
   views ??= fallbackViews(project);
+  // A hold whose file is gone (a matching check, or a compaction that finds it removed) has its card
+  // closed by one lift.
+  try {
+    const lineageHolds = views.lineageHolds ?? localViews(project, ['lineageHolds'])?.lineageHolds;
+    await left(recordLift({ project, views: { lineageHolds }, computer: computerId(), now, client: clientNow(), left }));
+  } catch { /* it informs */ }
   if ((await left(usage))?.receiver === 'failed') notes.push(NO_USAGE);
 
   const setupLine = setup === null ? null : setupNote(setup);

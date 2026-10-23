@@ -1,7 +1,8 @@
 // tests/scripts/host/helper-stop.test.js
 // The helper reads STOP and bypass for itself when a request's turn comes,
 // whatever the caller says (design section 12.7).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -19,10 +20,15 @@ import { cloneState } from '../../../scripts/state/clone.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
-import { makeBareRemote, push as plainPush } from '../../helpers/git-fixture.js';
+import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody, writeSessionProvenance } from '../../helpers/provenance.js';
+
+// No host tool runs for real: the helper's runs go through this, and the log stays empty.
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 // A pull request body stamped with what matches the installed manifest, so the gate's provenance condition passes.
 const BODY = matchingBody();
@@ -49,6 +55,7 @@ function fakeAdapter(overrides = {}) {
 
 async function withHelper(adapter, fn, extra = {}) {
   const helper = await startHelper({
+    run: hostGuard,
     address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => adapter, envFor: async () => ({}), ...extra,
   });
   try {
@@ -67,8 +74,8 @@ async function project() {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
-    assert.equal((await takeLock({ project: 'o__p', push: plainPush, now: at(0) })).taken, true);
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return { remote, home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }
@@ -365,7 +372,7 @@ test('close waits for the mirror tidy queued after an answer', async () => {
           tidied = true;
           return { code: 0, stdout: '', stderr: '' };
         }
-        return realRun(file, args, options);
+        return hostGuard(file, args, options);
       };
       const helper = await startHelper({ address: testAddress(process.env.WHEELHOUSE_HOME), adapterFor: async () => fakeAdapter(), envFor: async () => ({}), run });
       await helperClient({ address: helper.address }).merge({ project: 'o__p', number: 7, stop: false, bypass: false });

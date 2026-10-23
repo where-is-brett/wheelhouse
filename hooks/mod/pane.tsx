@@ -6,7 +6,11 @@
 // A tick sends { cmd: 'tick', session, cwd, idle, surface }. In the front desk's session its
 // answer holds the pane's model (scripts/mod/status.js), the glance and the status line; any
 // other session's answer, a session still in setup's included, holds only its role and `every`.
-// One tick runs at a time: a tick a press or traffic asks for while one runs follows it, once.
+// One tick runs at a time: a tick a press asks for while one runs follows it, once. A message
+// kept out as traffic (hooks/mod/messages.ts) asks for a tick that says it was received,
+// { received: { origin, via } } and never its text, so the bridge notes it. Those that come
+// while a tick runs share the one follow-up tick, which lists them ({ received: [...] }), the
+// newest MAX_WAITING of them.
 // Each prompt an answer's `submit` holds (the courier's wake in the front desk's session, the
 // watcher's lines in a Shape 2 foreman's) is handed on in order, once: the bridge has marked it
 // handed, so the next answer doesn't hold it again. A courier's wake that can't be handed on is
@@ -16,11 +20,13 @@
 // a turn starts. A watcher's line that can't be handed on is not tried again.
 //
 // The pane has two views: the board, with each card's buttons (hooks/mod/cards.tsx), and the
-// settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both.
+// settings (hooks/mod/settings.tsx). STOP or Lift STOP heads both. Everything is drawn by the
+// functions of hooks/mod/calm.tsx.
 import type { EngineInterface, RenderInput, SessionStartInput, TurnStartInput, TurnCompleteInput } from 'claude-code'
 import { ask, type Answer, type PaneModel } from './ask'
-import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS } from './numbers'
-import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED, NOT_HANDED_FOREMAN } from './cards'
+import { PANE_ID, TICK_MS, STALE_TICKS, TICK_ASK_MS, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_NEEDS_YOU, NOT_HANDED, NOT_HERE, SETTING_UP, staleLine as staleWords } from './numbers'
+import { body, footnote, group, heading, small, status, title } from './calm'
+import { drawCard, drawStop, pressingNow, releaseAll, submitAll, NOT_HANDED_FOREMAN } from './cards'
 import { drawSettings, forgetAsks, showSettings } from './settings'
 
 // Whether every button, STOP included, is held back while a turn runs. Buttons stay live during a
@@ -32,13 +38,12 @@ export const HIDE_WHILE_BUSY: boolean = false
 const FRONT_DESK = 'front-desk'
 const FOREMAN = 'foreman'
 const SETUP = 'setup'
-const NOT_OPENED = 'Wheelhouse couldn\'t open its pane'
+const NOT_OPENED = 'The pane didn\'t open. Type /wheelhouse to try again.'
 const FIRST_READING = 'Reading how the project stands…'
 // The pane's title while what it shows is old: no figures, so none is taken for current.
 const PLAIN_TITLE = 'Wheelhouse'
-// What /wheelhouse says, and opens nothing, where the last answered tick gave the session no pane.
-const NOT_HERE = 'Wheelhouse\'s pane belongs to the project\'s front desk: type /wheelhouse there'
-const SETTING_UP = 'This project is still being set up: its pane opens once setup finishes'
+// What /wheelhouse says, and opens nothing, where the last answered tick gave the session no pane
+// (NOT_HERE and SETTING_UP are the set words, in numbers.ts).
 const NO_PROJECT = 'This folder isn\'t a Wheelhouse project, so it has no pane'
 
 const PANE = { plugin: 'wheelhouse', key: 'pane' } as const
@@ -60,13 +65,22 @@ const UNHANDED = { plugin: 'wheelhouse', key: 'unhanded' } as const
 let timer: { every: number, cancel: () => void } | null = null
 let running = false
 let again = false
+const waiting: Received[] = []
+const MAX_WAITING = 50
 // The ticks' prompts being handed on. A prompt waits behind a running turn, so they are handed
 // on apart from the tick, which goes on ticking, and each tick's after the last tick's.
 let handing: Promise<unknown> = Promise.resolve()
 
+// A message kept out as traffic: the origin it arrived under and the hook that saw it.
+export type Received = { origin: string, via: 'prompt' | 'receive' }
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
+// The lines of what is building: each is a line of words, or, from the bridge now, { text, see }.
+const buildingLines = (value: unknown): string[] => (Array.isArray(value)
+  ? value.map((item) => (typeof item === 'string' ? item : isRecord(item) && typeof item.text === 'string' ? item.text : '')).filter((line) => line !== '')
+  : [])
 const records = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.filter(isRecord) : [])
 
 // "14:01" for `$.clock.now()`'s milliseconds, in the computer's own time zone: the mod's Date
@@ -177,11 +191,11 @@ async function show($: EngineInterface, answer: Answer, session: string, now: nu
   }
 }
 
-async function runTick($: EngineInterface) {
+async function runTick($: EngineInterface, received?: Received | Received[]) {
   let every: number | undefined
   try {
     const [session, cwd, busy, surface] = await Promise.all([$.session.id(), $.session.root(), $.state.get(BUSY), $.state.get(SURFACE)])
-    const answer = await ask($, { cmd: 'tick', session, cwd, idle: busy.value !== true, surface: surface.value ?? null }, { timeoutMs: TICK_ASK_MS })
+    const answer = await ask($, { cmd: 'tick', session, cwd, idle: busy.value !== true, surface: surface.value ?? null, ...(received === undefined ? {} : { received }) }, { timeoutMs: TICK_ASK_MS })
     const now = await $.clock.now()
     if (answer === null || !answer.ok) {
       await $.state.set(TICK, { at: now, failed: true })
@@ -230,9 +244,15 @@ async function isOld($: EngineInterface) {
 // runs once that one ends, however many asked; the timer's waits for its next fire. A tick that
 // runs long may leave the figures old: the status line and the title then stop showing them, and
 // the pane is drawn again, so its line saying how old they are comes without a tick's answer.
-export async function tick($: EngineInterface, queued = false) {
+export async function tick($: EngineInterface, queued = false, received?: Received | Received[]) {
   if (running) {
-    if (queued) again = true
+    if (queued) {
+      if (received === undefined) again = true
+      else {
+        waiting.push(...(Array.isArray(received) ? received : [received]))
+        if (waiting.length > MAX_WAITING) waiting.splice(0, waiting.length - MAX_WAITING)
+      }
+    }
     try {
       if (await isOld($)) {
         await showOld($, await $.session.id())
@@ -245,11 +265,15 @@ export async function tick($: EngineInterface, queued = false) {
   }
   running = true
   try {
-    await runTick($)
+    await runTick($, received)
   } finally {
     running = false
   }
-  if (again) {
+  if (waiting.length > 0) {
+    const listed = waiting.splice(0)
+    again = false
+    await tick($, false, listed.length === 1 ? listed[0] : listed)
+  } else if (again) {
     again = false
     await tick($)
   }
@@ -260,6 +284,7 @@ export async function tick($: EngineInterface, queued = false) {
 export async function startPane($: EngineInterface, e: SessionStartInput) {
   stopTimer()
   again = false
+  waiting.length = 0
   try {
     await $.state.set(SURFACE, e.surface)
   } catch {
@@ -321,17 +346,44 @@ export async function openPane($: EngineInterface): Promise<{ text: string }> {
 // answered for more than STALE_TICKS ticks.
 function staleLine(kept: { readAt: number } | undefined, last: { at: number, failed: boolean } | undefined, now: number): string | null {
   const failed = last?.failed === true
-  if (kept === undefined) return failed ? `Couldn't read the latest at ${timeOf(last.at)}` : null
+  // With nothing read yet, only when the failure was: the set line without its showing.
+  if (kept === undefined) return failed ? staleWords(timeOf(last.at), '').split(' Showing')[0] : null
   if (!failed && now - kept.readAt <= STALE_TICKS * TICK_MS) return null
-  return `Couldn't read the latest at ${timeOf(failed ? last.at : now)}; showing ${timeOf(kept.readAt)}'s`
+  return staleWords(timeOf(failed ? last.at : now), timeOf(kept.readAt))
 }
 
-// The pane: STOP or Lift STOP, the glance, STOP's line, the waiting cards one at a time with their
-// buttons, the building, health and usage lines, what couldn't be read, and Settings; or the
-// settings view. Every line is plain Text: a card's text is drawn whole, as written, and the
-// bridge has made every other line one line of plain words.
+
+const STOP_IS_ON = 'STOP is on'
+const text = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null)
+const count = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+// The "hh:mm" in a line such as "Since you were last here at 09:10."
+const timeIn = (line: unknown): string | null => (typeof line === 'string' ? /\b(\d{2}:\d{2})\b/.exec(line)?.[1] ?? null : null)
+
+// When STOP began, in words: the bridge's STOP line ("STOP is on, since 19 October 2026") without
+// its lead, else the start the model carries, as a time.
+function stopSince(model: PaneModel, line: string | null): string | null {
+  const rest = line?.replace(/^STOP is on,?\s*/, '') ?? ''
+  if (rest !== '') return rest.charAt(0).toUpperCase() + rest.slice(1)
+  const at = isRecord(model.stop) && typeof model.stop.since === 'string' ? Date.parse(model.stop.since) : NaN
+  return Number.isNaN(at) ? null : `Since ${timeOf(at)}`
+}
+
+// The next card's subject, with its optional mark: "Next: how files are named · optional · 3 min".
+function nextLine(card: Record<string, unknown>): string {
+  const parts = isRecord(card.parts) ? card.parts : {}
+  const subject = text(parts.ask) ?? text(card.header) ?? String(card.text).split('\n')[0]
+  const minutes = count(parts.optional)
+  return `Next: ${subject}${minutes !== null && minutes > 0 ? ` · optional · ${minutes} min` : ''}`
+}
+
+// The pane, top to bottom (design section 23.3): the line saying what is shown is old; STOP, or
+// the STOP is on group; the verdict; the card, with the next card's subject and Back and Next;
+// what is being built; launch; health and this week; and the foot, whose Settings is the only button on the board view (the settings view has its own Done). Each is a group, and an empty
+// one is left out. Every line is plain Text: a card's text is drawn whole, as written, and the
+// bridge has made every other line one line of plain words. Or the settings view.
 export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const t = $.ui.resolve(e)
+  const { Box } = t
   const [pane, last, shown, now, view, pressing] = await Promise.all([$.state.get(PANE), $.state.get(TICK), $.state.get(CARD), $.clock.now(), $.state.get(VIEW), pressingNow($)])
   // Busy is read only while it holds the buttons back, so a turn's start and end redraw nothing else.
   const live = !HIDE_WHILE_BUSY || (await $.state.get(BUSY)).value !== true
@@ -339,6 +391,7 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const kept = pane.value
   const model: PaneModel = isRecord(kept?.model) ? kept.model : {}
   const stale = staleLine(kept, last.value, now)
+  const staleNode = stale !== null && status(t, stale, 'warning')
   // Before the first picture, STOP heads the pane, as STOP needs only the session's folder. Once a
   // tick has given the session no pane (another role's, setup's included, or a front desk outside
   // a project), a pane /wheelhouse opened before it says why, with no STOP, as /wheelhouse would.
@@ -347,59 +400,159 @@ export async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     if (why !== null) {
       return (
         <Box flexDirection="column">
-          <Text>{why}</Text>
+          {body(t, why)}
         </Box>
       )
     }
     return (
       <Box flexDirection="column">
-        {await drawStop($, e, {}, pressing, live, after)}
-        <Text>{stale ?? FIRST_READING}</Text>
+        <Box flexDirection="row" gap="sm">
+          {await drawStop($, e, {}, pressing, live, after)}
+          {footnote(t, STOP_HALTS)}
+        </Box>
+        {body(t, stale ?? FIRST_READING)}
       </Box>
     )
   }
 
   const health = records(model.health).filter((line) => typeof line.text === 'string')
-  const stopLine = health.find((line) => line.of === 'stop')?.text
-    ?? (isRecord(model.stop) && model.stop.on === true ? 'STOP is on' : null)
+  const stopLine = health.find((line) => line.of === 'stop')?.text as string | undefined ?? null
   const cards = records(model.cards).filter((card) => typeof card.text === 'string')
   const ids = cards.map((card, i) => (typeof card.id === 'string' ? card.id : `#${i}`))
   const at = Math.max(0, ids.indexOf(shown.value ?? ''))
   const card = cards[at]
   const before = ids[at - 1]
   const later = ids[at + 1]
-  const usage = typeof model.usage === 'string' ? model.usage : null
-  const top = await drawStop($, e, model, pressing, live, after)
+  const control = await drawStop($, e, model, pressing, live, after)
+  const stopOn = isRecord(model.stop) && model.stop.on === true
+
+  // STOP, outlined with what it does beside it; or, while it is on, the group that leads the pane.
+  const stopPart = stopOn
+    ? group(t, (
+      <Box flexDirection="column" gap="xs">
+        {title(t, STOP_IS_ON)}
+        {stopSince(model, stopLine) !== null && body(t, stopSince(model, stopLine) as string)}
+        {control}
+        {footnote(t, ONLY_YOU_LIFT)}
+      </Box>
+    ))
+    : (
+      <Box flexDirection="row" gap="sm">
+        {control}
+        {footnote(t, STOP_HALTS)}
+      </Box>
+    )
 
   if (view.value === 'settings') {
     return (
-      <Box flexDirection="column">
-        {stale !== null && <Text bold>{stale}</Text>}
-        {top}
-        {await drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live)}
+      <Box flexDirection="column" gap="sm">
+        {staleNode}
+        {stopPart}
+        {await drawSettings($, e, (await $.state.get(SETTINGS)).value, pressing, live, now)}
       </Box>
     )
   }
 
-  return (
-    <Box flexDirection="column">
-      {stale !== null && <Text bold>{stale}</Text>}
-      {top}
-      <Text bold>{typeof model.glance === 'string' ? model.glance : PLAIN_TITLE}</Text>
-      {typeof stopLine === 'string' && <Text>{stopLine}</Text>}
-      {card !== undefined && <Text dimColor>{`Card ${at + 1} of ${cards.length}`}</Text>}
-      {card !== undefined && drawCard($, e, card, pressing, live, after)}
-      {live && cards.length > 1 && (
-        <Box flexDirection="row">
-          {before !== undefined && <Button key="back" label="Back" onPress={() => $.state.set(CARD, before)} />}
-          {later !== undefined && <Button key="next" label="Next" onPress={() => $.state.set(CARD, later)} />}
+  const verdict = text(model.verdict) ?? text(model.glance) ?? PLAIN_TITLE
+  const since = text(model.since)
+
+  // The card, with its place: a card of parts says it in its own header row, one with none above it.
+  const cardPart = card !== undefined
+    ? (
+      <Box flexDirection="column" gap="xs">
+        {!isRecord(card.parts) && footnote(t, `Card ${at + 1} of ${cards.length}`)}
+        {await drawCard($, e, card, `${at + 1} of ${cards.length}`, pressing, live, after)}
+        {later !== undefined && footnote(t, nextLine(cards[at + 1]))}
+        {live && cards.length > 1 && (
+          <Box flexDirection="row" gap="sm">
+            {before !== undefined && small(t, 'back', 'Back', () => $.state.set(CARD, before))}
+            {later !== undefined && small(t, 'next', 'Next', () => $.state.set(CARD, later))}
+          </Box>
+        )}
+      </Box>
+    )
+    : status(t, NOTHING_NEEDS_YOU, 'success')
+
+  const building = (Array.isArray(model.building) ? model.building : [])
+    .map((item) => (typeof item === 'string' ? { text: item, see: null } : isRecord(item) ? { text: text(item.text), see: text(item.see) } : { text: null, see: null }))
+    .filter((item) => item.text !== null)
+  const buildingPart = building.length > 0 && group(t, (
+    <Box flexDirection="column" gap="xs">
+      {heading(t, 'Being built')}
+      {building.map((item) => (
+        <Box flexDirection="column">
+          {body(t, item.text as string)}
+          {item.see !== null && footnote(t, item.see)}
+        </Box>
+      ))}
+    </Box>
+  ))
+
+  const launch = isRecord(model.launch) ? model.launch : null
+  const resolved = count(launch?.resolved)
+  const total = count(launch?.total)
+  const gained = count(launch?.gained)
+  const upNext = launch !== null && Array.isArray(launch.next) ? records(launch.next).filter((n) => typeof n.text === 'string') : []
+  const launchPart = launch !== null && resolved !== null && total !== null && group(t, (
+    <Box flexDirection="column" gap="xs">
+      {heading(t, 'Launch')}
+      {body(t, `${resolved} of ${total} blockers cleared`)}
+      {gained !== null && gained > 0 && footnote(t, `+${gained} since ${timeIn(since) ?? 'you were last here'}`)}
+      {upNext.length > 0 && footnote(t, 'What\'s next')}
+      {upNext.map((n) => body(t, n.yours === true ? `${n.text as string} (yours)` : (n.text as string)))}
+    </Box>
+  ))
+
+  const note = isRecord(model.healthNote) ? model.healthNote : {}
+  const watch = health.filter((line) => line.of !== 'stop' && (line.level === 'watch' || line.level === 'stop'))
+  const ideas = isRecord(model.ideas) ? model.ideas : null
+  const ideasCount = count(ideas?.count)
+  const fresh = count(ideas?.fresh)
+  const protection = text(note.protection)
+  const week = text(note.week)
+  const usage = text(model.usage)
+  const missing = strings(model.missing)
+  const healthRows = [
+    note.allWell === true && status(t, 'All well', 'success'),
+    ...watch.map((line) => status(t, 'To watch', 'warning', line.text as string)),
+    protection !== null && body(t, `Protection: ${protection}`),
+    week !== null && body(t, week),
+    usage !== null && footnote(t, usage),
+    ideasCount !== null && ideasCount > 0 && body(t, `${ideasCount} ${ideasCount === 1 ? 'idea' : 'ideas'}${fresh !== null && fresh > 0 ? ` · ${fresh} new since yesterday` : ''}`),
+    ...missing.map((line) => footnote(t, line)),
+  ].filter((row) => row !== false)
+  const healthPart = healthRows.length > 0 && group(t, (
+    <Box flexDirection="column" gap="xs">
+      {heading(t, 'Health and this week')}
+      {healthRows}
+    </Box>
+  ))
+
+  const updated = text(model.updated)
+  const footPart = group(t, (
+    <Box flexDirection="column" gap="xs">
+      {live && (
+        <Box flexDirection="row" gap="sm">
+          {small(t, 'settings', 'Settings', () => showSettings($))}
         </Box>
       )}
-      {strings(model.building).map((line) => <Text>{line}</Text>)}
-      {health.filter((line) => line.of !== 'stop').map((line) => <Text>{line.text as string}</Text>)}
-      {usage !== null && <Text>{usage}</Text>}
-      {strings(model.missing).map((line) => <Text dimColor>{line}</Text>)}
-      {live && <Button key="settings" label="Settings" onPress={() => showSettings($)} />}
+      {updated !== null && footnote(t, `Updated ${updated}`)}
+    </Box>
+  ))
+
+  return (
+    <Box flexDirection="column" gap="sm">
+      {staleNode}
+      {stopPart}
+      <Box flexDirection="column">
+        {title(t, verdict)}
+        {since !== null && footnote(t, since)}
+      </Box>
+      {cardPart}
+      {buildingPart}
+      {launchPart}
+      {healthPart}
+      {footPart}
     </Box>
   )
 }

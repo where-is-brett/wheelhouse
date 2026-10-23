@@ -11,11 +11,12 @@ import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/stat
 import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir } from '../../../scripts/lib/paths.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -484,11 +485,11 @@ test('an accepted setting keeps its until and the accepted value it replaced', a
     const s4 = ev('setting', 7, { key: 'quiet', value: 'never confirmed' });
     const v1 = build([s1, conf(2, s1)]);
     assert.deepEqual(v1.settings.quiet, {
-      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, confirmedOn: s1.computer, line: null,
+      key: 'quiet', id: s1.id, at: s1.at, value: true, until: '2026-11-01T00:00:00.000Z', before: null, computer: s1.computer, confirmedOn: s1.computer, line: null, confirmedAt: T(2),
     });
     const v2 = build([s1, conf(2, s1), s2, conf(4, s2)]);
     assert.deepEqual(v2.settings.quiet, {
-      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, confirmedOn: s2.computer, line: null,
+      key: 'quiet', id: s2.id, at: s2.at, value: false, before: { value: true, until: '2026-11-01T00:00:00.000Z' }, computer: s2.computer, confirmedOn: s2.computer, line: null, confirmedAt: T(4),
     });
     const v3 = build([s1, conf(2, s1), s2, conf(4, s2), s3, conf(6, s3), s4]);
     assert.deepEqual(v3.settings.quiet.before, { value: false });
@@ -520,7 +521,7 @@ test('a known:* setting of false, accepted with no confirmation, carries no sign
   await withHome(() => {
     const s1 = ev('setting', 1, { key: 'known:branch', value: false });
     assert.deepEqual(build([s1]).settings['known:branch'], {
-      key: 'known:branch', id: s1.id, at: s1.at, value: false, before: null, computer: s1.computer, confirmedOn: null, line: null,
+      key: 'known:branch', id: s1.id, at: s1.at, value: false, before: null, computer: s1.computer, confirmedOn: null, line: null, confirmedAt: null,
     });
   });
 });
@@ -871,7 +872,7 @@ test('Keep as is closes a proposal\'s confirm card, and its proposal stays uncon
     // keptAsIs names it (ruling F49), so the lists of what waits for the director's confirmation leave it out.
     assert.deepEqual(kept.keptAsIs, [level.id]);
     // A profile setting's card kept as is here names the profile's event, which this project's state doesn't hold.
-    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' }), id: 'profile-setting' };
+    const setting = { ...ev('setting', 4, { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it' }), id: 'profile-setting' };
     const own = ev('card', 5, cardData(`What this is: a setting.\n${confirmLine(setting)}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line: confirmLine(setting) }));
     assert.deepEqual(build([level, card, own, ev('card-answer', 6, { card: own.id, label: 'Keep as is' })]).keptAsIs, ['profile-setting']);
   });
@@ -881,7 +882,7 @@ test('a project\'s confirm card for a profile setting closes once the profile ho
   await withHome(async (home) => {
     // A profile setting with a card in project B; the director confirmed it from project A's card,
     // so the confirmation is in the profile and B's state holds no answer.
-    const setting = ev('setting', 1, { key: 'boardTab', value: 'build', words: 'Board tab shown first: build', because: 'you asked for it' });
+    const setting = ev('setting', 1, { key: 'boardTab', value: 'build', words: 'Board opens on: build', because: 'you asked for it' });
     const line = confirmLine(setting);
     const card = ev('card', 2, cardData(`What this is: a setting.\n${line}`, { kind: 'confirm', options: ['Confirm', 'Not now', 'Explain more', 'Keep as is'], line }));
     const confirmation = conf(3, setting);
@@ -1030,12 +1031,174 @@ test('each lineage hold, with the card made for it', async () => {
     const hold = (n) => ev('lineage-hold', n, { at: T(n), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] });
     const [first, second] = [hold(1), hold(2)];
     assert.deepEqual(build([first, second]).lineageHolds, [
-      { id: first.id, at: first.at, data: first.data, card: null },
-      { id: second.id, at: second.at, data: second.data, card: null },
+      { id: first.id, at: first.at, computer: first.computer, data: first.data, card: null },
+      { id: second.id, at: second.at, computer: second.computer, data: second.data, card: null },
     ]);
     const card = ev('card', 3, cardData('What this is: the kits differ.', { kind: 'question', event: first.id }));
     // Answered or not, the card stands for its hold.
     const answered = ev('card-answer', 4, { card: card.id, label: 'Leave it for now' });
     assert.deepEqual(build([first, second, card, answered]).lineageHolds.map((h) => h.card), [card.id, null]);
+  });
+});
+
+const lineageHold = (n) => ev('lineage-hold', n, { at: T(n), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] });
+const holdCard = (n, hold) => ev('card', n, cardData('What this is: the kits differ.', { kind: 'question', event: hold.id }));
+
+test('a lift closes the hold cards of the holds it names', async () => {
+  await withHome(() => {
+    const hold = lineageHold(1);
+    const card = holdCard(2, hold);
+    assert.deepEqual(build([hold, card]).waiting.map((c) => c.id), [card.id]);
+    const v = build([hold, card, ev('lineage-lift', 3, { at: T(3), holds: [hold.id] })]);
+    assert.deepEqual(v.waiting, []);
+    assert.deepEqual(v.lineageHolds, []);
+    assert.equal(v.status.waitingCount, 0);
+  });
+});
+
+test('a lift leaves the holds it does not name', async () => {
+  await withHome(() => {
+    const [first, second] = [lineageHold(1), lineageHold(2)];
+    const card = holdCard(3, second);
+    const v = build([first, second, card, ev('lineage-lift', 4, { at: T(4), holds: [first.id] })]);
+    assert.deepEqual(v.waiting.map((c) => c.id), [card.id]);
+    assert.deepEqual(v.lineageHolds.map((h) => h.id), [second.id]);
+  });
+});
+
+test('a hold recorded after the lift stands, though the lift names an earlier hold', async () => {
+  await withHome(() => {
+    const first = lineageHold(1);
+    const lift = ev('lineage-lift', 2, { at: T(2), holds: [first.id] });
+    const second = lineageHold(3);
+    const card = holdCard(4, second);
+    const v = build([first, lift, second, card]);
+    assert.deepEqual(v.lineageHolds.map((h) => h.id), [second.id]);
+    assert.deepEqual(v.waiting.map((c) => c.id), [card.id]);
+  });
+});
+
+// --- a steered card stays waiting; a revised card closes the one it revises ---
+
+const choice = { kind: 'question', options: ['Bell', 'Chime', 'Not now'] };
+
+test('a card answered Suggest a change… stays waiting, marked steered at that time', async () => {
+  await withHome(() => {
+    const card = ev('card', 1, cardData('Which sound?', choice));
+    const first = ev('card-answer', 2, { card: card.id, label: SUGGEST });
+    const later = ev('card-answer', 5, { card: card.id, label: SUGGEST });
+    assert.equal(build([card]).waiting[0].steered, null);
+    assert.equal(build([card, first]).waiting[0].steered, T(2));
+    // The latest such answer sets the time; a later answer that only puts the card off leaves it.
+    const notNow = ev('card-answer', 6, { card: card.id, label: 'Not now' });
+    const v = build([card, first, later, notNow]);
+    assert.deepEqual(v.waiting.map((c) => [c.id, c.steered, c.asked]), [[card.id, T(5), { at: T(6), label: 'Not now' }]]);
+    // Why? is not a steer.
+    assert.equal(build([card, ev('card-answer', 3, { card: card.id, label: WHY })]).waiting[0].steered, null);
+    // A press answered before a card was made is not about that card, though it quotes the same question.
+    const quoted = ev('card-answer', 2, { question: 'Which sound?', label: SUGGEST });
+    const sameQuestion = ev('card', 3, cardData('Which sound?', choice));
+    assert.deepEqual(build([card, quoted, sameQuestion]).waiting.map((c) => [c.id, c.steered]), [[card.id, T(2)], [sameQuestion.id, null]]);
+    // A real answer still decides the card.
+    assert.deepEqual(waitingIds([card, first, ev('card-answer', 7, { card: card.id, label: 'Bell' })]), []);
+  });
+});
+
+test('a revised card closes the card it revises', async () => {
+  await withHome(() => {
+    const old = ev('card', 1, cardData('Which sound?', choice));
+    const revised = ev('card', 3, cardData('Which sound, quieter?', { ...choice, revises: old.id }));
+    assert.deepEqual(waitingIds([old, revised]), [revised.id]);
+    assert.equal(build([old, revised]).status.waitingCount, 1);
+    // Whatever answer the old one had.
+    const steered = ev('card-answer', 2, { card: old.id, label: SUGGEST });
+    assert.deepEqual(waitingIds([old, steered, revised]), [revised.id]);
+    // Until the revised card is in the state, the old one waits.
+    assert.deepEqual(waitingIds([old, steered]), [old.id]);
+    // A chain closes each card with the next.
+    const again = ev('card', 5, cardData('Which sound, quietest?', { ...choice, revises: revised.id }));
+    assert.deepEqual(waitingIds([old, revised, again]), [again.id]);
+    // A card closes only a card older than it.
+    const early = ev('card', 0, cardData('Which sound, first?', { ...choice, revises: old.id }));
+    assert.deepEqual(waitingIds([old, early]), [early.id, old.id]);
+  });
+});
+
+test('a revision of another kind or another pull request closes nothing', async () => {
+  await withHome(() => {
+    const old = gateCard(1, approvalLine(7, A));
+    const revise = (line, extra = {}) => ev('card', 2, cardData(`What this is: a click the gate waits for.\n${line}`, { line, revises: old.id, ...extra }));
+    // The same pull request at another commit closes it.
+    const same = revise(approvalLine(7, B));
+    assert.deepEqual(waitingIds([old, same]), [same.id]);
+    // Another pull request closes nothing.
+    const otherPr = revise(approvalLine(8, B));
+    assert.deepEqual(waitingIds([old, otherPr]), [old.id, otherPr.id]);
+    // Another kind closes nothing, though its line is the same pull request's.
+    const otherKind = revise(approvalLine(7, B), { kind: 'question', options: ['Approve', 'Not now'] });
+    assert.deepEqual(waitingIds([old, otherKind]), [old.id, otherKind.id]);
+    // A card naming a card that is not there closes nothing.
+    const nobody = revise(approvalLine(7, B), { revises: 'nobody' });
+    assert.deepEqual(waitingIds([old, nobody]), [old.id, nobody.id]);
+    // An approval card revised by one with no line to compare closes nothing.
+    const noLine = ev('card', 2, cardData('Put it live?', { line: null, revises: old.id }));
+    assert.deepEqual(waitingIds([old, noLine]), [old.id, noLine.id]);
+    // A CI push card is closed by one for the same branch, not by one for another branch.
+    const pushCard = (n, line, extra = {}) => ev('card', n, cardData(`What this is: a click.\n${line}`, { kind: 'ci-push', line, ...extra }));
+    const first = pushCard(1, ciPushLine('wh/x', A));
+    const sameBranch = pushCard(2, ciPushLine('wh/x', B), { revises: first.id });
+    const otherBranch = pushCard(2, ciPushLine('wh/y', B), { revises: first.id });
+    assert.deepEqual(waitingIds([first, sameBranch]), [sameBranch.id]);
+    assert.deepEqual(waitingIds([first, otherBranch]), [first.id, otherBranch.id]);
+  });
+});
+
+test('an approval card closed by a later head is listed as outdated, and its revision takes the place of the gate\'s card at its own head', async () => {
+  await withHome(() => {
+    const old = gateCard(2, approvalLine(7, A));
+    const steered = ev('card-answer', 3, { card: old.id, label: SUGGEST });
+    const moved = gateAsk(4, { sha: B });
+    const plain = gateCard(5, approvalLine(7, B));
+    const line = approvalLine(7, B);
+    const revised = ev('card', 6, cardData(`What this is: a click the gate waits for.\n${line}`, { line, revises: old.id }));
+    // The head moved: the old card no longer waits, and is listed as closed by a later head.
+    const before = build([gateAsk(1), old, steered, moved, plain]);
+    assert.deepEqual(before.waiting.map((c) => c.id), [plain.id]);
+    assert.deepEqual(before.outdated.map((c) => c.id), [old.id]);
+    assert.equal(before.outdated[0].data.line, approvalLine(7, A));
+    // The revision at the head the gate asks about takes the place of the gate's card for it: one card waits.
+    const after = build([gateAsk(1), old, steered, moved, plain, revised]);
+    assert.deepEqual(after.waiting.map((c) => c.id), [revised.id]);
+    assert.equal(after.status.waitingCount, 1);
+    // A revised card made before the gate's card for its head leaves the gate's card nothing to make.
+    assert.equal(build([gateAsk(1), old, moved, revised]).gateAsks['7'].card, revised.id);
+    // A plain card with the same line does not replace another; a revision of another pull request takes no place.
+    assert.equal(waitingIds([gateAsk(1), old, moved, plain, gateCard(6, line)]).length, 2);
+    const elsewhere = ev('card', 6, cardData(`What this is: a click.\n${approvalLine(8, B)}`, { line: approvalLine(8, B), revises: old.id }));
+    assert.deepEqual(waitingIds([gateAsk(1), old, moved, plain, elsewhere]), [plain.id, elsewhere.id]);
+    // A card closed because its work finished, decided, or revised already is not listed as outdated.
+    assert.deepEqual(build([gateAsk(1), old, moved, reportEv(7, 'merged')]).outdated, []);
+    assert.deepEqual(build([gateAsk(1), old, ev('card-answer', 3, { card: old.id, label: 'Not now' }), moved]).outdated.map((c) => c.id), [old.id]);
+    assert.deepEqual(build([gateAsk(1), old, moved, revised]).outdated, []);
+    // A card that still waits is not outdated.
+    assert.deepEqual(build([gateAsk(1), old]).outdated, []);
+  });
+});
+
+test('a revised approval card has its own set line, so an approval of the old commit does not decide it', async () => {
+  await withHome(() => {
+    const old = gateCard(1, approvalLine(7, A));
+    const line = approvalLine(7, B);
+    const revised = ev('card', 3, cardData(`What this is: a click the gate waits for.\n${line}`, { line, revises: old.id }));
+    // A verified approval of the old commit carries the old card's question: it decides the old card only.
+    const approvedOld = ev('approval', 2, { pr: 7, commit: A.slice(0, 12), question: old.data.question });
+    assert.deepEqual(waitingIds([old, approvedOld]), []);
+    assert.deepEqual(waitingIds([old, approvedOld, revised]), [revised.id]);
+    // The same click made after the revised card is not a click on it.
+    const late = ev('approval', 4, { pr: 7, commit: A.slice(0, 12), question: old.data.question });
+    assert.deepEqual(waitingIds([old, revised, late]), [revised.id]);
+    // An approval carrying the revised card's own question decides it.
+    const approvedNew = ev('approval', 5, { pr: 7, commit: B.slice(0, 12), question: revised.data.question });
+    assert.deepEqual(waitingIds([old, revised, late, approvedNew]), []);
   });
 });

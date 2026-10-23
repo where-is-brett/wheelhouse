@@ -7,7 +7,7 @@ import path from 'node:path';
 import { writeBackup } from '../../../scripts/state/backup.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { run } from '../../../scripts/lib/run.js';
-import { makeBareRemote } from '../../helpers/git-fixture.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 test('writeBackup makes a bundle that git can verify, at most weekly, keeping eight', async () => {
@@ -16,7 +16,7 @@ test('writeBackup makes a bundle that git can verify, at most weekly, keeping ei
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
-    const stateDir = await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    const stateDir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     const day = (n) => () => new Date(Date.UTC(2026, 0, 1 + n, 12));
     const first = await writeBackup({ project: 'o__p', now: day(0) });
     assert.equal(path.basename(first), '2026-01-01.bundle');
@@ -46,7 +46,7 @@ test('a bundle dated in the future does not stop the weekly backup', async () =>
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   try {
-    await cloneState({ project: 'o__p', remoteUrl: remote.url });
+    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     const folder = path.join(home, 'profile', 'backups', 'o__p');
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, '2099-01-01.bundle'), 'not a bundle');

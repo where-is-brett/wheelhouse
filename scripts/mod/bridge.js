@@ -12,37 +12,46 @@
 // director's press on the pane; `sdk`, `peer` and every other origin never count.
 //
 //   { cmd: 'usage', session, cwd, usd?, windows? }  the session's running cost and the allowance
-//   { cmd: 'tick', session, cwd, idle, surface }    what the pane and the status line show now and the
+//   { cmd: 'tick', session, cwd, idle, surface, received? }  what the pane and the status line show now and the
 //                                                   courier's wake, with the ids it marked sent and its
 //                                                   stamp, or a Shape 2 foreman's wakes from one
-//                                                   watcher loop, or nothing while setup runs
+//                                                   watcher loop, or nothing while setup runs; it also
+//                                                   records a lineage-lift once a hold file is gone.
+//                                                   `received` ({ origin, via }, a kept-out message, never its text)
+//                                                   adds one line to the day's usage/mod file
 //   { cmd: 'unsent', session, cwd, ids, at }        the mod couldn't hand on the courier's wake stamped
 //                                                   `at`: its marks are undone, so the next tick wakes
 //                                                   again
 //   { cmd: 'reply', origin, text, cwd }             a reply code and an option, as the click
 //   { cmd: 'press', origin, cwd, card, hash, label } a press on a card in the pane, as its click
-//   { cmd: 'settings', cwd }                        the settings pane's rows, from the views on disk
+//   { cmd: 'why', origin, cwd, card, hash }         Why? on a card: its answer noted quietly, no prompt
+//   { cmd: 'suggest', origin, cwd, card, hash, words } Suggest a change… on a card: its answer noted, and
+//                                                   the director's words handed on as one prompt
+//   { cmd: 'settings', cwd }                        the settings pane's rows and groups, from the views on disk
 //   { cmd: 'setting', origin, cwd, key, choice }    a choice in the settings pane: sets it and confirms it
-//   { cmd: 'go', origin, cwd, since? }              /go or the pane: lifts STOP with a signed record;
+//   { cmd: 'go', origin, cwd, since? }              /wheelhouse-go or the pane: lifts STOP with a signed record;
 //                                                   the pane's carries the start of the STOP it drew
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
-//   { cmd: 'digest', origin, cwd }                  /digest: the briefing since the last, as text (any origin)
+//   { cmd: 'digest', origin, cwd }                  /wheelhouse-digest: the briefing since the last, as text (any origin)
 //
 // The signed records go through the helper as the prompt record sends its own: kept in
 // pending/ first, sent, and removed once the helper has them.
 import path from 'node:path';
+import { settingKey } from '../protection/windows-builds.js';
+import { computerId } from '../lib/paths.js';
 import { replyRecord as defaultReply } from './reply.js';
-import { pressCard as defaultPress } from './press.js';
-import { settingsRows as defaultRows, pressSetting as defaultSetting, effectiveFor as defaultEffective, ADVANCED } from './settings-pane.js';
+import { pressCard as defaultPress, whyCard as defaultWhy, suggestCard as defaultSuggest } from './press.js';
+import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
-import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
+import { featureSlug as defaultFeatureSlug, localViews as defaultLocalViews } from '../hooks/session-start.js';
+import { recordLift as defaultRecordLift } from '../lineage/check.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
 import { loadBoardInputs } from '../board/inputs.js';
-import { recordModReading, recordSession } from '../usage/store.js';
+import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
 import { isOwnStatusLine } from '../protection/settings.js';
@@ -53,6 +62,7 @@ import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatu
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { NOT_RECORDED } from '../lib/calm-words.js';
 
 // The whole run for most requests, from reading the request to the answer.
 export const BRIDGE_MS = 5000;
@@ -75,14 +85,14 @@ export const SETUP_ROLE = 'setup';
 export const SAYS = {
   unreadable: 'Wheelhouse couldn\'t read that request',
   unknown: 'Wheelhouse doesn\'t know that request',
-  failed: 'Wheelhouse couldn\'t do that this time',
+  failed: NOT_RECORDED,
   late: 'Wheelhouse couldn\'t do that in time',
   notKept: 'That usage reading couldn\'t be kept',
   notDirector: 'Only the director\'s own messages count',
   notProject: 'This isn\'t a Wheelhouse project',
   goNotDirector: 'Only the director can lift STOP',
   goNotProject: 'This isn\'t a Wheelhouse project, so STOP stays on',
-  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it',
+  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it',
   goOtherStop: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again',
   stopOff: 'STOP isn\'t on.',
   cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
@@ -104,9 +114,16 @@ const DEFAULTS = {
   featureSlug: defaultFeatureSlug,
   replyRecord: defaultReply,
   pressCard: defaultPress,
+  whyCard: defaultWhy,
+  suggestCard: defaultSuggest,
   settingsRows: defaultRows,
+  settingsGroups: defaultGroups,
+  computer: computerId,
+  localViews: defaultLocalViews,
+  recordLift: defaultRecordLift,
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
+  readChanges: defaultChanges,
   // The bridge's own time zone, which the pane's times are worked out in.
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   loadInputs: loadBoardInputs,
@@ -211,6 +228,31 @@ async function press(req, d) {
   return answer;
 }
 
+// Why? on a card in the pane, from the pane alone: the card's answer is noted quietly (press.js),
+// so the answer is ok with nothing to say and no prompt, whether or not the card was still there.
+async function why(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  await d.whyCard({ project, card: req.card, hash: req.hash, client: clientOf(d), now: d.now, stopState: d.stopState, budget: helperMs() });
+  return { ok: true };
+}
+
+// Suggest a change… on a card in the pane, from the pane alone. The director's words go to the
+// front desk as the one prompt press.js builds; they are kept nowhere else.
+async function suggest(req, d) {
+  if (req.origin !== PANE) return no(SAYS.notPane);
+  const project = placeOf(req.cwd, d);
+  if (!project) return no(SAYS.notProject);
+  const { made, says, submit } = await d.suggestCard({
+    project, card: req.card, hash: req.hash, words: req.words, client: clientOf(d), now: d.now, stopState: d.stopState, budget: helperMs(),
+  });
+  const answer = { ok: made === true || strings(submit) };
+  if (typeof says === 'string') answer.says = says;
+  if (strings(submit)) answer.submit = submit;
+  return answer;
+}
+
 // The settings pane's rows, from the settings views on disk and the profile's: the settings in
 // force, with each row's choices as they are offered now. A project's Locked mark is passed when
 // the project says it.
@@ -218,24 +260,27 @@ async function settings(req, d) {
   const found = siteOf(req.cwd, d);
   if (found === null) return no(SAYS.notProject);
   const effective = d.readEffective({ project: found.project, now: d.now });
-  return { ok: true, rows: d.settingsRows({ effective, now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined }), text: ADVANCED };
+  const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined };
+  // The level build commands run at on Windows is kept per computer: this computer's is shown.
+  const builds = effective?.[settingKey(d.computer())];
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
 }
 
-// A choice in the settings pane, from the pane alone: the setting is written and the director's
-// confirmation of it signed, as a Confirm click on its card would (settings-pane.js).
+// A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
+// director's confirmation of it signed, as a Confirm click on its card would (settings-pane.js).
 async function setting(req, d) {
   if (req.origin !== PANE) return no(SAYS.notPane);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: helperMs() });
+  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: helperMs(), stopState: d.stopState });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
-// /go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
+// /wheelhouse-go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
 // record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
 // leaves STOP on. The pane's press carries `since`, the start of the STOP the pane drew, and
 // lifts only that STOP, as a Lift STOP card does only for a STOP begun before it was shown, so a
-// pane drawn before STOP was set again can't lift a STOP the director never saw. /go typed or
+// pane drawn before STOP was set again can't lift a STOP the director never saw. /wheelhouse-go typed or
 // phoned lifts the STOP in force.
 async function go(req, d) {
   if (!fromDirector(req.origin) && req.origin !== PANE) return no(SAYS.goNotDirector);
@@ -246,7 +291,7 @@ async function go(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.goNotProject);
   if (fromPane && stop.at !== req.since) return no(SAYS.goOtherStop);
-  const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/go' } }, lift: true };
+  const got = { made: { kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: '/wheelhouse-go' } }, lift: true };
   let lifting = false;
   let kept;
   try {
@@ -269,7 +314,7 @@ async function stop(req, d) {
   return { ok: true, says: SAYS.stopOn };
 }
 
-// /digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
+// /wheelhouse-digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
 // and marks a briefing given, so whose command it is doesn't matter.
 async function digest(req, d) {
   return d.digestText({ cwd: req.cwd, now: d.now, client: clientOf(d), load: d.loadInputs, readEffective: d.readEffective });
@@ -371,6 +416,31 @@ function settingUp(cwd, d) {
   }
 }
 
+// A lineage hold whose hold file is gone has its card closed within a tick: the lift is recorded
+// once for each standing hold (lineage/check.js recordLift), by the tick because the session start
+// can't, the hold file being gone while no session starts. It informs, so a failure is passed over.
+async function liftingHold(project, d) {
+  try {
+    const views = d.localViews(project, ['lineageHolds']);
+    if (!Array.isArray(views?.lineageHolds) || views.lineageHolds.length === 0) return;
+    await d.recordLift({ project, views, computer: d.computer(), now: d.now, client: clientOf(d), left: withinBudget(Date.now() + helperMs()) });
+  } catch { /* the next tick tries again */ }
+}
+
+// A tick for messages the mod kept out of the front desk says so in `received`, { origin, via } or
+// a list of them (never the text): one line each in the day's mod file, the newest MAX_RECEIVED
+// of a list. It never fails the tick.
+const MAX_RECEIVED = 50;
+function noteReceived(req, d) {
+  const all = Array.isArray(req.received) ? req.received.slice(-MAX_RECEIVED) : [req.received];
+  for (const got of all) {
+    if (!isRecord(got) || (got.via !== 'prompt' && got.via !== 'receive') || typeof got.origin !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(got.origin)) continue;
+    try {
+      recordReceived({ session: req.session, via: got.via, origin: got.origin, at: d.now() });
+    } catch { /* the line is a note; the tick goes on */ }
+  }
+}
+
 // What the pane and the status line show now. Only the front desk, in a project's main folder,
 // has a pane: its model is kept as status.json before the answer goes, with whether the
 // watcher runs (a Shape 1 watcher that has stopped is started again here), and the courier's
@@ -382,6 +452,7 @@ function settingUp(cwd, d) {
 // ticking. In the terminal, when Wheelhouse's own status line is set, `status` is left out so the
 // glance isn't shown twice.
 async function tick(req, d) {
+  noteReceived(req, d);
   const role = roleOf(req, d);
   const found = siteOf(req.cwd, d);
   if (found !== null && role === 'foreman') return foremanTick(found, d);
@@ -390,10 +461,12 @@ async function tick(req, d) {
   const started = d.elapsedClock();
   // The watch runs beside the pane, so the two share the time the tick has.
   const watched = watching(found, role, clientOf(d), d);
+  const lifting = liftingHold(found.project, d);
   // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
-  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d) });
+  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d), client: clientOf(d) });
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
+  await lifting;
   // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.
   const wake = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
   try {
@@ -421,7 +494,7 @@ async function unsent(req, d) {
   return { ok: true };
 }
 
-const COMMANDS = { usage, reply, press, settings, setting, go, stop, digest, tick, unsent };
+const COMMANDS = { usage, reply, press, why, suggest, settings, setting, go, stop, digest, tick, unsent };
 
 // handle(request, deps) -> { ok, says? }. Never throws.
 export async function handle(request, deps = {}) {
@@ -476,6 +549,7 @@ export function lineOf(answer) {
   if (strings(answer?.woken)) out.woken = answer.woken;
   if (typeof answer?.wokeAt === 'string') out.wokeAt = answer.wokeAt;
   if (Array.isArray(answer?.rows) && answer.rows.every(isRecord)) out.rows = answer.rows;
+  if (Array.isArray(answer?.groups) && answer.groups.every(isRecord)) out.groups = answer.groups;
   if (typeof answer?.text === 'string') out.text = answer.text;
   return JSON.stringify(out);
 }

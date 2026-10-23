@@ -1,15 +1,16 @@
 // scripts/mod/digest.js
-// /digest: the briefing since the last one, as text, with no turn of the model's. The mod
-// registers the command and shows the bridge's text as its answer. The briefing is built as the
-// board-context hook builds it after a gap (briefingIn), from the board's full inputs (events, sources and
-// the settings in force), so it is within the words the briefing setting gives and goes through
-// the glossary's plain words. The helper is waited for INPUTS_WAIT_MS at most; one that doesn't
-// answer leaves the briefing built from what was read. It says when the delegation review is due
-// (reviewOf) and carries the weekly lines when they are due, as the hook's does. Giving it marks the
-// briefing given (briefedAt), so the next one starts from it, marks as raised the unusual use it
-// showed and, as the hook does, marks the weekly lines given (weeklyAt) only when its text showed
-// them: /digest's text is shown to the director as it is. It leaves the director's last message
-// (promptAt) alone: a command is not a message to the front desk.
+// /wheelhouse-digest: the briefing since the last one, as text, with no turn of the model's. The mod registers
+// the command and shows the bridge's text as its answer. The briefing is built as the board-context
+// hook builds it after a gap (briefingIn), from the board's full inputs (events, sources and the
+// settings in force), so it is within the words the briefing setting gives and goes through the
+// glossary's plain words, and its text is the briefing alone, opening with the verdict. The helper
+// is waited for INPUTS_WAIT_MS at most; one that doesn't answer leaves the briefing built from what
+// was read. It says when the delegation review is due (reviewOf) and carries the weekly lines when
+// they are due, as the hook's does. Giving it marks the briefing given (briefedAt), so the next one
+// starts from it, marks as raised the unusual use it showed and, as the hook does, marks the weekly
+// lines given (weeklyAt) only when its text showed them: /wheelhouse-digest's text is shown to the director as
+// it is. It leaves the director's last message (promptAt) alone: a command is not a message to the
+// front desk.
 import { loadBoardInputs } from '../board/inputs.js';
 import { briefingIn, reviewOf, INPUTS_WAIT_MS } from '../hooks/board-context.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
@@ -18,7 +19,6 @@ import { markRaised as realMarkRaised } from '../usage/figures.js';
 import { effectiveFor } from './settings-pane.js';
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 
-export const FIRST_LINE = 'Wheelhouse\'s briefing';
 export const UNBUILT = 'Wheelhouse couldn\'t put the briefing together this time';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -47,11 +47,11 @@ export async function digestText({
     const seen = readSeen(project, { now: at });
     const given = briefingIn({
       project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at),
-      at, briefingModel, room: CONTEXT_CHARS - FIRST_LINE.length - 2,
+      at, briefingModel, room: CONTEXT_CHARS,
     });
     attempt(() => markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}) }));
     if (given.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(given.raise, { now: at }));
-    return { ok: true, text: `${FIRST_LINE}\n\n${given.text}` };
+    return { ok: true, text: given.text };
   } catch {
     return { ok: false, text: UNBUILT };
   }

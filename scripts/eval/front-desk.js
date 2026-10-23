@@ -73,7 +73,8 @@ function allowRules(plugin) {
     for (const at of new Set([plugin, realOr(plugin)])) {
       allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
       const command = frontDeskCommand(at);
-      if (command !== null) allow.push(`Bash(${command}:*)`, `Edit(/${FRONT_DESK_INPUT})`);
+      const flagged = frontDeskCommand(at, { noSystemCa: true });
+      if (command !== null) allow.push(`Bash(${command}:*)`, `Bash(${flagged}:*)`, `Edit(/${FRONT_DESK_INPUT})`);
     }
   }
   try {
@@ -379,10 +380,11 @@ export function howAsked(events, card) {
     const words = typeof text === 'string' ? text.trim().replace(/[.!?]$/, '') : '';
     return words !== '' && reply.includes(words);
   };
-  const what = String(card.question ?? '').split('\n')[0].replace(/^What this is: /, '');
+  const what = typeof card.parts?.what === 'string' ? card.parts.what : String(card.question ?? '').split('\n')[0].replace(/^What this is: /, '');
   const labels = Array.isArray(card.options) ? card.options.filter((l) => typeof l === 'string') : [];
   const says = Array.isArray(card.descriptions) ? card.descriptions[labels.indexOf(card.recommend)] : undefined;
-  const decides = typeof says === 'string' ? says.replace(/^Recommended: /, '') : null;
+  const meaning = Array.isArray(card.parts?.options) ? card.parts.options.find((o) => o?.recommended === true)?.says : undefined;
+  const decides = typeof meaning === 'string' ? meaning : typeof says === 'string' ? says.replace(/^Recommended: /, '') : null;
   if ((typeof card.line === 'string' && reply.includes(card.line)) || carries(what)
     || (labels.length > 0 && labels.every((l) => reply.includes(l)) && carries(decides))) return 'in its reply';
   return null;

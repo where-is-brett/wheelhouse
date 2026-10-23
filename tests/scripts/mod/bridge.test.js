@@ -16,8 +16,9 @@ import { COURIER_GAP_MS, FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../..
 import { makeSigningKey, enrol, verify, readEnrolled } from '../../../scripts/state/signing.js';
 import { LIFT_STOP } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState, liftStop } from '../../../scripts/lib/stop.js';
-import { keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { computerId, keysDir, usageDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { pendingDir } from '../../../scripts/hooks/pending.js';
+import { holdFile } from '../../../scripts/lineage/check.js';
 import { withHome, tempFolder } from '../../helpers/homes.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -148,7 +149,7 @@ test('a reply from composer or bridge is recorded; from sdk or peer it is not', 
   assert.equal(client.calls.record.length, 0);
 }));
 
-test('/go from the director lifts STOP with a signed record, kept before it lifts', () => withHome(async () => {
+test('/wheelhouse-go from the director lifts STOP with a signed record, kept before it lifts', () => withHome(async () => {
   enrolKey();
   for (const origin of ['composer', 'bridge']) {
     setStop({ by: 'prompt', now: () => NOW });
@@ -170,7 +171,7 @@ test('/go from the director lifts STOP with a signed record, kept before it lift
     assert.equal(kept.body.project, P);
     const event = kept.body.event;
     assert.equal(event.kind, 'action');
-    assert.deepEqual(event.data, { action: 'lift-stop', question: LIFT_STOP, label: '/go' });
+    assert.deepEqual(event.data, { action: 'lift-stop', question: LIFT_STOP, label: '/wheelhouse-go' });
     assert.equal(verify(event, readEnrolled()), true);
 
     // Sent to the helper, and gone from pending once it was taken.
@@ -199,7 +200,7 @@ test('/go from the director lifts STOP with a signed record, kept before it lift
   assert.deepEqual(pendingFiles(), []);
 }));
 
-test('/go from any other origin leaves STOP on', () => withHome(async () => {
+test('/wheelhouse-go from any other origin leaves STOP on', () => withHome(async () => {
   enrolKey();
   setStop({ by: 'prompt', now: () => NOW });
   const client = fakeClient();
@@ -268,7 +269,7 @@ test('press is refused for any origin but pane; stop and go accept pane', () => 
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
 }));
 
-test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go typed or phoned needs no date', () => withHome(async () => {
+test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /wheelhouse-go typed or phoned needs no date', () => withHome(async () => {
   enrolKey();
   const SHOWN = '2026-10-19T04:00:00.000Z';
   setStop({ by: 'prompt', now: () => new Date(SHOWN) });
@@ -283,7 +284,7 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go
     assert.match(answer.says, /STOP stays on/, String(since));
     assert.doesNotMatch(answer.says, /\n/);
   }
-  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /go to lift it' });
+  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it' });
   assert.deepEqual(await goFromPane('2026-10-19T03:00:00.000Z'), { ok: false, says: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again' });
   assert.equal(lifted, 0);
   assert.equal(stopState().on, true);
@@ -304,7 +305,7 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /go
   assert.equal(stopState().on, false);
   assert.equal(client.calls.record.length, 1);
 
-  // /go typed or phoned lifts whatever STOP is on, with no date and whatever date it carries.
+  // /wheelhouse-go typed or phoned lifts whatever STOP is on, with no date and whatever date it carries.
   for (const [origin, since] of [['composer', undefined], ['bridge', '2026-10-19T03:00:00.000Z']]) {
     setStop({ by: 'prompt', now: () => new Date(SHOWN) });
     const answer = await handle({ cmd: 'go', origin, cwd: '/work', ...(since === undefined ? {} : { since }) }, deps({ client, loadInputs: building(1) }));
@@ -484,6 +485,73 @@ test('the front desk\'s tick gives the pane, the glance and the status line, and
   assert.equal('submit' in answer, false);
 }));
 
+test('a tick that carries a received message appends one received line to the day\'s mod file, and never fails for it', () => withHome(async (home) => {
+  const repo = registered(home);
+  const file = path.join(usageDir(), 'mod', '2026-10-19.jsonl');
+  const answer = await handle(tickOf(repo, { received: { origin: 'sdk', via: 'prompt' } }), live());
+  assert.equal(answer.ok, true);
+  assert.deepEqual(readLines(file), [{ at: NOW.toISOString(), event: 'received', via: 'prompt', origin: 'sdk', session: 'sess-1' }]);
+  await handle(tickOf(repo, { received: { origin: 'peer', via: 'receive' } }), live());
+  assert.deepEqual(readLines(file).at(-1), { at: NOW.toISOString(), event: 'received', via: 'receive', origin: 'peer', session: 'sess-1' });
+  // A list of them (the follow-up tick after a burst) gets a line each, at most 50.
+  await handle(tickOf(repo, { received: [{ origin: 'sdk', via: 'prompt' }, { origin: 'bad origin', via: 'prompt' }, { origin: 'peer', via: 'receive' }] }), live());
+  assert.deepEqual(readLines(file).slice(2).map((l) => [l.origin, l.via]), [['sdk', 'prompt'], ['peer', 'receive']]);
+  await handle(tickOf(repo, { received: Array(80).fill({ origin: 'sdk', via: 'prompt' }) }), live());
+  assert.equal(readLines(file).length, 4 + 50);
+  // A tick without one, or with one that isn't one, writes nothing; the pane's answer is the same.
+  for (const received of [undefined, null, 'sdk', { origin: 'sdk' }, { origin: 'sdk', via: 'other' }, { origin: 42, via: 'prompt' }, { origin: 'a'.repeat(99), via: 'prompt' }]) {
+    const got = await handle(tickOf(repo, { received }), live());
+    assert.equal(got.ok, true);
+  }
+  assert.equal(readLines(file).length, 54);
+  // A session ID the store refuses, or a store that can't be written, leaves the tick whole.
+  const bad = await handle(tickOf(repo, { session: '../x', received: { origin: 'sdk', via: 'prompt' } }), live());
+  assert.equal(bad.ok, true);
+  assert.equal(bad.role, 'front-desk');
+  assert.equal(readLines(file).length, 54);
+}));
+
+test('a tick with no hold file and an open hold records one lift; a second tick records none', () => withHome(async (home) => {
+  const repo = registered(home);
+  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), computer: computerId(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
+  const client = fakeClient();
+  const extra = { client, localViews: () => views };
+  const lifts = () => client.calls.write.filter((w) => w.kind === 'lineage-lift');
+  // The hold file stands: nothing is lifted.
+  fs.mkdirSync(path.dirname(holdFile(P)), { recursive: true });
+  fs.writeFileSync(holdFile(P), '{}');
+  await handle(tickOf(repo), live(extra));
+  assert.equal(lifts().length, 0);
+  // The file is gone: one lift, kept and sent, and no more at the next tick while the views still show the hold.
+  fs.rmSync(holdFile(P));
+  await handle(tickOf(repo), live(extra));
+  assert.deepEqual(lifts(), [{ project: P, kind: 'lineage-lift', data: { at: NOW.toISOString(), holds: ['h1'] } }]);
+  assert.deepEqual(pendingFiles(), []);
+  await handle(tickOf(repo), live(extra));
+  assert.equal(lifts().length, 1);
+  // A hold recorded since is a different hold: it is lifted by its own lift, once its file is gone.
+  const later = { lineageHolds: [{ ...views.lineageHolds[0], id: 'h3' }] };
+  await handle(tickOf(repo), live({ client, localViews: () => later }));
+  assert.equal(lifts().length, 2);
+  assert.deepEqual(lifts()[1].data.holds, ['h3']);
+  // A hold of another computer is not this computer's to lift.
+  const other = { lineageHolds: [{ ...views.lineageHolds[0], id: 'h2', computer: 'ffffffff' }] };
+  await handle(tickOf(repo), live({ client, localViews: () => other }));
+  assert.equal(lifts().length, 2);
+}));
+
+test('a lift kept but not yet sent counts as recorded, and a tick whose helper is down keeps one', () => withHome(async (home) => {
+  const repo = registered(home);
+  const views = { lineageHolds: [{ id: 'h1', at: NOW.toISOString(), computer: computerId(), data: { at: NOW.toISOString(), mismatches: [{ upstream: 'superpowers', path: 'LICENSE' }] }, card: null }] };
+  const down = fakeClient({ takes: false });
+  down.state.write = async () => { throw new Error('down'); };
+  await handle(tickOf(repo), live({ client: down, localViews: () => views }));
+  assert.equal(pendingFiles().length, 1);
+  await handle(tickOf(repo), live({ client: down, localViews: () => views }));
+  assert.equal(pendingFiles().length, 1, 'not a second');
+  assert.equal(readJson(path.join(pendingDir(P), pendingFiles()[0])).body.kind, 'lineage-lift');
+}));
+
 test('the front desk\'s tick carries the courier\'s wake as submit, after the session\'s first tick marks what waits', () => withHome(async (home) => {
   const repo = registered(home);
   // The waiting cards, those in `asked` handed out by the front desk.
@@ -506,7 +574,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // A turn is running: the new card waits.
   assert.equal('submit' in await handle(tickOf(repo, { idle: false }), live({ now: later(1) })), false);
   const woken = await handle(tickOf(repo, { idle: true }), live({ now: later(2) }));
-  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+  assert.deepEqual(woken.submit, ['Wheelhouse courier: 1 new card (2). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 2. Then ask any new cards now, once.']);
   assert.deepEqual(JSON.parse(lineOf(woken)).submit, woken.submit);
   assert.ok(!woken.submit[0].includes('words'));
   // Once handed back, it isn't handed back again.
@@ -531,7 +599,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   // Card 2, which the wake named, was never asked (its notification wasn't sent): its reminder
   // comes with card 3's wake.
   const woken3 = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + COURIER_GAP_MS) }));
-  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3); card 2 is still waiting. Send Claude\'s notification in one line, then ask them now, once.']);
+  assert.deepEqual(woken3.submit, ['Wheelhouse courier: 1 new card (3); card 2 is still waiting. Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 2 and 3. Then ask them now, once.']);
   assert.deepEqual(woken3.woken, ['card:c-third', 'remind:c-new']);
 
   // A second front desk opening now marks nothing and wakes for nothing. That wake's turn asked
@@ -540,7 +608,7 @@ test('the front desk\'s tick carries the courier\'s wake as submit, after the se
   const second = await handle(tickOf(repo, { idle: true, session: 'sess-2' }), live({ now: () => new Date(NOW.getTime() + 3 * TICK_MS + COURIER_GAP_MS) }));
   assert.equal('submit' in second, false);
   const first = await handle(tickOf(repo, { idle: true }), live({ now: () => new Date(NOW.getTime() + 2 * TICK_MS + 2 * COURIER_GAP_MS) }));
-  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, then ask any new cards now, once.']);
+  assert.deepEqual(first.submit, ['Wheelhouse courier: 1 new card (4). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 4. Then ask any new cards now, once.']);
 }));
 
 test('the tick names the ids its wake marked; the mod\'s unsent puts them back, so the next idle tick wakes again', () => withHome(async (home) => {
@@ -553,7 +621,7 @@ test('the tick names the ids its wake marked; the mod\'s unsent puts them back, 
   fs.writeFileSync(path.join(dir, 'waiting.json'), JSON.stringify([{
     id: 'c-new', at: '2026-10-19T04:00:00.000Z', data: { kind: 'question', header: 'Question', options: ['Yes'], question: 'Which one?', level: 3 }, asked: null,
   }]));
-  const WAKE = ['Wheelhouse courier: 1 new card (1). Send Claude\'s notification in one line, then ask any new cards now, once.'];
+  const WAKE = ['Wheelhouse courier: 1 new card (1). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 1 waiting on you: card 1. Then ask any new cards now, once.'];
   const woken = await handle(tickOf(repo, { idle: true }), live());
   assert.deepEqual(woken.submit, WAKE);
   assert.deepEqual(woken.woken, ['card:c-new']);
@@ -971,4 +1039,41 @@ test('a helper that never answers is waited for no longer than HELPER_MS', () =>
   assert.equal(handled.inTime, true, 'still waiting on the helper');
   const got = handled.value;
   assert.ok(got.pane.missing.includes(NO_HELPER));
+}));
+
+test('a pane origin is the only one the bridge takes for why, suggest and setting', () => withHome(async () => {
+  enrolKey();
+  const calls = [];
+  const spy = (name, answer) => async (args) => { calls.push([name, args]); return answer; };
+  const extra = {
+    whyCard: spy('why', { made: true }),
+    suggestCard: spy('suggest', { made: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] }),
+    pressSetting: spy('setting', { made: true, says: 'Pace is now 1, for this project' }),
+  };
+  const requests = [
+    { cmd: 'why', cwd: '/work', card: 'c', hash: 'h' },
+    { cmd: 'suggest', cwd: '/work', card: 'c', hash: 'h', words: 'x' },
+    { cmd: 'setting', cwd: '/work', key: 'pace', choice: 'undo' },
+  ];
+  for (const request of requests) {
+    for (const origin of ['composer', 'bridge', 'sdk', 'peer', 'Pane', '', undefined, ['pane']]) {
+      assert.deepEqual(await handle({ ...request, origin }, deps(extra)), { ok: false, says: 'Only a press in the pane counts as one' });
+    }
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(pendingFiles(), []);
+
+  assert.deepEqual(await handle({ ...requests[0], origin: 'pane' }, deps(extra)), { ok: true });
+  const suggested = await handle({ ...requests[1], origin: 'pane' }, deps(extra));
+  assert.deepEqual(suggested, { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] });
+  assert.deepEqual(JSON.parse(lineOf(suggested)).submit, suggested.submit);
+  assert.equal((await handle({ ...requests[2], origin: 'pane' }, deps(extra))).ok, true);
+  assert.deepEqual(calls.map(([name, args]) => [name, args.project]), [['why', P], ['suggest', P], ['setting', P]]);
+  assert.deepEqual([calls[1][1].card, calls[1][1].hash, calls[1][1].words], ['c', 'h', 'x']);
+  // Outside a project, nothing is pressed.
+  for (const request of requests) assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ ...extra, projectOf: () => null })), { ok: false, says: 'This isn\'t a Wheelhouse project' });
+  assert.equal(calls.length, 3);
+  // A suggestion refused hands no prompt and is not ok.
+  const refused = { suggestCard: spy('suggest', { made: false, says: 'That card changed while you were reading. Here is the new one.' }) };
+  assert.deepEqual(await handle({ ...requests[1], origin: 'pane' }, deps(refused)), { ok: false, says: 'That card changed while you were reading. Here is the new one.' });
 }));
