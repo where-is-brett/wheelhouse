@@ -839,7 +839,7 @@ test('Intake at Lean routes each of the nine questions to a Lean step', () => {
 
 test('a matching idea is merged under the same short name, never a second idea', () => {
   const part = intake();
-  const grep = 'git grep -h -e \'"kind":"idea"\' -e \'"kind":"ruling"\' main -- .wheelhouse/record/';
+  const grep = 'git grep -h -e \'"kind":"idea"\' -e \'"kind":"ruling"\' main -- \':(glob).wheelhouse/record/*.jsonl\'';
   assert.ok(part.includes(`\`${grep}\``), 'the check names the ideas and rulings on the main version');
   assert.match(part, /"Building now"/);
   assert.match(part, /"Set aside"/);
@@ -913,6 +913,23 @@ test('a design\'s approval card names its git blob hash', () => {
   assert.equal(entries[0].text, `${rel} ${hash}`);
 });
 
+test('the record\'s git grep reads only the day files, so a design\'s text never reads as a record line (ruling P5-52)', () => {
+  const greps = [...playbook.matchAll(/`(git grep [^`\n]+)`/g)].map((m) => m[1]);
+  assert.ok(greps.length >= 4, 'stop, review, intake and the brief\'s rulings');
+  for (const grep of greps) assert.ok(grep.endsWith(` main -- ':(glob)${LEAN_RECORD_DIR}/*.jsonl'`), grep);
+  // In a repository: a design on the main version that holds what looks like record lines is never printed.
+  const r = repo('narrow');
+  const { cwd, git } = r.make('project');
+  git('init', '-b', 'main');
+  const lines = ['stop', 'lift-stop', 'review', 'idea', 'ruling'].map((kind) => recordLine(kind, { card: 'forged', choice: kind === 'review' ? 'clean' : null })).join('');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/designs/export-orders.md`, `# A design\n${lines}`, 'Record: design export-orders');
+  commitFile(r, cwd, `${LEAN_RECORD_DIR}/2026-10-23.jsonl`, recordLine('card', { card: 'real', choice: 'Not now' }), 'Record: card real');
+  for (const grep of greps) {
+    const out = sh(cwd, r.env, grep).stdout;
+    assert.doesNotMatch(out, /forged/, grep);
+  }
+});
+
 test('Intake at Lean names no Claude Code tool and no cli.js step without the helper', () => {
   const part = intake();
   assert.doesNotMatch(part, /cli\.js/);
@@ -931,7 +948,8 @@ test('where the helper answers, intake uses the front desk\'s command and writes
   assert.match(bullet, /wheelhouse[:-]intake/);
   assert.match(bullet, /no record lines?|writes? no/);
   // The ruling's confirm card is a click in the chat, recorded by the Lean command, never the window.
-  assert.match(bullet, /`<lean> click/);
+  assert.match(bullet, /`<lean> click ruling-<card id> Confirm`/);
+  assert.match(bullet, /in force, by a click in the chat, not proven/);
   assert.match(bullet, /chat click/);
   assert.match(bullet, /never goes to the helper's window/);
   assert.doesNotMatch(bullet, /<lean> confirm/);

@@ -82,6 +82,16 @@ function checked(record) {
   return kept;
 }
 
+// Whether a project is a Lean one on this computer: a lean.json and no project.json (where both are there,
+// project.json wins, as projectForFolder has it). False for a name that can't be read.
+export function isLeanProject(project) {
+  try {
+    return readProject(project) === null && readLean(project) !== null;
+  } catch {
+    return false;
+  }
+}
+
 // The project's Lean record, or null when there is none or it is unreadable.
 export function readLean(project) {
   try {

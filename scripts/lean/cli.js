@@ -6,7 +6,8 @@
 //                                   version, whether it moved outside the helper (and the card that asks about it),
 //                                   STOP, the copy folder, the test command and whether it has real users
 //   click <card> <label> [<commit>] the director's click in the chat on the card named <card> (`merge-<slug>`,
-//                                   `undo-<slug>`, `main-moved` and the like) choosing <label>, with the commit it
+//                                   `undo-<slug>`, `main-moved`, `ruling-<card id>` for Confirm on a ruling's confirm
+//                                   card, and the like) choosing <label>, with the commit it
 //                                   names in full where it names one. Standard input is JSON: { "question": the
 //                                   card's text as the director saw it, "text": the director's own words, with
 //                                   Suggest a change… only }. Recorded as a chat click, never more

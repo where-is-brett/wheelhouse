@@ -763,7 +763,9 @@ export async function view({ client, cwd, name, now }) {
   const { views, cards: events, answers } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels', answers: name === 'work' });
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
-    return listed(rules.map((r) => `${flat(r.words)} (${r.status === 'accepted' ? 'in force' : 'waiting for the director to confirm it'})`), 'The rulebook is empty.');
+    // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.
+    const status = (r) => (r.status !== 'accepted' ? 'waiting for the director to confirm it' : r.proof === 'chat-click' ? 'in force, by a click in the chat, not proven' : 'in force');
+    return listed(rules.map((r) => `${flat(r.words)} (${status(r)})`), 'The rulebook is empty.');
   }
   if (name === 'waiting') {
     // Numbered as the board numbers them; a composed card is named by its `what`, and each card by

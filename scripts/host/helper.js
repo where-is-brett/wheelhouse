@@ -745,6 +745,8 @@ const CHAT_TEXT_CHARS = 500;
 const CHAT_WORDS_CHARS = 4000;
 // The option that hands the builder the director's own words (ruling P5-27 k): the only click that carries them.
 const SUGGEST = 'Suggest a change…';
+// A ruling's confirm card, as a click in the chat names it at Lean (ruling P5-52): `ruling-` and the card's id.
+const RULING_CARD = /^ruling-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 // The fields of a card-answer that only the helper's click routes write.
 const CLICK_FIELDS = ['proof', 'commit', 'hash', 'text'];
 
@@ -1465,6 +1467,16 @@ export async function startHelper({
     if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
     const confirmed = CONFIRMED_STEPS.some((step) => card === step || card.startsWith(`${step}-`));
     if (confirmed && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
+    // A ruling's confirm card at Lean (ruling P5-52): Confirm, unsigned, on the card named `ruling-<its id>`, when the
+    // state holds that card as a ruling's confirm card and the click names its text as the state holds it. The views
+    // count it only in a Lean project's rulebook. On any other project Confirm stays signed and is refused below.
+    const rulingCard = RULING_CARD.exec(card);
+    if (ctx.lean === true && label === 'Confirm' && rulingCard && text === undefined && commit === undefined) {
+      const held = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === rulingCard[1] && e.kind === 'card');
+      if (!held || held.data?.kind !== 'confirm' || !/^Confirm ruling \S+: "/.test(held.data?.line ?? '') || typeof held.data?.question !== 'string') refuse('that is not a ruling\'s confirm card in this project');
+      if (hash !== crypto.createHash('sha256').update(held.data.question).digest('hex')) refuse('the click must name the card\'s text as the state holds it');
+      return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean' } }, ctx, { own: true });
+    }
     const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
     if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');
     const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }), proof };

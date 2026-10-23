@@ -1,4 +1,5 @@
 // tests/scripts/state/views.test.js
+import crypto from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -1201,4 +1202,45 @@ test('a revised approval card has its own set line, so an approval of the old co
     const approvedNew = ev('approval', 5, { pr: 7, commit: B.slice(0, 12), question: revised.data.question });
     assert.deepEqual(waitingIds([old, revised, late, approvedNew]), []);
   });
+});
+
+// ---- A ruling confirmed by a click in the chat at Lean (ruling P5-52) ----
+
+test('at Lean a ruling confirmed by a chat click the record names is in force; elsewhere it is not', () => {
+  const sha = (text) => crypto.createHash('sha256').update(text).digest('hex');
+  const at = (n) => () => new Date(Date.UTC(2026, 9, 23, 1, 0, n));
+  const words = 'Every export is a CSV file, never Excel.';
+  const ruling = makeEvent({ kind: 'ruling', data: { words }, now: at(1) });
+  const question = `What this is: A rule you gave, in your words: "${words}"\nConfirm it?`;
+  const card = makeEvent({ kind: 'card', data: { question, header: 'Confirm', options: ['Confirm', 'Not now'], kind: 'confirm', level: 3, line: confirmLine(ruling) }, now: at(2) });
+  const answer = (data, n = 3) => makeEvent({ kind: 'card-answer', data: { card: card.id, label: 'Confirm', hash: sha(question), proof: 'chat-click', tier: 'lean', ...data }, now: at(n) });
+  const status = (events, options) => buildViews(events, [], options).rulebook.map((r) => [r.status, r.proof ?? null]);
+  const waiting = (events, options) => buildViews(events, [], options).waiting.map((c) => c.id);
+
+  const good = [ruling, card, answer({})];
+  assert.deepEqual(status(good, { lean: true }), [['accepted', 'chat-click']]);
+  assert.deepEqual(waiting(good, { lean: true }), []);
+  assert.deepEqual(buildViews(good, [], { lean: true }).unconfirmed, []);
+  // A Claude Code project's rulebook still counts only a signed confirmation.
+  assert.deepEqual(status(good), [['proposed', null]]);
+  assert.deepEqual(buildViews(good, []).unconfirmed.map((u) => u.id), [ruling.id]);
+
+  // Nothing else counts, at Lean either: the answer must name the card by its id and the card's text by its hash.
+  const others = [
+    answer({ hash: sha('another text') }),
+    answer({ card: ruling.id }),
+    answer({ proof: undefined }),
+    answer({ tier: undefined }),
+    answer({ label: 'Not now' }),
+    answer({}, 0),
+  ];
+  for (const other of others) {
+    assert.deepEqual(status([ruling, card, other], { lean: true }), [['proposed', null]], JSON.stringify(other.data));
+  }
+  // A wrong hash doesn't answer the card at all.
+  assert.deepEqual(waiting([ruling, card, others[0]], { lean: true }), [card.id]);
+  // A card whose line names other words, or another ruling, confirms nothing.
+  const otherLine = makeEvent({ kind: 'card', data: { ...card.data, line: `Confirm ruling ${ruling.id}: "Exports are Excel."` }, now: at(2) });
+  const otherAnswer = makeEvent({ kind: 'card-answer', data: { card: otherLine.id, label: 'Confirm', hash: sha(question), proof: 'chat-click', tier: 'lean' }, now: at(3) });
+  assert.deepEqual(status([ruling, otherLine, otherAnswer], { lean: true }), [['proposed', null]]);
 });

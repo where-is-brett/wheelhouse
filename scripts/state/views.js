@@ -1,9 +1,11 @@
 // scripts/state/views.js
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
-import { approvalLine, ciPushLine } from './card-lines.js';
+import { approvalLine, ciPushLine, confirmLine } from './card-lines.js';
+import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -15,6 +17,8 @@ const isPlainKey = (k) => typeof k === 'string' && k !== '';
 // otherwise null. A record signed by one computer that names another was made on neither.
 const signedOn = (e) => (typeof e?.computer === 'string' && e.sig?.computer === e.computer ? e.computer : null);
 const uniqueIds = (ids) => [...new Set(ids.filter(isPlainKey))];
+// The sha256 of a card's text as the director saw it: what a click in an agent's chat names (scripts/lean/cli.js).
+const textHash = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 // The latest event per key, in the sorted order the caller supplies.
 function latestPerKey(events, keyOf) {
@@ -211,6 +215,25 @@ const confirmNamed = (text) => /Confirm ([a-z-]+) (\S+): "/.exec(text);
 const confirmedAfter = (confirmations, record, named) => (named === null ? undefined : confirmations.find((c) => byOrder(record, c.event) < 0
   && c.target.id === named[2] && c.target.kind === named[1]));
 
+// At Lean (ruling P5-52), the rulings the director confirmed by a click in the chat: id -> the answer. The click is
+// a card-answer the helper's /cards/chat-click wrote, with proof chat-click and tier lean, after a confirm card whose
+// line names that ruling with its words as they are, naming the card by its id and the card's text by its hash. It
+// is not signed, so it counts only in a Lean project's views; the rulebook says the proof it rests on.
+function leanRulingClicks(sorted, rulings) {
+  const out = new Map();
+  const cards = sorted.filter((e) => e.kind === 'card' && e.data?.kind === 'confirm' && typeof e.data?.line === 'string' && typeof e.data?.question === 'string');
+  for (const ruling of rulings) {
+    if (typeof ruling.data?.words !== 'string') continue;
+    const line = confirmLine(ruling);
+    for (const card of cards.filter((c) => c.data.line === line && byOrder(ruling, c) < 0)) {
+      const click = sorted.find((a) => a.kind === 'card-answer' && byOrder(card, a) < 0 && a.data?.card === card.id && a.data.label === 'Confirm'
+        && a.data.proof === 'chat-click' && a.data.tier === 'lean' && a.data.hash === textHash(card.data.question));
+      if (click && !out.has(ruling.id)) out.set(ruling.id, click);
+    }
+  }
+  return out;
+}
+
 // The verified approvals and actions that carry the question they were clicked on.
 const answeredByOf = (sorted, enrolled) => sorted.filter((e) => (e.kind === 'approval' || e.kind === 'action') && typeof e.data?.question === 'string' && verify(e, enrolled));
 
@@ -239,7 +262,10 @@ export function confirmationTimes(events, enrolled) {
 function outcomesOf(sorted, { confirmations, answeredBy }) {
   const answers = sorted.filter((e) => e.kind === 'card-answer');
   const questionOf = (card) => (typeof card.data?.question === 'string' ? card.data.question : card.data?.title);
-  const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string' ? a.data.card === card.id
+  // An answer that names the card by its id and the card's text by its hash (a click in an agent's chat, ruling
+  // P5-52) answers it only when the hash is of the card's text as the state holds it.
+  const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string'
+    ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && a.data.hash === textHash(questionOf(card))))
     : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
   const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
   const signedFor = (card) => {
@@ -374,7 +400,8 @@ function buildLoopViews(sorted, enrolled) {
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a
 // profile setting closes on the profile's verified confirmation, whichever project's card was
 // clicked (ruling F47). The project's levels, settings and unconfirmed stay its own.
-export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [] } = {}) {
+// `lean` is true for a Lean project's views, where a ruling confirmed by a chat click counts (leanRulingClicks).
+export function buildViews(events, enrolled, { damaged = [], now = () => new Date(), profile = [], lean = false } = {}) {
   const { sorted, repeated } = uniqueSorted(events);
   const { confirmed, confirmations } = confirmationsOf(sorted, enrolled);
   const fromProfile = confirmationsOf(uniqueSorted(profile).sorted, enrolled).confirmations;
@@ -383,10 +410,12 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   // Rulebook
   const rulings = sorted.filter((e) => e.kind === 'ruling');
+  const chatClicked = lean ? leanRulingClicks(sorted, rulings) : new Map();
+  const inForce = (id) => confirmed.has(id) || chatClicked.has(id);
   const superseded = new Set();
   for (const r of rulings) {
     const target = rulings.find((x) => x.id === r.data?.supersedes);
-    if (confirmed.has(r.id) && target && target.id !== r.id && byOrder(target, r) < 0) superseded.add(target.id);
+    if (inForce(r.id) && target && target.id !== r.id && byOrder(target, r) < 0) superseded.add(target.id);
   }
   const rulebook = rulings.map((r) => ({
     id: r.id,
@@ -394,7 +423,9 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     words: r.data?.words,
     reason: r.data?.reason,
     scope: r.data?.scope,
-    status: superseded.has(r.id) ? 'superseded' : confirmed.has(r.id) ? 'accepted' : 'proposed',
+    status: superseded.has(r.id) ? 'superseded' : inForce(r.id) ? 'accepted' : 'proposed',
+    // A ruling in force only by a click in the chat says so: the record is the chat's account, not a signed one.
+    ...(!confirmed.has(r.id) && chatClicked.has(r.id) ? { proof: 'chat-click' } : {}),
   }));
 
   // Levels and settings: accepted value per key, plus proposals newer than it. A `known:*` setting
@@ -576,7 +607,7 @@ export async function writeViews(project, {
 } = {}) {
   const damaged = [];
   const events = listEvents(dir, { report: () => {}, skipped: damaged });
-  const views = buildViews(events, readEnrolled(), { damaged, now, profile });
+  const views = buildViews(events, readEnrolled(), { damaged, now, profile, lean: project !== undefined && isLeanProject(project) });
   // Built whole in a new folder, which then takes the old one's place. The old folder is
   // renamed aside first because Windows will not rename over a folder that has files in it.
   // Between the two renames there is no `views` folder, only `views.old` (a reader that

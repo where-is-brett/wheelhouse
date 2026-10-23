@@ -54,6 +54,7 @@ import { WINDOWS_LINE, UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { buildsShown, settingKey } from '../protection/windows-builds.js';
 import { listEvents } from '../state/events.js';
 import { buildViews } from '../state/views.js';
+import { isLeanProject } from '../lean/project.js';
 import { startBackground, startDetached } from '../lib/background.js';
 import { sessionRole } from '../lib/role.js';
 import { projectConfig } from '../watcher/main.js';
@@ -245,7 +246,7 @@ function fallbackViews(project) {
   const views = localViews(project);
   let built = null;
   try {
-    built = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+    built = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { lean: isLeanProject(project) });
   } catch {
     return views;
   }
