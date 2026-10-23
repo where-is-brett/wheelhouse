@@ -34,13 +34,19 @@
 //      is covered only when the rule that decides it is not a negation and is in the project's
 //      root .gitignore: .git/info/exclude and the computer's global ignore file are not shared with
 //      other computers, and any answer git does not give counts as not covered (it fails closed).
+//      When the working .gitignore differs from HEAD's, the same probes are asked again of a
+//      temporary repository holding HEAD's text (headMissing): the committed text must cover, or the
+//      .gitignore is involved and the director asked, whatever the working copy says (a rule such as
+//      `.*` covers there without naming .env). On a joining computer, a probe decided by a negation
+//      in the root .gitignore gets no exclude line, which that negation would beat; the step says so.
 //      What is missing, `.env` and/or `.env.*`, is appended to the root .gitignore (made if absent,
 //      the director's text and line endings kept), one `file` change a line, on this step's card;
 //      a `!.env.example` line the file holds is restated after `.env.*`, so the example stays
 //      shared. The cover must hold in what goes up as well as in the folder: the .gitignore is
 //      involved, and asked about like the three files when it holds changes of the director's own,
-//      when setup adds lines, when it is untracked or deleted, or when a changed line mentions
-//      `.env`, unless the changes are only lines setup's journal recorded writing. On a first
+//      when setup adds lines, when it is untracked or deleted (a deleted one has its own question),
+//      when HEAD's text does not cover, or when a changed line mentions `.env`, unless the changes
+//      are only lines setup's journal recorded writing. On a first
 //      computer it goes up in setup's commit; on a computer joining (ruling R78), which commits
 //      nothing, the lines go in this computer's own .git/info/exclude instead, where either file
 //      counts as cover. Uninstall keeps these lines (scripts/setup/uninstall.js);
@@ -78,7 +84,8 @@
 // 1's project-scope install left in the project's settings (the plugin switched on, check 37) is
 // not the director's, and goes up in setup's commit with no question. A setup commit
 // made but not pushed (a push that failed) is pushed by the next Go ahead, and nothing is
-// committed twice.
+// committed twice; a commit whose sha the journal recorded for the push (written before it is
+// tried) is accepted as setup's own, with the director's .gitignore changes they chose to put in.
 //
 // On a computer joining a project set up on another (ruling R78), the step runs in its "this
 // computer" form: this computer's .claude/settings.local.json key by key, the .git/info/exclude
@@ -98,6 +105,7 @@
 // (ruling R44).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { SETUP_FILES } from '../../adapters/claude-code/packaging.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -359,14 +367,18 @@ const textHash = (rel, text) => crypto.createHash('sha256').update(`${rel}\n${li
 // `isNew`: the product is new (step 3 made its repository), so putting them in is recommended.
 export function yoursAsk({ rel, text, isNew }) {
   const put = putYoursIn(rel);
+  // A .gitignore deleted here: setup's commit would put back one holding only its own lines.
+  const deleted = rel === GITIGNORE && text === null;
   return {
     id: `yours-${textHash(rel, text).slice(0, 12)}`,
     card: {
       level: 3,
-      what: `Setup step 7: ${rel} has changes of yours not yet committed. Setup's commit, "${COMMIT_MESSAGE}", would take them up with its own.`,
+      what: deleted
+        ? `Setup step 7: ${rel} has been deleted here; setup's commit, "${COMMIT_MESSAGE}", would put back one holding only the .env lines.`
+        : `Setup step 7: ${rel} has changes of yours not yet committed. Setup's commit, "${COMMIT_MESSAGE}", would take them up with its own.`,
       why: 'What goes up in setup\'s commit is shared with every computer and agent working on the project.',
       options: [
-        { label: put, says: 'They go up with setup\'s own changes in its one commit, on your Go ahead.' },
+        { label: put, says: deleted ? 'The commit puts back a .gitignore holding only the .env lines, on your Go ahead.' : 'They go up with setup\'s own changes in its one commit, on your Go ahead.' },
         { label: LEAVE_YOURS, says: 'Setup waits at this step until you have committed them or put them aside.' },
       ],
       recommend: isNew ? put : LEAVE_YOURS,
@@ -378,6 +390,10 @@ export function yoursAsk({ rel, text, isNew }) {
 
 // Why step 7 waits once the director chose to leave their changes out.
 export const leftYoursLine = (rel) => `${rel} holds changes of yours not yet committed, which you chose to leave out of setup's commit: once they are committed or put aside, setup goes on`;
+
+// What step 7 says on a joining computer when the root .gitignore lets some .env files into git
+// through a line starting with !, which nothing in this computer's own list can override.
+export const NEGATED_LINE = '.gitignore lets some .env files into git (a line starting with !); this computer can\'t override that, so take it up on the computer that set the project up';
 
 // ---- The host and git ----
 
@@ -450,8 +466,16 @@ function gitIn({ run, gitPath, host, platform, folder, remoteUrl, base }) {
     await refuseUnlistedSettings({ run, gitPath, cwd: folder });
     return quietly(run, gitPath, args, { cwd: folder, env: { ...isolated(env), GIT_WORK_TREE: folder }, baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   };
+  // The same shut-out git in another folder, a temporary repository of setup's own, whose settings
+  // are none to refuse.
+  const callIn = (dir, args) => quietly(run, gitPath, args, { cwd: dir, env: isolated(env), baseEnv: withoutGitVars(), timeoutMs: GIT_WAIT_MS });
   return {
     env,
+    rawIn: async (dir, args) => {
+      const got = await callIn(dir, args);
+      return got.code === 0 ? got.stdout : null;
+    },
+    okIn: async (dir, args) => (await callIn(dir, args)).code === 0,
     raw: async (args) => {
       const got = await call(args);
       return got.code === 0 ? got.stdout : null;
@@ -482,7 +506,7 @@ const headText = (git, rel) => git.raw(['show', `HEAD:${rel}`]);
 
 // Whether HEAD is a setup commit made on `tip` and not yet pushed: one commit on it, with setup's
 // message, changing only the setup files (and the .gitignore).
-async function setupCommitOn(git, head, tip, { strict = false } = {}) {
+async function setupCommitOn(git, head, tip, { strict = false, own = new Set() } = {}) {
   if (head === null || tip === null) return false;
   if ((await git.out(['rev-parse', '-q', '--verify', `${head}^1`])) !== tip) return false;
   if ((await git.out(['log', '-1', '--format=%s', head])) !== COMMIT_MESSAGE) return false;
@@ -490,7 +514,9 @@ async function setupCommitOn(git, head, tip, { strict = false } = {}) {
   if (!files.every((f) => SETUP_FILES.includes(f) || f === GITIGNORE)) return false;
   // Found again in a later plan (`strict`), the .gitignore the commit holds must be changed by
   // nothing but setup's own lines; a commit setup has just made may hold the director's, as they chose.
-  if (!strict || !files.includes(GITIGNORE)) return true;
+  // A commit whose sha the journal recorded as setup's own (it was recorded just before the push)
+  // is accepted as it is: the director chose to put their .gitignore changes in it.
+  if (!strict || !files.includes(GITIGNORE) || own.has(head)) return true;
   const diff = await git.raw(['diff', '--unified=0', '--no-color', '--no-ext-diff', tip, head, '--', GITIGNORE]);
   if (diff === null) return false;
   const body = diff.split(/\r?\n/).filter((l) => (l.startsWith('+') && !l.startsWith('+++')) || (l.startsWith('-') && !l.startsWith('---')));
@@ -500,6 +526,17 @@ async function setupCommitOn(git, head, tip, { strict = false } = {}) {
   return removed.every((l) => added.includes(l)) && added.every((l) => removed.includes(l) || OUR_LINES.includes(l));
 }
 
+// The shas of the setup commits the journal recorded, each written just before its push was tried.
+function journalledCommits(target) {
+  const own = new Set();
+  for (const r of readJournal().runs) {
+    for (const c of Array.isArray(r?.changes) ? r.changes : []) {
+      if (c?.kind === 'host' && c.target === target && c.after?.action === 'push' && /^[0-9a-f]{40,64}$/.test(c.after.sha ?? '')) own.add(c.after.sha);
+    }
+  }
+  return own;
+}
+
 // Which of the lines `.env` and `.env.*` a folder's ignore lists do not cover: asks git, for each
 // probe name (root and nested, `.env` and three `.env.<x>` names), which rule decides it
 // (`check-ignore --no-index -v`). A probe is covered when a rule (not a negation) of the folder's
@@ -507,21 +544,55 @@ async function setupCommitOn(git, head, tip, { strict = false } = {}) {
 // joining computer's own cover). Any other answer, from the global ignore file, a nested .gitignore,
 // none, or one git did not give, is not covered. `.env` is missing unless both its probes are
 // covered; `.env.*` unless every `.env.<x>` probe is.
-async function envMissing(git, folder, { exclude = null } = {}) {
-  const root = path.join(folder, GITIGNORE);
+async function envMissing(git, folder, { exclude = null, at = null } = {}) {
+  // `at`: a folder other than the project's whose root .gitignore holds `text` (HEAD's, in a
+  // temporary repository), asked through the same git. The answer is { missing, negated }:
+  // `negated` lists the lines a negation in the root .gitignore stops from covering, which an
+  // exclude line cannot put right.
+  const base = at ?? folder;
+  const root = path.join(base, GITIGNORE);
+  const ask = at === null ? (probe) => git.raw(['check-ignore', '--no-index', '-v', '--', probe]) : (probe) => git.rawIn(at, ['check-ignore', '--no-index', '-v', '--', probe]);
+  let blocked = false;
   const covered = async (probe) => {
-    const got = await git.raw(['check-ignore', '--no-index', '-v', '--', probe]);
+    const got = await ask(probe);
     // One line: `<source>:<line number>:<pattern>` a tab, and the name asked about.
     const found = got === null ? null : /^(.+):(\d+):([^\t]*)\t(.*)\r?\n?$/.exec(got);
     const [, source, , pattern, named] = found ?? [];
-    const file = source ? path.resolve(folder, source) : null;
+    const file = source ? path.resolve(base, source) : null;
+    if (file === root && typeof pattern === 'string' && pattern.startsWith('!') && named === probe) blocked = true;
     return file !== null && pattern !== '' && !pattern.startsWith('!') && named === probe && (file === root || (exclude !== null && file === exclude));
   };
   const all = async (probes) => {
-    for (const probe of probes) if (!(await covered(probe))) return false;
-    return true;
+    blocked = false;
+    for (const probe of probes) if (!(await covered(probe))) return { ok: false, blocked };
+    return { ok: true, blocked: false };
   };
-  return [...((await all(ENV_ONLY)) ? [] : ['.env']), ...((await all(ENV_DOT)) ? [] : ['.env.*'])];
+  const missing = [];
+  const negated = [];
+  for (const [line, probes] of [['.env', ENV_ONLY], ['.env.*', ENV_DOT]]) {
+    const got = await all(probes);
+    if (!got.ok) missing.push(line);
+    if (got.blocked) negated.push(line);
+  }
+  return { missing, negated };
+}
+
+// Which of the lines HEAD's committed .gitignore does not cover, asked of git in a temporary
+// repository holding that text, removed afterwards. Any failure counts as not covering (it fails closed).
+async function headMissing(git, text) {
+  const all = [...ENV_LINES];
+  if (text === null) return all;
+  let dir = null;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-head-'));
+    if (!(await git.okIn(dir, ['init', '-q']))) return all;
+    fs.writeFileSync(path.join(dir, GITIGNORE), text);
+    return (await envMissing(git, dir, { at: fs.realpathSync.native(dir) })).missing;
+  } catch {
+    return all;
+  } finally {
+    if (dir !== null) fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // The ignore file's lines to add for `missing`, as `file` changes of `target`; the example's
@@ -720,7 +791,7 @@ export function projectFilesStep({
   // (unless the product already ignores them), the line that keeps .wheelhouse/ out of git (unless
   // the folder's own list holds it in any form, ruling R108), then each pin not installed as the
   // manifest has it.
-  const computerParts = async (git, folder, { joining = false } = {}) => {
+  const computerParts = async (git, folder, { joining = false, blocked = [] } = {}) => {
     const parts = [];
     let excludeFile = null;
     const exclude = async () => {
@@ -734,7 +805,12 @@ export function projectFilesStep({
     if (!holdsLine(readText(await exclude()), WHEELHOUSE_LINE)) parts.push({ kind: 'file', target: await exclude(), line: WHEELHOUSE_LINE });
     // A joining computer commits nothing, so a .gitignore that doesn't keep .env files out of git is
     // covered by this computer's own list instead; the folder's own list counts as cover there.
-    if (joining) for (const line of await envMissing(git, folder, { exclude: await exclude() })) parts.push({ kind: 'file', target: await exclude(), line });
+    // A negation in the root .gitignore beats the computer's own list, so no line is offered for what it lets in.
+    if (joining) {
+      const { missing, negated } = await envMissing(git, folder, { exclude: await exclude() });
+      blocked.push(...negated);
+      for (const line of missing) if (!negated.includes(line)) parts.push({ kind: 'file', target: await exclude(), line });
+    }
     const kits = manifest();
     const wrong = new Set(lineage(folder).mismatches.map((m) => m.upstream));
     for (const u of kits.upstreams.filter((x) => wrong.has(x.name))) parts.push({ kind: 'process', target: `${u.plugin}@${MARKETPLACE}`, action: 'install', scope: 'project' });
@@ -762,10 +838,12 @@ export function projectFilesStep({
     for (const rel of SETUP_FILES) if (!sameContent(rel, readText(at(rel)), await headText(git, rel))) differ.push(rel);
     const home = claudeHome();
     const release = wheelhouseRelease({ folder, claudeHome: home });
+    const blocked = [];
     const changes = [
       ...localFilesChange({ folder, local: { address: address(), node, pluginRoot, platform, claudeHome: home } }),
-      ...(await computerParts(git, folder, { joining: true })),
+      ...(await computerParts(git, folder, { joining: true, blocked })),
     ];
+    if (blocked.length > 0) ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: ${NEGATED_LINE}.`);
     if (changes.length === 0) {
       if (differ.length > 0) ctx.say?.(`Setup step 7, ${SETUP_TITLES[7]}: this computer's files are in place; ${listed(differ)} ${differ.length === 1 ? 'differs' : 'differ'} from what is committed, and setup leaves ${differ.length === 1 ? 'it as it is' : 'them as they are'}.`);
       return { settled: { record: { nothing: true, ...(differ.length > 0 ? { differ } : {}) } } };
@@ -803,7 +881,7 @@ export function projectFilesStep({
       const head = await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}']);
       let unpushed = false;
       if (head !== tip) {
-        unpushed = await setupCommitOn(git, head, tip, { strict: true });
+        unpushed = await setupCommitOn(git, head, tip, { strict: true, own: journalledCommits(`${repo} ${branch}`) });
         if (!unpushed) {
           if (head !== null && await git.ok(['merge-base', '--is-ancestor', tip, head])) {
             throw new Error(`This folder has commits of your own on ${branch} that are not on ${NAME[host]} yet, and setup's commit would take them up too: push them, or move them to a branch of their own, then ask again`);
@@ -848,15 +926,19 @@ export function projectFilesStep({
       // untracked or deleted, or when a changed line mentions .env (a cover that isn't committed is not
       // trusted); unless the changes are only lines setup's journal recorded writing. Any other edit,
       // with the committed file already covering, is left alone.
-      const missing = await envMissing(git, folder);
+      const { missing } = await envMissing(git, folder);
       const ignoreWork = readText(at(GITIGNORE));
       const ignoreBefore = await headText(git, GITIGNORE);
       const ignoreMade = missing.length > 0 ? withLines(ignoreWork, ignoreChanges(at(GITIGNORE), missing, ignoreWork).map((c) => c.line)) : ignoreWork;
       const ignoreDiffers = !sameContent(GITIGNORE, ignoreWork, ignoreBefore);
       const wrote = journalled(at(GITIGNORE), (t) => samePathText(t, at(GITIGNORE)));
       const ignoreOurs = ignoreDiffers && onlyOurLines(ignoreBefore, ignoreWork, wrote);
+      // The committed text decides: when the working copy differs and HEAD's own text does not cover
+      // every probe, what goes up and what the other clones get lacks the cover, however the working
+      // copy gets it (a rule that never says .env, such as `.*`, included).
+      const headGaps = ignoreDiffers && !ignoreOurs && ignoreWork !== null && ignoreBefore !== null ? await headMissing(git, ignoreBefore) : [];
       const ignoreTheirs = ignoreDiffers && !ignoreOurs
-        && (ignoreWork === null || ignoreBefore === null || changedLines(ignoreBefore, ignoreWork).some((l) => l.includes('.env')));
+        && (ignoreWork === null || ignoreBefore === null || headGaps.length > 0 || changedLines(ignoreBefore, ignoreWork).some((l) => l.includes('.env')));
       const ignoreInvolved = missing.length > 0 || ignoreOurs || ignoreTheirs;
       if (ignoreInvolved && ignoreDiffers && !ignoreOurs) {
         const asked = yoursAsk({ rel: GITIGNORE, text: ignoreWork, isNew });

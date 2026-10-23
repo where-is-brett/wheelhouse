@@ -1280,7 +1280,7 @@ test('what goes up must hold the cover: a deleted, untracked or edited .gitignor
     const w = await world();
     fs.rmSync(path.join(w.folder, '.gitignore'));
     const asked = (await w.plan()).ask;
-    assert.match(asked?.card.what ?? '', /\.gitignore has changes of yours/);
+    assert.match(asked?.card.what ?? '', /\.gitignore has been deleted here/);
     w.answers[`7.${asked.id}`] = said(LEAVE_YOURS);
     assert.equal((await w.plan()).why, leftYoursLine('.gitignore'));
     w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
@@ -1365,5 +1365,94 @@ test('an unpushed setup commit holding .gitignore is pushed on the next Go ahead
     fs.writeFileSync(path.join(w.folder, '.gitignore'), 'node_modules\n.env\n.env.*\nsecrets.txt\n');
     await g(w.folder, 'commit', '-q', '--amend', '--no-edit', '-a');
     await assert.rejects(w.plan(), /commits of your own/);
+  });
+});
+
+// ---- Guard follow-ups: HEAD decides the cover, a negation on a joining computer, a deleted .gitignore, a retried push ----
+
+test('an uncommitted .gitignore over a HEAD that does not cover .env is asked about, whatever the edit says', async () => {
+  for (const text of ['.*\n', '*\n', '.e*\n', '.env*\n']) {
+    await withHome(async () => {
+      const w = await world({ gitignore: 'node_modules\n' });
+      fs.writeFileSync(path.join(w.folder, '.gitignore'), text);
+      const asked = (await w.plan()).ask;
+      assert.match(asked?.card.what ?? '', /\.gitignore has changes of yours/, JSON.stringify(text));
+    });
+  }
+});
+
+test('an uncommitted .gitignore over a HEAD that covers .env, with an unrelated edit, is left alone; a failing check of HEAD is not trusted', async () => {
+  await withHome(async () => {
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), '.*\n');
+    const planned = await w.plan();
+    assert.ok(planned.changes, JSON.stringify(planned.ask ?? planned));
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').files, SETUP_FILES);
+  });
+  await withHome(async () => {
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    w.gitFails = (args) => args.includes('init');
+    assert.match((await w.plan()).ask?.card.what ?? '', /\.gitignore has changes of yours/, 'HEAD not shown to cover, so asked');
+  });
+  await withHome(async () => {
+    const w = await world();
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    await w.plan();
+    assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('wh-head-')), [], 'the temporary folder is removed');
+  });
+});
+
+test('on a joining computer, a negation in the root .gitignore is not answered with an exclude line, and the step says so', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const first = await w.apply((await w.plan()).changes);
+    assert.equal(first.ok, true, first.reason);
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), '.env\n.env.*\n!.env.local\n');
+    await g(w.folder, 'commit', '-q', '-am', 'Let .env.local in');
+    await g(w.folder, 'push', '-q', w.bare, 'main');
+    const run = await secondComputer(w);
+    const heard = [];
+    const planned = await w.step.plan(w.ctx({ runId: run.id, say: (line) => heard.push(line) }));
+    assert.ok(Array.isArray(planned.changes), JSON.stringify(planned));
+    assert.ok(!planned.changes.some((c) => c.line === '.env' || c.line === '.env.*'), 'no exclude line offered');
+    assert.doesNotMatch(cardText(planned), /\.env files/);
+    assert.ok(heard.some((l) => /\.gitignore lets some \.env files into git/.test(l) && /take it up on the computer that set the project up/.test(l)), JSON.stringify(heard));
+  });
+});
+
+test('a deleted .gitignore has its own question, naming what setup would put back', async () => {
+  await withHome(async () => {
+    const w = await world();
+    fs.rmSync(path.join(w.folder, '.gitignore'));
+    const asked = (await w.plan()).ask;
+    assert.match(asked.card.what, /\.gitignore has been deleted here; setup's commit, "Set up Wheelhouse", would put back one holding only the \.env lines/);
+    assert.doesNotMatch(asked.card.what, /changes of yours/);
+    assert.deepEqual(asked.card.options.map((o) => o.label), [putYoursIn('.gitignore'), LEAVE_YOURS]);
+    assert.match(asked.id, /^yours-[0-9a-f]{12}$/);
+    assert.ok(asked.card.what.length < 200 && asked.card.options.every((o) => o.says.length < 200), 'shorter than the generic question');
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    assert.deepEqual(planned.changes.find((c) => c.action === 'commit').yours.map((y) => y.file), ['.gitignore']);
+  });
+});
+
+test('Put them in with a .gitignore of the director\'s, a failed push, then a retry: the commit is setup\'s own and goes up', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: 'node_modules\n' });
+    fs.appendFileSync(path.join(w.folder, '.gitignore'), 'dist\n');
+    const asked = (await w.plan()).ask;
+    w.answers[`7.${asked.id}`] = said(putYoursIn('.gitignore'));
+    const planned = await w.plan();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'down' } : failing(file, args, options));
+    assert.equal((await w.apply(planned.changes)).ok, false);
+    w.run = failing;
+    const again = await w.plan();
+    const push = again.changes?.find((c) => c.action === 'push');
+    assert.ok(push, JSON.stringify(again.ask ?? again));
+    const done = await w.apply(again.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'show', 'main:.gitignore'), 'node_modules\ndist\n.env\n.env.*');
   });
 });
