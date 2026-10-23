@@ -4,11 +4,12 @@
 // couldn't be looked at. Plain words, with no "commit", "branch" or "worktree"; the host named as it
 // is; a part with nothing in it never mentioned. Scheduled jobs and secret files are counted in the
 // survey but never said here (ruling A5).
+import { OTHER_SETUP_NAMED_FIRST } from '../lib/agent-control.js';
 
 const HOST_NAMES = { github: 'GitHub', gitlab: 'GitLab' };
 const HERE = 'on this computer';
 // The files named first, by the name a director is likeliest to know; otherwise the first listed.
-const NAMED_FIRST = ['AGENTS.md', '.cursorrules', '.windsurfrules', '.github/copilot-instructions.md'];
+const NAMED_FIRST = OTHER_SETUP_NAMED_FIRST;
 
 // A list the survey cut short (it looked at only so many lines) is said as at least what it found.
 const counted = (n, one, many, more = false) => `${more ? 'at least ' : ''}${n} ${n === 1 ? one : many}`;

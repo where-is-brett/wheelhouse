@@ -12,13 +12,10 @@ import path from 'node:path';
 import { readStart, isFile } from '../setup/questions.js';
 import { STATE_BRANCH } from '../state/clone.js';
 import { LOCK_BRANCH } from '../state/lock.js';
+import { OTHER_SETUP_PATHS } from '../lib/agent-control.js';
 
-// Where another agent setup keeps its instructions, from the project's folder: a list to look in,
-// not a shape the project must have. `/**` is every file under that folder.
-export const INSTRUCTION_PATHS = Object.freeze([
-  '.claude/skills/**', '.claude/agents/**', 'AGENTS.md', '.cursor/rules/**', '.cursorrules',
-  '.github/copilot-instructions.md', '.windsurfrules',
-]);
+// Where another agent setup keeps its instructions (scripts/lib/agent-control.js).
+export const INSTRUCTION_PATHS = OTHER_SETUP_PATHS;
 // At most this many instruction files are listed, and of CLAUDE.md the first FILE_BYTES are read.
 export const INSTRUCTION_FILES = 200;
 export const FILE_BYTES = 256 * 1024;
