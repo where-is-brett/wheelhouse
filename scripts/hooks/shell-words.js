@@ -73,6 +73,8 @@ function scan(command, windows, strict, operators = [], level = 0) {
   operators.push(null);
   let current = null;
   let quotedWord = false;
+  let braceChecked = 0;
+  let commentChecked = -1;
   const stack = ['top'];
   const hdInfos = [];
   const pending = [];
@@ -287,11 +289,16 @@ function scan(command, windows, strict, operators = [], level = 0) {
     } else if (!strict && ch === '$' && next === '{') {
       // Outside quotes ${ } is read as plain characters; a < inside it could be a
       // heredoc to the scanner and not to the shell, so none is allowed.
-      let open = 1;
-      for (let j = i + 2; j < chars.length && open > 0; j += 1) {
-        if (chars[j] === '{') open += 1;
-        else if (chars[j] === '}') open -= 1;
-        else if (chars[j] === '<') return null;
+      // A range already looked through is not looked through again.
+      if (i >= braceChecked) {
+        let open = 1;
+        let j = i + 2;
+        for (; j < chars.length && open > 0; j += 1) {
+          if (chars[j] === '{') open += 1;
+          else if (chars[j] === '}') open -= 1;
+          else if (chars[j] === '<' || chars[j] === '\n') return null; // not worth reading across lines
+        }
+        braceChecked = j;
       }
       add('${');
       i += 1;
@@ -344,8 +351,12 @@ function scan(command, windows, strict, operators = [], level = 0) {
       }
     } else if (ch === '#' && current === null) {
       // A comment: the shell skips it, so nothing in it may look like structure.
-      const { text: comment } = lineAt(i);
-      if (/['"`()<\\]/.test(comment)) return null;
+      // The first # of a line checks the rest of it.
+      if (i > commentChecked) {
+        const { text: comment, end } = lineAt(i);
+        if (/['"`()<\\]/.test(comment)) return null;
+        commentChecked = end;
+      }
       add(ch);
     } else {
       add(ch);

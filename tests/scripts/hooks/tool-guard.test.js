@@ -1067,3 +1067,11 @@ test('Bash refuses where the guard and the shell could disagree about a heredoc'
     assert.equal(await withWin(ctx, 'dir C:\\Users\\x'), undefined);
   });
 });
+
+test('the splitter reads long inputs in linear time', () => {
+  for (const command of ['gh x; ' + '# '.repeat(30000), '${'.repeat(30000), 'echo ${a}${b}\n'.repeat(5000), 'a # b\n'.repeat(10000)]) {
+    const start = Date.now();
+    segments(command, false);
+    assert.ok(Date.now() - start < 1000, `${command.slice(0, 20)} took ${Date.now() - start} ms`);
+  }
+});
