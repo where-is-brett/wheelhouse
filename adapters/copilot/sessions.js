@@ -17,14 +17,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pendingPart } from '../../scripts/agents/contract.js';
-import { isModelName } from '../../scripts/gate/guardrails.js';
+import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
-import { ACTIVITY_DAYS } from '../../scripts/lib/copilot-numbers.js';
+import { ACTIVITY_DAYS, LEVELS } from '../../scripts/lib/copilot-numbers.js';
 import { SLUG } from '../../scripts/lib/build-loop.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
+import { isConfiguredBuildCommand } from '../../scripts/protection/windows-builds.js';
 import { scanText } from '../../scripts/state/secret-scan.js';
 import { copilotHome, file as hookFile, writeRegistration } from './hooks.js';
+import { levelAllowed, levelRules } from './permissions.js';
 
 // The kit's agents, copied into every session's own home (adapters/copilot/home/agents).
 const KIT_AGENTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home', 'agents');
@@ -180,11 +182,11 @@ function rulesOf(list, what) {
 }
 
 // One session's call (ruling P7-2): `{ file, args, env, input, verbatim, home, usageFile, logDir, activityFile }`.
-// `rules` are the level's `{ allow, deny }` in Copilot's syntax; none given allows nothing, which fails closed (a
-// tool no rule allows is refused at once, check 61). `copilot` is the program as resolveCommand finds it. Through a
-// .cmd shim the whole line, the prompt included, goes through quoteForCmd: Copilot was never shown to read -p's
-// prompt on stdin, so every prompt is Wheelhouse's own short text naming a file, and one quoteForCmd refuses fails
-// the start in plain words (ruling P7-5). The home must already hold Wheelhouse's hook file (writeSessionHome), or
+// `rules` are `{ allow, deny }` in Copilot's syntax: the foreman's own tools, or a feature's level's (featureRules);
+// none given allows nothing, which fails closed (a tool no rule allows is refused at once, check 61). `copilot` is
+// the program as resolveCommand finds it. Through a .cmd shim the whole line, the prompt included, goes through
+// quoteForCmd: Copilot was never shown to read -p's prompt on stdin, so every prompt is Wheelhouse's own short text
+// naming a file, and one quoteForCmd refuses fails the start in plain words (ruling P7-5). The home must already hold Wheelhouse's hook file (writeSessionHome), or
 // the call refuses.
 function sessionCall({ project, target, role, config, prompt, rules = {}, resume = null, runId = crypto.randomUUID(), env = process.env, platform = process.platform, copilot = null }) {
   if (typeof prompt !== 'string' || prompt === '') throw new Error('A session needs a prompt');
@@ -249,17 +251,39 @@ export function foremanCall({ config, project, prompt, tools = null, env, platfo
   return sessionCall({ project, target: 'foreman', role: 'foreman', config, prompt, rules: { allow }, env, platform, copilot, runId });
 }
 
-// A feature's first session, run in its worktree. Copilot can't be given a session id, so `sessionId` is ignored;
-// sessionIdOf reads Copilot's own from the run's output.
+// A feature session's level and rules (ruling P7-11), worked out here, never taken from the caller: `rules` and
+// Claude Code's `allowed` are ignored. The level that runs is levelAllowed's; given no level, or one that can't be
+// read, it is Ask with no grants (failing closed). The grants' commands count only while the configuration still
+// lists them, as featureAllowRules counts them. `domains` are the project's web domains, its configuration's when
+// not given. Throws when the worktree isn't a whole path.
+function featureRules({ config, level, grants, guardedCommand = null, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform = process.platform }) {
+  const known = LEVELS.includes(level);
+  const allowed = levelAllowed({ level: known ? level : 'ask', realUsers, keysUnreadable, hostApproval, unattendedConfirmed });
+  const commands = config?.buildCommands ?? DEFAULT_BUILD_COMMANDS;
+  const given = (known && Array.isArray(grants) ? grants : [])
+    .filter((g) => g !== null && typeof g === 'object' && Array.isArray(g.commands))
+    .map((g) => ({ ...g, commands: g.commands.filter((c) => isConfiguredBuildCommand(c, commands)) }));
+  const rules = levelRules({ level: allowed.level, grants: given, runner: guardedCommand, worktree, domains: domains ?? config?.webDomains ?? [], platform });
+  return { level: allowed.level, rules };
+}
+
+// The inputs a feature call reads for its level, which never reach sessionCall.
+function featureCall({ rules: _rules, level, grants, guardedCommand, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, ...rest }, extra) {
+  const feature = featureRules({ config: rest.config, level, grants, guardedCommand, worktree, domains, realUsers, keysUnreadable, hostApproval, unattendedConfirmed, platform: rest.platform });
+  return { ...sessionCall({ ...rest, ...extra, rules: feature.rules }), level: feature.level };
+}
+
+// A feature's first session, run in its worktree, at the level levelAllowed lets run (`level` in the call's result).
+// Copilot can't be given a session id, so `sessionId` is ignored; sessionIdOf reads Copilot's own from the run's output.
 export function featureStartCall({ sessionId: _ignored, project, work, ...rest }) {
-  return sessionCall({ ...rest, project, target: `feature-${work}`, role: 'builder' });
+  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder' });
 }
 
 // A feature's session, woken: `--resume=<id>` in the feature's own home, never `--continue` (which takes the newest
-// session in the home, check 61).
+// session in the home, check 61). Its rules are worked out afresh, so a grant spent by an earlier run is not given.
 export function featureResumeCall({ sessionId, project, work, ...rest }) {
   if (sessionId === undefined || sessionId === null) throw new Error('A wake needs the session id');
-  return sessionCall({ ...rest, project, target: `feature-${work}`, role: 'builder', resume: sessionId });
+  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', resume: sessionId });
 }
 
 // The events in a run's output, one JSON object per line; a line that isn't one is skipped.

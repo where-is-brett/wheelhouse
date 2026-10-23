@@ -18,6 +18,7 @@ import { makeEvent, ACTIVITY_COMMANDS, PLAIN_KINDS, REFUSAL_KINDS } from '../../
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { registration } from '../../../adapters/copilot/hooks.js';
 import copilot from '../../../adapters/copilot/index.js';
+import { levelRules } from '../../../adapters/copilot/permissions.js';
 import sessions, {
   MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
   featureStartCall, finalAnswer, foremanCall, pruneActivity, refusalOf, refusalsOf, sessionHome, sessionIdOf,
@@ -53,16 +54,22 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 // A call refuses a home without Wheelhouse's hook file, so the homes the calls below use are written first, in this
 // file's own temporary Wheelhouse home.
 for (const target of ['foreman', 'feature-add-login']) writeSessionHome({ project: PROJECT, target, signedInFrom: personHome(), node: process.execPath, root: ROOT });
-const RULES = { allow: ['write', 'shell(npm test:*)', 'task'], deny: ['shell(gh:*)', 'write(**/AGENTS.md)'] };
+// A feature call's level, from which it works out its own rules (Part 7 Task 2, ruling P7-11).
+const WORKTREE = '/Users/a/projects/app/.worktrees/add-login';
+const LEVEL = { level: 'ask', grants: [{ questionId: 'q-add-login-1', commands: ['npm test'], scope: 'feature' }], worktree: WORKTREE };
+const RULE_ARGS = (() => {
+  const { allow, deny } = levelRules({ ...LEVEL, platform: process.platform });
+  return [...allow.map((r) => `--allow-tool=${r}`), ...deny.map((r) => `--deny-tool=${r}`)];
+})();
 const COPILOT = { kind: 'direct', file: 'copilot' };
 const ROUTED = { agentRouting: { copilot: { builder: 'model-a', foreman: 'model-b' } } };
 const WIDE = ['--trust-folder', '--allow-all', '--yolo', '--allow-all-tools', '--allow-all-paths', '--allow-all-urls', '--add-dir'];
 
 const start = (extra = {}) => featureStartCall({
-  project: PROJECT, work: 'add-login', config: ROUTED, prompt: 'Read .wheelhouse/feature/brief.md and start.', rules: RULES, env: { PATH: '/usr/bin', HOME: '/Users/a' }, copilot: COPILOT, ...extra,
+  project: PROJECT, work: 'add-login', config: ROUTED, prompt: 'Read .wheelhouse/feature/brief.md and start.', ...LEVEL, env: { PATH: '/usr/bin', HOME: '/Users/a' }, copilot: COPILOT, ...extra,
 });
 const resume = (extra = {}) => featureResumeCall({
-  project: PROJECT, work: 'add-login', sessionId: 'a1b2c3d4-0000-4000-8000-000000000001', config: ROUTED, prompt: 'Read the wake file w.json.', rules: RULES, env: { PATH: '/usr/bin', HOME: '/Users/a' }, copilot: COPILOT, ...extra,
+  project: PROJECT, work: 'add-login', sessionId: 'a1b2c3d4-0000-4000-8000-000000000001', config: ROUTED, prompt: 'Read the wake file w.json.', ...LEVEL, env: { PATH: '/usr/bin', HOME: '/Users/a' }, copilot: COPILOT, ...extra,
 });
 const foreman = (extra = {}) => foremanCall({
   project: PROJECT, config: ROUTED, prompt: 'Read the wake file w.json.', env: { PATH: '/usr/bin', HOME: '/Users/a' }, copilot: COPILOT, ...extra,
@@ -92,7 +99,7 @@ test('each call has --no-ask-user and the level\'s rules', () => {
     '-p', 'Read .wheelhouse/feature/brief.md and start.', '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps',
     '--no-ask-user', '--disallow-temp-dir', '--log-dir', call.logDir, '--usage-output-file', call.usageFile,
     '--agent', 'wheelhouse-builder', '--model', 'model-a',
-    '--allow-tool=write', '--allow-tool=shell(npm test:*)', '--allow-tool=task', '--deny-tool=shell(gh:*)', '--deny-tool=write(**/AGENTS.md)',
+    ...RULE_ARGS,
   ]);
 
   // A wake resumes by id, in the `=` form, never with --continue; its activity goes on in the session's own file.
@@ -103,7 +110,7 @@ test('each call has --no-ask-user and the level\'s rules', () => {
     '-p', 'Read the wake file w.json.', '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps',
     '--no-ask-user', '--disallow-temp-dir', '--log-dir', woken.logDir, '--usage-output-file', woken.usageFile,
     '--agent', 'wheelhouse-builder', '--model', 'model-a',
-    '--allow-tool=write', '--allow-tool=shell(npm test:*)', '--allow-tool=task', '--deny-tool=shell(gh:*)', '--deny-tool=write(**/AGENTS.md)',
+    ...RULE_ARGS,
   ]);
   assert.equal(woken.activityFile, activityFile(PROJECT, 'a1b2c3d4-0000-4000-8000-000000000001'));
   assert.equal(woken.home, call.home);
@@ -123,11 +130,15 @@ test('each call has --no-ask-user and the level\'s rules', () => {
   assert.equal(shells.length, 2);
   assert.throws(() => foreman({ long: true }), /Copilot's foreman runs one wake at a time; its long session isn't built/);
 
-  // No rules given: nothing allowed, which fails closed (a tool no rule allows is refused, check 61).
-  const bare = start({ rules: undefined });
-  assert.ok(!bare.args.some((arg) => arg.startsWith('--allow-tool')));
-  assert.throws(() => start({ rules: { allow: [''], deny: [] } }), /rule/);
-  assert.throws(() => start({ rules: { allow: ['shell(x)\ny'], deny: [] } }), /rule/);
+  // The level's rules hold the granted command, the loop's tools and the denies.
+  for (const rule of ['--allow-tool=write', '--allow-tool=shell(npm test:*)', '--allow-tool=task', '--deny-tool=shell(gh:*)', '--deny-tool=write(**/AGENTS.md)']) {
+    assert.ok(call.args.includes(rule), rule);
+  }
+  // No level given: Ask with no grants, so no shell rule at all, which fails closed (a tool no rule allows is refused,
+  // check 61); rules passed in are never used.
+  const bare = start({ level: undefined, rules: { allow: ['shell'], deny: [] } });
+  assert.ok(!bare.args.some((arg) => arg.startsWith('--allow-tool=shell')));
+  assert.equal(bare.level, 'ask');
 });
 
 test('the model comes from the routing table\'s Copilot column, and none is passed when it is absent (P7-6)', () => {
@@ -359,14 +370,14 @@ test('the own home carries hooks/wheelhouse.json', () => withHome((wheelhouse) =
 }));
 
 test('no call carries --trust-folder or an allow-everything flag', () => {
-  const calls = [start(), resume(), foreman(), start({ config: {} }), start({ rules: { allow: ['shell', 'write'], deny: [] } })];
+  const calls = [start(), resume(), foreman(), start({ config: {} }), start({ level: 'unattended', realUsers: false, unattendedConfirmed: true })];
   for (const call of calls) {
     const flags = call.args.filter((arg, i) => call.args[i - 1] !== '-p');
     for (const wide of WIDE) assert.ok(!flags.some((arg) => arg === wide || arg.startsWith(`${wide}=`)), `${wide} in ${call.args.join(' ')}`);
   }
   // A rule can't smuggle one in: each rule is one --allow-tool= or --deny-tool= argument.
-  const smuggled = start({ rules: { allow: ['--yolo'], deny: [] } });
-  assert.ok(smuggled.args.includes('--allow-tool=--yolo'));
+  const smuggled = start({ level: 'guarded', keysUnreadable: true, guardedCommand: '--yolo', platform: 'win32' });
+  assert.ok(smuggled.args.includes('--allow-tool=shell(--yolo:*)'));
   assert.ok(!smuggled.args.includes('--yolo'));
 });
 
