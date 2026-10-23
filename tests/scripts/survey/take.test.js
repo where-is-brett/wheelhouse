@@ -121,22 +121,22 @@ test('Wheelhouse\'s own lines are the feature lines its state records', async ()
 
 test('recording the survey never throws: a refused one is recorded as a survey that missed', async () => {
   const writes = [];
-  const client = (answers) => ({ state: { write: async (args) => { writes.push(args); return answers.shift() ?? { ok: true, id: 'x' }; } } });
+  const writer = (answers) => async (data) => { writes.push(data); return answers.shift() ?? { ok: true, id: 'x' }; };
   const data = { ...missedSurvey(), hostReached: true };
-  assert.deepEqual(await recordSurvey({ project: 'o__p', client: client([]), take: async () => data }), { ok: true, id: 'x' });
-  assert.deepEqual(writes.splice(0), [{ project: 'o__p', kind: 'survey', data }]);
+  assert.deepEqual(await recordSurvey({ write: writer([]), take: async () => data }), { ok: true, id: 'x' });
+  assert.deepEqual(writes.splice(0), [data]);
   // Refused (a secret the scan found, say): recorded again as a survey that missed the host.
-  await recordSurvey({ project: 'o__p', client: client([{ ok: false, refused: 'matched: github-token' }]), take: async () => data });
-  assert.deepEqual(writes.splice(0).map((w) => w.data), [data, missedSurvey()]);
+  await recordSurvey({ write: writer([{ ok: false, refused: 'matched: github-token' }]), take: async () => data });
+  assert.deepEqual(writes.splice(0), [data, missedSurvey()]);
   // Under STOP nothing more is tried.
-  await recordSurvey({ project: 'o__p', client: client([{ ok: false, refused: 'STOP is on' }]), take: async () => data });
+  await recordSurvey({ write: writer([{ ok: false, refused: 'STOP is on' }]), take: async () => data });
   assert.equal(writes.splice(0).length, 1);
-  // A take that throws, or a client that throws, still gives an answer.
-  await recordSurvey({ project: 'o__p', client: client([]), take: async () => { throw new Error('no'); } });
-  assert.deepEqual(writes.splice(0).map((w) => w.data), [missedSurvey()]);
-  const thrown = await recordSurvey({ project: 'o__p', client: { state: { write: async () => { throw new Error('gone'); } } }, take: async () => data });
+  // A take that throws, or a writer that throws, still gives an answer.
+  await recordSurvey({ write: writer([]), take: async () => { throw new Error('no'); } });
+  assert.deepEqual(writes.splice(0), [missedSurvey()]);
+  const thrown = await recordSurvey({ write: async () => { throw new Error('gone'); }, take: async () => data });
   assert.equal(thrown.ok, false);
   // With `again`, the survey says it was taken again.
-  await recordSurvey({ project: 'o__p', client: client([]), take: async () => data, again: true });
-  assert.deepEqual(writes.splice(0).map((w) => w.data), [{ ...data, again: true }]);
+  await recordSurvey({ write: writer([]), take: async () => data, again: true });
+  assert.deepEqual(writes.splice(0), [{ ...data, again: true }]);
 });

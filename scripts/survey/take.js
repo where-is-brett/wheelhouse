@@ -127,15 +127,16 @@ export async function takeSurvey({
   }
 }
 
-// Records the survey `take()` gives in the project's state through the helper (`client`), with
-// `again: true` when it is taken again. A survey the state refuses (other than under STOP) is
-// recorded as one that missed the host, so the next briefing looks again. Never throws: the
-// helper's answer, or { ok: false, refused } when it couldn't be asked.
-export async function recordSurvey({ project, client, take = () => takeSurvey({ project }), again = false }) {
+// Records the survey `take()` gives with `write(data)`, the helper's own writer of a survey (no
+// caller may write one, scripts/state/events.js's HELPER_ONLY_KINDS), with `again: true` when it is
+// taken again. A survey the state refuses (other than under STOP) is recorded as one that missed
+// the host, so the next briefing looks again. Never throws: the writer's answer, or { ok: false,
+// refused } when it couldn't write.
+export async function recordSurvey({ write: writeWith, take, again = false }) {
   const mark = (data) => (again ? { ...data, again: true } : data);
   const write = async (data) => {
     try {
-      return await client.state.write({ project, kind: 'survey', data: mark(data) });
+      return await writeWith(mark(data));
     } catch {
       return { ok: false, refused: 'the helper could not be asked' };
     }

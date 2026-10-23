@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
-import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath, writeEvent, syncState, listEvents, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
@@ -709,6 +709,8 @@ test('a survey record carries every part of the survey, each in its own shape', 
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
+    // Only the helper itself records a survey: no caller writes one.
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);

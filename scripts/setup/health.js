@@ -687,14 +687,17 @@ export function removeTrialLeftover(folder) {
 // line saying how the foreman stands; `briefing` the briefing's text, or null when it couldn't be
 // put together (the front desk gives one at the next visit). The survey only reads, and never
 // stops setup: one that fails, or that the state refuses, is recorded as one that missed the host
-// (scripts/survey/take.js). `start(project)`, `brief(project)`, `look()` (the survey taken) and
-// `adapterFor(record)` (the host's adapter the survey asks) are for tests.
+// (scripts/survey/take.js). Only the helper records a survey: `writeSurvey(project, data)` is its
+// own writer, which the helper hands setup's routes; with none, nothing is recorded.
+// `start(project)`, `brief(project)`, `look()` (the survey taken) and `adapterFor(record)` (the
+// host's adapter the survey asks) are for tests.
 export async function finishSetup({
   project, client = helperClient({ timeout: BRIEFING_WAIT_MS * 2 }), now = () => new Date(), spawn, load = loadBoardInputs,
   start, brief, adapterFor, look = () => takeSurvey({ project, ...(adapterFor ? { adapter: adapterFor } : {}) }),
+  writeSurvey = async () => ({ ok: false, refused: 'only the helper records a survey' }),
 } = {}) {
   try {
-    await recordSurvey({ project, client, take: look });
+    await recordSurvey({ write: (data) => writeSurvey(project, data), take: look });
   } catch { /* recordSurvey never throws; setup finishes whatever the survey does */ }
   let started;
   try {

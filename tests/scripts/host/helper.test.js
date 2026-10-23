@@ -1408,6 +1408,15 @@ const SURVEYED = {
   v: 1, hostReached: false, requests: [], pushed: [], local: [], more: { pushed: false, local: false },
   instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [{ words: 'Use British English.', source: { file: 'CLAUDE.md', line: 2 } }],
 };
+// A survey the helper recorded earlier, put into the state's folder as its file.
+let seeded = 0;
+function seedSurvey(data) {
+  seeded += 1;
+  const event = makeEvent({ kind: 'survey', data, now: () => new Date(Date.now() + seeded) });
+  const file = path.join(stateDir('o__p'), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+}
 const surveysIn = () => listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'survey').sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
 // A project whose folder is a repository of its own, on main, with one line of work off it.
@@ -1439,13 +1448,18 @@ test('/survey/again takes a survey once when the last one missed the host, and n
       },
     });
     await as(p.home, () => withHelper(adapter, async (client) => {
+      // No caller writes a survey: only the helper records one.
+      const forged = await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      assert.equal(forged.ok, false);
+      assert.match(forged.refused, /only the helper/);
+      assert.equal(surveysIn().length, 0);
       // No survey yet: none taken.
       assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
       // The host reached: none taken.
-      await client.state.write({ project: 'o__p', kind: 'survey', data: { ...SURVEYED, hostReached: true } });
+      seedSurvey({ ...SURVEYED, hostReached: true });
       assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
       // The host missed: one taken, and only once, however it goes.
-      await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      seedSurvey(SURVEYED);
       const missedAgain = await client.survey.again({ project: 'o__p' });
       assert.equal(missedAgain.ok, true);
       assert.equal(missedAgain.taken, true);
@@ -1457,7 +1471,7 @@ test('/survey/again takes a survey once when the last one missed the host, and n
       assert.deepEqual(last.data.local.map((i) => i.name), ['prices']);
       assert.deepEqual(last.data.rules, SURVEYED.rules, 'the rules found at setup are kept');
       // Missed at setup and reached when taken again: the secret in a title is left out.
-      await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      seedSurvey(SURVEYED);
       reached = true;
       const taken = await client.survey.again({ project: 'o__p' });
       assert.deepEqual([taken.ok, taken.taken, taken.hostReached], [true, true, true]);
@@ -1474,7 +1488,7 @@ test('/survey/again is refused under STOP, and takes nothing', async () => {
   const p = await surveyedProject();
   try {
     await as(p.home, () => withHelper(fakeAdapter({ openRequests: async () => [] }), async (client) => {
-      await client.state.write({ project: 'o__p', kind: 'survey', data: SURVEYED });
+      seedSurvey(SURVEYED);
       fs.writeFileSync(stopFile(), '');
       assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
       assert.equal(surveysIn().length, 1);

@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -42,7 +42,7 @@ import { cloneState } from '../state/clone.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
-import { takeSurvey, shapedSurvey, missedSurvey } from '../survey/take.js';
+import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
@@ -1355,6 +1355,7 @@ export async function startHelper({
   // must be shaped as a random UUID and not one the state holds already.
   async function doWrite({ project, kind, data, id }, ctx) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
+    if (HELPER_ONLY_KINDS.includes(kind)) refuse('only the helper itself records that kind');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refuse('an id given with a record must be a random UUID in lower case');
@@ -1387,19 +1388,41 @@ export async function startHelper({
     const latest = listEvents(stateDir(project), { report: () => {} })
       .filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object').sort(byOrder).at(-1);
     if (!latest || latest.data.hostReached !== false || latest.data.again === true) return { ok: true, taken: false };
-    const data = await takeSurvey({
-      project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest.data.rules }).rules,
+    let survey = null;
+    const got = await recordSurvey({
+      write: async (data) => {
+        const answer = await writeSurvey(project, data, ctx);
+        if (answer.ok) survey = data;
+        return answer;
+      },
+      take: () => takeSurvey({ project, run, adapter: () => ctx.adapter(), rules: shapedSurvey({ rules: latest.data.rules }).rules }),
+      again: true,
     });
-    let event = makeEvent({ kind: 'survey', data: { ...data, again: true }, now });
-    let result;
+    if (!got.ok) return got;
+    return { ok: true, taken: true, id: got.id, hostReached: survey.hostReached, pushed: got.pushed };
+  }
+
+  // The helper's own writer of a survey, the one kind no caller writes (HELPER_ONLY_KINDS): made
+  // and written here, and the views written again. A refusal (the state's secret scan, say) is an
+  // answer, never a throw. Called in the state's queue, with that route's `ctx`.
+  async function writeSurvey(project, data, ctx) {
     try {
-      result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
-    } catch {
-      event = makeEvent({ kind: 'survey', data: { ...missedSurvey(), again: true }, now });
-      result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+      const event = makeEvent({ kind: 'survey', data, now });
+      const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+      await freshViews(() => writeViews(project, { now }));
+      return written({ event, result });
+    } catch (error) {
+      return { ok: false, refused: error instanceof Error ? error.message : 'the survey could not be recorded' };
     }
-    await freshViews(() => writeViews(project, { now }));
-    return { ok: true, taken: true, id: event.id, hostReached: event.data.hostReached, pushed: result.pushed };
+  }
+  // finishSetup's writer: the project's own context, in the state's queue, refused under STOP.
+  async function writeSetupSurvey(project, data) {
+    try {
+      const ctx = await contextFor(checkProject(project));
+      return await stateRoute((body, c) => writeSurvey(project, data, c), { write: true })({ project }, ctx);
+    } catch (error) {
+      return { ok: false, refused: error instanceof Error ? error.message : 'the survey could not be recorded' };
+    }
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -2681,7 +2704,7 @@ export async function startHelper({
   // status answer under STOP; apply is refused. Plan writes under STOP (ruling R19), but only
   // setup's own records: it starts the folder's run when there is none, stamps the card's shownAt
   // and keeps the shown card in setup/shown/. It changes nothing a step lists.
-  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn });
+  const setup = setupRoutes({ now, stopped, stopRefusal: STOP_REFUSAL, stepsModule: setupSteps, userHome, spawn, writeSurvey: writeSetupSurvey });
   // The baseline from the private note (scripts/measures/baseline.js): per computer, no project.
   // Under STOP, in a project's folder the STOP guard refuses scripts/measures/cli.js, so the front
   // desk can't reach it; a request that arrives all the same may get its card, but nothing is
