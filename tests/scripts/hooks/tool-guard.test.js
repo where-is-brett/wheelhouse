@@ -1120,3 +1120,60 @@ test('an unreadable command is refused with its own message, and a PowerShell li
     assert.ok(denied(await withWin(ctx, 'echo `\n gh pr list', 'darwin', 'PowerShell')));
   });
 });
+
+// The keychain (the security-gaps plan's Task 10, part two). A backstop to the sandbox's denial
+// of ~/Library/Keychains (check 73): only the plain command line is refused.
+const KEYCHAIN = /keychain/;
+const KEYCHAIN_REFUSED = [
+  'security find-generic-password -s gh:github.com -w', 'security find-internet-password -s github.com', 'security dump-keychain',
+  'security export -k login.keychain -t all', '/usr/bin/security find-generic-password -w', 'SECURITY Find-Generic-Password -w',
+  'security -q find-generic-password -w', 'security$X find-generic-password', 'security find-generic-password$X -w',
+  'sudo security dump-keychain -d', 'env A=1 security find-internet-password', 'xargs security find-generic-password -w',
+  'sh -c "security find-generic-password -w"', 'x; security dump-keychain', 'true && security find-generic-password -s x -w > out.txt',
+  'S=security; $S find-generic-password -w', 'echo find-generic-password | security -i', 'security -qi', 'security -p "> "',
+  // security takes the first part of a command's name; a redirect or a variable doesn't hide it.
+  'security find -s x -w', 'security find-g -s x -w', 'security find-i -s x', 'security dump', 'security ex -k login.keychain',
+  'security 2>/dev/null find-generic-password -s x -w', 'security >out.txt find-generic-password -w', 'C=find-generic-password; security $C -s x -w',
+  'echo find-generic-password -s x -w | xargs security', 'find . -name k -exec security {} \\;', 'timeout 5 security find-generic-password -w',
+];
+for (const cmd of KEYCHAIN_REFUSED) {
+  test(`Bash refuses a read of the keychain: ${cmd}`, async () => {
+    await withHome(async (home) => {
+      const { base, main } = makeProject();
+      try {
+        const out = await run(base, home, call(main, 'Bash', { command: cmd }), 'darwin');
+        assert.ok(denied(out));
+        assert.match(out.hookSpecificOutput.permissionDecisionReason, KEYCHAIN);
+      } finally { fs.rmSync(base, { recursive: true, force: true }); }
+    });
+  });
+}
+
+test('Bash allows the security tool\'s other commands and words that only mention the keychain\'s', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const cmd of ['security list-keychains', 'security find-identity -v -p codesigning', 'security find-certificate -p -c x',
+        'security', 'security -h', 'grep -rn "security find-generic-password" docs', 'git commit -m "Refuse security dump-keychain"',
+        'grep security notes.md | grep find-generic-password', 'npm audit --security find-generic-password',
+        'export LABEL=security', 'TOPIC=security; export TOPIC', 'grep security -ri src/', 'echo security dump-keychain',
+        'security unlock-keychain -p "$PW" build.keychain', 'security export-smartcard', 'security 2>/dev/null list-keychains',
+        'find . -name k -exec security find-certificate -c {} \\;']) {
+        assert.equal(await run(base, home, call(main, 'Bash', { command: cmd }), 'darwin'), undefined, cmd);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('PowerShell and Monitor refuse a read of the keychain too', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const tool of ['PowerShell', 'Monitor']) {
+        const out = await run(base, home, call(main, tool, { command: 'security find-generic-password -w' }), 'darwin');
+        assert.ok(denied(out), tool);
+        assert.match(out.hookSpecificOutput.permissionDecisionReason, KEYCHAIN);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
