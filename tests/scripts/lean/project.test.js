@@ -17,7 +17,7 @@ import { stateDir } from '../../../scripts/lib/paths.js';
 import { listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { lookRefusalLine } from '../../../scripts/lib/safe-git.js';
-import { registerLean, readLean, LEAN_NO_HOST } from '../../../scripts/lean/project.js';
+import { registerLean, readLean, registeredLeanProjects, LEAN_NO_HOST, LEAN_FOLDER } from '../../../scripts/lean/project.js';
 
 // No real gh, glab, copilot or curl runs: the PATH finds the stand-ins first, and the helper's own
 // runs go through a guard whose log stays empty.
@@ -249,6 +249,61 @@ test('a host route for a Lean project refuses and names why', async () => {
     // Nothing was made for a host: no mirror, no lock, no state clone with a remote.
     const dir = await c.as(() => path.join(c.home, 'projects', PROJECT));
     assert.deepEqual(fs.readdirSync(dir).sort(), ['lean.json']);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a Lean state folder that holds files but no repository is kept, and the write refused', async () => {
+  const c = computer();
+  await c.as(() => registerLean({ project: PROJECT, folder: c.folder, now: () => T0 }));
+  const h = await helperOn(c);
+  try {
+    const dir = await c.as(() => stateDir(PROJECT));
+    const kept = path.join(dir, 'events', '2026', '10', 'approval.json');
+    fs.mkdirSync(path.dirname(kept), { recursive: true });
+    fs.writeFileSync(kept, '{"kind":"approval"}\n');
+    for (const ask of [
+      () => h.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'x' } }),
+      () => h.client.state.views({ project: PROJECT }),
+    ]) {
+      const answer = await ask();
+      assert.equal(answer.ok, false);
+      assert.match(answer.refused, /holds files but no repository, so it was left alone/);
+    }
+    assert.equal(fs.readFileSync(kept, 'utf8'), '{"kind":"approval"}\n');
+    assert.equal(fs.existsSync(path.join(dir, '.git')), false);
+    // An empty folder is made into the repository.
+    fs.rmSync(path.join(dir, 'events'), { recursive: true });
+    assert.equal((await h.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'x' } })).ok, true);
+  } finally {
+    await h.close();
+  }
+});
+
+test('setup and uninstall, asked in a Lean folder, refuse with one plain line and change nothing', async () => {
+  const c = computer();
+  await c.as(() => {
+    registerLean({ project: PROJECT, folder: c.folder, now: () => T0 });
+    assert.deepEqual(registeredLeanProjects(), [{ project: PROJECT, record: readLean(PROJECT) }]);
+  });
+  const h = await helperOn(c);
+  try {
+    for (const folder of [c.folder, path.join(c.folder, 'src')]) {
+      const asks = [
+        h.client.setup.plan({ folder, step: 1 }),
+        h.client.setup.apply({ folder, step: 1, hash: 'a'.repeat(64) }),
+        h.client.setup.status({ folder }),
+        h.client.setup.health({ folder, lines: [] }),
+        h.client.setup.uninstall.plan({ folder }),
+        h.client.setup.uninstall.apply({ folder, hash: 'a'.repeat(64) }),
+        h.client.setup.uninstall.status({ folder }),
+      ];
+      for (const answer of await Promise.all(asks)) assert.deepEqual(answer, { ok: false, refused: LEAN_FOLDER });
+    }
+    assert.deepEqual(fs.readdirSync(path.join(c.home, 'projects')), [PROJECT]);
+    assert.deepEqual(fs.readdirSync(path.join(c.home, 'projects', PROJECT)), ['lean.json']);
+    assert.equal(fs.existsSync(path.join(c.home, 'setup')), false, 'no setup journal was started');
   } finally {
     await h.close();
   }
