@@ -4,7 +4,8 @@
 // (scripts/agents/copilot/hook-entry.js) in a process of its own, as Copilot starts it. The run: the session start;
 // STOP by the word, then a write refused and STOP lifted in the window; an unknown tool refused; a chat that isn't
 // Copilot's let read only; an idea and a ruling confirmed by a chat click through the helper; a feature branch
-// approved by a chat click and merged with hooks planted in the store and the project's core.hooksPath, none run;
+// approved by a chat click and merged with hooks planted in the store and the project's core.hooksPath (on macOS
+// and Linux, with a commit outside the fence first showing they fire), none run;
 // undo on a window click used once; the copy holding main and wheelhouse-state; the main version moved outside the
 // helper, said at the session start and kept in the window; the helper stopped, then a write refused and a read
 // let through. Then a real-user Lean project's merge refused on a chat click and accepted after the window's click.
@@ -60,6 +61,14 @@ const GIT_ENV = {
 };
 async function git(cwd, args) {
   const got = await run('git', args, { cwd, baseEnv: withoutGitVars(), env: GIT_ENV });
+  if (got.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${got.stderr}`);
+  return got.stdout.trim();
+}
+
+// Git as a person's own would run, with no hooks folder set aside: only for showing that the planted hooks fire.
+async function unfencedGit(cwd, args) {
+  const { GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0, ...env } = GIT_ENV;
+  const got = await run('git', args, { cwd, baseEnv: withoutGitVars(), env });
   if (got.code !== 0) throw new Error(`git ${args.join(' ')} failed: ${got.stderr}`);
   return got.stdout.trim();
 }
@@ -168,7 +177,7 @@ async function computer({ project = 'shop', realUsers = false } = {}) {
   };
 }
 
-test('a Lean project with the helper, from the session start to the helper stopped', { skip: !unix && 'the planted hooks are shell scripts' }, async () => {
+test('a Lean project with the helper, from the session start to the helper stopped', async () => {
   const c = await computer();
   try {
     const patch = recorded('camel-preToolUse-apply_patch', c.folder);
@@ -226,7 +235,8 @@ test('a Lean project with the helper, from the session start to the helper stopp
     assert.match((await view({ client: c.client, cwd: c.folder, name: 'rulebook', now: c.now })).join('\n'), /in force, by a click in the chat, not proven/);
 
     // A feature branch approved by a chat click and merged, with hooks planted in the store and in the folder the
-    // store's core.hooksPath names: none runs.
+    // store's core.hooksPath names: none runs. The hooks are shell scripts, so they are planted on macOS and Linux
+    // only; every other step runs on every system.
     const marks = path.join(c.home, 'hook-ran');
     const hook = `#!/bin/sh\necho "$0" >> "${marks}"\n`;
     const HOOKS = ['pre-merge-commit', 'prepare-commit-msg', 'commit-msg', 'post-merge', 'post-commit', 'post-checkout', 'reference-transaction', 'pre-push', 'post-rewrite'];
@@ -234,10 +244,23 @@ test('a Lean project with the helper, from the session start to the helper stopp
       fs.mkdirSync(dir, { recursive: true });
       for (const name of HOOKS) fs.writeFileSync(path.join(dir, name), hook, { mode: 0o755 });
     };
-    plant(path.join(storeDir('shop'), 'hooks'));
-    const head = await c.feature('login', { 'login.txt': 'login\n', '.husky/post-merge': hook });
-    plant(path.join(c.folder, '.husky'));
-    await git(storeDir('shop'), ['config', 'core.hooksPath', path.join(c.folder, '.husky')]);
+    const husky = path.join(c.folder, '.husky');
+    if (unix) plant(path.join(storeDir('shop'), 'hooks'));
+    const head = await c.feature('login', { 'login.txt': 'login\n', ...(unix ? { '.husky/post-merge': hook } : {}) });
+    if (unix) {
+      plant(husky);
+      // The planted hooks do fire when git is let run them: a commit in the folder, outside the fence, runs the
+      // store's own, and once the store's settings name .husky, the ones there. Then the folder is put back.
+      await unfencedGit(c.folder, ['commit', '-q', '--allow-empty', '-m', 'Canary']);
+      await git(storeDir('shop'), ['config', 'core.hooksPath', husky]);
+      await unfencedGit(c.folder, ['commit', '-q', '--allow-empty', '-m', 'Canary']);
+      const fired = fs.readFileSync(marks, 'utf8');
+      assert.ok(fired.includes(path.join('hooks', 'post-commit')) && fired.includes(path.join('.husky', 'post-commit')), fired);
+      fs.rmSync(marks);
+      await git(c.folder, ['switch', '-q', '--detach', 'main']);
+    } else {
+      await git(storeDir('shop'), ['config', 'core.hooksPath', husky]);
+    }
     assert.match((await c.lean(['merge', 'login', head])).refused, /no approval of/);
     const question = `Add login to the main version?\n${leanApprovalLine('feature/login', head)}`;
     const approved = await c.lean(['click', 'merge-login', 'Approve', head], { question });
