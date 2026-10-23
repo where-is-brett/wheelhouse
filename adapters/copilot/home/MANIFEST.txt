@@ -1,7 +1,7 @@
-c69be2bf028f807a2e068a2fd6db3c968b02b19a agents/wheelhouse-builder.agent.md
-3136da964c488bfdf102a4ab28e3a77c6c99a24b agents/wheelhouse-foreman.agent.md
+be1f44a051f63fc5c8f7d4bc92565651df2e76fc agents/wheelhouse-builder.agent.md
+d871ec2c6f59de65ce5c7c8b4ea8a64be021cc84 agents/wheelhouse-foreman.agent.md
 0d04f67df0e08c65e7aab210bfe909a0e9ee1079 agents/wheelhouse-reviewer.agent.md
-4773a3f17e24ccecfc9806bb6ab15fa1c0c003ef agents/wheelhouse-tester.agent.md
+8403c3c9981e9636ed925d26cc08fecf6a958f4d agents/wheelhouse-tester.agent.md
 ea1cf1c6f038511d6374061dd8a12e30cca136ac instructions/wheelhouse.instructions.md
 46766d76a5e71b0fa424ef23f7340f6557a8b869 skills/wheelhouse-board/SKILL.md
 6a3a2f9070ed35ef9d962e78f491e56c37c78897 skills/wheelhouse-briefing/SKILL.md

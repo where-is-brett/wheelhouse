@@ -1,7 +1,7 @@
 ---
 name: "wheelhouse-tester"
 description: "Tries the built product as a user would, against the feature's done contract, using the preview deployment or Playwright from the worktree. It writes only screenshots and notes under .wheelhouse/feature/screens/ and reports findings as a reviewer does. Give it the preview address if there is one, and the commit it should try."
-tools: ["view", "rg", "glob", "web_fetch", "bash"]
+tools: ["view", "rg", "glob", "web_fetch", "bash", "powershell"]
 ---
 <!-- adapters/copilot/home/agents/wheelhouse-tester.agent.md (built from agents/tester.md by npm run copilot-home) -->
 

@@ -1,7 +1,7 @@
 ---
 name: "wheelhouse-foreman"
 description: "Use when a session's first prompt begins \"Wheelhouse foreman:\" - a wake to handle, or the start of the long-lived foreman session - and on every WAKE foreman line after it."
-tools: ["bash"]
+tools: ["bash", "powershell"]
 ---
 <!-- adapters/copilot/home/agents/wheelhouse-foreman.agent.md (built from skills/foreman/SKILL.md by npm run copilot-home) -->
 

@@ -1,7 +1,7 @@
 ---
 name: "wheelhouse-builder"
 description: "Builds one briefed task in the feature's own worktree, test first, commits it and ends with a report block. It never merges, pushes to the default branch or opens the pull request. Give it the task text, the files it may touch, the rulings that apply and what done means for the task."
-tools: ["view", "glob", "rg", "apply_patch", "edit", "create", "bash"]
+tools: ["view", "glob", "rg", "apply_patch", "edit", "create", "bash", "powershell"]
 ---
 <!-- adapters/copilot/home/agents/wheelhouse-builder.agent.md (built from agents/builder.md by npm run copilot-home) -->
 

@@ -127,17 +127,19 @@ test('every agent\'s tools are Copilot\'s names, and the foreman\'s are what its
     assert.equal(new Set(front.tools).size, front.tools.length, `${agent} names no tool twice`);
     for (const forbidden of ['task', 'skill', 'sql', 'ask_user']) assert.ok(!front.tools.includes(forbidden), `${agent} has ${forbidden}`);
   }
-  // The foreman: `allowed-tools: Bash(node '...wake.js':*)` is Bash, which is `bash`, and nothing broader.
+  // The foreman: `allowed-tools: Bash(node '...wake.js':*)` is Bash, which is the shell on either system (`bash`, `powershell`), and nothing broader.
   assert.match(fs.readFileSync(path.join(ROOT, 'skills', 'foreman', 'SKILL.md'), 'utf8'), /^allowed-tools: Bash\(/m);
-  assert.deepEqual(split(kit.get('agents/wheelhouse-foreman.agent.md')).front.tools, ['bash']);
+  assert.deepEqual(split(kit.get('agents/wheelhouse-foreman.agent.md')).front.tools, [...tools.shell]);
+  assert.deepEqual(tools.shell, ['bash', 'powershell']);
   // The tester: Read, Grep, Glob, WebFetch and Bash in the source.
-  assert.deepEqual([...split(kit.get('agents/wheelhouse-tester.agent.md')).front.tools].sort(), ['bash', 'glob', 'rg', 'view', 'web_fetch']);
+  assert.deepEqual([...split(kit.get('agents/wheelhouse-tester.agent.md')).front.tools].sort(), ['bash', 'glob', 'powershell', 'rg', 'view', 'web_fetch']);
   // No agent may edit but the builder.
   const editing = [...tools.edit];
   for (const agent of ['foreman', 'reviewer', 'tester']) {
     assert.deepEqual(split(kit.get(`agents/wheelhouse-${agent}.agent.md`)).front.tools.filter((t) => editing.includes(t)), [], agent);
   }
   assert.ok(split(kit.get('agents/wheelhouse-builder.agent.md')).front.tools.includes('apply_patch'));
+  for (const shell of tools.shell) assert.ok(split(kit.get('agents/wheelhouse-builder.agent.md')).front.tools.includes(shell), `the builder has ${shell}`);
 });
 
 test('the agents carry the same prompt text, with Claude Code\'s tool words mapped', () => {
@@ -156,7 +158,7 @@ test('the agents carry the same prompt text, with Claude Code\'s tool words mapp
     // The report block is byte for byte the source's.
     assert.ok(built.body.includes(source.body.slice(source.body.indexOf('```\nWHEELHOUSE REPORT'))), `${agent}'s report block`);
   }
-  assert.deepEqual(CLAUDE_TO_COPILOT, { Read: 'view', Grep: 'rg', Glob: 'glob', Bash: 'bash', WebFetch: 'web_fetch' });
+  assert.deepEqual(CLAUDE_TO_COPILOT, { Read: ['view'], Grep: ['rg'], Glob: ['glob'], Bash: [...tools.shell], WebFetch: ['web_fetch'] });
   assert.match(kit.get('agents/wheelhouse-builder.agent.md'), /\(the rules files, such as `AGENTS\.md` and `\.github\/copilot-instructions\.md`, and any file they point to\)/);
   assert.match(kit.get('agents/wheelhouse-reviewer.agent.md'), /Use `rg` and `glob` to find callers and tests/);
   assert.match(kit.get('agents/wheelhouse-tester.agent.md'), /Use `bash` to run Playwright/);
@@ -326,6 +328,16 @@ test('with no flag the script prints the paths that differ and exits 1; --write 
   assert.ok(!fs.existsSync(path.join(root, HOME_DIR, 'stale.md')));
   assert.equal(run().status, 0);
   assert.deepEqual(writeHome({ root }), [...kit.keys()].sort());
+});
+
+test('a .gitattributes beside the kit keeps its line endings LF', () => {
+  const file = path.join(ROOT, 'adapters', 'copilot', '.gitattributes');
+  assert.ok(fs.existsSync(file), 'adapters/copilot/.gitattributes exists');
+  const lines = lf(fs.readFileSync(file, 'utf8')).split('\n');
+  assert.equal(lines[0], '# adapters/copilot/.gitattributes');
+  assert.ok(lines.includes('home/** text eol=lf'));
+  // It sits outside the kit, so the kit and its manifest don't list it.
+  assert.ok(![...kit.keys()].some((f) => f.includes('gitattributes')));
 });
 
 test('package.json has the copilot-home script', () => {

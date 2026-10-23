@@ -23,7 +23,15 @@ export const HOME_DIR = 'adapters/copilot/home';
 const BUILD_COMMAND = 'npm run copilot-home';
 
 // Ruling P4-9: the names Claude Code gives its tools, in backticks, become Copilot's.
-export const CLAUDE_TO_COPILOT = Object.freeze({ Read: 'view', Grep: 'rg', Glob: 'glob', Bash: 'bash', WebFetch: 'web_fetch' });
+// Each name maps to the list of Copilot tools it grants. Bash is the shell on either system, so it is both of
+// tools.shell (`bash` and, on Windows, `powershell`; ruling P4-19). In running text a name becomes the first of its list.
+export const CLAUDE_TO_COPILOT = Object.freeze({
+  Read: Object.freeze(['view']),
+  Grep: Object.freeze(['rg']),
+  Glob: Object.freeze(['glob']),
+  Bash: Object.freeze([...tools.shell]),
+  WebFetch: Object.freeze(['web_fetch']),
+});
 // Every Claude Code tool name a playbook might put in backticks. One with no entry above is an error, not a pass.
 const CLAUDE_TOOL_NAMES = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'NotebookRead', 'LS'];
 // The five names Part 3 moved out of the playbooks.
@@ -41,7 +49,7 @@ const RULES_PHRASES = Object.freeze([
 // What each agent may use, in Copilot's names. The reviewer's are check 66's route b and nothing else: not the whole
 // of tools.read, which holds more than reading files and searching them. The builder reads, edits and runs commands.
 const REVIEWER_TOOLS = Object.freeze(['view', 'glob', 'rg']);
-const BUILDER_TOOLS = Object.freeze(['view', 'glob', 'rg', ...tools.edit, 'bash']);
+const BUILDER_TOOLS = Object.freeze(['view', 'glob', 'rg', ...tools.edit, ...tools.shell]);
 
 // Ruling P4-8: the explicit list of sources. A source missing from the tree is an error, never skipped.
 // Task 3 adds `wheelhouse-lean` (from skills/lean) and Task 5 adds `wheelhouse-setup` (from skills/setup-lean, since
@@ -101,7 +109,7 @@ function withoutPathComment(body, rel) {
 function mapToolWords(text, rel) {
   return text.replace(new RegExp(`\`(${CLAUDE_TOOL_NAMES.join('|')})\``, 'g'), (_, name) => {
     if (!Object.hasOwn(CLAUDE_TO_COPILOT, name)) throw new Error(`${rel} names \`${name}\`, which CLAUDE_TO_COPILOT has no entry for`);
-    return `\`${CLAUDE_TO_COPILOT[name]}\``;
+    return `\`${CLAUDE_TO_COPILOT[name][0]}\``;
   });
 }
 
@@ -161,7 +169,7 @@ function grantedTools(line, rel) {
   for (const raw of names.map((n) => n.trim()).filter(Boolean)) {
     const name = raw.replace(/\(.*$/s, '').trim();
     if (!Object.hasOwn(CLAUDE_TO_COPILOT, name)) throw new Error(`${rel} grants ${name}, which CLAUDE_TO_COPILOT has no entry for`);
-    if (!out.includes(CLAUDE_TO_COPILOT[name])) out.push(CLAUDE_TO_COPILOT[name]);
+    for (const tool of CLAUDE_TO_COPILOT[name]) if (!out.includes(tool)) out.push(tool);
   }
   return out;
 }
