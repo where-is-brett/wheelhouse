@@ -122,7 +122,7 @@ export function findRepoRoot(cwd) {
   }
 }
 
-// The registered project `cwd` belongs to, and whether it is Locked. Reads files only.
+// The registered project `cwd` belongs to, whether it is Locked, and whether it is a Lean one. Reads files only.
 export function projectOf(cwd, { dir = managedDir() } = {}) {
   const root = findRepoRoot(cwd);
   if (root === null) return null;
@@ -130,7 +130,8 @@ export function projectOf(cwd, { dir = managedDir() } = {}) {
   if (!found) return null;
   // By the record's folder, as lockedByPath does: a rewritten .git file can move `root`, not the record.
   const locked = lockedProjects({ dir }).some((folder) => sameFolder(folder, found.record.folder));
-  return { project: found.project, record: found.record, locked };
+  // A Lean project (scripts/lean/project.js) says so; a project with a project.json keeps the shape it had.
+  return { project: found.project, record: found.record, locked, ...(found.lean === true ? { lean: true } : {}) };
 }
 
 // Whether the folder lies inside a registered project's main folder, worked out
@@ -339,6 +340,13 @@ function translators(agent) {
   return TRANSLATORS[agent];
 }
 
+// Who writes what this agent's hooks record (scripts/agents/translators.js): 'self' when the hooks sign and
+// write under the Wheelhouse home, 'helper' when every write goes through the helper and the hooks never open
+// the keys folder. An agent the kit doesn't know gets 'helper', which writes nothing here.
+export function writeVia(agent) {
+  return Object.hasOwn(TRANSLATORS, agent) && TRANSLATORS[agent].writes === 'self' ? 'self' : 'helper';
+}
+
 // What a guard answers when its check could not run, shaped for its event.
 // SessionStart and SessionEnd cannot refuse anything, so they stay silent.
 function failureAnswer(event, reason = 'Wheelhouse\'s check could not run') {
@@ -368,6 +376,9 @@ class UnknownTool extends Error {
 // file): each is decided in turn, and the first refusal is the answer. A translation that names a tool the
 // adapter doesn't know (`{ unknownTool: name }`) is refused by a guard in the adapter's own words, before
 // `decide` runs, and an informing hook says nothing.
+//
+// Each `decide` is given the agent the input came from (`agent`) and who writes its records (`writeVia`):
+// with 'helper', a hook writes nothing under the Wheelhouse home and never opens the keys folder.
 //
 // Every guard today is on PreToolUse (the STOP guard also runs at SessionEnd,
 // where nothing can be refused); the hooks on UserPromptSubmit, PostToolUse,
@@ -407,7 +418,7 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
     }
     let out;
     for (const one of inputs) {
-      const answered = await decide(one, { event, dir: managed, ...deps });
+      const answered = await decide(one, { event, dir: managed, agent, writeVia: writeVia(agent), ...deps });
       if (refuses(answered)) {
         out = answered;
         break;

@@ -47,6 +47,8 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
+import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
+import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
@@ -708,12 +710,23 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // The front desk's requests (scripts/frontdesk/cli.js), which come from inside the sandbox, where
 // ~/.wheelhouse cannot be read: like the runbook's, each may give `cwd`, a full path, and the
 // helper places the project from it.
-const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview'];
+const PLACED_ROUTES = ['/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click'];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
 // its local state repository, before any connection is made. Every other route refuses it.
-const LEAN_ROUTES = ['/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync'];
+const LEAN_ROUTES = ['/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/session/mark', '/cards/chat-click'];
 const isLean = (project) => readProject(project) === null && readLean(project) !== null;
+
+// The marks a session sends (ruling P5-19), each with its fields and what each must be.
+const MARK_TEXT_CHARS = 200;
+const markText = (v) => typeof v === 'string' && v !== '' && v.length <= MARK_TEXT_CHARS && !/[\u0000-\u001f]/.test(v);
+const SESSION_MARKS = Object.freeze({
+  'unknown-tool': { name: markText },
+  compaction: { trigger: (v) => v === undefined || markText(v) },
+  deadline: { event: markText },
+});
+// The longest card name or label a chat click carries.
+const CHAT_TEXT_CHARS = 500;
 
 const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
 const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
@@ -1399,6 +1412,32 @@ export async function startHelper({
     const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
+  }
+
+  // A session's mark (ruling P5-19), from a hook that only reads: a plain note naming the mark. A tool the agent
+  // has that Wheelhouse doesn't know (`unknown-tool`, the board's line), a compaction, or a hook past its deadline.
+  async function doSessionMark({ project, mark, data }, ctx) {
+    if (!Object.hasOwn(SESSION_MARKS, mark)) refuse('that kind of session mark is not known');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the mark\'s data must be an object');
+    const fields = SESSION_MARKS[mark];
+    if (Object.keys(data).some((k) => !Object.hasOwn(fields, k)) || Object.entries(fields).some(([k, ok]) => !ok(data[k]))) refuse('the mark\'s data is not what that mark carries');
+    return doWrite({ project, kind: 'note', data: { mark, ...data } }, ctx);
+  }
+
+  // A click in the chat (ruling P5-17): an unsigned card-answer naming its proof, never signed. A label that
+  // decides a signed step is taken only on a card a chat click may decide: a merge card, or a guardrail card at
+  // Lean; never one of the confirmed steps, which need the window.
+  async function doChatClick({ project, card, hash, label, proof, commit }, ctx) {
+    if (!CHAT_PROOFS.includes(proof)) refuse(`a click in the chat is recorded as ${CHAT_PROOFS.join(' or ')}`);
+    if (typeof card !== 'string' || card === '' || card.length > CHAT_TEXT_CHARS) refuse('the card must be named');
+    if (typeof label !== 'string' || label === '' || label.length > CHAT_TEXT_CHARS) refuse('the click must name the option chosen');
+    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) refuse('the card\'s hash must be its sha256, in lower case');
+    if (commit !== undefined && (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit))) refuse('the commit must be written in full');
+    if (CONFIRMED_STEPS.includes(card) && SIGNED_LABELS.includes(label)) refuse('that step is confirmed outside the chat, never by a click in it');
+    const mayDecide = /^merge-/.test(card) || (ctx.lean === true && /^guardrail-/.test(card));
+    if (SIGNED_LABELS.includes(label) && !mayDecide) refuse('a click in the chat can\'t decide that card');
+    const data = { question: card, label, hash, ...(commit === undefined ? {} : { commit }), proof };
+    return doWrite({ project, kind: 'card-answer', data }, ctx);
   }
 
   const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -2713,6 +2752,8 @@ export async function startHelper({
       return { ok: true };
     }, { clone: false }),
     '/state/write': stateRoute(doWrite, { write: true }),
+    '/session/mark': stateRoute(doSessionMark, { write: true }),
+    '/cards/chat-click': stateRoute(doChatClick, { write: true }),
     '/state/record': signedIn(stateRoute(doRecord)),
     // A Lean project's state has no remote, so there is nothing to pull or push.
     '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
@@ -2912,9 +2953,10 @@ export async function startHelper({
       return send(res, 400, { ok: false, refused: 'the request must be a JSON object' });
     }
     if (url.pathname === '/stop/set') {
-      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it.
+      // Anyone may set STOP: a false alarm costs only a pause. No route lifts it. `by: 'prompt'` records that
+      // the director's STOP word set it, from a hook that only reads (ruling P5-18); anything else is the helper.
       try {
-        setStop({ by: 'helper', now });
+        setStop({ by: body.by === 'prompt' ? 'prompt' : 'helper', now });
         return send(res, 200, { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'STOP could not be recorded' });

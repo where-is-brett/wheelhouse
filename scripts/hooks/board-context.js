@@ -368,17 +368,25 @@ async function build(want, { project, cwd, at, client, load, command, since, wee
 }
 
 // decide(input, deps) -> the context to add, or undefined.
+//
+// On an agent whose hooks only read (`writeVia: 'helper'`, ruling P5-20) nothing is written under the Wheelhouse
+// home: no role, no visit, no prompt time, no unusual use raised. With no prompt time kept, a gap can't be told,
+// so it adds no briefing and runs no learning: that agent's briefing comes with its session start. The board
+// commands and the cards line are added as for any agent, read through the helper.
 export async function decide(input, deps = {}) {
   try {
     const {
       dir, now = () => new Date(), env = process.env, client, load = loadBoardInputs, waitMs = WAIT_MS + helperGrace(), learnWaitMs = LEARN_WAIT_MS + helperGrace(),
-      briefingModel = realBriefingModel, markRaised = realMarkRaised,
+      briefingModel = realBriefingModel, markRaised: raiseMarked = realMarkRaised, writeVia = 'self',
     } = deps;
+    const writes = writeVia === 'self';
+    const markSeenHere = writes ? markSeen : () => {};
+    const markRaised = writes ? raiseMarked : () => {};
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
     const found = projectOf(input.cwd, { dir });
     if (!found) return undefined;
     const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
-    const first = attempt(() => recordRole(input.session_id, role), false);
+    const first = writes ? attempt(() => recordRole(input.session_id, role), false) : false;
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
@@ -391,14 +399,14 @@ export async function decide(input, deps = {}) {
     // The gap runs from the director's last prompt or the last briefing given, whichever is later,
     // so a briefing /wheelhouse-digest gave counts as given: a prompt soon after it brings none.
     const due = gapPassed(project, [seen.promptAt, seen.briefedAt].filter((t) => typeof t === 'string').sort().at(-1) ?? null, at);
-    const want = command?.name ?? (due ? 'briefing' : null);
+    const want = command?.name ?? (due && writes ? 'briefing' : null);
     // A visit begins with the first prompt of any kind after a gap since the last one seen: the last
     // message, the last board command or the visit's own start.
     const lastSeen = [seen.promptAt, visits.visitAt, visits.boardAsks.at(-1)?.at].filter((t) => typeof t === 'string').sort().at(-1) ?? null;
     const visit = gapPassed(project, lastSeen, at) ? at : visits.visitAt;
-    if (visit === at) attempt(() => markSeen(project, { visitAt: at }));
-    if (command?.name === 'board') attempt(() => markSeen(project, { boardAsk: { at, tab: command.tab ?? null, visit } }));
-    if (!command && due && !attempt(() => stopState().on, true)) {
+    if (visit === at) attempt(() => markSeenHere(project, { visitAt: at }));
+    if (command?.name === 'board') attempt(() => markSeenHere(project, { boardAsk: { at, tab: command.tab ?? null, visit } }));
+    if (!command && due && writes && !attempt(() => stopState().on, true)) {
       await within(() => learn({ project, cwd: input.cwd, client, at, boardAsks: visits.boardAsks }), learnWaitMs);
     }
     const count = attempt(() => cardsToAsk(project, at), 0);
@@ -409,10 +417,10 @@ export async function decide(input, deps = {}) {
       : null;
     // The director did write, whatever could be shown. A command other than the briefing's
     // leaves the time as it was, so a briefing that was due still comes with the next prompt.
-    if (!command || command.name === 'briefing') attempt(() => markSeen(project, { promptAt: at }));
+    if (!command || command.name === 'briefing') attempt(() => markSeenHere(project, { promptAt: at }));
     if (built && want === 'briefing') {
       // The weekly lines count as given only when the text showed them.
-      attempt(() => markSeen(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}) }));
+      attempt(() => markSeenHere(project, { briefedAt: at, ...(built.weeklyShown ? { weeklyAt: at } : {}) }));
       if (built.raise.length > 0 && Number.isFinite(at.getTime())) attempt(() => markRaised(built.raise, { now: at }));
     }
     const text = [cards, built?.text].filter((part) => typeof part === 'string').join('\n\n');

@@ -44,7 +44,13 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
   const post = (path) => (args = {}) => ask(address, 'POST', path, args, timeout);
   return {
     health: () => ask(address, 'GET', '/health', undefined, timeout),
-    stop: post('/stop/set'), //      {} -> { ok }: turns STOP on; nothing here lifts it
+    stop: post('/stop/set'), //      { by? } -> { ok }: turns STOP on; nothing here lifts it. `by: 'prompt'` records that the director's word set it
+    session: {
+      mark: post('/session/mark'), // { project | cwd, mark, data } -> { ok, id }: a session's mark, as a plain note: 'unknown-tool' ({ name }), 'compaction' ({ trigger }) or 'deadline' ({ event })
+    },
+    cards: {
+      chatClick: post('/cards/chat-click'), // { project | cwd, card, hash, label, proof, commit? } -> { ok, id }: a click in the chat, as an unsigned card-answer naming its proof; never signed
+    },
     push: post('/push'), //          { project | cwd, dir, refspec }: a feature session's `cli.js push` and `open-pr` give their worktree as `cwd`, and the helper places the project
     pull: post('/pull'), //          { project | cwd, dir, branch } -> { ok, already } or { ok, already: false, merged, from, sha, bundle }, or { ok: false, refused, conflicts? }: `cli.js pull` brings the host's copy of the worktree's own feature branch in; `bundle` (base64) holds the commits the worktree lacks, under refs/wheelhouse/pulled
     foreman: {

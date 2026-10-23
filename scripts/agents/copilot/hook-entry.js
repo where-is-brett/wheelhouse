@@ -20,13 +20,21 @@
 // the input included, sits under one deadline (GUARD_DEADLINE_MS): past it a guard event is refused with
 // DEADLINE and an informing event writes nothing.
 //
-// Every step comes from `deps.steps` when given, and each step's own deps from `deps.stepDeps`, so a later step
-// (the helper probe, the writes routed through the helper) is added there without changing the order here.
+// Every step comes from `deps.steps` when given, and each step's own deps from `deps.stepDeps`.
+//
+// On Copilot no hook writes (rulings P5-20, P5-22): the entry asks the helper's /health once per event it runs
+// steps for, waiting at most HELPER_PROBE_MS, and gives every step `writeVia: 'helper'`, the helper client and
+// whether the helper answered (`helperUp`). So the STOP guard marks no bypass and, with no helper, refuses all
+// but reading with NO_HELPER_STOP; the STOP word asks the helper to set STOP; the board context and the session
+// start write nothing under the Wheelhouse home and never open the keys folder. The entry's own records go to
+// the helper as session marks (/session/mark): a tool Wheelhouse doesn't know, a compaction, and a run past its
+// deadline. A mark that can't be sent is lost; nothing is kept to send later.
 import claudeTools from '../../../adapters/claude-code/tools.js';
 import copilotTools from '../../../adapters/copilot/tools.js';
 import { toGuardInput, fromGuardAnswer, harnessOf, exitCodeFor, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.js';
 import { readInput, answer, projectOf, registeredByPath, beingSetUp, managedDir } from '../../hooks/kit.js';
-import { GUARD_DEADLINE_MS } from '../../lib/copilot-numbers.js';
+import { GUARD_DEADLINE_MS, HELPER_PROBE_MS } from '../../lib/copilot-numbers.js';
+import { helperClient } from '../../host/helper-client.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 
 export const LOCAL_HARNESS = 'Wheelhouse doesn\'t run in this kind of chat. Switch the chat to Copilot in the chat\'s agent picker.';
@@ -104,8 +112,26 @@ const STEPS = Object.freeze({
   sessionStart: [['sessionStart', first]],
 });
 
-// The answer, in Claude Code's shape, for one event's input: undefined for none.
-async function decideEvent(event, { stdin, env, deps }) {
+// What `promise` gives within HELPER_PROBE_MS, or null when it fails or is late.
+async function bounded(promise) {
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), HELPER_PROBE_MS); });
+  try {
+    return await Promise.race([Promise.resolve(promise).catch(() => null), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Each step's deps on Copilot: every write through the helper (ruling P5-20), and the STOP guard marks no bypass.
+function helperStepDeps(shared, given) {
+  const own = { stopGuard: { bypass: false } };
+  return Object.fromEntries(Object.keys(STEP_MODULES).map((name) => [name, { ...shared, ...own[name], ...given?.[name] }]));
+}
+
+// The answer, in Claude Code's shape, for one event's input: undefined for none. `seen.mark` is set once the
+// project is known, so a run past its deadline can still be marked.
+async function decideEvent(event, { stdin, env, deps, seen }) {
   const raw = await readInput(stdin);
   const dir = deps.dir ?? managedDir();
   if (typeof raw.cwd !== 'string' || raw.cwd === '') return refusal(event, COULD_NOT_RUN);
@@ -115,26 +141,51 @@ async function decideEvent(event, { stdin, env, deps }) {
     if (event === GUARD_EVENT && !copilotTools.read.includes(raw.toolName)) return answer.deny(LOCAL_HARNESS);
     return undefined;
   }
+  const client = deps.client ?? helperClient({ timeout: GUARD_DEADLINE_MS });
+  const placedIn = (deps.projectOf ?? projectOf)(raw.cwd, { dir })?.project;
+  // A mark informs: one that fails or is late is lost, and the event is answered as it would be.
+  const mark = async (name, data) => {
+    if (typeof placedIn !== 'string') return;
+    try {
+      await bounded(client.session.mark({ project: placedIn, mark: name, data }));
+    } catch {
+      // lost
+    }
+  };
+  seen.mark = mark;
   const translated = toGuardInput(raw, event);
-  if (typeof translated?.unknownTool === 'string') return refusal(event, UNKNOWN_TOOL(translated.unknownTool));
+  if (typeof translated?.unknownTool === 'string') {
+    if (event === GUARD_EVENT) await mark('unknown-tool', { name: translated.unknownTool });
+    return refusal(event, UNKNOWN_TOOL(translated.unknownTool));
+  }
   const inputs = Array.isArray(translated) ? translated : [translated];
   if (inputs.length === 0 || !inputs.every(isObject)) return refusal(event, COULD_NOT_RUN);
   if (event === 'preCompact') {
+    const record = deps.recordCompaction ?? ((input) => mark('compaction', typeof input.trigger === 'string' && input.trigger !== '' ? { trigger: input.trigger } : {}));
     try {
-      await deps.recordCompaction?.(inputs[0]);
+      await record(inputs[0]);
     } catch {
       // The compaction goes ahead whether or not it was recorded.
     }
     return undefined;
   }
-  return runSteps(STEPS[event], inputs, { event, steps: deps.steps, stepDeps: deps.stepDeps, dir });
+  // Once per event, inside the deadline (ruling P5-22): no answer means the helper isn't running.
+  let helperUp = false;
+  try {
+    helperUp = (await bounded(client.health()))?.ok === true;
+  } catch {
+    // not answering
+  }
+  const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps);
+  return runSteps(STEPS[event], inputs, { event, steps: deps.steps, stepDeps, dir });
 }
 
 // Runs the entry for `event`: `{ text, code }`, the line to write (or '') and the exit code. Never throws.
 //   deps.steps        a step's decide, by name, in place of the hook's own
 //   deps.stepDeps     extra deps for a step, by name
 //   deps.deadlineMs   the deadline over the whole run (GUARD_DEADLINE_MS)
-//   deps.recordCompaction(input)  records a compaction (nothing yet)
+//   deps.recordCompaction(input)  records a compaction (a /session/mark compaction)
+//   deps.client       the helper's client (helper-client.js), for the probe, the steps and the marks
 //   deps.dir, deps.projectOf, deps.harnessOf  as the hooks take them
 export async function runEntry(event, { stdin = process.stdin, env = process.env, deps = {} } = {}) {
   if (!Object.hasOwn(EVENT_NAMES, event)) return { text: '', code: 0 };
@@ -144,9 +195,11 @@ export async function runEntry(event, { stdin = process.stdin, env = process.env
     timer = setTimeout(() => resolve({ late: true }), deadlineMs);
   });
   let out;
+  const seen = {};
   try {
-    const settled = await Promise.race([decideEvent(event, { stdin, env, deps }).then((value) => ({ value })), late]);
+    const settled = await Promise.race([decideEvent(event, { stdin, env, deps, seen }).then((value) => ({ value })), late]);
     out = settled.late ? refusal(event, DEADLINE) : settled.value;
+    if (settled.late) await seen.mark?.('deadline', { event });
   } catch {
     out = refusal(event, COULD_NOT_RUN);
   } finally {

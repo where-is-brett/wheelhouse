@@ -73,6 +73,12 @@ function upper({ level, sandbox, platform, phoneStop }) {
   ];
 }
 
+// The board's line while Copilot has a tool Wheelhouse doesn't know (ruling P5-19, Review Focus 1): such a tool
+// is refused, so a Copilot update is waiting on Wheelhouse.
+export function updateWaiting(name) {
+  return `Copilot has a tool Wheelhouse doesn't know yet, \`${name}\`: it is refused until Wheelhouse is updated`;
+}
+
 // safetyLine({ tier, level, platform, node, addOn, sandbox, shellGuard, phoneStop }) -> string[]
 //   tier        'lean' (the default), 'middle' or 'full'
 //   level       at Middle and Full, the level builds run at: 'sandbox', 'guarded', 'ask' or 'unattended' (default 'ask')

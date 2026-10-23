@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import { answer, runAndExit, pluginRoots, projectOf, registeredByPath, worktreeRoot, lockedByPath, beingSetUp } from './kit.js';
 import { words } from './shell-words.js';
 import { QUESTION_ID } from '../feature/files.js';
-import { stopState } from '../lib/stop.js';
+import { stopState, NO_HELPER_STOP } from '../lib/stop.js';
 import { markBypass, clearBypass } from '../lib/bypass.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -159,16 +159,20 @@ export { pluginRoots };
 
 // The tools that only read, halt or notify come from `deps` (readTools, haltTools, notifyTools), so a hook entry
 // for an agent whose tools keep names of their own can add them; they default to Claude Code's.
+//
+// On an agent whose hooks only read (`writeVia: 'helper'`, or `bypass: false`), the bypass marker is neither
+// written nor cleared. `helperUp: false` says the helper isn't answering there (ruling P5-22): everything STOP
+// holds is held, with NO_HELPER_STOP, since nothing a write needs can reach the helper.
 export async function decide(input, {
   dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
-  readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS,
+  readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS, bypass = true, writeVia = 'self', helperUp,
 } = {}) {
   const cwd = input.cwd;
   const found = find(cwd, { dir });
   const byPath = found ? false : registeredByPath(cwd);
   const inProject = Boolean(found) || byPath === true || (byPath === false && beingSetUp(cwd) !== null);
   const sessionEnd = input.hook_event_name === 'SessionEnd';
-  if (inProject) {
+  if (inProject && bypass !== false && writeVia === 'self') {
     if (sessionEnd) {
       clearBypass(input.session_id);
       return undefined;
@@ -178,7 +182,8 @@ export async function decide(input, {
   }
   if (sessionEnd) return undefined;
   if ((input.tool_name === 'Bash' || input.tool_name === 'PowerShell') && (found?.locked || lockedByPath(cwd, { dir })) && !sandboxOn(cwd)) return answer.deny(SANDBOX_NEEDED);
-  if (!stopState().on) return undefined;
+  const stopped = stopState().on;
+  if (!stopped && helperUp !== false) return undefined;
   // A folder that cannot be placed is held, not waved through.
   if (!inProject && byPath !== null) return undefined;
   if (readTools.includes(input.tool_name) || haltTools.includes(input.tool_name) || notifyTools.includes(input.tool_name)) return undefined;
@@ -188,7 +193,7 @@ export async function decide(input, {
     if (isRunbook(command, roots, platform) || isFeatureRead(command, roots, platform) || isWakeRead(command, roots, platform)
       || isFrontDeskRead(command, roots, platform) || isSetupRead(command, roots, platform)) return undefined;
   }
-  return answer.deny(DENIED);
+  return answer.deny(stopped ? DENIED : NO_HELPER_STOP);
 }
 
 if (startedAsScript(import.meta.url)) {

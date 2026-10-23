@@ -171,6 +171,10 @@ const PLAIN_SHAPES = {
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces.
   card: { must: ['question', 'header', 'options', 'kind', 'level'], may: ['descriptions', 'line', 'code', 'recommend', 'importance', 'topic', 'concepts', 'event', 'parts', 'revises'] },
+  // A click on a card's option: the card by its id or its question, and the label chosen. A click in an agent's
+  // chat (ruling P5-17) also names the card's `hash`, the `commit` it approves when it approves one, and its
+  // `proof`; a Lean record's line moved up (lean-record.js) names its tier, proof, who and whether it was a click.
+  'card-answer': { must: ['label'], may: ['question', 'card', 'hash', 'commit', 'proof', 'tier', 'by', 'clicked', 'source'] },
   // The director undid something decided at level 2.
   reversal: { must: ['topic', 'what'], may: ['of'] },
   // The cards a visit handed out, by their card events' ids, so a card shown and dismissed is not offered again.
