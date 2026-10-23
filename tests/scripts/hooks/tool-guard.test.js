@@ -1057,21 +1057,39 @@ test('Bash refuses where the guard and the shell could disagree about a heredoc'
       'cat <<EOF\r\nEOF\n\'\n$(gh pr list)\n\'\nEOF\r\n',
       'echo "$(echo x)"\r\ngh pr list',
       'cat <<A\ncat <<B\n\'\nB\nA\ngh pr list',
-      'cat <<A\n# (a\nA',
+      'cat <<EOF\n\'\nE\\\nOF\ngh pr create #\'\nEOF',
+      'cat <<EOF\nx $(\n\'\nEOF\ngh pr create #\'\n)\nEOF',
+      'cat <<EOF\nx `\n\'\nEOF\ngh pr create #\'\n`\nEOF',
     ];
     for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
     const windows = ['echo \\<<EOF\n# \'\ngh pr list\n# \'\nEOF', 'echo \;gh pr list', 'echo a\\ b', 'echo \\#x', 'echo \\|x'];
     for (const command of windows) assert.ok(denied(await withWin(ctx, command)), command);
-    const allowed = ['echo "a < b" \'<<x\'', 'echo ${x:-y} ${#x}', 'cat <<EOF\nhello\nEOF\necho done', 'echo \'a\rb\''];
+    const allowed = ['npm test # run tests (all)', 'git commit -m "x" # done (wip)', 'git commit -m "$(cat <<\'EOF\'\nTidy\n\nCloses #12 (partial)\nEOF\n)"', 'cat <<EOF\nE\\\nOF\nEOF', 'echo "a < b" \'<<x\'', 'echo ${x:-y} ${#x}', 'cat <<EOF\nhello\nEOF\necho done', 'echo \'a\rb\''];
     for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
     assert.equal(await withWin(ctx, 'dir C:\\Users\\x'), undefined);
   });
 });
 
 test('the splitter reads long inputs in linear time', () => {
-  for (const command of ['gh x; ' + '# '.repeat(30000), '${'.repeat(30000), 'echo ${a}${b}\n'.repeat(5000), 'a # b\n'.repeat(10000)]) {
+  const inputs = [
+    ['gh x; ' + '# '.repeat(30000), 'gh'], ['${'.repeat(30000), '${'.repeat(30000)], ['echo ${a}${b}\n'.repeat(5000), 'echo'], ['a # b\n'.repeat(10000), 'a'],
+  ];
+  for (const [command, first] of inputs) {
     const start = Date.now();
-    segments(command, false);
+    const found = segments(command, false);
     assert.ok(Date.now() - start < 1000, `${command.slice(0, 20)} took ${Date.now() - start} ms`);
+    assert.ok(found.flat().includes(first), command.slice(0, 20));
   }
+});
+
+test('an unreadable command is refused with its own message, and a PowerShell line continuation is read', async () => {
+  await inProject(async (ctx) => {
+    const unreadable = await bash(ctx, 'echo "x');
+    assert.match(unreadable.hookSpecificOutput.permissionDecisionReason, /could not read this command with certainty/);
+    const host = await bash(ctx, 'gh pr list');
+    assert.doesNotMatch(host.hookSpecificOutput.permissionDecisionReason, /certainty/);
+    assert.equal(await withWin(ctx, 'Get-ChildItem `\n  -Force', 'darwin', 'PowerShell'), undefined);
+    assert.ok(denied(await withWin(ctx, 'Get-ChildItem `\r\n  -Force', 'darwin', 'PowerShell')));
+    assert.ok(denied(await withWin(ctx, 'echo `\n gh pr list', 'darwin', 'PowerShell')));
+  });
 });

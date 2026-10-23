@@ -75,6 +75,7 @@ function scan(command, windows, strict, operators = [], level = 0) {
   let quotedWord = false;
   let braceChecked = 0;
   let commentChecked = -1;
+  let commentTo = -1;
   const stack = ['top'];
   const hdInfos = [];
   const pending = [];
@@ -157,10 +158,12 @@ function scan(command, windows, strict, operators = [], level = 0) {
       if (pos > chars.length) return false;
       const h = queue[0];
       if (!h.quoted) {
+        const found = bodyEnd(pos, h);
+        if (found === null) return false;
         push('hd');
-        hdInfos.push({ queue, start: pos });
+        hdInfos.push({ queue, start: pos, delimStart: found.start, end: found.end });
         i = pos - 1;
-        return hdCheck(pos);
+        return true;
       }
       let p = pos;
       for (;;) {
@@ -178,22 +181,31 @@ function scan(command, windows, strict, operators = [], level = 0) {
     }
     return true;
   };
-  // At the start of an hd body line at pos: end the body if it is the delimiter line.
-  function hdCheck(pos) {
-    if (pos > chars.length) return true;
-    const info = hdInfos.at(-1);
-    const { text, end } = lineAt(pos);
-    if (!isDelimiter(info.queue[0], text)) return true;
-    stack.pop();
-    hdInfos.pop();
-    if (!reread(chars.slice(info.start, end).join(''))) return false;
-    info.queue.shift();
-    if (info.queue.length === 0) {
-      i = end - 1;
-      return true;
+  // Where an unquoted body ends, found as the shell finds it: lines are joined at
+  // a backslash-newline, and the first line equal to the delimiter ends the body.
+  // Returns where that line starts and ends, or null when there is none.
+  const bodyEnd = (pos, h) => {
+    let p = pos;
+    while (p <= chars.length) {
+      let q = p;
+      let logical = '';
+      let end;
+      for (;;) {
+        const line = lineAt(q);
+        end = line.end;
+        if (/(?:^|[^\\])(?:\\\\)*\\$/.test(line.text) && end < chars.length) {
+          logical += line.text.slice(0, -1);
+          q = end + 1;
+        } else {
+          logical += line.text;
+          break;
+        }
+      }
+      if (isDelimiter(h, logical)) return { start: p, end };
+      p = end + 1;
     }
-    return startBodies(end + 1, info.queue);
-  }
+    return null;
+  };
   const endWord = () => {
     if (current !== null) {
       segments.at(-1).push(current);
@@ -217,6 +229,18 @@ function scan(command, windows, strict, operators = [], level = 0) {
   };
   const add = (text) => { current = (current ?? '') + text; };
   for (; i < chars.length && !unreadable; i += 1) {
+    // An unquoted body ends at its delimiter line, with every frame opened in it closed.
+    const ended = hdInfos.find((info) => i >= info.delimStart);
+    if (ended) {
+      if (ended !== hdInfos.at(-1) || stack.at(-1) !== 'hd') return null;
+      stack.pop();
+      hdInfos.pop();
+      if (!reread(chars.slice(ended.start, ended.end).join(''))) return null;
+      ended.queue.shift();
+      if (ended.queue.length === 0) i = ended.end - 1;
+      else if (!startBodies(ended.end + 1, ended.queue)) return null;
+      continue;
+    }
     const ch = chars[i];
     const next = chars[i + 1];
     const top = stack.at(-1);
@@ -251,9 +275,7 @@ function scan(command, windows, strict, operators = [], level = 0) {
       if (ch !== '\'') add(ch);
       else if (!pop()) return null;
     } else if (top === 'hd') {
-      if (ch === '\n') {
-        if (!hdCheck(i + 1)) return null;
-      } else if (ch === '$' && next === '{') {
+      if (ch === '$' && next === '{') {
         push('brace');
         i += 1;
       } else if (ch === '`' || (ch === '$' && next === '(')) {
@@ -319,6 +341,8 @@ function scan(command, windows, strict, operators = [], level = 0) {
       }
       endSegment(ch);
       current = null;
+    } else if ((ch === '(' || ch === ')') && i <= commentTo) {
+      endSegment(ch); // in a comment at the top level: a boundary, with nothing to match
     } else if (ch === '(') {
       endSegment(ch);
       push('group');
@@ -354,8 +378,10 @@ function scan(command, windows, strict, operators = [], level = 0) {
       // The first # of a line checks the rest of it.
       if (i > commentChecked) {
         const { text: comment, end } = lineAt(i);
-        if (/['"`()<\\]/.test(comment)) return null;
+        // At the top level the brackets of a comment have nothing to match.
+        if ((stack.length === 1 ? /['"`<\\]/ : /['"`()<\\]/).test(comment)) return null;
         commentChecked = end;
+        if (stack.length === 1) commentTo = end;
       }
       add(ch);
     } else {
@@ -374,7 +400,8 @@ export function words(command, windows) {
   return segments === null ? null : segments[0];
 }
 
-// The command split into segments of words, or null when it has an unclosed quote.
+// The command split into segments of words, or null when it cannot be read with
+// confidence (see the fail-closed list in the header).
 export function segments(command, windows) {
   return scan(command, windows, false);
 }
