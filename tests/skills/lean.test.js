@@ -816,4 +816,7 @@ test('taking the project off the helper is a card with the plan\'s lines, then t
   assert.match(part, /\*\*Leave the helper\*\*/);
   assert.match(part, /\*\*Remove it too\*\*|--remove-state yes/);
   assert.match(part, /git switch --detach main/);
+  // The card about the state has every part a card has (CLAUDE.md): what, why, options, a recommendation, meanwhile.
+  const stateCard = /"Keep this project's Wheelhouse state\?"[^\n]*?Then run/.exec(part)[0];
+  for (const bit of [/what \(/, /why \(/, /\*\*Keep it\*\*/, /\*\*Remove it too\*\*/, /recommend/, /meanwhile \(/]) assert.match(stateCard, bit);
 });

@@ -17,6 +17,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { readLean, registerLean } from '../../../scripts/lean/project.js';
 import { storeDir } from '../../../scripts/lean/store.js';
+import { releaseProject } from '../../../scripts/lean/release.js';
 import { loginStartRecord } from '../../../scripts/lib/login-start.js';
 import { ownKey, readEnrolled } from '../../../scripts/state/signing.js';
 import { projectForFolder } from '../../../scripts/lib/projects.js';
@@ -413,5 +414,104 @@ test('the command line prints the plan with its hash, and install takes the same
     out.length = 0;
     assert.equal(await main(['uninstall', '--hash', off, '--remove-state', 'no'], { stdout, cwd: c.folder, deps: c.deps }), 0, out.join(''));
     assert.equal(readLean('shop'), null);
+  });
+});
+
+// ---- Giving the git back when something fails (re-review of P5-51) ----
+
+// Everything a failed give-back must leave as it was: the pointer file, the store and its worktree entry, its
+// settings and HEAD, and the folder reading its history through the store.
+async function storeState(c, project = 'shop-front') {
+  const store = storeDir(project);
+  return {
+    pointer: fs.readFileSync(path.join(c.folder, '.git'), 'utf8'),
+    entries: fs.readdirSync(path.join(store, 'worktrees')).sort(),
+    head: fs.readFileSync(path.join(store, 'HEAD'), 'utf8'),
+    bare: await git(store, ['config', '--bool', 'core.bare']),
+    log: await git(c.folder, ['log', '--format=%H', 'main']),
+    files: [...filesUnder(c.folder).keys()].sort(),
+  };
+}
+
+test('a give-back that fails after the move is put back as it was, and says the git is still in the store', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    for (const failing of ['reset', 'symbolic-ref']) {
+      const before = await storeState(c);
+      const run2 = async (file, args, options) => (file === 'git' && args.includes(failing) && !args.includes('-q')
+        ? { code: 1, stdout: '', stderr: `${failing} failed in a test` }
+        : hostGuard(file, args, options));
+      await assert.rejects(releaseProject({ project: 'shop-front', folder: c.folder, run: run2 }), (e) => {
+        assert.match(e.message, /everything was put back/, e.message);
+        assert.ok(e.message.includes(storeDir('shop-front')), e.message);
+        return true;
+      });
+      assert.deepEqual(await storeState(c), before, failing);
+      assert.ok(readLean('shop-front') !== null);
+    }
+  });
+});
+
+test('a put-back that itself fails says where the project\'s git is now and what failed, and deletes nothing', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const run2 = async (file, args, options) => (file === 'git' && args[0] === 'reset' ? { code: 1, stdout: '', stderr: 'no' } : hostGuard(file, args, options));
+    // The rename that would move the git back into the store fails.
+    const rename = (from, to) => {
+      if (to === storeDir('shop-front')) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      fs.renameSync(from, to);
+    };
+    await assert.rejects(releaseProject({ project: 'shop-front', folder: c.folder, run: run2, rename }), (e) => {
+      assert.match(e.message, /could not be put back/, e.message);
+      assert.ok(e.message.includes(path.join(c.folder, '.git')), `names where the git is: ${e.message}`);
+      assert.match(e.message, /EBUSY/);
+      assert.match(e.message, /nothing was deleted/i);
+      return true;
+    });
+    // The git is whole where the message says.
+    assert.equal(fs.lstatSync(path.join(c.folder, '.git')).isDirectory(), true);
+    assert.equal(fs.existsSync(path.join(c.folder, '.git', 'objects')), true);
+  });
+});
+
+test('giving the git back is refused while the store has other worktrees, or the folder points elsewhere', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const other = path.join(fs.realpathSync.native(shortHome()), 'other-tree');
+    await git(storeDir('shop-front'), ['worktree', 'add', '--detach', '-q', other, 'main']);
+    const before = await storeState(c);
+    await assert.rejects(releaseProject({ project: 'shop-front', folder: c.folder, run: hostGuard }), /other than this folder/);
+    assert.deepEqual(await storeState(c), before);
+    await git(storeDir('shop-front'), ['worktree', 'remove', '--force', other]);
+    // A pointer rewritten to lead outside the store's worktrees is not followed.
+    const pointer = fs.readFileSync(path.join(c.folder, '.git'), 'utf8');
+    const elsewhere = path.join(storeDir('shop-front'), 'elsewhere');
+    fs.cpSync(path.join(storeDir('shop-front'), 'worktrees', fs.readdirSync(path.join(storeDir('shop-front'), 'worktrees'))[0]), elsewhere, { recursive: true });
+    // Still a worktree of the store to git, so only the check of where the entry lies refuses it.
+    fs.writeFileSync(path.join(elsewhere, 'commondir'), `${storeDir('shop-front')}\n`);
+    fs.writeFileSync(path.join(c.folder, '.git'), `gitdir: ${elsewhere}\n`);
+    await assert.rejects(releaseProject({ project: 'shop-front', folder: c.folder, run: hostGuard }), /points to another repository/);
+    assert.equal(fs.existsSync(storeDir('shop-front')), true);
+    fs.writeFileSync(path.join(c.folder, '.git'), pointer);
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  });
+});
+
+test('a sign-in start that can\'t be removed says the state was left in place too', async () => {
+  const c = await computer();
+  await c.as(async () => {
+    await installed(c, c.folder);
+    const plist = loginStartRecord().path;
+    fs.appendFileSync(plist, '<!-- changed -->\n');
+    const plan = await planUninstall({ folder: c.folder, removeState: true }, c.deps);
+    await assert.rejects(uninstall({ folder: c.folder, removeState: true, hash: plan.hash }, c.deps), (e) => {
+      assert.match(e.message, /git is back in its folder/);
+      assert.match(e.message, /Wheelhouse state was left in place/);
+      return true;
+    });
+    assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front')), true);
   });
 });

@@ -334,7 +334,9 @@ export async function uninstall(answers = {}, deps = {}) {
       fs.rmSync(plan.hooks, { force: true });
       if (loginStartRecord() !== null) {
         const got = await removeLoginStart({ run: d.regRun, platform: d.platform });
-        if (!got.removed) refuse(`The project's git is back in its folder, but what starts Wheelhouse's helper when you sign in was not removed: ${got.why}`);
+        if (!got.removed) {
+          refuse(`The project's git is back in its folder and Wheelhouse's guards are no longer registered, but what starts Wheelhouse's helper when you sign in was not removed: ${got.why}${plan.removeState ? `. The project's Wheelhouse state was left in place too, in ${plan.state}` : ''}`);
+        }
       }
     }
   }, d.lockWaitMs === undefined ? {} : { waitMs: d.lockWaitMs });
