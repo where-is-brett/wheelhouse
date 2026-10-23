@@ -792,7 +792,10 @@ function cardFor(changes, status, platform) {
     if (!isTooLong(error)) throw error;
     // too long: the terse card below
   }
-  return card(`Setup step 2, ${SETUP_TITLES[2]}: ${terse.join('; ')}.`);
+  const short = card(`Setup step 2, ${SETUP_TITLES[2]}: ${terse.join('; ')}.`);
+  // The terse card is composed here too, so a card still too long is refused now, with the length refusal, not later.
+  composeCard({ ...short, target: { step: 2, hash: '0'.repeat(64) } });
+  return short;
 }
 
 // The allow rules in a settings file, as they are; an empty list when there is no file. A file that

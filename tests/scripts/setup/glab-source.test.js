@@ -406,18 +406,28 @@ test('a copy with no checksum is named on the card', async () => {
   });
 });
 
+// Long enough that the full wording of step 2's card does not compose, whichever checksums the list gives.
+const LONG_SOURCE = 400;
+
+// Folder names of `chars` characters in all, each at most 100 long (a name has a limit), joined by separators.
+function folderNames(chars) {
+  const names = [];
+  for (let left = chars; left > 0; left -= 101) names.push('x'.repeat(Math.min(100, left)));
+  return names;
+}
+
 test('step 2\'s card composes in the worst first run, and the no-checksum warning stays on it', async () => {
-  // Git's installer on Windows, gh and glab to fetch, the permission rule, and a 200-character source.
+  // Git's installer on Windows, gh and glab to fetch, the permission rule, and a 400-character source.
   for (const checksums of ['none', 'file']) {
     await withHome(async () => {
       const dir = fs.realpathSync.native(tempFolder('wh-long-'));
       const { list } = listFolder({ checksums });
-      const long = path.join(dir, 'x'.repeat(200 - dir.length - '/list.json'.length - 1), 'list.json');
+      const long = path.join(dir, ...folderNames(LONG_SOURCE - dir.length - '/list.json'.length - 1), 'list.json');
       fs.mkdirSync(path.dirname(long), { recursive: true });
       fs.copyFileSync(list, long);
       for (const name of [NAME, WINDOWS_NAME]) fs.copyFileSync(path.join(path.dirname(list), name), path.join(path.dirname(long), name));
       if (checksums === 'file') fs.copyFileSync(path.join(path.dirname(list), 'checksums.txt'), path.join(path.dirname(long), 'checksums.txt'));
-      assert.ok(long.length >= 190, String(long.length));
+      assert.ok(long.length >= LONG_SOURCE - 10, String(long.length));
       const folder = projectWith(`company ${long}`);
       const m = computer({ present: { node: 'C:\\Program Files\\nodejs\\node.exe' } });
       const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'x64', pluginRoot: 'C:\\Plugins\\wheelhouse', env: {} });
@@ -432,18 +442,14 @@ test('step 2\'s card composes in the worst first run, and the no-checksum warnin
       // the change under the plan hash.
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
       assert.ok(question.question.length <= 1200);
-      // The calm card's wording is short enough that the source may fit whole; where it does not, the card names it in short.
-      if (planned.card.what.includes(long)) {
-        if (checksums === 'none') assert.match(planned.card.what, /glab, from your company's list at .*; the list gives no checksum, so setup cannot check the file\..*Say Not now if unsure/);
-        else assert.match(planned.card.what, /glab, from your company's list at .*; checked against the checksum the list gives/);
+      // The full wording does not compose with a source this long, so the card is the terse one, naming the source in short.
+      assert.equal(planned.card.what.includes(long), false, 'the terse card is the one shown');
+      const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
+      assert.ok(planned.card.what.includes(shown), planned.card.what);
+      if (checksums === 'none') {
+        assert.match(planned.card.what, /glab: from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
       } else {
-        const shown = `${long.slice(0, 40)}…${long.slice(-23)}`;
-        assert.ok(planned.card.what.includes(shown), planned.card.what);
-        if (checksums === 'none') {
-          assert.match(planned.card.what, /glab: from your company's list at .*, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure/);
-        } else {
-          assert.match(planned.card.what, /glab: from your company's list at .*, checked/);
-        }
+        assert.match(planned.card.what, /glab: from your company's list at .*, checked/);
       }
       if (checksums === 'none') {
         assert.match(planned.card.what, /no checksum/);

@@ -1260,7 +1260,7 @@ test('uninstall on a company GitLab gives git the certificate for its address, a
       const glab = [];
       const inner = f.run;
       f.run = async (command, args = [], options = {}) => {
-        if (path.basename(command) === 'git') gitEnvs.push(options.env ?? {});
+        if (path.basename(command) === 'git') gitEnvs.push({ args: [...args], env: options.env ?? {} });
         if (path.basename(command) === 'glab') {
           glab.push({ args: [...args], env: options.env });
           return { code: 0, stdout: `${COMPANY}/${REPO}/-/merge_requests/12\n`, stderr: '' };
@@ -1276,8 +1276,12 @@ test('uninstall on a company GitLab gives git the certificate for its address, a
       assert.ok(glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab.map((c) => c.env)));
       assert.deepEqual([...new Set(asked)], [COMPANY]);
       // Every git call that reached the host carried the certificate for that address.
-      const withPair = gitEnvs.filter((env) => Object.values(env).includes(`http.${COMPANY}/.sslCAInfo`));
-      assert.ok(withPair.length > 0, 'git was given the certificate');
+      const carries = ({ env }) => Object.values(env).includes(`http.${COMPANY}/.sslCAInfo`);
+      assert.ok(gitEnvs.some(carries), 'git was given the certificate');
+      // Including the project's own fetch and push, which go over the network (the profile's are another address).
+      const network = gitEnvs.filter(({ args }) => args.some((a) => ['fetch', 'push', 'ls-remote'].includes(a)) && args.includes(host.product.url));
+      assert.ok(network.some(({ args }) => args.includes('fetch')) && network.some(({ args }) => args.includes('push')), JSON.stringify(network.map((c) => c.args)));
+      assert.deepEqual(network.filter((c) => !carries(c)).map((c) => c.args), [], 'every fetch, push and ls-remote carried the certificate');
     });
   } finally {
     host.cleanup();
@@ -1351,6 +1355,42 @@ test('a push the plan read as never made is looked for on the host first: there,
       const next = await applyPlan(world, f);
       assert.equal(next.done.ok, true, next.done.refused);
       assert.deepEqual(readJson(path.join(world.folder, '.claude', 'settings.json')), {});
+    });
+  } finally {
+    host.cleanup();
+  }
+});
+
+test('looking on a company GitLab for a push never made gives git the certificate for its address', async () => {
+  const COMPANY = 'https://git.example.org:8443';
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const world = makeWorld();
+      world.lockedDir = tempFolder('wh-locked ');
+      world.register(SLUG, world.folder, REPO, { host: 'gitlab', mode: 'quick', project: REPO, baseUrl: COMPANY });
+      writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'gitlab', repo: REPO, connection: { host: 'gitlab', mode: 'quick', project: REPO, baseUrl: COMPANY } });
+      const file = caFile(wheelhouseHome());
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'CERTIFICATES\n');
+      const run = startRun({ folder: world.folder, now: NOW });
+      const r = recorder(run.id);
+      writeText(path.join(world.folder, '.claude', 'settings.json'), '{}\n');
+      r.key(7, path.join(world.folder, '.claude', 'settings.json'), ['extraKnownMarketplaces'], { wheelhouse: { ref: 'v1' } });
+      const tip = await g(host.work, 'rev-parse', 'HEAD');
+      r.add(7, { kind: 'host', target: `${REPO} main`, before: { branch: 'main', sha: tip }, after: { action: 'push', branch: 'main', sha: tip } });
+      markStep(run.id, 7, 'failed', { now: NOW, reason: 'the setup commit could not be pushed' });
+      const f = fakes(world);
+      const calls = [];
+      const inner = f.run;
+      f.run = async (command, args = [], options = {}) => {
+        if (path.basename(command) === 'git') calls.push({ args: [...args], env: options.env ?? {} });
+        return inner(command, args, options);
+      };
+      await applyPlan(world, f);
+      const looked = calls.filter(({ args }) => args.includes('ls-remote') && args.includes(host.product.url));
+      assert.ok(looked.length > 0, 'the host was asked');
+      assert.deepEqual(looked.filter(({ env }) => !Object.values(env).includes(`http.${COMPANY}/.sslCAInfo`)), [], 'every ask carried the certificate');
     });
   } finally {
     host.cleanup();

@@ -714,7 +714,9 @@ test('git is given the company\'s certificate for that project\'s address only, 
       const pairs = settingsOf(s.env);
       assert.deepEqual(pairs[0], ['credential.helper', '']);
       for (const [key, value] of FENCE) assert.ok(pairs.some(([k, v]) => k === key && v === value), `${key} stays set`);
-      assert.ok(pairs.findIndex(([k]) => k === certificateKey) > pairs.findIndex(([k, v]) => !fenceKeys.has(k.toLowerCase()) && !/ssl/i.test(k) && !(k === 'credential.helper' && v === '')));
+      const connectionAt = pairs.findIndex(([k, v]) => !fenceKeys.has(k.toLowerCase()) && !/ssl/i.test(k) && !(k === 'credential.helper' && v === ''));
+      assert.ok(connectionAt >= 0, 'the connection\'s own pair is there to come after');
+      assert.ok(pairs.findIndex(([k]) => k === certificateKey) > connectionAt);
       assert.equal(s.env.GIT_CONFIG_NOSYSTEM, '1');
     }
     assert.ok(withIt.some((s) => s.args.includes('push')), 'the push carries it');

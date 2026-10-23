@@ -168,8 +168,11 @@ export function gitCaConfig(base, file, platform = process.platform) {
 }
 
 // `env` with git's settings added, through GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and
-// GIT_CONFIG_VALUE_<n>, after any already there. A copy: `env` is not changed. A setting that
-// would switch a certificate check off is refused, whoever asks.
+// GIT_CONFIG_VALUE_<n>, after any already there. A copy: `env` is not changed. Only the certificate
+// settings for one address (`http.<address>/.sslCAInfo`, `http.<address>/.sslBackend`) are taken:
+// git's fence keeps every pair a caller adds, so this is the one gate, and any other setting (an
+// include, a credential helper, a header, a command to run) is refused, whoever asks, as is any
+// that would switch a certificate check off.
 export function withGitConfig(env, pairs) {
   const out = { ...env };
   const given = out.GIT_CONFIG_COUNT;
@@ -177,6 +180,7 @@ export function withGitConfig(env, pairs) {
   let next = given === undefined ? 0 : Number(given);
   for (const { key, value } of pairs) {
     if (/ssl.?verify/i.test(String(key))) throw new Error('Wheelhouse never switches certificate checks off');
+    if (!certificateSetting(key) || !/^http\..+\/\.[^/]+$/i.test(String(key))) throw new Error('Only the certificate settings for one address can be added to git\'s environment');
     out[`GIT_CONFIG_KEY_${next}`] = key;
     out[`GIT_CONFIG_VALUE_${next}`] = value;
     next += 1;

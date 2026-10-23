@@ -1134,14 +1134,19 @@ test('step 3\'s card for a company\'s GitLab behind its own authority, with the 
 // lengths, and always says the two safety things.
 test('step 3\'s card on a company\'s GitLab composes for ordinary and for very long names, joining or not, with the two safety phrases', async () => {
   const lengths = [];
+  // Each case with the wording its card is expected to come in: the full one, the tight one (shorter clauses) or the bare
+  // one (the address and the names left out), so a fallback that stops being reached shows here.
   const cases = [
-    ['gitlab.acme.com:8443', 'engineering/shop', 'sam'],
-    ['gitlab.example.com', 'platform/customer-portal', 'a-director'],
-    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER],
-    [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200)],
-    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name'],
+    ['gitlab.acme.com:8443', 'engineering/shop', 'sam', 'full'],
+    ['gitlab.example.com', 'platform/customer-portal', 'a-director', 'full'],
+    ['git.example.org:8443', `${USER}/a-product-with-a-long-name-to-fill-the-card`, USER, 'full'],
+    [`${'h'.repeat(190)}.example.com:8443`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'tight'],
+    // A host name is at most 253 characters, so the bare wording takes an address with a long path after the host.
+    [`${'h'.repeat(190)}.example.com:8443/${'s'.repeat(300)}`, `${'g'.repeat(100)}/${'p'.repeat(99)}`, 'u'.repeat(200), 'bare'],
+    ['gitlab.internal.bigcompany.example.com:8443', `${'group-'.repeat(8)}/${'sub-'.repeat(20)}/shop`, 'a-well-known-user-with-a-long-name', { joining: 'tight', new: 'tight', existing: 'full' }],
   ];
-  for (const [hostName, repo, user] of cases) {
+  const wording = (what) => (/copied from this computer's own certificate store/.test(what) ? 'full' : /certificate for your GitLab's address/.test(what) ? 'bare' : 'tight');
+  for (const [hostName, repo, user, expected] of cases) {
     const base = `https://${hostName}`;
     const owner = repo.split('/').slice(0, -1).join('/');
     const name = repo.split('/').at(-1);
@@ -1158,6 +1163,7 @@ test('step 3\'s card on a company\'s GitLab composes for ordinary and for very l
       const { question } = composeCard({ ...card, target: { step: 3, hash: planHash(changes) } });
       assert.ok(question.question.length <= 1200, `${kind} ${hostName}: ${question.question.length}`);
       lengths.push(`${kind} ${hostName.length}/${repo.length}/${user.length}: ${question.question.length}`);
+      assert.equal(wording(card.what), typeof expected === 'string' ? expected : expected[kind], `${kind} ${hostName.length}: ${card.what}`);
       assert.match(card.what, /for that address only \(certificate checks stay on\)/, `${kind} ${hostName}`);
       assert.match(card.what, /pasted into your computer's box, never the chat/, `${kind} ${hostName}`);
       assert.match(card.what, /for your company's GitLab admin/);

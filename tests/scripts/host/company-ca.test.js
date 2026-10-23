@@ -86,8 +86,8 @@ test('no route ever sets GIT_SSL_NO_VERIFY, NODE_TLS_REJECT_UNAUTHORIZED=0, sslV
   for (const file of CODE_FOLDERS.flatMap(jsFilesIn)) {
     fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
       // The tool guard's table of `timeout`'s own options (its `-k` is a kill delay in a shell command it reads), not a git or curl flag.
-      if (file.endsWith(path.join('scripts', 'hooks', 'tool-guard.js')) && /\btimeout: \['-s', '-k'\]/.test(line)) return;
-      if (CHECKS_OFF.test(line)) found.push(`${path.relative(ROOT, file)}:${i + 1}`);
+      const toTest = file.endsWith(path.join('scripts', 'hooks', 'tool-guard.js')) ? line.replace(/\btimeout: \['-s', '-k'\]/, '') : line;
+      if (CHECKS_OFF.test(toTest)) found.push(`${path.relative(ROOT, file)}:${i + 1}`);
     });
   }
   assert.ok(CODE_FOLDERS.some((dir) => dir.endsWith('scripts')));
@@ -113,6 +113,12 @@ test('no route ever sets GIT_SSL_NO_VERIFY, NODE_TLS_REJECT_UNAUTHORIZED=0, sslV
   // And the routes refuse to be asked for it.
   assert.throws(() => withGitConfig({}, [{ key: 'http.sslVerify', value: 'false' }]), /certificate/i);
   assert.throws(() => withGitConfig({}, [{ key: `http.${BASE}/.sslVerify`, value: '0' }]), /certificate/i);
+  // Only the certificate settings for one address are taken: git's fence keeps every pair a caller
+  // adds, so anything else (an include, a helper, a header, a command to run) is refused here.
+  for (const key of ['include.path', 'credential.helper', `http.${BASE}/.extraHeader`, 'core.sshCommand', 'core.fsmonitor', 'http.sslCAInfo', 'core.sslCAInfo', `http.${BASE}/.proxy`, '']) {
+    assert.throws(() => withGitConfig({}, [{ key, value: 'x' }]), /certificate settings/, key);
+  }
+  assert.deepEqual(withGitConfig({}, [{ key: `http.${BASE}/.sslBackend`, value: 'schannel' }]).GIT_CONFIG_COUNT, '1');
   // And refuse an environment whose count of git settings is not a whole number.
   for (const bad of ['two', '-1', '1.5', '']) assert.throws(() => withGitConfig({ GIT_CONFIG_COUNT: bad }, gitCaConfig(BASE, caFile(home), 'darwin')), /whole number/);
 });
