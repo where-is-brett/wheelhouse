@@ -18,7 +18,10 @@ import { projectSettings } from '../../../scripts/protection/settings.js';
 import { guardedCommand } from '../../../scripts/windows/low.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants } from '../../../scripts/protection/windows-builds.js';
 import { LOOP_TOOLS, levelAllowed, levelRules } from '../../../adapters/copilot/permissions.js';
-import { featureResumeCall, featureStartCall, writeSessionHome } from '../../../adapters/copilot/sessions.js';
+import { sessionsPart, writeSessionHome } from '../../../adapters/copilot/sessions.js';
+
+// The calls check the switch themselves (ruling P8-1), so they are built from the part switched on.
+const { featureResumeCall, featureStartCall } = sessionsPart({ ready: true });
 
 const stand = standInTools();
 after(() => stand.restore());

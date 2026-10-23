@@ -799,13 +799,32 @@ export function makeWaker({
     const r = readJson(runningFile(project, target));
     return isPlain(r) && typeof r.at === 'string' ? r : null;
   };
-  // Ends the target's record when it is this process's; says whether it was.
-  const forget = (target, pid) => {
-    const r = readRunning(target);
-    if (r === null || r.pid !== pid) return false;
-    fs.rmSync(runningFile(project, target), { force: true });
-    return true;
+  // Takes the target's record away, whole, when `matches(record)`: it is renamed aside first, which only one
+  // process can do, so two that see the same run end (the exit handler of the waker that started it, and another
+  // waker's endRecord) never both act on it. A record that doesn't match is put back. Returns the record taken, or
+  // null.
+  const claimRecord = (target, matches) => {
+    const file = runningFile(project, target);
+    const aside = path.join(path.dirname(file), `.${target}.${crypto.randomUUID()}.claim`);
+    try {
+      fs.renameSync(file, aside);
+    } catch {
+      return null;
+    }
+    const r = readJson(aside);
+    if (isPlain(r) && typeof r.at === 'string' && matches(r)) {
+      fs.rmSync(aside, { force: true });
+      return r;
+    }
+    try {
+      if (lstatOf(file) === null) fs.renameSync(aside, file);
+    } finally {
+      fs.rmSync(aside, { force: true });
+    }
+    return null;
   };
+  // Ends the target's record when it is this process's; says whether it was.
+  const forget = (target, pid) => claimRecord(target, (r) => r.pid === pid) !== null;
 
   // The pids of every recorded running process, so their start times are asked for together.
   const runningPids = () => {
@@ -884,9 +903,11 @@ export function makeWaker({
   // Ends a record that has ended: its wakes go again (an overrun counts as a failure). A run whose output was kept
   // is read instead, so a run whose exit this watcher never saw (a start made by the foreman's command, or a
   // watcher that restarted) still leaves its records and its session id, and its wakes settle by its outcome.
+  // A record another process has already taken is left to it.
   async function endRecord(target, state) {
     const ids = list(state.ended.entries).filter((x) => typeof x === 'string');
-    fs.rmSync(runningFile(project, target), { force: true });
+    const same = (r) => r.at === state.ended.at && r.pid === state.ended.pid && r.state === state.ended.state;
+    if (claimRecord(target, same) === null) return;
     const kept = isPlain(state.ended.run) && typeof state.ended.run.output === 'string' ? state.ended.run : null;
     if (state.why === 'overran') {
       const minutes = Math.round(maxRunOf(target) / MINUTE);
@@ -920,12 +941,13 @@ export function makeWaker({
   // Starts a session for `target`. In order: `check(adapter)` (the adapter's own check, which refuses by
   // throwing); the adapter's `prepare({ project, target })` when it has one (an adapter whose sessions run from a
   // home of their own writes it there: a throw refuses the start, and the records it carries are raised, each once);
-  // `build(adapter)`, the call ({ file, args, env, input, verbatim, output?, level?, idFromRun? }); the call's level
-  // noted (noteLevel, for a feature); `beforeRun(call)`, which may refuse; then the session recorded as starting,
-  // run, and recorded as running.
+  // `build(adapter)`, the call ({ file, args, env, input, verbatim, output?, level?, idFromRun? }); `beforeRun(call)`,
+  // which may refuse; the call's level noted (noteLevel, for a feature), so a refused start records none; the session
+  // recorded as starting; `afterRecord(call)`, which writes what must only exist beside that record (a feature's
+  // session record, so no other process finds it with no run recorded); then run, and recorded as running.
   // Resolves with the pid. When the call names an `output` file, the child's output is appended there and read once
   // it exits (finishRun); otherwise its exit code settles `entries`, as it always has.
-  async function launch({ target, cwd, check, build, file, entries = [], beforeRun = () => {} }) {
+  async function launch({ target, cwd, check, build, file, entries = [], beforeRun = () => {}, afterRecord = () => {} }) {
     const adapter = sessionsOf();
     check(adapter);
     if (typeof adapter.prepare === 'function') {
@@ -944,8 +966,8 @@ export function makeWaker({
       }
     }
     const call = build(adapter);
-    if (target !== 'foreman') await noteLevel(call.level, nameOf(target));
     beforeRun(call);
+    if (target !== 'foreman') await noteLevel(call.level, nameOf(target));
     const { env } = call;
     const kept = typeof call.output === 'string'
       ? { output: call.output, from: outputSize(call.output), ...(typeof call.usageFile === 'string' ? { usageFile: call.usageFile } : {}), idFromRun: call.idFromRun === true }
@@ -956,6 +978,7 @@ export function makeWaker({
     writeJsonFile(file0, { state: 'starting', at, file, entries, ...(kept ? { run: kept } : {}) });
     let started;
     try {
+      afterRecord(call);
       started = await run(call.file, call.args, {
         cwd, env, input: call.input, windowsVerbatimArguments: call.verbatim, ...(kept ? { output: kept.output } : {}),
       });
@@ -1287,7 +1310,10 @@ export function makeWaker({
         }
         session = keptSession(work, cwd);
         if (session === STARTING) {
-          // Its first run ended with no id kept for it (its record has gone): there is no session to wake.
+          // Its first run ended with no id kept for it (its record has gone): there is no session to wake. A record
+          // younger than a start's own time may belong to a start still being made elsewhere: it waits.
+          const since = Date.parse(readJson(sessionFile(project, work))?.at ?? '');
+          if (!Number.isNaN(since) && now().getTime() - since < STARTING_MS) continue;
           keepStartedId(work, null);
           continue;
         }
@@ -1398,11 +1424,14 @@ export function makeWaker({
             config, project, work, sessionId, prompt: PROMPTS.start, allowed: feature.allowed, env: baseEnv, claude, platform, ...feature.inputs,
           }),
           file: brief,
-          // The session's id is kept before the run starts: the one made here, or, for an adapter whose sessions
-          // name their own (`idFromRun`), none yet, which the first run's output gives (ruling P8-3).
           beforeRun: (call) => {
             if (stopped()) throw new Error('STOP is on: no session is started');
             feature.recordUsed(call);
+          },
+          // The session's id is kept before the run starts, once its record is written: the one made here, or, for
+          // an adapter whose sessions name their own (`idFromRun`), none yet, which the first run's output gives
+          // (ruling P8-3).
+          afterRecord: (call) => {
             named = call.idFromRun === true ? null : sessionId;
             watcherFolder(project, 'sessions');
             writeJsonFile(sessionFile(project, work), { sessionId: named, worktree, at: now().toISOString(), ...(named === null ? { fromRun: true } : {}) });

@@ -322,7 +322,7 @@ function sessionCall({ project, target, role, config, prompt, rules = {}, resume
 // A fresh foreman for one wake, run in the project's main checkout. Its rules are its own tools, each
 // `Bash(<command>:*)` given as `shell(<command>:*)`, with no write (ruling P7-3). Copilot runs the watcher's first
 // shape only, so there is no long foreman session, and asking for one refuses (ruling P8-6).
-export function foremanCall({ config, project, prompt, tools = null, env, platform = process.platform, pluginRoot = PLUGIN_ROOT, copilot = null, runId, long = false }) {
+function buildForemanCall({ config, project, prompt, tools = null, env, platform = process.platform, pluginRoot = PLUGIN_ROOT, copilot = null, runId, long = false }) {
   if (long) throw new Error("Copilot's foreman runs one wake at a time; its long session isn't built");
   const given = tools ?? foremanTools(pluginRoot, { platform });
   const allow = given.filter((tool) => /^Bash\(.+\)$/s.test(tool)).map((tool) => `shell(${tool.slice('Bash('.length)}`);
@@ -354,16 +354,26 @@ function featureCall({ rules: _rules, level, grants, guardedCommand, worktree, d
 // A feature's first session, run in its worktree, at the level levelAllowed lets run (`level` in the call's result).
 // Copilot can't be given a session id, so `sessionId` is ignored; sessionIdOf reads Copilot's own from the run's output,
 // and `idFromRun` tells the waker so (ruling P8-3).
-export function featureStartCall({ sessionId: _ignored, project, work, ...rest }) {
+function buildFeatureStartCall({ sessionId: _ignored, project, work, ...rest }) {
   return { ...featureCall(rest, { project, target: `feature-${work}`, role: 'builder' }), idFromRun: true };
 }
 
 // A feature's session, woken: `--resume=<id>` in the feature's own home, never `--continue` (which takes the newest
 // session in the home, check 61). Its rules are worked out afresh, so a grant spent by an earlier run is not given.
-export function featureResumeCall({ sessionId, project, work, ...rest }) {
+function buildFeatureResumeCall({ sessionId, project, work, ...rest }) {
   if (sessionId === undefined || sessionId === null) throw new Error('A wake needs the session id');
   return featureCall(rest, { project, target: `feature-${work}`, role: 'builder', resume: sessionId });
 }
+
+// Each call checks the switch itself, so no caller (the waker, the foreman's start, an evaluation runner) can build
+// one while the sessions aren't switched on (ruling P8-1).
+function switched(ready, build, options) {
+  switchedOn(ready);
+  return build(options);
+}
+export const foremanCall = (options) => switched(BACKGROUND_SESSIONS_READY, buildForemanCall, options);
+export const featureStartCall = (options) => switched(BACKGROUND_SESSIONS_READY, buildFeatureStartCall, options);
+export const featureResumeCall = (options) => switched(BACKGROUND_SESSIONS_READY, buildFeatureResumeCall, options);
 
 // The events in a run's output, one JSON object per line; a line that isn't one is skipped.
 export function eventsOf(stdout) {
@@ -581,9 +591,9 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, hom
   return Object.freeze({
     checkForeman: (config) => checkForemanAt(config, ready),
     checkFeature: (config) => checkFeatureAt(config, ready),
-    foremanCall,
-    featureStartCall,
-    featureResumeCall,
+    foremanCall: (options) => switched(ready, buildForemanCall, options),
+    featureStartCall: (options) => switched(ready, buildFeatureStartCall, options),
+    featureResumeCall: (options) => switched(ready, buildFeatureResumeCall, options),
     finalAnswer,
     // Before every start (ruling P7-27 a): the pinned kits fetched once and checked, the activity folder, and the
     // session's own home written afresh. A throw refuses the start; nothing has been run.

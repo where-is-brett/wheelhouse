@@ -20,10 +20,14 @@ import { registration } from '../../../adapters/copilot/hooks.js';
 import copilot from '../../../adapters/copilot/index.js';
 import { levelRules } from '../../../adapters/copilot/permissions.js';
 import sessions, {
-  CMD_LINE_MOST, MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
-  featureStartCall, finalAnswer, foremanCall, pruneActivity, refusalOf, refusalsOf, sessionHome, sessionIdOf,
-  sessionUsage, sessionsPart, writeSessionHome,
+  CMD_LINE_MOST, MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv,
+  featureResumeCall as resumeCallOff, featureStartCall as startCallOff, finalAnswer, foremanCall as foremanCallOff, pruneActivity, refusalOf,
+  refusalsOf, sessionHome, sessionIdOf, sessionUsage, sessionsPart, writeSessionHome,
 } from '../../../adapters/copilot/sessions.js';
+
+// Every call checks the switch itself (ruling P8-1), so the calls are built here from the part switched on; the
+// exported ones refuse (the first test).
+const { featureResumeCall, featureStartCall, foremanCall } = sessionsPart({ ready: true });
 
 const stand = standInTools();
 after(() => stand.restore());
@@ -86,6 +90,10 @@ test('the registry\'s sessions part is built, and its checks refuse while the sw
   assert.throws(() => sessions.checkForeman({}), /aren't switched on yet/);
   assert.throws(() => sessions.checkFeature({}), /aren't switched on yet/);
   assert.throws(() => checkForeman({}), /aren't switched on yet/);
+  // The calls themselves refuse too, whoever asks, before anything is built.
+  for (const call of [foremanCallOff, startCallOff, resumeCallOff, sessions.foremanCall, sessions.featureStartCall, sessions.featureResumeCall]) {
+    assert.throws(() => call({}), /aren't switched on yet/);
+  }
 });
 
 test('each call has --no-ask-user and the level\'s rules', () => {

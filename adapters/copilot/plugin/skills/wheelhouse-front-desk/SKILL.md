@@ -76,6 +76,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 - **A chat pick of Suggest a change…:** Ask "What would you change?" in one line, then do as for the pane's suggestion.
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
 - **Talk it through:** one question at a time.
+- **A card a confirmed click decides, at Middle and Full:** on Copilot a click in the chat doesn't count, because no hook can sign it. For a build question's Allow this time or Allow for this feature, and for Lift STOP, a guardrail change, Unattended, a runbook step or a CI push, tell the director in one plain line that a click in the chat doesn't count here and that the helper's own window will show the card. Then run `confirm <card>` with the card's id from `views waiting` (or `confirm lift-stop`): it shows the card in that window, where their click is the one that counts, and waits for it. Say only what it prints: `"recorded":true` means the click was recorded; anything else, say in one plain line that nothing was decided.
 
 ## Carrying work on, and archiving another setup's instructions
 

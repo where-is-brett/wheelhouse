@@ -15,7 +15,7 @@ import { tempFolder } from '../../helpers/homes.js';
 import { buildHome, checkHome, gitBlobHash, writeHome, CLAUDE_TO_COPILOT, HOME_DIR } from '../../../scripts/agents/copilot/home.js';
 import tools from '../../../adapters/copilot/tools.js';
 import sheet from '../../../adapters/copilot/tool-sheet.js';
-import { BOARD_FILE } from '../../../scripts/lib/copilot-numbers.js';
+import { BOARD_FILE, CONFIRMED_STEPS } from '../../../scripts/lib/copilot-numbers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const HOME_SCRIPT = path.join(ROOT, 'scripts', 'agents', 'copilot', 'home.js');
@@ -408,4 +408,19 @@ test('none of gh, glab or copilot ran, and the real home was never touched', () 
   assert.ok(fs.realpathSync(home).startsWith(fs.realpathSync(os.tmpdir())), 'the test\'s home is a temporary folder');
   assert.notEqual(path.resolve(home), path.join(os.homedir(), '.wheelhouse'));
   assert.ok(!fs.existsSync(path.join(home, '.copilot')));
+});
+
+test('the kit\'s front desk sends a card a confirmed click decides to the helper\'s window, and Claude Code\'s doesn\'t (review Minor 2)', () => {
+  const line = '- **A card a confirmed click decides, at Middle and Full:**';
+  for (const dir of [HOME_DIR, 'adapters/copilot/plugin']) {
+    const text = fs.readFileSync(path.join(ROOT, dir, 'skills', 'wheelhouse-front-desk', 'SKILL.md'), 'utf8');
+    const at = text.indexOf(line);
+    assert.ok(at > text.indexOf('## Cards') && at < text.indexOf('## Carrying work on'), `${dir}: in the Cards section`);
+    assert.equal(text.split(line).length, 2, `${dir}: once`);
+    const said = text.slice(at, text.indexOf('\n', at));
+    for (const words of ['Allow this time', 'Allow for this feature', 'Lift STOP', '`confirm <card>`', 'a click in the chat doesn\'t count']) assert.ok(said.includes(words), `${dir}: ${words}`);
+  }
+  assert.ok(!fs.readFileSync(path.join(ROOT, 'skills', 'front-desk', 'SKILL.md'), 'utf8').includes('confirm <card>'));
+  // The window's step for an allowance is one of the confirmed steps the line sends there.
+  assert.ok(CONFIRMED_STEPS.includes('ask-allowance'));
 });

@@ -257,6 +257,58 @@ test('a start whose exit the starter never saw is read by the watcher once its p
   assert.equal(fake.calls.at(-1).args[0], `--resume=${ID}`);
 }));
 
+test('a first run\'s session record waits while its start may still be under way, and is cleared after (review Minor 4)', () => withHome(async () => {
+  const checkout = await project();
+  const dir = feature(checkout);
+  const clock = { t: T0 };
+  const { w, fake, errors } = copilotWaker({ clock });
+  // A record with no id and no running record yet, as another process's start leaves it for a moment.
+  fs.mkdirSync(path.dirname(sessionFile(P, WORK)), { recursive: true });
+  fs.writeFileSync(sessionFile(P, WORK), JSON.stringify({ sessionId: null, fromRun: true, worktree: dir, at: new Date(T0).toISOString() }));
+  clock.t = T0 + 1000;
+  await w.wakeFeature(WORK, featureWake(clock.t));
+  assert.equal(keptId().sessionId, null, 'kept while the start may still be made');
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(errors, []);
+  // Past a start's own time with still no run recorded: there is no session to wake.
+  clock.t = T0 + 3 * 60 * 1000;
+  await w.pump();
+  assert.equal(fs.existsSync(sessionFile(P, WORK)), false);
+  assert.equal(errors.filter((m) => /first run gave no session id/.test(m)).length, 1);
+}));
+
+test('two wakers that see the same run end read it once (review Minor 4)', () => withHome(async () => {
+  const checkout = await project();
+  const dir = feature(checkout);
+  const fake = fakeRun();
+  const starter = copilotWaker({ fake });
+  await starter.w.startFeature({ work: WORK, worktree: dir });
+  // The run ends; another waker finds its record ended before the starter hears of the exit.
+  fake.write(0, lines(ev.result(ID)));
+  const watcher = copilotWaker({ fake });
+  await watcher.w.pump();
+  fake.calls[0].done(0);
+  await until(() => keptId().sessionId === ID, { what: 'the id' });
+  await starter.w.pump();
+  const activities = [...starter.raised, ...watcher.raised].filter((r) => r.kind === 'activity');
+  assert.equal(activities.length, 1);
+}));
+
+test('a start STOP refuses just before its run records no level (review Minor 7)', () => withHome(async () => {
+  const checkout = await project();
+  const dir = feature(checkout);
+  let stop = false;
+  const { w, fake, raised } = copilotWaker({
+    stopped: () => stop,
+    windowsBuilds: () => { stop = true; return { level: 'ask', grants: [], guardedCommand: null }; },
+  });
+  await assert.rejects(w.startFeature({ work: WORK, worktree: dir }), /STOP is on/);
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(raised.filter((r) => r.kind === 'level'), []);
+  assert.equal(fs.existsSync(levelFile(P)), false);
+  assert.equal(fs.existsSync(sessionFile(P, WORK)), false);
+}));
+
 test('every feature call is given its level\'s inputs, and a level that changes is recorded once (P8-4, P8-5)', () => withHome(async () => {
   const checkout = await project();
   let answer = { level: 'unattended', grants: [], guardedCommand: null };

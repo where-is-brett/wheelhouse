@@ -5,7 +5,7 @@
 import '../../helpers/homes.js';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,6 @@ import { installPlugin, pluginInstalled } from '../../../scripts/agents/copilot/
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const PLUGIN = path.join(ROOT, ...PLUGIN_DIR.split('/'));
-const BASE = '85176b2';
 const COMMIT = 'a'.repeat(40);
 
 // The calls `copilot plugin install` and `copilot plugin list` are taken by the stand-in on the PATH.
@@ -102,15 +101,20 @@ test('installPlugin refuses a call it cannot trace to a release, and reports a f
   assert.equal(await pluginInstalled({ run: async () => ({ code: 0, stdout: 'wheelhouse-other 1\n', stderr: '' }) }), false);
 });
 
+// What Claude Code loads, as Part 8 left it: the sha256 of each file's text with line endings evened to LF. A
+// deliberate change to either file updates its hash here, in the same commit.
+const CLAUDE_CODE_FILES = Object.freeze({
+  '.claude-plugin/plugin.json': 'ea957983124a12583de90df07b6eed821d37eec787039eba8ebf62c7471957be',
+  'hooks/hooks.json': '8472de7747936b112161bb6b68de9a12334b50f1a3ebdbc7dc71c611951804cd',
+});
+
 test('Claude Code\'s manifest is unchanged', () => {
-  const git = (...args) => execFileSync('git', args, { cwd: ROOT });
-  for (const file of git('ls-tree', '-r', '--name-only', BASE, '--', '.claude-plugin', 'hooks/hooks.json').toString().split('\n').filter(Boolean)) {
-    assert.ok(Buffer.compare(git('show', `${BASE}:${file}`), fs.readFileSync(path.join(ROOT, file))) === 0, `${file} is as it was at ${BASE}`);
+  for (const [file, hash] of Object.entries(CLAUDE_CODE_FILES)) {
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal(crypto.createHash('sha256').update(text).digest('hex'), hash, `${file} is as recorded`);
   }
-  const now = git('ls-files', '.claude-plugin', 'hooks/hooks.json').toString().split('\n').filter(Boolean).sort();
-  const then = git('ls-tree', '-r', '--name-only', BASE, '--', '.claude-plugin', 'hooks/hooks.json').toString().split('\n').filter(Boolean).sort();
-  assert.deepEqual(now, then);
-  assert.ok(now.length >= 2);
+  // No Copilot file joined Claude Code's manifest folder.
+  assert.deepEqual(fs.readdirSync(path.join(ROOT, '.claude-plugin')).sort(), ['marketplace.json', 'plugin.json']);
 });
 
 test('no real Copilot ran', () => {
