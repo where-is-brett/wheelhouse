@@ -242,7 +242,7 @@ The first attempt showed this; the third ticked the same way.
 
 **The app's own tools (finding, first attempt).** The test session's call to the app's wrap-up tool (`mcp__ccd_turn__wrap_up`) was refused by Wheelhouse's connector guard: "This project has not listed that connector: ask the helper to do it". The guard treats the Desktop app's built-in `mcp__ccd_*` tools as connectors the project must list.
 
-## Second sitting (Mac, 22 and 23 October 2026)
+### Second sitting (Mac, 22 and 23 October 2026)
 
 It ran from 13:18 UTC on 22 October to 00:55 UTC on 23 October, with two long pauses: one for a usage limit and one while the director was away. It used the same Mac and the same way of loading as the first sitting. The plugin was a copy of `main` at e661198, with fixes A to G in it. The director followed a numbered list (L1 to L19). The agent's run of the bridge set STOP at L8, and the agent sent the two test messages at L18. The director's real `~/.wheelhouse` was unchanged before and after. The evidence is kept in the ledger's folder (`check-41-sitting-2/`, git-ignored), and the scratch project is deleted.
 
