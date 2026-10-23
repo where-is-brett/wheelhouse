@@ -9,13 +9,15 @@
 //            (; & | ( ) < > backtick, newline, and $( or a backtick inside double
 //            quotes) end the word and start a new segment, so `x;gh` and `$(gh x)`
 //            show their command word. An unclosed quote still gives null.
+// segmentsWithOperators() also says which operator opened each segment.
 // On Windows a backslash outside quotes is a path separator and becomes a slash.
 
 const OPERATORS = new Set([';', '&', '|', '(', ')', '<', '>', '`', '\n', '\r']);
 const SPACES = new Set([' ', '\t', '\f', '\v']);
 
-function scan(command, windows, strict) {
+function scan(command, windows, strict, operators = []) {
   const segments = [[]];
+  operators.push(null);
   let current = null;
   let quote = null;
   // Inside double quotes, `...` and $(...) run as code: the quote is left until
@@ -27,9 +29,17 @@ function scan(command, windows, strict) {
     if (current !== null) segments.at(-1).push(current);
     current = null;
   };
-  const endSegment = () => {
+  // The operator that opens the next segment is kept beside it.
+  const endSegment = (operator) => {
     endWord();
-    if (segments.at(-1).length > 0) segments.push([]);
+    if (segments.at(-1).length > 0) {
+      segments.push([]);
+      operators.push(operator);
+    } else if (operator === '<' || operator === '>') {
+      operators[operators.length - 1] = operator; // a redirect written before the command
+    } else if (operator === '(' && ['<', '>'].includes(operators.at(-1))) {
+      operators[operators.length - 1] = operator; // <( ) and >( ) run a command
+    }
   };
   const add = (text) => { current = (current ?? '') + text; };
   for (let i = 0; i < chars.length; i += 1) {
@@ -54,7 +64,7 @@ function scan(command, windows, strict) {
       if (ch === quote) {
         quote = null;
       } else if (!strict && quote === '"' && (ch === '`' || (ch === '$' && next === '('))) {
-        endSegment();
+        endSegment(ch === '`' ? '`' : '(');
         quote = null;
         sub = ch === '`' ? '`' : ')';
         depth = 1;
@@ -65,12 +75,12 @@ function scan(command, windows, strict) {
     } else if (sub !== null && (ch === sub || ch === '(' || ch === ')') && !(ch === '(' && sub === '`')) {
       if (ch === '(') depth += 1;
       else if (sub === '`' || (depth -= 1) === 0) {
+        endSegment(ch); // pushes the word in progress
         sub = null;
         quote = '"';
         current = null;
-        endSegment();
       } else {
-        endSegment();
+        endSegment(ch);
       }
     } else if (ch === '"' || ch === '\'') {
       quote = ch;
@@ -78,7 +88,7 @@ function scan(command, windows, strict) {
     } else if (strict ? (ch === ' ' || ch === '\t') : SPACES.has(ch)) {
       endWord();
     } else if (!strict && OPERATORS.has(ch)) {
-      endSegment();
+      endSegment(ch);
     } else {
       add(ch);
     }
@@ -98,4 +108,13 @@ export function words(command, windows) {
 // The command split into segments of words, or null when it has an unclosed quote.
 export function segments(command, windows) {
   return scan(command, windows, false);
+}
+
+// The segments as segments() gives them, and for each the operator that opened
+// it (null for the first; '(' or a backtick for a substitution inside double
+// quotes). A segment opened by < or > holds a redirect's target.
+export function segmentsWithOperators(command, windows) {
+  const operators = [];
+  const found = scan(command, windows, false, operators);
+  return found === null ? null : { segments: found, operators };
 }
