@@ -68,8 +68,22 @@ test('each health line appears in its case and in its order', () => {
     NO_PROFILE,
   ]);
   assert.deepEqual(everything.map((line) => line.level), [
-    'stop', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
+    'stop', 'ok', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
   ]);
+});
+
+test('the quick connection is normal on a Mac and a calm note elsewhere (the director\'s ruling, 24 October 2026)', () => {
+  const quick = { record: { connection: { mode: 'quick' } } };
+  // On the Mac the sandbox denies the sign-in's files and the keychain (check 73): no line.
+  assert.deepEqual(healthLines({ ...calm, ...quick }), [{ level: 'ok', text: 'Protection: Standard' }]);
+  // On Windows, with no sandbox, one ok line in the same words as setup's, never a watch line.
+  const windows = healthLines({ ...calm, ...quick, platform: 'win32' });
+  assert.deepEqual(windows.filter((l) => l.text === QUICK_LINE), [{ level: 'ok', text: QUICK_LINE }]);
+  assert.ok(!windows.some((l) => l.text === QUICK_LINE && l.level !== 'ok'));
+  // The narrow connection brings no line anywhere.
+  for (const platform of ['darwin', 'win32']) {
+    assert.ok(!healthLines({ ...calm, platform, record: { connection: { mode: 'narrow' } } }).some((l) => l.text === QUICK_LINE));
+  }
 });
 
 test('a front desk on another model than the pin is one watch line; on the pin, or with either unknown, none (design section 8)', () => {
@@ -82,7 +96,7 @@ test('a front desk on another model than the pin is one watch line; on the pin, 
 });
 
 test('the lines come only in their own case', () => {
-  assert.deepEqual(texts({ record: { connection: { mode: 'quick' } } }), ['Protection: Standard', QUICK_LINE]);
+  assert.deepEqual(texts({ record: { connection: { mode: 'quick' } }, platform: 'win32' }), ['Protection: Standard', QUICK_LINE, WINDOWS_LINE]);
   assert.deepEqual(texts({ platform: 'win32' }), ['Protection: Standard', WINDOWS_LINE]);
   assert.deepEqual(texts({ facts: { protection: 'none', ci: 'present' } }), ['Protection: Standard', FREE_PLAN_LINE]);
   assert.deepEqual(texts({ facts: { protection: 'unknown', ci: 'unknown' } }), ['Protection: Standard']);

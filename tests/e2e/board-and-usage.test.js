@@ -569,8 +569,10 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     const [verdictPart, sincePart, ...parts] = body.split('\n\n');
     assert.equal(verdictPart, '14 things need you. Nothing is broken.');
     assert.match(sincePart, /^Since \d\d:\d\d, about 3 hours$/);
+    // Quick is no line to watch (on a Mac none, elsewhere a calm one); on Windows, Windows' own line is.
+    const watching = process.platform === 'win32';
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [
-      'Not in effect until you confirm:', 'Waiting on you (+14):', 'Changed for users (+1):', 'Progress:', 'To watch:',
+      'Not in effect until you confirm:', 'Waiting on you (+14):', 'Changed for users (+1):', 'Progress:', ...(watching ? ['To watch:'] : []),
       'Usage this week: 300K tokens. On track.', 'Ask me anything. For the full board, type /wheelhouse:board.',
     ]);
     // Fourteen cards wait and the waiting cards are the last thing cut, so the other parts give way first.
@@ -578,7 +580,7 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     const waiting = parts[1].split('\n').slice(1);
     assert.deepEqual(waiting.slice(0, -1), titles.slice(0, waiting.length - 1).map((title, i) => `${i + 1}. ${title}`), 'oldest first, numbered');
     assert.equal(waiting.at(-1), `and ${titles.length - (waiting.length - 1)} more`);
-    for (const part of parts.slice(2, 5)) assert.deepEqual(part.split('\n').slice(1), ['and 1 more']);
+    for (const part of parts.slice(2, watching ? 5 : 4)) assert.deepEqual(part.split('\n').slice(1), ['and 1 more']);
   } finally {
     await c.close();
   }
