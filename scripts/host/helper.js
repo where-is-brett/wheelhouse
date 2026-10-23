@@ -1671,13 +1671,14 @@ export async function startHelper({
 
   // Whether the configuration git reads when the fenced runner `fenced` runs in `mirror` sets any
   // key matching `pattern`: 'none', 'some', or 'unreadable'.
-  // `where` narrows what is read (`--local --includes`: the repository's own file and what it includes,
-  // not the call's environment, where the fence sets `merge.verifySignatures`).
-  async function configSets(fenced, mirror, pattern, where = []) {
-    const listed = await fenced('git', ['config', ...where, '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
+  // With `withoutCall`, settings from the call's own environment (`command` scope, where the fence sets
+  // `merge.verifySignatures`) are left out; every file scope, the worktree's included, is still read.
+  async function configSets(fenced, mirror, pattern, withoutCall = false) {
+    const listed = await fenced('git', ['config', ...(withoutCall ? ['--show-scope'] : []), '--name-only', '--get-regexp', pattern], { cwd: mirror, input: '' });
     if (listed.code === 1) return 'none';
     if (listed.code !== 0) return 'unreadable';
-    return listed.stdout.trim() === '' ? 'none' : 'some';
+    const lines = listed.stdout.split('\n').filter((l) => l.trim() !== '' && !(withoutCall && l.startsWith('command\t')));
+    return lines.length === 0 ? 'none' : 'some';
   }
 
   // Two branches merged in the mirror, to see whether they clash in text
@@ -1706,7 +1707,7 @@ export async function startHelper({
     return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
       const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
       const local = (args) => plain('git', args, { cwd: mirror, input: '' });
-      for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook)\\.', ['--local', '--includes'])]) {
+      for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook)\\.', true)]) {
         if (said !== 'none') return { ok: false, refused: CONFIG_REFUSED[said] };
       }
       try {
@@ -1749,7 +1750,7 @@ export async function startHelper({
   // mirror's own. The refusal, or null.
   async function mirrorRefusal(mirror, keyed) {
     const plain = (file, args, options = {}) => unkeyed(file, args, { ...options, env: { GIT_ATTR_NOSYSTEM: '1', ...options.env } });
-    for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook|diff)\\.', ['--local', '--includes'])]) {
+    for (const said of [await configSets(keyed, mirror, '^hook\\.'), await configSets(plain, mirror, '^(filter|merge|hook|diff)\\.', true)]) {
       if (said !== 'none') return CONFIG_REFUSED[said];
     }
     return null;

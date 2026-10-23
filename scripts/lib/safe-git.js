@@ -69,10 +69,9 @@ export const PROJECT_CONDITIONS = Object.freeze({
   // Test 9: every `gh` and `glab` call in scripts/ names its repository (`-R`, `--repo`, or a full API
   // path) or runs outside any project. `gh` writes `remote.<name>.gh-resolved` to pick a repository, so
   // that key, and any other hyphenated `remote.<name>.<key>` (git reads no key with a `-`), is on the
-  // list only while this holds. It does not today: the survey's open-requests list runs `gh pr list`
-  // and `glab mr list` in the project's folder with no repository named (scripts/install/survey.js,
-  // openRequests). Those keys stay refused until that call names its repository.
-  ghNamesRepository: false,
+  // list only while this holds. It does: the survey's open-requests list (scripts/install/survey.js,
+  // openRequests) names its repository with `-R` and runs outside the project.
+  ghNamesRepository: true,
   // Test 10: no route whose look is the project list runs `push`, `commit`, `tag`, `rebase` or `am`.
   // Holds today. The push targets (`remote.<name>.pushurl`, `remote.pushDefault`,
   // `branch.<name>.pushRemote`) are on the list only while it does.

@@ -16,7 +16,7 @@ import {
 import { allowedSetting, FENCE, NULL_FILE } from '../../../scripts/setup/git.js';
 import { git as stateGit } from '../../../scripts/state/git.js';
 import { fetchedPath } from '../../../scripts/lib/host-tools.js';
-import { surveyProject } from '../../../scripts/install/survey.js';
+import { surveyProject, repositoryOf } from '../../../scripts/install/survey.js';
 import { run } from '../../../scripts/lib/run.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { startHttpHost } from '../../helpers/http-host.js';
@@ -327,40 +327,69 @@ test('5: signing switched on in the repository signs and verifies nothing on the
     ['gpg.program', gpg.cmd], ['gpg.ssh.program', gpgSsh.cmd],
   ]) await setting(dir, key, value);
 
-  // The marker works: an unfenced commit reaches the signing program.
+  // A commit that carries a signature header, so a git that verifies would start the signing program.
+  const head = await must(['rev-parse', 'HEAD'], dir);
+  const tree = await must(['rev-parse', 'HEAD^{tree}'], dir);
+  const body = `tree ${tree}\nparent ${head}\nauthor T <t@invalid> 1700000000 +0000\ncommitter T <t@invalid> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\nsigned\n`;
+  const made = await run('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], { cwd: dir, env: SHUT, input: body });
+  const sha = made.stdout.trim();
+  assert.match(sha, /^[0-9a-f]{40}/);
+  await must(['update-ref', 'refs/heads/ahead', sha], dir);
+  const tree2 = path.join(root, 'tree');
+  await must(['worktree', 'add', '-q', '--no-track', '-b', 'feature/s', tree2, 'HEAD'], dir);
+  const either = () => ran(gpg) || ran(gpgSsh);
+
+  // The markers work: git unfenced reaches the signing program on a commit, on showing a signed commit,
+  // on a signed tag, on verifying a merge; and a signed push is refused before it starts.
   await plain([...NAME, 'commit', '--allow-empty', '-q', '-m', 'signed'], dir);
-  assert.equal(ran(gpg) || ran(gpgSsh), true, 'control');
+  assert.equal(either(), true, 'control: commit');
   clear(gpg); clear(gpgSsh);
+  await plain(['log', '-1', 'ahead'], dir);
+  assert.equal(either(), true, 'control: log.showSignature');
+  clear(gpg); clear(gpgSsh);
+  await plain(['fetch', '-q', '--no-tags', dir, 'ahead'], tree2);
+  const unverified = await plain(['merge', '-q', '--ff-only', sha], tree2);
+  assert.notEqual(unverified.code, 0);
+  assert.equal(either(), true, 'control: merge.verifySignatures');
+  clear(gpg); clear(gpgSsh);
+  const unsigned = await plain(['push', '-q', 'origin', 'ahead'], dir);
+  assert.notEqual(unsigned.code, 0, 'control: push.gpgSign makes an ordinary push fail');
 
   // The look is skipped here: gpg.program is refused by the look, and the fence is what is tested.
   const survey = safeGit({ cwd: dir, look: 'never' });
-  const logged = await survey(['log', '--all', '--format=%H', '--', 'x']);
-  assert.equal(logged.code, 0, logged.stderr);
-  const shown = await survey(['log', '-1', '--format=%H']);
+  const shown = await survey(['log', '-1', 'ahead']);
   assert.equal(shown.code, 0, shown.stderr);
-  assert.equal(shown.stdout.includes('gpg'), false);
+  assert.ok(shown.stdout.includes(sha));
+  assert.equal((await survey(['log', '--all', '--format=%H', '--', 'x'])).code, 0);
+  assert.equal((await survey(['config', '--get', 'push.gpgSign'])).stdout.trim(), 'false');
+  assert.equal(either(), false, 'survey');
 
-  // The feature's merge --ff-only of a commit ahead of the worktree.
-  const tree = path.join(root, 'tree');
-  await must(['worktree', 'add', '-q', '--no-track', '-b', 'feature/s', tree, 'HEAD'], dir);
-  await plain([...ID, 'commit', '--allow-empty', '-q', '-m', 'ahead'], dir);
-  const sha = await must(['rev-parse', 'HEAD'], dir);
-  const feature = safeGit({ cwd: tree, reach: 'local', look: 'never' });
-  assert.equal((await feature(['fetch', '-q', '--no-tags', dir, 'main'])).code, 0);
+  // The feature's merge --ff-only of the signed commit.
+  const feature = safeGit({ cwd: tree2, reach: 'local', look: 'never' });
+  assert.equal((await feature(['fetch', '-q', '--no-tags', dir, 'ahead'])).code, 0);
   const merged = await feature(['merge', '-q', '--ff-only', sha]);
   assert.equal(merged.code, 0, merged.stderr);
+  assert.equal(either(), false, 'feature');
 
-  // The helper's state commit.
+  // A push with push.gpgSign on in the repository.
+  const pushed = await safeGit({ cwd: dir, reach: 'local', look: 'never' })(['push', '-q', 'origin', 'ahead']);
+  assert.equal(pushed.code, 0, pushed.stderr);
+  assert.equal(either(), false, 'push');
+
+  // The helper's state commit and signed tag.
   const state = path.join(root, 'state');
   await must(['init', '-q', '-b', 'main', state], root);
-  for (const [key, value] of [['commit.gpgSign', 'true'], ['gpg.format', 'ssh'], ['gpg.program', gpg.cmd], ['gpg.ssh.program', gpgSsh.cmd], ['user.signingKey', path.join(root, 'no-such-key')]]) await setting(state, key, value);
+  for (const [key, value] of [['commit.gpgSign', 'true'], ['tag.gpgSign', 'true'], ['gpg.format', 'ssh'], ['gpg.program', gpg.cmd], ['gpg.ssh.program', gpgSsh.cmd], ['user.signingKey', path.join(root, 'no-such-key')]]) await setting(state, key, value);
+  await plain([...ID, 'commit', '--allow-empty', '-q', '-m', 'first'], state);
+  clear(gpg); clear(gpgSsh);
+  await plain([...NAME, 'tag', '-m', 'note', 'control'], state);
+  assert.equal(either(), true, 'control: tag.gpgSign');
+  clear(gpg); clear(gpgSsh);
   const committed = await stateGit(state, ['commit', '--allow-empty', '-q', '-m', 'state']);
   assert.equal(committed.code, 0, committed.stderr);
   const tagged = await stateGit(state, ['tag', '-m', 'note', 't1']);
   assert.equal(tagged.code, 0, tagged.stderr);
-
-  assert.equal(ran(gpg), false);
-  assert.equal(ran(gpgSsh), false);
+  assert.equal(either(), false, 'state');
 });
 
 // --- Test 6: the credential reset ---
@@ -381,16 +410,18 @@ test('6: a repository\'s credential helpers run on no fenced call, and the direc
     await must(['remote', 'add', 'origin', `${host.url}/proj.git`], dir);
     const general = marker(root, 'helper-general');
     const scoped = marker(root, 'helper-scoped');
-    const ask = marker(root, 'askpass');
+    // git starts the askpass program without a shell, so it must be one executable file (unix only).
+    const ask = unix ? programMarker(root, 'askpass') : marker(root, 'askpass');
     await setting(dir, 'credential.helper', `!${general.cmd}`);
     await setting(dir, `credential.${host.url}.helper`, `!${scoped.cmd}`);
     await setting(dir, 'core.askPass', ask.cmd);
 
     // The markers work: an unfenced fetch that gets a 401 asks both helpers.
-    const control = await plain(['fetch', '-q', 'origin'], dir, { ...LOOPBACK_HTTP, GIT_ASKPASS: '' });
+    const control = await plain(['fetch', '-q', 'origin'], dir, LOOPBACK_HTTP);
     assert.notEqual(control.code, 0);
     assert.equal(ran(general), true, 'control: the general helper');
     assert.equal(ran(scoped), true, 'control: the URL-scoped helper');
+    if (unix) assert.equal(ran(ask), true, 'control: the askpass program, asked once the helpers gave nothing');
     clear(general); clear(scoped); clear(ask);
 
     // The project look lets both helpers be; the fence makes them inert.
@@ -558,6 +589,7 @@ function ghCallsIn(root) {
 }
 
 test('9: scan - every gh and glab call in scripts/ names its repository', () => {
+  assert.equal(PROJECT_CONDITIONS.ghNamesRepository, true);
   const calls = ghCallsIn(ROOT);
   assert.ok(calls.length > 30, 'the scan sees the adapter\'s command lines');
   assert.ok(calls.some((c) => c.file === 'scripts/host/github.js' && c.named));
@@ -631,54 +663,112 @@ async function projectWithSubmodule() {
   const { root, dir, origin } = await projectWithOrigin();
   const sub = path.join(root, 'sub-source');
   await must(['init', '-q', '-b', 'main', sub], root);
-  await commitIn(sub, 'sub one');
+  fs.writeFileSync(path.join(sub, 'a.txt'), 'one\n');
+  await must(['add', 'a.txt'], sub);
+  await plain([...ID, 'commit', '-q', '-m', 'sub one'], sub);
   await must(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor'], dir);
   await plain([...ID, 'commit', '-q', '-m', 'add sub'], dir);
   await must(['push', '-q', 'origin', 'main'], dir);
-  // A hook in the submodule's own git folder says whether a git ran a fetch there.
-  const hooks = path.join(dir, '.git', 'modules', 'vendor', 'hooks');
-  fs.mkdirSync(hooks, { recursive: true });
-  const mark = path.join(root, 'sub-fetched');
-  const script = path.join(hooks, 'reference-transaction');
-  fs.writeFileSync(script, `#!/bin/sh\necho "$1" >> "${mark.replaceAll('\\', '/')}"\ncat >/dev/null\n`, { mode: 0o755 });
-  // The source gains a commit, so a fetch in the submodule would update a ref.
-  await commitIn(sub, 'sub two');
-  return { root, dir, origin, mark };
+  const vendor = path.join(dir, 'vendor');
+  // Where the submodule's own copy of the source's branch stands: it moves only if a fetch went into the submodule.
+  const seen = () => must(['rev-parse', 'refs/remotes/origin/main'], vendor);
+  // The source gains a commit, so a fetch into the submodule would move that ref.
+  const moreInSource = () => commitIn(sub, `sub ${Math.random()}`);
+  await moreInSource();
+  return { root, dir, origin, vendor, seen, moreInSource };
 }
 
-test('11: a populated submodule is not fetched into, by the survey\'s and the feature\'s fetch', { skip: !unix && 'the submodule hook is a shell script' }, async () => {
-  const { dir, mark } = await projectWithSubmodule();
-  const fetchedInSub = () => fs.existsSync(mark);
+test('11: a populated submodule is not fetched into, by the survey\'s and the feature\'s fetch', async () => {
+  const { dir, seen, moreInSource } = await projectWithSubmodule();
+  const start = await seen();
+  const moved = async () => (await seen()) !== start;
 
   // The control: git unfenced, with the submodule's own setting on, fetches into it.
   await setting(dir, 'submodule.vendor.fetchRecurseSubmodules', 'true');
   await plain(['-c', 'protocol.file.allow=always', 'fetch', '-q', 'origin'], dir, { GIT_ALLOW_PROTOCOL: 'file' });
-  assert.equal(fetchedInSub(), true, 'control: in .git/config');
-  fs.rmSync(mark, { force: true });
+  assert.equal(await moved(), true, 'control: in .git/config');
 
+  await moreInSource();
+  const before = await seen();
   const survey = safeGit({ cwd: dir, reach: 'local', list: 'project', caller: 'survey' });
   assert.equal((await survey(['fetch', '--quiet', 'origin'])).code, 0);
-  assert.equal(fetchedInSub(), false, 'survey, .git/config');
+  assert.equal(await seen(), before, 'survey, .git/config');
   const feature = safeGit({ cwd: dir, reach: 'local', list: 'project', caller: 'feature' });
   assert.equal((await feature(['fetch', '-q', '--no-tags', dir, 'refs/heads/main'])).code, 0);
-  assert.equal(fetchedInSub(), false, 'feature, .git/config');
+  assert.equal(await seen(), before, 'feature, .git/config');
 
   // The same in .gitmodules, with the repository's own config silent.
   await must(['config', '--unset', 'submodule.vendor.fetchRecurseSubmodules'], dir);
   await must(['config', '-f', '.gitmodules', 'submodule.vendor.fetchRecurseSubmodules', 'true'], dir);
   await plain(['-c', 'protocol.file.allow=always', 'fetch', '-q', 'origin'], dir, { GIT_ALLOW_PROTOCOL: 'file' });
-  assert.equal(fetchedInSub(), true, 'control: in .gitmodules');
-  fs.rmSync(mark, { force: true });
+  assert.notEqual(await seen(), before, 'control: in .gitmodules');
+  await moreInSource();
+  const again = await seen();
   assert.equal((await survey(['fetch', '--quiet', 'origin'])).code, 0);
   assert.equal((await feature(['fetch', '-q', '--no-tags', dir, 'refs/heads/main'])).code, 0);
-  assert.equal(fetchedInSub(), false, '.gitmodules');
+  assert.equal(await seen(), again, '.gitmodules');
+});
+
+// --- The survey with markers planted: the project's, and a submodule's own filter ---
+
+test('survey: fsmonitor, sshCommand, pager and a submodule\'s planted filter run nothing in a real survey', async () => {
+  const { root, dir, vendor } = await projectWithSubmodule();
+  const marks = {
+    fsmonitor: marker(root, 'fsm'), ssh: marker(root, 'ssh'), pager: marker(root, 'pgr'), filter: marker(root, 'filter'),
+  };
+  await setting(dir, 'core.fsmonitor', marks.fsmonitor.cmd);
+  await setting(dir, 'core.sshCommand', marks.ssh.cmd);
+  await setting(dir, 'core.pager', marks.pager.cmd);
+  // The submodule's own config, which no look reads, holds a filter that its attributes switch on for a changed file.
+  await setting(vendor, 'filter.x.clean', marks.filter.cmd);
+  fs.writeFileSync(path.join(vendor, '.gitattributes'), '* filter=x\n');
+  // A new modification time makes git read the file's content to compare it, which runs the filter.
+  const later = new Date(Date.now() + 60000);
+  fs.utimesSync(path.join(vendor, 'a.txt'), later, later);
+
+  // The control: git's own status in the project enters the submodule and runs the filter.
+  await plain(['status', '--porcelain'], dir);
+  assert.equal(ran(marks.filter), true, 'control: status reaches the submodule\'s filter');
+  assert.equal(ran(marks.fsmonitor), true, 'control: fsmonitor');
+  Object.values(marks).forEach(clear);
+
+  const survey = await surveyProject({
+    folder: dir, manifest: { upstreams: [] }, host: 'github', claudeHome: tempFolder('wh-claude-'),
+    run: async (file, args, options) => (file === 'gh' ? { code: 0, stdout: '[]', stderr: '' } : run(file, args, options)),
+  });
+  assert.equal(survey.inFlight.behind >= 0, true);
+  for (const [name, m] of Object.entries(marks)) assert.equal(ran(m), false, name);
+});
+
+test('survey: the open-request list names its repository with -R and runs outside the project', async () => {
+  assert.equal(repositoryOf('https://github.com/o/p.git', 'github'), 'o/p');
+  assert.equal(repositoryOf('git@github.com:o/p.git', 'github'), 'o/p');
+  assert.equal(repositoryOf('https://gitlab.com/g/s/p.git', 'gitlab'), 'g/s/p');
+  assert.equal(repositoryOf('git@git.corp.example:g/s/p.git', 'gitlab'), 'git.corp.example/g/s/p');
+  assert.equal(repositoryOf('https://ghe.corp.example/o/p', 'github'), 'ghe.corp.example/o/p');
+  assert.equal(repositoryOf('/srv/x/p.git', 'github'), 'x/p');
+  assert.equal(repositoryOf('p', 'github'), null);
+  const { dir } = await projectWithOrigin();
+  const calls = [];
+  await surveyProject({
+    folder: dir, manifest: { upstreams: [] }, host: 'github', claudeHome: tempFolder('wh-claude-'),
+    run: async (file, args, options) => {
+      if (file !== 'gh') return run(file, args, options);
+      calls.push({ args, cwd: options.cwd });
+      return { code: 0, stdout: '[]', stderr: '' };
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args[calls[0].args.indexOf('-R') + 1], repositoryOf(path.join(dir, '..', 'origin.git'), 'github'));
+  assert.equal(path.resolve(calls[0].cwd).startsWith(fs.realpathSync.native(dir)), false);
+  assert.equal(fs.existsSync(calls[0].cwd), false, 'the scratch folder is removed');
 });
 
 // --- Test 12: built-ins only ---
 
-test('12: scan - every git subcommand the routes run is a built-in, so an alias cannot shadow one', async () => {
+test('12: scan - every git subcommand the routes run is a built-in, so an alias cannot shadow one', async (t) => {
   const listed = await run('git', ['--list-cmds=builtins']);
-  if (listed.code !== 0 || listed.stdout.trim() === '') return; // nothing to compare with on this git
+  if (listed.code !== 0 || listed.stdout.trim() === '') return t.skip('this git cannot list its built-in commands');
   const builtins = new Set(listed.stdout.split(/\s+/).filter(Boolean));
   const files = jsFiles(path.join(ROOT, 'scripts')).map((f) => relative(ROOT, f))
     // The route's own files, the host adapters (whose argument lists are gh's and glab's) and the process killer are not git calls.
@@ -761,20 +851,20 @@ test('13: ordinary projects of real-world shape pass the project look, and are r
   assert.ok(own.keys.includes('core.longpaths'));
 });
 
-test('13: a gh repo clone passes; its remote.<name>.gh-resolved only while test 9 holds', async () => {
+test('13: a gh repo clone passes, remote.<name>.gh-resolved included', async () => {
   const base = [['remote.origin.url', 'https://github.com/o/p.git'], ['remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'], ['branch.main.remote', 'origin'], ['branch.main.merge', 'refs/heads/main']];
   assert.deepEqual(await lookAtSettings({ cwd: await shaped(base), list: 'project' }), { keys: [] });
   const resolved = await lookAtSettings({ cwd: await shaped([...base, ['remote.origin.gh-resolved', 'base']]), list: 'project' });
-  assert.deepEqual(resolved, PROJECT_CONDITIONS.ghNamesRepository ? { keys: [] } : { keys: ['remote.origin.gh-resolved'] });
+  assert.deepEqual(resolved, { keys: [] });
 });
 
 // --- Test 14: new keys in whole sections ---
 
-test('14: a git upgrade adds no key to a whole-section entry without a look', async () => {
+test('14: a git upgrade adds no key to a whole-section entry without a look', async (t) => {
   const snapshot = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests/fixtures/git-config-keys.json'), 'utf8'));
   assert.match(snapshot.gitVersion, /^git version \d+\.\d+/);
   const listed = await run('git', ['help', '--config'], { env: { ...SHUT, GIT_PAGER: 'cat', PAGER: 'cat', MANPAGER: 'cat' } });
-  if (listed.code !== 0 || listed.stdout.trim() === '') return; // `git help --config` is not available here: the snapshot cannot be compared
+  if (listed.code !== 0 || listed.stdout.trim() === '') return t.skip('`git help --config` is not available here, so the snapshot cannot be compared');
   const sections = new Set([...PROJECT_WHOLE_SECTIONS, 'pull', 'color', 'advice']);
   assert.deepEqual([...Object.keys(snapshot.sections)].sort(), [...sections].sort(), 'the snapshot covers every whole section');
   const now = {};

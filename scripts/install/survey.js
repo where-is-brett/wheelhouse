@@ -30,6 +30,7 @@
 // The fetch's ssh never asks for a passphrase.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { run as defaultRun } from '../lib/run.js';
 import { directorSignIn, reachFor, safeGit } from '../lib/safe-git.js';
@@ -356,9 +357,9 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
       const branch = (await git(['symbolic-ref', '--quiet', 'HEAD'], folder, { allowFail: true })).trim();
       onDefault = branch !== '' && branch === `refs/heads/${ref.slice('refs/remotes/origin/'.length)}`;
     }
-    prs = await openRequests({ folder, host, run });
+    prs = await openRequests({ originUrl, host, run });
   }
-  const dirty = (await git(['status', '--porcelain'])).trim() !== '';
+  const dirty = (await git(['status', '--porcelain', '--ignore-submodules=dirty'])).trim() !== '';
   const worktrees = [];
   const blocks = (await git(['worktree', 'list', '--porcelain'])).replace(/\r\n/g, '\n').split('\n\n').filter((b) => b.trim() !== '');
   for (const block of blocks) {
@@ -370,17 +371,42 @@ async function readInFlight({ folder, host, git, run, sshEnv }) {
     const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : null;
     const there = fs.existsSync(at);
     // Looked at in its own folder: an agent can write a worktree's config too.
-    const changed = there ? (await git(['status', '--porcelain'], at, { allowFail: true })).trim() !== '' : false;
+    const changed = there ? (await git(['status', '--porcelain', '--ignore-submodules=dirty'], at, { allowFail: true })).trim() !== '' : false;
     worktrees.push({ path: at, branch, dirty: changed });
   }
   return { behind, dirty, onDefault, prs, worktrees };
 }
 
-async function openRequests({ folder, host, run }) {
+// The repository an origin address names, as `-R` takes it: `[HOST/]OWNER/NAME` (GitLab: the whole group
+// path). The host is written only for a self-managed address; a path on this computer names no host.
+export function repositoryOf(originUrl, host) {
+  const text = String(originUrl ?? '').trim().replaceAll('\\', '/');
+  let where = null;
+  let rest = text;
+  const url = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:]+)(?::\d+)?(\/.*)?$/.exec(text);
+  const scp = /^(?:[^/@\s]+@)?([^/:\s]{2,}):(?!\/)(.*)$/.exec(text);
+  if (url && !/^file:/i.test(text)) { where = url[1].toLowerCase(); rest = url[2] ?? ''; } else if (scp) { where = scp[1].toLowerCase(); rest = scp[2]; }
+  const parts = rest.replace(/\.git\/?$/i, '').split('/').filter(Boolean);
+  const named = host === 'gitlab' && where !== null ? parts : parts.slice(-2);
+  if (named.length < 2) return null;
+  const own = where === null || where === 'github.com' || where === 'gitlab.com';
+  return `${own ? '' : `${where}/`}${named.join('/')}`;
+}
+
+async function openRequests({ originUrl, host, run }) {
+  const repo = repositoryOf(originUrl, host);
+  if (repo === null) throw new Error('the origin address does not name a repository, so its open requests could not be listed');
   const [file, args] = host === 'gitlab'
-    ? ['glab', ['mr', 'list', '--output', 'json', '--per-page', '100']]
-    : ['gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
-  const result = await run(file, args, { cwd: folder, env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }, timeoutMs: GIT_WAIT_MS });
+    ? ['glab', ['mr', 'list', '-R', repo, '--output', 'json', '--per-page', '100']]
+    : ['gh', ['pr', 'list', '-R', repo, '--state', 'open', '--json', 'number,headRefName', '--limit', '200']];
+  // Run outside the project: gh and glab run git themselves, and would read the project's own config.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-survey-'));
+  let result;
+  try {
+    result = await run(file, args, { cwd: outside, env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' }, timeoutMs: GIT_WAIT_MS });
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
   if (result.code !== 0) throw new Error(`${file} could not list the open ${host === 'gitlab' ? 'merge' : 'pull'} requests: ${String(result.stderr).trim().split('\n').pop()}`);
   let listed;
   try { listed = JSON.parse(result.stdout); } catch { throw new Error(`${file} did not answer with a list`); }
