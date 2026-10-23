@@ -245,6 +245,9 @@ function checkPlain(kind, data) {
         && (f.request === undefined || (Number.isInteger(f.request) && f.request >= 1)))) {
         bad('has a from that is not a full commit, its refs/wheelhouse/from/<id> ref and the request it carries on');
       }
+      // Ready-made work is always shown to the director first, so it waits for their approval
+      // whatever its lane (scripts/foreman/queue.js).
+      if (data.visible !== true) bad('starts from a ready-made change, so it must be shown to the director first (visible true)');
     }
   } else if (kind === 'feature') {
     slug('work');

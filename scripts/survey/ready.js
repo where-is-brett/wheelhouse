@@ -210,23 +210,30 @@ async function commitWith({ git, base, changes, message, author }) {
   }
 }
 
-// Points the work's ref at `sha`: from `base` when `defaultRef` is the work's ref itself (the
-// default branch fetched into it), else only while the ref isn't there.
-async function setRef(git, work, sha, old) {
-  const set = await git(['update-ref', fromRef(work), sha, old]);
-  if (set.code !== 0) refuse('the ready-made change couldn\'t be kept: ask again');
+// The commit fetched into the work's ref (fetchInto), as fetchInto gave it: a full commit, never a
+// name read again, since an agent can point the ref elsewhere meanwhile.
+async function fetchedBase(git, base) {
+  if (typeof base !== 'string' || !FULL_SHA.test(base)) refuse('the change needs the commit fetched to build on');
+  return commitOf(git, base, 'The main line as fetched');
 }
 
-// archiveCommit({ git, defaultRef, files, work, author }) -> { sha, ref, moved }: one commit on
-// `defaultRef` moving each of `files` (the survey's list) that is, on `defaultRef` now, a plain
-// file of another agent setup's instructions to .wheelhouse-archive/<its path>, with the list of
+// Points the work's ref at `sha`, only while it still names `base`, the commit fetched into it.
+async function setRef(git, work, sha, base) {
+  const set = await git(['update-ref', fromRef(work), sha, base]);
+  if (set.code !== 0) refuse('the ready-made change couldn\'t be kept, as its ref moved after it was fetched: ask again');
+}
+
+// archiveCommit({ git, base, files, work, author }) -> { sha, ref, moved }: one commit on `base`,
+// the default branch's commit fetched into the work's ref (fetchInto), moving each of `files` (the
+// survey's list) that is, on `base`, a plain file of another agent setup's instructions to
+// .wheelhouse-archive/<its path>, with the list of
 // what moved (archived.json, { v: 1, moved: [{ from, to }] }) and a README, as uninstall reads it
 // back (scripts/setup/uninstall.js, archiveAt). A file no longer there, a link, or anything under
 // the archive folder is left out; a default branch holding an archive already is refused.
-export async function archiveCommit({ git, defaultRef, files, work, author }) {
+export async function archiveCommit({ git, base: fetched, files, work, author }) {
   checkWork(work);
   const ref = fromRef(work);
-  const base = await commitOf(git, defaultRef, 'The main line');
+  const base = await fetchedBase(git, fetched);
   const entries = await entriesOf(git, base);
   if (entries.some((e) => underArchive(e.path))) refuse(`the project has a ${ARCHIVE}/ folder already: put those back first`);
   const at = new Map(entries.map((e) => [e.path, e]));
@@ -249,18 +256,18 @@ export async function archiveCommit({ git, defaultRef, files, work, author }) {
   // Read back as uninstall reads it: every move there to put back.
   const back = await archiveAt(git, sha);
   if (back?.view?.refused !== undefined || back?.view?.moves?.length !== moves.length) refuse('the archive wasn\'t as uninstall reads one, so it wasn\'t kept');
-  await setRef(git, work, sha, defaultRef === ref ? base : NO_OBJECT);
+  await setRef(git, work, sha, base);
   return { sha, ref, moved: moves.map((m) => m.from) };
 }
 
-// restoreCommit({ git, defaultRef, work, author }) -> { sha, ref, moved }: one commit on
-// `defaultRef` putting each archived file back where it was, as uninstall would (archiveAt). A
+// restoreCommit({ git, base, work, author }) -> { sha, ref, moved }: one commit on `base`, fetched as
+// archiveCommit's is, putting each archived file back where it was, as uninstall would (archiveAt). A
 // file whose place is taken now stays in the archive, and the list then names it alone; once
 // everything is back, the list and the README go too. An archive uninstall would refuse is refused.
-export async function restoreCommit({ git, defaultRef, work, author }) {
+export async function restoreCommit({ git, base: fetched, work, author }) {
   checkWork(work);
   const ref = fromRef(work);
-  const base = await commitOf(git, defaultRef, 'The main line');
+  const base = await fetchedBase(git, fetched);
   const found = await archiveAt(git, base);
   if (found === null) refuse('there is no archive of another agent setup\'s instructions on the main line, so nothing to put back');
   if (found.view.refused !== undefined) refuse(`the archive can't be put back: ${found.view.refused}`);
@@ -279,6 +286,6 @@ export async function restoreCommit({ git, defaultRef, work, author }) {
       ...list,
     ],
   });
-  await setRef(git, work, sha, defaultRef === ref ? base : NO_OBJECT);
+  await setRef(git, work, sha, base);
   return { sha, ref, moved: moves.map((m) => m.from) };
 }

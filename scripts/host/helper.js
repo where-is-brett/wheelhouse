@@ -43,7 +43,7 @@ import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
 import { takeSurvey, shapedSurvey, recordSurvey } from '../survey/take.js';
-import { ReadyRefusal, archiveCommit, carryOn, dropRef, fetchInto, folderGit, freeWork, fromRef, restoreCommit } from '../survey/ready.js';
+import { ReadyRefusal, archiveCommit, carryOn, dropRef, fetchInto, folderGit, freeWork, restoreCommit } from '../survey/ready.js';
 import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
 import { reaching } from '../setup/git.js';
 import { directorGitEnv } from '../setup/host.js';
@@ -1508,17 +1508,19 @@ export async function startHelper({
 
   // The default branch as it is on the host now, fetched into the work's ref, and the commit `build`
   // makes on it put there in its place; the ref is taken out again when anything fails.
-  async function readyOnDefault({ project, record, git, used }, ctx, base, build) {
+  async function readyOnDefault({ project, record, git, used }, ctx, name, build) {
     const author = await authorFor(record);
     const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
     if (!plainBranch(defaultBranch)) refuse('the host didn\'t name its main line');
-    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base, used });
-    await fetchInto({ git, remoteUrl: record.remoteUrl, source: `refs/heads/${defaultBranch}`, work });
+    const work = await freeWork({ git, remoteUrl: record.remoteUrl, base: name, used });
+    // Built on the commit fetched, never on the ref read again: an agent could point it elsewhere
+    // meanwhile, and the ref is moved on only while it still names that commit.
+    const base = await fetchInto({ git, remoteUrl: record.remoteUrl, source: `refs/heads/${defaultBranch}`, work });
     let made;
     try {
-      made = await build({ work, defaultRef: fromRef(work), author });
+      made = await build({ work, base, author });
     } catch (error) {
-      await dropRef(git, work);
+      await dropRef(git, work, base);
       throw error;
     }
     await keepReady(project, git, work, { sha: made.sha, ref: made.ref, request: null, branch: null });

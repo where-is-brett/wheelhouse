@@ -435,6 +435,11 @@ test('work may start from a ready-made change: its full commit, its own ref and 
       { ...from, ref: 'refs/wheelhouse/from/another' }, { ...from, ref: 'refs/heads/export-csv' }, { ...from, ref: 'refs/wheelhouse/from/export-csv/x' },
       { ...from, request: 0 }, { ...from, request: 1.5 }, { ...from, request: '7' }, { ...from, branch: 'x' },
     ]) assert.throws(() => makeEvent({ kind: 'work', data: { ...w, from: bad } }), /work event has a from/, JSON.stringify(bad));
+    // Ready-made work is always shown to the director first, whatever its lane, so it waits for their approval.
+    for (const lane of ['quick', 'bug', 'small', 'feature']) {
+      assert.throws(() => makeEvent({ kind: 'work', data: { ...w, lane, visible: false, from } }), /ready-made change, so it must be shown to the director first/, lane);
+      assert.equal(makeEvent({ kind: 'work', data: { ...w, lane, visible: true, from } }).data.visible, true);
+    }
   });
 });
 

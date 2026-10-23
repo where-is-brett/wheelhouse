@@ -166,7 +166,7 @@ test('the archive commit moves exactly the instruction files on the default bran
     const base = await fetchedDefault(p, 'archive-instructions');
     assert.equal(base, tip);
     const surveyed = ['.claude/skills/tidy/SKILL.md', '.cursorrules', '.windsurfrules', 'AGENTS.md', 'README.md', '../outside', '.wheelhouse-archive/AGENTS.md'];
-    const made = await archiveCommit({ git: p.git, defaultRef: 'refs/wheelhouse/from/archive-instructions', files: surveyed, work: 'archive-instructions', author: AUTHOR });
+    const made = await archiveCommit({ git: p.git, base, files: surveyed, work: 'archive-instructions', author: AUTHOR });
     assert.deepEqual(made.moved, ['.claude/skills/tidy/SKILL.md', 'AGENTS.md'], 'only plain instruction files there now; the link, the gone file and the rest left out');
     assert.equal(made.ref, 'refs/wheelhouse/from/archive-instructions');
     assert.equal(await g(p.folder, 'rev-parse', made.ref), made.sha);
@@ -191,22 +191,23 @@ test('the archive commit moves exactly the instruction files on the default bran
 test('the archive is refused when nothing on the default branch is left to move, or an archive is there already', async () => {
   const p = await projectWith(OTHERS);
   try {
-    await fetchedDefault(p, 'archive-instructions');
-    await assert.rejects(archiveCommit({ git: p.git, defaultRef: 'refs/wheelhouse/from/archive-instructions', files: ['.cursorrules-gone', 'README.md'], work: 'archive-instructions', author: AUTHOR }), ReadyRefusal);
-    const made = await archiveCommit({ git: p.git, defaultRef: 'refs/wheelhouse/from/archive-instructions', files: ['AGENTS.md'], work: 'archive-instructions', author: AUTHOR });
-    await g(p.folder, 'update-ref', 'refs/heads/archived', made.sha);
-    await assert.rejects(archiveCommit({ git: p.git, defaultRef: 'refs/heads/archived', files: ['.cursorrules'], work: 'archive-again', author: AUTHOR }), /archive/);
+    const base = await fetchedDefault(p, 'archive-instructions');
+    await assert.rejects(archiveCommit({ git: p.git, base, files: ['.cursorrules-gone', 'README.md'], work: 'archive-instructions', author: AUTHOR }), ReadyRefusal);
+    const made = await archiveCommit({ git: p.git, base, files: ['AGENTS.md'], work: 'archive-instructions', author: AUTHOR });
+    await g(p.folder, 'update-ref', 'refs/wheelhouse/from/archive-again', made.sha);
+    await assert.rejects(archiveCommit({ git: p.git, base: made.sha, files: ['.cursorrules'], work: 'archive-again', author: AUTHOR }), /archive/);
   } finally { p.cleanup(); }
 });
 
 test('restoring reverses the archive, and the manifest and README go once everything is back', async () => {
   const p = await projectWith(OTHERS);
   try {
-    await fetchedDefault(p, 'archive-instructions');
-    const archived = await archiveCommit({ git: p.git, defaultRef: 'refs/wheelhouse/from/archive-instructions', files: ['AGENTS.md', '.cursorrules', '.claude/skills/tidy/SKILL.md'], work: 'archive-instructions', author: AUTHOR });
-    await g(p.folder, 'update-ref', 'refs/heads/archived', archived.sha);
+    const base = await fetchedDefault(p, 'archive-instructions');
+    const archived = await archiveCommit({ git: p.git, base, files: ['AGENTS.md', '.cursorrules', '.claude/skills/tidy/SKILL.md'], work: 'archive-instructions', author: AUTHOR });
+    // As the route fetches it: the default branch, now the archive, at the work's own ref.
+    await g(p.folder, 'update-ref', 'refs/wheelhouse/from/restore-instructions', archived.sha);
     const before = await folderNow(p.folder, 'restore-instructions');
-    const restored = await restoreCommit({ git: p.git, defaultRef: 'refs/heads/archived', work: 'restore-instructions', author: AUTHOR });
+    const restored = await restoreCommit({ git: p.git, base: archived.sha, work: 'restore-instructions', author: AUTHOR });
     assert.deepEqual(restored.moved, ['.claude/skills/tidy/SKILL.md', '.cursorrules', 'AGENTS.md']);
     assert.equal(await g(p.folder, 'rev-parse', 'refs/wheelhouse/from/restore-instructions'), restored.sha);
     assert.deepEqual(await treeOf(p.folder, restored.sha), await treeOf(p.folder, 'origin/main'), 'the tree as it was before the archive');
@@ -220,14 +221,41 @@ test('restoring reverses the archive, and the manifest and README go once everyt
     await g(p.seed, 'add', 'AGENTS.md');
     await g(p.seed, 'commit', '-q', '-m', 'A new AGENTS.md');
     await g(p.seed, 'push', '-q', '-f', p.remote.url, 'HEAD:refs/heads/taken');
-    await g(p.folder, 'fetch', '-q', 'origin', 'taken:refs/heads/taken');
-    const partly = await restoreCommit({ git: p.git, defaultRef: 'refs/heads/taken', work: 'restore-again', author: AUTHOR });
+    const taken = await fetchInto({ git: p.git, remoteUrl: p.remote.url, source: 'refs/heads/taken', work: 'restore-again' });
+    const partly = await restoreCommit({ git: p.git, base: taken, work: 'restore-again', author: AUTHOR });
     assert.deepEqual(partly.moved, ['.claude/skills/tidy/SKILL.md', '.cursorrules']);
     assert.deepEqual(JSON.parse(await g(p.folder, 'show', `${partly.sha}:.wheelhouse-archive/archived.json`)), { v: 1, moved: [{ from: 'AGENTS.md', to: '.wheelhouse-archive/AGENTS.md' }] });
     assert.equal(await g(p.folder, 'show', `${partly.sha}:AGENTS.md`), 'A new one');
     assert.equal(await g(p.folder, 'show', `${partly.sha}:.wheelhouse-archive/README.md`) !== '', true);
 
     // No archive: nothing to put back.
-    await assert.rejects(restoreCommit({ git: p.git, defaultRef: 'origin/main', work: 'restore-none', author: AUTHOR }), ReadyRefusal);
+    const none = await fetchedDefault(p, 'restore-none');
+    await assert.rejects(restoreCommit({ git: p.git, base: none, work: 'restore-none', author: AUTHOR }), ReadyRefusal);
+  } finally { p.cleanup(); }
+});
+
+test('the archive is built on the commit fetched, never on the work\'s ref read again, and is kept only while the ref still names that commit', async () => {
+  const p = await projectWith(OTHERS);
+  try {
+    const base = await fetchedDefault(p, 'archive-instructions');
+    // An agent points the work's ref at a commit of its own, with AGENTS.md changed.
+    fs.writeFileSync(path.join(p.seed, 'AGENTS.md'), 'Planted\n');
+    await g(p.seed, 'add', 'AGENTS.md');
+    await g(p.seed, 'commit', '-q', '-m', 'Planted');
+    await g(p.seed, 'push', '-q', p.remote.url, 'main:refs/heads/planted');
+    await g(p.folder, 'fetch', '-q', 'origin', 'planted:refs/heads/planted');
+    const planted = await g(p.folder, 'rev-parse', 'refs/heads/planted');
+    await g(p.folder, 'update-ref', 'refs/wheelhouse/from/archive-instructions', planted);
+    await assert.rejects(archiveCommit({ git: p.git, base, files: ['AGENTS.md'], work: 'archive-instructions', author: AUTHOR }), /couldn't be kept/);
+    assert.equal(await g(p.folder, 'rev-parse', 'refs/wheelhouse/from/archive-instructions'), planted, 'the ref is left as it was found');
+    await g(p.folder, 'update-ref', 'refs/wheelhouse/from/restore-x', planted);
+    await assert.rejects(restoreCommit({ git: p.git, base, work: 'restore-x', author: AUTHOR }), ReadyRefusal);
+    // Back at the commit fetched: built on that commit, with the archive's AGENTS.md as it was there.
+    await g(p.folder, 'update-ref', 'refs/wheelhouse/from/archive-instructions', base);
+    const made = await archiveCommit({ git: p.git, base, files: ['AGENTS.md'], work: 'archive-instructions', author: AUTHOR });
+    assert.equal(await g(p.folder, 'rev-parse', `${made.sha}^`), base);
+    assert.equal(await g(p.folder, 'show', `${made.sha}:.wheelhouse-archive/AGENTS.md`), 'Agents, as surveyed');
+    // Only a full commit is built on, never a name read again.
+    await assert.rejects(archiveCommit({ git: p.git, base: 'refs/wheelhouse/from/archive-instructions', files: ['AGENTS.md'], work: 'archive-instructions', author: AUTHOR }), ReadyRefusal);
   } finally { p.cleanup(); }
 });
