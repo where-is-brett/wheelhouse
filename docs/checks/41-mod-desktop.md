@@ -327,6 +327,37 @@ It ran from 13:18 UTC on 22 October to 00:55 UTC on 23 October, with two long pa
 
 **The director's answers on the closing card:** "i saw once 'couldn't hand that to the front desk'"; "during the lock i got no notification (not 100% sure) but the first lock i did."
 
+### Fixes after the second sitting (23 October 2026)
+
+Six changes answer the sitting's findings. Each says what it does and what the third sitting must confirm.
+
+- **33-3, a typed code in a session another session started.**
+  - The mod and the stop-word hook now read past whole leading app reminder blocks to the director's own words. A remainder that still holds a reminder tag sends nothing. Origins are unchanged.
+  - *Confirm:* type a reply code in a session another session started, and a typed "stop" there.
+- **A compaction's session start.**
+  - It now runs no lineage check, so it writes no hold and lifts none. The hold, when one is on, now lets Claude's notification and the app's task list and wrap-up through. The tool guard keeps its own check on the two app tools.
+  - *Confirm:* `/compact` in the test session, then a wrap-up and a notification.
+- **The hold's card.**
+  - A `lineage-lift` event `{at, holds}` now names the holds it lifts. The session start and the bridge's tick record it once when this computer has no hold file. A hold belongs to the computer on its event's envelope.
+  - *Confirm:* delete `hold.json` and see the card leave within a tick.
+- **41-9, the command names.**
+  - The mod's commands are now `/wheelhouse-go` and `/wheelhouse-digest`; `/wheelhouse` stays. Why is in design section 21.
+  - *Confirm:* type `/wheelhouse-digest` with the enterprise-search plugin installed.
+- **The certificate lines.**
+  - Node.js itself prints them at start-up. Claude Code sets `NODE_USE_SYSTEM_CA=1`, and the sandbox blocks the trust settings. The session start's command line now carries `--no-use-system-ca` when Node.js knows the flag (22.15 and later), and the guards and allow rules accept that one form.
+  - *Confirm:* a front desk command's output has no ERROR lines.
+- **41-8, the notice for a kept-out line.**
+  - No quiet answer exists. A headless probe on Claude Code 2.1.302 showed that `{text}` without `next` gives "Prompt not submitted: a hook answered without passing the prompt on", and a drop gives "Prompt dropped by a hook: <reason>". That is the app's limit. The reason now reads "Wheelhouse: an update from another session, shown in the pane".
+  - Each kept-out message now writes a `received` line to `usage/mod/<date>.jsonl`: its origin and via, never its text.
+  - In Desktop another session's message comes as an `sdk` prompt, not through `session.receive`.
+  - *Confirm:* the notice's words in Desktop, and the `received` lines.
+
+**Not fixed, recorded.**
+- **Fix D's timing.** No retry was seen before Lift STOP, and how long a session refuses prompts after Esc is not measured.
+- **41-7.** It is not settled. The sitting's add-card script reused the first card's words, and answers are kept by the question's words, so the second card read as answered. The script now gives each card its own words.
+- **The phone's `stop`.** Its origin in the transcript is `human`, the same as a typed prompt, while the mod sees `bridge`.
+- **`session.receive`.** Design section 17.1's "On the Mac, `session.receive` fires" held only for the first sitting's path; the design now says so.
+
 ## What it means for the design
 
 - **The pane, its presses and the settings pane** (section 17.1) work in Desktop on the Mac as designed: each press records what the matching click would, signed where the record is a signed kind, and a settings choice is in force at once.
@@ -347,17 +378,19 @@ It ran from 13:18 UTC on 22 October to 00:55 UTC on 23 October, with two long pa
 
 ## Needs the director
 
-- **After the second sitting (23 October 2026):** nothing now. Each new finding goes to the builder first:
-  - the typed code past the app's note;
-  - the hold after `/compact`, and its card's end;
-  - `/digest`'s name;
-  - the blocked-prompt notices.
-- **A third short sitting on the Mac** follows those changes, for what is still not seen:
+- **After the second sitting (23 October 2026):** nothing now. The fixes above are made.
+- **A third short sitting on the Mac** must try:
+  - a code typed in a session another session started, and a typed "stop" there;
+  - `/compact`, then a wrap-up and a notification;
+  - deleting `hold.json`, and the card leaving within a tick;
+  - `/wheelhouse-digest` with the enterprise-search plugin installed;
+  - a front desk command's output, with no ERROR lines;
+  - the notice's words in Desktop, and the `received` lines;
   - a notification after a real absence of 15 minutes, with the phone's Claude app closed;
   - a press while the reply is being written;
   - how long a session refuses prompts after Esc;
   - the `ui.open` line.
-  - Its run sheet gives the locked-screen card new words each time.
+  - Its run sheet gives each added card its own words, the locked-screen card included.
 
 **From the first sitting (20 October 2026):**
 
