@@ -436,6 +436,7 @@ function bashRefused(command, ctx, depth = 0) {
       const word = seg[i];
       const value = word.slice(word.indexOf('=') + 1);
       if (['gh', 'glab'].includes(names[i]) || ['gh', 'glab'].includes(nameOf(value))) return true;
+      if (/^(?:gh|glab)\$/.test(names[i]) || /^(?:gh|glab)\$/.test(nameOf(value))) return true; // a host tool named with a variable
       if (GIT_PUSHERS.has(names[i])) return true;
       if (names[i] === 'git' && gitPushes(seg.slice(i + 1))) return true;
       for (const candidate of [word, value]) {
