@@ -241,6 +241,44 @@ test('a level 4 question becomes a card too, with what it does to the checks or 
   });
 });
 
+test('views survey prints what the survey found as short lines, with the rules numbered by their sources', async () => {
+  await inHome(async () => {
+    const none = await run(fakeHelper(), ['views', 'survey']);
+    assert.equal(none.code, 0);
+    assert.equal(none.out, 'No survey has been taken.\n');
+    const empty = { v: 1, hostReached: true, requests: [], pushed: [], local: [], more: { pushed: false, local: false }, instructions: { files: [], sections: [] }, scheduled: 0, secrets: 0, rules: [] };
+    const bare = await run(fakeHelper({ events: [makeEvent({ kind: 'survey', data: empty, now: () => T(1) })] }), ['views', 'survey']);
+    assert.equal(bare.out, 'The survey found nothing under way, no other instructions and no rules.\n');
+    const data = {
+      ...empty,
+      requests: [{ number: 12, title: 'Add a map\nof the shop', draft: false }, { number: 15, title: 'Fix the footer', draft: true }],
+      pushed: [{ name: 'a', head: 'a'.repeat(40), commits: 1, subject: 'Work', at: '2026-10-24T09:00:00+11:00' }],
+      more: { pushed: false, local: true },
+      local: [{ name: 'b', head: 'b'.repeat(40), commits: 2, subject: 'Work', at: '2026-10-24T09:00:00+11:00' }],
+      instructions: { files: ['AGENTS.md', '.cursorrules'], sections: [{ heading: 'Other', line: 4 }] },
+      rules: [{ words: 'Never email on Sundays', source: { file: 'CLAUDE.md', line: 12 } }, { words: 'Use plain words', source: { file: 'AGENTS.md', line: 3 } }],
+    };
+    const full = await run(fakeHelper({ events: [makeEvent({ kind: 'survey', data: { ...empty, hostReached: false }, now: () => T(1) }), makeEvent({ kind: 'survey', data, now: () => T(2) })] }), ['views', 'survey']);
+    assert.equal(full.out, [
+      'Changes waiting to be merged: 2',
+      '- number 12: Add a map of the shop',
+      '- number 15: Fix the footer (a draft)',
+      'Unfinished work pushed: 1',
+      'Unfinished work on this computer: at least 1',
+      'Another agent setup\'s files: AGENTS.md, .cursorrules',
+      'Parts of CLAUDE.md: 1',
+      'Rules found: 2',
+      '1. Never email on Sundays (CLAUDE.md, line 12)',
+      '2. Use plain words (AGENTS.md, line 3)',
+      '',
+    ].join('\n'));
+    // A host that couldn't be looked at is the first line.
+    const missed = await run(fakeHelper({ events: [makeEvent({ kind: 'survey', data: { ...empty, hostReached: false }, now: () => T(1) })] }), ['views', 'survey']);
+    assert.match(missed.out, /^The host could not be looked at\./);
+    assert.doesNotMatch(full.out + missed.out, /commit|branch|worktree/i);
+  });
+});
+
 test('every line break in a view\'s text is put on one line', async () => {
   await inHome(async () => {
     const glossary = makeEvent({ kind: 'glossary', data: { term: 'deploy', plain: 'one\ntwo\r\nthree\u2028four', example: 'a\rb' }, now: () => T(1) });

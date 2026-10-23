@@ -62,7 +62,7 @@ export const RECORD_KINDS = Object.freeze([
   'ruling', 'idea', 'rejection', 'glossary', 'decision', 'risk', 'blocker', 'reversal', 'setting',
   'work', 'amendment', 'incident', 'note',
 ]);
-export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work']);
+export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
 const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview'];
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 // The Lift STOP card, which `cards` puts first under STOP. It is composed on each visit and never
@@ -780,6 +780,37 @@ const titleOf = (entry, key) => flat(entry?.data?.title) || flat(entry?.data?.te
 const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
+// The survey taken when setup finished, as short lines: what it counted, the requests by number
+// and title, the other setup's files, and the rules found, numbered, each with its source, so the
+// front desk can confirm one when it first matters. A part with nothing in it is left out.
+function surveyLines(survey) {
+  const data = isPlain(survey?.data) ? survey.data : null;
+  if (data === null) return ['No survey has been taken.'];
+  const list = (value) => (Array.isArray(value) ? value.filter(isPlain) : []);
+  const count = (label, n, more) => `${label}: ${more ? 'at least ' : ''}${n}`;
+  const requests = list(data.requests);
+  const pushed = list(data.pushed).length;
+  const local = list(data.local).length;
+  const files = Array.isArray(data.instructions?.files) ? data.instructions.files.filter((f) => typeof f === 'string') : [];
+  const sections = list(data.instructions?.sections).length;
+  const rules = list(data.rules);
+  const out = [];
+  if (data.hostReached === false) out.push('The host could not be looked at.');
+  if (requests.length > 0) {
+    out.push(`Changes waiting to be merged: ${requests.length}`);
+    for (const r of requests) out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}`);
+  }
+  if (pushed > 0) out.push(count('Unfinished work pushed', pushed, data.more?.pushed === true));
+  if (local > 0) out.push(count('Unfinished work on this computer', local, data.more?.local === true));
+  if (files.length > 0) out.push(`Another agent setup's files: ${files.map(flat).join(', ')}`);
+  if (sections > 0) out.push(`Parts of CLAUDE.md: ${sections}`);
+  if (rules.length > 0) {
+    out.push(`Rules found: ${rules.length}`);
+    rules.forEach((r, i) => out.push(`${i + 1}. ${flat(r.words)} (${flat(r.source?.file)}, line ${r.source?.line})`));
+  }
+  return out.length > 0 ? out : ['The survey found nothing under way, no other instructions and no rules.'];
+}
+
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
@@ -811,6 +842,7 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'ideas') return listed(Object.entries(isPlain(views.ideas) ? views.ideas : {}).map(([key, entry]) => `- ${titleOf(entry, key)}`), 'No ideas are kept yet.');
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
+  if (name === 'survey') return surveyLines(views.survey);
   if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now));
   // settings: the project's over the director's own, over the defaults
   const profile = await client.profile.views({});

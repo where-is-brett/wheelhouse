@@ -63,10 +63,12 @@ function instructionsLine(survey) {
 
 // briefingLines(survey, { host }) -> string[]: the survey's lines for the first briefing, in
 // order; none for a survey with nothing to say. `host` is 'github', 'gitlab' or null (git alone).
-export function briefingLines(survey, { host = null } = {}) {
+// `leave` names lines a caller says itself and wants left out: 'inFlight', 'instructions', 'missed'.
+export function briefingLines(survey, { host = null, leave = [] } = {}) {
   const hostName = HOST_NAMES[host] ?? null;
   const missed = hostName !== null && survey.hostReached === false
     ? `I couldn't look at ${hostName} for changes waiting to be merged; I'll look again next time.`
     : null;
-  return [inFlightLine(survey, hostName), instructionsLine(survey), missed].filter((line) => line !== null);
+  const lines = { inFlight: inFlightLine(survey, hostName), instructions: instructionsLine(survey), missed };
+  return Object.entries(lines).filter(([name, line]) => line !== null && !leave.includes(name)).map(([, line]) => line);
 }

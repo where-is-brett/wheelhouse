@@ -2,7 +2,8 @@
 // When the director was last seen in a project: `promptAt`, their last message, `briefedAt`,
 // the last briefing they were given, and `weeklyAt`, the last briefing that showed them the lines
 // it repeats once a week (Unattended build commands on Windows); and their visits: `visitAt`, when
-// the latest visit began, and `boardAsks`, the last BOARD_ASKS board commands as { at, tab, visit }
+// the latest visit began, `surveyAt`, the id of the survey the last briefing that mentioned it
+// mentioned, and `boardAsks`, the last BOARD_ASKS board commands as { at, tab, visit }
 // (`tab` the command's word or null, `visit` the visitAt it was asked in), which learning reads.
 // Kept in projects/<project>/seen.json, beside the state clone, and written whole (a temporary file
 // in the same folder, then a rename).
@@ -18,6 +19,8 @@ const FIELDS = ['promptAt', 'briefedAt', 'weeklyAt', 'visitAt'];
 // How many board commands are kept.
 export const BOARD_ASKS = 10;
 const TABS = ['director', 'build'];
+// An event's id, as a survey is named by it.
+const EVENT_ID = /^[A-Za-z0-9_.-]{1,80}$/;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -33,6 +36,8 @@ function timeText(value) {
   const ms = Date.parse(value);
   return !Number.isNaN(ms) && new Date(ms).toISOString() === value ? value : null;
 }
+
+const idText = (value) => (typeof value === 'string' && EVENT_ID.test(value) ? value : null);
 
 function nowMs(now) {
   try {
@@ -54,11 +59,11 @@ function asksOf(value) {
 // The times as written, each null when it isn't one, and the board commands; all none when the
 // file can't be read.
 function readKept(project) {
-  const none = { ...Object.fromEntries(FIELDS.map((field) => [field, null])), boardAsks: [] };
+  const none = { ...Object.fromEntries(FIELDS.map((field) => [field, null])), surveyAt: null, boardAsks: [] };
   try {
     const kept = JSON.parse(fs.readFileSync(seenFile(project), 'utf8'));
     if (!isRecord(kept)) return none;
-    return { ...Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])])), boardAsks: asksOf(kept.boardAsks) };
+    return { ...Object.fromEntries(FIELDS.map((field) => [field, timeText(kept[field])])), surveyAt: idText(kept.surveyAt), boardAsks: asksOf(kept.boardAsks) };
   } catch {
     return none;
   }
@@ -75,6 +80,11 @@ export function readSeen(project, { now } = {}) {
   return { promptAt: notAhead(kept.promptAt, limit), briefedAt: notAhead(kept.briefedAt, limit), weeklyAt: notAhead(kept.weeklyAt, limit) };
 }
 
+// readSurveyAt(project) -> the id of the survey a briefing last mentioned, or null.
+export function readSurveyAt(project) {
+  return readKept(project).surveyAt;
+}
+
 // readVisits(project, { now }) -> { visitAt, boardAsks }: when the latest visit began, or null,
 // and the board commands kept, oldest first, leaving out any asked after now.
 export function readVisits(project, { now } = {}) {
@@ -83,9 +93,9 @@ export function readVisits(project, { now } = {}) {
   return { visitAt: notAhead(kept.visitAt, limit), boardAsks: kept.boardAsks.filter((a) => notAhead(a.at, limit) !== null) };
 }
 
-// markSeen(project, { promptAt, briefedAt, weeklyAt, visitAt, boardAsk }): writes the times given,
+// markSeen(project, { promptAt, briefedAt, weeklyAt, visitAt, surveyAt, boardAsk }): writes the times given,
 // keeping the others as they were, and adds `boardAsk` ({ at, tab, visit }) to the board commands,
-// keeping the last BOARD_ASKS. A value that isn't a time, or a board command that isn't one, is not written.
+// keeping the last BOARD_ASKS. A value that isn't a time (or, for surveyAt, an id), or a board command that isn't one, is not written.
 export function markSeen(project, times = {}) {
   const file = seenFile(project);
   const next = readKept(project);
@@ -93,6 +103,8 @@ export function markSeen(project, times = {}) {
     const value = timeText(isRecord(times) ? times[field] : undefined);
     if (value !== null) next[field] = value;
   }
+  const surveyed = idText(isRecord(times) ? times.surveyAt : undefined);
+  if (surveyed !== null) next.surveyAt = surveyed;
   const ask = isRecord(times) && isRecord(times.boardAsk)
     ? { at: timeText(times.boardAsk.at), tab: times.boardAsk.tab ?? null, visit: timeText(times.boardAsk.visit) } : null;
   if (ask !== null) next.boardAsks = asksOf([...next.boardAsks, ask]);

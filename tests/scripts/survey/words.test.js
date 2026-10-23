@@ -95,3 +95,12 @@ test('no line holds the git words', () => {
     for (const line of briefingLines(full, { host })) assert.doesNotMatch(line, /commit|branch|worktree/i);
   }
 });
+
+test('lines can be left out by name, so a caller says one of them itself', () => {
+  const found = survey({ requests: [request(1)], instructions: { files: ['AGENTS.md'], sections: [] } });
+  assert.equal(briefingLines(found, { host: 'github', leave: ['inFlight'] }).length, 1);
+  assert.match(briefingLines(found, { host: 'github', leave: ['inFlight'] })[0], /^This project also has instructions/);
+  assert.match(briefingLines(found, { host: 'github', leave: ['instructions'] })[0], /^Already under way here/);
+  assert.deepEqual(briefingLines(found, { host: 'github', leave: ['inFlight', 'instructions'] }), []);
+  assert.deepEqual(briefingLines(survey({ hostReached: false }), { host: 'github', leave: ['missed'] }), []);
+});

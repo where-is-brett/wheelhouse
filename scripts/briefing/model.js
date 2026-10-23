@@ -18,21 +18,27 @@
 // They are that week's news, so they open `watch`, ahead of unusual use, and are the last of it
 // cut for length; `weekly` counts them, and the caller records them as shown (weeklyAt in
 // seen.json) only when the text showed them, so a briefing cut short leaves them due.
+//
+// What the survey found when setup finished (design section 15) is mentioned once: `found` holds its
+// lines when the latest survey is not the one `surveyAt` names, and `foundId` is that survey's id,
+// which the caller records (surveyAt in seen.json) only when the text showed every line. A survey
+// with nothing to say, or none, leaves both empty.
 import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../board/model.js';
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
 import { brokenCount } from '../board/health.js';
 import { FRONT_DESK_MODEL_LEAD } from '../lib/front-desk-model.js';
 import { verdict, sinceAbout } from '../lib/calm-words.js';
+import { briefingLines } from '../survey/words.js';
 
-// Briefing = { verdict, since, first, waiting, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
+// Briefing = { verdict, since, first, found, foundId, waiting, changed, progress, watch, usage, onTrack, plus, raise, weekly }.
 // `verdict` is the pane's sentence; `since` says when the last briefing was and how long ago ('' when
 // there was none); each `waiting` entry is { title, line, recommendation, optional } (a card's own
 // words, each only when it has them); `onTrack` says usage is as it usually is; `plus` counts what
 // is new since the last briefing, in waiting and changed ({ waiting, changed }, none when there was
 // no last briefing).
 const EMPTY = () => ({
-  verdict: '', since: '', first: [], waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
+  verdict: '', since: '', first: [], found: [], foundId: null, waiting: [], changed: [], progress: [], watch: [], usage: null, onTrack: false, plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
 });
 
 // What the board model says when a merge carried no words for users. It belongs to progress, not
@@ -214,12 +220,15 @@ function waitingEntry(w) {
   return entry;
 }
 
-// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review }) -> Briefing.
+// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review, survey, surveyAt, host, leaveOut }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing, `weeklySince` the time of the last briefing that showed the weekly lines.
 // `wasRaised(id)` says whether an unusual item was raised already (the usage store's by default).
 // `timeZone` is the director's, this computer's own by default. `review` is { due, days }: whether
 // the delegation review is due, and the days between reviews, as the caller worked it out from the state.
+// `survey` is the latest survey as the views give it ({ id, data }), `surveyAt` the id of the one a
+// briefing last mentioned, `host` the project's ('github', 'gitlab' or null) and `leaveOut` the
+// survey's lines (see briefingLines) the caller says itself.
 export function briefingModel(options) {
   try {
     return build(isRecord(options) ? options : {});
@@ -228,7 +237,15 @@ export function briefingModel(options) {
   }
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review }) {
+// The survey's lines, and its id, when it is one not mentioned yet and has something to say.
+function foundLines(survey, surveyAt, host, leaveOut) {
+  const none = { found: [], id: null };
+  if (!isRecord(survey) || !isRecord(survey.data) || typeof survey.id !== 'string' || survey.id === surveyAt) return none;
+  const found = lines(briefingLines(survey.data, { host, leave: list(leaveOut) }));
+  return found.length > 0 ? { found, id: survey.id } : none;
+}
+
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [] }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -240,6 +257,9 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
 
   // The heading says these aren't confirmed, so each line's own saying of it goes.
   briefing.first = part(() => lines(list(director.first)).map((line) => line.replace(UNCONFIRMED, '')), []);
+  const said = part(() => foundLines(survey, surveyAt, host, leaveOut), { found: [], id: null });
+  briefing.found = said.found;
+  briefing.foundId = said.id;
   briefing.waiting = part(() => records(director.waiting).map(waitingEntry), []);
   briefing.changed = part(() => lines(records(director.changed).filter((c) => isNew(c.at)).map((c) => c.what))
     .filter((what) => !BARE_MERGE.test(what)), []);
