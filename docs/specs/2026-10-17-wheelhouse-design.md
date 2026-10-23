@@ -1253,7 +1253,7 @@ The added costs are:
 **Added by the board-and-usage plan** (`docs/superpowers/plans/2026-10-18-wheelhouse-board-and-usage.md`). The build-loop design owns checks 24 to 30, and the safety sitting is check 31.
 
 32. **The mod's commands and the sandbox:** whether a command a mod runs with `$.process.run`, and a file it writes with `$.fs.write`, are held by the session's sandbox; whether the plugin can carry its mod beside its command hooks; and whether a UserPromptSubmit hook can answer a plugin command with context. **Answer:** Yes. The mod's commands and files run outside the sandbox, while an agent's run of the same file is refused; one `hooks/hooks.json` holds both; the hook sees `/wheelhouse:board` as typed and its context reaches the turn. `node` is found only where it is on the session's PATH, which setup checks. `docs/checks/32-mod-sandbox.md`
-33. **The mod's first piece in Desktop:** that the weekly figure and each session's cost reach the usage files; that `/go`, typed and sent from the phone, lifts STOP with a signed record; that "stop" from the phone sets it; and that a reply code, typed and sent from the phone, records what a click would, on the Mac and on Windows. **Answer:** Partly, on the Mac (20 October 2026, in check 41's sitting). The weekly figure and the session's cost reached the usage files. "stop", `/go` and a reply code sent from the phone each made a record that verifies, signed where the record is a signed kind. An agent's own reply code and bridge runs recorded nothing. Not run, at the director's request: `/go` and a code typed in the Desktop session. Windows follows when the director is next at that computer. `docs/checks/41-mod-desktop.md`
+33. **The mod's first piece in Desktop:** that the weekly figure and each session's cost reach the usage files; that `/go`, typed and sent from the phone, lifts STOP with a signed record; that "stop" from the phone sets it; and that a reply code, typed and sent from the phone, records what a click would, on the Mac and on Windows. **Answer:** Partly, on the Mac (20 October 2026, in check 41's sitting). The weekly figure and the session's cost reached the usage files. "stop", `/go` and a reply code sent from the phone each made a record that verifies, signed where the record is a signed kind. An agent's own reply code and bridge runs recorded nothing. Not run, at the director's request: `/go` and a code typed in the Desktop session. **Second sitting (22 and 23 October 2026):** `/go` typed in Desktop lifted STOP with a signed record. A code typed in Desktop didn't confirm: in a session another session started, the app puts its own "Linked sessions now" note before the director's line, and the prompt record doesn't read past it. Windows follows when the director is next at that computer. `docs/checks/41-mod-desktop.md`
 
 **Added by the front desk plan** (`docs/superpowers/plans/2026-10-18-wheelhouse-front-desk.md`):
 
@@ -1289,7 +1289,14 @@ The added costs are:
 
    Not confirmed: whether Desktop draws a separate status line.
 
-   Not run: `/digest`, and a press during the writing. Windows follows. `docs/checks/41-mod-desktop.md`
+   Not run: `/digest`, and a press during the writing. **Second sitting (22 and 23 October 2026), Mac:**
+   - *Passed:* Desktop draws a separate status line under the input; the app's wrap-up tool passes; the pressed card is explained after the numbers shift; a chat answer is reported from `views waiting`; a wake the mod couldn't hand on after Esc is undone, with one note; both `Wheelhouse:` lines are kept out of the conversation; the timer ticks while the screen is locked.
+   - *Found:*
+     - `/compact` runs the session start's lineage check, and the hold it set refused the wrap-up and Claude's notification; the hold's card stayed after the hold was lifted, and the session stopped trying to notify;
+     - the typed `/digest` ran another plugin's `digest` skill instead of the mod's command;
+     - the chat shows the director a "blocked by a hook" notice for each kept-out line.
+   - *Still not seen:* Claude's notification after a real absence, how long a session refuses prompts after Esc, a press during the writing, and the `ui.open` line.
+   Windows follows. `docs/checks/41-mod-desktop.md`
 
 **Added for build commands on Windows** (the director's decision of 19 October 2026, section 22). Both run as a standard user, on a personal Windows computer and, where one is available, a managed work computer:
 
