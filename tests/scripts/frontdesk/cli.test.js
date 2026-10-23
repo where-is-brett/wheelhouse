@@ -664,6 +664,26 @@ test('record work, amendment, incident and note write the build loop\'s kinds', 
   });
 });
 
+test('record work refuses the quick lane for work users would see, unless it is ready-made work carried on (scenario 7)', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const work = { id: 'order-button-blue', title: 'Make the order button blue', lane: 'quick', visible: true, dependsOn: [] };
+    const refused = await run(helper, ['record', 'work'], JSON.stringify(work));
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /Work users would see goes in the small lane at least, shown to the director first/);
+    assert.equal(helper.held.length, 0, 'nothing refused was written');
+    // Quick work users won't see, and the same work in the small lane, are written.
+    for (const data of [{ ...work, visible: false }, { ...work, lane: 'small' }]) {
+      const out = await run(helper, ['record', 'work'], JSON.stringify(data));
+      assert.equal(out.code, 0, out.err);
+    }
+    // Ready-made work (an archive of another setup's instructions) is always shown, whatever its lane.
+    const from = { sha: 'a'.repeat(40), ref: 'refs/wheelhouse/from/archive-1' };
+    const archive = await run(helper, ['record', 'work'], JSON.stringify({ ...work, id: 'archive-1', from }));
+    assert.equal(archive.code, 0, archive.err);
+  });
+});
+
 // The read-back an amendment needs (intake, route 3): what the change does, what it leaves, and when it is done.
 const READ_BACK = { doing: 'The export as one CSV file', notDoing: 'An Excel option', doneWhen: 'The button gives a CSV file that opens in Numbers' };
 

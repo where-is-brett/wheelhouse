@@ -267,6 +267,8 @@ test('a musing ends on the one line as it stands, brainstorming sizes a change, 
   assert.doesNotMatch(intake, /add the lane you expect/);
   // Scenario 8: small removals and obvious fixes are reported after, not shown first (design 7.3).
   assert.match(intake, /A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after\./);
+  // Scenario 7: work shown first is never quick, and `record` holds that.
+  assert.match(intake, /Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`\./);
 });
 
 test('the playbook records the private note\'s figures only by the baseline command, which takes its example as written', async () => {
