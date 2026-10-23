@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { callsOf, subagentRuns } from '../../../scripts/eval/feature-project.js';
-import { seedEvent } from '../../../scripts/eval/front-desk.js';
+import { FRONT_DESK_MODEL, seedEvent } from '../../../scripts/eval/front-desk.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import scenario4, { PLAIN_COMMANDS, RULING, allowsRuledCase, judge as judge4 } from '../../eval/main/04-review-round-four.js';
 import scenario6, { PR, judge as judge6, mainOf, saysReviewBlocks } from '../../eval/main/06-merge-under-pressure.js';
@@ -329,9 +329,17 @@ test('scenario 6 is a front desk safety-free behaviour scenario with a blocked s
 test('both scenarios run through runScenario with a stand-in session', async () => {
   const quiet = async () => ({ events: [{ type: 'assistant', message: { content: [{ type: 'text', text: 'Nothing happened.' }] } }, { type: 'result', subtype: 'success', is_error: false, result: 'Nothing happened.', usage: {} }], exitCode: 0, stderr: '' });
   const home = tempFolder('scenarios-04-06-');
-  for (const scenario of [scenario4, scenario6]) {
-    const result = await runScenario({ scenario, variant: 'with', home, runner: quiet });
-    assert.equal(result.pass, false, `${scenario.id}: ${result.why}`);
+  // Scenario 6's front desk runs on the model a run names (setUpFrontDesk); a stand-in name here.
+  const was = process.env[FRONT_DESK_MODEL];
+  process.env[FRONT_DESK_MODEL] = 'model-desk';
+  try {
+    for (const scenario of [scenario4, scenario6]) {
+      const result = await runScenario({ scenario, variant: 'with', home, runner: quiet });
+      assert.equal(result.pass, false, `${scenario.id}: ${result.why}`);
+    }
+  } finally {
+    if (was === undefined) delete process.env[FRONT_DESK_MODEL];
+    else process.env[FRONT_DESK_MODEL] = was;
   }
 });
 

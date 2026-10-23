@@ -247,8 +247,13 @@ function hookText({ body, views, events, seen, usage, home, plugin }) {
 // Resolves with the context runScenario takes: { env, pluginDirs, appendSystemPrompt, helper,
 // seededIds, evidence, hooksGave, head, close }, with `reload`, the session start's text over the
 // seed, with Wheelhouse. `hooksGave()` lists what the plugin's hooks added, in order.
+// The environment variable naming the front desk's model for a run. The front desk runs on the most
+// capable model (design section 8), which the repository never names, so the run is given it; both
+// variants take it, so the two are told apart by Wheelhouse alone.
+export const FRONT_DESK_MODEL = 'WHEELHOUSE_EVAL_FRONT_DESK_MODEL';
+
 export async function setUpFrontDesk(dir, variant, {
-  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null,
+  files = {}, commits = [], seed = [], approved = {}, worktree = null, pullRequests = {}, signed = [], lastPrompt, usage = null, env = process.env,
 } = {}) {
   assertUnderTmp(dir);
   // By its real path: the command runs nothing when started through a link in its path (the
@@ -331,6 +336,7 @@ export async function setUpFrontDesk(dir, variant, {
     return {
       env: { WHEELHOUSE_HOME: home }, pluginDirs, ...(appendSystemPrompt ? { appendSystemPrompt } : {}), ...(reloadText === null ? {} : { reload: reloadText }), head,
       helper, seededIds, evidence, hooksGave, close, unreadable: [helper.keyFolder],
+      model: env[FRONT_DESK_MODEL]?.trim() || null, modelVariable: FRONT_DESK_MODEL,
     };
   } catch (error) {
     await close();
