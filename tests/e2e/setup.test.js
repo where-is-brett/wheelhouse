@@ -19,19 +19,18 @@ import {
 } from '../helpers/setup-e2e.js';
 import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, PROFILE_REPO, fromOtherComputer } from '../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
-import { askedRecord } from '../../scripts/setup/clicks.js';
-import { listHash } from '../../scripts/lib/setup-writes.js';
+import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { SETUP_FILES, COMMIT_MESSAGE } from '../../scripts/setup/project-files.js';
 import { HEALTH_BRANCH } from '../../scripts/setup/health.js';
-import { setupLine, setLineOf, confirmAllLine, trustLine, SETUP_TITLES, UNINSTALL_LABEL, CONFIRM_ALL_LABEL, TRUST_LABEL } from '../../scripts/state/card-lines.js';
+import { setupLine, setLineOf, trustLine, SETUP_TITLES, UNINSTALL_LABEL, TRUST_LABEL } from '../../scripts/state/card-lines.js';
 import { NOT_SET_UP, partWay, REMOVED, TRUST_ASK } from '../../scripts/hooks/session-start.js';
 import { fingerprint } from '../../scripts/lib/trust-clicks.js';
 import { composeCard } from '../../scripts/cards/compose.js';
 import { UNINSTALL_BRANCH } from '../../scripts/setup/uninstall-run.js';
 import { PLUGIN_LINE } from '../../scripts/setup/uninstall.js';
 import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
-import { listEvents, eventPath } from '../../scripts/state/events.js';
+import { listEvents } from '../../scripts/state/events.js';
 import { readJournal } from '../../scripts/setup/journal.js';
 import { healthGreen, firstUnfinished, runClosed, stepsFor, joinedRepo, SETUP_STEPS, JOINING_STEPS } from '../../scripts/lib/setup-run.js';
 import { clicksDir, usedDir } from '../../scripts/lib/setup-clicks.js';
@@ -237,17 +236,18 @@ test('a new product: every step\'s card, its click, and a green board at the end
   }
 });
 
-test('an existing project with rules: Confirm all records each ruling confirmed', { skip: SKIP }, async () => {
+test('an existing project with rules: step 5 asks nothing and follows them as they are', { skip: SKIP }, async () => {
   shims.reset();
   const clock = makeClock();
   const host = standInHost({ shims });
   const repo = 'a-director/Harbour-Log';
   const slug = 'a-director__Harbour-Log';
-  // The director's own repository, with rules in its CLAUDE.md, and their checkout of it, its
-  // origin the host's address, with the install line's settings beside it.
+  // The director's own repository, with rules in its CLAUDE.md and another agent setup's file, and
+  // their checkout of it, its origin the host's address, with the install line's settings beside it.
   await host.seed(repo, {
     'README.md': '# Harbour Log\n\nHarbour Log keeps the tide tables for the harbour\'s skippers.\n',
     'CLAUDE.md': '# Harbour Log\n\n- Keep every price in pounds and pence.\n- Write a test for each tide calculation.\n- Always show times in the harbour\'s own time zone.\n',
+    'AGENTS.md': 'Never edit the generated tide files.\n',
   });
   const a = makeComputer(host, clock, { name: 'Harbour Log' });
   try {
@@ -262,64 +262,36 @@ test('an existing project with rules: Confirm all records each ruling confirmed'
 
     await a.start();
     await a.sessionStart();
-    const confirmCards = [];
     const log = await follow(a, {
       through: 5,
-      answer: (id, plan) => {
-        if (id.startsWith('rules-')) {
-          confirmCards.push(plan.ask);
-          return CONFIRM_ALL_LABEL;
-        }
+      answer: (id) => {
+        assert.ok(!id.startsWith('rule'), `step 5 asked ${id}`);
         return byId({ ...NEW_ANSWERS, product: PRODUCT.readme })(id);
       },
     });
     // An existing project: no joining question and no repository made; its card says it is kept.
+    // Step 5 settles with no card and no Go ahead.
     assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.goAhead ? 'go ahead' : 'settled')]), [
       [1, 'settled'], [2, 'go ahead'],
       [3, 'real-users'], [3, 'connection'], [3, 'go ahead'],
       [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'],
-      [5, 'rules'], [5, 'settled'],
+      [5, 'settled'],
     ]);
     assert.match(log.find((e) => e.step === 3 && e.goAhead).card.question, /a-director\/Harbour-Log on GitHub, kept as it is/);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
-    // The card of the rules found: each rule quoted with where it was found, the one in the
-    // director's own words as theirs, and its line naming how many and the hash of that list.
-    assert.equal(confirmCards.length, 1);
-    const [card] = confirmCards;
+    // The count is recorded, and nothing is a ruling yet: the survey holds the rules for the intake.
     const run = await a.setupRun();
-    const rules = await a.act(() => askedRecord(run.id, 5, card.id).rules);
-    assert.deepEqual(rules.map((r) => [r.words, r.source.file, r.source.line, r.original]), [
+    assert.deepEqual(run.changes.filter((c) => c.step === 5 && c.kind === 'answer').map((c) => c.after), [{ rules: 4 }]);
+    const events = await a.act(() => listEvents(stateDir(slug), { report: () => {} }));
+    assert.deepEqual(events.filter((e) => e.kind === 'ruling'), []);
+    const found = await a.act(() => rulesOf(a.folder, { userHome: a.config, env: { CLAUDE_CONFIG_DIR: a.config }, before: run.startedAt }));
+    assert.deepEqual(found.map((r) => [r.words, r.source.file, r.source.line, r.original]), [
       ['Keep every price in pounds and pence.', 'CLAUDE.md', 3, false],
       ['Write a test for each tide calculation.', 'CLAUDE.md', 4, false],
       ['Always show times in the harbour\'s own time zone, please.', 'CLAUDE.md', 5, true],
+      ['Never edit the generated tide files.', 'AGENTS.md', 1, false],
     ]);
-    assert.equal(setLineOf(card.card.question), confirmAllLine(listHash(rules), 3));
-    for (const r of rules) assert.ok(card.card.question.includes(r.words), r.words);
-    assert.deepEqual(run.changes.filter((c) => c.step === 5 && c.kind === 'answer').map((c) => c.after), [{ rules: 3, confirmed: 3, kept: 0, corrected: 0, left: 0 }]);
-
-    // Confirm all recorded each rule as a ruling with its own confirmation, signed by this computer,
-    // then the confirm-all action naming them; the helper recorded each in the project's state and
-    // pushed it to the host.
-    const events = await a.act(() => listEvents(stateDir(slug), { report: () => {} }));
-    const rulings = events.filter((e) => e.kind === 'ruling');
-    assert.deepEqual(rulings.map((e) => e.data).sort((x, y) => x.source.line - y.source.line), rules);
-    const enrolled = await a.act(() => readEnrolled());
-    for (const ruling of rulings) {
-      const confirmations = events.filter((e) => e.kind === 'confirmation' && e.data?.confirms === ruling.id);
-      assert.equal(confirmations.length, 1, ruling.data.words);
-      assert.equal(verify(confirmations[0], enrolled), true, `${ruling.data.words}: signed by this computer's enrolled key`);
-    }
-    const [all] = events.filter((e) => e.kind === 'action' && e.data?.action === 'confirm-all');
-    assert.deepEqual([...all.data.ids].sort(), rulings.map((e) => e.id).sort());
-    assert.equal(all.data.hash, listHash(rules));
-    assert.equal(verify(all, enrolled), true);
-    const views = (await a.act(() => a.client.state.views({ project: slug }))).views;
-    assert.deepEqual(views.rulebook.map((r) => [r.words, r.status]).sort(), rules.map((r) => [r.words, 'accepted']).sort());
-    assert.deepEqual(views.unconfirmed, []);
-    const onHost = await g(host.url({ repo }), 'ls-tree', '-r', '--name-only', STATE_BRANCH);
-    const confirmations = events.filter((e) => e.kind === 'confirmation' && rulings.some((r) => r.id === e.data.confirms));
-    for (const e of [...rulings, ...confirmations, all]) assert.ok(onHost.split('\n').includes(eventPath(e).split(path.sep).join('/')), `${e.kind} ${e.id} on the host's state branch`);
     assert.deepEqual(a.refused, []);
     assert.deepEqual(shims.calls(), []);
   } finally {

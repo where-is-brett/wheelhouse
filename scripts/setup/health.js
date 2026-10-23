@@ -71,6 +71,7 @@ import { directorGitEnv, directorGitlabApi, STOPPED, launchedIn } from './host.j
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
 import { takeSurvey, recordSurvey } from '../survey/take.js';
+import { rulesOf } from './rules.js';
 
 export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
@@ -689,15 +690,18 @@ export function removeTrialLeftover(folder) {
 // stops setup: one that fails, or that the state refuses, is recorded as one that missed the host
 // (scripts/survey/take.js). Only the helper records a survey: `writeSurvey(project, data)` is its
 // own writer, which the helper hands setup's routes; with none, nothing is recorded.
-// `start(project)`, `brief(project)`, `look()` (the survey taken) and `adapterFor(record)` (the
-// host's adapter the survey asks) are for tests.
+// `start(project)`, `brief(project)`, `look({ rules })` (the survey taken) and `adapterFor(record)` (the
+// host's adapter the survey asks) are for tests. The survey carries the rules step 5 found, as
+// `{ words, source }`, in the director's own words where their sessions from before the run hold
+// them (plan ruling P7).
 export async function finishSetup({
   project, client = helperClient({ timeout: BRIEFING_WAIT_MS * 2 }), now = () => new Date(), spawn, load = loadBoardInputs,
-  start, brief, adapterFor, look = () => takeSurvey({ project, ...(adapterFor ? { adapter: adapterFor } : {}) }),
+  start, brief, adapterFor, userHome = os.homedir(),
+  look = ({ rules }) => takeSurvey({ project, rules, ...(adapterFor ? { adapter: adapterFor } : {}) }),
   writeSurvey = async () => ({ ok: false, refused: 'only the helper records a survey' }),
 } = {}) {
   try {
-    await recordSurvey({ write: (data) => writeSurvey(project, data), take: look });
+    await recordSurvey({ write: (data) => writeSurvey(project, data), take: () => look({ rules: rulesFound(project, userHome) }) });
   } catch { /* recordSurvey never throws; setup finishes whatever the survey does */ }
   let started;
   try {
@@ -710,6 +714,19 @@ export async function finishSetup({
     briefing = brief ? await brief(project) : await firstBriefing(project, { client, now, load });
   } catch { /* the front desk briefs at the next visit */ }
   return { started, briefing };
+}
+
+// The rules of the project's folder as the survey keeps them, those found before its setup run
+// began: none when they can't be read.
+function rulesFound(project, userHome) {
+  try {
+    const folder = readProject(project)?.folder;
+    if (typeof folder !== 'string') return [];
+    const before = runIn(folder)?.startedAt;
+    return rulesOf(folder, { userHome, ...(typeof before === 'string' ? { before } : {}) }).map(({ words, source }) => ({ words, source }));
+  } catch {
+    return [];
+  }
 }
 
 // start.js's own start for Shape 1, the watcher (startWatcher), which wakes a foreman when there is

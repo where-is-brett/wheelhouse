@@ -32,7 +32,7 @@ import { tempFolder } from '../../helpers/homes.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile } from '../../../scripts/host/company-ca.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
-import { withProject, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
+import { withProject, lay, transcript, typed, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
 // The session's seven trial lines, every one as expected.
 const GREEN_LINES = Object.entries(SESSION_CHECKS).map(([name, c]) => `${name}: ${c.expected} / ${c.expected}`);
@@ -819,6 +819,23 @@ test('finishSetup\'s own survey reads the project\'s folder and asks the host th
   });
 });
 
+test('finishSetup puts the rules found into the survey, as the run\'s past words give them, each as words and source', async () => {
+  await withProject(async ({ folder, config }) => {
+    lay(folder, { 'CLAUDE.md': '- Never push straight to main.\n- Keep commits small.\n', 'AGENTS.md': 'Always write tests.\n' });
+    transcript(config, 'past', 'a', [typed(folder, 'And keep commits small, thanks!', '2026-10-19T00:00:00.000Z')]);
+    // Said after the run began, in the run's own session: not past words.
+    transcript(config, 'setup', 'b', [typed(folder, 'Please never push straight to main!', '2026-10-20T03:05:00.000Z')]);
+    startRun({ folder, now: () => T0 });
+    const writes = [];
+    await finishSetup({ project: SLUG, writeSurvey: writesTo(writes), look: async ({ rules }) => ({ ...EMPTY_SURVEY, rules }), start: async () => 'started', brief: async () => 'B.' });
+    assert.deepEqual(writes[0].data.rules, [
+      { words: 'Never push straight to main.', source: { file: 'CLAUDE.md', line: 1 } },
+      { words: 'And keep commits small, thanks!', source: { file: 'CLAUDE.md', line: 2 } },
+      { words: 'Always write tests.', source: { file: 'AGENTS.md', line: 1 } },
+    ]);
+  });
+});
+
 // The smallest configuration readConfig takes.
 const CONFIG = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
 
@@ -852,5 +869,20 @@ test('setup\'s ending hands finishSetup the helper\'s own survey writer', async 
     const route = routesFor(user, { finished, writeSurvey })['/setup/health'];
     assert.equal((await route({ folder, lines: GREEN_LINES })).green, true);
     assert.deepEqual(finished, [{ project: SLUG, writeSurvey }]);
+  });
+});
+
+test('a host that never answers doesn\'t stop setup finishing: the survey gives up at its deadline as one that missed the host', async () => {
+  await withProject(async () => {
+    const writes = [];
+    const never = new Promise(() => {});
+    const began = Date.now();
+    const done = await finishSetup({
+      project: SLUG, writeSurvey: writesTo(writes), adapterFor: async () => ({ defaultBranch: () => never, openRequests: () => never }),
+      surveyDeadlineMs: 300, start: async () => 'started', brief: async () => 'B.',
+    });
+    assert.deepEqual(done, { started: 'started', briefing: 'B.' });
+    assert.ok(Date.now() - began < 5000);
+    assert.deepEqual(writes.map((w) => w.data.hostReached), [false]);
   });
 });

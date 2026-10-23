@@ -34,7 +34,8 @@ import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { startRun } from '../../../scripts/setup/journal.js';
 import { noteAsked, keepClick, keepAnswer, copySetupRecords } from '../../../scripts/setup/clicks.js';
 import { questionsStep } from '../../../scripts/setup/questions.js';
-import { rulesStep } from '../../../scripts/setup/rules.js';
+import { findRules } from '../../../scripts/setup/rules.js';
+import { rulesInput } from '../../helpers/rules-card.js';
 import { REAL_USERS } from '../../../scripts/setup/host.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
@@ -464,8 +465,10 @@ test('setup\'s answers record the glossary entry, the phase and the rulings thro
 
       const product = await questionsStep().plan({ folder, runId: run.id, answers: { '3.real-users': { label: REAL_USERS.yes, text: null } } });
       const productCard = await ask(4, product, composeCard({ ...product.ask.card, kind: 'question' }).question);
-      const rules = await rulesStep({ env: { CLAUDE_CONFIG_DIR: config } }).plan({ folder, runId: run.id, userHome: config, answers: {}, now: at(0) });
-      const rulesCard = await ask(5, rules, composeCard({ ...rules.ask.card, target: { count: rules.ask.rules.length, hash: listHash(rules.ask.rules) } }).question);
+      // Step 5 asks no card; the confirm-all support is driven with one made of the rules found.
+      const found = findRules(folder).map((r) => ({ ...r, original: false }));
+      const rules = { ask: { id: 'rules-1', typed: false, rules: found, card: rulesInput('Cafe-Menu', found) } };
+      const rulesCard = await ask(5, rules, composeCard({ ...rules.ask.card, target: { count: found.length, hash: listHash(found) } }).question);
 
       await click(productCard, 'A menu for a small café.', c.client);
       await click(rulesCard, 'Confirm all', c.client);
