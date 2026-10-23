@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "node --test --import ./tests/helpers/test-home.js --test-timeout=480000 \"tests/**/*.test.js\"",
+    "copilot-home": "node scripts/agents/copilot/home.js --write",
     "mod-check": "node scripts/mod/validate.js && claude plugin test .",
     "eval": "node scripts/eval/run.js",
     "private-check": "node scripts/install/private-words.js"

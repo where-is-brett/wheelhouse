@@ -15,6 +15,7 @@ const TOOLING_FOLDERS = ['node_modules/', '.git/', '.superpowers/', '.claude/'];
 const ALLOWED_CORE_FILES = {
   'scripts/lib/copilot-numbers.js': 'the numbers of the Copilot design, named once',
   'scripts/lib/agent-control.js': 'the guardrail list names the folders and files that steer each agent, Copilot\'s among them (design section 6.5)',
+  'package.json': 'the copilot-home script, which builds the Lean kit for Copilot',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
 };
 
