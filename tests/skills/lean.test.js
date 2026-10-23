@@ -15,7 +15,7 @@ import { tempFolder } from '../helpers/homes.js';
 import safetyLine from '../../adapters/copilot/safety-line.js';
 import { buildHome } from '../../scripts/agents/copilot/home.js';
 import { AGENT_CONTROL } from '../../scripts/lib/agent-control.js';
-import { TO_CHANGE_IT, TO_KNOW_MORE } from '../../scripts/lib/calm-words.js';
+import { TO_KNOW_MORE } from '../../scripts/lib/calm-words.js';
 import { BOARD_FILE, LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../../scripts/lib/copilot-numbers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -450,6 +450,7 @@ test('a line left waiting by an earlier session is confirmed on a card before it
   assert.match(record, /A line that was waiting before this session began is an earlier session's/);
   assert.match(record, /The board is a view: a file git ignores, which anyone sharing the folder can edit/);
   assert.match(record, /\*\*Write them\*\*, \*\*Leave them out\*\* and \*\*Show me\*\*, a recommendation/);
+  assert.ok(record.includes(`and the closing line "${TO_KNOW_MORE}" **Write them** writes`), 'the earlier-lines card ends as the other cards do');
   assert.match(record, /\*\*Leave them out\*\* takes them off the board and records nothing/);
   assert.match(record, /A line this session wrote itself is never asked about/);
   assert.match(record, /write this session's own waiting lines/);
@@ -724,11 +725,14 @@ test('no Claude Code tool is named, nor Copilot in the source, nor a model name'
 
 test('the playbook speaks in plain words to the director and names the options on a card', () => {
   const cards = section(playbook, 'Cards');
-  // Calm's card words (scripts/lib/calm-words.js): Why? is for learning, Suggest a change… steers, and neither is an answer.
-  for (const option of ['Approve', 'Suggest a change…', 'Show me', 'Not now', 'Why?']) assert.ok(cards.includes(`**${option}**`), option);
+  // Calm's card words (scripts/lib/calm-words.js): Why? is for learning and is never an answer.
+  for (const option of ['Approve', 'Show me', 'Not now', 'Why?']) assert.ok(cards.includes(`**${option}**`), option);
   assert.ok(!playbook.includes('Explain more'), 'Explain more is not offered');
-  assert.ok(cards.includes(TO_KNOW_MORE) && cards.includes(TO_CHANGE_IT), 'the last lines a card ends with');
-  assert.match(cards, /\*\*Why\?\*\* and \*\*Suggest a change…\*\* are for learning and steering only: neither is ever an answer, neither is an approval, and neither writes a `card` or `approval` line/);
+  assert.ok(cards.includes(TO_KNOW_MORE), 'the last line a card ends with');
+  // Ruling P4-38: Lean cannot carry a suggested change safely yet, so no card offers one.
+  assert.ok(!playbook.replace(/Lean offers no \*\*Suggest a change…\*\* on any card/, '').includes('Suggest a change'), 'no card at Lean offers Suggest a change…');
+  assert.match(cards, /Lean offers no \*\*Suggest a change…\*\* on any card/);
+  assert.match(cards, /\*\*Why\?\*\* is for learning only: it is never an answer, never an approval, and it writes no `card` or `approval` line/);
   assert.match(cards, /12 characters/);
   assert.match(cards, /what this is/i);
   assert.match(cards, /recommend/i);
