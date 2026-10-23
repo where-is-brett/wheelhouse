@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { decide } from '../../../scripts/hooks/tool-guard.js';
 import { CREDENTIALS } from '../../../scripts/lib/credentials.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { CONTROL_FILE, homeControlFolders } from '../../../scripts/lib/agent-control.js';
 
 const temp = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 const CASE_BLIND = process.platform === 'darwin' || process.platform === 'win32';
@@ -810,5 +811,115 @@ test('Bash refuses a script a runner starts that is not there yet or the command
       'xargs ./t.sh < f', 'find . -exec ./t.sh {} \;', 'find . -execdir ./t.sh {} +', 'curl -o t.sh x; chmod +x t.sh; watch ./t.sh']) {
       assert.ok(denied(await bash(ctx, command)), command);
     }
+  });
+});
+
+
+// --- the files that steer an agent ---
+
+const REASON = (out) => out?.hookSpecificOutput?.permissionDecisionReason;
+const WRITERS = [['Edit', 'file_path'], ['Write', 'file_path'], ['MultiEdit', 'file_path'], ['NotebookEdit', 'notebook_path']];
+const runWithEnv = (base, home, input, { platform = process.platform, env = {} } = {}) => decide(input, { dir: path.join(base, 'managed'), home, platform, pluginRoot: PLUGIN, env });
+
+test('the tool guard refuses an Edit to .vscode/tasks.json with CONTROL_FILE, and every writing tool the same', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const [tool, key] of WRITERS) {
+        for (const rel of ['.vscode/tasks.json', '.github/hooks/x.json', '.github/copilot-instructions.md', '.github/skills/a/SKILL.md', 'AGENTS.md', 'docs/deep/AGENTS.md', 'GEMINI.md',
+          '.agents/skills/a.md', '.codex/config.toml', '.cursor/rules/a.mdc', '.gemini/settings.json', 'plugin.json', '.plugin/x', 'com.github.copilot/a', '.github/plugin/plugin.json', '.gitattributes']) {
+          const out = await run(base, home, call(main, tool, { [key]: path.join(main, ...rel.split('/')) }));
+          assert.ok(denied(out), `${tool} ${rel}`);
+          assert.equal(REASON(out), CONTROL_FILE, `${tool} ${rel}`);
+        }
+        // A relative path is placed from the folder the tool runs in.
+        assert.equal(REASON(await run(base, home, call(main, tool, { [key]: '.vscode/settings.json' }))), CONTROL_FILE, `${tool} relative`);
+        // Neighbours are left alone.
+        for (const rel of ['src/a.js', '.github/workflows-notes.md', '.github/ISSUE_TEMPLATE/a.md', 'AGENTS.md.bak', 'docs/MYAGENTS.md', 'sub/plugin.json']) {
+          assert.equal(await run(base, home, call(main, tool, { [key]: path.join(main, ...rel.split('/')) })), undefined, `${tool} ${rel}`);
+        }
+      }
+      if (CASE_BLIND) assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: path.join(main, '.VSCode', 'Tasks.json') }))), CONTROL_FILE);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('the tool guard refuses a Write to ~/.copilot/hooks/x.json and to VS Code\'s user settings, whatever the system', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const platform of ['darwin', 'linux']) {
+        for (const folder of homeControlFolders({ home, platform, env: {} })) {
+          for (const [tool, key] of WRITERS) {
+            const out = await runWithEnv(base, home, call(main, tool, { [key]: path.join(folder, 'settings.json') }), { platform });
+            assert.equal(REASON(out), CONTROL_FILE, `${platform} ${tool} ${folder}`);
+          }
+        }
+      }
+      assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: path.join(home, '.copilot', 'hooks', 'x.json') }))), CONTROL_FILE);
+      assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: '~/.copilot/hooks/x.json' }))), CONTROL_FILE, 'by the ~ form');
+      assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: path.join(home, 'Library', 'Application Support', 'Code', 'User', 'settings.json') }), 'darwin')), CONTROL_FILE);
+      // Windows: %APPDATA%\Code\User, wherever APPDATA points, and the home folder's AppData\Roaming when it is not set.
+      const roaming = path.join(home, 'Roam');
+      assert.equal(REASON(await runWithEnv(base, home, call(main, 'Write', { file_path: path.join(roaming, 'Code', 'User', 'settings.json') }), { platform: 'win32', env: { APPDATA: roaming } })), CONTROL_FILE);
+      assert.equal(REASON(await runWithEnv(base, home, call(main, 'Write', { file_path: path.join(home, 'AppData', 'Roaming', 'Code', 'User', 'tasks.json') }), { platform: 'win32', env: {} })), CONTROL_FILE);
+      // Other places in the home folder, and similar names, are left alone.
+      for (const rel of ['.copilotx/a', '.vscode/argv.json', 'Library/Application Support/Code/Cache/a', 'notes.txt', '.agentsfoo/a']) {
+        assert.equal(await run(base, home, call(main, 'Write', { file_path: path.join(home, ...rel.split('/')) }), 'darwin'), undefined, rel);
+      }
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('a link inside the worktree that leads to .github/hooks is refused by its real path', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      fs.mkdirSync(path.join(main, '.github', 'hooks'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.copilot', 'hooks'), { recursive: true });
+      try {
+        fs.symlinkSync(path.join(main, '.github', 'hooks'), path.join(main, 'innocent'));
+        fs.symlinkSync(path.join(home, '.copilot'), path.join(main, 'steer'));
+        fs.symlinkSync(path.join(main, '.vscode'), path.join(main, 'dangling'));
+      } catch { return; }
+      for (const rel of [['innocent', 'x.json'], ['innocent'], ['steer', 'hooks', 'x.json'], ['dangling', 'tasks.json']]) {
+        assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: path.join(main, ...rel) }))), CONTROL_FILE, rel.join('/'));
+      }
+      // The new file may not exist yet: its nearest existing parent is placed first.
+      assert.equal(REASON(await run(base, home, call(main, 'Write', { file_path: path.join(main, 'innocent', 'new', 'deeper', 'x.json') }))), CONTROL_FILE);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('a worktree of the project is held to the same files, by its own root', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const worktree = path.join(base, 'wt');
+      git(main, 'worktree', 'add', '-q', '-b', 'feature', worktree);
+      const real = fs.realpathSync(worktree);
+      assert.equal(REASON(await run(base, home, call(real, 'Write', { file_path: path.join(real, '.vscode', 'tasks.json') }))), CONTROL_FILE);
+      assert.equal(REASON(await run(base, home, call(real, 'Edit', { file_path: path.join(real, 'sub', 'AGENTS.md') }))), CONTROL_FILE);
+      assert.equal(await run(base, home, call(real, 'Write', { file_path: path.join(real, 'src', 'a.js') })), undefined);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+test('reading those files is still allowed', async () => {
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      for (const tool of ['Read']) {
+        for (const p of [path.join(main, '.vscode', 'tasks.json'), path.join(main, 'AGENTS.md'), path.join(main, '.github', 'hooks', 'x.json'), path.join(home, '.copilot', 'hooks', 'x.json'),
+          path.join(home, 'Library', 'Application Support', 'Code', 'User', 'settings.json')]) {
+          assert.equal(await run(base, home, call(main, tool, { file_path: p }), 'darwin'), undefined, `${tool} ${p}`);
+        }
+      }
+      assert.equal(await run(base, home, call(main, 'Grep', { pattern: 'x', path: path.join(main, '.vscode') })), undefined);
+      assert.equal(await run(base, home, call(main, 'Glob', { pattern: '**/AGENTS.md', path: main })), undefined);
+      assert.equal(await run(base, home, call(main, 'Grep', { pattern: 'x', path: path.join(main, '.github', 'hooks') })), undefined);
+      // The shell is judged as before: this guard does not read a command for what it writes.
+      assert.equal(await run(base, home, call(main, 'Bash', { command: 'cat .vscode/tasks.json' })), undefined);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });

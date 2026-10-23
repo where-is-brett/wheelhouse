@@ -3,7 +3,8 @@
 // and the MCP resource tools) in a Wheelhouse project, or in a folder being set up (kit.js's
 // beingSetUp), as in a project: refuses
 // secrets (.env files, the credential folders, Wheelhouse's own home), writes to
-// the places that hold the guardrails, the host tools (gh, glab, git push) and
+// the places that hold the guardrails (and the files that steer an agent, in the project and the
+// home folder: writes only), the host tools (gh, glab, git push) and
 // connectors the project has not listed (the Claude Desktop app's own drawing tools
 // pass unlisted in a session it started). It backs up the deny rules and the
 // sandbox; it does not replace them. Any other tool passes untouched.
@@ -11,11 +12,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { answer, runAndExit, projectOf, registeredByPath, beingSetUp } from './kit.js';
+import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRoot } from './kit.js';
 import { segmentsWithOperators } from './shell-words.js';
+import { AGENT_CONTROL, CONTROL_FILE, homeControlFolders } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
+import { matchGlob } from '../gate/glob.js';
 import { readConfig } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -119,7 +122,52 @@ function secretFolders(home, platform) {
   ];
 }
 
-function fileRefusal(input, { home, platform, pluginRoot }) {
+// The path made absolute, with the real path of its nearest existing parent (the file may not
+// exist yet, as when a Write creates it) and the parts below that put back.
+function realOfNearestParent(file, cwd) {
+  const given = path.resolve(cwd, file);
+  const below = [];
+  for (let current = given; ; current = path.dirname(current)) {
+    try {
+      return path.join(fs.realpathSync.native(current), ...below);
+    } catch {
+      if (path.dirname(current) === current) return given;
+      below.unshift(path.basename(current));
+    }
+  }
+}
+
+// Every spelling of a place that the guard looks at: as given, as links lead, and by its nearest
+// existing parent's real path.
+function spellings(file, cwd) {
+  const out = new Set([path.resolve(cwd, file), realOfNearestParent(file, cwd)]);
+  try {
+    out.add(resolveReal(file, cwd));
+  } catch (error) {
+    if (error?.message !== TOO_MANY) throw error;
+  }
+  return [...out];
+}
+
+// Whether a path is a file that steers an agent (agent-control.js), in the home folder or in one of
+// the project's roots (its main folder and the worktree the session is in), each by every spelling.
+// Separators are made alike, since a Windows path may come with either, and case is ignored where
+// the system ignores it (the same fold the other checks use).
+function steersAgent(candidates, { roots, folders, platform, fold }) {
+  const ignoreCase = platform === 'darwin' || platform === 'win32';
+  const plain = (p) => fold(p).replaceAll('\\', '/').replace(/\/+$/, '');
+  const below = (base, file) => (file === base ? [] : file.startsWith(`${base}/`) ? file.slice(base.length + 1).split('/').filter(Boolean) : null);
+  for (const candidate of candidates.map(plain)) {
+    if (folders.some((f) => below(plain(f), candidate) !== null)) return true;
+    for (const root of roots.map(plain)) {
+      const parts = below(root, candidate);
+      if (parts !== null && parts.length > 0 && AGENT_CONTROL.some((p) => matchGlob(p, parts.join('/'), { ignoreCase }))) return true;
+    }
+  }
+  return false;
+}
+
+function fileRefusal(input, { home, platform, pluginRoot, env, roots }) {
   const tool = input.tool_name;
   const args = input.tool_input ?? {};
   const fold = foldFor(platform);
@@ -156,6 +204,12 @@ function fileRefusal(input, { home, platform, pluginRoot }) {
       if ((parts.at(-1) === 'settings.local.json' || parts.at(-1) === 'settings.json') && parts.at(-2) === '.claude') return refuse('change Claude\'s settings');
       if (parts.some((part, i) => part === '.claude' && parts[i + 1] === 'hooks' && i + 2 < parts.length)) return refuse('change the project\'s hooks');
     }
+    // The files that steer an agent (agent-control.js), whichever agent reads them. The home
+    // folders are looked at by their real paths too, and a project's by each root's.
+    const folders = [home, homeReal].flatMap((h) => homeControlFolders({ home: h, platform, env }));
+    const known = [...folders, ...folders.flatMap((f) => spellings(f, home))];
+    const places = [...roots, ...roots.flatMap((r) => spellings(r, r))];
+    if (steersAgent(spellings(given, input.cwd), { roots: places, folders: known, platform, fold })) return answer.deny(CONTROL_FILE);
   }
   return null;
 }
@@ -605,7 +659,7 @@ function connectorRefusal(input, server, mainFolder, entrypoint, projectDir) {
   return null;
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR } = {}) {
+export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env } = {}) {
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
@@ -637,8 +691,11 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     const root = found?.record?.folder ?? setup?.folder ?? cwd;
     return bashRefused(command, { windows, fold, cwd, home, root }) ? refuse('run the host tools, push, or read a .env file') : undefined;
   }
+  // The folders a project's own files are placed from: the project's main folder and the worktree
+  // the session is in.
+  const roots = [found?.record?.folder, setup?.folder, worktreeRoot(cwd)].filter((r) => typeof r === 'string' && r !== '');
   try {
-    return fileRefusal(input, { home, platform, pluginRoot }) ?? undefined;
+    return fileRefusal(input, { home, platform, pluginRoot, env, roots: [...new Set(roots)] }) ?? undefined;
   } catch (error) {
     if (error?.message === TOO_MANY) return refuse('use a path with that many links');
     throw error;
