@@ -56,4 +56,4 @@ Copilot asks you before it runs each command, as it always does. What the line d
 
 Then the chat follows Wheelhouse's own playbook for Lean: the record, the board, cards, building, merging, undo and the copy, all with git. The board's first lines say plainly what is and isn't enforced on your computer. At Lean nothing enforces STOP, an approval is a click in the chat that the chat records itself, and the VS Code settings are conveniences, not controls. **Lean is not for projects with real users.**
 
-**For the chat reading this:** check `git --version` first; then `git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git ~/.copilot/wheelhouse/<tag>`, and follow `skills/setup-lean/SKILL.md` in that clone, step by step.
+**For the chat reading this:** check `git --version` first; then `git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME/.copilot/wheelhouse/<tag>"`, and follow `skills/setup-lean/SKILL.md` in that clone, step by step.

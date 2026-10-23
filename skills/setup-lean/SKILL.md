@@ -16,6 +16,8 @@ At Lean the director has VS Code with Copilot and git, and nothing else. No prog
 
 **Copilot asks the director before each command you run.** That is Copilot's own habit, not Wheelhouse's; say so once, in a line, before the first command: "Copilot will ask you to allow each command I run. They are git commands and file copies, and I'll say what each one is for."
 
+**Run each block as it is, in the terminal as it stands.** Every block runs in a subshell (sh) or a script block of its own (PowerShell), so it leaves the terminal's folder, variables and shell as they were, and a block that fails prints why and ends without closing the terminal. Don't take the commands out of their block. In any command, write the home folder as `$HOME` (it works in both shells), never `~`: PowerShell doesn't expand `~` for git, and a folder named `~` would be made.
+
 **Stop at any card.** If the director stops, say where setup stands and that "set up Wheelhouse" again carries on from there: every step checks first, and does nothing twice.
 
 ## Cards
@@ -43,52 +45,56 @@ Wheelhouse's own repository is public, so no sign-in is needed. Clone it at the 
 
 ```sh
 # fetch-and-check
-TAG='<tag>'
-KIT="$HOME/.copilot/wheelhouse/$TAG"
-[ -d "$KIT" ] || git clone --depth 1 --branch "$TAG" https://github.com/where-is-brett/wheelhouse.git "$KIT" || exit 1
-[ "$(git -C "$KIT" describe --tags --exact-match 2>/dev/null)" = "$TAG" ] || { echo "$KIT is not the release $TAG"; exit 1; }
-cd "$KIT/adapters/copilot/home" || exit 1
-# before anything is copied: every file in the clone matches its fingerprint
-while read -r hash file; do
-  case "$file" in hooks/*) continue ;; esac
-  [ "$(git hash-object --no-filters "$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
-done < MANIFEST.txt
-# after each file is copied: the copy matches too, and the first that doesn't stops the rest
-while read -r hash file; do
-  case "$file" in hooks/*) continue ;; esac
-  mkdir -p "$HOME/.copilot/$(dirname "$file")"
-  cp "$file" "$HOME/.copilot/$file"
-  [ "$(git hash-object --no-filters "$HOME/.copilot/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
-done < MANIFEST.txt
-echo "Every file matches MANIFEST.txt"
+(
+  TAG='<tag>'
+  KIT="$HOME/.copilot/wheelhouse/$TAG"
+  [ -d "$KIT" ] || git clone --depth 1 --branch "$TAG" https://github.com/where-is-brett/wheelhouse.git "$KIT" || exit 1
+  [ "$(git -C "$KIT" describe --tags --exact-match 2>/dev/null)" = "$TAG" ] || { echo "$KIT is not the release $TAG"; exit 1; }
+  cd "$KIT/adapters/copilot/home" || exit 1
+  # before anything is copied: every file in the clone matches its fingerprint
+  while read -r hash file; do
+    case "$file" in hooks/*) continue ;; esac
+    [ "$(git hash-object --no-filters "$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
+  done < MANIFEST.txt
+  # after each file is copied: the copy matches too, and the first that doesn't stops the rest
+  while read -r hash file; do
+    case "$file" in hooks/*) continue ;; esac
+    mkdir -p "$HOME/.copilot/$(dirname "$file")"
+    cp "$file" "$HOME/.copilot/$file"
+    [ "$(git hash-object --no-filters "$HOME/.copilot/$file")" = "$hash" ] || { echo "Does not match MANIFEST.txt: $file"; exit 1; }
+  done < MANIFEST.txt
+  echo "Every file matches MANIFEST.txt"
+)
 ```
 
 ```powershell
 # fetch-and-check
-$Tag = '<tag>'
-$Kit = Join-Path $HOME ".copilot\wheelhouse\$Tag"
-if (-not (Test-Path $Kit)) { git clone --depth 1 --branch $Tag https://github.com/where-is-brett/wheelhouse.git $Kit; if ($LASTEXITCODE -ne 0) { throw 'The clone failed' } }
-if ((git -C $Kit describe --tags --exact-match 2>$null) -ne $Tag) { throw "$Kit is not the release $Tag" }
-$Source = Join-Path $Kit 'adapters\copilot\home'
-$Lines = Get-Content (Join-Path $Source 'MANIFEST.txt') | Where-Object { $_ -ne '' }
-# before anything is copied: every file in the clone matches its fingerprint
-foreach ($Line in $Lines) {
-  $Hash, $File = $Line -split ' ', 2
-  if ($File -like 'hooks/*') { continue }
-  $Path = Join-Path $Source ($File -replace '/', '\')
-  if ((git hash-object --no-filters $Path) -ne $Hash) { throw "Does not match MANIFEST.txt: $File" }
+& {
+  $Tag = '<tag>'
+  $Kit = Join-Path $HOME ".copilot\wheelhouse\$Tag"
+  if (-not (Test-Path $Kit)) { git clone --depth 1 --branch $Tag https://github.com/where-is-brett/wheelhouse.git $Kit; if ($LASTEXITCODE -ne 0) { throw 'The clone failed' } }
+  if ((git -C $Kit describe --tags --exact-match 2>$null) -ne $Tag) { throw "$Kit is not the release $Tag" }
+  $Source = Join-Path $Kit 'adapters\copilot\home'
+  $Lines = Get-Content (Join-Path $Source 'MANIFEST.txt') | Where-Object { $_ -ne '' }
+  # before anything is copied: every file in the clone matches its fingerprint
+  foreach ($Line in $Lines) {
+    $Hash, $File = $Line -split ' ', 2
+    if ($File -like 'hooks/*') { continue }
+    $Path = Join-Path $Source ($File -replace '/', '\')
+    if ((git hash-object --no-filters $Path) -ne $Hash) { throw "Does not match MANIFEST.txt: $File" }
+  }
+  # after each file is copied: the copy matches too, and the first that doesn't stops the rest
+  foreach ($Line in $Lines) {
+    $Hash, $File = $Line -split ' ', 2
+    if ($File -like 'hooks/*') { continue }
+    $From = Join-Path $Source ($File -replace '/', '\')
+    $To = Join-Path $HOME (Join-Path '.copilot' ($File -replace '/', '\'))
+    New-Item -ItemType Directory -Force (Split-Path $To) | Out-Null
+    Copy-Item $From $To -Force
+    if ((git hash-object --no-filters $To) -ne $Hash) { throw "Does not match MANIFEST.txt: $File" }
+  }
+  'Every file matches MANIFEST.txt'
 }
-# after each file is copied: the copy matches too, and the first that doesn't stops the rest
-foreach ($Line in $Lines) {
-  $Hash, $File = $Line -split ' ', 2
-  if ($File -like 'hooks/*') { continue }
-  $From = Join-Path $Source ($File -replace '/', '\')
-  $To = Join-Path $HOME (Join-Path '.copilot' ($File -replace '/', '\'))
-  New-Item -ItemType Directory -Force (Split-Path $To) | Out-Null
-  Copy-Item $From $To -Force
-  if ((git hash-object --no-filters $To) -ne $Hash) { throw "Does not match MANIFEST.txt: $File" }
-}
-'Every file matches MANIFEST.txt'
 ```
 
 (The release clone may be there already, from the README's note or an earlier run: the block uses it, and stops if it isn't the tag asked for.)
@@ -116,13 +122,13 @@ Then say which tier this is, in one sentence: "This computer runs Wheelhouse at 
 
 ## Step 4: set up the project
 
-Work in the project's folder (`git rev-parse --show-toplevel`). Each part checks first and does nothing twice.
+Start in the project's folder: the folder VS Code has open, which the terminal opens in. Check that `git rev-parse --show-toplevel` prints it (and not the release clone under `$HOME/.copilot/wheelhouse/`); if the terminal is anywhere else, `cd` to the project's folder first, and run every command of this step and the next from there. Each part checks first and does nothing twice.
 
 **The folder is a git repository, and the main version is `main`.** `git rev-parse --is-inside-work-tree` must print `true`. If the folder isn't a repository, ask a card: "Start tracking this folder with git?" (what: git will keep this project's history on this computer; why: Wheelhouse needs it; options **Start tracking** and **Not now**; recommend **Start tracking**; meanwhile nothing changes). On **Start tracking**, run `git init -b main`. On **Not now**, stop and say setup carries on when they're ready. If the repository's main version has another name (`git branch --show-current` prints `master`, say), ask a card with **Rename it to main** (`git branch -m main`) and **Not now**: every Lean step says `main`.
 
 **VS Code's settings.** The release holds `adapters/copilot/vscode-settings.json`: the settings that keep every command asked for, edits outside the project asked for, edits to files that steer an agent asked for, and nothing approved automatically.
 
-- **The project has no `.vscode/settings.json`:** copy that file from the release clone (`~/.copilot/wheelhouse/<tag>/adapters/copilot/vscode-settings.json`) to `.vscode/settings.json`, making the `.vscode` folder first.
+- **The project has no `.vscode/settings.json`:** copy that file from the release clone (`$HOME/.copilot/wheelhouse/<tag>/adapters/copilot/vscode-settings.json`) to `.vscode/settings.json`, making the `.vscode` folder first.
 - **It has one:** work out the merged file: the project's own settings, with Wheelhouse's added, and a setting the project already has with another value changed to Wheelhouse's. Show it on a card, and write it only after **Approve**. The card says what this is (the project's VS Code settings, with Wheelhouse's added); why it comes to them (it is a file the project already has); the options **Approve**, **Show me** (the lines that would change) and **Not now**; a recommendation (**Approve**, because these settings only make VS Code ask more); and what happens meanwhile (the file stays as it is, and VS Code asks about commands as it did). Make the change by editing the file's text, line by line, so its comments and order stay: never rewrite it whole from parsed JSON. After **Not now**, carry on with the rest of setup and say the settings weren't added.
 - **These settings are conveniences, not controls.** Say so on the card and in your line afterwards: VS Code's own settings, the company's settings and the director's choices win over them, and a person can approve commands without asking. The board's lines say the same: Copilot's command prompts aren't a control.
 
@@ -133,40 +139,44 @@ Work in the project's folder (`git rev-parse --show-toplevel`). Each part checks
 
 ```sh
 # ignore-lines
-if git check-ignore -q .wheelhouse/record/2026-10-23.jsonl; then echo 'The record is ignored'; exit 1; fi
-touch .gitignore
-[ -z "$(tail -c1 .gitignore)" ] || echo >> .gitignore
-git check-ignore -q .wheelhouse/feature/brief.md || printf '%s\n' '.wheelhouse/*' '!.wheelhouse/record/' >> .gitignore
-git check-ignore -q wheelhouse/board.md || printf '%s\n' 'wheelhouse/' >> .gitignore
-git check-ignore -q .wheelhouse/feature/brief.md || { echo 'The feature folder is not ignored'; exit 1; }
-git check-ignore -q wheelhouse/board.md || { echo 'The board is not ignored'; exit 1; }
-if git check-ignore -q .wheelhouse/record/2026-10-23.jsonl; then echo 'The record is ignored'; exit 1; fi
+(
+  if git check-ignore -q .wheelhouse/record/2026-10-23.jsonl; then echo 'The record is ignored'; exit 1; fi
+  touch .gitignore
+  [ -z "$(tail -c1 .gitignore)" ] || echo >> .gitignore
+  git check-ignore -q .wheelhouse/feature/brief.md || printf '%s\n' '.wheelhouse/*' '!.wheelhouse/record/' >> .gitignore
+  git check-ignore -q wheelhouse/board.md || printf '%s\n' 'wheelhouse/' >> .gitignore
+  git check-ignore -q .wheelhouse/feature/brief.md || { echo 'The feature folder is not ignored'; exit 1; }
+  git check-ignore -q wheelhouse/board.md || { echo 'The board is not ignored'; exit 1; }
+  if git check-ignore -q .wheelhouse/record/2026-10-23.jsonl; then echo 'The record is ignored'; exit 1; fi
+)
 ```
 
    On Windows, in PowerShell, the same:
 
 ```powershell
 # ignore-lines
-git check-ignore -q .wheelhouse/record/2026-10-23.jsonl
-if ($LASTEXITCODE -eq 0) { throw 'The record is ignored' }
-if (-not (Test-Path .gitignore)) { New-Item .gitignore -ItemType File | Out-Null }
-$Text = Get-Content .gitignore -Raw
-if ($Text -and -not $Text.EndsWith("`n")) { Add-Content .gitignore '' }
-git check-ignore -q .wheelhouse/feature/brief.md
-if ($LASTEXITCODE -ne 0) { Add-Content .gitignore '.wheelhouse/*', '!.wheelhouse/record/' }
-git check-ignore -q wheelhouse/board.md
-if ($LASTEXITCODE -ne 0) { Add-Content .gitignore 'wheelhouse/' }
-git check-ignore -q .wheelhouse/feature/brief.md
-if ($LASTEXITCODE -ne 0) { throw 'The feature folder is not ignored' }
-git check-ignore -q wheelhouse/board.md
-if ($LASTEXITCODE -ne 0) { throw 'The board is not ignored' }
-git check-ignore -q .wheelhouse/record/2026-10-23.jsonl
-if ($LASTEXITCODE -eq 0) { throw 'The record is ignored' }
+& {
+  git check-ignore -q .wheelhouse/record/2026-10-23.jsonl
+  if ($LASTEXITCODE -eq 0) { throw 'The record is ignored' }
+  if (-not (Test-Path .gitignore)) { New-Item .gitignore -ItemType File | Out-Null }
+  $Text = Get-Content .gitignore -Raw
+  if ($Text -and -not $Text.EndsWith("`n")) { Add-Content .gitignore '' }
+  git check-ignore -q .wheelhouse/feature/brief.md
+  if ($LASTEXITCODE -ne 0) { Add-Content .gitignore '.wheelhouse/*', '!.wheelhouse/record/' }
+  git check-ignore -q wheelhouse/board.md
+  if ($LASTEXITCODE -ne 0) { Add-Content .gitignore 'wheelhouse/' }
+  git check-ignore -q .wheelhouse/feature/brief.md
+  if ($LASTEXITCODE -ne 0) { throw 'The feature folder is not ignored' }
+  git check-ignore -q wheelhouse/board.md
+  if ($LASTEXITCODE -ne 0) { throw 'The board is not ignored' }
+  git check-ignore -q .wheelhouse/record/2026-10-23.jsonl
+  if ($LASTEXITCODE -eq 0) { throw 'The record is ignored' }
+}
 ```
 
    If it stops with "The record is ignored", the project's own `.gitignore` ignores all of `.wheelhouse/` (a line `.wheelhouse/`), and the record has to be tracked. Don't change that line yourself: ask a card (what: the project's `.gitignore` hides Wheelhouse's record from git; why: the record is how the director sees who approved what; options **Change it** and **Not now**; recommend **Change it**; meanwhile nothing is written). On **Change it**, replace that one line with `.wheelhouse/*`, then run the block again.
 
-3. Write the board, `wheelhouse/board.md` (make the `wheelhouse` folder first). Its first line is `Tier: Lean`, and its next lines are the safety lines for this computer's case, from Step 3. Take them from `wheelhouse-lean` (now in `~/.copilot/skills/wheelhouse-lean/SKILL.md`), the block in its section "The board" for a Mac without Node.js or for Windows without Node.js: copy each line exactly, with a dash in front. The rest of the board follows, in this order, with "Nothing" in each part that is empty and "No copy yet" under The copy:
+3. Write the board, `wheelhouse/board.md` (make the `wheelhouse` folder first), **only if there is none.** If the file is already there, setup has run before and the board holds the director's live state (STOP, cards waiting, lines waiting to be recorded, what is building, what was copied): keep it as it is. Change only its tier lines, the `Tier: Lean` line and the dash lines straight under it up to the first blank line, and only if they differ from this computer's case now; replace those lines and nothing below them. Otherwise the board is untouched, and a run of setup never turns STOP off. A new board's first line is `Tier: Lean`, and its next lines are the safety lines for this computer's case, from Step 3. Take them from `wheelhouse-lean` (now in `~/.copilot/skills/wheelhouse-lean/SKILL.md`), the block in its section "The board" for a Mac without Node.js or for Windows without Node.js: copy each line exactly, with a dash in front. The rest of the board follows, in this order, with "Nothing" in each part that is empty and "No copy yet" under The copy:
 
 ```
 ## Waiting on you
@@ -194,11 +204,13 @@ Nothing
 
 ```sh
 # first-commit
-set --
-for p in .gitignore .vscode/settings.json .wheelhouse/record/.gitkeep; do
-  [ -e "$p" ] && { git check-ignore -q "$p" || set -- "$@" "$p"; }
-done
-git add -- "$@" && git commit -m "Set up Wheelhouse at Lean" -- "$@"
+(
+  set --
+  for p in .gitignore .vscode/settings.json .wheelhouse/record/.gitkeep; do
+    [ -e "$p" ] && { git check-ignore -q "$p" || set -- "$@" "$p"; }
+  done
+  git add -- "$@" && git commit -m "Set up Wheelhouse at Lean" -- "$@"
+)
 ```
 
    On Windows, run the same `git` commands, naming those paths in the same way. If git says there is nothing to commit, an earlier setup made it: go on. If git says it doesn't know who is committing, ask the director for the name and email to use (a card), and set them for this project only (`git config user.name` and `git config user.email`, without `--global`), then commit again.
@@ -215,11 +227,13 @@ Otherwise ask a card. What this is: a copy of the project's history in a folder 
 
 ```sh
 # copy-remote
-FOLDER='<folder>'
-[ -d "$FOLDER" ] || { echo "That folder isn't there"; exit 1; }
-case "$(cd "$FOLDER" && pwd -P)/" in "$(pwd -P)"/*) echo 'That folder is inside the project'; exit 1 ;; esac
-COPY="$FOLDER/$(basename "$PWD").git"
-git init --bare --initial-branch=main "$COPY" && git remote add wheelhouse-copy "$COPY" && git ls-remote wheelhouse-copy
+(
+  FOLDER='<folder>'
+  [ -d "$FOLDER" ] || { echo "That folder isn't there"; exit 1; }
+  case "$(cd "$FOLDER" && pwd -P)/" in "$(pwd -P)"/*) echo 'That folder is inside the project'; exit 1 ;; esac
+  COPY="$FOLDER/$(basename "$PWD").git"
+  git init --bare --initial-branch=main "$COPY" && git remote add wheelhouse-copy "$COPY" && git ls-remote wheelhouse-copy
+)
 ```
 
    On Windows, the same `git` commands, with the path written as the director gave it. If the folder isn't there, can't be written to, or is inside the project, say so plainly, add no remote, and ask the card again once; on a second failure, treat it as **Not now**.

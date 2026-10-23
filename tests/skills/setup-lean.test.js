@@ -245,6 +245,101 @@ test('a clone that is not the tag asked for stops setup', { skip: !unix && 'a sh
   assert.ok(!fs.existsSync(path.join(home, '.copilot', 'skills')));
 });
 
+// ---- The blocks leave the terminal as it was ----
+
+test('every sh block runs in a subshell and every PowerShell block in a script block of its own, never exit', () => {
+  const marked = blocks(skill).filter((b) => /^# [a-z-]+$/.test(b.body.split('\n')[0]));
+  assert.equal(marked.length, 6, 'fetch-and-check twice, ignore-lines twice, first-commit, copy-remote');
+  for (const { lang, body } of marked) {
+    const lines = body.trimEnd().split('\n');
+    if (lang === 'sh') {
+      assert.equal(lines[1], '(', `${lines[0]}: opens a subshell`);
+      assert.equal(lines.at(-1), ')', `${lines[0]}: closes it`);
+    } else {
+      assert.equal(lines[1], '& {', `${lines[0]}: opens a script block`);
+      assert.equal(lines.at(-1), '}');
+      assert.doesNotMatch(body, /\bexit\b|\bcd\b|Set-Location/, `${lines[0]}: the terminal is left alone`);
+    }
+  }
+  assert.match(skill, /leaves the terminal's folder, variables and shell as they were/);
+});
+
+test('the blocks run in one persistent shell: the folder is unchanged and the shell is alive after a failure', { skip: !unix && 'a shell script' }, () => {
+  const release = makeRelease('v9.9.4');
+  const bad = makeRelease('v9.9.3', (dir) => {
+    fs.appendFileSync(path.join(dir, 'adapters/copilot/home/skills/wheelhouse-lean/SKILL.md'), 'A line the manifest does not know.\n');
+  });
+  const { home, project } = makeProject();
+  const wholeIgnored = makeProject('ignored');
+  fs.writeFileSync(path.join(wholeIgnored.project, '.gitignore'), '.wheelhouse/\n');
+  const gone = path.join(tempFolder('wh-drive-'), 'gone');
+  // One shell reads the lot, as Copilot's persistent terminal does; each step prints where it ended and its status.
+  const probe = (label) => `echo "${label} status=$? pwd=$(pwd -P) args=$#"`;
+  const script = [
+    `cd '${project}'`,
+    'set -- keep me',
+    fetchBlock('v9.9.4', release), probe('fetch-ok'),
+    fetchBlock('v9.9.3', bad), probe('fetch-bad'),
+    `cd '${wholeIgnored.project}'`, block('ignore-lines'), probe('ignore-bad'),
+    block('copy-remote').replaceAll('<folder>', gone), probe('copy-bad'),
+    `cd '${project}'`, block('ignore-lines'), probe('ignore-ok'),
+    block('first-commit'), probe('commit'),
+    'echo shell-alive',
+  ].join('\n');
+  const result = spawnSync('sh', ['-c', script], { env: GIT_ENV(home), encoding: 'utf8' });
+  assert.equal(result.status, 0, 'the shell ran to its last line');
+  const out = result.stdout;
+  assert.match(out, /shell-alive/, 'the shell is still alive after failures');
+  const line = (label) => out.split('\n').find((l) => l.startsWith(`${label} `));
+  const where = (p) => fs.realpathSync(p);
+  assert.equal(line('fetch-ok'), `fetch-ok status=0 pwd=${where(project)} args=2`, 'a good fetch leaves the folder and the arguments as they were');
+  assert.match(line('fetch-bad'), new RegExp(`^fetch-bad status=[1-9]\\d* pwd=${where(project).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} args=2$`), 'a failed fetch ends in a status, not in the release folder');
+  assert.match(line('ignore-bad'), /status=[1-9]/);
+  assert.match(line('ignore-bad'), new RegExp(`pwd=${where(wholeIgnored.project)} `));
+  assert.match(out, /The record is ignored/, 'the stop message is shown');
+  assert.match(line('copy-bad'), /status=[1-9]/);
+  assert.match(out, /That folder isn't there/);
+  assert.match(line('ignore-ok'), /status=0/);
+  assert.match(line('commit'), /status=0 pwd=\S+ args=2$/);
+  // Nothing was written into the release clone.
+  const clone = path.join(home, '.copilot', 'wheelhouse', 'v9.9.4');
+  assert.equal(execFileSync('git', ['status', '--short'], { cwd: clone, env: GIT_ENV(home), encoding: 'utf8' }), '', 'the release clone is as cloned');
+  assert.ok(!fs.existsSync(path.join(clone, '.gitignore')) && !fs.existsSync(path.join(clone, '.vscode')));
+  assert.ok(fs.existsSync(path.join(project, '.gitignore')), 'the project\'s own folder got the file');
+});
+
+test('setup run again keeps the board the director has, and changes only its tier lines', () => {
+  const step = section('Step 4: set up the project');
+  assert.match(step, /only if there is none/);
+  assert.match(step, /keep it as it is/i);
+  assert.match(step, /STOP/);
+  assert.match(step, /never turns STOP off/);
+  assert.match(step, /waiting to be recorded|Waiting to be recorded/i);
+  assert.match(step, /Change only its tier lines/);
+  assert.match(step, /only if they differ/);
+  assert.match(step, /replace those lines and nothing below them/);
+  assert.match(step, /Start in the project's folder/);
+  assert.match(step, /not the release clone/);
+});
+
+test('no command in the README or the skill passes a bare ~ to git, cp or a copy', () => {
+  const commandStart = /^(git|cp|mkdir|cd|Copy-Item|New-Item|Join-Path)\b/;
+  const spans = (text) => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+  for (const [name, text] of [['README.md', readme], ['SKILL.md', skill]]) {
+    for (const span of spans(text)) {
+      if (commandStart.test(span)) assert.doesNotMatch(span, /(^|\s|")~/, `${name}: "${span}"`);
+    }
+    // A path the chat is told to copy from or write to, in a code span, is written with $HOME.
+    for (const span of spans(text)) assert.doesNotMatch(span, /~\/\.copilot\/wheelhouse\/<tag>\/adapters/, `${name}: "${span}"`);
+  }
+  for (const { body } of blocks(skill)) {
+    for (const line of body.split('\n').filter((l) => !l.trim().startsWith('#'))) assert.doesNotMatch(line, /(^|\s|")~[/\\]/, `a block line: ${line}`);
+  }
+  // The README's clone line uses $HOME, as the skill's blocks do.
+  assert.ok(readme.includes('git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME/.copilot/wheelhouse/<tag>"'));
+  assert.match(skill, /write the home folder as `\$HOME`/);
+});
+
 // ---- Step 3: can Wheelhouse run here? ----
 
 test('step 3 asks the computer four things and says the tier in one sentence', () => {
