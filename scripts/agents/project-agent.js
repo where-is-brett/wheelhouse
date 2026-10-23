@@ -10,7 +10,7 @@ import { computerId } from '../lib/paths.js';
 
 export const AGENTS = Object.freeze(['claude-code', 'copilot']);
 
-// Copilot's sessions part is not built yet: its members throw NOT_BUILT_YET (adapters/copilot/sessions.js).
+// Copilot's sessions part is built, but its checks refuse until its switch is on (adapters/copilot/sessions.js).
 const SESSIONS = Object.freeze({ 'claude-code': claudeSessions, copilot: copilotSessions });
 
 // The sentence for a name that is no agent's.

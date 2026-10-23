@@ -2,11 +2,14 @@
 // How a background Copilot session is started and woken (design section 6.4; checks 56, 61, 64 and 66; rulings
 // P7-1 to P7-8): its command line, its own home and environment, and how its output is read afterwards.
 //
-// Built here and tested by name, but not switched on (ruling P7-1). The default export, which the project's session
-// registry (scripts/agents/project-agent.js) and the adapter hold, stays the not-built-yet stub, so the waker and
-// the foreman's start still find NOT_BUILT_YET where Copilot is the project's agent: the waker today discards a
-// session's output, chooses the session id, settles a wake on the exit code and passes Claude Code's rules, none of
-// which fits Copilot. Part 8 Task 1 makes the built calls the default in the same commit that changes the waker.
+// Built here, and the adapter's sessions part (ruling P8-1), but switched off: while BACKGROUND_SESSIONS_READY
+// (scripts/lib/copilot-numbers.js) is false, checkForeman and checkFeature refuse, so neither the waker nor the
+// foreman's start starts a Copilot session, and the helper's sign-in start makes no watcher for a Copilot project. sessionsPart({
+// ready: true }) builds the part switched on, for tests to drive the waker with; nothing else passes it.
+//
+// Beside the contract's six members the part has three the waker asks for when they are there (ruling P8-2):
+// `prepare` writes the session's own home before every start, `afterRun` reads a run's whole output once it ends (its
+// outcome, its session id, and the records it leaves), and `pruneActivity` removes old activity.
 //
 // Every call has its rules spelt out (`--allow-tool=` and `--deny-tool=`), `--no-ask-user`, the temporary folder
 // shut off, and never `--trust-folder` or an allow-everything flag: trust loads a project's hooks and `.mcp.json`
@@ -16,15 +19,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pendingPart } from '../../scripts/agents/contract.js';
+import { kitSkills, ensureKits } from '../../scripts/agents/copilot/kits.js';
 import { DEFAULT_BUILD_COMMANDS, isModelName } from '../../scripts/gate/guardrails.js';
 import { quoteForCmd, resolveCommand } from '../../scripts/lib/claude.js';
-import { ACTIVITY_DAYS, LEVELS } from '../../scripts/lib/copilot-numbers.js';
+import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, LEVELS } from '../../scripts/lib/copilot-numbers.js';
 import { SLUG } from '../../scripts/lib/build-loop.js';
-import { stateDir } from '../../scripts/lib/paths.js';
+import { stateDir, wheelhouseHome } from '../../scripts/lib/paths.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { isConfiguredBuildCommand } from '../../scripts/protection/windows-builds.js';
 import { scanText } from '../../scripts/state/secret-scan.js';
+import { fingerprintTree } from '../../scripts/lineage/fingerprint.js';
 import { copilotHome, file as hookFile, writeRegistration } from './hooks.js';
 import { levelAllowed, levelRules } from './permissions.js';
 
@@ -39,13 +43,14 @@ const KIT_AGENTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home
 // 61's note). Both spellings Copilot has used are listed.
 export const SIGN_IN_KEYS = Object.freeze(['loggedInUsers', 'lastLoggedInUser', 'logged_in_users', 'last_logged_in_user']);
 
-// What may stay at the top of a session's home between runs: Wheelhouse's own three, and Copilot's own state (its
+// What may stay at the top of a session's home between runs: Wheelhouse's own four, and Copilot's own state (its
 // sessions, which `--resume` reads; its session database and that database's side files; its logs; its lock files).
 // Everything else is removed before each start: a `settings.json`, `mcp-config.json`, `lsp-config.json`,
-// `copilot-instructions.md`, skills, instructions or installed plugins never survive into a run. The first real run
+// `copilot-instructions.md`, instructions or installed plugins never survive into a run, and `skills` holds only the
+// pinned kits' verified copies (scripts/agents/copilot/kits.js), written afresh each start. The first real run
 // lists what Copilot writes into a home, and confirms these names (check 61 saw `session-state`, a session database,
 // `installed-plugins`, `plugin-data` and lock files).
-const WHEELHOUSE_KEEPS = ['config.json', 'hooks', 'agents'];
+const WHEELHOUSE_KEEPS = ['config.json', 'hooks', 'agents', 'skills'];
 export const COPILOT_STATE = [/^session-state$/, /^logs?$/, /\.(db|sqlite3?)(-wal|-shm|-journal)?$/i, /\.lock$/i];
 
 // The variables a session keeps from the environment it is started from (ruling P7-7). No token variable: check 61
@@ -126,22 +131,59 @@ export function signInOf(signedInFrom = copilotHome()) {
   return signIn;
 }
 
+// Throws when any folder from Wheelhouse's home down to `dir` is a link (ruling P8-12), so nothing written or removed
+// under `dir` can land outside the home. Folders not made yet are not looked at.
+function refuseLinkedPath(dir) {
+  const home = path.resolve(wheelhouseHome());
+  const relative = path.relative(home, path.resolve(dir));
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(`${dir} isn't inside Wheelhouse's home`);
+  let at = home;
+  for (const part of ['', ...relative.split(path.sep).filter(Boolean)]) {
+    at = part === '' ? at : path.join(at, part);
+    const stat = fs.lstatSync(at, { throwIfNoEntry: false });
+    if (stat === undefined) return;
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`${at} must be a folder Wheelhouse made, and it is a link or a file, so nothing is written there`);
+  }
+}
+
+// Copies one verified skill folder into the home's skills/, then checks the copy against the manifest's hash: a link
+// is never copied, and a copy that differs refuses the start.
+function copySkill(skill, into) {
+  const target = path.join(into, skill.name);
+  fs.cpSync(skill.dir, target, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error(`The ${skill.name} skill holds a link, which is never given to a session`);
+      if (entry.isDirectory()) walk(path.join(dir, entry.name));
+    }
+  };
+  walk(target);
+  if (typeof skill.hash === 'string' && fingerprintTree(target).hash !== skill.hash) throw new Error(`The ${skill.name} skill copied into the session's home doesn't match Wheelhouse's manifest, so no session is started`);
+}
+
 // Writes the session's own home before a start (ruling P7-7), and returns its path: Wheelhouse's hook registration in
 // hooks/wheelhouse.json (the only place Wheelhouse's hooks load without trust, check 56), the only hook file there;
-// the kit's agents, the only agents there; config.json holding the sign-in keys only, from the person's Copilot home
+// the kit's agents, the only agents there; the pinned kits' skills (`skills`, each `{ name, dir, hash }` from
+// kitSkills), the only skills there; config.json holding the sign-in keys only, from the person's Copilot home
 // (`signedInFrom`); and nothing else but Copilot's own state. config.json is written last, so a home is never signed
 // in without its guards: a write that fails part way leaves a home no session can sign in from. A source with no
-// sign-in refuses the start before anything in the home is touched.
-export function writeSessionHome({ project, target, signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform }) {
+// sign-in refuses the start before anything in the home is touched, and so does a link anywhere from Wheelhouse's
+// home down to the session's.
+export function writeSessionHome({ project, target, signedInFrom = copilotHome(), node = process.execPath, root = PLUGIN_ROOT, platform = process.platform, skills = [] }) {
   const home = sessionHome(project, target);
   const signIn = signInOf(signedInFrom);
+  if (!Array.isArray(skills) || !skills.every((s) => s !== null && typeof s === 'object' && typeof s.name === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.name) && typeof s.dir === 'string')) {
+    throw new Error("A session's skills are each a plain name and a folder");
+  }
+  refuseLinkedPath(home);
 
   const there = fs.lstatSync(home, { throwIfNoEntry: false });
   if (there && !there.isDirectory()) throw new Error(`A session's Copilot home must be a folder Wheelhouse made, and ${home} isn't`);
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  refuseLinkedPath(home);
   for (const name of fs.readdirSync(home)) {
     const own = COPILOT_STATE.some((pattern) => pattern.test(name)) && !fs.lstatSync(path.join(home, name)).isSymbolicLink();
-    // A link is removed, never followed; Wheelhouse's own three are written afresh.
+    // A link is removed, never followed; Wheelhouse's own four are written afresh.
     if (!own) fs.rmSync(path.join(home, name), { recursive: true, force: true });
   }
 
@@ -149,6 +191,11 @@ export function writeSessionHome({ project, target, signedInFrom = copilotHome()
   const agents = path.join(home, 'agents');
   fs.mkdirSync(agents);
   for (const name of fs.readdirSync(KIT_AGENTS).filter((n) => n.endsWith('.agent.md'))) fs.copyFileSync(path.join(KIT_AGENTS, name), path.join(agents, name));
+  if (skills.length > 0) {
+    const into = path.join(home, 'skills');
+    fs.mkdirSync(into);
+    for (const skill of skills) copySkill(skill, into);
+  }
 
   const config = path.join(home, 'config.json');
   const temp = `${config}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -169,15 +216,31 @@ function modelOf(config, role) {
   return model;
 }
 
-// Whether a foreman session can be started under `config`: throws, in plain words, when its model can't be passed.
-export function checkForeman(config) {
-  modelOf(config, 'foreman');
+// The words the switch refuses with, while BACKGROUND_SESSIONS_READY is false (ruling P8-1).
+export const NOT_SWITCHED_ON = "Copilot's background sessions aren't switched on yet: their first real run hasn't been seen";
+
+function switchedOn(ready) {
+  if (ready !== true) throw new Error(NOT_SWITCHED_ON);
 }
 
-// Whether a feature session can be started under `config`: throws, in plain words, when its model can't be passed.
-export function checkFeature(config) {
-  modelOf(config, 'builder');
+// Whether a foreman session can be started under `config`: throws, in plain words, when the watcher's second shape is
+// asked for (on Copilot the watcher wakes a fresh foreman for each wake, ruling P8-6), when its model can't be
+// passed, and while the sessions aren't switched on.
+function checkForemanAt(config, ready) {
+  if (config?.watcherShape === 2) throw new Error("On Copilot the watcher wakes a fresh foreman for each wake; the second shape isn't offered");
+  modelOf(config, 'foreman');
+  switchedOn(ready);
 }
+
+// Whether a feature session can be started under `config`: throws, in plain words, when its model can't be passed,
+// and while the sessions aren't switched on.
+function checkFeatureAt(config, ready) {
+  modelOf(config, 'builder');
+  switchedOn(ready);
+}
+
+export const checkForeman = (config) => checkForemanAt(config, BACKGROUND_SESSIONS_READY);
+export const checkFeature = (config) => checkFeatureAt(config, BACKGROUND_SESSIONS_READY);
 
 // The rules as given, each one argument: a plain line of text.
 function rulesOf(list, what) {
@@ -191,7 +254,8 @@ function rulesOf(list, what) {
   return list;
 }
 
-// One session's call (ruling P7-2): `{ file, args, env, input, verbatim, home, usageFile, logDir, activityFile }`.
+// One session's call (ruling P7-2): `{ file, args, env, input, verbatim, home, usageFile, logDir, activityFile,
+// output }`, `output` being the activity file again: the waker hands the child that file as its stdout (ruling P8-2).
 // `rules` are `{ allow, deny }` in Copilot's syntax: the foreman's own tools, or a feature's level's (featureRules);
 // none given allows nothing, which fails closed (a tool no rule allows is refused at once, check 61). `copilot` is
 // the program as resolveCommand finds it. Through a .cmd shim the whole line, the prompt included, goes through
@@ -251,12 +315,13 @@ function sessionCall({ project, target, role, config, prompt, rules = {}, resume
     usageFile,
     logDir,
     activityFile: activityFile(project, resume ?? run),
+    output: activityFile(project, resume ?? run),
   };
 }
 
 // A fresh foreman for one wake, run in the project's main checkout. Its rules are its own tools, each
-// `Bash(<command>:*)` given as `shell(<command>:*)`, with no write (ruling P7-3). Copilot's long foreman session isn't
-// built: Part 8 Task 1 decides it.
+// `Bash(<command>:*)` given as `shell(<command>:*)`, with no write (ruling P7-3). Copilot runs the watcher's first
+// shape only, so there is no long foreman session, and asking for one refuses (ruling P8-6).
 export function foremanCall({ config, project, prompt, tools = null, env, platform = process.platform, pluginRoot = PLUGIN_ROOT, copilot = null, runId, long = false }) {
   if (long) throw new Error("Copilot's foreman runs one wake at a time; its long session isn't built");
   const given = tools ?? foremanTools(pluginRoot, { platform });
@@ -287,9 +352,10 @@ function featureCall({ rules: _rules, level, grants, guardedCommand, worktree, d
 }
 
 // A feature's first session, run in its worktree, at the level levelAllowed lets run (`level` in the call's result).
-// Copilot can't be given a session id, so `sessionId` is ignored; sessionIdOf reads Copilot's own from the run's output.
+// Copilot can't be given a session id, so `sessionId` is ignored; sessionIdOf reads Copilot's own from the run's output,
+// and `idFromRun` tells the waker so (ruling P8-3).
 export function featureStartCall({ sessionId: _ignored, project, work, ...rest }) {
-  return featureCall(rest, { project, target: `feature-${work}`, role: 'builder' });
+  return { ...featureCall(rest, { project, target: `feature-${work}`, role: 'builder' }), idFromRun: true };
 }
 
 // A feature's session, woken: `--resume=<id>` in the feature's own home, never `--continue` (which takes the newest
@@ -331,9 +397,12 @@ export function sessionIdOf(stdout) {
   return typeof last === 'string' && PLAIN_ID.test(last) ? last : null;
 }
 
-// The kinds of refusal, by their messages (checks 58, 61 and 69). A guard's three come first, so a Wheelhouse
-// guard's refusal is never taken for a gap in the rules, whatever its reason quotes.
-const GUARD = /Denied by preToolUse hook\b|\(hook errored\)|hook exited with code 2/;
+// The kinds of refusal, by their messages (checks 58, 61 and 69). A guard's come first, so a Wheelhouse guard's
+// refusal is never taken for a gap in the rules, whatever its reason quotes. A refusal is a guard's only when it
+// carries the code `denied` and its message is one of the hook's own forms, from its start (ruling P8-10): the
+// guard's reason ("Denied by preToolUse hook: ...", the exit-2 form among them) or a hook that failed ("Denied by
+// preToolUse hook from "<file>" (hook errored)"), so a tool's own message quoting those words is no guard's.
+const GUARD = [/^Denied by preToolUse hook: /, /^Denied by preToolUse hook from "[^"\r\n]*" \(hook errored\)$/];
 const RULE = /denied due to the following rules:?\s*(.*)$/s;
 const NO_RULE = /no interactive user response was available/;
 
@@ -347,8 +416,9 @@ export function refusalsOf(stdout) {
     if (event.type !== 'tool.execution_complete' || event.data?.success !== false) continue;
     const tool = toolOf.get(event.data?.toolCallId);
     const message = typeof event.data?.error?.message === 'string' ? event.data.error.message : '';
-    const refusal = { tool: typeof tool === 'string' && tool !== '' ? tool : 'unknown' };
-    if (GUARD.test(message)) refusal.kind = 'guard';
+    // The tool's name is cleaned as the activity's tool counts are (ruling P8-10).
+    const refusal = { tool: typeof tool === 'string' && TOOL_NAME.test(tool) ? tool : tool === undefined || tool === null || tool === '' ? 'unknown' : 'other' };
+    if (event.data?.error?.code === 'denied' && GUARD.some((form) => form.test(message))) refusal.kind = 'guard';
     else if (RULE.test(message)) {
       refusal.kind = 'rule';
       const rule = RULE.exec(message)[1].replace(/`/g, '').trim();
@@ -430,9 +500,11 @@ export function sessionUsage({ usageFile = null, stdout = '' } = {}) {
 }
 
 // Removes the project's activity older than ACTIVITY_DAYS: each run's output, usage file and log folder, by when
-// it was last written. A link is removed, never followed. Returns the names removed.
+// it was last written. A link is removed, never followed, and a link anywhere from Wheelhouse's home down to the
+// activity folder refuses the whole prune (ruling P8-12). Returns the names removed.
 export function pruneActivity({ project, now = () => new Date() }) {
   const dir = path.join(projectFolder(project), 'activity');
+  refuseLinkedPath(dir);
   const cutoff = now().getTime() - ACTIVITY_DAYS * DAY_MS;
   let names;
   try {
@@ -452,4 +524,76 @@ export function pruneActivity({ project, now = () => new Date() }) {
   return removed;
 }
 
-export default pendingPart('sessions', ['checkForeman', 'checkFeature', 'foremanCall', 'featureStartCall', 'featureResumeCall', 'finalAnswer']);
+// The board note a run leaves when a Wheelhouse guard refused something in it: one per run, naming the session and
+// the tools, never what was refused (the activity record holds that).
+function guardNote(refusals, work) {
+  const tools = [...new Set(refusals.map((r) => r.tool))].slice(0, 5);
+  const who = work === undefined ? "the foreman's run" : `the ${work} session's run`;
+  const times = refusals.length === 1 ? 'one tool call' : `${refusals.length} tool calls`;
+  return `A Wheelhouse guard refused ${times} in ${who} (${tools.join(', ')}). The run's activity record lists them.`;
+}
+
+// What a run's whole output says once it ends (ruling P8-2), as `{ ok, why, sessionId, records }`. A run with no
+// `result` event failed, whatever its exit code (`code`, which is never read: a refusal exits 0, check 61); one with a
+// result is done, refusals and all, and its refusals go into its activity record. `records` are what the waker writes
+// to the state: the run's `activity` (ruling P7-4), with its use (sessionUsage) and, for a feature, its work; and,
+// when a guard refused anything, one `note` for the board. `call` is what the waker kept of the call: its `output`,
+// `usageFile` and `idFromRun`. A first run's output (`idFromRun`) is renamed to the session's own name, so its wakes
+// append to it (activityFile).
+export function afterRun({ stdout = '', code: _code = null, call = {}, target, at = new Date().toISOString() } = {}) {
+  const finished = eventsOf(stdout).some((event) => event.type === 'result');
+  const sessionId = sessionIdOf(stdout);
+  const work = typeof target === 'string' && target.startsWith('feature-') ? target.slice('feature-'.length) : undefined;
+  const summary = activitySummary(stdout);
+  const usage = sessionUsage({ usageFile: typeof call?.usageFile === 'string' ? call.usageFile : null, stdout });
+  const records = [{ kind: 'activity', data: { ...summary, role: work === undefined ? 'foreman' : 'builder', ...(work === undefined ? {} : { work }), usage, at } }];
+  const guards = summary.refusals.filter((r) => r.kind === 'guard');
+  if (guards.length > 0) records.push({ kind: 'note', data: { text: guardNote(guards, work) } });
+  if (call?.idFromRun === true && sessionId !== null && typeof call.output === 'string' && path.basename(call.output).endsWith('.jsonl')) {
+    const named = path.join(path.dirname(call.output), `${sessionId}.jsonl`);
+    try {
+      if (named !== call.output && fs.lstatSync(call.output, { throwIfNoEntry: false })?.isFile() && fs.lstatSync(named, { throwIfNoEntry: false }) === undefined) {
+        fs.renameSync(call.output, named);
+      }
+    } catch { /* the output stays under the run's own name */ }
+  }
+  return finished
+    ? { ok: true, why: null, sessionId, records }
+    : { ok: false, why: 'its session ended without a result', sessionId, records };
+}
+
+// The project's activity folder, made before a start so the waker can hand the child its output file there.
+function activityFolder(project) {
+  const dir = path.join(projectFolder(project), 'activity');
+  refuseLinkedPath(dir);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  refuseLinkedPath(dir);
+  return dir;
+}
+
+// The sessions part. `ready` is the switch (BACKGROUND_SESSIONS_READY unless a test builds the part switched on);
+// `kits` ({ manifest, fetchTo }) and `home` ({ signedInFrom, node, root }) are for tests, which never fetch from the
+// network or read the person's Copilot home.
+export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, home = {} } = {}) {
+  return Object.freeze({
+    checkForeman: (config) => checkForemanAt(config, ready),
+    checkFeature: (config) => checkFeatureAt(config, ready),
+    foremanCall,
+    featureStartCall,
+    featureResumeCall,
+    finalAnswer,
+    // Before every start (ruling P7-27 a): the pinned kits fetched once and checked, the activity folder, and the
+    // session's own home written afresh. A throw refuses the start; nothing has been run.
+    async prepare({ project, target }) {
+      switchedOn(ready);
+      await ensureKits(kits);
+      const skills = kitSkills(kits);
+      activityFolder(project);
+      writeSessionHome({ project, target, skills, ...home });
+    },
+    afterRun,
+    pruneActivity,
+  });
+}
+
+export default sessionsPart();

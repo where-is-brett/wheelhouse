@@ -86,7 +86,9 @@ test('a shell deny is passed where the level\'s allows could reach it (P7-30)', 
   assert.ok(!at('ask', ['npm test']).some((r) => r.startsWith('shell(npx')));
   // A granted command inside a denied one is reached too: the deny beats it.
   assert.ok(at('ask', ['npx wrangler deploy']).includes('shell(npx wrangler:*)'));
-  assert.ok(!at('ask', ['npx wranglerish']).includes('shell(npx wrangler:*)'));
+  // A plain prefix reaches too (ruling P8-11): no run has shown whether `:*` matches whole words only.
+  assert.ok(at('ask', ['npx wranglerish']).includes('shell(npx wrangler:*)'));
+  assert.ok(!at('ask', ['npm test']).includes('shell(npx wrangler:*)'));
   // A granted git brings git's denies; Guarded's runner reaches none of them.
   const git = at('ask', ['git']);
   for (const rule of ['shell(git push:*)', 'shell(git credential:*)']) assert.ok(git.includes(rule), rule);

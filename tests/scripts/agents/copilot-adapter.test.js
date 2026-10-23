@@ -29,7 +29,8 @@ import copilotSheet from '../../../adapters/copilot/tool-sheet.js';
 import identity from '../../../adapters/copilot/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const PENDING = ['settings', 'sessions', 'evalRunner'];
+// The sessions part left the list in Part 8 Task 1 (ruling P8-1): built, and switched off by its own switch.
+const PENDING = ['settings', 'evalRunner'];
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
 const stand = standInTools();
@@ -55,7 +56,9 @@ test('a part not built yet throws NOT_BUILT_YET naming the part', () => {
       assert.throws(() => fn(), (error) => error.code === NOT_BUILT_YET && error.part === part && error.message.includes(`The ${part} part`) && error.message.includes(member), `${part}.${member}`);
     }
   }
-  assert.deepEqual(Object.keys(copilot.sessions).sort(), ['checkFeature', 'checkForeman', 'featureResumeCall', 'featureStartCall', 'finalAnswer', 'foremanCall']);
+  // The sessions part is built: the contract's six members, and the three the waker asks for when they are there.
+  assert.equal(isPendingPart(copilot.sessions), false);
+  assert.deepEqual(Object.keys(copilot.sessions).sort(), ['afterRun', 'checkFeature', 'checkForeman', 'featureResumeCall', 'featureStartCall', 'finalAnswer', 'foremanCall', 'prepare', 'pruneActivity']);
 });
 
 test('sessionsFor gives the very object the Copilot adapter holds', () => {

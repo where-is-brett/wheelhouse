@@ -265,8 +265,10 @@ export async function startAll({
     }
   }
   if (!up) return { ok: false, line: NOT_STARTED, watchers: [] };
-  // The watcher for each project on a code host whose agent here has its sessions part built. A Lean project has
-  // no watcher, and one on an agent whose sessions aren't built yet is left alone, so no waker is made for it.
+  // The watcher for each project on a code host whose agent here may start its sessions. A Lean project has no
+  // watcher, and one on an agent whose sessions aren't built yet, or whose foreman check refuses (Copilot's sessions
+  // while they aren't switched on, ruling P8-1; a configuration they can't run under), is left alone, so no waker
+  // is made for it.
   const watchers = [];
   for (const { project } of registeredProjects()) {
     const read = await answerOf(projectConfig(project, api));
@@ -278,6 +280,11 @@ export async function startAll({
       continue;
     }
     if (isPendingPart(sessions)) continue;
+    try {
+      sessions.checkForeman(read.config);
+    } catch {
+      continue;
+    }
     try {
       startWatcher(project, { spawn, pluginRoot, env });
       watchers.push(project);

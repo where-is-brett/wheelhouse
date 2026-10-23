@@ -8,7 +8,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adapterFor } from '../../../scripts/agents/index.js';
-import { NOT_BUILT_YET } from '../../../scripts/agents/contract.js';
 import { agentOfConfig, agentOfProject, sessionsFor, sessionsOfProject } from '../../../scripts/agents/project-agent.js';
 import { foremanSession } from '../../../scripts/foreman/start.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
@@ -24,6 +23,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const RECORDED = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agents', 'claude-argv.json'), 'utf8'));
 const sessions = adapterFor('claude-code').sessions;
 const T0 = '2026-10-19T09:00:00.000Z';
+// Copilot's sessions refuse while their switch is off (ruling P8-1).
+const SWITCHED_OFF = /aren't switched on yet/;
 
 // Stand-ins for gh, glab, copilot and claude come first on the PATH; the tests that name them assert none ran.
 const hostStandIns = standInTools();
@@ -321,26 +322,26 @@ async function copilotProject() {
   return { checkout, held, ...made };
 }
 
-test('the waker refuses a Copilot project\'s foreman wake while Copilot\'s sessions are not built', () => withHome(async () => {
+test('the waker refuses a Copilot project\'s foreman wake while Copilot\'s sessions are switched off', () => withHome(async () => {
   hostStandIns.reset();
   const { w, calls } = await copilotProject();
-  await assert.rejects(w.wakeForeman(foremanWake()), (error) => error.code === NOT_BUILT_YET && /not built yet/.test(error.message));
+  await assert.rejects(w.wakeForeman(foremanWake()), SWITCHED_OFF);
   assert.equal(calls.length, 0, 'no session was started');
   assert.deepEqual(w.waiting(), [], 'nothing was recorded for the refused wake, as with a bad mode');
   assert.deepEqual(hostStandIns.calls(), [], 'no host program ran, claude included');
   // A waker made for such a project is refused as it is made, as a bad mode is.
-  assert.throws(() => waker({ config: configOf2({ agents: { [computerId()]: 'copilot' } }) }), (error) => error.code === NOT_BUILT_YET);
+  assert.throws(() => waker({ config: configOf2({ agents: { [computerId()]: 'copilot' } }) }), SWITCHED_OFF);
 }));
 
-test('the waker refuses a Copilot project\'s feature wake while Copilot\'s sessions are not built', () => withHome(async () => {
+test('the waker refuses a Copilot project\'s feature wake while Copilot\'s sessions are switched off', () => withHome(async () => {
   hostStandIns.reset();
   const { checkout, w, calls } = await copilotProject();
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
   const bundle = { to: 'feature', work: 'login-page', events: [{ type: 'ci-red', id: 'x' }], digest: [], dropped: 0 };
-  await assert.rejects(w.wakeFeature('login-page', writeWake(P, bundle, { now: () => new Date(T0) })), (error) => error.code === NOT_BUILT_YET);
-  await assert.rejects(w.startFeature({ work: 'login-page', worktree, briefFile: featurePaths(worktree).brief }), (error) => error.code === NOT_BUILT_YET);
+  await assert.rejects(w.wakeFeature('login-page', writeWake(P, bundle, { now: () => new Date(T0) })), SWITCHED_OFF);
+  await assert.rejects(w.startFeature({ work: 'login-page', worktree, briefFile: featurePaths(worktree).brief }), SWITCHED_OFF);
   assert.equal(calls.length, 0, 'no session was started');
   assert.deepEqual(w.waiting(), []);
   assert.deepEqual(hostStandIns.calls(), []);
