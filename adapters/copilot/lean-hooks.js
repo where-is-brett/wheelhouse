@@ -1,8 +1,8 @@
 // adapters/copilot/lean-hooks.js
 // Lean's guard on a Mac where Node.js doesn't run (check 69; Part 5 Task 8): the hook file and the shell guard it runs,
 // both built with the kit (scripts/agents/copilot/home.js) and only copied by setup, so every person's copy has the
-// same bytes and MANIFEST.txt can list them. The guard guards only a Lean project (ruling P5-56) and lets everything
-// through elsewhere.
+// same bytes and MANIFEST.txt can list them. The guard guards only a Lean project, the session's or the one a write lands in
+// (rulings P5-56 and P5-57), and lets everything through elsewhere.
 //
 // The hook file is the one Part 5 Task 2's registration writes, `<home>/hooks/wheelhouse.json` (ruling P5-15), with one
 // camelCase `preToolUse` entry. The guard sits beside it as `hooks/wheelhouse-lean-guard.sh`. The entry's command
@@ -43,7 +43,8 @@ const SAY = Object.freeze({
 });
 
 // What the guard says where this Mac's plutil is missing or lacks the options it reads with (ruling P5-56).
-export const PLUTIL_MISSING = 'Wheelhouse\'s guard needs this Mac\'s plutil with its -type and raw options, and they aren\'t here, so it refuses';
+// In plain words, since the director may read it in the chat (ruling P5-57).
+export const PLUTIL_MISSING = 'This Mac\'s built-in file reader is too old for Wheelhouse\'s guard, so the guard refuses';
 
 // Wheelhouse's own folder in the home, which holds its keys where Node.js runs (the tool guard refuses it too).
 const WHEELHOUSE_FOLDER = '.wheelhouse';

@@ -3,8 +3,9 @@
 # Lean's guard on a Mac where Node.js doesn't run (check 69; Part 5 Task 8, rulings P5-33 and P5-34): Copilot's
 # preToolUse hook, in /bin/sh, reading its input with /usr/bin/plutil, which every Mac has. It decides on what is being
 # done, never on a tool's name alone (check 58), and keeps no state and asks nothing (ruling P5-33). It guards only a
-# Lean project, a folder holding `.git` and `.wheelhouse/record/` that the input's folder is in or under, and lets
-# everything through elsewhere, as the Node.js hook entry does outside a project (ruling P5-56). In a Lean project:
+# Lean project, a folder holding `.git` and `.wheelhouse/record/`: one the session's folder is in or under, or one a
+# file tool's write lands in from wherever the session started (rulings P5-56 and P5-57). Elsewhere it lets everything
+# through, as the Node.js hook entry does outside a project. In a Lean project:
 #   - a file tool's write to a file that steers an agent, in the project or the home folder, to git's own files or to
 #     a record file already there is refused;
 #   - a file tool's read or write of the credential folders, Wheelhouse's keys or a .env file is refused, as is a
@@ -165,11 +166,37 @@ is_env() {
   return 1
 }
 
+# The Lean project a real folder is in: the nearest folder at or above it holding `.git` and the record folder, in
+# LEAN_FOUND (empty for none). Status 1 where that can't be told: a folder on the way that can't be searched, or a
+# `.wheelhouse` beside `.git` whose record folder can't be tested or isn't a folder (a dangling link, say).
+lean_of() {
+  LEAN_FOUND=
+  _up=$1
+  while [ ! -d "$_up" ]; do
+    _up=${_up%/*}
+    [ -n "$_up" ] || _up=/
+  done
+  while :; do
+    [ -x "$_up" ] || return 1
+    if [ -e "$_up/.git" ] || [ -L "$_up/.git" ]; then
+      if [ -e "$_up/.wheelhouse" ] || [ -L "$_up/.wheelhouse" ]; then
+        [ -d "$_up/.wheelhouse" ] && [ -x "$_up/.wheelhouse" ] || return 1
+        if [ -d "$_up/$RECORD_DIR" ]; then LEAN_FOUND=$_up; return 0; fi
+        if [ -e "$_up/$RECORD_DIR" ] || [ -L "$_up/$RECORD_DIR" ]; then return 1; fi
+      fi
+    fi
+    [ "$_up" = / ] && return 0
+    _up=${_up%/*}
+    [ -n "$_up" ] || _up=/
+  done
+}
+
 # ---- The places, worked out once a path needs them ----
 
 places_ready=no
 ready_places() {
   [ "$places_ready" = yes ] && return 0
+  case ${HOME:-} in /*) ;; *) deny_it "$SAY_COULD_NOT_RUN" ;; esac
   place "$HOME" || deny_it "$SAY_COULD_NOT_RUN"
   home_real=$(lower "$PLACED")
   _list=
@@ -192,10 +219,6 @@ ready_places() {
     _list=$_list$PLACED$NL
   fi
   control_places=$(lower "$_list")
-  # The project's roots: the folder Copilot runs in, and the Lean project's own folder.
-  roots=$cwd_real
-  [ "$lean_root" = "$cwd_real" ] || roots=$roots$NL$lean_root
-  roots=$(lower "$roots")
   places_ready=yes
 }
 
@@ -251,8 +274,21 @@ check_search() {
   if inside "$SPOT" "$home_real" || holds_any "$SPOT" "$secret_places"; then deny_it "$SAY_SEARCH"; fi
 }
 
-# A write: everything a read refuses, and the files that steer an agent, git's own files and the record's files.
+# A write: everything a read refuses, and the files that steer an agent, git's own files and the record's files. The
+# project's roots are the session's folder and its Lean project, if it is in one, and the Lean project the write lands in.
+# A write that lands in no Lean project, from a session in none, is let through.
 check_write() {
+  [ -n "$1" ] || deny_it "$SAY_COULD_NOT_RUN"
+  case ${HOME:-} in /*) ;; *) deny_it "$SAY_COULD_NOT_RUN" ;; esac
+  full_path "$1"
+  place "$FULL" || deny_it "$SAY_PLACE"
+  lean_of "$PLACED" || deny_it "$SAY_COULD_NOT_RUN"
+  _target_root=$LEAN_FOUND
+  [ -n "$lean_root" ] || [ -n "$_target_root" ] || return 0
+  _roots=
+  [ -z "$lean_root" ] || _roots=$cwd_real$NL$lean_root$NL
+  [ -z "$_target_root" ] || _roots=$_roots$_target_root$NL
+  roots=$(lower "$_roots")
   check_read "$1"
   if names_git "$GIVEN" || names_git "$SPOT"; then deny_it "$SAY_CONTROL"; fi
   if inside_any "$SPOT" "$control_places"; then deny_it "$SAY_CONTROL"; fi
@@ -318,20 +354,15 @@ decide() {
   # and the guard lets everything through; a folder on the way it can't read is refused.
   place "$cwd" || deny_it "$SAY_COULD_NOT_RUN"
   cwd_real=$PLACED
-  lean_root=
-  _up=$cwd_real
-  while :; do
-    [ -x "$_up" ] || deny_it "$SAY_COULD_NOT_RUN"
-    if { [ -e "$_up/.git" ] || [ -L "$_up/.git" ]; } && [ -d "$_up/$RECORD_DIR" ]; then lean_root=$_up; break; fi
-    [ "$_up" = / ] && break
-    _up=${_up%/*}
-    [ -n "$_up" ] || _up=/
-  done
-  [ -n "$lean_root" ] || allow_it
-  case ${HOME:-} in /*) ;; *) deny_it "$SAY_COULD_NOT_RUN" ;; esac
+  lean_of "$cwd_real" || deny_it "$SAY_COULD_NOT_RUN"
+  lean_root=$LEAN_FOUND
   read_field toolName || deny_it "$SAY_COULD_NOT_RUN"
   tool=$FIELD
   [ -n "$tool" ] || deny_it "$SAY_COULD_NOT_RUN"
+  # A session outside every Lean project: only a file tool's write is looked at, for where it lands.
+  if [ -z "$lean_root" ]; then
+    in_list "$tool" "$WRITE_TOOLS" || [ "$tool" = "$PATCH_TOOL" ] || allow_it
+  fi
   if in_list "$tool" "$UNSETTLED_TOOLS" || ! in_list "$tool" "$KNOWN_TOOLS"; then
     printf '%s' "$tool" >"$work/tool"
     deny_it unknown

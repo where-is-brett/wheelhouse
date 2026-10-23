@@ -17,6 +17,7 @@ import { KNOWN_TOOLS, UNKNOWN_TOOL } from '../../../adapters/copilot/translate.j
 import { registration, file, writeRegistration } from '../../../adapters/copilot/hooks.js';
 import { leanHookFile, leanGuardScript, GUARD_SCRIPT, LEAN_HOOK_COMMAND, PLUTIL_MISSING } from '../../../adapters/copilot/lean-hooks.js';
 import { buildHome } from '../../../scripts/agents/copilot/home.js';
+import { glossaryOf, plainWords } from '../../../scripts/frontdesk/glossary.js';
 import { COULD_NOT_RUN, DEADLINE } from '../../../scripts/agents/copilot/hook-entry.js';
 
 // Stand-ins for gh, glab, copilot and curl come first on the PATH; the last test asserts none ran.
@@ -212,7 +213,9 @@ test('unreadable input, a field that can\'t be read and a missing parser each re
   const nonsense = path.join(base, 'nonsense-plutil');
   fs.writeFileSync(nonsense, '#!/bin/sh\necho dictionary\n', { mode: 0o755 });
   refused(runGuard(fine, { guard: guardFile({ plutil: nonsense }, 'nonsense-plutil.sh') }), 'with a parser that answers nonsense', PLUTIL_MISSING);
-  assert.match(PLUTIL_MISSING, /plutil/);
+  // Ruling P5-57: the line is in plain words, since the director may read it in the chat.
+  assert.doesNotMatch(PLUTIL_MISSING, /plutil|-type|\braw\b|option/i);
+  assert.equal(plainWords(PLUTIL_MISSING, glossaryOf({}), { explanations: 'plain', known: ['STOP', 'Standard', 'Locked'] }).text, PLUTIL_MISSING);
   // The same input with the real parser is let through, so it was the parser that refused.
   allowed(runGuard(fine), 'the same read');
   // No HOME: the credential folders can't be placed.
@@ -249,6 +252,59 @@ test('outside a Lean project the guard lets everything through, and inside one i
   } finally {
     fs.chmodSync(shut, 0o755);
   }
+});
+
+test('a Lean project whose record folder can\'t be told is refused, not taken for no project (ruling P5-57)', onMac, () => {
+  const make = (name) => {
+    const dir = path.join(HOME, 'Projects', name);
+    fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+    return dir;
+  };
+  // .wheelhouse can't be searched.
+  const shut = make('shut-record');
+  fs.mkdirSync(path.join(shut, '.wheelhouse', 'record'), { recursive: true });
+  fs.chmodSync(path.join(shut, '.wheelhouse'), 0o000);
+  try {
+    refused(runGuard(call('edit', { path: path.join(shut, 'AGENTS.md') }, shut), { cwd: shut }), 'a .wheelhouse that can\'t be searched', COULD_NOT_RUN);
+  } finally {
+    fs.chmodSync(path.join(shut, '.wheelhouse'), 0o755);
+  }
+  // .wheelhouse/record is a link that leads nowhere.
+  const dangling = make('dangling-record');
+  fs.mkdirSync(path.join(dangling, '.wheelhouse'));
+  fs.symlinkSync(path.join(base, 'nowhere-at-all'), path.join(dangling, '.wheelhouse', 'record'));
+  refused(runGuard(call('edit', { path: path.join(dangling, 'AGENTS.md') }, dangling), { cwd: dangling }), 'a record folder that is a dangling link', COULD_NOT_RUN);
+  // .wheelhouse itself a link that leads nowhere.
+  const gone = make('dangling-wheelhouse');
+  fs.symlinkSync(path.join(base, 'nowhere-either'), path.join(gone, '.wheelhouse'));
+  refused(runGuard(call('edit', { path: path.join(gone, 'AGENTS.md') }, gone), { cwd: gone }), 'a .wheelhouse that is a dangling link', COULD_NOT_RUN);
+  // A .wheelhouse with no record folder in it is still no Lean project.
+  const other = make('no-record');
+  fs.mkdirSync(path.join(other, '.wheelhouse', 'feature'), { recursive: true });
+  allowed(runGuard(call('edit', { path: path.join(other, 'AGENTS.md') }, other), { cwd: other }), 'a .wheelhouse with no record folder');
+});
+
+test('a write into a Lean project is guarded from whichever folder the session started in (ruling P5-57)', onMac, () => {
+  const outside = path.join(HOME, 'Downloads', 'elsewhere');
+  fs.mkdirSync(outside, { recursive: true });
+  const from = (input) => runGuard(input, { cwd: outside });
+  refused(from(call('create', { path: path.join(PROJECT, 'AGENTS.md') }, outside)), 'the project\'s AGENTS.md by its full path', CONTROL_FILE);
+  refused(from(call('apply_patch', patch(`*** Add File: ${path.join(PROJECT, '.github', 'hooks', 'x.json')}`, '+{}'), outside)), 'a patch into the project', CONTROL_FILE);
+  refused(from(call('edit', { path: path.join(PROJECT, 'src', '.git') }, outside)), 'a .git pointer in the project', CONTROL_FILE);
+  refused(from(call('edit', { path: path.join(PROJECT, '.wheelhouse', 'record', '2026-10-23.jsonl') }, outside)), 'an earlier record file', /record/);
+  // Through a link that leads into the project.
+  fs.symlinkSync(PROJECT, path.join(outside, 'shop-link'));
+  refused(from(call('create', { path: path.join(outside, 'shop-link', 'AGENTS.md') }, outside)), 'through a link into the project', CONTROL_FILE);
+  // Ordinary writes into the project and writes that stay outside are let through.
+  allowed(from(call('create', { path: path.join(PROJECT, 'src', 'other.js') }, outside)), 'the project\'s code');
+  allowed(from(call('create', { path: path.join(outside, 'AGENTS.md') }, outside)), 'a control-file name outside any project');
+  // A target that can't be placed is refused.
+  refused(from(call('create', { path: `${PROJECT}/nowhere/../AGENTS.md` }, outside)), 'a target that can\'t be placed', /could not tell where/);
+  // From inside one Lean project, another Lean project's files are guarded as its own.
+  const second = path.join(HOME, 'Projects', 'second');
+  fs.mkdirSync(path.join(second, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(second, '.wheelhouse', 'record'), { recursive: true });
+  refused(runGuard(call('create', { path: path.join(second, '.vscode', 'settings.json') })), 'another Lean project\'s control file', CONTROL_FILE);
 });
 
 test('the guard answers well inside the hook\'s timeoutSec', onMac, async () => {
