@@ -427,14 +427,18 @@ async function liftingHold(project, d) {
   } catch { /* the next tick tries again */ }
 }
 
-// A tick for a message the mod kept out of the front desk says so in `received`, { origin, via }
-// and never the text: one line in the day's mod file. It never fails the tick.
+// A tick for messages the mod kept out of the front desk says so in `received`, { origin, via } or
+// a list of them (never the text): one line each in the day's mod file, the newest MAX_RECEIVED
+// of a list. It never fails the tick.
+const MAX_RECEIVED = 50;
 function noteReceived(req, d) {
-  const got = req.received;
-  if (!isRecord(got) || (got.via !== 'prompt' && got.via !== 'receive') || typeof got.origin !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(got.origin)) return;
-  try {
-    recordReceived({ session: req.session, via: got.via, origin: got.origin, at: d.now() });
-  } catch { /* the line is a note; the tick goes on */ }
+  const all = Array.isArray(req.received) ? req.received.slice(-MAX_RECEIVED) : [req.received];
+  for (const got of all) {
+    if (!isRecord(got) || (got.via !== 'prompt' && got.via !== 'receive') || typeof got.origin !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(got.origin)) continue;
+    try {
+      recordReceived({ session: req.session, via: got.via, origin: got.origin, at: d.now() });
+    } catch { /* the line is a note; the tick goes on */ }
+  }
 }
 
 // What the pane and the status line show now. Only the front desk, in a project's main folder,

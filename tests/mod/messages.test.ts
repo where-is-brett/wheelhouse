@@ -461,22 +461,22 @@ test('a kept-out message sends one tick that says it was received, never its tex
   expect('received' in seen.ticks[0]).toBe(false)
 })
 
-test('messages kept out while a tick runs each get a tick that says it was received', async ($, on) => {
+test('messages kept out while a tick runs share one follow-up tick that lists them, at most 50', async ($, on) => {
   const { seen, clear, start, clock } = world(on, () => ({ hold: 3000, then: frontDesk() }))
   await start($, 'desktop')
   await clock.advance(3000)
   clear()
-  const first = submit($, TRAFFIC[0], 'sdk')
-  await first
+  await submit($, TRAFFIC[0], 'sdk')
   await clock.advance(1000)
-  // Two more ask while the first one's tick still runs.
-  await submit($, TRAFFIC[1], 'peer')
-  await receive($, TRAFFIC[1], { kind: 'peer' })
-  await clock.advance(20000)
+  // 60 more ask while the first one's tick still runs.
+  for (let i = 0; i < 60; i++) await submit($, TRAFFIC[1], i === 59 ? 'sdk' : 'peer')
+  await clock.advance(2000)
   await clock.settle()
-  expect(seen.ticks.map((t: any) => t.received).filter(Boolean)).toEqual([
-    { origin: 'sdk', via: 'prompt' }, { origin: 'peer', via: 'prompt' }, { origin: 'peer', via: 'receive' },
-  ])
+  const withReceipts = seen.ticks.filter((t: any) => t.received !== undefined)
+  expect(withReceipts).toHaveLength(2)
+  expect(withReceipts[0].received).toEqual({ origin: 'sdk', via: 'prompt' })
+  expect(withReceipts[1].received).toHaveLength(50)
+  expect(withReceipts[1].received.at(-1)).toEqual({ origin: 'sdk', via: 'prompt' })
 })
 
 // Each surface in a test of its own, so the session's state holds no role from an earlier answer.
@@ -792,7 +792,7 @@ test('a message whose first line has the lead is traffic, whatever names the for
   }
 })
 
-test('traffic that comes while a tick runs gets a tick each once that one ends, none at the timer\'s fire', async ($, on) => {
+test('traffic that comes while a tick runs gets one tick between them once that one ends, none at the timer\'s fire', async ($, on) => {
   let reply: Reply = frontDesk()
   const { seen, clear, start, clock } = world(on, () => reply)
   for (const surface of SURFACES) {
@@ -811,11 +811,12 @@ test('traffic that comes while a tick runs gets a tick each once that one ends, 
     // It ends, and a tick follows at once for each message, saying it was received, and none at
     // the timer's next fire but the timer's own.
     await clock.advance(5000)
-    expect(seen.ticks.slice(1).map((t: any) => t.received)).toEqual([{ origin: 'peer', via: 'prompt' }, { origin: 'peer', via: 'receive' }])
+    expect(seen.ticks).toHaveLength(2)
+    expect(seen.ticks[1].received).toEqual([{ origin: 'peer', via: 'prompt' }, { origin: 'peer', via: 'receive' }])
     await clock.advance(TICK_MS - 5000 - 1)
-    expect(seen.ticks).toHaveLength(3)
+    expect(seen.ticks).toHaveLength(2)
     await clock.advance(1)
-    expect(seen.ticks).toHaveLength(4)
+    expect(seen.ticks).toHaveLength(3)
   }
 })
 

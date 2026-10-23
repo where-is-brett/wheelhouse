@@ -493,17 +493,22 @@ test('a tick that carries a received message appends one received line to the da
   assert.deepEqual(readLines(file), [{ at: NOW.toISOString(), event: 'received', via: 'prompt', origin: 'sdk', session: 'sess-1' }]);
   await handle(tickOf(repo, { received: { origin: 'peer', via: 'receive' } }), live());
   assert.deepEqual(readLines(file).at(-1), { at: NOW.toISOString(), event: 'received', via: 'receive', origin: 'peer', session: 'sess-1' });
+  // A list of them (the follow-up tick after a burst) gets a line each, at most 50.
+  await handle(tickOf(repo, { received: [{ origin: 'sdk', via: 'prompt' }, { origin: 'bad origin', via: 'prompt' }, { origin: 'peer', via: 'receive' }] }), live());
+  assert.deepEqual(readLines(file).slice(2).map((l) => [l.origin, l.via]), [['sdk', 'prompt'], ['peer', 'receive']]);
+  await handle(tickOf(repo, { received: Array(80).fill({ origin: 'sdk', via: 'prompt' }) }), live());
+  assert.equal(readLines(file).length, 4 + 50);
   // A tick without one, or with one that isn't one, writes nothing; the pane's answer is the same.
   for (const received of [undefined, null, 'sdk', { origin: 'sdk' }, { origin: 'sdk', via: 'other' }, { origin: 42, via: 'prompt' }, { origin: 'a'.repeat(99), via: 'prompt' }]) {
     const got = await handle(tickOf(repo, { received }), live());
     assert.equal(got.ok, true);
   }
-  assert.equal(readLines(file).length, 2);
+  assert.equal(readLines(file).length, 54);
   // A session ID the store refuses, or a store that can't be written, leaves the tick whole.
   const bad = await handle(tickOf(repo, { session: '../x', received: { origin: 'sdk', via: 'prompt' } }), live());
   assert.equal(bad.ok, true);
   assert.equal(bad.role, 'front-desk');
-  assert.equal(readLines(file).length, 2);
+  assert.equal(readLines(file).length, 54);
 }));
 
 test('a tick with no hold file and an open hold records one lift; a second tick records none', () => withHome(async (home) => {
