@@ -970,3 +970,26 @@ test('Bash reads nested quotes inside substitutions, and refuses what hides in t
     for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
   });
 });
+
+test('a heredoc body cannot close a frame the shell is still in', async () => {
+  await inProject(async (ctx) => {
+    const refused = [
+      'echo "$(cat <<\'EOF\'\n1)\nEOF\ngh pr list)"',
+      'echo "$(cat <<EOF\n1)\nEOF\ngh pr list)"',
+      'echo "$(cat <<"EOF"\n1)\nEOF\ngh pr list)"',
+      'echo "$(cat <<-EOF\n\t1)\n\tEOF\ngh pr list)"',
+      'echo "`cat <<EOF\n1`\nEOF\ngh pr list`"',
+      'echo "$(cat <<A <<B\n1)\nA\nx\nB\ngh pr list)"',
+      'echo "$(cat <<EOF\nx"\nEOF\ngh pr list)"',
+      'echo "$(cat <<EOF\nDon\'t\nEOF\n)"',
+      'cat <<EOF\nhello', 'echo "$(cat <<EOF\nhello\n)"', 'cat <<$X\nhello\n$X', 'cat <<\nx',
+    ];
+    for (const command of refused) assert.ok(denied(await bash(ctx, command)), command);
+    const allowed = [
+      'git commit -m "$(cat <<\'EOF\'\nTidy (a) and b\nEOF\n)"',
+      'git commit -m "$(cat <<-\'EOF\'\n\tTidy (a)\n\tEOF\n)"',
+      'cat <<EOF\nhello\nEOF', 'cat <<A <<B\nx\nA\ny\nB', 'cat <<< "hello"',
+    ];
+    for (const command of allowed) assert.equal(await bash(ctx, command), undefined, command);
+  });
+});
