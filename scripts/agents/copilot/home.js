@@ -52,12 +52,13 @@ const REVIEWER_TOOLS = Object.freeze(['view', 'glob', 'rg']);
 const BUILDER_TOOLS = Object.freeze(['view', 'glob', 'rg', ...tools.edit, ...tools.shell]);
 
 // Ruling P4-8: the explicit list of sources. A source missing from the tree is an error, never skipped.
-// `wheelhouse-lean` is Lean's playbook, from skills/lean. Task 5 adds `wheelhouse-setup` (from skills/setup-lean, since
-// skills/setup's steps need Node.js).
+// `wheelhouse-lean` is Lean's playbook, from skills/lean. `wheelhouse-setup` is setup at Lean, from skills/setup-lean (not
+// from skills/setup, whose steps need Node.js).
 const PLAYBOOK_SKILLS = Object.freeze([
   { name: 'front-desk', source: 'skills/front-desk/SKILL.md' },
   { name: 'intake', source: 'skills/intake/SKILL.md' },
   { name: 'lean', source: 'skills/lean/SKILL.md' },
+  { name: 'setup', source: 'skills/setup-lean/SKILL.md' },
 ]);
 // The words a source holds back for the kit to fill in, so the source stays in general words (the core never names an
 // agent). `{{agent}}` is the product the kit is for, where a safety line names it (adapters/copilot/safety-line.js).

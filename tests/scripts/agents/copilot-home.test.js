@@ -90,7 +90,7 @@ test('the kit is byte-stable: LF only, sorted, the same on every build', () => {
   }
 });
 
-test('the kit holds exactly the files Tasks 2 and 3 build', () => {
+test('the kit holds exactly the files Tasks 2, 3 and 5 build', () => {
   assert.deepEqual([...kit.keys()], [
     'MANIFEST.txt',
     'agents/wheelhouse-builder.agent.md',
@@ -104,11 +104,12 @@ test('the kit holds exactly the files Tasks 2 and 3 build', () => {
     'skills/wheelhouse-intake/SKILL.md',
     'skills/wheelhouse-lean/SKILL.md',
     'skills/wheelhouse-settings/SKILL.md',
+    'skills/wheelhouse-setup/SKILL.md',
     'skills/wheelhouse-sources/SKILL.md',
     'skills/wheelhouse-stop/SKILL.md',
   ]);
-  // The hook files come with Part 5 Task 8; wheelhouse-setup with Task 5.
-  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/') || f.includes('wheelhouse-setup')));
+  // The hook files come with Part 5 Task 8.
+  assert.ok(![...kit.keys()].some((f) => f.startsWith('hooks/')));
 });
 
 // ---- The agents ----

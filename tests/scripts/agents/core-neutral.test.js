@@ -16,6 +16,8 @@ const ALLOWED_CORE_FILES = {
   'scripts/lib/copilot-numbers.js': 'the numbers of the Copilot design, named once',
   'scripts/lib/agent-control.js': 'the guardrail list names the folders and files that steer each agent, Copilot\'s among them (design section 6.5)',
   'package.json': 'the copilot-home script, which builds the Lean kit for Copilot',
+  'skills/setup-lean/SKILL.md': 'setup at Lean copies the kit into ~/.copilot/ and sets the project up for Copilot, so it names the product it sets up',
+  'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
 };
 
