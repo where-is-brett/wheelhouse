@@ -78,6 +78,14 @@
 // again. Start times are asked for every running pid in one call (`ps`, or
 // one PowerShell call on Windows) and kept for a minute.
 //
+// Before every wake of a feature, at either shape, the files in its worktree
+// that steer agents are read (control-files.js) and compared with the record
+// kept when the worktree was made. A new or changed one, or no record at all,
+// fails the wake and does not wake: `raise` is given a `control-file` record
+// once for each work and finding, for the director's card, and the wake waits
+// and is tried again. Once the files match again the wake goes, and `raise`
+// is given a `control-file-lift`, which closes the card.
+//
 // Under STOP nothing is started, woken or printed (it is checked again right
 // before each start), and startFeature is refused. Bypass mode is refused at
 // every call, whatever the configuration says.
@@ -87,6 +95,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DIGEST_CAP } from './core.js';
+import { checkControlFiles, markRaised, raisedHash } from './control-files.js';
 import { inWorktreesFolder, LOOKBACK_MS, plainWorktreePath } from './sources.js';
 import { ensureIgnored, featurePaths } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
@@ -102,7 +111,7 @@ import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { featureAllowRules } from '../protection/settings.js';
 import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.js';
-import { listEvents } from '../state/events.js';
+import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { guardedCommand, guardedReady, labelWorktree } from '../windows/low.js';
@@ -593,6 +602,7 @@ export function makeWaker({
   platform = process.platform,
   pluginRoot = PLUGIN_ROOT,
   onError = () => {},
+  raise = async () => {},
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
@@ -855,6 +865,44 @@ export function makeWaker({
     return typeof kept.worktree === 'string' && path.resolve(kept.worktree) === path.resolve(worktree) ? kept.sessionId : null;
   };
 
+  // Whether the feature's wakes `ids` are held by the files in `worktree` that steer agents: when
+  // one is new or changed since the worktree was made, or there is no record of them, the wakes
+  // fail, the finding is raised once (a raise that fails is tried again at the next wake), and
+  // nothing is woken. A folder that can't be read holds them too. Once the files match again, a
+  // finding raised before is lifted.
+  async function controlHeld(work, worktree, ids) {
+    let found;
+    try {
+      found = checkControlFiles(project, work, worktree, { platform });
+    } catch (error) {
+      settle(ids, 'failed', `the files in its folder that steer agents can't be read: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return true;
+    }
+    const at = now().toISOString();
+    if (found.ok) {
+      if (raisedHash(project, work) !== null) {
+        try {
+          await raise({ kind: 'control-file-lift', data: { work, at } });
+          markRaised(project, work, null);
+        } catch (error) {
+          onError(`The ${work} feature's agent files match again, but its card couldn't be closed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
+      }
+      return false;
+    }
+    settle(ids, 'failed', found.paths.length === 0
+      ? "there is no record yet of this feature's agent files"
+      : `its folder has a new or changed file that steers agents: ${found.paths.slice(0, 3).join(', ')}${found.paths.length > 3 ? ` and ${found.paths.length - 3} more` : ''}`);
+    if (raisedHash(project, work) === found.hash) return true;
+    try {
+      await raise({ kind: 'control-file', data: { work, paths: found.paths.slice(0, CONTROL_PATHS), at } });
+      markRaised(project, work, found.hash);
+    } catch (error) {
+      onError(`The ${work} feature's agent files hold its wakes, but the card couldn't be raised: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+    return true;
+  }
+
   // The features whose wakes wait for a session the watcher started, already reported.
   const unstarted = new Set();
 
@@ -902,6 +950,7 @@ export function makeWaker({
             settle([e.id], 'done'); // the feature has closed or gone
             continue;
           }
+          if (await controlHeld(e.work, worktree, [e.id])) continue;
           copy = copyInto(e.file, featureWakesDir(worktree));
         }
       } catch (error) {
@@ -954,6 +1003,7 @@ export function makeWaker({
           continue;
         }
         unstarted.delete(work);
+        if (await controlHeld(work, cwd, waiting.map((e) => e.id))) continue;
       }
       let gathered;
       let copy;

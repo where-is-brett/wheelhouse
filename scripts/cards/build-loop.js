@@ -1,8 +1,9 @@
 // scripts/cards/build-loop.js
 // The cards the build loop's plain records call for, worked out from the views, so `cli.js cards`,
 // which makes and asks them, and the board-context hook, which counts them, agree: the click the
-// merge gate waits for (a `gate-asks` record, rulings R117 and F72) and a lineage hold (rulings
-// R146 and F71). Also the composer's input for each.
+// merge gate waits for (a `gate-asks` record, rulings R117 and F72), a lineage hold (rulings
+// R146 and F71) and a feature whose wakes the files that steer agents hold (a `control-file`
+// record, ruling P7-13). Also the composer's input for each.
 import { CLICK_MS } from '../lib/core-numbers.js';
 import { namedPaths } from '../lineage/check.js';
 import { prFinished } from '../state/views.js';
@@ -51,6 +52,12 @@ export function gateAsksDue(views, now) {
 export function holdsDue(views) {
   return (Array.isArray(views?.lineageHolds) ? views.lineageHolds : [])
     .filter((h) => isRecord(h) && typeof h.id === 'string' && h.card === null && Array.isArray(h.data?.mismatches) && h.data.mismatches.length > 0);
+}
+
+// The control-file records no card has been made for yet, from the views' `controlFiles`.
+export function controlFilesDue(views) {
+  return (Array.isArray(views?.controlFiles) ? views.controlFiles : [])
+    .filter((r) => isRecord(r) && typeof r.id === 'string' && r.card === null && typeof r.data?.work === 'string' && Array.isArray(r.data?.paths));
 }
 
 // Whether the pull request, as the host gives it ({ headSha, state }), still waits for the click: it
@@ -129,6 +136,43 @@ export function holdInput(hold, { short = false } = {}) {
     because: 'nothing in this project moves on until the kits match',
     meanwhile: 'Agents read and report; nothing is edited or built.',
     event: hold.id,
+  };
+}
+
+// The paths a control-file card names: the first three, each in backticks, then how many more.
+const SHOWN_PATHS = 3;
+function pathsOf(paths) {
+  const named = paths.slice(0, SHOWN_PATHS).map((p) => `\`${p}\``);
+  if (paths.length > SHOWN_PATHS) named.push(`${paths.length - SHOWN_PATHS} more`);
+  return named.length === 1 ? named[0] : `${named.slice(0, -1).join(', ')} and ${named.at(-1)}`;
+}
+
+// The composer's input for a control-file record's card (ruling P7-13): a question with no set line,
+// since no click lifts the hold. It says which files are new or changed, in the plan's words, and
+// that the feature, named by `name`, isn't woken until its files match the record kept when its
+// folder was made; or, for a record naming no paths, that there is no such record yet. `short`
+// says only how many files.
+export function controlFileInput(record, name, { short = false } = {}) {
+  const { paths } = record.data;
+  const one = paths.length === 1;
+  const named = short ? `${paths.length} ${one ? 'file' : 'files'}` : pathsOf(paths);
+  return {
+    kind: 'question',
+    level: 3,
+    what: paths.length === 0
+      ? `There is no record yet of this feature's agent files, so they can't be checked: look at them before the feature carries on. The feature is ${name}.`
+      : `A feature's folder has ${one ? 'a new file that steers' : 'new files that steer'} agents, ${named}: look at ${one ? 'it' : 'them'} before the feature carries on. The feature is ${name}.`,
+    why: paths.length === 0
+      ? 'A file that steers agents could change what a session may do, so a feature\'s session is woken only while those files are as they were when its folder was made, and this folder was made before that record was kept.'
+      : 'A file that steers agents could change what a session may do, so the feature\'s session isn\'t woken until you have looked. No click here lifts the hold: once the files are as they were when the folder was made, the next wake goes ahead.',
+    options: [
+      { label: 'Go through them', says: 'We look at the files together: what each does, and how to take one out if it shouldn\'t be there.' },
+      { label: 'Leave it for now', says: 'The feature waits, and its session isn\'t woken.' },
+    ],
+    recommend: 'Go through them',
+    because: 'the feature carries on only once its files have been looked at',
+    meanwhile: 'The feature waits; other work carries on.',
+    event: record.id,
   };
 }
 

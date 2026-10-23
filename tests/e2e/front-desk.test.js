@@ -38,6 +38,7 @@ import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { readHandled } from '../../scripts/watcher/handled.js';
 import { projectConfig, runWatcher } from '../../scripts/watcher/main.js';
+import { writeBaseline } from '../../scripts/watcher/control-files.js';
 import { makeWaker } from '../../scripts/watcher/waker.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
@@ -278,6 +279,7 @@ async function buildLoop(world, kind, data) {
 async function building(world, work, title) {
   const worktree = path.join(world.checkout, '.claude', 'worktrees', work);
   fs.mkdirSync(path.join(worktree, '.wheelhouse', 'feature'), { recursive: true });
+  writeBaseline(P, work, worktree); // the record of its agent files, as the foreman's start keeps it
   await buildLoop(world, 'work', { id: work, title, lane: 'small', visible: false, dependsOn: [] });
   await buildLoop(world, 'feature', { work, step: 'building', worktree, branch: `feature/${work}`, session: `sess-${work}` });
 }

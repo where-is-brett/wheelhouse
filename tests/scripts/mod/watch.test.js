@@ -14,6 +14,7 @@ import { featurePaths } from '../../../scripts/feature/files.js';
 import { WATCH_EVERY_MS } from '../../../scripts/lib/mod-numbers.js';
 import { takeStartLock } from '../../../scripts/lib/start-lock.js';
 import { lockFile } from '../../../scripts/watcher/main.js';
+import { writeBaseline } from '../../../scripts/watcher/control-files.js';
 import { withHome } from '../../helpers/homes.js';
 import {
   P, T0, config, fakeClient, project, worktree,
@@ -137,6 +138,7 @@ test('Shape 1: a watcher running is left alone', () => withHome(async () => {
 test('Shape 2: a foreman tick runs one watcher loop and hands back its wake lines, in order', () => withHome(async () => {
   const checkout = await project();
   const dir = worktree(checkout, 'login-page');
+  writeBaseline(P, 'login-page', dir); // the record of its agent files, as the foreman's start keeps it
   const h = helper(config({ watcherShape: 2 }));
   const c = clock();
   const look = looker([INCIDENT, BUILD('login-page')]);

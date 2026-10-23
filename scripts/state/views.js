@@ -175,6 +175,23 @@ function lineageHoldsOf(sorted, lifted) {
     .map((e) => ({ id: e.id, at: e.at, computer: typeof e.computer === 'string' ? e.computer : null, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null }));
 }
 
+// The control-file records (ruling P7-13) that still stand, in order, each with the card made for it
+// (its id, or null), and the ids of those closed. A record stands until a later control-file-lift
+// of its work, or a later control-file record of its work, which takes its place.
+function controlFilesOf(sorted) {
+  const cards = sorted.filter((e) => e.kind === 'card');
+  const records = sorted.filter((e) => e.kind === 'control-file' && typeof e.data?.work === 'string' && Array.isArray(e.data?.paths));
+  const lifts = sorted.filter((e) => e.kind === 'control-file-lift' && typeof e.data?.work === 'string');
+  const closed = new Set();
+  const standing = [];
+  for (const e of records) {
+    const later = (x) => x.data.work === e.data.work && byOrder(e, x) < 0;
+    if (lifts.some(later) || records.some(later)) closed.add(e.id);
+    else standing.push({ id: e.id, at: e.at, data: e.data, card: cards.find((c) => c.data?.event === e.id)?.id ?? null });
+  }
+  return { standing, closed };
+}
+
 // The events with an id no other event carries, in order, and a line for each repeated one: an id
 // carried by more than one event is damage, so every copy is left out and listed.
 function uniqueSorted(events) {
@@ -500,14 +517,16 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const handedOut = sorted.filter((e) => e.kind === 'asked' && Array.isArray(e.data?.cards));
   const outcomes = outcomesOf(sorted, { confirmations: closing, answeredBy, lean });
   const waiting = [];
-  // A card made from a lineage hold that has been lifted is closed, as an answered card is.
+  // A card made from a lineage hold that has been lifted is closed, as an answered card is, and so
+  // is one made from a control-file record that no longer stands.
   const liftedHolds = liftedHoldIds(sorted);
+  const controlFiles = controlFilesOf(sorted);
   // The approval and CI push cards closed only by a later head of their pull request or branch:
   // undecided and not revised, so a revised card may still name one (ruling C21), with `steered` as a
   // waiting card has it.
   const outdatedCards = [];
   for (const { card, answers: mine, decided, steered } of outcomes) {
-    if (decided !== null || revised(card) || liftedHolds.has(card.data?.event)) continue;
+    if (decided !== null || revised(card) || liftedHolds.has(card.data?.event) || controlFiles.closed.has(card.data?.event)) continue;
     const gone = outdated(card);
     if (gone === 'head') outdatedCards.push({ id: card.id, at: card.at, data: card.data, steered });
     if (gone !== false) continue;
@@ -586,6 +605,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     keptAsIs,
     gateAsks,
     lineageHolds,
+    controlFiles: controlFiles.standing,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,

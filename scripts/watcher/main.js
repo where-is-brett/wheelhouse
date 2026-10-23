@@ -21,6 +21,10 @@
 //      holds up the rest;
 //   6. only then writes the cursor, with the bundler's `held`. A stop between
 //      a wake and the cursor wakes again on restart; it never loses a wake.
+// A feature's wake held by the files in its folder that steer agents
+// (control-files.js) is raised through the helper as a plain record, for the
+// director's card (raiseRecord).
+//
 // Under STOP it goes on observing and recording, and the waker holds every
 // wake until STOP lifts.
 //
@@ -79,6 +83,16 @@ export async function projectConfig(project, client) {
     }
   }
   return { config: null, why: typeof answer?.refused === 'string' ? answer.refused : 'the helper gave no answer' };
+}
+
+// What the waker raises (a `control-file` record or its lift), written to the
+// project's state through the helper. Throws when the helper doesn't take it,
+// so the waker raises it again at the next wake.
+export function raiseRecord(project, client) {
+  return async ({ kind, data }) => {
+    const answer = await client.state.write({ project, kind, data });
+    if (answer?.ok !== true) throw new Error(typeof answer?.refused === 'string' ? answer.refused : 'the helper gave no answer');
+  };
 }
 
 // The awake time since the last loop: none on the first, never below nothing
@@ -182,7 +196,9 @@ export async function runWatcher({
       }
       if (settings !== null && wake === null) {
         try {
-          wake = waker ?? makeWaker({ shape, project, config: settings, now, onError: fault, ...wakerOptions });
+          wake = waker ?? makeWaker({
+            shape, project, config: settings, now, onError: fault, raise: raiseRecord(project, client), ...wakerOptions,
+          });
         } catch (error) {
           fault(`The watcher can't wake sessions with this configuration: ${error.message}`);
         }

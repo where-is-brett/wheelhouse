@@ -55,7 +55,7 @@ import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { cardsLineFor } from '../agents/card-words.js';
 import { existingCard } from '../cards/visit.js';
-import { gateAsksDue, holdsDue } from '../cards/build-loop.js';
+import { controlFilesDue, gateAsksDue, holdsDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
@@ -214,13 +214,14 @@ function inPlainWords(make, room, words) {
 // visit has handed out, and the open questions from the build that no waiting card asks yet and
 // that the composer can make a card of, which it makes cards of first; then the cards the build
 // loop's records call for (scripts/cards/build-loop.js): each click the merge gate waits for whose
-// card is to be made or asked again, and each lineage hold with no card. Whether a pull request
+// card is to be made or asked again, each lineage hold with no card, and each control-file
+// record with no card. Whether a pull request
 // has moved on is the host's to say, which `cli.js cards` asks and this doesn't, so until the
 // gate's next record this may count a gate card that `cards` then doesn't give. At most one call's worth. Under STOP,
 // the one Lift STOP card.
 function cardsToAsk(project, at) {
   if (stopState().on) return 1;
-  return cardsDue(localViews(project, ['waiting', 'questions', 'gateAsks', 'lineageHolds', 'reports']) ?? {}, at);
+  return cardsDue(localViews(project, ['waiting', 'questions', 'gateAsks', 'lineageHolds', 'controlFiles', 'reports']) ?? {}, at);
 }
 
 // The count cardsToAsk gives, from the views given (with STOP off).
@@ -232,7 +233,7 @@ export function cardsDue(views, at) {
       && questionProblem(entry.question?.data) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
-  const made = gate.filter((due) => due.make).length + holdsDue(views).length;
+  const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length;
   return Math.min(CARD.questions, fresh.size + questions + made);
 }
 

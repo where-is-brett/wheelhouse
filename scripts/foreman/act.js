@@ -152,6 +152,7 @@ import { confirmLine, replyCode, replyCodeLine, unattendedBuildsLine } from '../
 import { readEnrolled, verify } from '../state/signing.js';
 import { recordHandled } from '../watcher/handled.js';
 import { recordedBriefs } from '../watcher/sources.js';
+import { writeBaseline } from '../watcher/control-files.js';
 import { makeWaker, sessionFile } from '../watcher/waker.js';
 import { guardedCardInput, guardedCommand, readSelfTest } from '../windows/low.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -424,6 +425,9 @@ async function fetchBase(ctx, git, checkout, base) {
 // checkout. A feature/<work> branch or worktree folder that is there already
 // was not made by a recorded start (a recorded feature never reaches here), so
 // it is refused, never reused: an agent can make branches in the shared repository.
+// Straight after it is made, the files in it that steer agents are recorded (the baseline the
+// watcher compares with before every wake, scripts/watcher/control-files.js). A record that can't
+// be written is said, and the start goes on: with no record, the feature's wakes wait for the director.
 async function makeWorktree(ctx, work, checkout, worktree, branch) {
   // The fenced route, looking at the repository's settings before each call: a setting off the
   // allowed list (a hook or fsmonitor an agent set, say) is refused, naming it, and git runs no more.
@@ -451,6 +455,11 @@ async function makeWorktree(ctx, work, checkout, worktree, branch) {
   if (kept.code === 0) refuse(`The branch ${branch} is there already, but no recorded feature made it: ask the director`);
   const made = await git(['worktree', 'add', '--quiet', '--no-track', '-b', branch, worktree, base]);
   if (made.code !== 0) refuse(`git couldn't make the worktree: ${oneLine(made.stderr || made.stdout || 'no reason given', 200)}`);
+  try {
+    writeBaseline(ctx.project, work, worktree, { now: ctx.now, platform: ctx.platform });
+  } catch (error) {
+    ctx.say(`The record of the worktree's agent files couldn't be written, so its wakes wait for the director: ${oneLine(error instanceof Error ? error.message : 'unknown error', 200)}`);
+  }
 }
 
 // The files of an ended run that the status reads, set aside when the work starts again.

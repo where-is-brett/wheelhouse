@@ -18,7 +18,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file', 'control-file-lift',
 ];
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
@@ -221,7 +221,15 @@ const PLAIN_SHAPES = {
   // pattern) and its refusals, each the tool and the kind (a guard's, a rule's, no rule's, or other) with the rule
   // when one was named. The whole output is kept in the project's activity folder on this computer, not in the state.
   activity: { must: ['session', 'role', 'tools', 'commands', 'refusals'], may: ['work', 'usage', 'at'] },
+  // The watcher held a feature's wakes because a file in its folder that steers agents is new or changed since the
+  // folder was made (ruling P7-13): the work, the paths (at most CONTROL_PATHS), and when. No paths: there is no
+  // record of the folder's agent files to compare with. The front desk's card.
+  'control-file': { must: ['work', 'paths', 'at'], may: [] },
+  // The feature's agent files match their record again, so its standing control-file records are closed, with their cards.
+  'control-file-lift': { must: ['work', 'at'], may: [] },
 };
+// The most paths a control-file record names.
+export const CONTROL_PATHS = 50;
 // The most commands an activity record lists, and the kinds of refusal it names.
 export const ACTIVITY_COMMANDS = 50;
 export const REFUSAL_KINDS = Object.freeze(['guard', 'rule', 'no-rule', 'other']);
@@ -339,6 +347,12 @@ function checkPlain(kind, data) {
   } else if (kind === 'lineage-lift') {
     if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
     if (!Array.isArray(data.holds) || data.holds.length === 0 || !data.holds.every(isText)) bad('needs holds, the ids of the holds it lifts');
+  } else if (kind === 'control-file' || kind === 'control-file-lift') {
+    slug('work');
+    if (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at))) bad('needs at to be a time');
+    if (kind === 'control-file' && !(Array.isArray(data.paths) && data.paths.length <= CONTROL_PATHS && data.paths.every(isText))) {
+      bad(`needs paths to be a list of at most ${CONTROL_PATHS} paths`);
+    }
   } else if (kind === 'activity') {
     if (data.session !== null && !isText(data.session)) bad('needs session to be the session\'s id or null');
     text('role');

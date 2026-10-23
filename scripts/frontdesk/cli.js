@@ -37,7 +37,7 @@ import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
-import { gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { controlFileInput, controlFilesDue, gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
@@ -268,6 +268,25 @@ function holdCard(hold, words) {
   }
 }
 
+// A control-file record's card, naming the work by its title or its id, and the first paths, or
+// only how many when they make the card too long or can't stand in it. When none composes, the
+// first refusal is the one given.
+function controlFileCard(record, views, words) {
+  const work = record.data.work;
+  const title = flat(views.work?.[work]?.work?.data?.title);
+  let refusal = null;
+  for (const name of [...new Set([title || work, work])]) {
+    for (const short of [false, true]) {
+      try {
+        return composePlain(controlFileInput(record, name, { short }), words);
+      } catch (error) {
+        refusal ??= error;
+      }
+    }
+  }
+  throw refusal;
+}
+
 // Whether the pull request a gate-asks names still waits for its click, as the host says (see
 // stillWaits; `again` for a card asked again). A read that fails says it does: asking is the safe side.
 async function gateStillWaits(client, cwd, entry, again) {
@@ -283,7 +302,7 @@ async function gateStillWaits(client, cwd, entry, again) {
 // waits for, its approval or CI push card, made once, unless the host says the pull request has
 // moved on, and a CI push card asked again when its click lapsed before the push (gateAsksDue,
 // R121); and a question card for each lineage
-// hold, made once. Resolves with { made, again }: how many cards were recorded, and the ids of the
+// hold, made once, and for each control-file record, made once. Resolves with { made, again }: how many cards were recorded, and the ids of the
 // cards to put back on this visit. What couldn't be made goes into `problems`.
 async function buildLoopCards({ client, cwd, views, words, now, problems }) {
   let made = 0;
@@ -315,6 +334,14 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
       made += 1;
     } catch (error) {
       problems.push(`The card for the lineage hold ${hold.id} wasn't made: ${error.message}`);
+    }
+  }
+  for (const record of controlFilesDue(views)) {
+    try {
+      await write(client, cwd, 'card', controlFileCard(record, views, words).card);
+      made += 1;
+    } catch (error) {
+      problems.push(`The card for the ${record.data.work} feature's agent files wasn't made: ${error.message}`);
     }
   }
   return { made, again };

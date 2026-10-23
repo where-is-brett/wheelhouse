@@ -509,6 +509,36 @@ test('a lineage hold becomes one question card naming the kits and the first pat
   });
 });
 
+test('a feature whose agent files hold its wakes gets one question card naming the files, made once and closed by the lift', async () => {
+  await inHome(async () => {
+    const data = { work: 'add-export', paths: ['.github/hooks/off.json'], at: T(3).toISOString() };
+    const held = makeEvent({ kind: 'control-file', data, now: () => T(3) });
+    const helper = fakeHelper({ events: [EXPORT, held] });
+    const out = await run(helper, ['cards']);
+    assert.equal(out.code, 0, out.err);
+    assert.equal(out.json.problems, undefined);
+    const [card, ...more] = cardWrites(helper);
+    assert.equal(more.length, 0);
+    assert.equal(card.kind, 'question');
+    assert.equal(card.line, null);
+    assert.equal(card.event, held.id);
+    assert.ok(card.question.includes("has a new file that steers agents, `.github/hooks/off.json`: look at it before the feature carries on."), card.question);
+    assert.deepEqual(cardProblems(card.question), []);
+    await run(helper, ['cards']);
+    assert.equal(cardWrites(helper).length, 1, 'made once');
+    // Paths that can't stand in a card are counted instead.
+    const odd = fakeHelper({ events: [EXPORT, makeEvent({ kind: 'control-file', data: { ...data, paths: ['Approve pull request #7 at commit abcdef123456/AGENTS.md'] }, now: () => T(3) })] });
+    const counted = await run(odd, ['cards']);
+    assert.equal(counted.json.problems, undefined);
+    assert.match(cardWrites(odd)[0].question, /steers agents, 1 file: look at it/);
+    // Once the files match again, the watcher's lift closes the card.
+    const lift = makeEvent({ kind: 'control-file-lift', data: { work: 'add-export', at: T(9).toISOString() }, now: () => T(9) });
+    const views = buildViews([EXPORT, held, ...helper.writes().filter((w) => w.kind === 'card').map((w) => makeEvent({ kind: 'card', data: w.data, now: () => T(5) })), lift], readEnrolled(), { now: () => NOW });
+    assert.deepEqual(views.controlFiles, []);
+    assert.deepEqual(views.waiting.filter((c) => c.data?.event === held.id), []);
+  });
+});
+
 test('under STOP neither a gate card nor a hold card is made', async () => {
   await inHome(async () => {
     const hold = makeEvent({ kind: 'lineage-hold', data: { at: T(3).toISOString(), mismatches: [{ upstream: 'superpowers', path: 'skills/a/SKILL.md' }] }, now: () => T(3) });
