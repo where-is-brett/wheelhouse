@@ -11,10 +11,19 @@
 // forms that fetch and run new code (exit 4) and tells the session to ask for them. It refuses
 // local git the same way (exit 4, EXIT.git): the worktree's git folders aren't labelled low
 // (scripts/windows/low.js, PLAN_GIT_LOW_LABELS), so local git is asked for and runs at the normal
-// level. It points npm's cache and the temporary folders inside the worktree, where a low process
-// can write, runs the command, ends it and everything it started with `taskkill /T /F` after 30
-// minutes, removes each link in the worktree that leads out of it (removeLinksOut), naming each
-// on stderr, and exits with the command's code.
+// level. It removes each link in the worktree that leads out of it (removeLinksOut), naming each on
+// stderr, points npm's cache and the temporary folders inside the worktree, where a low process can
+// write, runs the command, ends it and everything it started with `taskkill /T /F` after 30
+// minutes, removes the links out again, and exits with the command's code. The worktree is the one
+// labelled for Guarded (labelledWorktree), never a folder below it that merely holds a .git. A
+// worktree with more entries than the look for links goes through (LINK_WALK_LIMIT) runs nothing,
+// and one that grows past it during the command ends with that refusal's code (exit 5).
+//
+// Removing the links is a tidy-up, not the hold. A runner ended by the agent's own time limit never
+// reaches its second sweep, and a low process that outlives the command can make a link after it;
+// the sweep before each command removes what those left. What holds the agents' file tools, at
+// the normal level, to the worktree is the tool guard's check of each path where it really leads
+// (scripts/hooks/tool-guard.js, realpathSync.native).
 //
 // `--self-test <home> <marker> <scratch>` is the self-test's mode (low.js, selfTest): after the
 // same check, it tries to write a file in Wheelhouse's home, and through a link from `scratch` to
@@ -40,7 +49,8 @@ export const SELF_TEST_FLAG = '--self-test';
 // The runner's exit codes, beside the command's own: `fetches` and `git` share a code, since the
 // session does the same for both (asks for the command), and the line said tells them apart;
 // `timedOut` is the usual code of a command ended for its time.
-export const EXIT = Object.freeze({ usage: 2, notLow: 3, fetches: 4, git: 4, notFound: 127, timedOut: 124 });
+// `linksUnchecked` is a worktree too large to look through for links out of it.
+export const EXIT = Object.freeze({ usage: 2, notLow: 3, fetches: 4, git: 4, linksUnchecked: 5, notFound: 127, timedOut: 124 });
 
 // What stays at the normal level in a worktree labelled low (low.js, labelWorktree), so a build
 // can't plant a hook or a setting there: folders, labelled with inheritance, and files.
@@ -107,12 +117,45 @@ export function fetchesCode(words) {
   return words.slice(1).some((w) => FETCHING[program].includes(String(w).toLowerCase()));
 }
 
-// The worktree `cwd` is in: the nearest folder holding a `.git`, or `cwd` itself.
-function worktreeOf(cwd) {
-  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, '.git'))) return dir;
-    if (path.dirname(dir) === dir) return path.resolve(cwd);
+// Whether `a` and `b` name the same place; Windows' paths ignore case, as NTFS does, by upper case.
+export function samePath(a, b, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const fold = (x) => (platform === 'win32' ? p.resolve(x).toUpperCase() : p.resolve(x));
+  return fold(a) === fold(b);
+}
+
+// Whether `dir` is a linked worktree's top: its .git file points to an admin folder in a
+// `worktrees` folder, whose own gitdir file points back at that .git. A low build can write a .git
+// file below the worktree's top, but not the admin folder, which is outside the worktree, so a
+// planted one doesn't point back; a submodule's .git points into `modules`, not `worktrees`.
+function worktreeTop(dir, platform) {
+  try {
+    const dot = path.join(dir, '.git');
+    if (!fs.lstatSync(dot).isFile()) return false;
+    const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dot, 'utf8'));
+    if (!pointer) return false;
+    const admin = fs.realpathSync.native(path.resolve(dir, pointer[1]));
+    if (path.basename(path.dirname(admin)) !== 'worktrees') return false;
+    const back = fs.readFileSync(path.join(admin, 'gitdir'), 'utf8').trim();
+    return samePath(fs.realpathSync.native(path.resolve(admin, back)), fs.realpathSync.native(dot), platform);
+  } catch {
+    return false;
   }
+}
+
+// The worktree `cwd` is in, as labelled for Guarded (low.js, labelWorktree): the outermost folder,
+// `cwd` or above it, that is a linked worktree's top (worktreeTop), so a .git planted in a
+// subfolder, or a submodule's, never narrows it. Where there is none, the nearest folder holding a
+// .git, or `cwd` itself.
+export function labelledWorktree(cwd, platform = process.platform) {
+  let top = null;
+  let nearest = null;
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    if (nearest === null && fs.existsSync(path.join(dir, '.git'))) nearest = dir;
+    if (worktreeTop(dir, platform)) top = dir;
+    if (path.dirname(dir) === dir) break;
+  }
+  return top ?? nearest ?? path.resolve(cwd);
 }
 
 // A word for a cmd.exe command line: bare when plain, else in double quotes. Characters cmd
@@ -279,38 +322,61 @@ function selfTestTries(home, marker, scratch, out) {
   return 0;
 }
 
-// The message for each link removed after a command, followed by its path.
+// The message for each link removed, followed by its path in backticks.
 export const LINK_REMOVED = 'Removed a link that led out of the worktree:';
 
-// Whether `target` is `folder` or inside it, both real paths; Windows' paths ignore case.
+// How many entries the look for links out of a worktree goes through before it stops.
+export const LINK_WALK_LIMIT = 500000;
+export const linksUnchecked = (limit = LINK_WALK_LIMIT) => `The runner stopped looking for links out of the worktree after ${limit} entries, so it can't say none lead out, and it won't run anything more here. ${ASK_INSTEAD}`;
+
+// Whether `target` is `folder` or inside it, both real paths; Windows' paths ignore case, as NTFS
+// does, by upper case.
 export function insideFolder(folder, target, platform = process.platform) {
   const p = platform === 'win32' ? path.win32 : path.posix;
-  const fold = (x) => (platform === 'win32' ? p.resolve(x).toLowerCase() : p.resolve(x));
+  const fold = (x) => (platform === 'win32' ? p.resolve(x).toUpperCase() : p.resolve(x));
   const relative = p.relative(fold(folder), fold(target));
   return relative === '' || (!relative.startsWith('..') && !p.isAbsolute(relative));
 }
 
 // Removes each symbolic link or junction in `worktree` whose real target is outside it, and each
-// dangling one, so the agents' file tools, at the normal level, can't be led out of the worktree
-// by a link a low build made. It walks with lstat and never follows a link, and skips the
-// worktree's own .git file. Returns the paths removed; one it can't remove isn't among them.
-export function removeLinksOut(worktree, { platform = process.platform } = {}) {
+// dangling one, so the agents' file tools, at the normal level, aren't led out of the worktree by a
+// link a low build made. It walks with lstat and never follows a link, and skips the worktree's own
+// .git file. A folder whose real path isn't its parent's real path and its name is a link too, even
+// where lstat doesn't say so (on Windows, a junction to a volume's path rather than a drive letter):
+// it is judged by where it really leads, removed if that is outside, and never walked. Returns the
+// paths removed; one it can't remove isn't among them. Past `limit` entries it stops and throws,
+// with what it removed as the error's `removed`. `realpath` is fs.realpathSync.native.
+export function removeLinksOut(worktree, { platform = process.platform, realpath = fs.realpathSync.native, limit = LINK_WALK_LIMIT } = {}) {
   const removed = [];
   let root;
   try {
-    root = fs.realpathSync.native(worktree);
+    root = realpath(worktree);
   } catch {
     return removed;
   }
-  const walk = (dir) => {
+  const remove = (entry, folder) => {
+    for (const attempt of folder ? [fs.rmdirSync] : [fs.unlinkSync, fs.rmdirSync]) {
+      try {
+        attempt(entry);
+        removed.push(entry);
+        return;
+      } catch { /* the next way, or left; the tool guard's real-path check still holds */ }
+    }
+  };
+  const folders = [[worktree, root]];
+  let seen = 0;
+  while (folders.length > 0) {
+    const [dir, realDir] = folders.pop();
     let names;
     try {
       names = fs.readdirSync(dir);
     } catch {
-      return;
+      continue;
     }
     for (const name of names) {
       if (dir === worktree && name === '.git') continue;
+      seen += 1;
+      if (seen > limit) throw Object.assign(new Error(linksUnchecked(limit)), { removed });
       const entry = path.join(dir, name);
       let stat;
       try {
@@ -318,27 +384,20 @@ export function removeLinksOut(worktree, { platform = process.platform } = {}) {
       } catch {
         continue;
       }
-      if (stat.isSymbolicLink()) {
-        let target = null;
-        try {
-          target = fs.realpathSync.native(entry);
-        } catch { /* dangling, or a loop */ }
-        if (target !== null && insideFolder(root, target, platform)) continue;
-        try {
-          fs.unlinkSync(entry);
-          removed.push(entry);
-        } catch {
-          try {
-            fs.rmdirSync(entry);
-            removed.push(entry);
-          } catch { /* left; the tool guard's real-path check still holds */ }
-        }
-      } else if (stat.isDirectory()) {
-        walk(entry);
+      const link = stat.isSymbolicLink();
+      if (!link && !stat.isDirectory()) continue;
+      let target = null;
+      try {
+        target = realpath(entry);
+      } catch { /* dangling, or a loop */ }
+      if (!link && target !== null && samePath(target, path.join(realDir, name), platform)) {
+        folders.push([entry, target]);
+        continue;
       }
+      if (target !== null && insideFolder(root, target, platform)) continue;
+      remove(entry, !link);
     }
-  };
-  walk(worktree);
+  }
   return removed;
 }
 
@@ -347,7 +406,7 @@ export function removeLinksOut(worktree, { platform = process.platform } = {}) {
 // to the session (stderr), `out` the self-test's line (stdout).
 export async function guarded(words, {
   run = runProgram, start = startInherited, cwd = process.cwd(), env = process.env, platform = process.platform,
-  timeoutMs = GUARDED_TIMEOUT_MS, exists = fs.existsSync, say = (line) => process.stderr.write(`${line}\n`), out = (line) => process.stdout.write(`${line}\n`),
+  timeoutMs = GUARDED_TIMEOUT_MS, linkLimit = LINK_WALK_LIMIT, exists = fs.existsSync, say = (line) => process.stderr.write(`${line}\n`), out = (line) => process.stdout.write(`${line}\n`),
 } = {}) {
   let low = false;
   const whoami = windowsTool('whoami', env);
@@ -388,9 +447,24 @@ export async function guarded(words, {
     return EXIT.usage;
   }
 
+  // The links out of the worktree, removed before the command and again after it.
+  const worktree = labelledWorktree(cwd, platform);
+  const sweep = () => {
+    let links;
+    try {
+      links = removeLinksOut(worktree, { platform, limit: linkLimit });
+    } catch (error) {
+      for (const link of error.removed ?? []) say(`${LINK_REMOVED} \`${link}\``);
+      say(error.message);
+      return false;
+    }
+    for (const link of links) say(`${LINK_REMOVED} \`${link}\``);
+    return true;
+  };
+  if (!sweep()) return EXIT.linksUnchecked;
+
   // npm's cache and the temporary folders, inside the worktree, where a low process can write.
   // The common folder's info/exclude keeps .wheelhouse/ out of git (scripts/feature/files.js).
-  const worktree = worktreeOf(cwd);
   const tmp = path.join(worktree, '.wheelhouse', 'tmp');
   try {
     fs.mkdirSync(tmp, { recursive: true });
@@ -405,7 +479,7 @@ export async function guarded(words, {
     return EXIT.notFound;
   }
   const ended = await runToEnd(child, { run, env, timeoutMs });
-  for (const link of removeLinksOut(worktree, { platform })) say(`${LINK_REMOVED} ${link}`);
+  if (!sweep()) return EXIT.linksUnchecked;
   if (ended.timedOut) {
     say(`${words.join(' ')} ran past the runner's time limit of ${Math.round(timeoutMs / 60000)} minutes, so the runner ended it and everything it started.`);
     return EXIT.timedOut;
