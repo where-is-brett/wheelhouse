@@ -63,6 +63,8 @@ function copyOfSources() {
   for (const part of ['skills', 'agents', 'commands']) fs.cpSync(path.join(ROOT, part), path.join(root, part), { recursive: true });
   fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
+  // Lean's playbooks sit beside the adapter, not in skills/ (ruling P4-30).
+  fs.cpSync(path.join(ROOT, 'adapters', 'copilot', 'skills'), path.join(root, 'adapters', 'copilot', 'skills'), { recursive: true });
   return root;
 }
 

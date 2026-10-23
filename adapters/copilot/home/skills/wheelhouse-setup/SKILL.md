@@ -2,7 +2,7 @@
 name: "wheelhouse-setup"
 description: "Use when the director asks to set up Wheelhouse in VS Code with Copilot, for example \"Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v1.0.0\", on a computer with git and nothing else - it copies the kit into the Copilot folder, sets the project up, and makes the copy folder, with git alone."
 ---
-<!-- adapters/copilot/home/skills/wheelhouse-setup/SKILL.md (built from skills/setup-lean/SKILL.md by npm run copilot-home) -->
+<!-- adapters/copilot/home/skills/wheelhouse-setup/SKILL.md (built from adapters/copilot/skills/setup-lean/SKILL.md by npm run copilot-home) -->
 
 # Setting up Wheelhouse at Lean
 

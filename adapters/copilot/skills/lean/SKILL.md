@@ -2,7 +2,7 @@
 name: lean
 description: Use when the front desk or the board says the project runs at Lean (nothing but git runs here, no Wheelhouse program) - for the record, the board, cards, building, reviewing, merging, undo, the copy, STOP, the settings and the briefing, and the runbook's local steps.
 ---
-<!-- skills/lean/SKILL.md -->
+<!-- adapters/copilot/skills/lean/SKILL.md -->
 
 # Lean: Wheelhouse with git alone
 

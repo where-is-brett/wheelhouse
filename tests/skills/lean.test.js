@@ -18,7 +18,7 @@ import { BOARD_FILE, LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../../scripts
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replaceAll('\r\n', '\n');
-const playbook = read('skills/lean/SKILL.md');
+const playbook = read('adapters/copilot/skills/lean/SKILL.md');
 const kit = buildHome({ root: ROOT });
 const leanKit = kit.get('skills/wheelhouse-lean/SKILL.md');
 
@@ -48,8 +48,17 @@ function section(text, heading) {
 
 // ---- The playbook itself ----
 
+test('no skill under skills/ is Copilot-only: Lean\'s playbooks sit beside the adapter, so Claude Code\'s plugin never loads them', () => {
+  const names = fs.readdirSync(path.join(ROOT, 'skills'), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  assert.ok(names.includes('front-desk'), 'the folder read is the plugin\'s skills');
+  assert.ok(!names.includes('lean') && !names.includes('setup-lean'), `skills/ holds ${names.join(', ')}`);
+  for (const name of names) assert.doesNotMatch(read(`skills/${name}/SKILL.md`).split('\n').slice(0, 5).join('\n'), /^name: (lean|setup-lean)$/m, name);
+  assert.ok(fs.existsSync(path.join(ROOT, 'adapters', 'copilot', 'skills', 'lean', 'SKILL.md')));
+  assert.ok(fs.existsSync(path.join(ROOT, 'adapters', 'copilot', 'skills', 'setup-lean', 'SKILL.md')));
+});
+
 test('the playbook has front matter, then its path comment, and is named lean', () => {
-  assert.match(playbook, /^---\nname: lean\ndescription: [^\n]+\n---\n<!-- skills\/lean\/SKILL\.md -->\n/);
+  assert.match(playbook, /^---\nname: lean\ndescription: [^\n]+\n---\n<!-- adapters\/copilot\/skills\/lean\/SKILL\.md -->\n/);
   assert.ok(playbook.split('\n')[2].length < 1100);
 });
 
@@ -424,7 +433,8 @@ test('the playbook names a case for the board by what the computer allows, not b
 test('no Claude Code tool is named, nor Copilot in the source, nor a model name', () => {
   for (const name of TOOL_NAMES) assert.ok(!playbook.includes(name), `names ${name}`);
   assert.doesNotMatch(playbook, CLAUDE_CODE_TOOL_WORDS);
-  assert.doesNotMatch(playbook, /copilot/i, 'the source stays in general words (core-neutral)');
+  // The source sits under adapters/copilot/, so its path comment names the folder; the text itself stays in general words.
+  assert.doesNotMatch(playbook.replace(/^<!--[^\n]*-->\n/m, ''), /copilot/i, 'the source stays in general words');
   assert.doesNotMatch(playbook, /\b(ask_user|askQuestions|apply_patch)\b/);
   for (const tool of ['Write', 'Read', 'Edit', 'Bash', 'Grep', 'Glob']) assert.ok(!playbook.includes(`\`${tool}\``), `names \`${tool}\``);
   assert.doesNotMatch(playbook, /\b(opus|sonnet|haiku)\b|Co-Authored-By|Generated with/i);
@@ -458,7 +468,7 @@ test('the Lean path of the kit names no Claude Code tool and no Claude Code', ()
 
 test('the kit holds the playbook as wheelhouse-lean, with the product named where the source says {{agent}}', () => {
   const text = kit.get('skills/wheelhouse-lean/SKILL.md');
-  assert.match(text, /^---\nname: "wheelhouse-lean"\ndescription: "[^\n]+"\n---\n<!-- adapters\/copilot\/home\/skills\/wheelhouse-lean\/SKILL\.md \(built from skills\/lean\/SKILL\.md by npm run copilot-home\) -->\n/);
+  assert.match(text, /^---\nname: "wheelhouse-lean"\ndescription: "[^\n]+"\n---\n<!-- adapters\/copilot\/home\/skills\/wheelhouse-lean\/SKILL\.md \(built from adapters\/copilot\/skills\/lean\/SKILL\.md by npm run copilot-home\) -->\n/);
   assert.ok(!text.includes('{{'), 'no token is left');
   assert.ok(text.includes('Copilot\'s command prompts aren\'t a control'));
   assert.ok(!text.includes('wheelhouse:'), 'skills are named with a hyphen');
@@ -487,11 +497,12 @@ test('buildHome throws when the Lean playbook is missing, and builds nothing fro
   for (const part of ['skills', 'agents', 'commands']) fs.cpSync(path.join(ROOT, part), path.join(root, part), { recursive: true });
   fs.mkdirSync(path.join(root, 'adapters', 'copilot'), { recursive: true });
   fs.copyFileSync(path.join(ROOT, 'adapters', 'copilot', 'tool-sheet.md'), path.join(root, 'adapters', 'copilot', 'tool-sheet.md'));
+  fs.cpSync(path.join(ROOT, 'adapters', 'copilot', 'skills'), path.join(root, 'adapters', 'copilot', 'skills'), { recursive: true });
   assert.doesNotThrow(() => buildHome({ root }));
-  const file = path.join(root, 'skills', 'lean', 'SKILL.md');
+  const file = path.join(root, 'adapters', 'copilot', 'skills', 'lean', 'SKILL.md');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('{{agent}}', '{{somebody}}'));
   assert.throws(() => buildHome({ root }), /somebody/);
-  fs.rmSync(path.join(root, 'skills', 'lean'), { recursive: true });
+  fs.rmSync(path.join(root, 'adapters', 'copilot', 'skills', 'lean'), { recursive: true });
   assert.throws(() => buildHome({ root }), /skills[\\/]lean[\\/]SKILL\.md/);
 });
 

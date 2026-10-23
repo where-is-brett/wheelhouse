@@ -2,7 +2,7 @@
 name: "wheelhouse-lean"
 description: "Use when the front desk or the board says the project runs at Lean (nothing but git runs here, no Wheelhouse program) - for the record, the board, cards, building, reviewing, merging, undo, the copy, STOP, the settings and the briefing, and the runbook's local steps."
 ---
-<!-- adapters/copilot/home/skills/wheelhouse-lean/SKILL.md (built from skills/lean/SKILL.md by npm run copilot-home) -->
+<!-- adapters/copilot/home/skills/wheelhouse-lean/SKILL.md (built from adapters/copilot/skills/lean/SKILL.md by npm run copilot-home) -->
 
 # Lean: Wheelhouse with git alone
 

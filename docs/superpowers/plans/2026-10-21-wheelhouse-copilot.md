@@ -144,8 +144,8 @@ scripts/audit/report.js                   the audit report, checked against the 
 scripts/review/clean-session.js           the clean checkout, the prompt from trusted state, the verdict
 scripts/watcher/control-files.js          agent-control files read directly before every wake
 scripts/health/own-files.js               changes to Wheelhouse's and Copilot's own files
-skills/lean/SKILL.md                      Lean's playbook, with no Node.js
-skills/setup-lean/SKILL.md                setup from one request in the chat, with git alone
+adapters/copilot/skills/lean/SKILL.md           Lean's playbook, with no Node.js
+adapters/copilot/skills/setup-lean/SKILL.md     setup from one request in the chat, with git alone
 docs/copilot/                             tested-versions.md, it-note.md, baseline/ (managed settings, policy hooks)
 vscode/                                   the add-on: package.json, extension.cjs, pane/, README.md
 scripts/addon/                            validate.js (the static proof), pack.js (the .vsix)
@@ -601,7 +601,7 @@ test('a Claude Code project\'s health line is unchanged', ...)
 - Modify: `package.json` (`"copilot-home": "node scripts/agents/copilot/home.js --write"`)
 
 **Interfaces:**
-- Consumes: `skills/*/SKILL.md`, `agents/*.md`, `skills/lean/SKILL.md` and `skills/setup-lean/SKILL.md` (Tasks 3 and 5), `adapters/copilot/tool-sheet.md`.
+- Consumes: `skills/*/SKILL.md`, `agents/*.md`, `adapters/copilot/skills/lean/SKILL.md` and `adapters/copilot/skills/setup-lean/SKILL.md` (Tasks 3 and 5), `adapters/copilot/tool-sheet.md`.
 - Produces: `buildHome({ root }) -> Map<string, string>` (relative path to text) for this tree:
   - `skills/wheelhouse-front-desk/`, `wheelhouse-intake/`, `wheelhouse-lean/`, `wheelhouse-setup/`, and one skill per command the director calls by name: `wheelhouse-board`, `wheelhouse-briefing`, `wheelhouse-settings`, `wheelhouse-stop`, `wheelhouse-sources` (each a short skill pointing to the front desk's section for it);
   - `agents/wheelhouse-builder.agent.md`, `wheelhouse-reviewer.agent.md`, `wheelhouse-tester.agent.md`, `wheelhouse-foreman.agent.md`: the same prompt text as `agents/*.md`, with Copilot's front matter (`name`, `description`, `tools`); the reviewer's `tools` are `view`, `glob` and `rg` and nothing else (check 66's route b; not the whole of `tools.read`, which may name `skill`, `sql` and others);
@@ -629,7 +629,7 @@ test('every skill and agent name starts wheelhouse-', ...)
 **Safety: yes** (approvals and records at Lean)
 
 **Files:**
-- Create: `skills/lean/SKILL.md`, `tests/skills/lean.test.js`
+- Create: `adapters/copilot/skills/lean/SKILL.md`, `tests/skills/lean.test.js`
 - Modify: `skills/front-desk/SKILL.md` (one line: "At Lean, follow wheelhouse-lean for the record, the board, building and merging")
 
 **Interfaces:**
@@ -668,11 +668,11 @@ test('every skill and agent name starts wheelhouse-', ...)
 **Safety: no**
 
 **Files:**
-- Create: `skills/setup-lean/SKILL.md`, `adapters/copilot/vscode-settings.json`, `docs/copilot/tested-versions.md`, `scripts/agents/copilot/versions.js`, `tests/skills/setup-lean.test.js`, `tests/scripts/agents/copilot-versions.test.js`
+- Create: `adapters/copilot/skills/setup-lean/SKILL.md`, `adapters/copilot/vscode-settings.json`, `docs/copilot/tested-versions.md`, `scripts/agents/copilot/versions.js`, `tests/skills/setup-lean.test.js`, `tests/scripts/agents/copilot-versions.test.js`
 - Modify: `README.md` (an "On GitHub Copilot" section), then `npm run copilot-home`
 
 **Interfaces:**
-- `skills/setup-lean/SKILL.md`, the steps the chat takes:
+- `adapters/copilot/skills/setup-lean/SKILL.md`, the steps the chat takes:
   1. Check `git --version`; without git, stop kindly.
   2. Clone Wheelhouse's public repository at the release tag into `~/.copilot/wheelhouse/<tag>/`, then copy `adapters/copilot/home/` into `~/.copilot/` (skills, agents, instructions; not `hooks/`, which step 4 handles), and check each copied file against `MANIFEST.txt` with `git hash-object`.
   3. "Can Wheelhouse run here?" at Lean: git, `node --version`, `copilot --version`, the project's remote; say in one sentence which tier this is ("This computer runs Wheelhouse at Lean: everything stays here, and Copilot builds in your chat"), and if Node.js runs, that Part 5's helper can add more.

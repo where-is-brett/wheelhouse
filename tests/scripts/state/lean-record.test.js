@@ -10,7 +10,7 @@ import { gateDecision } from '../../../scripts/gate/conditions.js';
 import { verify } from '../../../scripts/state/signing.js';
 import { parseLeanRecord, readLeanRecord, leanToEvents } from '../../../scripts/state/lean-record.js';
 
-// The lines the Lean playbook shows for each kind (skills/lean/SKILL.md, "The record").
+// The lines the Lean playbook shows for each kind (adapters/copilot/skills/lean/SKILL.md, "The record").
 const LINES = {
   card: { at: '2026-10-23T01:10:02Z', kind: 'card', card: 'orders-spreadsheet', choice: 'Not now', commit: null, proof: 'chat-click', by: 'chat', tier: 'lean' },
   review: { at: '2026-10-23T01:18:30Z', kind: 'review', card: null, choice: 'clean', commit: '3f9a1c7d02be', proof: 'chat-review', by: 'chat', tier: 'lean' },

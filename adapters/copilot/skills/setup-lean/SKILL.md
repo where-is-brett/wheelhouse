@@ -2,7 +2,7 @@
 name: setup-lean
 description: Use when the director asks to set up Wheelhouse in VS Code with Copilot, for example "Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v1.0.0", on a computer with git and nothing else - it copies the kit into the Copilot folder, sets the project up, and makes the copy folder, with git alone.
 ---
-<!-- skills/setup-lean/SKILL.md -->
+<!-- adapters/copilot/skills/setup-lean/SKILL.md -->
 
 # Setting up Wheelhouse at Lean
 

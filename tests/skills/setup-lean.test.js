@@ -19,8 +19,8 @@ import { BOARD_FILE, LEAN_RECORD_DIR } from '../../scripts/lib/copilot-numbers.j
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8').replaceAll('\r\n', '\n');
-const skill = read('skills/setup-lean/SKILL.md');
-const lean = read('skills/lean/SKILL.md');
+const skill = read('adapters/copilot/skills/setup-lean/SKILL.md');
+const lean = read('adapters/copilot/skills/lean/SKILL.md');
 const readme = read('README.md');
 const kit = buildHome({ root: ROOT });
 const REPO_URL = 'https://github.com/where-is-brett/wheelhouse';
@@ -103,14 +103,14 @@ function makeProject(name = 'orders') {
 // ---- The skill itself ----
 
 test('the skill has front matter, then its path comment, and is named setup-lean', () => {
-  assert.match(skill, /^---\nname: setup-lean\ndescription: [^\n]+\n---\n<!-- skills\/setup-lean\/SKILL\.md -->\n/);
+  assert.match(skill, /^---\nname: setup-lean\ndescription: [^\n]+\n---\n<!-- adapters\/copilot\/skills\/setup-lean\/SKILL\.md -->\n/);
   assert.ok(skill.split('\n')[2].length < 1100);
 });
 
-test('the kit holds the skill as wheelhouse-setup, built from skills/setup-lean and not from skills/setup', () => {
+test('the kit holds the skill as wheelhouse-setup, built from adapters/copilot/skills/setup-lean and not from skills/setup', () => {
   const text = kit.get('skills/wheelhouse-setup/SKILL.md');
   assert.ok(text, 'the kit has wheelhouse-setup');
-  assert.match(text, /^---\nname: "wheelhouse-setup"\ndescription: "[^\n]+"\n---\n<!-- adapters\/copilot\/home\/skills\/wheelhouse-setup\/SKILL\.md \(built from skills\/setup-lean\/SKILL\.md by npm run copilot-home\) -->\n/);
+  assert.match(text, /^---\nname: "wheelhouse-setup"\ndescription: "[^\n]+"\n---\n<!-- adapters\/copilot\/home\/skills\/wheelhouse-setup\/SKILL\.md \(built from adapters\/copilot\/skills\/setup-lean\/SKILL\.md by npm run copilot-home\) -->\n/);
   assert.ok(!text.includes('{{') && !text.includes('wheelhouse:'));
   assert.doesNotMatch(text, /scripts\/setup\/cli\.js|the host helper/i, 'none of the Node.js setup\'s steps');
   assert.ok(kit.get('MANIFEST.txt').includes(' skills/wheelhouse-setup/SKILL.md\n'), 'the manifest lists it');
@@ -679,7 +679,7 @@ test('the README gives the one request line', () => {
   assert.match(text, /wheelhouse\/board\.md/);
   assert.match(text, /not for projects with real users|Not for projects with real users/i);
   assert.match(text, /no release|not yet released|isn't released|hasn't been released/i, 'says plainly that there is no release yet');
-  assert.match(text, /skills\/setup-lean\/SKILL\.md/, 'tells the chat where the steps are');
+  assert.match(text, /adapters\/copilot\/skills\/setup-lean\/SKILL\.md/, 'tells the chat where the steps are');
   assert.match(text, /git clone/);
 });
 

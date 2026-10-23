@@ -1,6 +1,6 @@
 // scripts/state/lean-record.js
 // Lean's record, read and turned into state events. At Lean the chat writes one JSON line for each
-// event into `.wheelhouse/record/YYYY-MM-DD.jsonl`, with git alone (skills/lean/SKILL.md, "The
+// event into `.wheelhouse/record/YYYY-MM-DD.jsonl`, with git alone (adapters/copilot/skills/lean/SKILL.md, "The
 // record"). Where Node.js runs, Wheelhouse reads those files and moves them up into its state.
 //
 // This module only reads and converts. It never runs git and never writes; `moveUp` (Part 6)
