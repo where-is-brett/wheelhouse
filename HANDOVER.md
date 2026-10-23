@@ -240,7 +240,7 @@ The director is a product owner, not a developer. They want their product built 
    - **Next:** design section 17.2's next step, as the director set it on 19 October 2026 (item 7): the evaluation as a whole (section 18), on a build with every designed piece in it; then Wheelhouse used for all work on the first project, with no small-feature pilot; and the first public release once the measures have held for two weeks. Check 19's timed run and the sittings above are the director's, through the main session.
 9. **Calm is built** (`docs/superpowers/plans/2026-10-21-wheelhouse-calm-interface.md`, design section 23), on branch `feature/calm-interface-1c226a`, with `main` merged in. It is the interface the director chose on 20 October 2026, after finding the pane's card ugly and hard to read: the pane (the verdict first, one card at a time, the four shapes of what can be pressed), Settings as a grouped list with pop-ups, the cards' parts, Why? and Suggest a change…, and the words everywhere else (the board, the briefing, `/digest`, setup, notifications and toasts). The design takes the plan's calls and what the build settled in section 21.
    - **Left:**
-     - **The three faults the director wants put right before real use** (check 42, below): the one-line Suggest box, Undo after its minute, and the doubled usage line.
+     - **The three faults the director wanted put right before real use** (check 42, below) are put right on 24 October 2026; the director sees them at their next look.
      - **The real runs of scenario 36.** It is now three legs (the pane's Suggest a change… on the approval card, Show me, and the chat's typed why); its counted runs are of the old press, so a rerun is due.
      - **Check 42's Windows run** waits for check 41's Windows sitting.
      - **Merging:** the director said yes on 23 October 2026; main merges it.
@@ -257,6 +257,13 @@ The director is a product owner, not a developer. They want their product built 
    - **Check 19, the timed setup run: put off** by the director (it was nearly midnight). It needs a tag on the host first: none was there.
    - **The director's remarks:** the context meter showed 29% after `/compact`, which they found acceptable once they saw it was of 300,000. They asked whether Wheelhouse shouldn't handle compaction intelligently itself. That is an idea for later, not designed.
    - **Left on the Mac:** the scratch session's transcript (the director chose to keep it) and the keychain probe's status log in `~/.wheelhouse-probes/73-keychain/`. The scratch folder, helper and dev mods were removed, and the test session archived.
-   - **Next:** put the three faults right, then real use on the Mac (the director's condition, 23 October 2026). Give the kit's brief the flag. Book check 19 for another day, with the tag pushed first.
+   - **Put right on 24 October 2026** (branch `feature/calm-sitting-3-fixes-983ac2`):
+     - the Suggest box is four lines tall;
+     - the pane draws the settings again when Undo's minute is up, so Undo leaves then, and a late Undo says "It's too late to undo that. Undo lasts one minute.";
+     - the usage line shows once;
+     - the kit's brief gives the command with `--no-use-system-ca` where Node.js knows the flag, so the next sitting can show check 41's certificate lines gone.
+     - The mod check reads a calls list that `claude plugin validate` cuts short (it cuts a long note at "… [+N chars]"): the source's members sorting from the cut on stand for the rest. Adding `$.clock.after` pushed the list past the cut.
+     - None of it is seen in Desktop yet; the director's next look can be the first real use.
+   - **Next:** real use on the Mac (the director's condition, 23 October 2026), with a look at the Suggest box, Undo and Health on the way. Book check 19 for another day, with the tag pushed first.
 11. **The Copilot build** (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`): Part 3 (the adapter seam, with Claude Code as its first adapter) is in on branch `claude/copilot-part-3`; the full test suite and mod-check pass, and the counted evaluation scenarios ran again with no failure caused by the seam (`docs/evals/adapter-seam.md`).
 12. **Backlog:** budget allocation (section 9.1), which the director asked for once usage could be read. The director put it in the backlog on 18 October 2026.

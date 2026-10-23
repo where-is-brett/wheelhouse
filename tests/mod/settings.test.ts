@@ -380,6 +380,28 @@ test('a row changed just now shows Undo, which sends undo', async ($, on) => {
   }
 })
 
+test('Undo leaves when its minute is up, with nothing sent', async ($, on) => {
+  const state: { autonomy: string, changed?: any } = { autonomy: 'cautious', changed: { at: new Date(START - 20000).toISOString(), undo: true } }
+  const { seen, clear, start, clock } = world(on, aGroupedBridge(state))
+  for (const surface of SURFACES) {
+    state.changed = { at: new Date(clock.now() - 20000).toISOString(), undo: true }
+    await start($, surface)
+    const ui = await mount($, surface)
+    await ui.press({ key: 'settings' })
+    expect(await ui.find({ key: choiceKey('autonomy', 'undo') })).toBeDefined()
+    clear()
+    // The bridge still gives the row its change: the pane alone takes Undo away at the minute.
+    await clock.advance(39000)
+    expect(await ui.find({ key: choiceKey('autonomy', 'undo') })).toBeDefined()
+    await clock.advance(1000)
+    expect(await ui.find({ key: choiceKey('autonomy', 'undo') })).toBeUndefined()
+    expect(await texts(ui)).not.toContain('Changed just now')
+    expect(picksOf(seen)).toEqual([])
+    await ui.press({ key: 'done' })
+    await ui.unmount()
+  }
+})
+
 test('a change made over a minute ago, or not undoable, shows no Undo', async ($, on) => {
   const state: { autonomy: string, changed?: any } = { autonomy: 'cautious', changed: { at: new Date(START - 61000).toISOString(), undo: true } }
   const { start } = world(on, aGroupedBridge(state))

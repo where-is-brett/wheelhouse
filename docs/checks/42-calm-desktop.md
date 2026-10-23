@@ -9,6 +9,11 @@
   - **The Suggest box is one line.** Past a few words, what the director types runs beyond its width and can't be seen.
   - **Undo after its minute.** Undo is still drawn after the minute is up, because the pane hasn't redrawn. Pressed then, it does nothing and says nothing. Pressed inside the minute, it works.
   - **The usage line is doubled.** "Usage this week: 1% of your weekly allowance." shows twice in Health and this week: once as a line, once dimmed.
+- **Put right on 24 October 2026** (on `main` once its pull request merges; the director sees them at their next look in Desktop):
+  - **The Suggest box is four lines tall.** A sentence or two stays in sight, and a longer text scrolls inside it. Enter still sends.
+  - **Undo leaves when its minute is up.** The pane draws the settings again at that moment, so Undo is gone without anything else redrawing it. If it is pressed late all the same, the toast says "It's too late to undo that. Undo lasts one minute." rather than "There's nothing to undo now", which stays for a setting with no change to undo.
+  - **The usage line shows once** in Health and this week: the week's share line, and the usage line only for a pane model that has no week line.
+  - Shown by the mod's tests (`npm run mod-check`) and the settings pane's tests; not yet seen in Desktop.
 - **Smaller points seen:** the Suggest box doesn't take focus when it opens (the director had to click it). In Health the "To watch" label wraps onto two lines. The foot shows Settings only, with no Board button.
 
 ## Question
@@ -92,4 +97,4 @@ Also seen: Health and this week shows "Usage this week: 1% of your weekly allowa
 
 ## Needs the director
 
-Nothing for this check until the three faults are put right; then a short look at the Suggest box and Undo in Desktop, which can be folded into the first real use. Windows follows when the director is next at that computer, with check 41's.
+The three faults are put right (24 October 2026). What is left is a short look at the Suggest box, Undo after its minute and the Health group in Desktop, which can be folded into the first real use. Windows follows when the director is next at that computer, with check 41's.
