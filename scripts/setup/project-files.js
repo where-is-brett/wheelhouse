@@ -23,7 +23,8 @@
 //      left as it is; then the lineage check (checkInstalled) must pass.
 //      Board-and-usage check 32 found the mod needs no second plugin, so there is no
 //      wheelhouse-mod to install;
-//   3. secrets kept out of git. The tool guard treats `.env` and `.env.*` as secrets, and a file
+//   1 (continued). secrets kept out of git, planned before the pins and written with the files in
+//      apply's first part. The tool guard treats `.env` and `.env.*` as secrets, and a file
 //      `git add -A` commits is readable from .git/objects, where the guard cannot see, so the
 //      project's .gitignore must keep them out of git (names that start `.env` in other ways,
 //      such as `.envrc`, are left to the guard and the sandbox). git itself is asked
@@ -50,7 +51,7 @@
 //      computer it goes up in setup's commit; on a computer joining (ruling R78), which commits
 //      nothing, the lines go in this computer's own .git/info/exclude instead, where either file
 //      counts as cover. Uninstall keeps these lines (scripts/setup/uninstall.js);
-//   4. the setup commit, "Set up Wheelhouse", of the three shared files (.claude/settings.json,
+//   3. the setup commit, "Set up Wheelhouse", of the three shared files (.claude/settings.json,
 //      .claude/wheelhouse.json and CLAUDE.md), and the .gitignore when the lines above are added to
 //      it, made with `git commit --only`, so nothing the director had staged goes in, by the
 //      signed-in host account (its no-reply address: a fresh
@@ -61,7 +62,7 @@
 //      apply wrote; the commit made must be setup's alone on that tip, and the push sends that
 //      exact commit, never whatever HEAD is. A commit, a branch switch or an edit made while the
 //      kits installed stops the step with nothing committed or pushed;
-//   5. then protection, switched on with the same sign-in (switchOnAsDirector, Task 8) and read
+//   4. then protection, switched on with the same sign-in (switchOnAsDirector, Task 8) and read
 //      back and said as it is. It comes after the commit: once it is on, nothing goes straight to
 //      the default branch, and the gate can't merge without CI and Wheelhouse running.
 // Each change is recorded in the journal just before it is made: the files through
@@ -149,15 +150,15 @@ const WHEELHOUSE_FORMS = Object.freeze(['.wheelhouse/', '/.wheelhouse/', '.wheel
 const holdsLine = (text, line) => text !== null && text.split(/\r?\n/)
   .some((l) => (line === WHEELHOUSE_LINE ? WHEELHOUSE_FORMS.includes(l.trim()) : l === line));
 // The project's own ignore list, which keeps secrets out of git, and the names that must be kept out
-// of it: `.env` and `.env.*`, probed as `.env` and `.env.local` (not `.env.example`, which many
-// projects commit on purpose). A line is added only where its probe is not already ignored.
+// of it: `.env` and `.env.*`, probed by name at the root and in a folder (not `.env.example`, which
+// many projects commit on purpose). A line is added only where its probes are not already ignored.
 export const GITIGNORE = '.gitignore';
 // The guard treats a `.env` file at any depth as a secret, so the probes include a nested folder
-// (named so it is never a real one); `.env.<x>` is probed by three names, so a rule that covers
+// (named so it is never a real one); `.env.<x>` is probed by three names in each place, so a rule that covers
 // only `.env.local` (`.env*.local`, `*.local`) doesn't count as covering them all.
-export const NESTED_PROBE = 'wheelhouse-probe';
+const NESTED_PROBE = 'wheelhouse-probe';
 const ENV_ONLY = Object.freeze(['.env', `${NESTED_PROBE}/.env`]);
-const ENV_DOT = Object.freeze(['.env.local', '.env.production', '.env.wheelhouse-probe', `${NESTED_PROBE}/.env.local`]);
+const ENV_DOT = Object.freeze(['.env.local', '.env.production', '.env.wheelhouse-probe', `${NESTED_PROBE}/.env.local`, `${NESTED_PROBE}/.env.production`, `${NESTED_PROBE}/.env.wheelhouse-probe`]);
 const ENV_LINES = ['.env', '.env.*'];
 // The lines uninstall keeps, wherever setup wrote them.
 export const ENV_STAYS_LINES = Object.freeze([...ENV_LINES, '!.env.example']);
@@ -504,7 +505,7 @@ async function remoteTip(git, remoteUrl, branch) {
 }
 
 // What a file held at HEAD, exactly, or null when it wasn't there.
-const headText = (git, rel) => git.raw(['show', `HEAD:${rel}`]);
+const headText = (git, rel, rev = 'HEAD') => git.raw(['show', `${rev}:${rel}`]);
 
 // Whether HEAD is a setup commit made on `tip` and not yet pushed: one commit on it, with setup's
 // message, changing only the setup files (and the .gitignore).
@@ -519,13 +520,14 @@ async function setupCommitOn(git, head, tip, { strict = false, own = new Set() }
   // A commit whose sha the journal recorded as setup's own (it was recorded just before the push)
   // is accepted as it is: the director chose to put their .gitignore changes in it.
   if (!strict || !files.includes(GITIGNORE) || own.has(head)) return true;
-  const diff = await git.raw(['diff', '--unified=0', '--no-color', '--no-ext-diff', tip, head, '--', GITIGNORE]);
-  if (diff === null) return false;
-  const body = diff.split(/\r?\n/).filter((l) => (l.startsWith('+') && !l.startsWith('+++')) || (l.startsWith('-') && !l.startsWith('---')));
-  const added = body.filter((l) => l.startsWith('+')).map((l) => l.slice(1).trim()).filter((l) => l !== '');
-  const removed = body.filter((l) => l.startsWith('-')).map((l) => l.slice(1).trim()).filter((l) => l !== '');
-  // A last line without its newline is rewritten with one: removed, and added again as it was.
-  return removed.every((l) => added.includes(l)) && added.every((l) => removed.includes(l) || OUR_LINES.includes(l));
+  // The tip's lines must all still be there, in their order, followed by setup's own lines alone
+  // (the tip's last line regaining its newline changes nothing in the lines).
+  const split = (text) => lines(text ?? '').split('\n').map((l) => l.replace(/\s+$/, ''));
+  const trimEnd = (list) => { while (list.length > 0 && list.at(-1) === '') list.pop(); return list; };
+  const was = trimEnd(split(await headText(git, GITIGNORE, tip)));
+  const now = trimEnd(split(await git.raw(['show', `${head}:${GITIGNORE}`])));
+  if (now.length < was.length || !was.every((l, i) => now[i] === l)) return false;
+  return now.slice(was.length).filter((l) => l.trim() !== '').every((l) => OUR_LINES.includes(l.trim()));
 }
 
 // The shas of the setup commits the journal recorded, each written just before its push was tried.

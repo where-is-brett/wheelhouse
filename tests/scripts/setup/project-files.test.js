@@ -1509,3 +1509,26 @@ test('the questions about .gitignore compose as the engine composes a question, 
     }
   }
 });
+
+test('every .env name is probed inside a folder as well as at the root', async () => {
+  await withHome(async () => {
+    // Rules for the root only, or for some names at any depth, do not cover the lot.
+    const { w, planned } = await planFor('/.env.*\n.env\n.env.local\n');
+    assert.deepEqual(ignoreLines(w, planned.changes), ['.env.*']);
+  });
+});
+
+test('a setup commit that reorders the .gitignore\'s lines is refused when found again; one that only adds setup\'s lines is not', async () => {
+  await withHome(async () => {
+    const w = await world({ gitignore: '.env*\n!.env.local\nnode_modules\n' });
+    const planned = await w.plan();
+    const failing = w.run;
+    w.run = async (file, args, options) => (args.includes('push') ? { code: 1, stdout: '', stderr: 'down' } : failing(file, args, options));
+    assert.equal((await w.apply(planned.changes)).ok, false);
+    w.run = failing;
+    assert.ok((await w.plan()).changes, 'setup\'s own commit is accepted');
+    fs.writeFileSync(path.join(w.folder, '.gitignore'), '!.env.local\n.env*\nnode_modules\n');
+    await g(w.folder, 'commit', '-q', '--amend', '--no-edit', '-a');
+    await assert.rejects(w.plan(), /commits of your own/);
+  });
+});
