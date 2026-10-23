@@ -406,6 +406,10 @@ export async function card({ client, cwd, input, now }) {
     if (typeof sha !== 'string' || !HEAD.test(sha)) throw new CliError(`The host gave no head commit for pull request #${target.pr}`);
     target = { ...target, sha };
   }
+  // Work users would see is shown to the director before it merges, whatever the card was given (scenario 7).
+  if (input.kind === 'approve-work' && isPlain(target) && views.work?.[target.work]?.work?.data?.visible === true) {
+    target = { ...target, shownFirst: true };
+  }
   const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
   // The card revised must wait now, or have been closed only by a later head of its pull request or
   // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same

@@ -591,6 +591,21 @@ test('card fills a pull request\'s head and records the card once', async () => 
   });
 });
 
+test('an approve-work card for work users would see always shows it to the director before it merges (scenario 7)', async () => {
+  await inHome(async () => {
+    const work = (id, visible) => makeEvent({ kind: 'work', data: { id, title: 'Make the order button blue', lane: 'small', visible, dependsOn: [] }, now: () => T(1) });
+    const helper = fakeHelper({ events: [work('order-button-blue', true), work('order-total-sum', false)] });
+    const approve = (id) => JSON.stringify({ ...APPROVAL, kind: 'approve-work', what: `Work ${id}: a small change.`, target: { work: id, lane: 'small', hash: DOC } });
+    const seen = await run(helper, ['card'], approve('order-button-blue'));
+    assert.equal(seen.code, 0, seen.err);
+    assert.match(helper.writes().find((w) => w.kind === 'card').data.line, /, and show it to me before it merges$/);
+    // Work users won't see keeps the card as given.
+    const unseen = await run(helper, ['card'], approve('order-total-sum'));
+    assert.equal(unseen.code, 0, unseen.err);
+    assert.doesNotMatch(helper.writes().filter((w) => w.kind === 'card').at(-1).data.line, /show it to me/);
+  });
+});
+
 test('card refuses an answer card, input that is not JSON and a card the composer refuses', async () => {
   await inHome(async () => {
     const helper = fakeHelper();
