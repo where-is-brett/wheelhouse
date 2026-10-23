@@ -2541,6 +2541,8 @@ test('the .wheelhouse/ line kept where it is when it came before setup\'s settin
 
 const ARCHIVED = { 'AGENTS.md': '# Agents\nWrite small changes.\n', '.claude/agents/writer.md': '# Writer\nKeep it short.\n', '.cursorrules': 'Be brief.\n' };
 const movesOf = (froms) => froms.map((from) => ({ from, to: `${ARCHIVE}/${from}` }));
+// Where each move goes, without what it puts there (its mode and object).
+const placesOf = (moves) => moves.map(({ from, to }) => ({ from, to }));
 const manifestText = (moved) => `${JSON.stringify({ v: 1, moved }, null, 2)}\n`;
 const gitHere = async () => ({ ok: true, path: 'git' });
 
@@ -2580,7 +2582,12 @@ test('uninstall\'s pull request puts the other agent setup\'s instructions back 
       await fetchToFolder(world, host.product.url);
       const f = fakes(world);
       const got = await planHere(world, f);
-      assert.deepEqual(archiveOf(got), {
+      // Each move names the plain file it puts back, by its mode and object, so the hash covers it.
+      for (const m of archiveOf(got).moves) {
+        assert.equal(m.mode, '100644');
+        assert.equal(m.sha, await g(host.product.url, 'rev-parse', `main:${m.to}`));
+      }
+      assert.deepEqual({ ...archiveOf(got), moves: placesOf(archiveOf(got).moves) }, {
         moves: movesOf(['AGENTS.md', '.claude/agents/writer.md', '.cursorrules']), taken: [], missing: [],
         folder: ['.wheelhouse-archive/.claude/agents/writer.md', '.wheelhouse-archive/.cursorrules', '.wheelhouse-archive/AGENTS.md', '.wheelhouse-archive/README.md', '.wheelhouse-archive/archived.json'],
       });
@@ -2615,7 +2622,7 @@ test('a moved file whose place is taken on the default branch stays in the archi
       await fetchToFolder(world, host.product.url);
       const f = fakes(world);
       const got = await planHere(world, f);
-      assert.deepEqual(archiveOf(got).moves, movesOf(['AGENTS.md', '.claude/agents/writer.md']));
+      assert.deepEqual(placesOf(archiveOf(got).moves), movesOf(['AGENTS.md', '.claude/agents/writer.md']));
       assert.deepEqual(archiveOf(got).taken, ['.cursorrules']);
       assert.deepEqual(archiveOf(got).missing, ['.windsurfrules']);
       assert.match(got.card.what, /Left in \.wheelhouse-archive\/, as its place is taken: \.cursorrules\./);
@@ -2686,7 +2693,44 @@ test('an archive whose list can\'t be read, names a path outside the project or 
   await g(work, 'rm', '-r', '-q', '--ignore-unmatch', ARCHIVE);
   const files = { '.Claude/Agents/checker.md': '# Checker\n', 'agents.md': '# agents\n', '.github/copilot-instructions.md': 'Be kind.\n' };
   await commitArchive(work, { manifest: manifestText(movesOf(Object.keys(files))), files });
-  assert.deepEqual((await archiveAt(git, 'HEAD')).view.moves, movesOf(Object.keys(files)));
+  assert.deepEqual(placesOf((await archiveAt(git, 'HEAD')).view.moves), movesOf(Object.keys(files)));
+  // A link, or another repository, where a moved file should be refuses the whole archive: only a
+  // plain file is ever put back.
+  for (const [what, mode, sha] of [['a link', '120000', await (async () => { writeText(path.join(work, 'target.txt'), '/etc/hosts'); return g(work, 'hash-object', '-w', 'target.txt'); })()], ['another repository', '160000', 'e'.repeat(40)]]) {
+    await g(work, 'rm', '-r', '-q', '--ignore-unmatch', ARCHIVE);
+    await commitArchive(work, { manifest: manifestText(movesOf(['AGENTS.md'])), files: {} });
+    await g(work, 'update-index', '--add', '--cacheinfo', `${mode},${sha},${ARCHIVE}/AGENTS.md`);
+    await g(work, 'commit', '-q', '-m', what);
+    const got = await archiveAt(git, 'HEAD');
+    assert.equal(got?.view.refused, ARCHIVE_OUTSIDE, what);
+    assert.equal(got.view.moves, undefined, what);
+  }
+});
+
+test('a moved file\'s text changed between card and click is a new card: the hash covers what is put back, not only where', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world } = await applyWorld({ host });
+      await archiveOnHost(host);
+      await fetchToFolder(world, host.product.url);
+      const f = fakes(world);
+      const first = await planHere(world, f);
+      writeText(path.join(host.work, ARCHIVE, 'AGENTS.md'), '# Agents\nSomething else entirely.\n');
+      await g(host.work, 'commit', '-q', '-am', 'Another AGENTS.md in the archive');
+      await g(host.work, 'push', '-q', host.product.url, 'main');
+      // Not fetched: the apply's own look at the host finds it isn't the card's.
+      const stale = await applyUninstall({ folder: world.folder, plan: first, now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+      assert.equal(stale.ok, false);
+      assert.match(stale.refused, /isn't as this folder last saw it/);
+      assert.deepEqual(f.seen.stops, []);
+      const second = await planHere(world, f);
+      assert.notEqual(second.hash, first.hash);
+      assert.deepEqual(placesOf(archiveOf(second).moves), placesOf(archiveOf(first).moves));
+    });
+  } finally {
+    host.cleanup();
+  }
 });
 
 test('a refused archive stays as it is in uninstall\'s pull request, and the card says why', async () => {

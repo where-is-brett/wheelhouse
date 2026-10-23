@@ -81,7 +81,7 @@ import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { answersFor, askedRecord } from './clicks.js';
 import {
   uninstallPlan, readProgress, writeProgress, describe, shown, hostTarget, samePath, within, keyOf, realOr,
-  ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES, ARCHIVE, ARCHIVE_MANIFEST, ARCHIVE_BACK, archiveAt,
+  ASK_STEP, UNINSTALL_CHANGED, HOSTS, DELETE_LABEL, NEVER_PUSHED, PHASES, ARCHIVE, ARCHIVE_MANIFEST, ARCHIVE_BACK, PLAIN_FILE, archiveAt,
 } from './uninstall.js';
 import { canonicalJson } from '../lib/canonical.js';
 
@@ -180,15 +180,16 @@ async function putBackOnHost(git, tip, folder, entries) {
 }
 
 // Puts the archive back in the scratch index read from the branch's tip (`found`, archiveAt's):
-// each move's file at its own path by its object and mode on the branch; then the archive's files
+// each move's plain file at its own path by its object and mode on the branch; then the archive's files
 // taken out, all of them when nothing stays in it, otherwise those moved, with its list written
 // again naming only what stays. Paths go to git NUL-separated, never quoted or read as patterns.
 async function putArchiveBack(git, found, zeros) {
-  const { view, entries, manifest } = found;
-  const at = new Map(entries.map((e) => [e.path, e]));
-  for (const { from, to } of view.moves) {
-    const e = at.get(to);
-    await git.must(['update-index', '--add', '--cacheinfo', `${e.mode},${e.sha},${from}`], `git could not put ${from} back`);
+  const { view, manifest } = found;
+  // By the mode and object the card's list names (the same as the branch's, checked before), and
+  // only as a plain file: never a link or another repository.
+  for (const { from, mode, sha } of view.moves) {
+    if (!PLAIN_FILE.includes(mode)) throw new Halt(`${from} in ${ARCHIVE}/ is not a plain file, so it was not put back`);
+    await git.must(['update-index', '--add', '--cacheinfo', `${mode},${sha},${from}`], `git could not put ${from} back`);
   }
   const stays = view.taken.length > 0;
   const out = stays ? view.moves.map((m) => m.to) : view.folder;

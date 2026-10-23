@@ -439,9 +439,11 @@ function keepLines(group, wanted) {
 export const ARCHIVE = '.wheelhouse-archive';
 export const ARCHIVE_MANIFEST = `${ARCHIVE}/archived.json`;
 const ARCHIVE_MOST = 1000;
+// The modes of a plain file in git's tree: the only ones put back.
+export const PLAIN_FILE = Object.freeze(['100644', '100755']);
 // Why an archive is refused whole, named on the card.
 export const ARCHIVE_UNREAD = 'its list of what was moved (archived.json) could not be read';
-export const ARCHIVE_OUTSIDE = 'its list names a path outside the project, a file that isn\'t another agent setup\'s instructions, or a move from anywhere but its own path in the archive folder';
+export const ARCHIVE_OUTSIDE = 'its list names a path outside the project, a file that isn\'t another agent setup\'s instructions, a move from anywhere but its own path in the archive folder, or a link or something other than a plain file';
 export const ARCHIVE_TWICE = 'its list names one place twice, or one inside another';
 // What the pull request does with it, as the card says it.
 export const ARCHIVE_BACK = 'the other agent setup\'s instructions, back where they were';
@@ -481,7 +483,7 @@ function treeEntries(text) {
 // The archive on `ref`, read by `git(args)` (run's answer), changing nothing:
 //   null                     no archive there, or `ref` can't be read;
 //   { view, entries, manifest }, where view (ArchiveView, what the list and its hash hold) is
-//     { moves: [{ from, to }], taken: [from], missing: [from], folder: [path] }: the moves to make,
+//     { moves: [{ from, to, mode, sha }], taken: [from], missing: [from], folder: [path] }: the moves to make,
 //     in the list's order; those whose place is taken on `ref` (a file there, in any case, or a
 //     file where a folder on its way would be), left in the archive; those the archive no longer
 //     holds as a file, left out; and every file in the archive folder;
@@ -536,12 +538,17 @@ export async function archiveAt(git, ref) {
       return (places.get(blindKey(on)) ?? []).some((e) => e.type !== 'tree' || e.path !== on);
     });
   };
-  const files = new Map(inside.filter((e) => e.type === 'blob').map((e) => [e.path, e]));
+  // Only a plain file is ever put back: a link, another repository or a folder where a moved file
+  // should be refuses the whole archive. Each move names the file's mode and object, so the hash
+  // covers what is put back, not only where.
+  const at = new Map(inside.map((e) => [e.path, e]));
+  if (moved.some((m) => at.has(m.to) && !PLAIN_FILE.includes(at.get(m.to).mode))) return refused(ARCHIVE_OUTSIDE);
   const view = { moves: [], taken: [], missing: [], folder };
   for (const m of moved) {
-    if (!files.has(m.to)) view.missing.push(m.from);
+    const e = at.get(m.to);
+    if (e === undefined) view.missing.push(m.from);
     else if (taken(m.from)) view.taken.push(m.from);
-    else view.moves.push({ from: m.from, to: m.to });
+    else view.moves.push({ from: m.from, to: m.to, mode: e.mode, sha: e.sha });
   }
   return { view, entries, manifest };
 }
