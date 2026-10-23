@@ -1,0 +1,58 @@
+{
+  "_source": "written by hand from docs/checks/61-sessions.md (the lists and deny-over-all runs)",
+  "events": [
+    {
+      "type": "tool.execution_start",
+      "data": {
+        "toolCallId": "<ID>",
+        "toolName": "bash",
+        "arguments": {
+          "command": "touch denied.txt",
+          "description": "Create denied.txt"
+        },
+        "turnId": "0"
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "tool.execution_complete",
+      "data": {
+        "toolCallId": "<ID>",
+        "interactionId": "<ID>",
+        "turnId": "0",
+        "success": false,
+        "error": {
+          "message": "Permission to run this tool was denied due to the following rules: `shell(touch:*)`",
+          "code": "denied"
+        }
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "assistant.message",
+      "data": {
+        "messageId": "<ID>",
+        "content": "The command was refused by a rule. Done.",
+        "toolRequests": [],
+        "turnId": "1",
+        "phase": "final_answer"
+      },
+      "id": "<ID>",
+      "timestamp": "<TIME>",
+      "parentId": "<ID>"
+    },
+    {
+      "type": "result",
+      "timestamp": "<TIME>",
+      "sessionId": "<ID>",
+      "exitCode": 0,
+      "usage": {
+        "premiumRequests": 1
+      }
+    }
+  ]
+}

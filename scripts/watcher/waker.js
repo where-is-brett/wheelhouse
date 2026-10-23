@@ -78,6 +78,18 @@
 // again. Start times are asked for every running pid in one call (`ps`, or
 // one PowerShell call on Windows) and kept for a minute.
 //
+// Before every wake of a feature, at either shape, the files in its worktree
+// that steer agents are read (control-files.js) and compared with the record
+// kept when the worktree was made. A new or changed one, or no record at all,
+// fails the wake and does not wake: `raise` is given a `control-file` record
+// once for each work and finding, for the director's card, and the wake waits
+// and is tried again. Once the files match again the wake goes, and `raise`
+// is given a `control-file-lift`, which closes the card. The director's Keep
+// (a signed `keep-control-files` action, from a signed click on Claude Code or
+// the helper's window, naming the finding's hash, made after the record it
+// replaces) keeps the files as they were found as the new record, and the
+// wake goes; a plain record never does (ruling P7-31).
+//
 // Under STOP nothing is started, woken or printed (it is checked again right
 // before each start), and startFeature is refused. Bypass mode is refused at
 // every call, whatever the configuration says.
@@ -87,6 +99,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DIGEST_CAP } from './core.js';
+import { WALK_CAP, checkControlFiles, markRaised, raisedOf, writeBaseline } from './control-files.js';
+import { controlFilesNamed } from '../cards/build-loop.js';
+import { keepControlLine, setLineOf } from '../state/card-lines.js';
 import { inWorktreesFolder, LOOKBACK_MS, plainWorktreePath } from './sources.js';
 import { ensureIgnored, featurePaths } from '../feature/files.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
@@ -102,8 +117,8 @@ import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { featureAllowRules } from '../protection/settings.js';
 import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.js';
-import { listEvents } from '../state/events.js';
-import { readEnrolled } from '../state/signing.js';
+import { CONTROL_PATHS, listEvents } from '../state/events.js';
+import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { guardedCommand, guardedReady, labelWorktree } from '../windows/low.js';
 
@@ -593,6 +608,8 @@ export function makeWaker({
   platform = process.platform,
   pluginRoot = PLUGIN_ROOT,
   onError = () => {},
+  raise = async () => {},
+  walkCap = WALK_CAP,
   beforeCopy = () => {},
 }) {
   if (shape !== 1 && shape !== 2) throw new Error('The watcher shape is 1 or 2');
@@ -855,6 +872,80 @@ export function makeWaker({
     return typeof kept.worktree === 'string' && path.resolve(kept.worktree) === path.resolve(worktree) ? kept.sessionId : null;
   };
 
+  // Whether the feature's wakes `ids` are held by the files in `worktree` that steer agents: when
+  // one is new or changed since the worktree was made, or there is no record of them, the wakes
+  // fail, the finding is raised once (a raise that fails is tried again at the next wake), and
+  // nothing is woken. A folder that can't be read holds them too. Once the files match again, a
+  // finding raised before is lifted.
+  // Whether the director kept the files as `found` found them (ruling P7-33): the watcher's own last
+  // finding raised for the work (kept under the home, never read from the state) is this one, and a
+  // verified keep-control-files action names its hash, was made after the record it would replace
+  // was kept, and was a Confirm on a card whose one set line is that finding's Keep line and whose
+  // words say what the watcher found, by name or by count.
+  const keptByDirector = (work, found) => {
+    const raised = raisedOf(project, work);
+    if (raised === null || raised.hash !== found.hash || raised.why !== found.why) return false;
+    const line = keepControlLine(work, found.hash);
+    const said = [false, true].map((short) => controlFilesNamed(raised, { short }));
+    const enrolled = readEnrolled();
+    return listEvents(stateDir(project), { report: () => {} }).some((e) => e.kind === 'action' && e.data?.action === 'keep-control-files'
+      && e.data.work === work && e.data.hash === found.hash && (found.since === null || e.at > found.since)
+      && typeof e.data.question === 'string' && setLineOf(e.data.question) === line && said.some((words) => e.data.question.includes(words))
+      && verify(e, enrolled));
+  };
+
+  // Whether a control-file-lift for the work came into the state after `at`: one the watcher didn't
+  // write (its own clears its finding first), so the card it closed is raised again.
+  const liftedSince = (work, at) => listEvents(stateDir(project), { report: () => {} })
+    .some((e) => e.kind === 'control-file-lift' && e.data?.work === work && typeof e.at === 'string' && e.at > at);
+
+  async function controlHeld(work, worktree, ids) {
+    let found;
+    try {
+      found = checkControlFiles(project, work, worktree, { platform, walkCap });
+    } catch (error) {
+      settle(ids, 'failed', `the files in its folder that steer agents can't be read: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return true;
+    }
+    const at = now().toISOString();
+    if (!found.ok && found.state !== null && keptByDirector(work, found)) {
+      try {
+        writeBaseline(project, work, worktree, { now, platform, state: found.state });
+      } catch (error) {
+        settle(ids, 'failed', `the director kept its agent files, but the record of them couldn't be written: ${error instanceof Error ? error.message : 'unknown error'}`);
+        return true;
+      }
+      found = { ok: true };
+    }
+    if (found.ok) {
+      if (raisedOf(project, work) !== null) {
+        try {
+          await raise({ kind: 'control-file-lift', data: { work, at } });
+          markRaised(project, work, null);
+        } catch (error) {
+          onError(`The ${work} feature's agent files match again, but its card couldn't be closed: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
+      }
+      return false;
+    }
+    const why = {
+      'no-record': "there is no record yet of this feature's agent files",
+      'too-many': 'its folder has too many files to check',
+      changed: `its folder has a new or changed file that steers agents: ${found.paths.slice(0, 3).join(', ')}${found.paths.length > 3 ? ` and ${found.paths.length - 3} more` : ''}`,
+    }[found.why];
+    settle(ids, 'failed', why);
+    const raised = raisedOf(project, work);
+    if (raised?.hash === found.hash && !liftedSince(work, raised.at)) return true;
+    const paths = found.paths.slice(0, CONTROL_PATHS);
+    try {
+      await raise({ kind: 'control-file', data: { work, why: found.why, paths, hash: found.hash, at } });
+      markRaised(project, work, { hash: found.hash, why: found.why, paths, at });
+    } catch (error) {
+      onError(`The ${work} feature's agent files hold its wakes, but the card couldn't be raised: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+    return true;
+  }
+
   // The features whose wakes wait for a session the watcher started, already reported.
   const unstarted = new Set();
 
@@ -902,6 +993,7 @@ export function makeWaker({
             settle([e.id], 'done'); // the feature has closed or gone
             continue;
           }
+          if (await controlHeld(e.work, worktree, [e.id])) continue;
           copy = copyInto(e.file, featureWakesDir(worktree));
         }
       } catch (error) {
@@ -954,6 +1046,7 @@ export function makeWaker({
           continue;
         }
         unstarted.delete(work);
+        if (await controlHeld(work, cwd, waiting.map((e) => e.id))) continue;
       }
       let gathered;
       let copy;
@@ -1024,6 +1117,9 @@ export function makeWaker({
       if (!lstatOf(brief)?.isFile()) throw new Error("The feature's brief isn't there");
       return serial(async () => {
         if (stopped()) throw new Error('STOP is on: no session is started');
+        // The files that steer agents are checked as before a wake: a worktree a closed feature
+        // left, started again, may hold some an earlier session planted (ruling P7-33).
+        if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
         if (shape === 2) {
           print(`START feature ${work} ${worktree}`);
           return { printed: true };

@@ -13,6 +13,7 @@ import { agentOfConfig, agentOfProject, sessionsFor, sessionsOfProject } from '.
 import { foremanSession } from '../../../scripts/foreman/start.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
 import { computerId } from '../../../scripts/lib/paths.js';
+import { writeBaseline } from '../../../scripts/watcher/control-files.js';
 import { makeWaker, writeWake } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { withHome } from '../../helpers/homes.js';
@@ -132,6 +133,7 @@ test('the waker asks the project\'s adapter for the foreman\'s call, the feature
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
+  writeBaseline(P, 'login-page', worktree); // the record of its agent files, as the foreman's start keeps it
   const { w, calls } = waker({ sessions: stand, locate: () => worktree, foremanTools: ['Read'], windowsBuilds: () => ({ level: 'ask', grants: [], guardedCommand: null }), platform: 'darwin' });
 
   await w.wakeForeman(foremanWake());
@@ -287,6 +289,7 @@ test('the waker asks the project\'s adapter for the mode checks', () => withHome
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
+  writeBaseline(P, 'login-page', worktree); // the record of its agent files, as the foreman's start keeps it
   const held = configOf2();
   const { w } = waker({ config: held, sessions: stood, locate: () => worktree });
   assert.deepEqual(seen.map(([kind]) => kind), ['foreman'], 'the waker is checked as it is made');

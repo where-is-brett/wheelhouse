@@ -5,13 +5,25 @@ import { verify } from '../state/signing.js';
 // name the head commit. The carried form, { carried: true, record }, is a review
 // of an earlier commit that the caller has already judged still counts (the
 // feature's own changes did not move), so it need not name the head.
-function reviewCounts(entry, headSha, enrolled) {
+// With `kinds` an array (ruling P7-15), the record's `data.reviewKind` must be one of them too.
+function reviewCounts(entry, headSha, enrolled, kinds = null) {
   const carried = entry?.carried === true;
   const record = carried ? entry.record : entry;
   return record?.kind === 'review'
     && verify(record, enrolled)
     && record.data?.verdict === 'CLEAN'
-    && (carried || record.data?.commit === headSha);
+    && (carried || record.data?.commit === headSha)
+    && (kinds === null || kinds.includes(record.data?.reviewKind));
+}
+
+// The refusal where only a review of the kinds the agent's clean session gives counts, and none does.
+export const NO_CLEAN_REVIEW = (short) => `no review of ${short} from a clean session: the helper's own reviewer hasn't passed it`;
+
+// The review kinds that count: null (absent) for today's rule, which reads no kind; an array as given; anything
+// else counts none, failing closed.
+function reviewKindsOf(i) {
+  if (i.reviewKinds === undefined || i.reviewKinds === null) return null;
+  return Array.isArray(i.reviewKinds) ? i.reviewKinds.filter((k) => typeof k === 'string') : [];
 }
 
 // An approval counts only if it verifies and names the head commit, or is the
@@ -96,6 +108,10 @@ function incidentReason(incident) {
 // today's rule: only a signed approval counts. With 'chat-click' or 'hook-click' among them, an unsigned
 // card-answer labelled Approve naming the head counts too, unless `realUsers` is true: then only a signed
 // approval naming a 'window', 'add-on' or 'host' proof counts, and the answer's `needs` names which one.
+//
+// `reviewKinds` (ruling P7-15) names the kinds of review that count, null when not given, which is today's rule: any
+// signed CLEAN review of the head counts, whatever its kind. Given a list, a review counts only if its
+// `data.reviewKind` is in it, and a missing one is refused with NO_CLEAN_REVIEW; an empty list counts none.
 export function gateDecision(input) {
   const i = input && typeof input === 'object' ? input : {};
   const headSha = typeof i.headSha === 'string' ? i.headSha : '';
@@ -114,8 +130,9 @@ export function gateDecision(input) {
   const needReview = i.reviewRequired === true || guardrails;
   const needApproval = i.approvalRequired === true || guardrails;
 
-  if (needReview && !(headSha !== '' && reviewCounts(i.review, headSha, i.enrolled))) {
-    reasons.push(`no CLEAN review of ${short}`);
+  const kinds = reviewKindsOf(i);
+  if (needReview && !(headSha !== '' && reviewCounts(i.review, headSha, i.enrolled, kinds))) {
+    reasons.push(kinds === null ? `no CLEAN review of ${short}` : NO_CLEAN_REVIEW(short));
   }
   const approved = needApproval ? approvalOf(i, headSha) : { counts: true };
   const approvalMissing = !approved.counts;

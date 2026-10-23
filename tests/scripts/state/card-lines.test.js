@@ -5,7 +5,7 @@ import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE,
-  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName,
+  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -50,6 +50,7 @@ const BUILD_LINES = [
   amendLine('export-csv', FULL),
   liftIncidentLine('bad-total'),
   incidentFixLine('bad-total', 31),
+  keepControlLine('export-csv', FULL),
 ];
 
 test('each line the build loop writes is found by setLineOf, and matches exactly one set line pattern', () => {
