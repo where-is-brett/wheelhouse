@@ -118,6 +118,28 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       });
     },
 
+    // Open pull requests, up to 100, as the adapter's request values.
+    async openRequests() {
+      const requests = await ask(['pr', 'list', ...R, '--state', 'open', '--json', 'number,title,body,headRefName,headRefOid,isDraft,isCrossRepository', '--limit', '100']);
+      if (!Array.isArray(requests)) throw new Error('GitHub did not list the open pull requests');
+      return requests.map((r) => ({
+        number: r.number, title: r.title, body: r.body ?? '', branch: r.headRefName, head: r.headRefOid,
+        draft: r.isDraft === true, fork: r.isCrossRepository === true,
+      }));
+    },
+
+    // The files a pull request changes and its commits' subjects, oldest first.
+    async requestDetails(number) {
+      const pr = await ask(['pr', 'view', String(number), ...R, '--json', 'files,commits']);
+      return {
+        files: (pr?.files ?? []).map((f) => ({ path: f.path, additions: f.additions ?? 0, deletions: f.deletions ?? 0 })),
+        commits: (pr?.commits ?? []).map((c) => c.messageHeadline ?? ''),
+      };
+    },
+
+    // The name under which the host keeps a pull request's head, whoever's copy it came from.
+    pullRef: (number) => `refs/pull/${number}/head`,
+
     issue: {
       async create({ title, body, labels }) {
         const args = ['issue', 'create', ...R, `--title=${title}`, '--body-file', '-', ...labels.map((l) => `--label=${l}`)];

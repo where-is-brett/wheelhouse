@@ -191,6 +191,32 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
       });
     },
 
+    // Open merge requests, up to 100, as the adapter's request values. A request from another
+    // project's copy has a source project that is not this one.
+    async openRequests() {
+      const requests = await ask(['mr', 'list', ...R, '--per-page', '100', '--output', 'json']);
+      if (!Array.isArray(requests)) throw new Error('GitLab did not list the open merge requests');
+      return requests.map((r) => ({
+        number: r.iid, title: r.title, body: r.description ?? '', branch: r.source_branch, head: r.sha,
+        draft: r.draft === true, fork: r.source_project_id !== r.target_project_id,
+      }));
+    },
+
+    // The files a merge request changes, with lines counted from each diff, and its commits'
+    // subjects, oldest first (GitLab lists them newest first).
+    async requestDetails(number) {
+      const changes = await ask(['api', `${project}/merge_requests/${number}/changes`]);
+      const commits = await ask(['api', `${project}/merge_requests/${number}/commits?per_page=50`]);
+      const count = (diff, mark) => String(diff ?? '').split('\n').filter((line) => line.startsWith(mark)).length;
+      return {
+        files: (changes?.changes ?? []).map((f) => ({ path: f.new_path, additions: count(f.diff, '+'), deletions: count(f.diff, '-') })),
+        commits: (Array.isArray(commits) ? commits : []).map((c) => c.title ?? '').reverse(),
+      };
+    },
+
+    // The name under which the host keeps a merge request's head, whoever's copy it came from.
+    pullRef: (number) => `refs/merge-requests/${number}/head`,
+
     issue: {
       async create({ title, body, labels }) {
         const args = ['issue', 'create', ...R, `--title=${title}`, '--description-file', '-', ...labels.map((l) => `--label=${l}`), '--yes'];
