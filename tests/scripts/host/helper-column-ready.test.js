@@ -60,7 +60,7 @@ test('the helper records a level ready on a full set of the bar\'s records, and 
       assert.equal(answer.ok, true, answer.refused);
       const [event] = await c.readies();
       assert.equal(event.id, answer.id);
-      assert.deepEqual(event.data, { column: 'lean', pins: PINS, records });
+      assert.deepEqual(event.data, { column: 'lean', pins: PINS, records, commit: 'abc123def456' });
       const views = await client.state.views({ project: 'o__p' });
       assert.deepEqual(readyColumns(views.views.columnsReady, readConfig(JSON.stringify(c.config))), ['lean']);
     });

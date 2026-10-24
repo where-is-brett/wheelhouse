@@ -75,8 +75,12 @@ function readJson(file) {
   }
 }
 
+// The plugin's commit a run record says its run was made on (run.js's `commit`, the first twelve characters).
+const COMMIT = /^[0-9a-f]{7,40}$/;
+
 // Every trial of the bar at `level` on `pins` that a run record names, in the order run: { name, scenario, trial,
-// pass, handled, why, sha256, run }. A run record of another level or other pins is passed over.
+// pass, handled, why, sha256, run, commit }. A run record of another level or other pins is passed over, and so is
+// one that names no commit: a counted run is one commit of the plugin, so a trial of no known commit counts for nothing.
 function barTrials(evals, level, pins) {
   const runs = path.join(evals, 'runs');
   let names = [];
@@ -87,13 +91,14 @@ function barTrials(evals, level, pins) {
   for (const runName of names) {
     const record = readJson(path.join(runs, runName))?.json;
     if (!isPlain(record) || record.level !== level || !samePins(record.pins, pins) || !Array.isArray(record.runs)) continue;
+    if (typeof record.commit !== 'string' || !COMMIT.test(record.commit)) continue;
     for (const entry of record.runs) {
       if (!isPlain(entry) || entry.variant !== 'with' || entry.level !== level || !samePins(entry.pins, pins)) continue;
       const scenario = entry.leg ? `${entry.id}-${entry.leg}` : String(entry.id);
       if (!BAR.includes(scenario)) continue;
       found.push({
         name: recordName(evals, entry.file), scenario, trial: entry.trial, pass: entry.pass === true, handled: entry.handled !== false,
-        why: typeof entry.why === 'string' ? entry.why : '', sha256: entry.sha256 ?? null, run: runName,
+        why: typeof entry.why === 'string' ? entry.why : '', sha256: entry.sha256 ?? null, run: runName, commit: record.commit,
       });
     }
   }
@@ -142,30 +147,19 @@ export function trialProblem({ evals, name, scenario, trial, sha256, level, pins
 
 const trialWord = (t) => (Number.isInteger(t.trial) ? `trial ${t.trial}` : 'a trial');
 
-// Whether `level` is ready on `pins` by the records under `evals`: { ok, records, gaps }. `records` are the passing
-// trials' names, BAR_TRIALS of each scenario of the bar, oldest first; `gaps` says in plain words each scenario and
-// trial that failed or is missing. A trial that failed anywhere at that level on those pins keeps the level not ready,
-// however many passed after it. A trial that wasn't handled (the session never took its prompt in hand, or stopped
-// short with nothing seen wrong) is neither: it may be run again, as the harness's own gate lets it. `given`, when
-// passed, is the list of names a caller says stand: each must be one that stands, and only those count.
-export function readiness({ evals, level, pins, premium = null, given = null }) {
+// The bar judged on the trials of one commit: { gaps, records }. A handled failure among them is a gap, however many
+// passed beside it; each scenario needs BAR_TRIALS trials that stand (trialProblem). With `offered` (the names a caller
+// gives), only those count, each must stand, and every one that stands is recorded; without, the first BAR_TRIALS of
+// each scenario are.
+function judgeCommit({ evals, trials, level, pins, premium, offered }) {
   const gaps = [];
-  if (!READY_LEVELS.includes(level)) return { ok: false, records: [], gaps: [`${JSON.stringify(level)} isn't a level a readiness run is made for: Lean or Lightest`] };
-  if (!PIN_NAMES.every((n) => isModelName(pins?.[n]))) return { ok: false, records: [], gaps: ['the pins are not two model names'] };
-  if (given !== null && (!Array.isArray(given) || !given.every((n) => typeof n === 'string'))) return { ok: false, records: [], gaps: ['the records are not a list of names'] };
-  const trials = barTrials(evals, level, pins);
   const records = [];
-  const offered = given === null ? null : new Set(given);
-  if (offered !== null) {
-    const known = new Set(trials.map((t) => t.name));
-    for (const name of offered) if (!known.has(name)) gaps.push(`${name} is not a trial any run at ${levelWord(level)} on these pins saved`);
-  }
   for (const scenario of BAR) {
     const own = trials.filter((t) => t.scenario === scenario);
     for (const t of own.filter((x) => x.handled && !x.pass)) gaps.push(`scenario ${scenario} ${trialWord(t)} failed${t.why ? ` (${t.why})` : ''}`);
     const standing = [];
     for (const t of own.filter((x) => x.pass && (offered === null || offered.has(x.name)))) {
-      if (standing.some((s) => s.name === t.name)) continue;
+      if (standing.some((x) => x.name === t.name)) continue;
       const problem = trialProblem({ evals, ...t, level, pins, premium });
       if (problem === null) standing.push(t);
       else gaps.push(`scenario ${scenario} ${trialWord(t)} doesn't stand: ${problem}`);
@@ -174,8 +168,49 @@ export function readiness({ evals, level, pins, premium = null, given = null }) 
       const lacking = BAR_TRIALS - standing.length;
       gaps.push(`scenario ${scenario}: ${standing.length} of ${BAR_TRIALS} passing trials, ${lacking} ${lacking === 1 ? 'trial is' : 'trials are'} missing`);
     }
-    records.push(...standing.slice(0, BAR_TRIALS).map((t) => t.name));
+    records.push(...(offered === null ? standing.slice(0, BAR_TRIALS) : standing).map((t) => t.name));
   }
-  if (gaps.length > 0) return { ok: false, records: [], gaps };
-  return { ok: true, records: offered === null ? records : [...offered], gaps: [] };
+  if (offered !== null) {
+    for (const name of offered) if (!records.includes(name)) gaps.push(`${name} is not a passing trial of the bar`);
+  }
+  return { gaps, records };
+}
+
+// Whether `level` is ready on `pins` by the records under `evals`: { ok, commit, records, gaps }. One counted run is
+// one commit of the plugin: the level is ready when, for one commit, every scenario of the bar has BAR_TRIALS passing
+// `with` trials at that level on those pins, and no trial of the bar failed there. Trials of two commits never add
+// up, and a failure on one commit doesn't block another's full pass. The newest commit that passes is taken; when none
+// does, `gaps` are the newest commit's, in plain words, each scenario and trial that failed or is missing. A trial
+// that wasn't handled (the session never took its prompt in hand, or stopped short with nothing seen wrong) is
+// neither a pass nor a failure: it may be run again, as the harness's own gate lets it. `given`, when passed, is the
+// list of names a caller says stand: all from one commit, each a passing trial of the bar that stands, and only those
+// count and are recorded.
+export function readiness({ evals, level, pins, premium = null, given = null }) {
+  const no = (gaps) => ({ ok: false, commit: null, records: [], gaps });
+  if (!READY_LEVELS.includes(level)) return no([`${JSON.stringify(level)} isn't a level a readiness run is made for: Lean or Lightest`]);
+  if (!PIN_NAMES.every((n) => isModelName(pins?.[n]))) return no(['the pins are not two model names']);
+  if (given !== null && (!Array.isArray(given) || !given.every((n) => typeof n === 'string'))) return no(['the records are not a list of names']);
+  const trials = barTrials(evals, level, pins);
+  // The commits, by their latest run, oldest first.
+  const commits = [...new Set([...trials].reverse().map((t) => t.commit))].reverse();
+  const judged = (commit, offered) => {
+    const { gaps, records } = judgeCommit({ evals, trials: trials.filter((t) => t.commit === commit), level, pins, premium, offered });
+    return gaps.length === 0 ? { ok: true, commit, records, gaps: [] } : { ...no(gaps), commit };
+  };
+  if (given !== null) {
+    const offered = new Set(given);
+    const gaps = [];
+    for (const name of offered) if (!trials.some((t) => t.name === name)) gaps.push(`${name} is not a trial any run at ${levelWord(level)} on these pins saved`);
+    const from = [...new Set(trials.filter((t) => offered.has(t.name)).map((t) => t.commit))];
+    if (from.length > 1) gaps.push(`the records come from more than one build of the plugin (${from.join(', ')}): a counted run is one build`);
+    if (gaps.length > 0) return no(gaps);
+    if (from.length === 0) return no(['the records are not named']);
+    return judged(from[0], offered);
+  }
+  if (commits.length === 0) return no(judgeCommit({ evals, trials: [], level, pins, premium, offered: null }).gaps);
+  for (const commit of [...commits].reverse()) {
+    const found = judged(commit, null);
+    if (found.ok) return found;
+  }
+  return judged(commits.at(-1), null);
 }

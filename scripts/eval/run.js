@@ -40,7 +40,8 @@
 // ready.js); it is refused without them, and never takes Thorough or premium. Its run record, each trial in it and
 // each trial's record name the level and the pins, and the run record keeps each trial file's hash. `--ready
 // lean|lightest --project <project>` runs nothing: it reads the run records for that level and those pins, and only
-// when every scenario of the bar has its three passing `with` trials, and none failed, asks the helper to record the
+// when, for one commit of the plugin, every scenario of the bar has its three passing `with` trials, and none failed
+// on that commit, asks the helper to record the
 // level ready for the project (`column-ready`); the helper reads and checks the records itself. Anything short says
 // which scenario and trial is missing or failed, and nothing is recorded.
 import crypto from 'node:crypto';
@@ -402,7 +403,7 @@ async function readyStep({ level, project, home, print, env, helper }) {
   const pins = pinsFrom(env);
   const found = readiness({ evals: path.join(home, '.wheelhouse-evals'), level, pins });
   if (!found.ok) {
-    print(`${LEVEL_WORDS[level]} is not ready on ${pins.mostCapable} and ${pins.midSized}, so nothing was recorded:`);
+    print(`${LEVEL_WORDS[level]} is not ready on ${pins.mostCapable} and ${pins.midSized}${found.commit ? ` at build ${found.commit}, the latest run` : ''}, so nothing was recorded:`);
     for (const gap of found.gaps) print(`  ${gap}`);
     return 1;
   }
@@ -411,7 +412,7 @@ async function readyStep({ level, project, home, print, env, helper }) {
     print(`The helper did not record ${LEVEL_WORDS[level]} ready: ${answer?.refused ?? 'it gave no answer'}`);
     return 1;
   }
-  print(`${LEVEL_WORDS[level]} is recorded ready for ${project} on ${pins.mostCapable} and ${pins.midSized}, from ${found.records.length} trials.`);
+  print(`${LEVEL_WORDS[level]} is recorded ready for ${project} on ${pins.mostCapable} and ${pins.midSized}, from ${found.records.length} trials of build ${found.commit}.`);
   return 0;
 }
 

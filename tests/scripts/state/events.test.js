@@ -416,7 +416,10 @@ test('a column-ready record names the column, the pins it ran on and the evaluat
     const data = { column: 'lean', pins: { mostCapable: 'model-top', midSized: 'model-mid', premium: null }, records: ['eval-1'] };
     assert.deepEqual(makeEvent({ kind: 'column-ready', data }).data, data);
     for (const column of ['lightest', 'premium']) assert.equal(makeEvent({ kind: 'column-ready', data: { ...data, column } }).data.column, column);
+    // The plugin's commit the counted run was made on, as the helper records it.
+    assert.equal(makeEvent({ kind: 'column-ready', data: { ...data, commit: 'abc123def456' } }).data.commit, 'abc123def456');
     for (const bad of [
+      { ...data, commit: '' }, { ...data, commit: 'ABC123DEF456' }, { ...data, commit: 'abc12' }, { ...data, commit: 7 },
       null, { column: 'lean', pins: data.pins }, { ...data, extra: 1 },
       { ...data, column: 'balanced' }, { ...data, column: 'thorough' }, { ...data, column: 'Lean' },
       { ...data, pins: null }, { ...data, pins: [] }, { ...data, pins: { other: 'model-top' } }, { ...data, pins: { mostCapable: '-flag' } }, { ...data, pins: { midSized: 7 } },

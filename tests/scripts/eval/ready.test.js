@@ -37,6 +37,7 @@ test('a full set of passing trials makes the level ready, naming each record', (
   barRun(evals, { level: 'lean' });
   const ready = readiness({ evals, level: 'lean', pins: PINS });
   assert.equal(ready.ok, true, ready.gaps.join('; '));
+  assert.equal(ready.commit, 'abc123def456');
   assert.equal(ready.records.length, BAR.length * BAR_TRIALS);
   assert.ok(ready.records.includes('2026-10-25/27-with-3.json'));
   // The helper's check of the same names passes too.
@@ -55,6 +56,38 @@ test('a failed trial keeps the level not ready, however many passed beside it', 
   assert.equal(ready.ok, false);
   assert.deepEqual(ready.records, []);
   assert.ok(ready.gaps.some((g) => /^scenario 21 trial 2 failed \(stand-in fail\)$/.test(g)), ready.gaps.join('; '));
+});
+
+test('one counted run is one commit: trials of two commits never add up, and an older commit\'s failure doesn\'t block a later full pass', () => {
+  const evals = tempFolder('eval-ready-');
+  // Commit one: a failure and gaps. Commit two: only half the bar.
+  barRun(evals, { level: 'lean', commit: 'aaaaaaa11111', fail: (s, t) => s === '20' && t === 1, only: ['20', '21', '22', '23'] });
+  barRun(evals, { level: 'lean', commit: 'bbbbbbb22222', at: '2026-10-25T09:00:00.000Z', only: ['27', '33', '34'], from: 4 });
+  const split = readiness({ evals, level: 'lean', pins: PINS });
+  assert.equal(split.ok, false, 'two commits\' halves are not one pass');
+  assert.ok(split.gaps.includes('scenario 20: 0 of 3 passing trials, 3 trials are missing'), split.gaps.join('; '));
+  // Commit two then runs the rest of the bar: ready on commit two, though commit one failed.
+  barRun(evals, { level: 'lean', commit: 'bbbbbbb22222', at: '2026-10-25T10:00:00.000Z', only: ['20', '21', '22', '23'], from: 4 });
+  const ready = readiness({ evals, level: 'lean', pins: PINS });
+  assert.equal(ready.ok, true, ready.gaps.join('; '));
+  assert.equal(ready.commit, 'bbbbbbb22222');
+  assert.ok(ready.records.every((n) => /-with-[4-6]\.json$/.test(n)));
+  // A failure at commit two blocks commit two.
+  barRun(evals, { level: 'lean', commit: 'bbbbbbb22222', at: '2026-10-25T11:00:00.000Z', only: ['33'], from: 7, trials: 1, fail: () => true });
+  const blocked = readiness({ evals, level: 'lean', pins: PINS });
+  assert.equal(blocked.ok, false);
+  assert.ok(blocked.gaps.some((g) => /^scenario 33 trial 7 failed/.test(g)), blocked.gaps.join('; '));
+  // Names from two commits given together are refused.
+  const mixed = readiness({ evals, level: 'lean', pins: PINS, given: [...ready.records.filter((n) => !n.startsWith('2026-10-25/20-')), '2026-10-25/20-with-2.json', '2026-10-25/20-with-3.json', '2026-10-25/20-with-4.json'] });
+  assert.equal(mixed.ok, false);
+});
+
+test('a run record that names no commit counts for nothing', () => {
+  const evals = tempFolder('eval-ready-');
+  barRun(evals, { level: 'lean', commit: null });
+  const ready = readiness({ evals, level: 'lean', pins: PINS });
+  assert.equal(ready.ok, false);
+  assert.ok(ready.gaps.includes('scenario 20: 0 of 3 passing trials, 3 trials are missing'));
 });
 
 test('a missing trial keeps the level not ready, and says which scenario', () => {
@@ -116,6 +149,14 @@ test('the names a caller gives must each be a saved trial of the bar, and only t
   const evals = tempFolder('eval-ready-');
   barRun(evals, { level: 'lean' });
   const { records } = readiness({ evals, level: 'lean', pins: PINS });
+  // A passing trial of the bar beyond the three is fine, and is recorded; a trial that stood not is refused, not recorded.
+  barRun(evals, { level: 'lean', at: '2026-10-25T09:00:00.000Z', only: ['21'], from: 4, trials: 2, unhandled: (s, t) => t === 5 });
+  const more = readiness({ evals, level: 'lean', pins: PINS, given: [...records, '2026-10-25/21-with-4.json'] });
+  assert.equal(more.ok, true, more.gaps.join('; '));
+  assert.ok(more.records.includes('2026-10-25/21-with-4.json'));
+  const unhandled = readiness({ evals, level: 'lean', pins: PINS, given: [...records, '2026-10-25/21-with-5.json'] });
+  assert.equal(unhandled.ok, false);
+  assert.ok(unhandled.gaps.includes('2026-10-25/21-with-5.json is not a passing trial of the bar'), unhandled.gaps.join('; '));
   // One left out.
   const short = readiness({ evals, level: 'lean', pins: PINS, given: records.filter((n) => n !== '2026-10-25/21-with-2.json') });
   assert.deepEqual(short.gaps, ['scenario 21: 2 of 3 passing trials, 1 trial is missing']);

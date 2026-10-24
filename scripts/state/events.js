@@ -259,7 +259,8 @@ const PLAIN_SHAPES = {
   // A Thoroughness column passed its evaluation (design section 14.6, "Settled for the builder"): the column (Lean,
   // Lightest, or the premium model's own pass), the pins it ran on (`tiers.pins`, each a model name or null) and the
   // evaluation's records. It counts only while the configuration's pins are the ones it ran on (views.js, readyColumns).
-  'column-ready': { must: ['column', 'pins', 'records'], may: [] },
+  // `commit` is the plugin's commit the counted run was made on (one counted run is one commit), as the helper records it.
+  'column-ready': { must: ['column', 'pins', 'records'], may: ['commit'] },
   // The front desk's session start offered a usage card (design section 14.6, "The usage nudge"): which (`nudge`,
   // `lightest`, `up` or `return`), when, the allowance week it belongs to (`reset`, the time the weekly allowance
   // resets), the Thoroughness level in force (`from`), the one the card offered (`to`), and the full hash of the card
@@ -481,6 +482,7 @@ function checkPlain(kind, data) {
       bad(`needs pins, each of ${listed([...PIN_NAMES])} a model name or null`);
     }
     if (!Array.isArray(data.records) || data.records.length > READY_RECORDS || !data.records.every(isText)) bad(`needs records to be a list of at most ${READY_RECORDS} names`);
+    if (data.commit !== undefined && (typeof data.commit !== 'string' || !/^[0-9a-f]{7,40}$/.test(data.commit))) bad('has a commit that is not a commit\'s hash');
   } else if (kind === 'survey') {
     const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
     if (data.v !== 1) bad('needs v to be 1');

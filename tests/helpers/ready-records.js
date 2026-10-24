@@ -24,10 +24,10 @@ export function trialRecord({ id, leg, trial, level, pins = PINS, pass = true })
 }
 
 // One run of the bar (or of `only` its scenarios) at `level`, `trials` trials each from trial `from`, its run record
-// stamped `at`. `fail`, `skip` and `unhandled` say, by scenario and trial, which trials failed, were never run, or
+// stamped `at` and made on the plugin's commit `commit` (null for a run record that names none). `fail`, `skip` and `unhandled` say, by scenario and trial, which trials failed, were never run, or
 // were not handled; `record` may change a trial's record as written (a forgery the run record doesn't know of).
 export function barRun(evals, {
-  level, pins = PINS, at = '2026-10-25T08:00:00.000Z', only = BAR, from = 1, trials = 3,
+  level, pins = PINS, at = '2026-10-25T08:00:00.000Z', only = BAR, from = 1, trials = 3, commit = 'abc123def456',
   fail = () => false, skip = () => false, unhandled = () => false, record = (r) => r,
 }) {
   const runs = [];
@@ -51,6 +51,6 @@ export function barRun(evals, {
   }
   const runFile = path.join(evals, 'runs', `${at.replace(/[:.]/g, '-')}.json`);
   fs.mkdirSync(path.dirname(runFile), { recursive: true });
-  fs.writeFileSync(runFile, `${JSON.stringify({ v: 1, at, date: DATE, how: 'ids', level, pins: { ...pins }, runs }, null, 2)}\n`);
+  fs.writeFileSync(runFile, `${JSON.stringify({ v: 1, at, date: DATE, how: 'ids', ...(commit === null ? {} : { commit }), level, pins: { ...pins }, runs }, null, 2)}\n`);
   return runFile;
 }

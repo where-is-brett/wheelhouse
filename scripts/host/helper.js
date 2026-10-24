@@ -1557,9 +1557,17 @@ export async function startHelper({
   // record, a kind no caller writes (HELPER_ONLY_KINDS). It takes no one's word: the level must be Lean or Lightest, the
   // pins the ones the configuration in the project's main folder holds now, and the records named must each be a
   // trial an evaluation run saved under this computer's evaluations folder, which the helper reads and checks itself
-  // (scripts/routing/column-ready.js): the bar's every scenario with its three passing `with` trials at that level on those pins,
-  // each record's text the one its run saved and naming no premium model, and no trial of the bar failed there.
-  // Anything short is refused, saying which scenario and trial, and nothing is written. Called in the state's queue.
+  // (scripts/routing/column-ready.js): one counted run, all of one commit of the plugin, with the bar's every scenario's
+  // three passing `with` trials at that level on those pins, each record's text the one its run saved and naming no
+  // premium model, and no trial of the bar failed on that commit. The record names that commit. Anything short is
+  // refused, saying which scenario and trial, and nothing is written. Called in the state's queue.
+  // The limit of this check: the records aren't signed. The hash a run record keeps of each trial file catches a trial
+  // file changed on its own, not one changed together with its run record, since both sit in the same folder,
+  // ~/.wheelhouse-evals. That folder is outside every agent's working folder, and the sandbox lets a command write only
+  // inside the project and the paths its settings allow, none of which is that folder (the Write and Edit tools aren't
+  // the sandbox's: outside the project they ask). But the repository's sandbox settings don't name the folder in their
+  // denyWrite (scripts/protection/settings.js), and a process running as the director outside the sandbox could
+  // rewrite both files.
   async function doColumnReady({ project, column, pins, records }, ctx) {
     if (!READY_LEVELS.includes(column)) refuse('only Lean or Lightest is recorded ready this way');
     const record = recordOf(project);
@@ -1574,7 +1582,7 @@ export async function startHelper({
     if (!Array.isArray(records) || records.length === 0) refuse('the evaluation\'s records are not named');
     const found = readiness({ evals: evalsFolder, level: column, pins, premium: typeof held.premium === 'string' ? held.premium : null, given: records });
     if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
-    const event = makeEvent({ kind: 'column-ready', data: { column, pins: { mostCapable: pins.mostCapable, midSized: pins.midSized }, records: found.records }, now });
+    const event = makeEvent({ kind: 'column-ready', data: { column, pins: { mostCapable: pins.mostCapable, midSized: pins.midSized }, records: found.records, commit: found.commit }, now });
     const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
