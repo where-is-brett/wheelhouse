@@ -359,6 +359,48 @@ test('work in flight and no other setup: the carry-on card says it, and the next
   }
 });
 
+// The director's ruling of 25 October 2026, as the rehearsal on a project under way met it
+// (docs/evals/rehearsal-project-under-way.md): the folder is on a line of the director's own, one
+// commit ahead and with changes not yet committed. Step 7 first asks to switch the folder to main,
+// one click; setup then carries on to a green board, the line is left as it was and found as work
+// under way, and the changes not yet committed are still in the folder. No stash.
+test('a folder on a line of unfinished work: one click switches it to main, setup goes on to green, and the line is carried on', { skip: SKIP }, async () => {
+  const world = await underWay({ instructions: false });
+  const { a, shims } = world;
+  try {
+    await g(a.folder, 'checkout', '-q', '-b', 'add-filters');
+    fs.writeFileSync(path.join(a.folder, 'filters.md'), '# Filters\n\nBy price.\n');
+    await g(a.folder, 'add', 'filters.md');
+    await g(a.folder, 'commit', '-q', '-m', 'Start filters');
+    const lineTip = await g(a.folder, 'rev-parse', 'HEAD');
+    fs.appendFileSync(path.join(a.folder, 'README.md'), 'Draft words.\n');
+    fs.writeFileSync(path.join(a.folder, 'notes.md'), '# Notes\n');
+
+    await a.start();
+    await a.sessionStart();
+    const log = await follow(a, { answer: (id) => byId(id) });
+    const sevens = log.filter((e) => e.step === 7 && e.goAhead);
+    assert.equal(sevens.length, 2, 'the switch, then step 7\'s own list');
+    assert.match(sevens[0].card.question, /^Setup step 7: your folder is on 'add-filters'\. Switch it to main to set up\? Your unfinished work stays saved on 'add-filters'\./);
+    assert.match(sevens[1].card.question, /^Setup step 7, The project's files/);
+    const { health } = log.at(-1);
+    assert.equal(health.green, true, health.lines.join('\n'));
+
+    assert.equal(await g(a.folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.equal(await g(a.folder, 'rev-parse', 'add-filters'), lineTip);
+    const status = await g(a.folder, 'status', '--porcelain');
+    assert.match(status, /M README\.md/);
+    assert.match(status, /\?\? notes\.md/);
+    assert.equal(await g(a.folder, 'stash', 'list'), '');
+    const [survey] = await eventsOf(a, 'survey');
+    assert.ok(survey.data.local.some((i) => i.name === 'add-filters' && i.commits === 1), JSON.stringify(survey.data.local));
+    assert.match(health.card.question.question, /^Wheelhouse found work already under way in cafe-menu:/);
+  } finally {
+    await a.cleanup();
+    shims.restore();
+  }
+});
+
 test('a project under way at Trusting: no card, and the first briefing says Wheelhouse is carrying the work on', { skip: SKIP }, async () => {
   const world = await underWay();
   const { a, shims } = world;

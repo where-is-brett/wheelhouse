@@ -821,7 +821,11 @@ export async function uninstallPlan({
               because: 'your product\'s history can\'t be brought back once deleted',
             }),
           });
-        } else if (one.after?.action === 'protect') kept(`protection on ${one.after.branch} of ${c.target.replace(/ protection$/, '')}`, 'left on, as the host keeps it', list);
+        // Step 7's switch of a folder on a line of work, and a line of the director's changes it kept
+        // safe (the director's ruling of 25 October 2026): their work, never switched back or deleted.
+        } else if (one.after?.action === 'switch') kept(`this folder's switch from ${one.after.from} to ${one.after.to}`, `left as it is: your work stays on ${one.after.from}`, list);
+        else if (one.after?.action === 'keep') kept(`your changes kept on ${one.after.line}`, 'left as they are, on their own line', list);
+        else if (one.after?.action === 'protect') kept(`protection on ${one.after.branch} of ${c.target.replace(/ protection$/, '')}`, 'left on, as the host keeps it', list);
         else if (trial?.[3] !== undefined) {
           if (c.after?.state === 'open') add('files', at, { put: 'close-pull-request', repo: trial[1], number: Number(trial[3]), ids: list });
           else settled(list, 'closed by the health check');

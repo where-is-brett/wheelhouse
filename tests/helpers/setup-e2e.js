@@ -535,7 +535,7 @@ export const GREEN_LINES = Object.entries(SESSION_CHECKS).map(([name, check]) =>
 // is clicked, after apply is shown to refuse it without the click, then applied; step 9's wait is
 // waited out on the clock; and step 10's open trial is reported with the session's trial lines.
 // Gives what happened, in order: { step, ask, label, unanswered? }, { step, goAhead: hash,
-// refusedBefore }, { step, settled: true, said? }, { step, wait }, { step: 10, health }.
+// refusedBefore } (a step planned again after it, such as step 7's switch, comes again), { step, settled: true, said? }, { step, wait }, { step: 10, health }.
 export async function follow(c, { answer, through = 10, lines = GREEN_LINES, most = 80 } = {}) {
   const log = [];
   const done = async (n) => typeof (await c.setupRun())?.steps?.[n]?.doneAt === 'string';
@@ -566,7 +566,9 @@ export async function follow(c, { answer, through = 10, lines = GREEN_LINES, mos
       await c.click(plan.card, 'Go ahead');
       await c.cli('apply', String(plan.step), plan.hash);
       log.push({ step: plan.step, goAhead: plan.hash, card: plan.card, refusedBefore: before.refused });
-      if (!(await done(plan.step))) throw new Error(`step ${plan.step} did not finish: ${(await c.setupRun())?.steps?.[plan.step]?.failed}`);
+      // A step planned again after a first part (step 7's switch of the folder) is neither done nor failed.
+      const entry = (await c.setupRun())?.steps?.[plan.step] ?? {};
+      if (!(await done(plan.step)) && (entry.failed || entry.clickedAt)) throw new Error(`step ${plan.step} did not finish: ${entry.failed}`);
     }
     // Step 10 is done once its board has been green, which the health route reads, not its apply.
     if (plan.step === through && through !== 10 && await done(through)) return log;
