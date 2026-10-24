@@ -543,7 +543,14 @@ test('session-start exits in time with its context when the helper never answers
     // The watcher the session start may have started runs on, in the home: it is stopped too.
     await as(home, () => stopWatcher(P)).catch(() => {});
     server.close();
-    removeFolder(home);
+    try {
+      removeFolder(home);
+    } catch (error) {
+      // The session start's detached jobs (the weekly one, the watcher) run with the home as their working folder,
+      // which Windows won't let go of while they run: there what is inside goes, and the empty folder is left to the
+      // system's temporary folder. Anywhere else, or with anything left inside, the failure stands.
+      if (process.platform !== 'win32' || error.code !== 'EBUSY' || fs.readdirSync(home).length > 0) throw error;
+    }
   }
 });
 
