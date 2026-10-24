@@ -352,6 +352,12 @@ test('each new plain kind is accepted with its shape and refused without it', as
       () => makeEvent({ kind: 'work', data: { ...SHAPES.work, what: 'A change' } }),
       /A work event has a field it should not: what\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent and from/,
     );
+    // A record missing fields names every one of them, and what the kind takes, in one refusal (the
+    // rehearsal on a project under way: three refusals, one field each).
+    assert.throws(
+      () => makeEvent({ kind: 'work', data: { id: 'carry-on-3', lane: 'small', visible: true } }),
+      /A work event needs its title and dependsOn\. It takes id, title, lane, visible and dependsOn, and may take doc, place, parent and from/,
+    );
     const w = SHAPES.work;
     for (const bad of [
       { ...w, lane: 'huge' }, { ...w, visible: 'yes' }, { ...w, dependsOn: 'login' }, { ...w, dependsOn: ['Not A Slug'] },

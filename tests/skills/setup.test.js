@@ -141,6 +141,20 @@ test('the playbook closes the gaps its pressure runs found', () => {
   assert.match(playbook, /`status` says step 10's "own checks finished"/);
 });
 
+// From the rehearsal on a project under way (docs/evals/rehearsal-project-under-way.md): with the
+// folder on a line of unfinished work, the session told the director to stash their changes (the
+// install's lines in .claude/settings.json with them) or to make that line the host's default; with
+// the helper unreachable, it sent them to a "Wheelhouse app" that doesn't exist.
+test('the playbook keeps a project under way safe when step 7 finds the folder on another line, and says how the helper starts', () => {
+  const wrong = playbook.split('\n## When something goes wrong\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(read('scripts/setup/project-files.js'), /but this folder is on \$\{current \?\? 'no branch'\}/, 'step 7 words it so');
+  assert.match(wrong, /\*\*"this folder is on <line>"\*\*/);
+  assert.match(wrong, /Never suggest putting their changes aside \(stash\), undoing, committing or deleting them, or changing the host's default branch/);
+  assert.match(wrong, /`git switch <branch>`/);
+  assert.match(read('scripts/host/helper-client.js'), /the host helper could not be reached/, 'the client words it so');
+  assert.match(wrong, /\*\*"the host helper could not be reached"\*\*[^\n]*session start starts it[^\n]*There is no Wheelhouse app to open/);
+});
+
 // Task R N1: uninstall's shortest cards point to `uninstall status` for the list, so the playbook
 // runs it and shows its lines before asking the card. Rulings R142, R146: once a stopped uninstall's
 // status, or plan, says first to start a new session, the card is not asked again in this one.
