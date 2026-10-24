@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   caFile, exportSystemRoots, writeCaFile, caEnv, glabCaArgs, gitCaConfig, withGitConfig, HOST_UNREACHABLE,
   CERTIFICATE_NOT_TRUSTED, failureKind, unreachableRefusal, outputKind, companyGitEnv, makeAwayLog, stageCaFile, certificateRefusal, awayLine,
+  revocationFallback,
 } from '../../../scripts/host/company-ca.js';
 import { safeGit, directorSignIn } from '../../../scripts/lib/safe-git.js';
 import { setupGit, setupGitEnv, FENCE } from '../../../scripts/setup/git.js';
@@ -565,4 +566,52 @@ test('the certificate reaches a git call made through safeGit and through setup\
     companyGitEnv(signIn, { host: 'gitlab', base: BASE }, { home: shortHome(), platform: 'darwin' }),
   ];
   for (const env of none) assert.equal(env.GIT_CONFIG_COUNT, signIn.GIT_CONFIG_COUNT);
+});
+
+// What git through Windows' store says when the network blocks the revocation check.
+const BLOCKED = 'fatal: unable to access \'https://git.example.org/o/p.git/\': schannel: next InitializeSecurityContext failed: CRYPT_E_NO_REVOCATION_CHECK (0x80092012) - The revocation function was unable to check revocation for the certificate.';
+
+test('a blocked revocation check through Windows\' store turns into the certificate file for that address, with git\'s own TLS (option C)', () => {
+  const home = tempFolder('wh-ca-home-');
+  const env = withGitConfig({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' }, gitCaConfig('https://git.example.org', '', 'win32'));
+  // No file yet: nothing to fall back to.
+  assert.equal(revocationFallback(env, BLOCKED, { home }), null);
+  writeCaFile({ home, pem: '-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n' });
+  const back = revocationFallback(env, BLOCKED, { home });
+  const pairs = Array.from({ length: Number(back.GIT_CONFIG_COUNT) }, (_, i) => [back[`GIT_CONFIG_KEY_${i}`], back[`GIT_CONFIG_VALUE_${i}`]]);
+  assert.deepEqual(pairs, [
+    ['credential.helper', ''],
+    ['http.https://git.example.org/.sslCAInfo', caFile(home)],
+    ['http.https://git.example.org/.sslBackend', 'openssl'],
+  ]);
+  // Any other refusal, or a call with no Windows-store setting, is left as it was.
+  assert.equal(revocationFallback(env, 'fatal: Authentication failed', { home }), null);
+  assert.equal(revocationFallback(withGitConfig({}, gitCaConfig('https://git.example.org', caFile(home), 'darwin')), BLOCKED, { home }), null);
+  assert.equal(revocationFallback({}, BLOCKED, { home }), null);
+});
+
+test('safeGit tries a call once more with the certificate file when Windows\' store was refused for a blocked revocation check, and only then', async () => {
+  const home = tempFolder('wh-ca-home-');
+  writeCaFile({ home, pem: '-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n' });
+  const before = process.env.WHEELHOUSE_HOME;
+  process.env.WHEELHOUSE_HOME = home;
+  try {
+    const store = gitCaConfig('https://git.example.org', '', 'win32');
+    const seen = [];
+    const answers = [{ code: 128, stdout: '', stderr: BLOCKED }, { code: 0, stdout: 'done', stderr: '' }];
+    const run = async (file, args, options) => { seen.push(options.env); return answers.shift(); };
+    const git = safeGit({ cwd: tempFolder('wh-ca-work-'), look: 'never', run, env: withGitConfig({}, store) });
+    assert.deepEqual(await git(['ls-remote', 'https://git.example.org/o/p.git']), { code: 0, stdout: 'done', stderr: '' });
+    assert.equal(seen.length, 2);
+    const keys = (env) => Object.entries(env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([, v]) => v);
+    assert.ok(keys(seen[0]).includes('http.https://git.example.org/.sslBackend'));
+    assert.ok(keys(seen[1]).includes('http.https://git.example.org/.sslCAInfo'));
+    // A refusal of another kind is answered as it is, with no second call.
+    seen.length = 0;
+    answers.push({ code: 128, stdout: '', stderr: 'fatal: Authentication failed' });
+    assert.equal((await git(['ls-remote', 'https://git.example.org/o/p.git'])).code, 128);
+    assert.equal(seen.length, 1);
+  } finally {
+    if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
+  }
 });

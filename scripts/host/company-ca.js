@@ -167,6 +167,32 @@ export function gitCaConfig(base, file, platform = process.platform) {
   return [{ key: `http.${address}/.sslCAInfo`, value: file }];
 }
 
+// Windows' store, with the file when its revocation check is blocked (the foreman's decision of 24 October
+// 2026, on the director's steer that it works for anyone and for companies alike): some company networks
+// block the check that a certificate wasn't withdrawn, and git through Windows' store then refuses every
+// call. Given a git call's environment and what git said, `env` with the address's Windows-store setting
+// turned into the file's (and git's own TLS, which reads the file), once setup has made the file; null when
+// git said something else, the call had no Windows-store setting, or there is no file. No one is asked.
+const REVOCATION_BLOCKED = /CRYPT_E_NO_REVOCATION_CHECK|CRYPT_E_REVOCATION_OFFLINE|revocation function was unable to check revocation|revocation server was offline/i;
+export function revocationFallback(env, stderr, { home = wheelhouseHome() } = {}) {
+  if (!REVOCATION_BLOCKED.test(String(stderr ?? ''))) return null;
+  const count = Number(env?.GIT_CONFIG_COUNT);
+  if (!Number.isInteger(count) || count < 1) return null;
+  const file = caFile(home);
+  if (!fs.existsSync(file)) return null;
+  for (let i = 0; i < count; i += 1) {
+    const store = /^http\.(.+)\/\.sslbackend$/i.exec(String(env[`GIT_CONFIG_KEY_${i}`] ?? ''));
+    if (store === null || !/^schannel$/i.test(String(env[`GIT_CONFIG_VALUE_${i}`] ?? ''))) continue;
+    return {
+      ...env,
+      [`GIT_CONFIG_KEY_${i}`]: `http.${store[1]}/.sslCAInfo`, [`GIT_CONFIG_VALUE_${i}`]: file,
+      [`GIT_CONFIG_KEY_${count}`]: `http.${store[1]}/.sslBackend`, [`GIT_CONFIG_VALUE_${count}`]: 'openssl',
+      GIT_CONFIG_COUNT: String(count + 1),
+    };
+  }
+  return null;
+}
+
 // `env` with git's settings added, through GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and
 // GIT_CONFIG_VALUE_<n>, after any already there. A copy: `env` is not changed. Only the certificate
 // settings for one address (`http.<address>/.sslCAInfo`, `http.<address>/.sslBackend`) are taken:

@@ -12,7 +12,7 @@ import { recordSession } from '../usage/store.js';
 import { weeklyDue } from '../jobs/weekly.js';
 import { takeStartLock } from './start-lock.js';
 import { sessionRole } from './role.js';
-import { usageDir, wheelhouseHome } from './paths.js';
+import { jobFolder, usageDir, wheelhouseHome } from './paths.js';
 
 export const BACKGROUND_MS = 1000;
 const HEALTH_MS = 300;
@@ -64,7 +64,7 @@ export function startDetached(spawn, script) {
   try {
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [script], { cwd: home, detached: true, windowsHide: true, stdio: 'ignore' });
+    const child = spawn(process.execPath, [script], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore' });
     child?.unref?.();
     child?.on?.('error', () => {});
     return true;
