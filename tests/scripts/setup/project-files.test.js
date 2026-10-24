@@ -22,7 +22,7 @@ import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
 import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
-import { FRONT_DESK_ALIAS } from '../../../scripts/setup/best-model.js';
+import { FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from '../../../scripts/setup/best-model.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
@@ -60,6 +60,8 @@ const COVERED = '.env\n.env.*\n';
 const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
 // What the front desk's model alias stands for here: a stand-in name.
 const BEST_MODEL = 'model-top-1';
+// What the mid-sized model's alias stands for here.
+const MID_MODEL = 'model-mid-1';
 
 // ---- The world: a product on a stand-in host, connected as step 3 leaves it ----
 
@@ -118,7 +120,7 @@ function kits(root) {
 async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
 } = {}) {
-  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, bestAsked: 0, aliases: [] };
+  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, mid: MID_MODEL, bestAsked: 0, aliases: [] };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -217,7 +219,7 @@ async function world({
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
-    best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return w.best; },
+    best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return alias === MID_SIZED_ALIAS ? w.mid : w.best; },
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
   w.ctx = (extra = {}) => ({ folder: w.folder, step: 7, now: () => T0, platform: 'darwin', userHome: w.user, answers: w.answers, ...extra });
@@ -337,8 +339,8 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
   await withHome(async () => {
     const w = await world();
     const planned = await w.plan();
-    assert.equal(w.bestAsked, 1);
-    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS], 'never the strongest: setup asks nothing about it');
+    assert.equal(w.bestAsked, 2);
+    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, MID_SIZED_ALIAS], 'never the strongest: setup asks nothing about it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}\\b`));
     assert.doesNotMatch(text, /strongest/);
@@ -350,7 +352,7 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     // The pin stays where it is: a later run asks nothing and changes nothing, even when the alias has moved.
     w.best = 'model-top-2';
     const again = await w.plan();
-    assert.equal(w.bestAsked, 1);
+    assert.equal(w.bestAsked, 2);
     assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
   });
 });
@@ -364,13 +366,64 @@ test('the most capable model is asked once in a setup run: every later plan in t
     const first = await w.step.plan(ctx);
     w.best = BEST_MODEL;
     const again = await w.step.plan(ctx);
-    assert.equal(w.bestAsked, 1);
+    assert.equal(w.bestAsked, 2, 'each alias once');
     assert.equal(planHash(again.changes), planHash(first.changes), 'the card\'s hash still holds at the click');
     // A new run asks again.
     const next = startRun({ folder: w.folder, now: () => T0 });
     const later = await w.step.plan(w.ctx({ runId: next.id }));
-    assert.equal(w.bestAsked, 2);
+    assert.equal(w.bestAsked, 4, 'each alias again');
     assert.deepEqual(later.changes.filter((c) => c.key?.[0] === 'model').map((c) => c.after), [BEST_MODEL]);
+  });
+});
+
+test('the starter configuration pins both classes, never a premium pin, and reads back as written', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const config = starterConfig({ answers, frontDesk: BEST_MODEL, midSized: MID_MODEL });
+  assert.deepEqual(config.tiers, { pins: { mostCapable: BEST_MODEL, midSized: MID_MODEL } });
+  assert.deepEqual(readConfig(JSON.stringify(config)), config);
+  assert.deepEqual(starterConfig({ answers, midSized: MID_MODEL }).tiers, { pins: { midSized: MID_MODEL } });
+  assert.equal(starterConfig({ answers }).tiers, undefined, 'no pins, no tiers');
+});
+
+test('step 7 writes both class pins, the card says once what the lighter model does, and a later run changes nothing', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.equal(text.split('Lean and Lightest move most building and routine checking to the lighter model').length, 2);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL, midSized: MID_MODEL } });
+    w.mid = 'model-mid-2';
+    const again = await w.plan();
+    assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
+    const t2 = composeCard({ ...again.card, target: { step: 7, hash: planHash(again.changes) } }).question.question;
+    assert.doesNotMatch(t2, /lighter model/);
+  });
+});
+
+test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says Lean and Lightest wait', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.mid = null;
+    const planned = await w.plan();
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /Lean and Lightest wait for the lighter model/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.deepEqual(w.json('.claude/wheelhouse.json').tiers, { pins: { mostCapable: BEST_MODEL } });
+    // A later run, with the alias answering, adds it; a pin already held is never changed.
+    w.mid = MID_MODEL;
+    const later = await w.plan();
+    assert.ok(later.changes.some((c) => c.kind === 'json-key' && c.target.endsWith('wheelhouse.json')));
+    const config = path.join(w.folder, '.claude', 'wheelhouse.json');
+    const now = w.json('.claude/wheelhouse.json');
+    fs.writeFileSync(config, `${JSON.stringify({ ...now, tiers: { pins: { mostCapable: 'model-chosen', midSized: 'model-picked' } } }, null, 2)}\n`);
+    const kept = projectFilesChange({
+      folder: w.folder, config: starterConfig({ answers: w.answers, frontDesk: BEST_MODEL, midSized: MID_MODEL }), release: { ref: REF },
+      local: { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin' },
+    });
+    assert.deepEqual(kept.filter((c) => c.target === config), [], 'pins already held stay as they are');
   });
 });
 
@@ -385,10 +438,10 @@ test('a project set up before the front desk had a model gets one at its next se
     w.best = BEST_MODEL;
     const later = await w.plan();
     const keys = later.changes.filter((c) => c.kind === 'json-key').map((c) => `${path.basename(c.target)} ${c.key.join('.')} ${c.after}`);
-    assert.deepEqual(keys, [`wheelhouse.json routing.frontDesk ${BEST_MODEL}`, `settings.local.json model ${BEST_MODEL}`]);
+    assert.deepEqual(keys, [`wheelhouse.json routing.frontDesk ${BEST_MODEL}`, `wheelhouse.json tiers.pins.mostCapable ${BEST_MODEL}`, `settings.local.json model ${BEST_MODEL}`]);
     // A pin moved by hand, or by the pin mover, is never put back by setup.
     const config = path.join(w.folder, '.claude', 'wheelhouse.json');
-    fs.writeFileSync(config, `${JSON.stringify({ ...w.json('.claude/wheelhouse.json'), routing: { ...w.json('.claude/wheelhouse.json').routing, frontDesk: 'model-chosen' } }, null, 2)}\n`);
+    fs.writeFileSync(config, `${JSON.stringify({ ...w.json('.claude/wheelhouse.json'), routing: { ...w.json('.claude/wheelhouse.json').routing, frontDesk: 'model-chosen' }, tiers: { pins: { mostCapable: 'model-chosen' } } }, null, 2)}\n`);
     const asked = w.bestAsked;
     const kept = projectFilesChange({
       folder: w.folder, config: starterConfig({ answers: w.answers, frontDesk: BEST_MODEL }), release: { ref: REF },
@@ -422,7 +475,7 @@ test('a joining computer starts the front desk on the model the committed config
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.equal(w.json('.claude/settings.local.json').model, BEST_MODEL);
-    assert.equal(w.bestAsked, 1, 'only the first computer asked');
+    assert.equal(w.bestAsked, 2, 'only the first computer asked, once for each alias');
   });
 });
 
