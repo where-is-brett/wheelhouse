@@ -382,6 +382,28 @@ test('--again tops up a round run again that stopped short', async () => {
   assert.ok(printed.some((line) => /The gate is passed/.test(line)), printed.join('\n'));
 });
 
+test('--again runs every leg of a scenario from its files, a leg missing from the run record included', async () => {
+  const root = twoSuites();
+  const home = tempFolder('eval-home-');
+  const e2eDir = e2eFolder();
+  const options = {
+    root, home, e2eDir, version: '0', commit: null, print: quiet, designed: [],
+    endToEnd: async (files) => [{ file: files[0], test: 'scenario five holds', pass: true }],
+  };
+  await main(['--all'], { ...options, now: firstNow, run: standInRun([], (name, variant) => variant === 'with') });
+  // The run was cut short between 27's legs: its route leg's runs are not in the record.
+  const runsDir = path.join(home, '.wheelhouse-evals', 'runs');
+  const [name] = fs.readdirSync(runsDir).filter((file) => file.endsWith('.json'));
+  const kept = JSON.parse(fs.readFileSync(path.join(runsDir, name), 'utf8'));
+  kept.runs = kept.runs.filter((r) => r.leg !== 'route');
+  fs.writeFileSync(path.join(runsDir, name), JSON.stringify(kept));
+  const calls = [];
+  const printed = [];
+  const code = await main(['--again'], { ...options, now: () => new Date('2026-10-20T01:04:03.000Z'), print: (line) => printed.push(line), run: standInRun(calls, (n, variant) => variant === 'with') });
+  assert.deepEqual(calls, ['27 with 2', '27 with 3', '27 with 4', '27-route with 2', '27-route with 3', '27-route with 4']);
+  assert.equal(code, 0, printed.join('\n'));
+});
+
 test('--again with nothing marked and the gate shut says only a fresh --all clears it', async () => {
   const root = twoSuites();
   const home = tempFolder('eval-home-');

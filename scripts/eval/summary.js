@@ -71,7 +71,17 @@ export function declaredAgents(file) {
 // Whether a scenario declaring `agents` (declaredAgents) runs on `agent`.
 export const runsOnAgent = (agents, agent) => agents === null || agents.includes(agent);
 
-// Every scenario file in the suites under `root`, by number: { number, suite, file }.
+// The leg a scenario file declares (its module's `leg: '<name>'`), read from its text so the
+// file need not be loaded; null for a scenario's main leg.
+export function declaredLeg(file) {
+  try {
+    return /^\s*leg:\s*['"]([a-z]+)['"]/m.exec(fs.readFileSync(file, 'utf8'))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Every scenario file in the suites under `root`, by number: { number, suite, file, leg }.
 function writtenScenarios(root) {
   const found = [];
   let suites = [];
@@ -83,7 +93,7 @@ function writtenScenarios(root) {
   for (const suite of suites) {
     for (const name of fs.readdirSync(path.join(root, suite)).sort()) {
       const match = SCENARIO_FILE.exec(name);
-      if (match) found.push({ number: Number(match[1]), suite, file: name, agents: declaredAgents(path.join(root, suite, name)) });
+      if (match) found.push({ number: Number(match[1]), suite, file: name, agents: declaredAgents(path.join(root, suite, name)), leg: declaredLeg(path.join(root, suite, name)) });
     }
   }
   return found;
@@ -160,13 +170,15 @@ function judge(runs, legs, safety) {
 
 const reasons = (runs) => [...new Set(runs.map((run) => run.why).filter(Boolean))].join('; ');
 
-function rowFor(id, allRuns) {
+// `fileLegs` are the legs the scenario's files declare: a leg there that never ran in a variant
+// fails that variant's every trial, so a run cut short between legs never passes.
+function rowFor(id, allRuns, fileLegs = []) {
   // A trial recorded `notRun` (a scenario that needs the sandbox, on Windows: ruling E30) is
   // neither a pass nor a failure: it is left out of every verdict, never run again, and its
   // variant reads `not run` with its reason.
   const runs = allRuns.filter((run) => !run.notRun);
   const notRunWhy = Object.fromEntries(VARIANTS.map((variant) => [variant, allRuns.find((run) => run.variant === variant && run.notRun)?.notRun ?? null]));
-  const legs = [...new Set((runs.length ? runs : allRuns).map(leg))];
+  const legs = [...new Set([...(runs.length ? runs : allRuns).map(leg), ...fileLegs])];
   const safety = allRuns.some((run) => run.safety === true);
   const verdicts = Object.fromEntries(VARIANTS.map((variant) => [variant, judge(runs.filter((run) => run.variant === variant), legs, safety)]));
   // Marked to run again: a first round whose with failed or whose without passed, for
@@ -192,6 +204,12 @@ function rowFor(id, allRuns) {
   const own = reasons(failing.filter((run) => lead.round !== 'again' || run.round === 'again'));
   if (own) parts.push(own);
   if (lead.short) parts.push(`the round run again stopped at ${lead.done} of ${TRIALS_AGAIN}`);
+  for (const variant of VARIANTS) {
+    const ran = runs.filter((run) => run.variant === variant);
+    if (!ran.length) continue;
+    for (const l of legs) if (l !== null && !ran.some((run) => leg(run) === l)) parts.push(`${variant}: leg ${l} did not run`);
+    if (legs.includes(null) && !ran.some((run) => leg(run) === null)) parts.push(`${variant}: the main leg did not run`);
+  }
   for (const variant of VARIANTS) {
     if (verdicts[variant].result === 'not run' && notRunWhy[variant]) parts.push(`${variant}: not run (${notRunWhy[variant]})`);
   }
@@ -242,7 +260,6 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     if (!byId.has(run.id)) byId.set(run.id, []);
     byId.get(run.id).push(run);
   }
-  const rows = [...byId.entries()].map(([id, scenarioRuns]) => rowFor(id, scenarioRuns));
   // The scenarios that don't run on the run's agent (`agents`) are no rows of its report; those that
   // name it are among the designed set it must account for.
   const agent = typeof record?.agent === 'string' ? record.agent : DEFAULT_AGENT;
@@ -250,6 +267,8 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
   const written = all.filter((scenario) => runsOnAgent(scenario.agents, agent));
   const named = typeof record?.agent === 'string' ? all.filter((scenario) => scenario.agents?.includes(agent)).map((scenario) => scenario.number) : [];
   designed = [...new Set([...designed, ...named])];
+  const legsOf = (id) => [...new Set(written.filter((scenario) => scenario.number === id).map((scenario) => scenario.leg))];
+  const rows = [...byId.entries()].map(([id, scenarioRuns]) => rowFor(id, scenarioRuns, legsOf(id)));
   for (const scenario of written) {
     if (!rows.some((row) => row.id === scenario.number)) rows.push(notRun(scenario.number, scenario.file, scenario.suite, 'not in this run'));
   }

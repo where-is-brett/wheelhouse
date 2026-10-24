@@ -59,7 +59,7 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
 
 | Brainstorming's size | Lane | What you record and ask |
 |---|---|---|
-| "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after. |
+| "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. |
 | "a small change" | Small | The brief; a `work` event naming it; an `approve-work` card (lane `small`, with `shownFirst`) |
 | "a written design" | Feature | The design; a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
 

@@ -11,7 +11,12 @@
 //                   replaces the one it names
 //   again <n>       the card the board numbers n, with its id, to ask again
 //   why <n>         notes that the director asked why about the card the board numbers n, and
-//                   prints one line; it never gives the card again: explain, then run `again <n>`
+//                   prints the one sentence to say before the card; it never gives the card again:
+//                   say it, then run `again <n>`
+//   suggest <card id> <work id> <the change>
+//                   hands a change the director suggested on a waiting approval or CI push card to
+//                   the build: the work re-stated with the change, in the front desk's own words, as
+//                   its title; prints the one line to say
 //   record <kind>   records something the front desk decided: one of RECORD_KINDS, the data as JSON;
 //                   for a work event's document and an amendment, it works out the hash and prints it;
 //                   an amendment needs its read-back, and prints the route line and the read-back to say
@@ -77,7 +82,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore', 'confirm'];
+const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore', 'confirm'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -445,6 +450,10 @@ export async function card({ client, cwd, input, now }) {
     if (typeof sha !== 'string' || !HEAD.test(sha)) throw new CliError(`The host gave no head commit for pull request #${target.pr}`);
     target = { ...target, sha };
   }
+  // Work users would see is shown to the director before it merges, whatever the card was given (scenario 7).
+  if (input.kind === 'approve-work' && isPlain(target) && views.work?.[target.work]?.work?.data?.visible === true) {
+    target = { ...target, shownFirst: true };
+  }
   const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
   // The card revised must wait now, or have been closed only by a later head of its pull request or
   // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same
@@ -523,7 +532,46 @@ export async function why({ client, cwd, n }) {
     got = null;
   }
   if (!taken(got) && !keepAnswer(cwd, body)) throw new CliError(`The ${WHY} about card ${n} wasn't noted: ${said(got, 'the host helper did not answer')}`);
-  return [`Noted that you asked why about card ${n}.`];
+  return [`Noted that you asked why about card ${n}.`, ...whyNext(views, question, n)];
+}
+
+// The one sentence the front desk says before card n on a Why?, word for word: the everyday example
+// of the first term the card uses that the glossary gives one for, then what the card asks
+// (scenario 36). With no such term, the sentence's form, for the front desk to fill.
+function whyNext(views, question, n) {
+  const glossary = glossaryOf(views.glossary);
+  const term = Object.keys(glossary).find((t) => glossary[t].example && termPattern(t).test(question));
+  const like = term === undefined ? null : glossary[term].example.trim().replace(/^like\s+/i, '').replace(/[.!]+$/, '');
+  const asks = String(question).split('\n')[0].trim();
+  const how = `then card ${n} from \`again ${n}\` in your clickable-question tool, in the same message:`;
+  if (like) return [`Say this one sentence, word for word, and nothing else, ${how}`, `It's like ${like}: card ${n} asks "${asks}"`];
+  return [`Say one sentence and nothing else, ${how}`, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`];
+}
+
+// --- suggest ---
+
+// The one line the front desk says after handing a suggested change to the build.
+export const SUGGESTED = 'Noted. A new proposal will follow.';
+
+// Hands a change the director suggested on a waiting approval or CI push card to the build: the open
+// work re-stated as it stands, its title the change in the front desk's own words, so the code
+// changes before the card is revised. One command, so nothing is said between steps (scenario 36).
+// Resolves with { id, pushed, say }.
+export async function suggest({ client, cwd, card: cardId, work: workId, change }) {
+  const words = typeof change === 'string' ? change.trim() : '';
+  if (words === '' || BREAK.test(words)) throw new CliError('Give the change in your own words, on one line: suggest <card id> <work id> <the change in your own words>');
+  const { views } = await viewsOf(client, cwd);
+  const pressed = views.waiting.find((c) => c.id === cardId);
+  if (pressed === undefined) throw new CliError(`Card ${cardId} no longer waits: say so in one line and ask nothing`);
+  const kind = pressed.data?.kind;
+  if (!['approval', 'ci-push'].includes(kind)) throw new CliError(`Card ${cardId} is ${/^[aeiou]/.test(String(kind)) ? 'an' : 'a'} ${kind} card: revise the proposal and compose its new card with \`card\``);
+  if (!isOpen(views, workId)) {
+    const open = Object.keys(isPlain(views.work) ? views.work : {}).filter((id) => isOpen(views, id));
+    throw new CliError(`${workId} isn't open work: the open work is ${open.length ? open.join(', ') : 'none'}`);
+  }
+  const data = { ...views.work[workId].work.data, title: words };
+  const got = await write(client, cwd, 'work', data);
+  return { id: got.id, pushed: got.pushed === true, say: SUGGESTED };
 }
 
 // --- record ---
@@ -700,6 +748,11 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
   // A reversal's topic is a slug in lower case, as a card's is, so the delegation review counts them together.
   if (kind === 'reversal') return answered(await write(client, cwd, kind, { ...input, topic: topicOf(input.topic) }));
   if (kind === 'work') {
+    // A change users would see goes in the small lane at least, shown first (intake, route 9;
+    // scenario 7). Ready-made work carried on (`from`) is shown whatever its lane.
+    if (input.lane === 'quick' && input.visible === true && input.from === undefined) {
+      throw new CliError('Work users would see goes in the small lane at least, shown to the director first: record it in the small lane, with an approve-work card (shownFirst). The quick lane is for work users won\'t see (visible false)');
+    }
     const data = await withHash(client, cwd, kind, input);
     const hash = data.doc?.hash;
     return { ...answered(await write(client, cwd, kind, data)), ...(typeof hash === 'string' ? { hash } : {}) };
@@ -1099,6 +1152,9 @@ export async function main(argv, {
     } else if (command === 'why') {
       if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number on the board: why <n>');
       lines(await why({ client: helper, cwd: here, n: Number(rest[0]) }));
+    } else if (command === 'suggest') {
+      if (rest.length < 3) throw new CliError('Give the card, the work and the change: suggest <card id> <work id> <the change in your own words>');
+      json(await suggest({ client: helper, cwd: here, card: rest[0], work: rest[1], change: rest.slice(2).join(' ') }));
     } else if (command === 'record') {
       only(rest, 1, `Give the kind to record: record <kind>, one of ${RECORD_KINDS.join(', ')}`);
       if (!RECORD_KINDS.includes(rest[0])) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);

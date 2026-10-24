@@ -93,7 +93,7 @@ export const NO_HELPER = 'The host helper isn\'t running, so nothing can be push
 export const NOT_SYNCED = 'State was not synced with the host this time';
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
 // In the project's main folder, for any session that isn't the foreman's: the front desk's playbook.
-export const FRONT_DESK_LINE = 'This is the front desk. Follow wheelhouse:front-desk.';
+export const FRONT_DESK_LINE = 'This is the front desk. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.';
 
 // In a folder being set up: where setup stands.
 export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';

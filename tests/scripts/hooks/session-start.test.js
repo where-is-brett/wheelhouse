@@ -806,7 +806,7 @@ test('the session start leaves the watcher alone in Shape 2, and fails open when
 
 test('in the project\'s main folder the reload names the front desk\'s playbook, after STOP and damaged state', async () => {
   await withHome(async () => {
-    assert.equal(FRONT_DESK_LINE, 'This is the front desk. Follow wheelhouse:front-desk.');
+    assert.equal(FRONT_DESK_LINE, 'This is the front desk. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.');
     const lines = text(await run(fake(), { env: {} })).split('\n');
     assert.equal(lines.filter((l) => l === FRONT_DESK_LINE).length, 1);
     const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
