@@ -41,7 +41,7 @@ import { settingKey } from '../protection/windows-builds.js';
 import { computerId } from '../lib/paths.js';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress, whyCard as defaultWhy, suggestCard as defaultSuggest } from './press.js';
-import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, ADVANCED } from './settings-pane.js';
+import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, premiumPinIn, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -58,6 +58,7 @@ import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
+import { columnsReadyOf } from '../routing/in-force.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
@@ -124,6 +125,8 @@ const DEFAULTS = {
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
   readChanges: defaultChanges,
+  // The Thoroughness columns ready on the pins in force, for the pane's levels (scripts/routing/in-force.js).
+  columnsReady: columnsReadyOf,
   // The bridge's own time zone, which the pane's times are worked out in.
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   loadInputs: loadBoardInputs,
@@ -253,6 +256,17 @@ async function suggest(req, d) {
   return answer;
 }
 
+// The Thoroughness levels beyond Balanced and Thorough whose columns are ready: the state's
+// `column-ready` list, as the `columnsReady` reader gives it, or none when it can't be read.
+function readyOf(project, d) {
+  try {
+    const list = typeof d.columnsReady === 'function' ? d.columnsReady({ project }) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
 // The settings pane's rows, from the settings views on disk and the profile's: the settings in
 // force, with each row's choices as they are offered now. A project's Locked mark is passed when
 // the project says it.
@@ -260,10 +274,10 @@ async function settings(req, d) {
   const found = siteOf(req.cwd, d);
   if (found === null) return no(SAYS.notProject);
   const effective = d.readEffective({ project: found.project, now: d.now });
-  const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined };
+  const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined, ready: readyOf(found.project, d) };
   // The level build commands run at on Windows is kept per computer: this computer's is shown.
   const builds = effective?.[settingKey(d.computer())];
-  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premiumPin: premiumPinIn(found.record?.folder), stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
 }
 
 // A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
@@ -272,7 +286,7 @@ async function setting(req, d) {
   if (req.origin !== PANE) return no(SAYS.notPane);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: helperMs(), stopState: d.stopState });
+  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: helperMs(), stopState: d.stopState, ready: readyOf(project, d) });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 

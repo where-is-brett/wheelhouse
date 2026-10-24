@@ -1,7 +1,7 @@
 // tests/scripts/settings/effective.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveSettings, settingsText, settingWords } from '../../../scripts/settings/effective.js';
+import { effectiveSettings, settingsText, settingWords, sayValue } from '../../../scripts/settings/effective.js';
 import { buildViews } from '../../../scripts/state/views.js';
 
 const entry = (key, value, extra = {}) => ({ key, id: `id-${key}`, at: '2026-10-18T08:00:00.000Z', value, before: null, ...extra });
@@ -117,4 +117,11 @@ test('settingWords names a setting and its value in plain words, on one line', (
   assert.equal(settingWords('pace', 2), 'Builders at once: 2');
   // The settings list says each the same way.
   assert.match(settingsText(effectiveSettings({ project: {}, profile: view(entry('known:pull-request', true)), now: NOON })), /^Knows "pull request": yes \(yours\)$/m);
+});
+
+test('the Thoroughness, premium and usage nudge values are said in plain words', () => {
+  assert.deepEqual(['lightest', 'lean', 'balanced', 'thorough'].map((v) => sayValue('efficiency', v)), ['Lightest', 'Lean', 'Balanced', 'Thorough']);
+  assert.deepEqual(['off', 'within-plan', 'paid-too'].map((v) => sayValue('premium', v)), ['off', 'on, within your plan', 'on, paid credits too']);
+  assert.deepEqual(['off', 50, 75, 90].map((v) => sayValue('usageMark', v)), ['off', 'at 50%', 'at 75%', 'at 90%']);
+  assert.equal(settingWords('usageMark', 75), 'Usage nudge: at 75%');
 });

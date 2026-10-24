@@ -123,7 +123,7 @@ import path from 'node:path';
 import { PLUGIN_ROOT } from './tools.js';
 import {
   ForemanError, NO_PLAN, PLANS_WHILE_HELD, SAYS_CHARS, TamperedBrief, checkoutOf, clashFor, featureOf, haltFor, haltOf, laneOf, loadConfig, loadViews, oneLine,
-  openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
+  builderCapOf, openPrWait, pausedBy, planOf, projectHere, queueToStart, queuedAgain, recordedBriefOf, slotFor, stateEvents, waitText, whyText, worktreeOf,
 } from './wake.js';
 import { questionProblem } from '../cards/compose.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
@@ -140,6 +140,8 @@ import { lockedByPath } from '../hooks/kit.js';
 import { branchOf } from '../hooks/session-start.js';
 import { forward } from './forward.js';
 import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
+import { classifyChange } from '../gate/guardrails.js';
+import { routingFrom } from '../routing/in-force.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { CARD } from '../lib/front-desk.js';
@@ -150,6 +152,7 @@ import { run as runProgram } from '../lib/run.js';
 import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { sameRemote } from '../state/git.js';
+import { sessionsOfProject } from '../agents/project-agent.js';
 import { readReadyRecord } from '../survey/ready-record.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
@@ -319,7 +322,7 @@ async function goAhead(ctx, work, f, { lead = '' } = {}) {
   }
   const config = await ctx.config();
   const clash = clashFor(views, config, work, Array.isArray(f.files) ? f.files : []);
-  const wait = waitText(clash, slotFor(views, work, { now: ctx.now }));
+  const wait = waitText(clash, slotFor(views, work, { now: ctx.now, builderCap: builderCapOf(views, config, ctx.now) }));
   if (wait !== null) {
     ctx.say(`${lead}${work} waits: ${wait}.`);
     return false;
@@ -584,9 +587,10 @@ async function start(ctx, work, rest) {
   // The brief's plan comes before the one the session records, so a brief that
   // named one could never move on to slice 2 (R87, R88).
   if (plan && slices > 1) refuse('--plan names one plan, so it can\'t be given for work in several slices: each slice\'s plan is recorded by its session');
-  const routing = Object.fromEntries(Object.entries(config.routing ?? {}).filter(([, m]) => typeof m === 'string' && m !== ''));
+  // The brief carries no models: the watcher gives each wake the column in force (design section 14.6).
+  // `routing` stays in the brief's shape, empty, so an older brief's is still read (and ignored).
   const fields = {
-    v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing, shownFirst: entry.approval?.shownFirst === true,
+    v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing: {}, shownFirst: entry.approval?.shownFirst === true,
     ...(plan ? { plan } : {}), ...(slices ? { slices } : {}),
     ...(entry.work.data.from === undefined ? {} : { from: entry.work.data.from }),
   };
@@ -598,7 +602,8 @@ async function start(ctx, work, rest) {
   }
 
   // The queue: work it lets start, or small or feature work held for pace or a dependency (R60, R89).
-  const q = queueToStart(views, { now: ctx.now });
+  // At Lean and Lightest, one builds at a time beside pace (design section 14.6).
+  const q = queueToStart(views, { now: ctx.now, builderCap: builderCapOf(views, config, ctx.now) });
   let held = null;
   if (!q.start.includes(work)) {
     const why = q.hold.find((h) => h.work === work)?.why ?? 'unknown';
@@ -1164,6 +1169,81 @@ async function releaseMerged(ctx, pr, merged) {
   await ctx.write('merge', { pr, ...commit, forUsers: merged.briefing });
 }
 
+// The verified CLEAN reviews of pull request `pr` at `head` on record, each counted once: by its record's id, which a
+// record sent again (from a session's pending folder, say) keeps, and its signer. Two reviewers' records may hold
+// the same data (the same verdict, model and version), so the data alone never makes two reviews one.
+function cleanReviewsOf(project, pr, head) {
+  const enrolled = readEnrolled();
+  const seen = new Set();
+  for (const e of stateEvents(project)) {
+    if (!(e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head && e.data.verdict === 'CLEAN' && verify(e, enrolled))) continue;
+    seen.add(`${e.sig.computer}:${e.id}`);
+  }
+  return seen.size;
+}
+
+// Whether `work`'s change is in one of the project's critical areas: the files its plan names and those its branch
+// changes from the default branch at `head`. 'yes', 'no', or 'unknown' when git can't say, which counts as in one, so
+// the check is never skipped.
+async function criticalAreaOf(ctx, config, views, work, head) {
+  const areas = Array.isArray(config?.criticalAreas) ? config.criticalAreas : [];
+  if (areas.length === 0) return 'no';
+  const planned = featureOf(views, work)?.files;
+  const paths = Array.isArray(planned) ? planned.filter((x) => typeof x === 'string') : [];
+  if (classifyChange({ paths, config }).criticalAreas.length > 0) return 'yes';
+  if (head === undefined) return 'unknown';
+  try {
+    const git = fencedGit(ctx, checkoutOf(ctx.project), 'nothing was merged');
+    const diff = await git(['diff', '--name-only', '-z', `refs/remotes/origin/HEAD...${head}`]);
+    if (diff.code !== 0) return 'unknown';
+    const changed = String(diff.stdout ?? '').split('\0').filter((x) => x !== '');
+    return classifyChange({ paths: changed, config }).criticalAreas.length > 0 ? 'yes' : 'no';
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Whether the agent the project runs here passes each subagent its column (`takesColumn`), so its feature session
+// can dispatch a second reviewer at Thorough. When which agent that is can't be told, it counts as one that does:
+// the second review is never dropped on a guess.
+function takesColumn(config) {
+  try {
+    return sessionsOfProject(config).takesColumn === true;
+  } catch {
+    return true;
+  }
+}
+
+// At Thorough, work in a critical area merges only once two fresh reviewers have each reported CLEAN on its head
+// (design section 14.6): the foreman's check, asked before the gate is; the gate's own condition stays as it is.
+// Null when the merge may go to the gate, else the line saying why it waits.
+async function secondReviewWait(ctx, views, work, pr, head) {
+  // A configuration that can't be read falls back to Balanced, whose one review is the gate's to weigh as always; the
+  // gate itself is unchanged, and reads the configuration again for its own conditions.
+  let config;
+  try {
+    config = await ctx.config();
+  } catch (error) {
+    if (!(error instanceof ForemanError)) throw error;
+    return null;
+  }
+  if (routingFrom({ config, views, now: ctx.now }).extra?.secondReviewer !== true) return null;
+  const area = await criticalAreaOf(ctx, config, views, work, head);
+  if (area === 'no') return null;
+  // An agent that doesn't take the column is never told to dispatch a second reviewer, so it has one
+  // review, as the gate requires.
+  if (!takesColumn(config)) return null;
+  const clean = head === undefined ? 0 : cleanReviewsOf(ctx.project, pr, head);
+  if (clean >= 2) return null;
+  const merges = `at Thorough it merges only once two fresh reviewers have each reported CLEAN on ${head === undefined ? 'its head' : short(head)}: ${clean} so far. `;
+  if (area === 'unknown') {
+    return `Pull request #${pr} for ${work} is treated as in a critical area, because git couldn't say which files it changes, and ${merges}`
+      + "It waits for the feature session's second reviewer; if none comes, ask the director.";
+  }
+  return `Pull request #${pr} for ${work} is in a critical area, and ${merges}`
+    + "It waits for the feature session's second reviewer; nothing to do.";
+}
+
 async function merge(ctx, work, rest) {
   flagsOf(rest, [], 'merge');
   const views = await ctx.views();
@@ -1209,6 +1289,12 @@ async function merge(ctx, work, rest) {
   // A new head needs CI on that exact commit before the gate lets it merge (design section 12).
   if (updated.updated === true) {
     ctx.say(`Brought pull request #${pr} for ${work} up to date at ${short(updated.head)}; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.`);
+    return;
+  }
+  const head = [updated.head, state?.result?.headSha].find((h) => typeof h === 'string' && FULL_COMMIT.test(h));
+  const second = await secondReviewWait(ctx, views, work, pr, head);
+  if (second !== null) {
+    ctx.say(second);
     return;
   }
   const merged = await ctx.client.merge(number);

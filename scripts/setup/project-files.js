@@ -123,7 +123,7 @@ import { STATE_BRANCH } from '../state/clone.js';
 import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { readConfig, isModelName } from '../gate/guardrails.js';
-import { aliasModel, FRONT_DESK_ALIAS } from './best-model.js';
+import { aliasModel, FRONT_DESK_ALIAS, MID_SIZED_ALIAS } from './best-model.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
@@ -247,17 +247,25 @@ function sameContent(rel, a, b) {
 // command line's own default), the front desk's `pages` (none, so no approval carries over a
 // screenshot), and `liveData` from step 4's answer (ruling R31). Real users are the `phase` setting
 // in state, never a key here (ruling R38). The configuration is the same on GitHub and GitLab.
-export function starterConfig({ answers = {}, frontDesk = null } = {}) {
+export function starterConfig({ answers = {}, frontDesk = null, midSized = null } = {}) {
   const live = answers['4.live-data'];
   if (live?.label !== LIVE_DATA.yes && live?.label !== LIVE_DATA.no) throw new Error('Step 4 has not been told whether the product holds live data yet');
   const starter = { ...readConfig(null), pages: [], liveData: live.label === LIVE_DATA.yes };
   // Only the director's Yes on step 4's question opens the keychain (check 73), never the working copy.
   if (answers['4.apple-apps']?.label === SIGNS_APPS.yes) starter.signsApps = true;
-  return frontDesk ? { ...starter, routing: { ...starter.routing, frontDesk } } : starter;
+  const out = frontDesk ? { ...starter, routing: { ...starter.routing, frontDesk } } : starter;
+  // The most capable class is the front desk's model; the mid-sized class is what its alias stands for.
+  // No premium pin is ever written here: it is the director's separate opt-in (design section 14.6).
+  const pins = { ...(frontDesk ? { mostCapable: frontDesk } : {}), ...(midSized ? { midSized } : {}) };
+  return Object.keys(pins).length > 0 ? { ...out, tiers: { pins } } : out;
 }
 
 // The front desk's model a configuration pins (design section 8), or null when it pins none.
 export const frontDeskPin = (config) => (isModelName(config?.routing?.frontDesk) ? config.routing.frontDesk : null);
+
+// The model a configuration pins for a class of the Thoroughness setting's columns, or null.
+const classPin = (config, name) => (isModelName(config?.tiers?.pins?.[name]) ? config.tiers.pins[name] : null);
+export const midSizedPin = (config) => classPin(config, 'midSized');
 
 // The configuration a project ends up with: the one it has, with each of the starter's keys it
 // lacks added, the starter's front desk pin where it has none, and `liveData` as step 4's answer says. A file that isn't a configuration is refused.
@@ -277,6 +285,13 @@ function configFrom(existing, starter) {
   else if (Object.hasOwn(out, 'signsApps')) out.signsApps = false;
   // A project set up before the front desk had a model gets the starter's pin; a pin it holds stays.
   if (frontDeskPin(out) === null && frontDeskPin(starter) !== null && isObject(out.routing)) out.routing = { ...out.routing, frontDesk: starter.routing.frontDesk };
+  // The same for the classes' pins (design section 8): one the configuration holds stays, one it lacks is added.
+  const wanted = starter.tiers?.pins ?? {};
+  const missing = Object.keys(wanted).filter((name) => classPin(out, name) === null);
+  if (missing.length > 0) {
+    const held = isObject(out.tiers?.pins) ? out.tiers.pins : {};
+    out.tiers = { ...(isObject(out.tiers) ? out.tiers : {}), pins: { ...held, ...Object.fromEntries(missing.map((name) => [name, wanted[name]])) } };
+  }
   return out;
 }
 
@@ -696,18 +711,19 @@ async function installPin({ id, folder, run, claude }) {
 // project's own folder of this computer's, which uninstall removes with the project.
 const bestFile = (project) => path.join(projectsDir(), project, 'setup-best-model.json');
 
-// What `best(alias)` gives, asked once in a setup run (`runId`) of `project` for that alias and
+// What `best(alias)` gives, asked once in a setup run (`runId`) of `project` for each alias and
 // kept, so every plan of the run (the card's, the click's, the step's own) gives the same list and
-// the card's hash holds. A run with no id asks every time; a new run, or another alias, asks
-// again, so one that found nothing tries again.
+// the card's hash holds. A run with no id asks every time; a new run asks again, so one that
+// found nothing tries again.
 async function bestOnce(project, runId, alias, best) {
   if (typeof runId !== 'string') return best(alias);
   const kept = readJson(bestFile(project));
-  if (kept?.runId === runId && kept.alias === alias) return isModelName(kept.model) ? kept.model : null;
+  const models = kept?.runId === runId && isObject(kept.models) ? kept.models : {};
+  if (Object.hasOwn(models, alias)) return isModelName(models[alias]) ? models[alias] : null;
   const model = await best(alias);
   try {
     fs.mkdirSync(path.dirname(bestFile(project)), { recursive: true });
-    fs.writeFileSync(bestFile(project), `${JSON.stringify({ runId, alias, model })}\n`);
+    fs.writeFileSync(bestFile(project), `${JSON.stringify({ runId, models: { ...models, [alias]: model } })}\n`);
   } catch { /* asked again at the next plan */ }
   return model;
 }
@@ -733,7 +749,7 @@ const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0
 // shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
 // that nothing is committed and protection stays as it is, and names each shared file in
 // `differ`, which differs from what is committed and is left as it is.
-export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null }) {
+export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null }) {
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
   // computer, in this computer's own list.
@@ -752,6 +768,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
   if (frontDesk === NO_PIN) parts.push('the front desk\'s model is left as it is: Claude Code didn\'t say which model to use');
   else if (frontDesk) parts.push(`the front desk runs on ${frontDesk}`);
+  if (midSized === NO_PIN) parts.push('Lean and Lightest wait for the lighter model: Claude Code didn\'t say which model to use');
+  else if (midSized) parts.push('Lean and Lightest move most building and routine checking to the lighter model');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
@@ -965,7 +983,10 @@ export function projectFilesStep({
       // The front desk's model (design section 8): the pin the configuration holds, else what Claude
       // Code's alias for the front desk stands for now, asked only while there is no pin.
       const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(found.project, ctx.runId, FRONT_DESK_ALIAS, best);
-      const config = starterConfig({ answers: ctx.answers, frontDesk: pin });
+      // The lighter model for Lean and Lightest the same way: the pin held, else what its alias stands for, asked once.
+      const held = midSizedPin(objectIn(CONFIG, readText(at(CONFIG))));
+      const mid = held ?? await bestOnce(found.project, ctx.runId, MID_SIZED_ALIAS, best);
+      const config = starterConfig({ answers: ctx.answers, frontDesk: pin, midSized: mid });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
       const targets = targetsFor({ folder, config, release });
@@ -1040,7 +1061,7 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean) });
       changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin)}), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid }), director: 'One click' };
     },
 
     async apply(ctx, changes) {

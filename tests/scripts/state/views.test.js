@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildViews, writeViews, latestFor } from '../../../scripts/state/views.js';
+import { buildViews, writeViews, latestFor, readyColumns } from '../../../scripts/state/views.js';
 import { listEvents, makeEvent, confirmationFor, eventHash, dataHash, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, sign } from '../../../scripts/state/signing.js';
 import { approvalLine, ciPushLine, confirmLine } from '../../../scripts/state/card-lines.js';
@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -475,6 +475,16 @@ test('only live shown records hold a code or clash: a spent or expired one gives
     assert.deepEqual(w.damaged, []);
     // With no live record, the latest one is shown, as used.
     assert.equal(build([used, lift]).shown.K7M2.spent, true);
+  });
+});
+
+test('an accepted setting keeps the usage card offer that made it', async () => {
+  await withHome(() => {
+    const at = '2026-10-26T01:00:00.000Z';
+    const s1 = ev('setting', 1, { key: 'efficiency', value: 'lean', usageCard: at });
+    const s2 = ev('setting', 3, { key: 'efficiency', value: 'balanced' });
+    assert.equal(build([s1, conf(2, s1)]).settings.efficiency.usageCard, at);
+    assert.equal('usageCard' in build([s1, conf(2, s1), s2, conf(4, s2)]).settings.efficiency, false);
   });
 });
 
@@ -1214,6 +1224,51 @@ test('the survey view is the latest survey, or null when none was taken', async 
     const [first, second] = [survey(1, false), survey(2, true)];
     assert.deepEqual(build([second, first]).survey, { id: second.id, at: second.at, data: second.data });
   });
+});
+
+test('the columnsReady view keeps the latest column-ready record of each column', async () => {
+  await withHome(() => {
+    const ready = (n, column, pins) => ev('column-ready', n, { column, pins, records: [`run-${n}`] });
+    assert.deepEqual(build([]).columnsReady, {});
+    const first = ready(1, 'lean', { mostCapable: 'model-top', midSized: 'model-mid' });
+    const second = ready(2, 'lean', { mostCapable: 'model-top', midSized: 'model-mid-2' });
+    const light = ready(3, 'lightest', { mostCapable: 'model-top', midSized: 'model-mid' });
+    const view = build([second, light, first]).columnsReady;
+    assert.deepEqual(Object.keys(view).sort(), ['lean', 'lightest']);
+    assert.deepEqual(view.lean, { id: second.id, at: second.at, pins: second.data.pins, records: ['run-2'] });
+  });
+});
+
+test('the usageCards view lists the usage cards offered, oldest first', async () => {
+  await withHome(() => {
+    assert.deepEqual(build([]).usageCards, []);
+    const data = (card) => ({ card, at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from: 'balanced', to: 'lean' });
+    const first = ev('usage-card', 1, data('nudge'));
+    const second = ev('usage-card', 2, data('lightest'));
+    assert.deepEqual(build([second, first]).usageCards, [{ id: first.id, ...first.data }, { id: second.id, ...second.data }]);
+  });
+});
+
+test('readyColumns counts a column only while the configuration holds the pins it ran on', () => {
+  const pins = { mostCapable: 'model-top', midSized: 'model-mid', premium: 'model-premium' };
+  const config = { tiers: { pins } };
+  const view = {
+    lean: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } },
+    lightest: { pins: { mostCapable: 'model-top', midSized: 'model-old' } },
+    premium: { pins: { mostCapable: 'model-top', premium: 'model-premium' } },
+  };
+  assert.deepEqual(readyColumns(view, config), ['lean', 'premium']);
+  // A pin moved since: its column waits for a new evaluation.
+  assert.deepEqual(readyColumns(view, { tiers: { pins: { ...pins, midSized: 'model-mid-2' } } }), ['premium']);
+  assert.deepEqual(readyColumns(view, { tiers: { pins: { ...pins, mostCapable: 'model-top-2' } } }), []);
+  // The premium column needs a premium pin now.
+  assert.deepEqual(readyColumns(view, { tiers: { pins: { ...pins, premium: null } } }), ['lean']);
+  // A pin that stands for no model in both still matches: the column ran on it as it is.
+  assert.deepEqual(readyColumns({ lean: { pins: { mostCapable: 'model-top', midSized: null } } }, { tiers: { pins: { mostCapable: 'model-top' } } }), ['lean']);
+  // No pins, no view, or a view that can't be read: nothing is ready.
+  for (const [v, c] of [[view, {}], [view, null], [view, { routing: {} }], [null, config], ['lean', config], [{ lean: 'yes' }, config], [{ lean: { pins: null } }, config]]) {
+    assert.deepEqual(readyColumns(v, c), [], JSON.stringify([v, c]));
+  }
 });
 
 // ---- A ruling confirmed by a click in the chat at Lean (ruling P5-52) ----

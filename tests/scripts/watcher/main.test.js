@@ -320,7 +320,7 @@ test('Shape 1 starts a foreman for a due bundle; Shape 2 prints its line', () =>
   const c = clock();
   await runWatcher({ project: P, config: config(), observe: looker().observe, wakerOptions, loops: 5, now: c.now, sleep: c.sleep, log: quiet });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a']);
+  assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium']);
   assert.deepEqual(lines, []);
 
   fs.rmSync(path.dirname(healthFile(P)), { recursive: true });
@@ -407,5 +407,5 @@ test('the command line gives the watcher the handled ids and the foreman its too
     project: P, config: config(), observe: looker().observe, wakerOptions: { ...wakerOptions, ...options.wakerOptions }, loops: 5, now: c.now, sleep: c.sleep, log: quiet,
   });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--allowedTools', ...foremanTools()]);
+  assert.deepEqual(calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', ...foremanTools()]);
 }));

@@ -537,3 +537,24 @@ test('the command line reads, records and refuses in one plain line', () => with
   assert.equal(await main(['measures'], io), 0);
   assert.equal(said.out, 'Idle wakes: 0 of 1 (0%). Conflicts per merge: 0.\n');
 }));
+
+test('wake read at Lean counts one building slot, and says so', () => withHome(async () => {
+  const checkout = await project();
+  const pins = { mostCapable: 'model-top', midSized: 'model-mid' };
+  const views = emptyViews();
+  views.work.e = workView('e', { since: '2026-10-19T07:00:00.000Z' });
+  views.features.e = featureView('e', { step: 'building', worktree: worktree(checkout, 'e'), branch: 'feature/e', files: [] });
+  views.work['a-bug'] = workView('a-bug', { lane: 'bug', approved: false });
+  views.settings = { efficiency: { key: 'efficiency', value: 'lean' } };
+  views.columnsReady = { lean: { pins } };
+  const read = async (cfg) => (await readWakeLines({ file: wakeFile(path.join(checkout, 'w'), `w${Math.random()}`, { events: [] }), project: P, client: fakeClient({ views, cfg }).client, now })).lines.join('\n');
+  const lean = await read(config({ tiers: { pins } }));
+  assert.match(lean, /^Building \(1 of 1\): e\.$/m);
+  assert.match(lean, /^Thoroughness: one builds at a time at this level\.$/m);
+  assert.match(lean, /^- hold a-bug \(bug\): no building slot is free \(pace\)\.$/m);
+  // With no pins, Lean can't run: Balanced, pace alone.
+  const flat = await read(config());
+  assert.match(flat, /^Building \(1 of 3\): e\.$/m);
+  assert.doesNotMatch(flat, /one builds at a time/);
+  assert.match(flat, /^- start a-bug \(bug\)/m);
+}));

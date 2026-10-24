@@ -12,6 +12,7 @@ import {
   decide, toolSheetLines, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
   TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
 } from '../../../scripts/hooks/session-start.js';
+import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
@@ -1645,4 +1646,68 @@ test('the Wheelhouse command line carries the flag that turns the system certifi
   const command = (flags) => toolSheetLines('claude-code', { pluginRoot: '/plugin/root', platform: 'darwin', allowedFlags: flags }).find((l) => l.startsWith('The Wheelhouse command is '));
   assert.equal(command(new Set(['--use-system-ca'])), 'The Wheelhouse command is node --no-use-system-ca "/plugin/root/scripts/frontdesk/cli.js"');
   assert.equal(command(new Set(['--inspect'])), 'The Wheelhouse command is node "/plugin/root/scripts/frontdesk/cli.js"');
+});
+
+// ---- The usage cards (design section 14.6) ----
+
+const USAGE_NOW = '2026-10-26T01:00:00.000Z';
+const USAGE_RESET = '2026-10-28T22:00:00.000Z';
+const weekly = (used, at = USAGE_NOW) => () => ({ used, resetsAt: USAGE_RESET, at });
+const usageLines = (out) => text(out).split('\n').filter((l) => l.startsWith(USAGE_ASK));
+const usageCard = (line) => JSON.parse(line.slice(USAGE_ASK.length, line.indexOf('}.') + 1));
+const kept = (project) => {
+  const dir = pendingDir(project);
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'))) : [];
+};
+
+test('the front desk is handed the usage card when the allowance passes the mark, with the setting change to make, and the offer is recorded', async () => {
+  await withHome(async () => {
+    const f = fake();
+    const out = await run(f, { columnsReady: () => ['lean', 'lightest'], now: () => new Date(USAGE_NOW), allowance: weekly(76), timeZone: 'Australia/Sydney' });
+    const [line, ...more] = usageLines(out);
+    assert.deepEqual(more, []);
+    const card = usageCard(line);
+    assert.deepEqual(cardProblems(card.question), []);
+    assert.match(card.question, /You've used 76% of this week's allowance\. It resets on Thursday at 09:00\./);
+    assert.deepEqual(card.options.map((o) => o.label), ['Switch to Lean until it resets', 'Stay on Balanced', 'Suggest a change…']);
+    assert.match(line, /If the director picks "Switch to Lean until it resets", record the setting .*\{"key":"efficiency","value":"lean","usageCard":"2026-10-26T01:00:00.000Z"\}/);
+    assert.deepEqual(f.calls.writes.filter((w) => w.kind === 'usage-card'), [{ project: P, kind: 'usage-card', data: { card: 'nudge', at: USAGE_NOW, reset: USAGE_RESET, from: 'balanced', to: 'lean' } }]);
+  });
+});
+
+test('no switch to Lean is offered while the Lean column is not ready', async () => {
+  await withHome(async () => {
+    const out = await run(fake(), { columnsReady: () => [], now: () => new Date(USAGE_NOW), allowance: weekly(99) });
+    assert.equal(usageLines(out).length, 0);
+  });
+});
+
+test('no usage card below the mark, with no reading, for the director\'s mark off, once offered this week, or outside the front desk', async () => {
+  await withHome(async () => {
+    const now = () => new Date(USAGE_NOW);
+    const none = async (extra, f = fake(), input = {}) => usageLines(await run(f, { now, columnsReady: () => ['lean', 'lightest'], ...extra }, input)).length;
+    assert.equal(await none({ allowance: weekly(74) }), 0);
+    assert.equal(await none({ allowance: () => null }), 0);
+    assert.equal(await none({ allowance: weekly(80, '2026-10-24T00:00:00.000Z') }), 0);
+    const off = fake();
+    off.client.profile = { views: async () => ({ ok: true, views: { settings: { usageMark: { key: 'usageMark', value: 'off', id: 'u1', at: USAGE_NOW } } } }) };
+    assert.equal(await none({ allowance: weekly(99) }, off), 0);
+    const offered = fake({ views: { ...VIEWS, usageCards: [{ id: 'c1', card: 'nudge', at: USAGE_NOW, reset: USAGE_RESET, from: 'balanced', to: 'lean' }] } });
+    assert.equal(await none({ allowance: weekly(99) }, offered), 0);
+    recordRole('s-foreman', 'foreman');
+    assert.equal(await none({ allowance: weekly(99) }, fake(), { session_id: 's-foreman' }), 0);
+    // The director's own mark is read from their profile.
+    const lower = fake();
+    lower.client.profile = { views: async () => ({ ok: true, views: { settings: { usageMark: { key: 'usageMark', value: 50, id: 'u2', at: USAGE_NOW } } } }) };
+    assert.equal(await none({ allowance: weekly(55) }, lower), 1);
+  });
+});
+
+test('a usage offer the helper did not take is kept to send at a later start', async () => {
+  await withHome(async () => {
+    const f = fake();
+    f.client.state.write = async () => ({ ok: false });
+    await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
+    assert.deepEqual(kept(P).filter((r) => r.body?.kind === 'usage-card').map((r) => r.body.data.card), ['nudge']);
+  });
 });

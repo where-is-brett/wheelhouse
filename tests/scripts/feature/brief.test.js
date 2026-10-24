@@ -235,21 +235,21 @@ test('the commands carry the real plugin root', () => {
   assert.throws(() => renderBrief({ fields: fields(), pluginRoot: '' }), /plugin root/);
 });
 
-test('models come only from the routing given', () => {
-  const text = render('feature');
-  for (const model of ['model-a', 'model-b', 'model-c', 'model-d', 'model-e']) assert.ok(text.includes(model), model);
+test('the brief names the subagent roles and no model: the models and efforts come with each wake', () => {
+  const whole = render('feature');
+  // An older brief's routing is still read (its JSON block keeps it), and the text names none of it.
+  const text = whole.slice(whole.indexOf('\n```\n') + 5);
+  for (const model of ['model-a', 'model-b', 'model-c', 'model-d', 'model-e']) assert.ok(!text.includes(model), model);
+  for (const role of ['builder', 'mechanical', 'builderCritical', 'reviewer', 'reviewerCritical', 'tester']) assert.match(text, new RegExp(`^- ${role} \\(`, 'm'), role);
   assert.match(text, /wheelhouse:builder/);
   assert.match(text, /wheelhouse:reviewer/);
   assert.match(text, /wheelhouse:tester/);
-
-  // A role with no model, or no routing at all, uses the session's own default.
-  const bare = renderBrief({ fields: { ...fields('feature'), routing: { builder: 'model-a' } }, pluginRoot });
-  assert.ok(bare.includes('model-a'));
-  for (const model of ['model-b', 'model-c', 'model-d', 'model-e']) assert.ok(!bare.includes(model), model);
-  assert.match(bare, /session's own default/);
+  assert.match(text, /come with each wake/);
+  assert.match(text, /holds the same lines as its `column`/);
+  assert.match(text, /`effort`/);
   const none = renderBrief({ fields: { ...fields('quick'), routing: {} }, pluginRoot });
-  assert.ok(!/model-/.test(none));
-  assert.match(none, /session's own default/);
+  assert.ok(!/model-/.test(none), 'a new brief carries no models at all');
+  assert.equal(none.slice(none.indexOf('# Models by role')), render('quick').slice(render('quick').indexOf('# Models by role')));
 
   // No model name sits in a template.
   for (const file of ['brief.md', 'override.md', 'lanes/quick.md', 'lanes/small.md', 'lanes/feature.md', 'lanes/bug.md']) {

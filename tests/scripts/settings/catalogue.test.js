@@ -11,6 +11,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     showFirst: ['project', 'visual'],
     milestones: ['project', 'ask'],
     efficiency: ['project', 'balanced'],
+    premium: ['project', 'off'],
     budget: ['project', 'report'],
     pace: ['project', 3],
     phase: ['project', 'before-launch'],
@@ -18,6 +19,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     briefing: ['profile', 'standard'],
     briefingGapHours: ['profile', BRIEFING_GAP_HOURS],
     explanations: ['profile', 'plain'],
+    usageMark: ['profile', 75],
     notifications: ['profile', { channels: ['claude'] }],
     boardTab: ['profile', 'director'],
     hours: ['profile', null],
@@ -107,4 +109,15 @@ test('build commands on Windows is a setting per computer, kept in the project, 
   for (const key of ['windowsBuildCommands', 'windowsBuildCommands:', 'windowsBuildCommands:0A1B2C3D', 'windowsBuildCommands:0a1b2c3', 'windowsBuildCommands:0a1b2c3d4']) {
     assert.throws(() => checkSetting(key, 'ask'), /no setting called/, key);
   }
+});
+
+test('Thoroughness has four levels, Premium model three and Usage nudge five', () => {
+  assert.deepEqual(SETTINGS.efficiency.levels, ['lightest', 'lean', 'balanced', 'thorough']);
+  assert.deepEqual([SETTINGS.premium.label, SETTINGS.premium.levels], ['Premium model', ['off', 'within-plan', 'paid-too']]);
+  assert.deepEqual([SETTINGS.usageMark.label, SETTINGS.usageMark.levels], ['Usage nudge', ['off', 50, 65, 75, 90]]);
+  for (const level of ['lightest', 'lean', 'balanced', 'thorough']) assert.doesNotThrow(() => checkSetting('efficiency', level));
+  assert.throws(() => checkSetting('efficiency', 'max'));
+  assert.doesNotThrow(() => checkSetting('usageMark', 90));
+  assert.throws(() => checkSetting('usageMark', 80));
+  assert.throws(() => checkSetting('premium', 'on'));
 });

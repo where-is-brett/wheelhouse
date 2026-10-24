@@ -2,8 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { settingsRows, settingsGroups, choiceOf, pressSetting, changesFor, ADVANCED } from '../../../scripts/mod/settings-pane.js';
+import { settingsRows, settingsGroups, choiceOf, pressSetting, changesFor, premiumPinIn, ADVANCED } from '../../../scripts/mod/settings-pane.js';
 import { handle, lineOf } from '../../../scripts/mod/bridge.js';
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
 import { SETTINGS } from '../../../scripts/settings/catalogue.js';
@@ -85,12 +86,12 @@ test('every everyday setting is a row in the design\'s order, with its current c
   });
   const rows = settingsRows({ effective, now, timeZone: SYDNEY });
   assert.deepEqual(rows.map((r) => r.key), [
-    'autonomy', 'showFirst', 'presence', 'milestones', 'efficiency', 'budget', 'pace', 'briefing', 'briefingGapHours', 'explanations',
-    'notifications', 'boardTab', 'hours', 'phase', 'protection',
+    'autonomy', 'showFirst', 'presence', 'milestones', 'efficiency', 'premium', 'budget', 'pace', 'briefing', 'briefingGapHours', 'explanations',
+    'notifications', 'usageMark', 'boardTab', 'hours', 'phase', 'protection',
   ]);
   assert.deepEqual(rows.map((r) => r.label), [
-    'Autonomy', 'Show before building', 'Availability', 'Feature milestones', 'Thoroughness', 'Budget', 'Builders at once', 'Briefing length', 'Hours before a new briefing',
-    'Explanations', 'Notifications', 'Board opens on', 'Working hours', 'Product phase', 'Protection',
+    'Autonomy', 'Show before building', 'Availability', 'Feature milestones', 'Thoroughness', 'Premium model', 'Budget', 'Builders at once', 'Briefing length', 'Hours before a new briefing',
+    'Explanations', 'Notifications', 'Usage nudge', 'Board opens on', 'Working hours', 'Product phase', 'Protection',
   ]);
 
   const pace = rowOf(rows, 'pace');
@@ -593,7 +594,7 @@ test('the groups come in order, with their notes word for word', () => {
     'Autonomy', 'Show before building', 'Feature milestones', 'Builders at once', 'Thoroughness', 'Product phase', 'Build commands on Windows', 'Budget', 'Protection',
   ]);
   assert.deepEqual(groups[2].rows.map((r) => r.label), [
-    'Availability', 'Briefing length', 'Hours before a new briefing', 'Explanations', 'Board opens on', 'Notifications', 'Working hours',
+    'Availability', 'Briefing length', 'Hours before a new briefing', 'Explanations', 'Usage nudge', 'Board opens on', 'Notifications', 'Working hours',
   ]);
   assert.deepEqual(groups[3].rows.map((r) => [r.label, r.kind]), [['Advanced settings', 'change']]);
   assert.deepEqual(JSON.parse(JSON.stringify(groups)), groups);
@@ -662,4 +663,67 @@ test('the bridge shows this computer\'s build-command level, not another\'s', as
   assert.equal(groupRow((await ask('bbbbbbbb')).groups, 'windowsBuildCommands').value, 'Guarded');
   assert.equal(groupRow((await ask('aaaaaaaa')).groups, 'windowsBuildCommands').value, 'Unattended');
   assert.equal(groupRow((await ask('cccccccc')).groups, 'windowsBuildCommands').value, 'Ask');
+});
+
+// --- Thoroughness, the premium model and the usage nudge ---
+
+test('Thoroughness offers four levels, and a level not ready reads so; Balanced and Thorough are always ready', () => {
+  const groups = groupsAt('2026-10-19T05:00:00.000Z');
+  assert.deepEqual(groupRow(groups, 'efficiency').options, [
+    { value: 'lightest', label: 'Lightest: not ready yet' },
+    { value: 'lean', label: 'Lean: not ready yet' },
+    { value: 'balanced', label: 'Balanced' },
+    { value: 'thorough', label: 'Thorough' },
+  ]);
+  const lean = groupRow(groupsAt('2026-10-19T05:00:00.000Z', { ready: ['lean'] }), 'efficiency');
+  assert.deepEqual(lean.options.map((o) => o.label), ['Lightest: not ready yet', 'Lean', 'Balanced', 'Thorough']);
+});
+
+test('a pick of a level that is not ready records nothing and says so', () => withKey(async () => {
+  const client = fake();
+  assert.deepEqual(await press(client, 'efficiency', 'lean'), { made: false, says: 'Lean isn\'t ready yet, so Thoroughness stays as it is' });
+  assert.equal(nothingSent(client), 0);
+  assert.equal((await press(fake(), 'efficiency', 'thorough')).made, true);
+  assert.equal((await pressSetting({ project: P, key: 'efficiency', choice: 'lean', client: fake(), now: at('2026-10-19T05:00:00.000Z'), timeZone: SYDNEY, ready: ['lean'] })).made, true);
+}));
+
+test('Premium model shows, as a Change… row, only when the configuration has a premium pin', () => {
+  assert.equal(groupRow(groupsAt('2026-10-19T05:00:00.000Z'), 'premium'), undefined);
+  const groups = groupsAt('2026-10-19T05:00:00.000Z', { premiumPin: true });
+  assert.deepEqual(groupRow(groups, 'premium'), { key: 'premium', label: 'Premium model', value: 'off', kind: 'change' });
+  assert.deepEqual(groupRows(groups, 'project').map((r) => r.key).slice(4, 7), ['efficiency', 'premium', 'phase']);
+});
+
+test('the premium pin is read from the project configuration', () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-'));
+  try {
+    assert.equal(premiumPinIn(folder), false);
+    fs.mkdirSync(path.join(folder, '.claude'));
+    const write = (config) => fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], ...config }));
+    write({ tiers: { pins: { premium: 'model-premium' } } });
+    assert.equal(premiumPinIn(folder), true);
+    write({ tiers: { pins: { premium: null } } });
+    assert.equal(premiumPinIn(folder), false);
+    write({ tiers: { pins: { premium: 'model-premium' }, other: 1 } });
+    assert.equal(premiumPinIn(folder), false);
+    assert.equal(premiumPinIn(undefined), false);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('Usage nudge is a pop-up in the group for every project, at 75% by default', () => {
+  const nudge = groupRow(groupsAt('2026-10-19T05:00:00.000Z'), 'usageMark');
+  assert.equal(nudge.kind, 'select');
+  assert.equal(nudge.value, '75');
+  assert.deepEqual(nudge.options.map((o) => o.label), ['Off', 'At 50%', 'At 65%', 'At 75%', 'At 90%']);
+  assert.ok(groupRows(groupsAt('2026-10-19T05:00:00.000Z'), 'you').some((r) => r.key === 'usageMark'));
+});
+
+test('while Lightest is in force the project note adds its warning', () => {
+  const now = at('2026-10-19T05:00:00.000Z');
+  const effective = effectiveSettings({ project: { efficiency: { key: 'efficiency', value: 'lightest', id: 'a', at: '2026-10-18T00:00:00.000Z', before: null } }, now });
+  const note = settingsGroups({ effective, now, timeZone: SYDNEY }).find((g) => g.id === 'project').note;
+  assert.ok(note.endsWith(' Lightest: the lighter model also designs and checks risky work, so mistakes are likelier to slip through. Every check still runs.'));
+  assert.ok(!groupsAt('2026-10-19T05:00:00.000Z').find((g) => g.id === 'project').note.includes('Lightest'));
 });

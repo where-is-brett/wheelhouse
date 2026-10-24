@@ -98,6 +98,38 @@ test('the foreman and feature sessions, which read the main folder\'s local sett
   }
 });
 
+test('a call given the column in force passes its model, --effort and --fallback-model, before the tools', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  const config = { routing: { foreman: 'model-flat', builder: 'model-flat', feature: 'model-flat' } };
+  const given = { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' };
+  const wake = sessions.foremanCall({ config, prompt: 'go', claude, tools: ['Read'], ...given });
+  assert.deepEqual(wake.args, ['-p', 'go', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh', '--fallback-model', 'model-mid', '--allowedTools', 'Read']);
+  const long = sessions.foremanCall({ config, prompt: 'go', claude, long: true, settings: '/s.json', tools: ['Read'], ...given });
+  assert.deepEqual(long.args.slice(long.args.indexOf('--model')), ['--model', 'model-top', '--effort', 'xhigh', '--fallback-model', 'model-mid', '--allowedTools', 'Read']);
+  const start = sessions.featureStartCall({ config, prompt: 'go', claude, sessionId: 's', allowed: ['Read'], ...given });
+  assert.deepEqual(start.args, ['-p', 'go', '--session-id', 's', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh', '--fallback-model', 'model-mid', '--allowedTools', 'Read']);
+  const resume = sessions.featureResumeCall({ config, prompt: 'go', claude, sessionId: 's', ...given, fallback: null });
+  assert.deepEqual(resume.args, ['-p', 'go', '--resume', 's', '--permission-mode', 'acceptEdits', '--model', 'model-top', '--effort', 'xhigh']);
+  // The environment never carries an effort for every subagent.
+  for (const call of [wake, long, start, resume]) assert.ok(!Object.keys(call.env).some((k) => /EFFORT/i.test(k)));
+  // No model given (null or left out): the flat table's, as before; a feature's own role first, then the builder's.
+  assert.equal(sessions.foremanCall({ config, prompt: 'go', claude, model: null, effort: 'low' }).args.join(' '), '-p go --permission-mode acceptEdits --model model-flat --effort low');
+  const featureOnly = sessions.featureStartCall({ config: { routing: { feature: 'model-f', builder: 'model-b' } }, prompt: 'go', claude, sessionId: 's', model: null });
+  assert.equal(featureOnly.args[featureOnly.args.indexOf('--model') + 1], 'model-f');
+  const builderOnly = sessions.featureStartCall({ config: { routing: { builder: 'model-b' } }, prompt: 'go', claude, sessionId: 's', model: null });
+  assert.equal(builderOnly.args[builderOnly.args.indexOf('--model') + 1], 'model-b');
+});
+
+test('an effort that isn\'t one of the levels, or a model or fallback that is no model, is refused', () => {
+  const claude = { kind: 'direct', file: 'claude' };
+  const base = { prompt: 'go', claude, sessionId: 's', config: {} };
+  for (const call of [sessions.foremanCall, sessions.featureStartCall, sessions.featureResumeCall]) {
+    for (const effort of ['max', 'HIGH', '', 3, '--yolo', {}]) assert.throws(() => call({ ...base, effort }), /isn't a thinking effort/, String(effort));
+    for (const fallback of ['--dangerously-skip-permissions', 'a b', 7, '']) assert.throws(() => call({ ...base, fallback }), /fallback model can't be passed/, String(fallback));
+    for (const model of ['--dangerously-skip-permissions', 'a b', 7, '']) assert.throws(() => call({ ...base, model }), /model can't be passed/, String(model));
+  }
+});
+
 test('the foreman gets its role in its environment and a feature does not, whatever spelling the host used', () => {
   const env = { PATH: '/bin', wheelhouse_role: 'front-desk', CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/c' };
   const claude = { kind: 'direct', file: 'claude' };
@@ -132,7 +164,7 @@ test('the waker asks the project\'s adapter for the foreman\'s call, the feature
     seen.push({ name, options });
     return { file: `agent-${name}`, args: [name, options.prompt], input: 'in', verbatim: false, env: { PATH: '/p', MARK: name } };
   };
-  const stand = { checkForeman: (config) => seen.push({ name: 'check-foreman', config }), checkFeature: (config) => seen.push({ name: 'check', config }), foremanCall: answer('foreman'), featureStartCall: answer('start'), featureResumeCall: answer('resume'), finalAnswer: () => null };
+  const stand = { checkForeman: (config) => seen.push({ name: 'check-foreman', config }), checkFeature: (config) => seen.push({ name: 'check', config }), foremanCall: answer('foreman'), featureStartCall: answer('start'), featureResumeCall: answer('resume'), finalAnswer: () => null, takesColumn: true };
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');
@@ -155,7 +187,10 @@ test('the waker asks the project\'s adapter for the foreman\'s call, the feature
   assert.equal(calls[1].file, 'agent-start');
   const start = seen.find((x) => x.name === 'start');
   assert.equal(start.options.sessionId, started.sessionId);
-  assert.equal(start.options.prompt, 'Read .wheelhouse/feature/brief.md and follow it.');
+  assert.ok(start.options.prompt.startsWith('Read .wheelhouse/feature/brief.md and follow it.\n\nThe models and efforts for the subagents'), start.options.prompt);
+  // The column in force goes to the adapter with the call: here Balanced, on the flat table's models.
+  assert.deepEqual([start.options.model, start.options.effort, start.options.fallback], [null, 'high', null]);
+  assert.deepEqual([foreman.options.model, foreman.options.effort, foreman.options.fallback], ['model-a', 'medium', null]);
   assert.deepEqual(start.options.allowed, ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
   assert.equal(calls[1].cwd, worktree);
 

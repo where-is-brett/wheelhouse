@@ -55,7 +55,7 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function readAllowance() {
+export function readAllowance() {
   const reading = readJson(usagePath('allowance.json'));
   if (!isRecord(reading) || !Array.isArray(reading.windows) || reading.windows.length === 0) return null;
   const at = Date.parse(reading.at);

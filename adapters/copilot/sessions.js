@@ -345,6 +345,10 @@ function sessionCall({ project, target, role, config, prompt, rules = {}, resume
   };
 }
 
+// The waker and the foreman's start give every call the Thoroughness column's `model`, `effort` and `fallback`
+// (scripts/routing/in-force.js). Copilot's calls take them and ignore them: its columns are built with Copilot's
+// own routing table, and whether a custom agent's effort holds in a headless run is check 75's.
+
 // A fresh foreman for one wake, run in the project's main checkout. Its rules are its own tools, each
 // `Bash(<command>:*)` given as `shell(<command>:*)`, with no write (ruling P7-3). Copilot runs the watcher's first
 // shape only, so there is no long foreman session, and asking for one refuses (ruling P8-6).

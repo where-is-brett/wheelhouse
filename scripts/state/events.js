@@ -13,19 +13,22 @@ import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
+import { isModelName } from '../gate/guardrails.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'usage-card',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
-// helper, when setup finishes and when it is taken again.
-export const HELPER_ONLY_KINDS = ['survey'];
+// helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
+// evaluation's, through the helper's own writer, so no session can mark a Thoroughness column ready; nothing writes
+// one yet.
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 
@@ -251,7 +254,23 @@ const PLAIN_SHAPES = {
   // because the last one couldn't reach the host (ruling P3). Each part is checked as the survey
   // makes it, and at most as many as it looks at.
   survey: { must: ['v', 'hostReached', 'requests', 'pushed', 'local', 'more', 'instructions', 'scheduled', 'secrets', 'rules'], may: ['again'] },
+  // A Thoroughness column passed its evaluation (design section 14.6, "Settled for the builder"): the column (Lean,
+  // Lightest, or the premium model's own pass), the pins it ran on (`tiers.pins`, each a model name or null) and the
+  // evaluation's records. It counts only while the configuration's pins are the ones it ran on (views.js, readyColumns).
+  'column-ready': { must: ['column', 'pins', 'records'], may: [] },
+  // The front desk's session start offered a usage card (design section 14.6, "The usage nudge"): which (`nudge`,
+  // `lightest`, `up` or `return`), when, the allowance week it belongs to (`reset`, the time the weekly allowance
+  // resets), the Thoroughness level in force (`from`) and the one the card offered (`to`). What a week has offered
+  // is read from these, so no card is offered twice in a week and a return card knows the level before.
+  'usage-card': { must: ['card', 'at', 'reset', 'from', 'to'], may: [] },
 };
+// The columns a column-ready record may name, the pins it may carry, and the most records it lists.
+// The usage cards a usage-card record may name, and the Thoroughness levels it may carry.
+export const USAGE_CARDS = Object.freeze(['nudge', 'lightest', 'up', 'return']);
+const USAGE_LEVELS = Object.freeze(['lightest', 'lean', 'balanced', 'thorough']);
+export const READY_COLUMNS = Object.freeze(['lightest', 'lean', 'premium']);
+export const PIN_NAMES = Object.freeze(['mostCapable', 'midSized', 'premium']);
+export const READY_RECORDS = 50;
 // The most paths a control-file record names.
 export const CONTROL_PATHS = 50;
 export const CONTROL_WHY = Object.freeze(['changed', 'no-record', 'too-many']);
@@ -438,6 +457,17 @@ function checkPlain(kind, data) {
     if (data.work !== undefined) slug('work');
     if (data.usage !== undefined && !isPlain(data.usage)) bad('has a usage that is not an object');
     if (data.at !== undefined && (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at)))) bad('has an at that is not a time');
+  } else if (kind === 'usage-card') {
+    if (!USAGE_CARDS.includes(data.card)) bad(`needs card to be ${listed([...USAGE_CARDS])}`);
+    for (const k of ['at', 'reset']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
+    for (const k of ['from', 'to']) if (!USAGE_LEVELS.includes(data[k])) bad(`needs ${k} to be a Thoroughness level`);
+  } else if (kind === 'column-ready') {
+    if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
+    const pins = data.pins;
+    if (!isPlain(pins) || !Object.keys(pins).every((k) => PIN_NAMES.includes(k)) || !Object.values(pins).every((m) => m === null || isModelName(m))) {
+      bad(`needs pins, each of ${listed([...PIN_NAMES])} a model name or null`);
+    }
+    if (!Array.isArray(data.records) || data.records.length > READY_RECORDS || !data.records.every(isText)) bad(`needs records to be a list of at most ${READY_RECORDS} names`);
   } else if (kind === 'survey') {
     const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
     if (data.v !== 1) bad('needs v to be 1');
