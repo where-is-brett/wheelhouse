@@ -1675,7 +1675,7 @@ test('the front desk is handed the usage card when the allowance passes the mark
     assert.deepEqual(cardProblems(card.question), []);
     assert.match(card.question, /You've used 76% of this week's allowance\. It resets on Thursday at 09:00\./);
     assert.deepEqual(card.options.map((o) => o.label), ['Switch to Lean until it resets', 'Stay on Balanced', 'Suggest a change…']);
-    assert.match(line, /If the director picks "Switch to Lean until it resets", record the setting .*\{"key":"efficiency","value":"lean"\}/);
+    assert.match(line, /If the director picks "Switch to Lean until it resets", record the setting .*\{"key":"efficiency","value":"lean","usageCard":"2026-10-26T01:00:00.000Z"\}/);
     assert.deepEqual(f.calls.writes.filter((w) => w.kind === 'usage-card'), [{ project: P, kind: 'usage-card', data: { card: 'nudge', at: USAGE_NOW, reset: USAGE_RESET, from: 'balanced', to: 'lean' } }]);
   });
 });

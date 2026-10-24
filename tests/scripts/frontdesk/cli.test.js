@@ -863,6 +863,17 @@ test('record never writes a card, an answer, a shown or asked record, or a signe
   });
 });
 
+test('a setting made by a usage card\'s pick carries the time of the card\'s offer, and nothing else extra', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const at = '2026-10-26T01:00:00.000Z';
+    assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'lean', usageCard: at, other: 1 }))).code, 0);
+    assert.deepEqual(helper.writes()[0].data, { key: 'efficiency', value: 'lean', usageCard: at, words: 'Thoroughness: Lean' });
+    assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'lean', usageCard: 'not a time' }))).code, 0);
+    assert.equal('usageCard' in helper.writes()[1].data, false);
+  });
+});
+
 test('a setting the catalogue refuses is refused before it reaches the helper', async () => {
   await inHome(async () => {
     const helper = fakeHelper();

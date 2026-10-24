@@ -739,7 +739,9 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
       throw new CliError(error.message);
     }
     // Only what the setting is: its words are made from it, and a reason marks a learnt one.
-    const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }) };
+    const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }),
+      // The time of the usage card whose pick this is, which the card's line gives; it ties a return card to this switch.
+      ...(typeof input.usageCard === 'string' && !Number.isNaN(Date.parse(input.usageCard)) ? { usageCard: input.usageCard } : {}) };
     const words = countsAtOnce({ kind: 'setting', data }) ? null : await wordsOf(client, (await viewsOf(client, cwd)).views, now);
     const got = await writeSetting({ client, cwd, data, words, makeId });
     if (got.card === undefined) return got;

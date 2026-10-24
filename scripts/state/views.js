@@ -472,6 +472,8 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     for (const e of all) {
       if (!accepts(e)) continue;
       const entry = { key: e.data.key, id: e.id, at: e.at, value: e.data.value };
+      // A setting a usage card's pick made says which offer (its time), so a return card is for that switch alone.
+      if (kind === 'setting' && typeof e.data.usageCard === 'string') entry.usageCard = e.data.usageCard;
       if (kind === 'setting') {
         // A setting may end on its own (until) and remembers the accepted value it replaced.
         const prior = out[e.data.key];

@@ -11,7 +11,7 @@ test('the level in force is read from the project\'s settings, the mark from the
   const got = usageOffer({ views: { settings: setting('efficiency', 'lean') }, profile: {}, allowance: allowance(91), now: NOW, timeZone: 'UTC' });
   assert.ok(got.line.startsWith(USAGE_ASK));
   assert.match(got.line, /Switch to Lightest until it resets/);
-  assert.match(got.line, /\{"key":"efficiency","value":"lightest"\}/);
+  assert.match(got.line, /\{"key":"efficiency","value":"lightest","usageCard":"2026-10-26T01:00:00.000Z"\}/);
   assert.deepEqual(got.record, { card: 'lightest', at: NOW, reset: '2026-10-28T22:00:00.000Z', from: 'lean', to: 'lightest' });
   assert.equal(usageOffer({ views: {}, profile: setting('usageMark', 90), allowance: allowance(80), now: NOW }), null);
   assert.equal(usageOffer({ views: {}, profile: setting('usageMark', 65), allowance: allowance(80), now: NOW }).record.card, 'nudge');

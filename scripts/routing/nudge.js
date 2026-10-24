@@ -137,10 +137,12 @@ function returnInput({ day, before, level, when, saved }) {
 // `allowance` is the seven-day window ({ used, resetsAt, at }: weeklyOf). `level` the Thoroughness level in force,
 // `mark` the usage nudge setting (`off` or a percentage). `offers` the usage-card records so far (views.usageCards),
 // each { card, at, reset, from, to }: what an allowance week has offered is read from them, by the reset they name.
+// `switched` the accepted `efficiency` setting ({ at, value, usageCard }): a return card is for a switch a card's pick
+// made (it names the offer's time), set after the offer and before its reset, never for one made another way.
 // `now` a function or a time, `timeZone` the director's (this computer's own when undefined). `input` is the composer's
 // input; `switchLabel` the option whose pick is the change to `switchTo`; `record` what to keep once the card is
 // handed over (a return card's record names the reset of the week it closes). At most one card.
-export function nudgeCard({ allowance, level, mark, offers = [], now, timeZone }) {
+export function nudgeCard({ allowance, level, mark, offers = [], switched = null, now, timeZone }) {
   if (mark === 'off' || !Number.isFinite(mark) || !LEVELS.includes(level)) return null;
   const nowMs = typeof now === 'function' ? new Date(now()).getTime() : new Date(now ?? Date.now()).getTime();
   if (!allowance || !Number.isFinite(allowance.used) || Number.isNaN(time(allowance.resetsAt)) || Number.isNaN(time(allowance.at))) return null;
@@ -162,7 +164,8 @@ export function nudgeCard({ allowance, level, mark, offers = [], now, timeZone }
 
   // Return: the first reading after a reset, when the level in force came from one of these cards.
   const origin = list
-    .filter((o) => SWITCHING.includes(o.card) && !sameWeek(o.reset, allowance.resetsAt) && time(o.reset) < resetMs && time(o.reset) <= readMs && o.to === level)
+    .filter((o) => SWITCHING.includes(o.card) && !sameWeek(o.reset, allowance.resetsAt) && time(o.reset) < resetMs && time(o.reset) <= readMs && o.to === level
+      && switched?.value === level && switched.usageCard === o.at && time(switched.at) > time(o.at) && time(switched.at) < time(o.reset))
     .sort((a, b) => time(a.at) - time(b.at)).at(-1);
   if (origin && !list.some((o) => o.card === 'return' && sameWeek(o.reset, origin.reset))) {
     const before = levelBefore(list, origin);

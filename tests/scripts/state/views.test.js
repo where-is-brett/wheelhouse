@@ -478,6 +478,16 @@ test('only live shown records hold a code or clash: a spent or expired one gives
   });
 });
 
+test('an accepted setting keeps the usage card offer that made it', async () => {
+  await withHome(() => {
+    const at = '2026-10-26T01:00:00.000Z';
+    const s1 = ev('setting', 1, { key: 'efficiency', value: 'lean', usageCard: at });
+    const s2 = ev('setting', 3, { key: 'efficiency', value: 'balanced' });
+    assert.equal(build([s1, conf(2, s1)]).settings.efficiency.usageCard, at);
+    assert.equal('usageCard' in build([s1, conf(2, s1), s2, conf(4, s2)]).settings.efficiency, false);
+  });
+});
+
 test('an accepted setting keeps its until and the accepted value it replaced', async () => {
   await withHome(() => {
     const s1 = ev('setting', 1, { key: 'quiet', value: true, until: '2026-11-01T00:00:00.000Z' });
