@@ -1,11 +1,12 @@
 // scripts/lib/front-desk-model.js
 // The model the front desk's session runs on, and the line that says when it isn't the one setup
-// pinned (design section 8). The front desk is meant to run on the most capable model: on a smaller
-// one it follows the director's rulings less closely (docs/evals/front-desk.md, scenarios 1 and 16).
-// Setup pins that model in the project's routing table and starts the front desk's sessions on it,
-// but the director can still pick another in Claude's model menu, and that choice stands. So the
-// session start keeps, for this computer, the model the front desk's session started on, and the
-// board and the briefing show one plain line while it differs from the pin. It blocks nothing.
+// pinned (design section 8). The front desk is meant to run on the model the evaluation passed on:
+// on a smaller one it follows the director's rulings less closely (docs/evals/front-desk.md,
+// scenarios 1 and 16), and the strongest costs more. Setup pins it in the project's routing table
+// and starts the front desk's sessions on it, but the director can still pick another in Claude's
+// model menu, and that choice stands. So the session start keeps, for this computer, the model the
+// front desk's session started on, and the board and the briefing show one plain line while it
+// differs from the pin. It blocks nothing.
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectsDir } from './paths.js';
@@ -57,5 +58,5 @@ export const FRONT_DESK_MODEL_LEAD = 'The front desk is running on ';
 // The line for a front desk running on another model than the pin, or null.
 export function frontDeskModelLine({ running, pinned } = {}) {
   if (!running || !pinned || running === pinned) return null;
-  return `${FRONT_DESK_MODEL_LEAD}${running}, not ${pinned}, the most capable model, so it may follow your rulings less closely: switch back to the most capable model in Claude's model menu`;
+  return `${FRONT_DESK_MODEL_LEAD}${running}, not ${pinned}, the model it was set up on: pick ${pinned} again in Claude's model menu, unless you meant to change it`;
 }

@@ -27,7 +27,12 @@ test('the session start\'s input gives its model as a name or as an object with 
 test('one plain line when the front desk runs on another model than the pin, naming both; none when they match or either is unknown', () => {
   const line = frontDeskModelLine({ running: 'model-small', pinned: 'model-top' });
   assert.match(line, /^The front desk is running on model-small, not model-top/);
-  assert.match(line, /most capable/);
+  assert.match(line, /model-top, the model it was set up on/);
+  assert.match(line, /Claude's model menu/);
+  assert.doesNotMatch(line, /most capable/, 'the pin is no longer always the most capable model');
+  // A front desk moved up to a stronger model than the pin, without the director's opt-in at setup, is
+  // still off the pin, and says so.
+  assert.match(frontDeskModelLine({ running: 'model-strongest', pinned: 'model-top' }), /^The front desk is running on model-strongest, not model-top/);
   assert.equal(frontDeskModelLine({ running: 'model-top', pinned: 'model-top' }), null);
   assert.equal(frontDeskModelLine({ running: null, pinned: 'model-top' }), null);
   assert.equal(frontDeskModelLine({ running: 'model-small', pinned: null }), null);
