@@ -34,7 +34,9 @@ export const SETTINGS = {
   autonomy: { label: 'Autonomy', group: 'everyday', levels: ['cautious', 'balanced', 'trusting'], default: 'balanced', home: 'project' },
   showFirst: { label: 'Show before building', group: 'everyday', levels: ['always', 'visual', 'asked'], default: 'visual', home: 'project' },
   milestones: { label: 'Feature milestones', group: 'everyday', levels: ['demos', 'to-the-end', 'ask'], default: 'ask', home: 'project' },
-  efficiency: { label: 'Thoroughness', group: 'everyday', levels: ['lean', 'balanced', 'thorough'], default: 'balanced', home: 'project' },
+  efficiency: { label: 'Thoroughness', group: 'everyday', levels: ['lightest', 'lean', 'balanced', 'thorough'], default: 'balanced', home: 'project' },
+  // The premium model for design and critical work at Thorough: off, within the plan's own allowance, or paid credits too.
+  premium: { label: 'Premium model', group: 'everyday', levels: ['off', 'within-plan', 'paid-too'], default: 'off', home: 'project' },
   // Only "report" is on offer while budget allocation is in the backlog.
   budget: { label: 'Budget', group: 'everyday', levels: ['report', 'weekly-share', 'per-feature'], only: ['report'], default: 'report', home: 'project' },
   // The build loop's limit of three wins over the main design's two.
@@ -46,6 +48,8 @@ export const SETTINGS = {
   briefingGapHours: { label: 'Hours before a new briefing', group: 'everyday', check: wholeBetween(1, 24), default: BRIEFING_GAP_HOURS, home: 'profile' },
   explanations: { label: 'Explanations', group: 'everyday', levels: ['plain', 'some-terms'], default: 'plain', home: 'profile' },
   notifications: { label: 'Notifications', group: 'everyday', check: checkNotifications, default: { channels: ['claude'] }, home: 'profile' },
+  // The usage level (a percentage of the plan's allowance) at which the front desk speaks up, or off.
+  usageMark: { label: 'Usage nudge', group: 'everyday', levels: ['off', 50, 65, 75, 90], default: 75, home: 'profile' },
   boardTab: { label: 'Board opens on', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
   hours: { label: 'Working hours', group: 'everyday', check: checkHours, default: null, home: 'profile' },
   // Advanced, kept in the project.

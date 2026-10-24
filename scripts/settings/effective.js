@@ -53,6 +53,9 @@ export function sayTime(iso) {
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+const EFFICIENCY_WORDS = { lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' };
+const PREMIUM_WORDS = { off: 'off', 'within-plan': 'on, within your plan', 'paid-too': 'on, paid credits too' };
+
 export function sayValue(key, value) {
   if (key.startsWith('known:')) return value ? 'yes' : 'no';
   if (key === 'notifications') {
@@ -64,6 +67,9 @@ export function sayValue(key, value) {
   if (key === 'briefingGapHours') return `${value} ${value === 1 ? 'hour' : 'hours'}`;
   if (key === 'delegationReviewDays') return `${value} days`;
   if (key === 'sources') return value.length ? `${value.length} ${value.length === 1 ? 'address' : 'addresses'}` : 'none yet';
+  if (key === 'efficiency') return EFFICIENCY_WORDS[value] ?? String(value);
+  if (key === 'premium') return PREMIUM_WORDS[value] ?? String(value);
+  if (key === 'usageMark') return value === 'off' ? 'off' : `at ${value}%`;
   if (typeof value === 'number') return value.toLocaleString('en-AU');
   return String(value);
 }
