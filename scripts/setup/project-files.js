@@ -123,7 +123,7 @@ import { STATE_BRANCH } from '../state/clone.js';
 import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { readConfig, isModelName } from '../gate/guardrails.js';
-import { bestModel } from './best-model.js';
+import { aliasModel, FRONT_DESK_ALIAS } from './best-model.js';
 import { projectSettings, localSettings, mergeSettings, directorStatusLine, withoutKeychainDenial } from '../protection/settings.js';
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
@@ -692,21 +692,22 @@ async function installPin({ id, folder, run, claude }) {
 
 // ---- The front desk's model ----
 
-// Where a setup run keeps what Claude Code said its most capable model is: in the project's own
-// folder of this computer's, which uninstall removes with the project.
+// Where a setup run keeps what Claude Code said the front desk's alias stands for: in the
+// project's own folder of this computer's, which uninstall removes with the project.
 const bestFile = (project) => path.join(projectsDir(), project, 'setup-best-model.json');
 
-// What `best()` gives, asked once in a setup run (`runId`) of `project` and kept, so every plan of the run (the
-// card's, the click's, the step's own) gives the same list and the card's hash holds. A run with no
-// id asks every time; a new run asks again, so one that found nothing tries again.
-async function bestOnce(project, runId, best) {
-  if (typeof runId !== 'string') return best();
+// What `best(alias)` gives, asked once in a setup run (`runId`) of `project` for that alias and
+// kept, so every plan of the run (the card's, the click's, the step's own) gives the same list and
+// the card's hash holds. A run with no id asks every time; a new run, or another alias, asks
+// again, so one that found nothing tries again.
+async function bestOnce(project, runId, alias, best) {
+  if (typeof runId !== 'string') return best(alias);
   const kept = readJson(bestFile(project));
-  if (kept?.runId === runId) return isModelName(kept.model) ? kept.model : null;
-  const model = await best();
+  if (kept?.runId === runId && kept.alias === alias) return isModelName(kept.model) ? kept.model : null;
+  const model = await best(alias);
   try {
     fs.mkdirSync(path.dirname(bestFile(project)), { recursive: true });
-    fs.writeFileSync(bestFile(project), `${JSON.stringify({ runId, model })}\n`);
+    fs.writeFileSync(bestFile(project), `${JSON.stringify({ runId, alias, model })}\n`);
   } catch { /* asked again at the next plan */ }
   return model;
 }
@@ -749,8 +750,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (files.length > shared.length) parts.push(`this computer's settings into .claude/settings.local.json, which stays here${excluded ? `${ours ? '; it and .wheelhouse/' : ','} kept out of git` : ''}`);
   else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
-  if (frontDesk === NO_PIN) parts.push('the front desk\'s model is left as it is: Claude Code didn\'t say which is its most capable');
-  else if (frontDesk) parts.push(`the front desk runs on ${frontDesk}, the most capable model`);
+  if (frontDesk === NO_PIN) parts.push('the front desk\'s model is left as it is: Claude Code didn\'t say which model to use');
+  else if (frontDesk) parts.push(`the front desk runs on ${frontDesk}`);
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
@@ -828,7 +829,7 @@ function sayFit(parts) {
 // GitLab's API with the director's sign-in; `claude` finds Claude Code's command line (lib/claude.js:
 // on Windows its .exe or .cmd on the path); `manifest`, `claudeHome` and `locate` are the lineage
 // check's; `switchOn` and `protectionStatus` are protection's; `address`, `node` and `pluginRoot`
-// are what the local settings name; `best` gives what Claude Code's alias for its most capable model
+// are what the local settings name; `best(alias)` gives what one of Claude Code's model aliases
 // stands for, or null (setup/best-model.js). All are for tests.
 export function projectFilesStep({
   run = realRun, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
@@ -836,7 +837,7 @@ export function projectFilesStep({
   manifest = () => readManifest(), claudeHome = () => defaultClaudeHome(), locate = locateInstalled,
   switchOn = switchOnAsDirector, protectionStatus = realProtectionStatus,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
-  best = () => bestModel({ run, claude }),
+  best = (alias) => aliasModel(alias, { run, claude }),
 } = {}) {
   const gitFor = async ({ host, platform, folder, remoteUrl, base }) => {
     const located = await findGit({ platform, run });
@@ -952,8 +953,8 @@ export function projectFilesStep({
       }
 
       // The front desk's model (design section 8): the pin the configuration holds, else what Claude
-      // Code's alias for its most capable model stands for now, asked only while there is no pin.
-      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(found.project, ctx.runId, best);
+      // Code's alias for the front desk stands for now, asked only while there is no pin.
+      const pin = frontDeskPin(objectIn(CONFIG, readText(at(CONFIG)))) ?? await bestOnce(found.project, ctx.runId, FRONT_DESK_ALIAS, best);
       const config = starterConfig({ answers: ctx.answers, frontDesk: pin });
       const home = claudeHome();
       const release = wheelhouseRelease({ folder, claudeHome: home });
@@ -1029,7 +1030,7 @@ export function projectFilesStep({
       if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean) });
       changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
-      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin) }), director: 'One click' };
+      return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin)}), director: 'One click' };
     },
 
     async apply(ctx, changes) {

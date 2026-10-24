@@ -10,8 +10,14 @@
 //              routing?: { frontDesk, foreman, builder, reviewer, reviewerCritical, tester, mechanical },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
 //              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
-//              glabFrom?: string, signsApps?: boolean }
+//              glabFrom?: string, signsApps?: boolean,
+//              agentRouting?: { <agent>: { <role>: model | null } } }
 // Other keys are kept and ignored.
+//
+// `agentRouting` is the routing table's column for each agent other than the command line's own (ruling P8-22): keyed
+// by an agent's name (scripts/agents/names.js), each a table of the same roles as `routing`, each model a name
+// isModelName passes or null for that agent's own default. Anything else makes the configuration unreadable. Setup
+// pins no model there until that agent's list of models has been read on a real run.
 //
 // `signsApps: true` says the project's builds sign Mac or iOS apps, which needs the keychain, so
 // the project's settings leave it open (scripts/protection/settings.js, check 73). Left out or
@@ -23,7 +29,7 @@
 //   - routing: each role's model name, or null for the command line's own
 //     default (the default for every role, so Wheelhouse names no model). Setup
 //     pins `frontDesk` in the project's own table to the full name Claude Code's
-//     alias for its most capable model stands for (setup/best-model.js), and the
+//     alias `opus` stands for (setup/best-model.js), and the
 //     pin moves only after the evaluation passes on a new model (design section 8).
 //     A name may not start with `-`, so it can never read as a flag. Other
 //     roles in the table are kept.
@@ -47,6 +53,7 @@
 import { matchGlob } from './glob.js';
 import { AGENT_CONTROL } from '../lib/agent-control.js';
 import { isPage } from '../screens/pages.js';
+import { AGENTS } from '../agents/names.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get), then every file that steers an
@@ -99,8 +106,14 @@ function withDefaults(c) {
   };
 }
 
+// The agent whose column is `routing` itself, so `agentRouting` never holds one for it (review Minor 8).
+const COMMAND_LINE_AGENT = 'claude-code';
+// One agent's column: an object of roles, each a model or null.
+const columnOk = (column) => isObject(column) && Object.entries(column).every(([role, model]) => ROLES.includes(role) && modelOk(model));
+
 function buildLoopOk(c) {
   if (c.routing !== undefined && !(isObject(c.routing) && Object.values(c.routing).every(modelOk))) return false;
+  if (c.agentRouting !== undefined && !(isObject(c.agentRouting) && Object.entries(c.agentRouting).every(([agent, column]) => AGENTS.includes(agent) && agent !== COMMAND_LINE_AGENT && columnOk(column)))) return false;
   if (c.sessionMode !== undefined && !SESSION_MODES.includes(c.sessionMode)) return false;
   if (c.buildCommands !== undefined && !(Array.isArray(c.buildCommands) && c.buildCommands.every(isBuildCommand))) return false;
   if (c.watcherShape !== undefined && !WATCHER_SHAPES.includes(c.watcherShape)) return false;

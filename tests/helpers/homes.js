@@ -12,8 +12,9 @@ const unix = process.platform !== 'win32';
 
 // Temporary folders made through tempFolder, removed once the test file's tests are done.
 const made = [];
+// Removal tries again: a helper's or a session's background work may still be writing there.
 after(() => {
-  for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // A new temporary folder whose name starts with `prefix`, removed after the file's tests.
@@ -67,4 +68,25 @@ export function withHome(fn, { prefix = 'wh-home-' } = {}) {
   if (result && typeof result.then === 'function') return result.finally(finish);
   finish();
   return result;
+}
+
+// Runs fn with CLAUDE_CONFIG_DIR set to a new Claude Code folder whose list of installed plugins
+// names stand-in folders for Superpowers and Matt Pocock's skills, so a scenario's variants load
+// those and never the computer's own installs (a CI runner has none). The old value is put back
+// afterwards.
+export async function withStandInPlugins(fn) {
+  const config = tempFolder('wh-claude-config-');
+  const plugins = {};
+  for (const [name, id] of [['superpowers', 'superpowers@claude-plugins-official'], ['mattpocock-skills', 'mattpocock-skills@market']]) {
+    const installed = path.join(config, 'plugins', 'cache', name);
+    fs.mkdirSync(path.join(installed, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(installed, '.claude-plugin', 'plugin.json'), JSON.stringify({ name }));
+    plugins[id] = [{ scope: 'user', installPath: installed }];
+  }
+  fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins }));
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = config;
+  try { return await fn(); } finally {
+    if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before;
+  }
 }

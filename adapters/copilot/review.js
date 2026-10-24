@@ -60,6 +60,9 @@ const BUILT_IN_MCP = 'github-mcp-server';
 const LISTING_MS = 60_000;
 const SESSION_MS = 15 * 60_000;
 const OUTPUT_BYTES = 8 * 1024 * 1024;
+// How often a running program's STOP is looked for (ruling P8-14): STOP is a file any of its setters may write, so it
+// is read, not told.
+const STOP_POLL_MS = 1000;
 
 // The session's argv, exactly (ruling P7-17): compared whole by the clean check (M2), so an extra or a missing flag fails.
 export function reviewArgs({ prompt, logDir }) {
@@ -242,10 +245,11 @@ export const versionOf = (text) => /\b(\d+\.\d+\.\d+)\b/.exec(String(text ?? '')
 // One review session in `folder` (ruling P7-17): the review's own home, Copilot's version and its four listings from
 // that home, folder and environment, the session, then the clean check. Gives `{ clean, reasons, answer, firstLine }`.
 // Everything it made is removed before it returns. `stopped()` is read before each program it runs (the version,
-// each listing, the session): under STOP no further one starts, and it gives `{ stopped: true }`. After the session
+// each listing, the session), and every STOP_POLL_MS while the session runs: under STOP the session is ended (ruling
+// P8-14), no further program starts, and it gives `{ stopped: true }`. After the session
 // the folder and the home are looked at again before its answer is taken. `copilot` is the program as resolveCommand finds it; through a
 // .cmd shim the review is not started, since its prompt, with the project's rules and the brief, can be longer than a cmd.exe line.
-export async function runSession({ folder, prompt, stopped = () => false, env = process.env, platform = process.platform, copilot = null, run = realRun, signedInFrom = copilotHome(), tmp = os.tmpdir(), timeoutMs = SESSION_MS }) {
+export async function runSession({ folder, prompt, stopped = () => false, env = process.env, platform = process.platform, copilot = null, run = realRun, signedInFrom = copilotHome(), tmp = os.tmpdir(), timeoutMs = SESSION_MS, stopPollMs = STOP_POLL_MS }) {
   const refused = (why) => ({ clean: false, reasons: [why], answer: null, firstLine: null });
   const halted = { clean: false, reasons: ['STOP is on'], answer: null, firstLine: null, stopped: true };
   let resolved;
@@ -270,7 +274,20 @@ export async function runSession({ folder, prompt, stopped = () => false, env = 
     }
     fs.mkdirSync(logDir);
     const sessionEnv = reviewEnv(env, { home, platform });
-    const call = (args, ms) => (stopped() ? null : run(resolved.file, args, { cwd: folder, baseEnv: {}, env: sessionEnv, input: '', timeoutMs: ms, limit: OUTPUT_BYTES, platform }));
+    // A program's run; null when STOP is on before it starts. With `watched` (the session, which may run for
+    // SESSION_MS; the version and the listings start no agent and are short), STOP is read every stopPollMs while it
+    // runs, and the run is ended when it comes on, which also gives null.
+    const call = async (args, ms, watched = false) => {
+      if (stopped()) return null;
+      const ending = new AbortController();
+      const watch = watched ? setInterval(() => { if (stopped()) ending.abort(); }, stopPollMs) : null;
+      try {
+        const answer = await run(resolved.file, args, { cwd: folder, baseEnv: {}, env: sessionEnv, input: '', timeoutMs: ms, limit: OUTPUT_BYTES, platform, signal: ending.signal });
+        return answer?.stopped === true || ending.signal.aborted ? null : answer;
+      } finally {
+        clearInterval(watch);
+      }
+    };
 
     const version = await call(['--version'], LISTING_MS);
     if (version === null) return halted;
@@ -289,7 +306,7 @@ export async function runSession({ folder, prompt, stopped = () => false, env = 
     }
 
     const args = reviewArgs({ prompt, logDir });
-    const session = await call(args, timeoutMs);
+    const session = await call(args, timeoutMs, true);
     if (session === null) return halted;
     if (session.timedOut || session.code !== 0) return refused(session.timedOut ? 'the review session did not finish in time' : `the review session ended with exit code ${session.code}`);
     const answer = finalAnswer(session.stdout);

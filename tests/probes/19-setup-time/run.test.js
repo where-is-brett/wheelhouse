@@ -117,7 +117,7 @@ test('a failed step is named, and the notes table carries every step', () => {
   assert.match(text, /Verdict on these numbers: Yes\./);
 });
 
-test('a folder\'s newest run is picked; with no folder, the newest of all', () => {
+test('a folder\'s newest run is picked; with no folder, the newest of all', { skip: process.platform === 'win32' ? 'check 19 runs on a Mac, and these folders are a Mac\'s paths' : false }, () => {
   const journal = { v: 1, runs: [
     { id: 'run-a', folder: '/f/one', startedAt: at(0) },
     { id: 'run-b', folder: '/f/two', startedAt: at(5) },
@@ -231,7 +231,7 @@ test('Windows: each AskUserQuestion card is timed from its call to its result', 
   assert.deepEqual(askedDurations(entries), [{ askedAt: at(1), question: 'Step 4?', answeredAt: at(1.75), directorMs: 45000 }]);
 });
 
-test('only a wheelhouse-check19 folder directly in the temporary folder or /Users/Shared is touched', () => {
+test('only a wheelhouse-check19 folder directly in the temporary folder or /Users/Shared is touched', { skip: process.platform === 'win32' ? 'check 19 runs on a Mac, and these folders are a Mac\'s paths' : false }, () => {
   const tmp = os.tmpdir();
   assert.equal(assertScratch(path.join(tmp, `${PREFIX}-x`)), path.resolve(tmp, `${PREFIX}-x`));
   assert.equal(assertScratch('/Users/Shared/wheelhouse-check19'), '/Users/Shared/wheelhouse-check19');

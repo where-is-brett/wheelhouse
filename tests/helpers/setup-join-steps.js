@@ -33,7 +33,7 @@ const MAKE = {
     run: world().run, findGit: async () => ({ ok: true, path: 'git' }), claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => world().manifest, claudeHome: () => world().claudeHome, switchOn: nothing, protectionStatus: nothing,
     address: () => world().address, node: '/usr/local/bin/node', pluginRoot: world().pluginRoot,
-    // What Claude Code's alias for its most capable model stands for: a stand-in name, never asked of claude.
+    // What the front desk's model alias stands for: a stand-in name, never asked of claude.
     best: async () => 'model-top',
   }),
   8: () => lockedStep({ run: nothing, dir: world().managedDir, mdmPlist: '/nowhere/com.anthropic.claudecode.plist' }),

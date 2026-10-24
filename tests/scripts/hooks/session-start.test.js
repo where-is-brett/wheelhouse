@@ -38,6 +38,7 @@ import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
+import { searchPathIn } from '../../helpers/env.js';
 
 const P = 'owner__name';
 
@@ -123,7 +124,7 @@ test('a helper started once setup has made the company\'s certificate gets it fo
     const after = fake();
     await run(after);
     assert.equal(after.calls.spawn[0].opts.env.NODE_EXTRA_CA_CERTS, file);
-    assert.equal(after.calls.spawn[0].opts.env.PATH, process.env.PATH);
+    assert.equal(searchPathIn(after.calls.spawn[0].opts.env), process.env.PATH);
     assert.equal(after.calls.spawn[0].opts.detached, true);
   });
 });
@@ -525,7 +526,8 @@ test('session-start exits in time with its context when the helper never answers
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    // On Windows the killed receiver may hold its folder a moment longer: removal tries again.
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 
@@ -1275,7 +1277,7 @@ test('the guards act in a folder being set up', async () => {
 // from (whose director may set it up again), are told the tool sheet and where the command is.
 test('a folder being set up, and one Wheelhouse was removed from, are given the tool sheet and the command line', async () => {
   await withHome(async () => {
-    const sheet = toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: process.platform });
+    const sheet = toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
     const folder = fs.realpathSync.native(tempFolder('wh-sheet-setup '));
     const T = Date.parse('2026-10-20T03:00:00.000Z');
     const run = startRun({ folder, now: () => new Date(T) });

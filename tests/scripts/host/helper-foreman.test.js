@@ -24,6 +24,7 @@ import { takeLock } from '../../../scripts/state/lock.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeBareRemote, g, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { searchPathIn } from '../../helpers/env.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -182,7 +183,7 @@ test('the foreman\'s command gets no key or secret, and none comes back in its o
       assert.equal(options.cwd, p.checkout);
       for (const name of Object.keys(planted)) assert.equal(name in options.baseEnv, false, name);
       assert.equal(options.baseEnv.WHEELHOUSE_HOME, p.home);
-      assert.equal(options.baseEnv.PATH, process.env.PATH);
+      assert.equal(searchPathIn(options.baseEnv), process.env.PATH);
     }, { run, envFor: async () => ({ mode: 'narrow', env: { GH_TOKEN: KEY } }) });
   } finally {
     for (const [k, v] of Object.entries(before)) if (v === undefined) delete process.env[k]; else process.env[k] = v;

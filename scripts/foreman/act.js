@@ -56,6 +56,10 @@
 //       the head, or their push of an update that changes a CI file), it records
 //       a `gate-asks` event once for that click and commit, and waits: the
 //       watcher wakes the foreman once the click is on record (ruling R117).
+//       When the gate lacks the helper's own review in a clean session (an
+//       agent whose reviews are the helper's), it asks the helper for that
+//       review once and stops: the next merge-ready wakes the foreman (ruling
+//       P8-14). The helper reviews each commit once.
 //       A pins-only release the gate merged without the director's approval
 //       carries the helper's line for the briefing: it is recorded once, as a
 //       `merge` event's words for users (ruling F73).
@@ -135,6 +139,7 @@ import { sameStatus } from '../hooks/feature-status.js';
 import { lockedByPath } from '../hooks/kit.js';
 import { branchOf } from '../hooks/session-start.js';
 import { forward } from './forward.js';
+import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_QUESTIONS, HASH, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { CARD } from '../lib/front-desk.js';
@@ -1133,6 +1138,12 @@ function approvalNeeded(answer, pr) {
   return isPlain(a) && a.pr === pr && typeof a.commit === 'string' && FULL_COMMIT.test(a.commit) ? a : null;
 }
 
+// Whether a /merge refusal names the gate's NO_CLEAN_REVIEW for the head, the first of `heads` that is a full commit.
+function wantsCleanReview(answer, heads) {
+  const head = heads.find((h) => typeof h === 'string' && FULL_COMMIT.test(h));
+  return head !== undefined && Array.isArray(answer.reasons) && answer.reasons.includes(NO_CLEAN_REVIEW(head.slice(0, 7)));
+}
+
 // The gate waits for one click of the director's (ruling R117): a `gate-asks` record says which,
 // once per pull request, click and commit, for the card that asks for it; the watcher wakes the
 // foreman when the click is on record. Nothing is asked here.
@@ -1204,6 +1215,15 @@ async function merge(ctx, work, rest) {
   const approval = merged?.ok === false ? approvalNeeded(merged, pr) : null;
   if (approval !== null) {
     await gateAsks(ctx, { work, pr, ask: 'approval', sha: approval.commit }, 'their approval of that commit');
+    return;
+  }
+  // The gate wants the helper's own review in a clean session (an agent whose reviews are the helper's; Claude
+  // Code's never are, so it never meets this): the helper is asked for it once, and the next merge-ready, once the
+  // signed review is on record, wakes the foreman again (ruling P8-14).
+  if (merged?.ok === false && wantsCleanReview(merged, [updated.head, state?.result?.headSha])) {
+    const review = await ctx.client.review(number);
+    if (review?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}; and the helper's review wasn't started: ${refusal(review)}. Ask the director; don't try again.`);
+    ctx.say(`The helper is reviewing #${pr} in a clean session; the next merge-ready wakes the foreman.`);
     return;
   }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);

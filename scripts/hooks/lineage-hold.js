@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { answer, runAndExit, projectOf } from './kit.js';
 import { HALT_TOOLS, NOTIFY_TOOLS, READ_TOOLS, isFrontDeskRead, isRunbook, scriptArguments, pluginRoots } from './stop-guard.js';
-import { isHeld } from '../lineage/check.js';
+import { agentHoldWords, isHeld } from '../lineage/check.js';
 import { projectForFolder } from '../lib/projects.js';
 import { stateDir } from '../lib/paths.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -58,9 +58,10 @@ function anyHeld() {
 // Whether the folder is held. Both the project its repository names and the project its path
 // lies in count, so a .git file pointed at another project's repository cannot step out of
 // the hold. A folder whose path cannot be placed is held while any project is.
+// Gives the held project's name, true for a hold that can't be placed, or false.
 function heldAt(cwd, find, dir) {
   const byRepository = find(cwd, { dir })?.project;
-  if (byRepository && isHeld(byRepository)) return true;
+  if (byRepository && isHeld(byRepository)) return byRepository;
   let real;
   try {
     real = fs.realpathSync.native(cwd);
@@ -68,7 +69,17 @@ function heldAt(cwd, find, dir) {
     return anyHeld();
   }
   const byPath = projectForFolder(real)?.project;
-  return Boolean(byPath) && isHeld(byPath);
+  return Boolean(byPath) && isHeld(byPath) ? byPath : false;
+}
+
+// What the refusal says: an agent's own hold says what holds the work and what lifts it (ruling P8-32); the session
+// start's hold, or one that can't be placed, says the hook's own words.
+function heldWords(held) {
+  let words = null;
+  try {
+    words = typeof held === 'string' ? agentHoldWords(held) : null;
+  } catch { /* the hook's own words */ }
+  return words === null ? HELD : `Wheelhouse is holding edits and commands: ${words}`;
 }
 
 // The tools that only read, halt or notify come from `deps`, defaulting to Claude Code's, as in stop-guard.js.
@@ -76,7 +87,8 @@ export async function decide(input, {
   dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
   readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS,
 } = {}) {
-  if (!heldAt(input.cwd, find, dir)) return undefined;
+  const held = heldAt(input.cwd, find, dir);
+  if (!held) return undefined;
   const tool = input.tool_name;
   if (readTools.includes(tool) || haltTools.includes(tool) || notifyTools.includes(tool) || APP_TURN_TOOLS.includes(tool)) return undefined;
   if (input.tool_name === 'Bash') {
@@ -84,7 +96,7 @@ export async function decide(input, {
     const command = input.tool_input?.command;
     if (isCheck(command, roots, platform) || isRunbook(command, roots, platform) || isFrontDeskRead(command, roots, platform)) return undefined;
   }
-  return answer.deny(HELD);
+  return answer.deny(heldWords(held));
 }
 
 if (startedAsScript(import.meta.url)) {

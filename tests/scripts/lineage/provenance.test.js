@@ -96,7 +96,7 @@ test('provenance matches the manifest only with the same versions, commits and f
   // Every reason is a set phrase.
   assert.deepEqual(Object.values(WHY).sort(), [
     'Claude Code is older than the floor', 'an upstream commit differs', 'no provenance block', 'the Wheelhouse version differs',
-    'the fingerprints did not match', 'the installed manifest can\'t be read', 'the provenance block can\'t be read',
+    'the agent is older than its pin', 'the fingerprints did not match', 'the installed manifest can\'t be read', 'the provenance block can\'t be read',
   ]);
 });
 

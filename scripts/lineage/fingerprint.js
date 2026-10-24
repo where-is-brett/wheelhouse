@@ -21,7 +21,8 @@ function evenLineEndings(buffer) {
 // The hash of what a file or link holds, as it is compared across systems.
 function contentHash(file) {
   const stat = fs.lstatSync(file);
-  if (stat.isSymbolicLink()) return sha256(Buffer.from(fs.readlinkSync(file), 'utf8'));
+  // A link's target with "/" separators: Windows reads it back with backslashes.
+  if (stat.isSymbolicLink()) return sha256(Buffer.from(fs.readlinkSync(file).split(path.sep).join('/'), 'utf8'));
   return sha256(evenLineEndings(fs.readFileSync(file)));
 }
 

@@ -43,6 +43,9 @@ function hold(project = P) {
 
 const call = (cwd, tool, toolInput = {}) => ({ cwd, session_id: 's1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: toolInput });
 const bash = (cwd, command) => call(cwd, 'Bash', { command });
+// A path as a POSIX shell takes it unquoted: forward slashes, so a Windows folder's backslashes
+// aren't read as escapes.
+const slash = (p) => p.split(path.sep).join('/');
 const deps = (home, extra = {}) => ({ dir: path.join(home, 'managed'), pluginRoot: PLUGIN, platform: 'linux', ...extra });
 const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny' && out.hookSpecificOutput.permissionDecisionReason === HELD;
 
@@ -148,7 +151,7 @@ test('the check command and the runbook are let through; the check only reads, a
     const script = `${PLUGIN}/scripts/lineage/check.js`;
     for (const ok of [
       `node ${script}`,
-      `node ${script} ${main}`,
+      `node ${script} ${slash(main)}`,
       `node "${script}" "${main}"`,
       `node '${script}' '${main}'`,
       `node ${script} .`,
@@ -258,7 +261,7 @@ test('from the managed copy, the check command at the plugin folder Locked recor
     const self = path.join(dir, 'wheelhouse', 'scripts', 'hooks', 'lineage-hold.js');
     const managed = { ...deps(home), self, pluginRoot: path.join(dir, 'wheelhouse') };
     assert.equal(await decide(bash(main, 'node /recorded/root/scripts/lineage/check.js'), managed), undefined);
-    assert.equal(await decide(bash(main, `node ${dir}/wheelhouse/scripts/lineage/check.js`), managed), undefined);
+    assert.equal(await decide(bash(main, `node ${slash(dir)}/wheelhouse/scripts/lineage/check.js`), managed), undefined);
     assert.ok(denied(await decide(bash(main, 'node /recorded/root/scripts/lineage/check.js'), deps(home))), 'the plugin\'s copy reads no record');
   });
 });

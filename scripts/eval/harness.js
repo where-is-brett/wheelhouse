@@ -10,6 +10,7 @@ import { run } from '../lib/run.js';
 import { projectSettings } from '../protection/settings.js';
 import { fileURLToPath } from 'node:url';
 import { makeScratchProject } from '../../probes/lib/scratch.js';
+import { AGENTS } from '../agents/names.js';
 
 const VARIANTS = ['with', 'without'];
 
@@ -489,7 +490,8 @@ export function describeRun({ id, variant, pass, why, usage }) {
 
 // The command line of `npm run eval`: scenario ids (24, or one leg, 27-route), or one of --all
 // (every suite), --suite <name> or --again (what the last run marked); --variant and --trials
-// with ids, --all or --suite. `all`, `suite` and `again` are in the answer only when given.
+// with ids, --all or --suite; --agent <name>, one of AGENTS, the agent whose sessions run them.
+// `all`, `suite`, `again` and `agent` are in the answer only when given.
 export function parseArgs(argv) {
   const ids = [];
   let variants = VARIANTS;
@@ -497,6 +499,7 @@ export function parseArgs(argv) {
   let all = false;
   let suite = null;
   let again = false;
+  let agent = null;
   let chose = false;
   for (let i = 0; i < argv.length; i += 1) {
     let arg = argv[i];
@@ -524,6 +527,10 @@ export function parseArgs(argv) {
       suite = value;
     } else if (arg === '--again') {
       again = true;
+    } else if (arg === '--agent') {
+      value ??= argv[++i];
+      if (!AGENTS.includes(value)) throw new Error(`--agent must be one of ${AGENTS.join(', ')}, not ${value}`);
+      agent = value;
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option ${arg}`);
     } else if (/^\d+$/.test(arg)) {
@@ -539,7 +546,7 @@ export function parseArgs(argv) {
   if (ways.length > 1) throw new Error(`Give one of scenario numbers, --all, --suite or --again, not ${ways.join(' and ')}`);
   if (again && chose) throw new Error('--again chooses its own variants and trials: give it no --variant or --trials');
   if (!ways.length) throw new Error('Name at least one scenario number, or --all, --suite <name> or --again, for example: npm run eval -- 24 --variant with');
-  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}) };
+  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}) };
 }
 
 // The local date, as the evaluations folder names a day's folder.
@@ -592,7 +599,11 @@ function saveRecord({ home, date, scenario, variant, trial, record }) {
 // `close()`, called once the run is over, pass or fail; its `helper.address` is the one socket the
 // session's sandbox lets a command reach, and its `readable` and `writable` go to the sandbox too
 // (runSession). A scenario's own `extraArgs` go to the session's command line, and its `offered`
-// tools are taken off the denied list (runSession). Resolves with the verdict, its reasons,
+// tools are taken off the denied list (runSession); its `commands`, the commands a runner whose
+// agent has rules for them lets the session run, go to the runner too, as does its `role`, the role whose agent a
+// runner that starts one starts (runSession has none, and passes it over). A runner whose outcome
+// carries `raw` (the agent's own events, when they are not stream-json) has them kept in the record
+// as `raw`, every turn's in order, and given to pass beside `events`. Resolves with the verdict, its reasons,
 // the record's file, the trial it was saved under, whether the session was handled, its tokens
 // and its one printed line. `beforePrompt({ scenario, variant, dir, context, runner, home })`, when given,
 // runs after the set-up and may answer { why, usage?, evidence? } to refuse the trial (see above).
@@ -661,6 +672,8 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
         ...(scenario.extraArgs ? { extraArgs: scenario.extraArgs } : {}),
         ...(scenario.offered ? { offered: scenario.offered } : {}),
+        ...(scenario.commands ? { commands: scenario.commands } : {}),
+        ...(scenario.role ? { role: scenario.role } : {}),
         ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
         ...(context.readable ? { readable: context.readable } : {}),
         ...(context.unreadable ? { unreadable: context.unreadable } : {}),
@@ -677,6 +690,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(turns.find((t) => t.stderr) ? { stderr: turns.find((t) => t.stderr).stderr } : {}),
     };
     const several = prompts.length > 1;
+    const raw = turns.some((t) => Array.isArray(t.raw)) ? turns.flatMap((t) => (Array.isArray(t.raw) ? t.raw : [])) : null;
     // A session that never took the prompt in hand passes nothing, whatever its pass says
     // (Review Focus 4); its pass is still asked, and kept in the record, but cannot make it a pass.
     // Over several turns, every turn that ran must have taken its prompt in hand. A `/compact` turn
@@ -686,7 +700,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const sessionHandled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
     let judged;
     try {
-      judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}) });
+      judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}), ...(raw === null ? {} : { raw }) });
     } catch (error) {
       judged = { pass: false, why: `pass could not judge it: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -747,6 +761,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       ...(session.stderr ? { stderr: session.stderr } : {}),
       ...(typeof context.evidence === 'function' ? { evidence: context.evidence() } : {}),
       events: session.events,
+      ...(raw === null ? {} : { raw }),
     };
     const { file, trial: saved } = saveRecord({ home, date, scenario, variant, trial, record });
     return { pass, why, file, trial: saved, handled: shown, usage: total, line: describeRun({ id: scenarioName(scenario), variant, pass, why, usage: total }) };

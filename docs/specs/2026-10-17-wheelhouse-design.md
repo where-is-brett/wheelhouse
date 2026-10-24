@@ -373,18 +373,19 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
   Stacks, where unavoidable, merge bottom-up with merge commits.
 - **Watching CI and conflicts.** Locally there are no push events from the host. The foreman watches in the background, without spending turns: `gh pr checks --watch`, `glab ci status --live`, or a monitor. It checks mergeability before each merge, because hosts send no conflict event.
 - **Models.**
-  - One routing table in the project settings says which model does which job. Nothing else names a model.
-  - The most capable model for critical-area work and for every review of it.
-  - A mid-sized model for well-defined work: content batches, docs, mechanical PRs.
-  - The front desk runs on the most capable model. Whether routine front-desk turns can run on a smaller one is a later experiment.
+  - One routing table in the project settings says which model does which job, and with how much thinking effort. Nothing else names a model.
+  - **The table has four columns, one for each Thoroughness level** (Lightest, Lean, Balanced, Thorough; section 14.6). Its cells name a class of model (the most capable or the mid-sized) and an effort, never a model; the table pins each class to a full model ID once. The everyday setting `efficiency` picks which column is in force. Section 14.6 gives every cell.
+  - At every level: the most capable model for design, for critical-area work and for every review of it.
+  - A mid-sized model for mechanical work (content batches, docs, mechanical PRs) at every level, for routine reviews at Lean and Balanced, and for well-defined building at Lean.
+  - The front desk runs on the most capable model at every level, at its own default effort. It leaves it only after its evaluation passes on a smaller model, as a level-4 change to the table, never as a Thoroughness level (section 14.6).
   - The table pins full model IDs, not aliases. A pin moves only after the evaluation passes on the new model (section 9.1). *Designer's call*, replacing the first draft's aliases, because an alias can move to an untested model before the evaluation runs.
   - **How the front desk gets its model** (the command centre's ruling, 24 October 2026, after scenarios 1 and 16 failed on a smaller default model: `docs/evals/front-desk.md`):
-    - Setup's step 7 asks Claude Code once what its alias `best` stands for, and pins that full ID as `frontDesk` in the project's routing table. Wheelhouse's own repository names no model, only the alias.
+    - Setup's step 7 asks Claude Code once what its alias `opus` stands for, with no question to the director (a quiet default), and pins that full ID as `frontDesk` in the project's routing table. Its card names the model. Wheelhouse's own repository names no model, only the aliases; the code that asks what `best` stands for is kept for section 14.6's premium check, unused by setup's step 7.
     - Setup writes the pin as `model` in the main folder's `.claude/settings.local.json`. That file is never committed, and the front desk's sessions start on the pin.
-    - The worktrees inside the folder read that file too, so the foreman's and the feature sessions' calls always name their own model: their role's, or the command line's default. A setup run asks what `best` stands for once, and every plan in the run uses that answer.
-    - The pin moves only after the evaluation passes on the new model. Setup never changes a pin the table already holds.
-    - The director can still pick another model in Claude's model menu, and that choice stands. The session start keeps the model the front desk runs on. While it isn't the pin, the board shows one line saying so, and the briefing gives that line once a week. It blocks nothing.
-    - If Claude Code isn't signed in on the command line, or doesn't say what `best` stands for, step 7 goes on without a pin and its card says so. The next setup run tries again.
+    - The worktrees inside the folder read that file too, so the foreman's and the feature sessions' calls always name their own model: their role's, or the command line's default. A setup run asks what `opus` stands for once, and every plan in the run uses that answer.
+    - The pin moves only after the evaluation passes on the new model. Setup never changes a pin the table already holds. The premium model is never the front desk's: it is a separate opt-in, for design and critical work, at Thorough only (section 14.6).
+    - The director can still pick another model in Claude's model menu, and that choice stands. The session start keeps the model the front desk runs on. While it isn't the pin, the board shows one line saying so, naming the pin as the model the front desk was set up on, and the briefing gives that line once a week. It blocks nothing.
+    - If Claude Code isn't signed in on the command line, or doesn't say what the alias stands for, step 7 goes on without a pin and its card says so. The next setup run tries again.
 - **The foreman starts fresh at every wake,** reading where things stand from state and the feature files; its context never grows across wakes (`docs/specs/2026-10-18-build-loop-design.md`, section 11).
 - **Permission mode.** Builders and reviewers inherit the foreman's permission mode, so the foreman is started in an explicit mode and never in bypass mode, at either protection level. The merge gate refuses to act for a session in bypass mode, and Locked switches bypass mode off altogether (section 12.1).
 - **Where the foreman runs**, in order of preference:
@@ -471,10 +472,13 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
     - the Superpowers and Matt Pocock repositories: new releases, their dates and security advisories (`docs/specs/2026-10-18-build-loop-design.md`, section 14.4).
 
     The front desk reads only what changed, if anything did. Pages are compared by their lines, as sets; eight copies of each are kept; new links on the models and deprecations pages are listed, since that is where a new model's card and migration guide turn up. What changed reaches the front desk marked as text from outside, not instructions. The check runs in the weekly jobs (section 9). *Designer's call.*
-  - **A new model is tested before it is trusted.** When the check finds one, the evaluation suite (section 18) runs on it. If it does at least as well, the pin moves to it and the director is told in the briefing (level 2, because the director asked the system to keep up with the model family). If it does worse, the pin stays and the director gets one card. Any other change to the routing table, such as a smaller model for a job, is a guardrail change at level 4 (section 12.4). A model due to retire is raised a month ahead. *Designer's call.*
+  - **A new model is tested before it is trusted.** When the check finds one, the evaluation suite (section 18) runs on it. If it does at least as well, the pin moves to it and the director is told in the briefing (level 2, because the director asked the system to keep up with the model family). If it does worse, the pin stays and the director gets one card. Any other change to the routing table, such as a smaller model for a job, is a guardrail change at level 4 (section 12.4). The most capable class's pin, which the front desk runs on, moves only to a new model Claude Code's alias `opus` names; a new premium model never becomes it, and reaches the table only through the director's own opt-in (24 October 2026; section 14.6). A model due to retire is raised 45 days ahead, which leaves time to evaluate its successor (section 14.6). *Designer's call.*
+  - **The table's pins are per class of model,** not per job (section 8): one pin for the most capable model, one for the mid-sized, and one for the premium model only once the director opts in (section 14.6). A pin moving moves every cell of that class, in every column, so the evaluation that moves it runs the scenarios each column uses that class for: the front desk's and the build loop's for the most capable, the build loop's on the Lean column for the mid-sized. *Designer's call.*
+  - **Switching Thoroughness is not a change to the table** (section 14.6). The four columns are the guardrail, approved and evaluated as a whole; the setting only picks one, by the director's word or press, which is their own confirmation. A column is offered only once its evaluation has passed. Changing a cell is still a level-4 change.
   - **Changes to skills or settings** prompted by new guidance come to the director as one card.
 - **Budget allocation is not designed yet.** The director wants an option to give each feature or area a share of the weekly allowance, which Claude Code can read (above). It is in the backlog, by the director's decision of 18 October 2026, and isn't designed unless it is taken up (section 22).
-- **Usage pressure never lowers a level or relaxes a review** (section 12.3).
+- **Usage pressure never lowers a decision level or relaxes a review** (section 12.3). Nor does it move Thoroughness: the front desk may offer Lean on one card when the allowance passes the director's mark, and only the director's press switches it (section 14.6). No Thoroughness level skips a required review or test, or moves the merge gate.
+- **The usage nudge** reads the share used from `usage/allowance.json`, written above. Section 14.6 gives the nudge and its cards.
 
 ## 10. Context and compaction
 
@@ -864,8 +868,8 @@ Settings let the director change how the system behaves without briefing it agai
 
 **The catalogue** (`scripts/settings/catalogue.js`) names every setting by key, with its levels or its check, its default and where it lives (section 14.3). A value it doesn't allow is refused, and only presence can carry an end time.
 
-- **Everyday, in the project:** `autonomy`, `showFirst`, `milestones`, `efficiency`, `budget` (only "report" for now), `pace` and `phase`.
-- **Everyday, in the profile:** `presence`, `briefing`, `briefingGapHours` (2 hours by default), `explanations`, `notifications`, `boardTab` (which tab of the board shows first), `hours` (working hours, none by default), and one `known:<concept>` for each concept the director already knows, so the glossary's plain words can be dropped for it.
+- **Everyday, in the project:** `autonomy`, `showFirst`, `milestones`, `efficiency`, `premium` (off by default; section 14.6), `budget` (only "report" for now), `pace` and `phase`.
+- **Everyday, in the profile:** `presence`, `briefing`, `briefingGapHours` (2 hours by default), `explanations`, `notifications`, `boardTab` (which tab of the board shows first), `hours` (working hours, none by default), `usageMark` (the share of the allowance at which the front desk offers Lean, 75% by default; section 14.6), and one `known:<concept>` for each concept the director already knows, so the glossary's plain words can be dropped for it.
 - **Advanced, in the project:** `roundCap`, `compactPrepare`, `delegationReviewDays`, `unusualFactor` and `sources`.
 
 The catalogue holds a setting before everything that obeys it is built, as section 10 says for `compactPrepare`: `pace` and `roundCap` are read by the build loop, and `delegationReviewDays` by the front desk.
@@ -878,7 +882,9 @@ The catalogue holds a setting before everything that obeys it is built, as secti
 | **Show before build** | Always · **Visual changes** · Only when asked | Section 7.3 |
 | **Availability** (`presence`) | **Here** · Away until… · Do not disturb | Away: features run to the end, and only breakages and questions that block all work notify. Do not disturb: only STOP-worthy problems and live harm notify. A briefing waits on return either way |
 | **Feature milestones** | Midpoint demos · Run to the end · **Ask per feature** | Section 7.4, step 5 |
-| **Thoroughness** (`efficiency`) | Lean · **Balanced** · Thorough | Lean: the mid-sized model for all well-defined work and routine front-desk turns, one builder at a time, screenshots only on request. Thorough: the most capable model more widely, a second reviewer on critical-area work, more evaluation trials. Required reviews, tests and the merge gate never change |
+| **Thoroughness** (`efficiency`) | Lightest · Lean · **Balanced** · Thorough | Which model does which job, how hard it thinks, and the extra checks, together (section 14.6). Lightest: every job but the front desk on the mid-sized model, so risky work is checked less closely. Lean: the mid-sized model for most building and routine reviews, one builder at a time, screenshots only where a change is shown first or asked for. Thorough: the most capable model for almost everything, thinking longer, a second reviewer on critical-area work, more evaluation trials. The front desk, required reviews, tests and the merge gate are the same at every level |
+| **Premium model** (`premium`) | **Off** · On, within the plan · On, paid credits too | Section 14.6. Used at Thorough only. A separate opt-in, offered only where the account has it, and only by the director's own Yes on its card. No level turns it on |
+| **Usage nudge** (`usageMark`) | Off · 50% · 65% · **75%** · 90% | The share of the weekly allowance at which the front desk offers Lean until it resets (section 14.6) |
 | **Budget** | **Report only** · Weekly share · Per feature | Report only is the director's ruling (section 9.1). Budget allocation is in the backlog, by the director's decision of 18 October 2026; the other two levels come only if it is taken up |
 | **Builders at once** (`pace`) | 1 · 2 · **3** | How fast features move, and how much usage they draw at once. The default is the build-loop design's limit of three, which wins over this design's earlier two. *Designer's call* |
 | **Briefing** | Short (about 80 words) · **Standard (about 150)** · Detailed (about 300) | Section 5.2. The gap before a briefing, two hours by default, is set here too |
@@ -903,6 +909,8 @@ These are rarely changed. The first three are guardrails (section 12.4), so a ch
 
 The compaction point itself isn't among them: it stays in the project's Claude Code settings, a guardrail, so `compactPrepare` moves only the gauge's "prepare" point. *Designer's call.*
 
+The routing table holds all four Thoroughness columns. Changing a cell or a pin is the guardrail change; picking a column is the everyday setting Thoroughness (section 14.6).
+
 ### 14.3 Where settings live
 
 There are two kinds, kept apart:
@@ -918,7 +926,7 @@ There are two kinds, kept apart:
 ### 14.4 How settings change
 
 - **By saying it.** "I'm away till 6" or "be more careful this week". The front desk reads the change back in one line, and it takes effect on the director's confirmation (section 9). A temporary change carries its end time and reverts on its own.
-- **In the mod's settings pane** (section 17.1), with no Claude turn. A press is both the change and the director's confirmation of it, signed as a Confirm click on its card would be, so it is in force at once. Each row shows its current choice and where it comes from. Presence has six set choices (Here; Away for 2 hours; Away until 18:00; Away until 09:00 tomorrow; Do not disturb until 09:00 tomorrow; Do not disturb until I change it), whose end time is worked out at the press, in the computer's own time zone, and a choice whose time has passed isn't offered. Protection, notifications, working hours and the briefing gap are changed through the front desk, so their rows offer only **Change…**, which asks the front desk (section 23.6); the budget shows its one level while budget allocation is in the backlog; the advanced settings stay with the front desk. Under STOP a press records nothing and says so. *Designer's call.*
+- **In the mod's settings pane** (section 17.1), with no Claude turn. A press is both the change and the director's confirmation of it, signed as a Confirm click on its card would be, so it is in force at once. Each row shows its current choice and where it comes from. Presence has six set choices (Here; Away for 2 hours; Away until 18:00; Away until 09:00 tomorrow; Do not disturb until 09:00 tomorrow; Do not disturb until I change it), whose end time is worked out at the press, in the computer's own time zone, and a choice whose time has passed isn't offered. Protection, notifications, working hours, the briefing gap and the premium model are changed through the front desk, so their rows offer only **Change…**, which asks the front desk (section 23.6); the budget shows its one level while budget allocation is in the backlog; the advanced settings stay with the front desk. Under STOP a press records nothing and says so. *Designer's call.*
 - **Learnt from how the director works** (section 5.5): each is a one-line card, in force only on the director's Confirm, except a concept set back to not known, which makes explanations longer at once.
 - **Only the director changes them.** Agents are denied writes to the settings files, and every change is logged with its date.
 - **Build commands on Windows** moves away from Ask only by the director's click on its card, never by saying it; back to Ask, by either (section 12.2).
@@ -935,6 +943,200 @@ Wheelhouse's own non-negotiables:
 
 **And each project's own:** a project can mark rules as non-negotiable in its rulebook, and no setting moves those either.
 
+### 14.6 Thoroughness: one preset for models, effort and extra checks
+
+**What the director asked, 24 October 2026.** Model use should follow how much of the weekly allowance is left. When it runs low, the mid-sized model for most sessions, with the most capable model only for design work, or even the mid-sized model for everything. When plenty is left, the best model for design and the most capable model for most sessions. Their rulings: Thoroughness is one preset (Lean · Balanced · Thorough, with Lightest added later by the director below Lean) that sets three things together (which model does which job, thinking effort, and the extra checks); the front desk stays on the most capable model; the premium model is a separate opt-in, never on by default, offered only where the account has it, and needing the director's own authorisation. This section was designed for the director to review before anything is built, from the research in `docs/research/model-presets-2026-10.md` (cited below as "the research"), which compares Claude Code's and Copilot's controls, Anthropic's guidance and other tools' presets. Three named levels are what Copilot and Cursor also offer (the research, section 3).
+
+**What never changes with the level.** Required reviews (one fresh, independent reviewer wherever one is required today), tests, the merge gate and its conditions, the round cap, the decision levels, Show before build, STOP, the guardrails and each feature's appetite. Lean makes the work lighter; it never removes a check that is there today. Thorough only adds checks.
+
+#### The table
+
+The routing table (section 8) gains two roles, so design can be told apart from building: `feature`, the feature session itself, which brainstorms, designs, plans and runs the loop (today it takes `builder`'s model), and `builderCritical`, a builder on a task in a critical area. *Designer's call.*
+
+Each cell is a class of model and a thinking effort. The efforts are Claude Code's own names, `low`, `medium`, `high` and `xhigh`, never `max`, which Anthropic says tends to overthink and which a setting can't hold (the research, section 1.2). The same name means a different amount on each model, so an effort belongs to its cell, and the evaluation that moves a pin judges its class's efforts with it. The column in bold is the default.
+
+| Job | Roles | Lightest | Lean | **Balanced** | Thorough |
+|---|---|---|---|---|---|
+| Front desk | `frontDesk` | most capable, its own default effort | the same | the same | the same |
+| Foreman | `foreman` | mid-sized, `low` | mid-sized, `low` | mid-sized, `medium` | most capable, `medium` |
+| Design and critical work | `feature`, `builderCritical` | mid-sized, `high` | most capable, `medium` | most capable, `high` | most capable, `xhigh` |
+| Reviews of critical work | `reviewerCritical` | mid-sized, `high` | most capable, `high` | most capable, `high` | most capable, `xhigh` |
+| Well-defined builds | `builder`, `tester` | mid-sized, `medium`; `high` when a task is sent back | mid-sized, `medium`; `high` when a task is sent back | most capable, `medium` | most capable, `high` |
+| Mechanical builds | `mechanical` | mid-sized, `low` | mid-sized, `low` | mid-sized, `medium` | mid-sized, `medium` |
+| Routine reviews | `reviewer` | mid-sized, `medium` | mid-sized, `medium` | mid-sized, `high` | most capable, `high` |
+
+The premium model, where the director has opted in, replaces the most capable model for design and critical work, at `high` (below).
+
+**The extra checks:**
+
+| Check | Lightest | Lean | **Balanced** | Thorough |
+|---|---|---|---|---|
+| A second fresh reviewer on critical-area work, which must also report CLEAN | no | no | no | yes |
+| Evaluation trials per scenario, when the evaluation runs (section 18) | 3 | 3 | 3 | 5 |
+| The tester's screenshots | only where a change is shown first, or asked for | the same | every visual change | every visual change, at phone and desktop widths, light and dark |
+| Builders at once | at most 1, whatever `pace` says | at most 1 | as `pace` says | as `pace` says |
+
+*Designer's calls*, each cell:
+
+- **Balanced is today's section 8,** made explicit: the most capable model for design, critical work, its reviews and ordinary building; the mid-sized model for mechanical work and routine reviews. It is the default, so a project set up before this section behaves as it does now.
+- **Reviews of critical work stay on the most capable model at Lean.** They are the one fresh pair of eyes on the riskiest diffs, and the evaluation has only judged them there. Saving there would buy little: reviews read far less than builders write.
+- **The foreman sits on the mid-sized model at Lean and Balanced,** because its choices that matter are checked by scripts: the merge gate, the lock and the appetite. At Thorough it moves up with the rest.
+- **Evaluation trials never drop below three,** because a pin moving rests on them (section 9.1). Lean saves nothing there.
+- **Screenshots at Lean still cover every change shown first,** since the director's approval of it rests on them.
+- **Lean's builders follow Anthropic's advice for the mid-sized model:** `medium` for well-specified tasks and `high` for harder ones, so a task sent back by its review is built again at `high`, since a second rework costs more than the extra thinking. Mechanical work is at `low`, as Anthropic suggests for simple subagent work (the research, section 2).
+- **Why the model, not only the effort, changes at Lean.** Anthropic's test is whether a failure came from not knowing enough (a bigger model) or not trying hard enough (more effort), and on work that stretches the smaller model the bigger one can cost less per task (the research, section 2). So Lean moves only well-specified work to the mid-sized model, and keeps design and critical work on the most capable model at a lower effort. The most capable model costs about twice the mid-sized one per token (the research, section 2), so Lean saves roughly half on the jobs it moves.
+- **Not the split plan-and-do alias, `best` or `default`.** Each moves on its own (`best` becomes the premium model where the account has it, and the split alias needs plan mode, which wakes don't use), so the table pins full IDs only (the research, section 6.1).
+- **Not the advisor yet.** Claude Code's advisor lets a cheaper model consult a stronger one at decision points. It would suit Lean's builders, but it is experimental and fails silently, so it is left for later (the research, section 1.5).
+- **Builders at once at Lean is one.** Fewer builders at once doesn't lower the week's total by itself, but it slows the burn so a low allowance lasts while the director decides, and one feature's usage is easier to read. `pace` stays as the director set it, and comes back with Balanced.
+
+#### Lightest: everything on the mid-sized model
+
+**Decided by the director, 24 October 2026:** a fourth level, Lightest, below Lean, with every job on the mid-sized model and the front desk staying on the most capable one. Its safety cost is said plainly on the settings pane and on the card that offers it, and every check still runs.
+
+- **What it is:** the Lightest column above. Design and critical work, and their reviews, move to the mid-sized model at `high`, the effort Anthropic suggests for its harder work (the research, section 2). Everything else is as at Lean.
+- **Why the front desk still stays:** scenarios 1 and 16 failed on a smaller model (`docs/evals/front-desk.md`): it applied a ruling without quoting it, and it went ahead with a change before saying it waited for the director's confirmation. Those are the two things the front desk exists to get right. The front desk leaves the most capable model, at any level, only when the front desk's whole evaluation passes three trials of three on the mid-sized model, scenarios 1 and 16 included. Even then it is a level-4 change to the table, on its own card, not part of a Thoroughness level.
+- **What it costs in safety:**
+  - designs and plans are thinner, so more of the work is redone, and more questions reach the director mid-build;
+  - risky work is written and checked by the same lighter model, whose blind spots then overlap: a mistake the builder makes is likelier to pass its check. The check still runs and the merge gate still holds, but it catches less.
+- **Ready only after its own evaluation.** Nothing evaluated so far ran this way, so Lightest is offered only after the build loop's feature-session scenarios pass on its column, as Lean's do, and in the same counted run. It has its own `column-ready` event. *Designer's call.*
+- **How it is offered.** By the director's word or pick, and by one card when the allowance is nearly gone: at Lean, at 90% used with more than 24 hours to the reset, once a week (the usage nudge, below). The nudge's first card still offers Lean, never Lightest, so Lightest is never one step away from the default. *Designer's call.*
+- **While it is in force,** the board shows one line, "Lightest: risky work is checked less closely", and the settings pane's group note says the same (below). *Designer's call.*
+
+#### How a level change squares with section 9.1
+
+- **The table holds all four columns, and they are the guardrail.** Changing a cell (a model class or an effort) is a level-4 pull request, as today. Picking which column is in force is the everyday setting `efficiency`, on the state branch, changed by the director's word or press. A press is the change and the director's own confirmation of it (section 14.4). Since the columns were approved together, switching between them is not "a smaller model for a job" in section 9.1's sense.
+- **The columns arrive once, with the director's approval.** Setup writes all four into a new project's table, and its card says what Lean and Lightest move to the mid-sized model. A project set up before this section gets them through setup's project-files card on its next run: one click, which is the director's approval of the guardrail change. Until then only Balanced, today's behaviour, is offered.
+- **Pins are per class, not per cell.** The table pins the most capable model (setup's step 7 does this today, as `frontDesk`), the mid-sized model (step 7 asks Claude Code what its alias for that model stands for, in the same way), and the premium model only after the director opts in. A pin moves only after the evaluation passes (section 9.1), and then moves every cell of its class.
+- **A column is offered only once it has passed.** Balanced and Thorough use the classes already evaluated today. Lean puts builders and routine reviewers on the mid-sized model, so before Lean is offered, the build loop's feature-session scenarios (20 to 23, 27's bug leg, 33 and 34; `docs/evals/build-loop.md`) run once on the Lean column, three trials each, as the plan's one counted evaluation. If one fails, Lean stays unoffered, the pane shows it as "Lean: not ready yet", and the director gets one card saying what failed. Lightest's column runs in the same counted run and is judged by itself.
+- **Setup needs a Claude Code that takes an effort per subagent call** (v2.1.292 or later, the research, section 1.2), as it already checks other versions; with an older one only Balanced is offered.
+- **No Thoroughness level is a decision level.** Autonomy, Show before build and level 4 are separate settings, and Thoroughness moves none of them.
+
+#### When a model can't be used
+
+The research (section 4) found that Claude Code checks a model only at its first request, that an organisation's block swaps in its default model with a warning nobody sees in a headless run, and that its fallback models cover a model overloaded or retired but never a usage limit, billing or sign-in. So each level is kept working as follows. *Designer's call*, each.
+
+- **Probes.** At setup, after each change of Claude Code's version, and once a day, a script runs one tiny headless session per class in use (never the premium model without the director's Yes) and reads which model actually answered. A class whose probe fails, or answers with another model, is marked not available, and the board says so in one line.
+- **Every wake reads its own stream.** The watcher reads the model each wake's session actually started on, and any model-not-found, overloaded or usage-limit error, from the session's own output, so no extra probe runs per wake. A session on a model other than its cell's says so in one line on the board, and a review records the model it ran on, as it does today.
+- **A fallback for one turn.** Each wake passes the other evaluated class as its fallback model, which Claude Code uses for one turn when the pin is overloaded or retired, and then tries the pin again. Two cells take none: reviews of critical work, since a review on a weaker model isn't the review the gate expects, so that review waits and runs again; and the front desk, which the director's own session runs. Three fallbacks in a day give the director one card.
+- **A class not available.** The mid-sized class missing: its cells use the most capable model, which costs more, and Lean and Lightest are shown as not ready. The most capable class missing: design, critical work and its reviews hold, the rest carries on, and the director gets one card. The level in force doesn't change on its own.
+- **Retirement.** Anthropic gives at least 60 days' notice (the research, section 4). The weekly check of official sources (section 9.1) raises a pin's retirement 45 days ahead, which leaves time to evaluate its successor before the pin moves.
+
+#### The usage nudge
+
+- **What it is.** When the share of the weekly allowance used reaches the director's mark (`usageMark`, 75% by default), the front desk offers one card: "Switch to Lean until it resets?" It never switches on its own.
+- **When it is offered.** At the front desk's next turn after the mark is passed, when the level in force is Balanced or Thorough, the allowance's reset is more than 24 hours away (so it isn't worth changing for the last day), and it hasn't been offered in this allowance week. Declining it ends it for the week. It goes on the waiting list like any card, and while the director is Away it notifies once, since a used-up allowance would stop all work. At Do not disturb it waits. *Designer's call.*
+- **The second card, at Lean.** When the level in force is Lean and 90% is used, with more than 24 hours to the reset, the front desk offers one card: "Switch to Lightest until it resets?", which says Lightest's safety cost on the card itself. Once a week, like the first. *Designer's call.*
+- **Going back.** When Lean or Lightest came from one of these cards, the first front-desk turn after the reset offers one card: "Go back to Balanced?", naming the level before the switch, which the switch's event records. It never goes back on its own either. A switch the director made any other way gets no return card. *Designer's call.*
+- **How usage is read on Claude Code.** The front desk's session start and each tick read `usage/allowance.json` with a script, so the check costs no reasoning. The mod writes that file from `rateLimits` in Desktop, and the terminal's status line from `rate_limits.seven_day` (section 9.1). Only the weekly figure is used, not the 5-hour one, which resets too soon to be worth a level change. A file older than a day, or none at all (Desktop without the mod), means no nudge; the board says "Allowance share not known, so no nudge" once. Claude Code gives the figure only on Pro and Max plans, and only after a session's first reply (the research, section 1.4), so Team and Enterprise seats get no nudge, and the board says so. *Designer's call.*
+- **When the limit is reached.** The allowance is shared by every model, so switching level then doesn't help: work is blocked until the reset (the research, section 1.4). When a wake reports the weekly limit, the watcher stops waking sessions until the reset time, and the front desk sends one card: "Work is paused until Thursday at 09:00, when your allowance resets." Its one option is OK. Nothing is lost, and work picks up from the ledger at the reset. *Designer's call.*
+- **On Copilot** usage is billed by the month in credits, not a weekly share (`docs/specs/2026-10-20-other-agents-design.md`, section 5). Where check C11 finds a figure for the month's credits used and the month's allowance, the same mark applies to the month and the cards say "until your credits renew". Where it doesn't (Copilot's Lean tier, or no figure from GitHub), there is no nudge, the board says so, and the director switches Thoroughness by hand. Copilot CLI's `--max-ai-credits` caps one run's credits, and Lean sets it on each wake there. *Designer's call.*
+- **When plenty is left** (decided by the director, 24 October 2026). When under 40% of the weekly allowance is used with under two days to the reset, and the level in force is below Thorough, the front desk offers one card: "Plenty left: switch to Thorough until it resets?" After the reset, the first front-desk turn offers one card to go back to the level before. It is not offered in a week in which the director switched down, or declined it, and the usage nudge's Off turns it off too. It never switches on its own. *Designer's call* for the details.
+
+#### The premium model
+
+What the director has settled (24 October 2026): it is a separate opt-in, never on by default and never turned on by a level; it is offered only where the account has it, with its cost said plainly, and it needs the director's own authorisation. When an opted-in premium model can't be used, work falls back to the most capable model and the board says so in one line, with no card. It is offered at Thorough only (the director, 24 October 2026). And it never spends paid credits or extra usage without the director's own Yes for that: if Wheelhouse can't tell whether a run would bill, it uses the most capable model and says so in one line.
+
+- **It is a money decision, not only an allowance one.** On some plans its use is paid from usage credits, and a headless session, as every wake is, pays without asking; on Max plans it also has a weekly limit of its own, which Wheelhouse can't read (the research, section 1.4). So the card says plainly that it may spend real money, and nothing touches the model before the director's Yes, not even a probe.
+- **Two Yeses, not one.** The opt-in's Yes allows the premium model within the plan's own allowance only. Paying for it from usage credits or extra usage needs a second Yes of its own, on its own line of the card, never assumed from the first. Without it, a premium wake runs only when Wheelhouse can tell beforehand that the run draws on the plan and not on credits. When it can't tell, as today, since nothing Claude Code gives a script says so in advance (check 76), that wake runs on the most capable model, and the board says in one line: "Premium model not used: it might have been paid from credits." The evaluation runs that the Yes starts follow the same rule. *Designer's call* for how it is told apart.
+- **Offered only where the account has it.** At the Yes, setup's check asks Claude Code what its premium alias stands for; an account that can't resolve it doesn't have it, and the card isn't offered again until a setup run finds it.
+- **Only by the director's own opt-in,** on its card, which the front desk shows when the director asks for it, or presses Change… on its row. Nothing else turns it on: no level, no ruling, no learnt setting and no other agent.
+- **What it is used for:** design and critical work only (`feature` and `builderCritical`), at `high`, Anthropic's starting point for it, since `xhigh` multiplies the dearest model's output (the research, section 6.1). Not for reviews, so work it wrote is reviewed by a different, evaluated model. Not for the front desk, whose model the director already chooses in Claude's model menu (section 8). *Designer's call.*
+- **What the Yes starts.** Its pin is written into the table as a level-4 change, which the Yes approves. The build loop's design-heavy scenarios then run on it, three trials each, under the same Yes, and the card says they spend some of it. It takes effect only if they pass; if one fails, the director gets one card and it stays off. A new premium pin needs a new Yes, since the Yes covered the model it named. *Designer's call.*
+- **When it can't be used.** Each premium wake passes the most capable model as its fallback, which covers an outage or retirement for one turn. A usage limit or a billing refusal isn't covered by Claude Code's fallback, so the watcher runs that wake again on the most capable model at the cell's own effort. Either way the board says one line ("Premium model not available, so design is on the most capable model"), with no card. After a limit or a refusal it rests until its limit resets, when that is known, or for a day, and is then tried at the next wake; after an account loses it altogether, it rests until a setup run finds it again. *Designer's call.*
+- **Below Thorough,** it isn't used, and its row reads "On (not in use at Balanced)". Moving back to Thorough uses it again with one line on the board, and no new card, since the director's Yes still stands. *Designer's call.*
+- **It lasts until the director turns it off,** by a press or by saying so, which takes effect at once and needs no evaluation. The board shows one line while it is in use. *Designer's call.*
+
+#### How a running feature picks up a change
+
+- **At its next session start, never mid-session.** Each wake of a feature session or the foreman is one session start (section 8, and the watcher's two shapes). The watcher reads the level in force at each wake and gives that wake its model and effort, and the table the session uses for the subagents it dispatches during that wake. A wake already running finishes on what it began with.
+- **The brief no longer carries the models.** Today the foreman copies the routing table into the brief at dispatch (`routing` in the brief's file), so a feature keeps the table it started with. Instead the brief names the roles, and the watcher puts the column in force into the wake's prompt. It isn't a file in the worktree, which the session could change. *Designer's call.*
+- **In the watcher's Shape 2,** where the mod hands wakes to a long-lived session, that session's own model holds until it ends; the subagents it dispatches follow the new column from its next wake.
+- **The front desk** is the same at every level, so nothing changes for it. The premium model and Lightest don't touch it either.
+- **How effort reaches a session.** Today nothing passes an effort: every session takes Claude Code's default. The watcher and the foreman's start script give the effort with the model, and the brief tells the feature session the effort for each subagent role. The research (section 1.2) settles most of check 74: a session takes `--effort`, and since v2.1.292 each subagent call takes its own `model` and `effort`, which the feature session passes from the column in the wake's prompt. The watcher never sets `CLAUDE_CODE_EFFORT_LEVEL`, which would override every subagent's own. What is left of check 74 is a trial on the Mac that a resumed wake takes `--effort` too, and that a subagent's effort shows in the stream. An organisation's cap lowers an effort without saying so, which the probe and the stream report.
+- **On Copilot** the routing table has a column per agent (`docs/specs/2026-10-20-other-agents-design.md`, section 8.9). Each Thoroughness column there names the same classes, picked from the models Copilot offers. Copilot takes an effort per session and per custom agent, and an agent can list models in order of preference (the research, section 5). Wheelhouse's Copilot agents list their class's models, never use Copilot's Auto, under which subagents ignore their own model, and set `modelPolicy: "required"` on the reviewers of critical work, so a swap is refused rather than made quietly. What is left of check 75 is a trial that a custom agent's effort holds in a headless run.
+
+#### Settled for the builder
+
+*Designer's call*, each:
+
+- **The second reviewer at Thorough is the foreman's check, not the gate's.** The feature session dispatches both reviewers, each records its review as today, and the foreman asks the gate to merge only when both are CLEAN on the head commit. The gate's own condition stays one CLEAN review where one is required, so the gate never depends on an everyday setting.
+- **Where "ready" lives.** When a column's evaluation passes, the evaluation's script writes a `column-ready` event to the state branch through the state command, naming the column, the pins it ran on and the evaluation's records. The pane, the foreman and the watcher all read it. A column is ready only for the pins it ran on; when a pin moves, its new evaluation writes a new event. If the level in force isn't ready (set by the director's word, say, or left over from before a pin moved), the foreman and the watcher use Balanced, and the board says so in one line. The premium model's pass is a `column-ready` event of its own.
+- **Finding the pins.** Setup asks Claude Code what its alias for each class stands for, as it does for `best` today, each alias named by one constant in the code. If it can't say for the mid-sized model, Lean isn't offered and setup's card says so; the next setup run tries again. The premium alias is asked only at the director's opt-in; an account that can't resolve it doesn't have it, and the opt-in isn't offered.
+- **The table's shape.** `routing` becomes the pins per class and a column per level, each cell a class and an effort. A table in today's flat shape is read as Balanced alone, its models as written, until setup's project-files card replaces it; both shapes are read until the first public release, when the flat shape is dropped.
+- **The allowance file** holds the weekly share used, when it resets and when it was read, which Claude Code gives (section 9.1). The nudge needs all three.
+- **The cap of one builder at Lean** is the foreman's, at dispatch, beside `pace`; the brief doesn't carry it.
+- **Copilot's columns** are built with Copilot's routing table (`docs/specs/2026-10-20-other-agents-design.md`, section 8.9), not in the plan that builds this section.
+
+#### The words the director sees
+
+The pane's rows (section 23.6), in **This project**:
+
+- **Thoroughness:** pop-up with Lightest, Lean, Balanced, Thorough. While a level isn't ready, its option reads "Lean: not ready yet" (or Lightest's) and can't be picked. While Lightest is in force, the group's note adds: "Lightest: the lighter model also designs and checks risky work, so mistakes are likelier to slip through. Every check still runs."
+- **Premium model:** "Off", "On, within your plan", "On, paid credits too", or either with "(not in use at Balanced)", with Change…, which asks the front desk. The row isn't shown on an account that doesn't have it.
+
+And in **You, in every project**:
+
+- **Usage nudge:** pop-up with Off, At 50%, At 65%, At 75%, At 90%.
+
+What the front desk says when asked what a level means, and in `/wheelhouse:settings`:
+
+- **Lightest:** "Saves the most allowance. A lighter model does everything except talking with you, including designing and checking risky work, so mistakes are likelier to slip through. Every required check still runs. Best kept for the last days before your allowance resets."
+
+- **Lean:** "Saves your allowance. Design and the checks on risky work stay on the strongest model. Most building and routine checking moves to a lighter one, one feature at a time. Every required check still runs."
+- **Balanced:** "The usual mix. The strongest model designs, builds and checks anything risky. A lighter one does routine work."
+- **Thorough:** "Uses more allowance. The strongest model does almost everything and thinks longer, and risky work gets a second independent check."
+- **Premium model:** "Claude's largest model, used only at Thorough for design and risky work, and only if you allow it. It may design better. It costs about two and a half times as much, and on some plans it's paid from your usage credits, which is real money."
+
+**The nudge card:**
+
+- **What this is:** "You've used 76% of this week's allowance. It resets on Thursday at 09:00."
+- **Why it comes to you:** "Only you choose how thorough the work is."
+- **Options:** Switch to Lean until it resets · Stay on Balanced.
+- **Recommendation:** "Switch to Lean. Work keeps going, a little lighter, so it's less likely to stop before Thursday. I'll offer to switch back after the reset."
+- **Meanwhile:** "Work carries on as it is."
+
+**The return card:**
+
+- **What this is:** "Your allowance reset this morning. You switched to Lean on Monday to save it."
+- **Why it comes to you:** "Only you choose how thorough the work is."
+- **Options:** Go back to Balanced · Stay on Lean.
+- **Recommendation:** "Go back to Balanced. There's a full week's allowance again."
+- **Meanwhile:** "Work carries on on Lean."
+
+**The Lightest card:**
+
+- **What this is:** "You've used 91% of this week's allowance, and you're on Lean. It resets on Thursday at 09:00."
+- **Why it comes to you:** "Lightest saves more, but it's less safe, so only you can choose it."
+- **Options:** Switch to Lightest until it resets · Stay on Lean.
+- **Recommendation:** "Stay on Lean, unless work stopping before Thursday matters more than catching mistakes. On Lightest, a lighter model also designs and checks risky work, so mistakes are likelier to slip through. Every check still runs."
+- **Meanwhile:** "Work carries on on Lean."
+
+**The upward card:**
+
+- **What this is:** "You've used 32% of this week's allowance, and it resets on Thursday at 09:00."
+- **Why it comes to you:** "Only you choose how thorough the work is."
+- **Options:** Switch to Thorough until it resets · Stay on Balanced.
+- **Recommendation:** "Switch to Thorough. Allowance left at the reset is lost, and Thorough checks risky work twice. I'll offer to switch back after the reset."
+- **Meanwhile:** "Work carries on as it is."
+
+**The premium model's card** (at Thorough only):
+
+- **What this is:** "Your account has Claude's largest model. It may design better than the model Wheelhouse uses now, and it costs about two and a half times as much. Its use can be paid from your usage credits, which is real money, and Wheelhouse can't see its separate weekly limit."
+- **Why it comes to you:** "It can spend money, so only you can allow it."
+- **Options:** Allow it within my plan · Allow it, paid credits too · Not now.
+- **Recommendation:** "Allow it within your plan, if you often have allowance left at the end of the week. For now I can't tell beforehand whether a run would be paid from credits, so within your plan it will be used only once I can."
+- **Meanwhile:** "If you allow it, it's tried on your project's own checks first, which uses some of it. Nothing changes until it passes, and I'll tell you when it does."
+
+**The paused card:** "Work is paused until Thursday at 09:00, when your allowance resets. Nothing is lost; it picks up from where it stopped." One option, OK.
+
+**Words never used:** "unlimited", and "rate limit" for the allowance. Cursor's users were misled by both (the research, section 3). Each level's cost is said in the director's own unit: allowance on Claude Code, credits on Copilot.
+
+On Copilot, the cards say "credits" and "until your credits renew". Since Copilot also has a tier called Lean (`docs/specs/2026-10-20-other-agents-design.md`, section 6.4), its cards always say "Thoroughness: Lean" in full. *Designer's call* for all the wording.
+
+#### Decided by the director
+
+On 24 October 2026, on the three cards of the first draft: **Add Lightest**, with its safety cost said plainly on the pane and its card; **offer the upward card**, under 40% used with under two days left, with a card to switch back after the reset; **the premium model at Thorough only**, and never paying from credits or extra usage without its own Yes (section 22).
+
 ## 15. Setup
 
 **The aim:** a non-technical person finishes setup in about 15 minutes, with clicks and their computer password. No terminal, no editing files, no secret pasted into the chat. Built by the setup plan (`docs/superpowers/plans/2026-10-18-wheelhouse-setup.md`, 18 to 20 October 2026); the rulings it was built by are in section 21.
@@ -947,7 +1149,7 @@ Wheelhouse's own non-negotiables:
 
 **Long installs start first.** On a fresh computer git's installer can take well over five minutes: Apple's command-line tools on a Mac, or Git for Windows, fetched into an empty folder and checked against its published checksum before it opens. Setup starts it first, at step 2, and asks step 3's questions while it runs. `gh` and `glab` are not installed at all: setup fetches the one the project's host needs from its official release archive into the helper's own folder, checks it against the release's checksums and unpacks it only then, so there is no installer, password or warning for it. Only the helper runs them. On the Mac both are signed and notarised, carry no quarantine mark, and took about 5 to 7 seconds; Windows waits for its sitting (check 38, `docs/checks/38-host-tools.md`).
 
-**Setup never depends on the command-line Claude being signed in.** It runs in Desktop, whose sign-in can work where the command line's fails (check 1). Installing the pinned kits at step 7 needs no sign-in (check 37). Step 7's other `claude` command asks what the alias `best` stands for, to pin the front desk's model (section 8). It needs the sign-in, so without it the step goes on with no pin, says so on its card, and tries again at the next setup run.
+**Setup never depends on the command-line Claude being signed in.** It runs in Desktop, whose sign-in can work where the command line's fails (check 1). Installing the pinned kits at step 7 needs no sign-in (check 37). Step 7's other `claude` command asks what the alias `opus` stands for, to pin the front desk's model (section 8). It needs the sign-in, so without it the step goes on with no pin, says so on its card, and tries again at the next setup run.
 
 **How each step happens.**
 
@@ -969,7 +1171,7 @@ Wheelhouse's own non-negotiables:
 | 4 | **The questions:** what the product is and who uses it (typed, or the README's own words, or later), and whether it has live data (section 12.6; agents get test data only, and the director is told once). Only for a project that looks like an iPhone or Mac app, whether its builds sign it (section 12.2). The real-users question was asked at step 3. Each answer is recorded by its click, with its confirmation: the product's glossary entry and its phase (launched or before launch, from the real-users answer) | A typed line or a click, and a click | 2 min |
 | 5 | **Rules found** in an existing project: read from `CLAUDE.md`, the README, the docs and another agent setup's instruction files, then followed as they are, with no card (ruling A3, built) | None | About 0 minutes |
 | 6 | **Changes to this computer,** listed on one card: telemetry on this computer only (section 9.1); transcripts kept 30 days, saying older ones go for good (section 12.8); Wheelhouse never updating on its own, and Claude Code on its stable channel at or above Wheelhouse's floor (a higher minimum of the director's is kept); phone notifications ("Push when Claude decides"); this computer's signing key, named so the director knows it exists; and each of the director's own settings that would weaken Standard, named and left as they are (section 12.1) | One click | 1 min |
-| 7 | **The project's files, pins and protection.** The project's `.claude/settings.json` and `.claude/wheelhouse.json`, and `CLAUDE.md`'s "Compact instructions" (section 10), go up in one commit, "Set up Wheelhouse", pushed straight to the default branch with the director's own sign-in; this computer's `.claude/settings.local.json` is written by key and kept out of git with `.wheelhouse/`. The front desk is pinned to the model Claude Code's alias `best` stands for: in the routing table, and as that file's `model` (section 8). The project's `.gitignore` must keep `.env` and `.env.*` files, which hold secrets, out of git (the tool guard cannot see a secret once it is committed). Setup asks git whether `.env`, `.env.local`, `.env.production` and `.env.wheelhouse-probe` are ignored, at the root and in a folder, by a rule of the project's root `.gitignore`: a broader pattern such as `.env*` counts; a negation, a rule for `.env.local` alone (`*.local`), a root-only rule (`/.env`), `.git/info/exclude` and the computer's own global list do not. It adds only the missing lines to the root `.gitignore`, in the same commit and on the same card, and asks first, like any of the director's own uncommitted changes, when that file is untracked, deleted (with its own question, saying setup would put back one holding only the `.env` lines), edited around `.env` lines, or differs from the commit while the commit's own text does not cover every probe (git is asked of a temporary repository holding that text; a failed check counts as not covering); a computer joining a project, which commits nothing, adds them to its own `.git/info/exclude` instead, except where a `!` line in the root `.gitignore` lets some `.env` files in, which no line of its own can override: it says so and leaves that to the computer that set the project up. Uninstall keeps these lines. The guard refuses any name starting `.env` (`.envrc` and `.env_prod` among them), while setup's lines cover `.env` and `.env.*` only; the rest is left to the guard and the sandbox. The pinned kits are installed for the project. Then server-side protection is switched on with the director's sign-in, read back and shown (on GitLab, "pipelines must succeed" only where the project has a pipeline, or after asking: section 12.3). Where a shared file holds the director's own changes not yet committed, a card first asks whether they go up in setup's commit | One click | 1 min, while the kits install |
+| 7 | **The project's files, pins and protection.** The project's `.claude/settings.json` and `.claude/wheelhouse.json`, and `CLAUDE.md`'s "Compact instructions" (section 10), go up in one commit, "Set up Wheelhouse", pushed straight to the default branch with the director's own sign-in; this computer's `.claude/settings.local.json` is written by key and kept out of git with `.wheelhouse/`. The front desk is pinned to the model Claude Code's alias `opus` stands for, with no question: in the routing table, and as that file's `model` (section 8). The project's `.gitignore` must keep `.env` and `.env.*` files, which hold secrets, out of git (the tool guard cannot see a secret once it is committed). Setup asks git whether `.env`, `.env.local`, `.env.production` and `.env.wheelhouse-probe` are ignored, at the root and in a folder, by a rule of the project's root `.gitignore`: a broader pattern such as `.env*` counts; a negation, a rule for `.env.local` alone (`*.local`), a root-only rule (`/.env`), `.git/info/exclude` and the computer's own global list do not. It adds only the missing lines to the root `.gitignore`, in the same commit and on the same card, and asks first, like any of the director's own uncommitted changes, when that file is untracked, deleted (with its own question, saying setup would put back one holding only the `.env` lines), edited around `.env` lines, or differs from the commit while the commit's own text does not cover every probe (git is asked of a temporary repository holding that text; a failed check counts as not covering); a computer joining a project, which commits nothing, adds them to its own `.git/info/exclude` instead, except where a `!` line in the root `.gitignore` lets some `.env` files in, which no line of its own can override: it says so and leaves that to the computer that set the project up. Uninstall keeps these lines. The guard refuses any name starting `.env` (`.envrc` and `.env_prod` among them), while setup's lines cover `.env` and `.env.*` only; the rest is left to the guard and the sandbox. The pinned kits are installed for the project. Then server-side protection is switched on with the director's sign-in, read back and shown (on GitLab, "pipelines must succeed" only where the project has a pipeline, or after asking: section 12.3). Where a shared file holds the director's own changes not yet committed, a card first asks whether they go up in setup's commit | One click | 1 min, while the kits install |
 | 8 | **Locked only,** on the Mac: the system's own password prompt | Their password | 1 min |
 | 9 | **Phone notifications:** one card of plain steps: switch on Remote Control in Claude Desktop, check both push options ("Push when Claude decides", which step 6 switched on, and "Push when actions required"), allow Claude's notifications on the phone (check 4). On **Ready**, the director locks the screen until the phone buzzes, or for three minutes; the session sends one test two minutes after the click, since a push is skipped while they are at the computer, and on their return asks **It arrived** or **It didn't**. A test that didn't arrive is a line on the board's health. **Later** stops setup there for now | One switch, one on the phone, two clicks, a locked screen | 3 min |
 | 10 | **Health check:** after its card's click, the helper tries a merge the gate must refuse on a trial pull request, STOP with the real stop guard, the pinned kits and the protection; then the session tries, from inside its sandbox, that `.env` can't be read, the keys folder can't be reached and an agent can't reach the host. The board shows green; only then is setup finished, the foreman started and the first briefing given. A red board says what failed and what to do, and the step can be run again | One click | 1 min |
@@ -1360,6 +1562,12 @@ The added costs are:
 52. **The low-integrity runner:** whether a copy of Node.js labelled low with `icacls` starts at low and its children too, or is refused by AppLocker or App Control; whether `npm test`, a `node` script and `git commit` work in a worktree labelled low with `.git/hooks`, `.git/config` and `.claude/` left at the normal level, and how much slower; whether the low process is refused writes to `~/.claude`, the plugin's folder, the Startup folder, `HKCU`'s Run key, `.git/hooks` and a second drive; what it can read of `~/.ssh`, `~/.wheelhouse`, a browser profile and git's stored credentials; whether a "no read up" label can be set on a folder with stock tools (`icacls`, PowerShell in the language mode the computer allows, or Node's built-in `node:ffi`) and then holds; and whether the low process can start a normal-level one. The answers set what Guarded's card says it holds (section 12.2). The steps are the research's section 8.4, items 1 to 7.
 53. **Granting build commands to a feature session on Windows:** whether a `claude -p` feature session started through `claude.cmd` refuses an unallowed `npm test` at once rather than waiting, and runs it when `--allowedTools` names it, and runs the Guarded runner's rule; whether Claude Desktop on Windows applies any sandbox of its own (the research found conflicting reports, section 2.1); and, only if check 27 gives Shape 2, whether a running Desktop session picks up an allow rule written into its worktree's `.claude/settings.local.json`.
 
+**Added for Thoroughness** (section 14.6, 24 October 2026):
+
+74. **Thinking effort for each session:** mostly answered from the documentation (`docs/research/model-presets-2026-10.md`, section 1.2): `--effort` for a session, and `model` and `effort` on each subagent call from v2.1.292. Left to try on the Mac: that a wake resumed with `--resume` takes `--effort`, and that a subagent's effort shows in the stream. Until it is tried, a subagent runs at its feature session's effort.
+75. **Thinking effort on Copilot:** the documentation gives `--effort` per session and `reasoningEffort` per custom agent (`docs/research/model-presets-2026-10.md`, section 5). Left to try: that a custom agent's effort and `modelPolicy: "required"` hold in a headless run. Until it is tried, the Copilot columns name models only.
+76. **Telling a paid premium run beforehand:** whether anything Claude Code gives a script (a setting, the status line, `/usage`, a stream event, the account's own pages) says, before a headless run on the premium model, whether it would be paid from usage credits or extra usage rather than the plan's allowance. Until it does, the premium model runs only with the director's Yes to paid credits (section 14.6).
+
 ## 21. The designer's calls (the director may override)
 
 - critical areas, named per project (section 3);
@@ -1643,6 +1851,14 @@ The added costs are:
 - the keychain files denied in each project's sandbox, `signsApps` set at setup only by the director's Yes on step 4's question, never from the working copy, and Locked's computer-wide file leaving them to each project (section 12.2; check 73; 24 October 2026). Cost: `codesign` and iOS signing in a project not detected as an Apple app fail until it is lifted. *Designer's call.*
 - with real users, **Make it stricter** recommended on the Mac's connection card, and a joining computer's card counted as one with real users (section 11; 24 October 2026). *Designer's call.*
 - the host tools' token variables unset in every sandboxed command (section 12.2; 24 October 2026). *Designer's call.*
+- Thoroughness as one preset of four columns in the routing table (Lightest added by the director), each cell a model class and an effort, with Balanced as today's section 8; reviews of critical work on the most capable model at every level; the foreman on the mid-sized model at Lean and Balanced; evaluation trials never under three; Lean at one builder at a time; the roles `feature` and `builderCritical` (section 14.6; 24 October 2026). *Designer's call.*
+- switching Thoroughness counted as picking an approved column, not as changing the routing table; pins per model class; Lean offered only after the build loop's feature-session scenarios pass on it (sections 9.1 and 14.6; 24 October 2026). *Designer's call.*
+- the usage nudge on the weekly figure only, at 75% by default, not within 24 hours of the reset, once a week, with a return card only when Lean came from the nudge; no nudge without a fresh figure, and on Copilot only where check C11 gives the month's share (section 14.6; 24 October 2026). *Designer's call.*
+- the premium model for design and critical work only, at `high`, never for reviews or the front desk, evaluated under the director's opt-in before it takes effect, a new Yes for a new pin, idle at a level that doesn't offer it and back in use without a new card, on until turned off, and its fallback to the most capable model said in one line (section 14.6; 24 October 2026). Thorough only, and paid credits only on their own Yes, are the director's (section 22). *Designer's call.*
+- Lightest ready only after its own evaluation, offered by the nudge only at Lean and 90%, never as the first step down; the upward card not offered in a week the director switched down (section 14.6; 24 October 2026). *Designer's call.*
+- probes per class at setup, after a Claude Code update and daily; a one-turn fallback to the other evaluated class on every wake but the critical reviews and the front desk; retirement raised 45 days ahead; work paused with one card when the weekly limit is reached (section 14.6; 24 October 2026). *Designer's call.*
+- a running feature taking the column in force at each wake, from the wake's prompt rather than the brief or a file in the worktree (section 14.6; 24 October 2026). *Designer's call.*
+
 Cards A and B of the safety plan, Cards 1 and 2 of the board-and-usage plan, Card 1 of the front desk plan and Card 1 of the setup plan, answered by the director, are in section 22. The build loop's own designer's calls are in `docs/specs/2026-10-18-build-loop-design.md`, section 17.
 
 ## 22. Decided by the director
@@ -1680,6 +1896,8 @@ Answered on 17 October 2026:
 | Suggest a change | Decided 20 October 2026: every card offers Suggest a change, in the pane, the chat and on the phone. The director's words go to the front desk, and a new proposal comes back as a new card. Typed words steer but never approve (sections 12.3 and 23.3) |
 | Comparing screenshots to save a second approval (Card 1 of the front desk plan) | Decided 18 October 2026: **Compare them**, for fewer repeat approvals; any doubt still asks again. When a branch is brought up to date after the director approved it, the helper opens the change's preview in a hidden browser on this computer, with a fresh empty profile, and the approval carries over only when every page looks exactly the same. No setting to always ask again was built; a project that lists no pages always asks (section 12.3) |
 | Quiet protections, and the connection's default (the security pass) | Decided 24 October 2026, in discussion: setup must not scare non-technical people, so protections are quiet defaults, not choices. The keychain denial is on at Standard and Locked with no card; one plain question is asked only when the project looks like it signs Apple apps, with a reviewed way to lift it later, and `SECURITY.md` explains it. On the Mac, Quick (the ordinary sign-in) is the default, since check 73 shows the denial keeps a sandboxed agent from it; narrow sits behind an advanced **Make it stricter**, with one plain line on why. On Windows, which has no sandbox, setup still recommends narrow. Mechanisms unchanged: only the defaults, the order and the words (sections 11, 12.2 and 15) |
+| The front desk's model | Decided 24 October 2026: the front desk runs on the most capable model, found through Claude Code's alias `opus`; setup pins it quietly, with no card. The premium model (through `best`) is never the front desk's: it is the separate opt-in section 14.6 sets out (sections 8, 9.1, 14.6 and 15) |
+| Thoroughness (PR #68's three cards) | Decided 24 October 2026: **add Lightest**, a fourth level below Lean with every job but the front desk on the mid-sized model, its safety cost said plainly on the pane and its card, and every check still running; **offer the upward card** (under 40% used with under two days left, and a card to go back after the reset); **the premium model at Thorough only**, never spending paid credits or extra usage without the director's own Yes for that, falling back to the most capable model with one line when Wheelhouse can't tell (section 14.6) |
 
 **Still the director's to decide, later:**
 
@@ -1836,7 +2054,7 @@ Settings is a grouped, inset list, like System Settings on the Mac and Settings 
 - **The header:** "Settings", and a filled Done that goes back to the pane.
 - **A row is one setting:** its name on the left, as a noun, and its value on the right in plain words ("Autonomy: Balanced"), never a sentence.
 - **A setting with levels** shows them in a pop-up menu (`Select`). In Desktop that is the Mac's own pop-up button, the one System Settings uses.
-- **A setting the front desk changes** shows its value and a small "Change…" button, which asks the front desk. These are Protection, Build commands on Windows, Notifications, Working hours and the briefing gap.
+- **A setting the front desk changes** shows its value and a small "Change…" button, which asks the front desk. These are Protection, Build commands on Windows, Notifications, Working hours, the briefing gap and Premium model.
 - **A setting with no value in force** (Availability while the director is away for a while) draws no pop-up, but its words and Change…. A pick of the value already in force sends nothing.
 - **A setting with nothing to change** shows its value alone. Budget is "Report only" while budget allocation is in the backlog.
 - **Each group** has a short dim note under it, saying what the group is.
@@ -1844,8 +2062,8 @@ Settings is a grouped, inset list, like System Settings on the Mac and Settings 
 **The groups, in order:**
 
 1. **STOP:** "Builders · Working", and the STOP button. Note: "STOP halts every builder at once. Only you can lift it."
-2. **This project:** Autonomy, Show before building, Feature milestones, Builders at once, Thoroughness, Product phase, Build commands on Windows, Budget, Protection. Note: "Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them."
-3. **You, in every project:** Availability, Briefing length, Hours before a new briefing, Explanations, Board opens on, Notifications, Working hours. Note: "These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you."
+2. **This project:** Autonomy, Show before building, Feature milestones, Builders at once, Thoroughness, Premium model, Product phase, Build commands on Windows, Budget, Protection. Note: "Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them."
+3. **You, in every project:** Availability, Briefing length, Hours before a new briefing, Explanations, Board opens on, Notifications, Working hours, Usage nudge. Note: "These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you."
 4. **Advanced settings,** with Change…, which opens the front desk, as "Advanced settings: ask the front desk" did.
 
 **Four plainer names,** shown in the pane, the board and `/wheelhouse:settings`. The keys stay as they are.

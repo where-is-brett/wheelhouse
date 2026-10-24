@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
+import { COPILOT_VERSION } from '../../../scripts/lib/copilot-numbers.js';
 import {
   MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
 } from '../../../scripts/lineage/manifest.js';
@@ -54,6 +55,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
       files: [{ path: 'LICENSE', hash: fingerprintFile(path.join(dir, 'LICENSE')).hash }],
     }],
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
+    agents: { copilot: { cli: COPILOT_VERSION } },
     models: MODELS,
   });
   assert.equal(CLAUDE_CODE_FLOOR, '2.1.299');

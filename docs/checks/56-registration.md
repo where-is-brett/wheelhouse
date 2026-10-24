@@ -69,3 +69,8 @@ Counts per run were the same in all three folders. Each cell is the number of ti
 ## Needs the director
 
 Nothing now. The Windows part is the director's sitting (plan session S2).
+
+Addendum, 24 October 2026. Part 8 Task 1b built the plugin as its own root, `adapters/copilot/plugin/` (ruling P8-15). It holds a `plugin.json` naming `skills/` and `agents/` with no `hooks` key, the kit's skills and agents as byte-checked copies listed in a MANIFEST, and no hooks anywhere in it. The repository's root has no `plugin.json`, and `.claude-plugin/` and `hooks/hooks.json` are as they were. `installPlugin` and `pluginInstalled` (scripts/agents/copilot/plugin.js) run `copilot plugin install` and `copilot plugin list`; no setup step calls them yet (ruling P8-16). They are tested with a stand-in that models only what this check saw, and no real Copilot ran.
+
+- **Deferred, held for the director.** Install the package into a scratch Copilot home, run one prompt with a logging hook in the person's hook folder, and confirm that only that hook fires, once per call. This also settles what this check left untried: the plugin loaded alone, with no root manifest of its own beside Claude Code's, and from a marketplace.
+- **Direct installs are going.** `copilot plugin install <path>` is deprecated (above), so a marketplace route replaces `installPlugin` before Copilot drops direct installs. Installing from GitHub at a tag needs a marketplace entry naming `adapters/copilot/plugin/`.

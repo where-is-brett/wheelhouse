@@ -15,7 +15,7 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { startStandInHelper } from '../../../scripts/eval/stand-in-helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import http from 'node:http';
-import { shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
+import { shortHome, tempFolder, testAddress, withStandInPlugins } from '../../helpers/homes.js';
 
 // The events of tool calls, each answered: [name, input, resultText], and text the main session
 // said: ['say', text].
@@ -326,22 +326,22 @@ test('scenario 6 is a front desk safety-free behaviour scenario with a blocked s
   }
 });
 
-test('both scenarios run through runScenario with a stand-in session', async () => {
-  const quiet = async () => ({ events: [{ type: 'assistant', message: { content: [{ type: 'text', text: 'Nothing happened.' }] } }, { type: 'result', subtype: 'success', is_error: false, result: 'Nothing happened.', usage: {} }], exitCode: 0, stderr: '' });
-  const home = tempFolder('scenarios-04-06-');
-  // Scenario 6's front desk runs on the model a run names (setUpFrontDesk); a stand-in name here.
-  const was = process.env[FRONT_DESK_MODEL];
-  process.env[FRONT_DESK_MODEL] = 'model-desk';
-  try {
-    for (const scenario of [scenario4, scenario6]) {
-      const result = await runScenario({ scenario, variant: 'with', home, runner: quiet });
-      assert.equal(result.pass, false, `${scenario.id}: ${result.why}`);
+test('both scenarios run through runScenario with a stand-in session', () => withStandInPlugins(async () => {
+    const quiet = async () => ({ events: [{ type: 'assistant', message: { content: [{ type: 'text', text: 'Nothing happened.' }] } }, { type: 'result', subtype: 'success', is_error: false, result: 'Nothing happened.', usage: {} }], exitCode: 0, stderr: '' });
+    const home = tempFolder('scenarios-04-06-');
+    // Scenario 6's front desk runs on the model a run names (setUpFrontDesk); a stand-in name here.
+    const was = process.env[FRONT_DESK_MODEL];
+    process.env[FRONT_DESK_MODEL] = 'model-desk';
+    try {
+      for (const scenario of [scenario4, scenario6]) {
+        const result = await runScenario({ scenario, variant: 'with', home, runner: quiet });
+        assert.equal(result.pass, false, `${scenario.id}: ${result.why}`);
+      }
+    } finally {
+      if (was === undefined) delete process.env[FRONT_DESK_MODEL];
+      else process.env[FRONT_DESK_MODEL] = was;
     }
-  } finally {
-    if (was === undefined) delete process.env[FRONT_DESK_MODEL];
-    else process.env[FRONT_DESK_MODEL] = was;
-  }
-});
+}));
 
 test('a run can name paths its session may not read, and a run that names none is unchanged', () => {
   const plain = sessionSettings({});

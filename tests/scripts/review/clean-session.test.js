@@ -469,6 +469,8 @@ test('the route refuses under STOP, while the clean session is switched off, and
       const merged = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
       assert.equal(merged.ok, false);
       assert.ok(merged.reasons.includes(NO_CLEAN_REVIEW(project.head.slice(0, 7))), merged.refused);
+      // Taken away again: a head with a signed review is not reviewed again (ruling P8-14).
+      fs.rmSync(file);
     });
     // Claude Code's reviews are its own subagent's.
     await withHelper(project, () => null, async (client) => {
@@ -596,8 +598,9 @@ test("the prompt carries the feature's brief only when it is the one the state r
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
     });
+    // Each session is shown not clean, so it signs nothing and the head may be reviewed again (ruling P8-14).
     const promptNow = async () => {
-      const stand = standInReview({ answer: answerFor('CLEAN') });
+      const stand = standInReview({ answer: answerFor('CLEAN'), clean: false });
       await withHelper(project, () => stand.module, async (client) => {
         assert.equal((await client.review({ project: 'o__p', number: 7 })).started, true);
       });
@@ -716,4 +719,125 @@ test('a steering file written into the folder while the session runs means its v
   });
   assert.equal(outcome.ok, false);
   assert.match(outcome.why, /gained files that steer an agent while the session ran: \.github/);
+});
+
+// An event put straight into the project's state clone, signed where its kind is.
+const plant = (project, kind, data, ms) => as(project.home, () => {
+  const event = makeEvent({ kind, data, now: at(ms) });
+  const file = path.join(stateDir('o__p'), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+  return file;
+});
+
+test('the route reviews a commit once: a head with a signed review, of any verdict or kind, or three failed runs is refused (ruling P8-14)', async () => {
+  const project = await reviewProject({ change: { 'src/i.js': 'i\n' } });
+  const spent = /one review per commit: a fix needs a new commit$/;
+  try {
+    const short = project.head.slice(0, 7);
+    // Notes count for nothing, even ones worded as the helper's (the front desk can write plain notes): only the
+    // helper's own count of failed runs does (ruling P8-31).
+    for (const n of [1, 2, 3]) await plant(project, 'note', { text: `${NO_CLEAN_REVIEW(short)}: the review session did not finish in time.` }, 1000 + n);
+    const runOnce = async () => {
+      const stand = standInReview({ answer: answerFor('CLEAN'), clean: false });
+      await withHelper(project, () => stand.module, async (client) => {
+        assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: true, started: true });
+      });
+      assert.equal(stand.seen.length, 1);
+    };
+    await runOnce();
+    await runOnce();
+    // The third failed run counts though its note can't be written (the state clone is made read-only meanwhile).
+    const state = await as(project.home, () => stateDir('o__p'));
+    const lock = (mode) => {
+      for (const entry of fs.readdirSync(state, { recursive: true, withFileTypes: true })) if (entry.isDirectory()) fs.chmodSync(path.join(entry.parentPath, entry.name), mode);
+      fs.chmodSync(state, mode);
+    };
+    lock(0o555);
+    let notesBefore;
+    try {
+      notesBefore = (await as(project.home, () => listEvents(stateDir('o__p'), { report: () => {} }))).filter((e) => e.kind === 'note').length;
+      await runOnce();
+    } finally {
+      lock(0o755);
+    }
+    const notesAfter = (await as(project.home, () => listEvents(stateDir('o__p'), { report: () => {} }))).filter((e) => e.kind === 'note').length;
+    assert.equal(notesAfter, notesBefore, 'the third run wrote no note');
+    // Three failed runs by the helper's count: no fourth.
+    const fourth = standInReview({ answer: answerFor('CLEAN') });
+    await withHelper(project, () => fourth.module, async (client) => {
+      const answer = await client.review({ project: 'o__p', number: 7 });
+      assert.equal(answer.ok, false);
+      assert.match(answer.refused, new RegExp(`^the review of ${short} has failed 3 times; `));
+      assert.match(answer.refused, spent);
+    });
+    assert.equal(fourth.seen.length, 0);
+    // A count that can't be read refuses too.
+    const counted = await as(project.home, () => path.join(stateDir('o__p'), '..', 'review-failures.json'));
+    fs.writeFileSync(counted, '{ not json');
+    await withHelper(project, () => fourth.module, async (client) => {
+      assert.match((await client.review({ project: 'o__p', number: 7 })).refused, /count of failed reviews can't be read; one review per commit/);
+    });
+    assert.equal(fourth.seen.length, 0);
+  } finally {
+    project.cleanup();
+  }
+
+  // A signed review of the head, FINDINGS from a kind the gate doesn't count included, ends the head's reviews.
+  for (const data of [{ verdict: 'FINDINGS', findings: 2, reviewKind: 'clean-session' }, { verdict: 'CLEAN', reviewKind: 'subagent' }, { verdict: 'CLEAN' }]) {
+    const fresh = await reviewProject({ change: { 'src/j.js': 'j\n' } });
+    try {
+      await plant(fresh, 'review', { pr: 7, commit: fresh.head, ...data }, 1000);
+      const stand = standInReview({ answer: answerFor('CLEAN') });
+      await withHelper(fresh, () => stand.module, async (client) => {
+        const answer = await client.review({ project: 'o__p', number: 7 });
+        assert.equal(answer.ok, false, JSON.stringify(data));
+        assert.equal(answer.refused, `${fresh.head.slice(0, 7)} has a signed review already; one review per commit: a fix needs a new commit`);
+      });
+      assert.equal(stand.seen.length, 0);
+    } finally {
+      fresh.cleanup();
+    }
+  }
+});
+
+test('/pr/carried counts no CLEAN where the default branch\'s configuration can\'t be read: which agent runs here, and so which kinds count, is not known (final review Minor 5)', async () => {
+  for (const modules of [() => ({ ...standInReview({ answer: answerFor('CLEAN') }).module }), reviewsFor]) {
+    const project = await reviewProject({ change: { 'src/k.js': 'k\n' }, base: { '.claude/wheelhouse.json': '{ not json\n' } });
+    try {
+      await plant(project, 'review', { pr: 7, commit: project.head, verdict: 'CLEAN' }, 1000);
+      await withHelper(project, modules, async (client) => {
+        const answer = await client.carried({ project: 'o__p', number: 7 });
+        assert.equal(answer.ok, true, answer.refused);
+        assert.equal(answer.review, 'none');
+      });
+    } finally {
+      project.cleanup();
+    }
+  }
+});
+
+test('/pr/carried counts a review only of a kind the gate counts for this computer\'s agent; Claude Code\'s counts any, as before (ruling P8-14)', async () => {
+  const counted = { module: { ...standInReview({ answer: answerFor('CLEAN') }).module } };
+  for (const [agent, modules, data, expected] of [
+    ['copilot', () => counted.module, { verdict: 'CLEAN', reviewKind: 'clean-session' }, 'clean'],
+    ['copilot', () => counted.module, { verdict: 'CLEAN', reviewKind: 'subagent' }, 'none'],
+    ['copilot', () => counted.module, { verdict: 'CLEAN' }, 'none'],
+    // The shipped module counts none while REVIEW_SESSION_READY is false.
+    ['copilot', reviewsFor, { verdict: 'CLEAN', reviewKind: 'clean-session' }, 'none'],
+    ['claude-code', reviewsFor, { verdict: 'CLEAN' }, 'clean'],
+    ['claude-code', reviewsFor, { verdict: 'CLEAN', reviewKind: 'subagent' }, 'clean'],
+  ]) {
+    const project = await reviewProject({ change: { 'src/k.js': 'k\n' }, agent });
+    try {
+      await plant(project, 'review', { pr: 7, commit: project.head, ...data }, 1000);
+      await withHelper(project, modules, async (client) => {
+        const answer = await client.carried({ project: 'o__p', number: 7 });
+        assert.equal(answer.ok, true, answer.refused);
+        assert.equal(answer.review, expected, `${agent} ${JSON.stringify(data)}`);
+      });
+    } finally {
+      project.cleanup();
+    }
+  }
 });

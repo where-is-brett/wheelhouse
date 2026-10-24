@@ -27,6 +27,10 @@ const SECOND = 'Allow build commands to run unattended?'
 
 const button = (label: string, does: string) => ({ label, does })
 
+// Whether this engine's Input takes rows (Claude Code 2.1.301 and later), read from an Input the
+// engine builds: one before it leaves the prop out.
+const takesRows = () => 'rows' in h('Input', { key: 'probe', label: 'probe', value: '', rows: 4, onChange: () => {}, onSubmit: () => {} }).props
+
 const model = (stopOn: boolean) => ({
   v: 1,
   project: 'shop',
@@ -815,8 +819,10 @@ test('Suggest a change… opens a box with What would you change?, Send and Canc
     expect(box?.type).toBe('Input')
     expect(box?.props.label).toBe('What would you change?')
     expect(box?.props.autoFocus).toBe(true)
-    // A few lines tall, so what the director types stays in sight.
-    expect(box?.props.rows).toBe(4)
+    // A few lines tall, so what the director types stays in sight. Input takes rows from Claude
+    // Code 2.1.301; on the releases below it, down to Wheelhouse's floor (2.1.299), the box works
+    // one line tall, so the four lines are checked only from 2.1.301.
+    expect(box?.props.rows).toBe(takesRows() ? 4 : undefined)
     expect(box?.props.value).toBe('')
     expect((await ui.find({ key: 'suggest-cancel' }))?.props.variant).toBe('secondary')
     expect((await ui.find({ key: 'suggest-cancel' }))?.text).toBe('Cancel')

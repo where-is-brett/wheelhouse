@@ -5,7 +5,7 @@
 // the watchers an agent's built sessions part needs, and uninstall takes away what no other project needs. No real
 // launch agent, registry entry, ~/.wheelhouse or ~/.copilot is touched: every home is temporary, the helper's
 // client and every spawn are stand-ins, and `reg` is never run.
-import { test, after, afterEach } from 'node:test';
+import { test as nodeTest, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -30,6 +30,11 @@ import { registeredLeanProjects, leanState } from '../../../scripts/lean/project
 import {
   planInstall, install, startAll, planUninstall, uninstall, main, CHANGED, STOP_ON, STOP_CARRIED, RUNNING, NOT_STARTED,
 } from '../../../scripts/agents/copilot/start-helper.js';
+
+// These install the helper as on a Mac (a launch agent, and a Mac's paths for Node.js and the plugin),
+// so on Windows they are left to the Mac's run; Windows's Run entry is checked in
+// tests/scripts/lib/login-start.test.js.
+const test = process.platform === 'win32' ? (name, fn) => nodeTest(name, { skip: 'the helper is installed here as on a Mac' }, fn) : nodeTest;
 
 const shims = standInTools();
 const hostLog = [];
@@ -208,10 +213,11 @@ test('the signing key is made while the project\'s lock is held', async () => {
   });
 });
 
-test('start starts the helper, and a watcher only for a project whose agent has its sessions part built', async () => {
+test('start starts the helper, and a watcher only for a project whose agent may start its sessions', async () => {
   const c = await computer();
   await c.as(async () => {
-    // A Lean project, a host project on Copilot (sessions not built yet) and one on Claude Code.
+    // A Lean project, a host project on Copilot (its sessions not switched on, so its foreman check refuses) and one
+    // on Claude Code.
     registerLean({ project: 'shop', folder: c.folder, now: () => T0 });
     const id = computerId();
     const hosted = (name) => {

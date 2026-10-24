@@ -226,7 +226,7 @@ test('with a last prompt, the scratch plugin\'s hooks ask the stand-in: the relo
     const hook = (input) => runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify(input) });
     const start = JSON.parse((await hook({ hook_event_name: 'SessionStart', source: 'startup' })).out);
     assert.equal(start.hookSpecificOutput.additionalContext, reload({ views: context.helper.views(), stop: null, notes: [], frontDesk: true, sheet: toolSheetLines('claude-code', { pluginRoot: plugin }) }));
-    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+    assert.ok(start.hookSpecificOutput.additionalContext.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin.replaceAll('\\', '/')}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
     assert.match(start.hookSpecificOutput.additionalContext, /Changed without the director's confirmation:\n.*Prices show to the cent/);
     // Confirmed between turns, the next reload has it in the rulebook instead.
     context.helper.confirm(context.helper.events()[0].id);
@@ -535,7 +535,7 @@ test('scenarios 7 and 8 want the lane said, a preview offered for a visual chang
   assert.equal(judge7({ reply: 'I\'ve treated this as a small change. Want me to show you a quick preview first?', written: [small], calls: [], dir }).pass, true);
   assert.match(judge7({ reply: 'A small change.', written: [small], calls: [], dir }).why, /no preview offered/);
   const built = callsOf(events(['Edit', { file_path: path.join(dir, 'public/styles.css'), old_string: '#2e7d32', new_string: '#1565c0' }]));
-  assert.match(judge7({ reply: 'Done, it is blue.', written: [], calls: built, dir }).why, /it wrote .*public\/styles\.css/);
+  assert.match(judge7({ reply: 'Done, it is blue.', written: [], calls: built, dir }).why, /it wrote .*public[\\/]styles\.css/);
   // Its second turn answers brainstorming but leaves the blue to choose, so a choice is left (F95).
   assert.match(PROMPTS_7[1], /Pick the blue you think fits our new logo/);
   assert.doesNotMatch(PROMPTS_7.join(' '), /#[0-9a-f]{3,6}\b|rgb\(/i);

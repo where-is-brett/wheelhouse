@@ -86,4 +86,4 @@ The documented calls are `GET /users/{username}/settings/billing/ai_credit/usage
 
 ## Needs the director
 
-Nothing now.
+- **Deferred, held for the director (24 October 2026): a resumed run's figures.** Both of this check's runs were first runs. Whether a `--resume` run's usage file and `session.usage_checkpoint` give that run's use alone, or the session's use so far, was not tried. Part 8 Task 2 records each run as it ends (`recordRunUsage`, scripts/usage/store.js) and the store sums a session's runs, which is right only if each run gives its own use. The first real resumed run records here which it is. If it is the session's use so far, the store must keep the last figure for each session rather than the sum.
