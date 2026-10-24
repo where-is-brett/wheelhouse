@@ -42,7 +42,7 @@ test('a critical area\'s check file is a guardrail; a file in the area only name
 });
 
 // What readConfig fills in for each build-loop key a configuration leaves out.
-const ROUTING_NONE = { frontDesk: null, foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null };
+const ROUTING_NONE = { frontDesk: null, foreman: null, builder: null, reviewer: null, reviewerCritical: null, tester: null, mechanical: null, feature: null, builderCritical: null };
 const DEFAULTS = {
   routing: ROUTING_NONE, sessionMode: 'acceptEdits', buildCommands: ['npm test', 'npm run', 'node'], watcherShape: 1,
   hotFiles: ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', '**/migrations/**'], flagFiles: [],
@@ -183,4 +183,21 @@ test('a pull request touching .github/hooks/x.json or a nested AGENTS.md is a gu
   assert.deepEqual(classifyChange({ paths: ['src/AGENTS.md.bak', 'docs/MYAGENTS.md', 'src/.vscode-notes.md', 'sub/plugin.json', '.github/ISSUE_TEMPLATE/a.md'], config: empty }).guardrailPaths, []);
   // Case is ignored here as it is for the other guardrails.
   assert.equal(classifyChange({ paths: ['.GitHub/Hooks/x.json'], config: empty }).touchesGuardrails, true);
+});
+
+test('readConfig: tiers.pins holds up to three model names or null, and the flat routing may name feature and builderCritical', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  const pins = { mostCapable: 'model-top', midSized: null, premium: 'model-premium' };
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, tiers: { pins } })).tiers, { pins });
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, tiers: { pins: {} } })).tiers, { pins: {} });
+  assert.equal(readConfig(JSON.stringify(base)).tiers, undefined);
+  const routed = readConfig(JSON.stringify({ ...base, routing: { feature: 'model-a', builderCritical: 'model-b' } })).routing;
+  assert.equal(routed.feature, 'model-a');
+  assert.equal(routed.builderCritical, 'model-b');
+  const bad = [
+    { tiers: [] }, { tiers: null }, { tiers: 'x' }, { tiers: {} }, { tiers: { pins: [] } }, { tiers: { pins: null } },
+    { tiers: { pins, other: 1 } }, { tiers: { pins: { mostCapable: '--flag' } } }, { tiers: { pins: { midSized: 1 } } },
+    { tiers: { pins: { premium: '' } } }, { tiers: { pins: { extra: 'model-a' } } }, { tiers: { pins: { mostCapable: 'model a' } } },
+  ];
+  for (const extra of bad) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), /can't be read/, JSON.stringify(extra));
 });

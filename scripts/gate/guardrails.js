@@ -7,7 +7,8 @@
 //   Config = { v: 1, criticalAreas: [{ name, paths: [glob], checks: [glob] }],
 //              ciFiles: [glob], mcpServers: [string], webDomains: [string],
 //              runbook?: { contain?: { describe: string, command: [string] } },
-//              routing?: { frontDesk, foreman, builder, reviewer, reviewerCritical, tester, mechanical },
+//              routing?: { frontDesk, foreman, builder, reviewer, reviewerCritical, tester, mechanical, feature, builderCritical },
+//              tiers?: { pins: { mostCapable?, midSized?, premium? } },
 //              sessionMode?: string, buildCommands?: [string], watcherShape?: 1 | 2,
 //              hotFiles?: [glob], flagFiles?: [glob], pages?: [path], gitlabHosts?: [string],
 //              glabFrom?: string, signsApps?: boolean,
@@ -18,6 +19,12 @@
 // by an agent's name (scripts/agents/names.js), each a table of the same roles as `routing`, each model a name
 // isModelName passes or null for that agent's own default. Anything else makes the configuration unreadable. Setup
 // pins no model there until that agent's list of models has been read on a real run.
+//
+// `tiers.pins` is the Thoroughness setting's column of models (design section 14.6): the name of the most capable,
+// the mid-sized and the premium model, each a name isModelName passes or null. A cell of the routing table is a class
+// of model, and the class's pin is its model (scripts/routing/thoroughness.js). With no `tiers`, only Balanced is
+// available, and `routing` names each role's model as it always did. Anything else in `tiers` makes the configuration
+// unreadable.
 //
 // `signsApps: true` says the project's builds sign Mac or iOS apps, which needs the keychain, so
 // the project's settings leave it open (scripts/protection/settings.js, check 73). Left out or
@@ -68,7 +75,7 @@ const strings = (x) => Array.isArray(x) && x.every((s) => typeof s === 'string')
 // A glob with an empty segment (a leading, trailing or doubled `/`) would never match.
 const globs = (x) => strings(x) && x.every((s) => s !== '' && s.split('/').every((seg) => seg !== ''));
 
-export const ROLES = Object.freeze(['frontDesk', 'foreman', 'builder', 'reviewer', 'reviewerCritical', 'tester', 'mechanical']);
+export const ROLES = Object.freeze(['frontDesk', 'foreman', 'builder', 'reviewer', 'reviewerCritical', 'tester', 'mechanical', 'feature', 'builderCritical']);
 // Claude Code's permission modes, less bypass.
 export const SESSION_MODES = Object.freeze(['acceptEdits', 'auto', 'default', 'dontAsk', 'plan']);
 export const DEFAULT_SESSION_MODE = 'acceptEdits';
@@ -111,7 +118,12 @@ const COMMAND_LINE_AGENT = 'claude-code';
 // One agent's column: an object of roles, each a model or null.
 const columnOk = (column) => isObject(column) && Object.entries(column).every(([role, model]) => ROLES.includes(role) && modelOk(model));
 
+const PIN_CLASSES = ['mostCapable', 'midSized', 'premium'];
+const tiersOk = (t) => isObject(t) && Object.keys(t).length === 1 && isObject(t.pins)
+  && Object.entries(t.pins).every(([name, model]) => PIN_CLASSES.includes(name) && modelOk(model));
+
 function buildLoopOk(c) {
+  if (c.tiers !== undefined && !tiersOk(c.tiers)) return false;
   if (c.routing !== undefined && !(isObject(c.routing) && Object.values(c.routing).every(modelOk))) return false;
   if (c.agentRouting !== undefined && !(isObject(c.agentRouting) && Object.entries(c.agentRouting).every(([agent, column]) => AGENTS.includes(agent) && agent !== COMMAND_LINE_AGENT && columnOk(column)))) return false;
   if (c.sessionMode !== undefined && !SESSION_MODES.includes(c.sessionMode)) return false;
