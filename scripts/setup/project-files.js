@@ -1110,6 +1110,7 @@ export function projectFilesStep({
       }
       const checked = lineage(folder);
       if (!checked.ok) {
+        if (process.env.WH_DIAG) console.error('WH_DIAG lineage', JSON.stringify({ folder, mismatches: checked.mismatches, record: (() => { try { return fs.readFileSync(path.join(claudeHome(), 'plugins', 'installed_plugins.json'), 'utf8'); } catch (e) { return String(e); } })() }));
         const names = [...new Set(checked.mismatches.map((m) => PIN_NAMES[m.upstream] ?? m.upstream))];
         throw new Error(`${listed(names)} ${names.length === 1 ? 'is' : 'are'} not installed as Wheelhouse's manifest has ${names.length === 1 ? 'it' : 'them'}, so nothing went up; a fresh Go ahead installs again`);
       }

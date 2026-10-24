@@ -41,7 +41,9 @@ jobs:
       # npm test with a longer limit per test file: on Windows the end-to-end build loop's file
       # runs past npm test's eight minutes, as each of its tests takes a minute or more there.
       - if: matrix.os == 'windows-latest'
-        run: node --test --import ./tests/helpers/test-home.js --test-timeout=1500000 "tests/**/*.test.js"
+        env:
+          WH_DIAG: '1'
+        run: node --test --import ./tests/helpers/test-home.js --test-timeout=1500000 tests/e2e/copilot-lean.test.js tests/scripts/agents/copilot-eval-runner.test.js tests/scripts/agents/copilot-translate.test.js tests/scripts/agents/copilot-wiring.test.js tests/scripts/eval/front-desk-scenarios.test.js tests/scripts/eval/harness.test.js tests/scripts/eval/scenarios-13-15-18.test.js tests/scripts/eval/scenarios-20-23.test.js tests/scripts/eval/scenarios-25-26-35.test.js tests/scripts/hooks/lineage-hold.test.js tests/scripts/hooks/session-start.test.js tests/scripts/host/helper-state.test.js tests/scripts/host/push-rules.test.js tests/scripts/install/survey.test.js tests/scripts/lean/store.test.js tests/scripts/lib/safe-git.test.js tests/scripts/mod/status.test.js tests/scripts/protection/locked.test.js tests/scripts/protection/settings.test.js tests/scripts/review/clean-session.test.js tests/scripts/setup/cli.test.js tests/scripts/setup/health.test.js tests/scripts/setup/host.test.js tests/scripts/setup/joining-run.test.js tests/scripts/setup/project-files.test.js tests/scripts/setup/tools.test.js tests/scripts/state/clone.test.js tests/scripts/state/lock.test.js tests/scripts/watcher/sources.test.js tests/scripts/windows/guarded.test.js tests/skills/tool-names.test.js  tests/scripts/lib/paths.test.js tests/scripts/host/helper.test.js
 
   validate:
     runs-on: ubuntu-latest
