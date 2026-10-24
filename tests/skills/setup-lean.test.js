@@ -777,7 +777,7 @@ test('the README gives the one request line', () => {
   assert.match(text, /~\/\.copilot\//);
   assert.match(text, /wheelhouse\/board\.md/);
   assert.match(text, /not for projects with real users|Not for projects with real users/i);
-  assert.match(text, /no release|not yet released|isn't released|hasn't been released/i, 'says plainly that there is no release yet');
+  assert.match(text, /first release|early release/i, 'says plainly that this is an early release');
   assert.match(text, /adapters\/copilot\/skills\/setup-lean\/SKILL\.md/, 'tells the chat where the steps are');
   assert.match(text, /git clone/);
 });
