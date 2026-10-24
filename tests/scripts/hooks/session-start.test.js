@@ -518,15 +518,23 @@ test('session-start exits in time with its context when the helper never answers
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, new RegExp(NOT_SYNCED));
     assert.ok(fs.existsSync(path.join(home, 'usage', 'sessions', 's1.json')), 'the session\'s part is recorded');
   } finally {
-    for (let tries = 0; tries < 40; tries += 1) {
-      try {
-        process.kill(Number.parseInt(fs.readFileSync(path.join(home, 'usage', 'receiver.pid'), 'utf8'), 10));
+    // The receiver is stopped once it has written its pid (a slow start on Windows takes seconds), and
+    // waited for until it has gone, so it holds nothing in the folder when it is removed.
+    const alive = (pid) => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    };
+    for (let tries = 0; tries < 300; tries += 1) {
+      let pid = null;
+      try { pid = Number.parseInt(fs.readFileSync(path.join(home, 'usage', 'receiver.pid'), 'utf8'), 10); } catch { /* not written yet */ }
+      if (Number.isInteger(pid)) {
+        try { process.kill(pid); } catch { /* not running */ }
+        for (let wait = 0; wait < 100 && alive(pid); wait += 1) await new Promise((resolve) => setTimeout(resolve, 50));
         break;
-      } catch { /* not written yet, or not running */ }
+      }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     server.close();
-    // On Windows the killed receiver may hold its folder a moment longer: removal tries again.
+    // On Windows a stopped process's files may be held a moment longer: removal tries again.
     fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

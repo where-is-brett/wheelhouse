@@ -31,7 +31,7 @@ import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { caFile } from '../../../scripts/host/company-ca.js';
+import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { withProject, lay, transcript, typed, T0, REPO, SLUG } from '../../helpers/setup-answers.js';
 
@@ -246,7 +246,8 @@ test('step 10 on a company GitLab uses the company address for the adapter, git\
     assert.ok(bases.length >= 1 && bases.every((b) => b === COMPANY), JSON.stringify(bases));
     // Git carries the certificate for that address, and no check is switched off.
     const pairs = gitEnvs.flatMap((env) => Object.entries(env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([, key]) => key));
-    assert.ok(gitEnvs.length > 0 && pairs.includes(`http.${COMPANY}/.sslCAInfo`), JSON.stringify(pairs));
+    // The certificate's setting as this system has it: on Windows git's own store (schannel), elsewhere the file.
+    assert.ok(gitEnvs.length > 0 && pairs.includes(gitCaConfig(COMPANY, file)[0].key), JSON.stringify(pairs));
     // The protection read is made at the company's address, with glab told the host.
     assert.ok(asked.length > 0 && asked.every((u) => u.startsWith(`${COMPANY}/api/v4/`)), JSON.stringify(asked));
     assert.ok(glab.length > 0 && glab.every((c) => c.env?.GITLAB_HOST === 'git.example.org:8443'), JSON.stringify(glab));

@@ -2,13 +2,10 @@
 // A test file run by hand (`node --test <file>`) gets a temporary home too, as under `npm test`.
 import './test-home.js';
 import { after } from 'node:test';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { helperAddress } from '../../scripts/lib/paths.js';
-
-const unix = process.platform !== 'win32';
 
 // Temporary folders made through tempFolder, removed once the test file's tests are done.
 const made = [];
@@ -29,12 +26,10 @@ export function shortHome() {
   return tempFolder('wh-');
 }
 
-// A helper address for a test: a socket in the home, or on Windows a pipe
-// that is never the real user's.
+// A helper address for a test: the home's own, as code run with that home reaches it: a socket in
+// the home, or on Windows that home's pipe, never the real user's.
 export function testAddress(home) {
-  return unix
-    ? path.join(home, 'helper.sock')
-    : helperAddress({ platform: 'win32', user: `test-${crypto.randomBytes(4).toString('hex')}` });
+  return helperAddress({ home });
 }
 
 // Runs fn with WHEELHOUSE_HOME set to `home`, putting the old value back afterwards.

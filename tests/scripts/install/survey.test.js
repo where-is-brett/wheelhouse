@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run } from '../../../scripts/lib/run.js';
 import { batchSshCommand, commandsIn, deniedByStandard, reachOfOrigin, surveyProject, upstreamsNeeded } from '../../../scripts/install/survey.js';
-import { caFile } from '../../../scripts/host/company-ca.js';
+import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { g, makeBareRemote } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -376,13 +376,14 @@ test('the survey\'s fetch from a company GitLab with its own authority is given 
   try {
     // No file yet: no certificate pair, as before.
     const none = await surveyWithOrigin('https://git.example.org:8443/o/p.git', { host: 'gitlab' });
-    assert.equal(pairsOf(none.env).some(([k]) => /sslcainfo/i.test(k)), false);
+    assert.equal(pairsOf(none.env).some(([k]) => /sslcainfo|sslbackend/i.test(k)), false);
     fs.mkdirSync(path.dirname(caFile(home)), { recursive: true });
     fs.writeFileSync(caFile(home), 'CERTIFICATES\n');
     const company = await surveyWithOrigin('https://git.example.org:8443/o/p.git', { host: 'gitlab' });
     const pairs = pairsOf(company.env);
-    const certificate = pairs.filter(([k]) => /sslcainfo/i.test(k));
-    assert.deepEqual(certificate, [['http.https://git.example.org:8443/.sslCAInfo', caFile(home)]]);
+    const certificate = pairs.filter(([k]) => /sslcainfo|sslbackend/i.test(k));
+    // The certificate's setting as this system has it: on Windows git's own store (schannel), elsewhere the file.
+    assert.deepEqual(certificate, gitCaConfig('https://git.example.org:8443', caFile(home)).map(({ key, value }) => [key, value]));
     assert.ok(pairs.findIndex(([k]) => k === 'credential.helper' && true) >= 0, 'the sign-in is still there');
     assert.equal(company.env.GIT_CONFIG_GLOBAL, '/dev/null');
     // The public service, and GitHub, are left alone even with the file.

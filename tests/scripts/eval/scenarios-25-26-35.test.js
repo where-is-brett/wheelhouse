@@ -150,7 +150,7 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
     const start = await runNode([path.join(plugin, 'hooks', 'context.js')], { cwd: project.dir, input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }) });
     assert.deepEqual(JSON.parse(start.out), { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: given } });
     const allow = JSON.parse(fs.readFileSync(path.join(project.dir, '.claude', 'settings.local.json'), 'utf8')).permissions.allow;
-    assert.ok(allow.includes(`Bash(node "${plugin}/scripts/frontdesk/cli.js":*)`), 'the front desk\'s own rule');
+    assert.ok(allow.includes(`Bash(node "${plugin.replaceAll('\\', '/')}/scripts/frontdesk/cli.js":*)`), 'the front desk\'s own rule, the path with "/" as the command has it');
     assert.ok(allow.includes('Edit(/.wheelhouse/front-desk.json)'), 'and the one file it writes its input to without a scratchpad');
 
     // The plugin's copy of the command, run as the session runs it, reaches the stand-in.

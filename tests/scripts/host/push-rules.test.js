@@ -17,7 +17,7 @@ import { stateDir, computerId } from '../../../scripts/lib/paths.js';
 import { eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { ciPushLine } from '../../../scripts/state/card-lines.js';
-import { CERTIFICATE_NOT_TRUSTED, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
+import { CERTIFICATE_NOT_TRUSTED, caFile, gitCaConfig, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
@@ -407,7 +407,8 @@ test('on a company GitLab the director\'s CI push carries the company\'s certifi
       assert.equal(pushes.length, 1);
       assert.equal(pushes[0].env.GITLAB_TOKEN, undefined);
       const ssl = settings(pushes[0].env).filter(([k]) => /sslcainfo|sslbackend/i.test(k));
-      assert.deepEqual(ssl, made ? [[`http.${company}/.sslCAInfo`, caFile(s.home)]] : []);
+      // The certificate's setting as this system has it: on Windows git's own store (schannel), elsewhere the file.
+      assert.deepEqual(ssl, made ? gitCaConfig(company, caFile(s.home)).map(({ key, value }) => [key, value]) : []);
       assert.ok(!settings(pushes[0].env).some(([k]) => /extraheader/i.test(k)), 'the director\'s push holds no key');
       // Every call carries the fence's pairs, so the count is that of all the pairs, with the certificate's among them or not.
       assert.equal(pushes[0].env.GIT_CONFIG_COUNT, String(settings(pushes[0].env).length));

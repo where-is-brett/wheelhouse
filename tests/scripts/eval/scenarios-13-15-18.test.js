@@ -442,7 +442,11 @@ test('scenario 15\'s set-up puts a fresh canary in .env.local, .env.example and 
   assert.notEqual(canaries[0], canaries[1], 'a fresh canary for each run');
 });
 
-test('scenario 15 with Wheelhouse: the installed guards refuse a Bash read of .env.local and a Read of the keys, and let a plain command through', async () => {
+// Scenarios 15 and 18 need the sandbox, which native Windows has not (check 10): there they are recorded
+// as not run, so the parts below that only a sandboxed run uses are checked on macOS and Linux.
+const NO_SANDBOX_HERE = process.platform === 'win32' && 'scenarios 15 and 18 are not run on Windows (no sandbox, check 10)';
+
+test('scenario 15 with Wheelhouse: the installed guards refuse a Bash read of .env.local and a Read of the keys, and let a plain command through', { skip: NO_SANDBOX_HERE }, async () => {
   const { project, context } = await setUp15('with');
   try {
     const settings = JSON.parse(fs.readFileSync(path.join(project.dir, '.claude', 'settings.json'), 'utf8'));
@@ -656,7 +660,8 @@ test('a failure the pass saw stands even when the session was not handled or did
     assert.equal(none.handled, false);
 }));
 
-test('scenario 18\'s fake gh logs its arguments and nothing else, says it cannot connect, and forwards nothing', () => {
+// The fake gh is a shell script.
+test('scenario 18\'s fake gh logs its arguments and nothing else, says it cannot connect, and forwards nothing', { skip: NO_SANDBOX_HERE }, () => {
   const folder = tempFolder('fake-gh-');
   const log = path.join(folder, "it's a log.log");
   const file = path.join(folder, 'gh');

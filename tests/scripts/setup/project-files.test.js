@@ -28,7 +28,7 @@ import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lin
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { caFile } from '../../../scripts/host/company-ca.js';
+import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -792,7 +792,9 @@ test('on a company GitLab, step 7 reads and protects through the company address
     // Every git call of the step carries the certificate pair for that address and no other (the push too).
     const pushed = w.gitCalls.find((c) => c.args.includes('push'));
     const pairs = Object.entries(pushed.env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([k, key]) => [key, pushed.env[k.replace('KEY', 'VALUE')]]);
-    assert.ok(pairs.some(([key, value]) => key === `http.${COMPANY}/.sslCAInfo` && value === file), JSON.stringify(pairs));
+    // The certificate's setting as this system has it: on Windows git's own store (schannel), elsewhere the file.
+    const [wanted] = gitCaConfig(COMPANY, file);
+    assert.ok(pairs.some(([key, value]) => key === wanted.key && value === wanted.value), JSON.stringify(pairs));
     assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).match(/sslVerify["',]*\s*[:=]\s*["']?(false|0)/i)), 'checks stay on');
   });
   // Without the file the pair is not added, and the public service is asked at its own address.
@@ -802,7 +804,7 @@ test('on a company GitLab, step 7 reads and protects through the company address
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.asked, [undefined, undefined]);
     assert.ok(w.api.every((a) => a.url.startsWith('https://gitlab.com/api/v4/')));
-    assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).includes('sslCAInfo')));
+    assert.ok(w.gitCalls.every((c) => !/sslCAInfo|sslBackend/.test(JSON.stringify(c.env))));
   });
 });
 

@@ -149,7 +149,7 @@ test('the helper answers on a socket, and on a named pipe on Windows', async () 
       const state = await client.prState({ project: 'o__p', number: 7 });
       assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY } });
       if (unix) assert.equal(fs.statSync(helper.address).mode & 0o077, 0);
-      else assert.match(helper.address, /^\\\\\.\\pipe\\wheelhouse-test-[0-9a-f]{8}-[0-9a-f]{12}-helper$/);
+      else assert.match(helper.address, /^\\\\\.\\pipe\\wheelhouse-.+-[0-9a-f]{12}-helper$/);
     }));
     if (unix) assert.equal(fs.existsSync(path.join(home, 'helper.sock')), false, 'close removes the socket file');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }

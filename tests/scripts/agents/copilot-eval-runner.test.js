@@ -262,7 +262,7 @@ test('with no command given, the session starts the copilot the PATH finds first
   assert.equal(outcome.handled, false);
   assert.match(outcome.stderr, /copilot is not run in this test/);
   const calls = stand.calls();
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 1, calls.join('\n'));
   assert.match(calls[0], /^copilot -p Say hello\. --output-format json /);
   stand.reset();
 });

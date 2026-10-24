@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { HOST_UNREACHABLE, CERTIFICATE_NOT_TRUSTED, caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
+import { HOST_UNREACHABLE, CERTIFICATE_NOT_TRUSTED, caFile, gitCaConfig, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { connectionOf } from '../../../scripts/host/helper.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
@@ -689,7 +689,9 @@ test('git is given the company\'s certificate for that project\'s address only, 
   // that talks to the host also carries the connection's own pairs, which are the ones that matter here.
   const fenceKeys = new Set(FENCE.map(([key]) => key.toLowerCase()));
   const beyondFence = (env) => settingsOf(env).filter(([k, v]) => !fenceKeys.has(k.toLowerCase()) && !(k === 'credential.helper' && v === ''));
-  const certificateKey = `http.${repo.host.url}/.sslCAInfo`;
+  // The certificate's setting as this system has it: on Windows git's own store (schannel), elsewhere the file.
+  const certificate = (file) => gitCaConfig(repo.host.url, file)[0];
+  const certificateKey = certificate('x').key;
   const c = await computer(repo, { project: gitlab, run: spy });
   try {
     // Before setup has made the file: no certificate setting anywhere.
@@ -711,7 +713,7 @@ test('git is given the company\'s certificate for that project\'s address only, 
     assert.ok(withIt.length > 0);
     for (const s of gitCalls()) {
       const own = beyondFence(s.env).filter(([k]) => /ssl/i.test(k));
-      assert.deepEqual(own, [[certificateKey, file]]);
+      assert.deepEqual(own, [[certificateKey, certificate(file).value]]);
       assert.equal(s.env.GIT_CONFIG_COUNT, String(settingsOf(s.env).length));
       // The fence is whole beside it, the clearing of credential helpers is first, and the certificate comes after the connection's own pairs.
       const pairs = settingsOf(s.env);
@@ -734,7 +736,7 @@ test('git is given the company\'s certificate for that project\'s address only, 
       writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
       assert.equal((await d.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
     });
-    assert.ok(seen.every((s) => !JSON.stringify(s.env).includes('sslCAInfo')));
+    assert.ok(seen.every((s) => !/sslCAInfo|sslBackend/.test(JSON.stringify(s.env))));
   } finally { await d.close(); await other.cleanup(); }
 });
 
