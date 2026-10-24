@@ -19,7 +19,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'usage-card',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
@@ -258,8 +258,16 @@ const PLAIN_SHAPES = {
   // Lightest, or the premium model's own pass), the pins it ran on (`tiers.pins`, each a model name or null) and the
   // evaluation's records. It counts only while the configuration's pins are the ones it ran on (views.js, readyColumns).
   'column-ready': { must: ['column', 'pins', 'records'], may: [] },
+  // The front desk's session start offered a usage card (design section 14.6, "The usage nudge"): which (`nudge`,
+  // `lightest`, `up` or `return`), when, the allowance week it belongs to (`reset`, the time the weekly allowance
+  // resets), the Thoroughness level in force (`from`) and the one the card offered (`to`). What a week has offered
+  // is read from these, so no card is offered twice in a week and a return card knows the level before.
+  'usage-card': { must: ['card', 'at', 'reset', 'from', 'to'], may: [] },
 };
 // The columns a column-ready record may name, the pins it may carry, and the most records it lists.
+// The usage cards a usage-card record may name, and the Thoroughness levels it may carry.
+export const USAGE_CARDS = Object.freeze(['nudge', 'lightest', 'up', 'return']);
+const USAGE_LEVELS = Object.freeze(['lightest', 'lean', 'balanced', 'thorough']);
 export const READY_COLUMNS = Object.freeze(['lightest', 'lean', 'premium']);
 export const PIN_NAMES = Object.freeze(['mostCapable', 'midSized', 'premium']);
 export const READY_RECORDS = 50;
@@ -446,6 +454,10 @@ function checkPlain(kind, data) {
     if (data.work !== undefined) slug('work');
     if (data.usage !== undefined && !isPlain(data.usage)) bad('has a usage that is not an object');
     if (data.at !== undefined && (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at)))) bad('has an at that is not a time');
+  } else if (kind === 'usage-card') {
+    if (!USAGE_CARDS.includes(data.card)) bad(`needs card to be ${listed([...USAGE_CARDS])}`);
+    for (const k of ['at', 'reset']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
+    for (const k of ['from', 'to']) if (!USAGE_LEVELS.includes(data[k])) bad(`needs ${k} to be a Thoroughness level`);
   } else if (kind === 'column-ready') {
     if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
     const pins = data.pins;

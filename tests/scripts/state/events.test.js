@@ -419,6 +419,18 @@ test('a column-ready record names the column, the pins it ran on and the evaluat
   });
 });
 
+test('a usage-card record says which card, when, the allowance week and the levels', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('usage-card'), true);
+    assert.equal(HELPER_ONLY_KINDS.includes('usage-card'), false);
+    const data = { card: 'nudge', at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from: 'balanced', to: 'lean' };
+    assert.deepEqual(makeEvent({ kind: 'usage-card', data }).data, data);
+    for (const bad of [null, { ...data, card: 'other' }, { ...data, at: 'now' }, { ...data, reset: 3 }, { ...data, from: 'best' }, { ...data, to: undefined }, { ...data, extra: 1 }]) {
+      assert.throws(() => makeEvent({ kind: 'usage-card', data: bad }), /usage-card event/, JSON.stringify(bad));
+    }
+  });
+});
+
 test('a lineage-lift record says when, and which holds it lifts', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);

@@ -597,6 +597,10 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     columnsReady[e.data.column] = { id: e.id, at: e.at, pins: e.data.pins, records: Array.isArray(e.data.records) ? e.data.records : [] };
   }
 
+  // The usage cards the front desk's session start has offered, oldest first (design section 14.6): { id, card, at, reset, from, to }.
+  const usageCards = sorted.filter((e) => e.kind === 'usage-card' && isPlainObject(e.data))
+    .map((e) => ({ id: e.id, ...e.data }));
+
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
@@ -623,6 +627,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     controlFiles: controlFiles.standing,
     survey,
     columnsReady,
+    usageCards,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,
