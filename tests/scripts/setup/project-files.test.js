@@ -21,8 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
-import { LIVE_DATA, SIGNS_APPS, FRONT_DESK_MODEL } from '../../../scripts/setup/questions.js';
-import { FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../../../scripts/setup/best-model.js';
+import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
+import { FRONT_DESK_ALIAS } from '../../../scripts/setup/best-model.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
@@ -331,7 +331,7 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     const w = await world();
     const planned = await w.plan();
     assert.equal(w.bestAsked, 1);
-    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS], 'never the strongest, unless the director chose it');
+    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS], 'never the strongest: setup asks nothing about it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
     assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}\\b`));
     assert.doesNotMatch(text, /strongest/);
@@ -345,41 +345,6 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     const again = await w.plan();
     assert.equal(w.bestAsked, 1);
     assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
-  });
-});
-
-test('the director\'s choice of the strongest model at step 4 pins what Claude Code\'s best alias stands for, and the card says it costs more', async () => {
-  await withHome(async () => {
-    const w = await world();
-    w.answers = { ...w.answers, '4.front-desk-model': { label: FRONT_DESK_MODEL.strongest, text: null, at: T0.toISOString() } };
-    w.best = 'model-strongest-1';
-    const planned = await w.plan();
-    assert.deepEqual(w.aliases, [STRONGEST_ALIAS]);
-    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /the front desk runs on model-strongest-1, the strongest model, as you chose; it costs more of your usage/);
-    const done = await w.apply(planned.changes);
-    assert.equal(done.ok, true, done.reason);
-    assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, 'model-strongest-1');
-    assert.equal(w.json('.claude/settings.local.json').model, 'model-strongest-1');
-  });
-  // The standard answer is the default's alias.
-  await withHome(async () => {
-    const w = await world();
-    w.answers = { ...w.answers, '4.front-desk-model': { label: FRONT_DESK_MODEL.standard, text: null, at: T0.toISOString() } };
-    await w.plan();
-    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS]);
-  });
-});
-
-test('a choice changed within a setup run asks Claude Code again, for the alias now chosen', async () => {
-  await withHome(async () => {
-    const w = await world();
-    const run = startRun({ folder: w.folder, now: () => T0 });
-    await w.step.plan(w.ctx({ runId: run.id }));
-    await w.step.plan(w.ctx({ runId: run.id }));
-    w.answers = { ...w.answers, '4.front-desk-model': { label: FRONT_DESK_MODEL.strongest, text: null, at: T0.toISOString() } };
-    await w.step.plan(w.ctx({ runId: run.id }));
-    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, STRONGEST_ALIAS]);
   });
 });
 

@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { questionsStep, readmeDescription, signsAppleApps, LIVE_DATA, PRODUCT, SIGNS_APPS, FRONT_DESK_MODEL, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
+import { questionsStep, readmeDescription, signsAppleApps, LIVE_DATA, PRODUCT, SIGNS_APPS, PROJECT_WAIT_MS } from '../../../scripts/setup/questions.js';
 import { REAL_USERS, LEVELS } from '../../../scripts/setup/host.js';
 import { noteAsked, answersFor } from '../../../scripts/setup/clicks.js';
 import { keepAnswer } from '../../../scripts/lib/setup-clicks.js';
@@ -117,17 +117,12 @@ test('each answer writes its setting or configuration key, checked by the catalo
       assert.deepEqual(await answer(live.ask.card, LIVE_DATA.yes), []);
       assert.equal(answersFor(runId)['4.live-data'].label, LIVE_DATA.yes);
 
-      // Then the front desk's model, which records nothing in the state: step 7 pins from it.
-      const model = await plan(4);
-      assert.equal(model.ask.id, 'front-desk-model');
-      assert.deepEqual(await answer(model.ask.card, FRONT_DESK_MODEL.standard), []);
-
       // Every answer in: the step settles, with no Go ahead, its record in the journal.
       const done = await plan(4);
       assert.deepEqual(done, { ok: true, done: true });
       const settled = readJournal().runs.find((r) => r.id === runId);
       assert.equal(typeof settled.steps[4].doneAt, 'string');
-      assert.deepEqual(settled.changes.filter((c) => c.step === 4).map((c) => [c.kind, c.after]), [['answer', { described: true, phase, locked: false, liveData: true, frontDeskModel: 'standard' }]]);
+      assert.deepEqual(settled.changes.filter((c) => c.step === 4).map((c) => [c.kind, c.after]), [['answer', { described: true, phase, locked: false, liveData: true }]]);
       assert.equal(fs.existsSync(path.join(home, 'setup', 'shown')), false, 'no Go-ahead card');
     }, { files: { 'README.md': README } });
   }
@@ -256,7 +251,6 @@ test('step 4 asks whether the project signs Apple apps only when it looks like i
     assert.match(apple.ask.card.question, /sign/i);
     assert.doesNotMatch(apple.ask.card.question, /keychain/i, 'plain words: no jargon on the card');
     await answer(apple.ask.card, SIGNS_APPS.yes);
-    await answer((await plan(4)).ask.card, FRONT_DESK_MODEL.standard);
     const done = await plan(4);
     assert.deepEqual(done, { ok: true, done: true });
   }, { files: { 'README.md': README, 'Cafe.xcodeproj/project.pbxproj': '' } });
@@ -267,41 +261,6 @@ test('a project that doesn\'t look like it signs Apple apps is never asked', asy
     answerStep3(folder, { realUsers: REAL_USERS.no });
     await answer((await plan(4)).ask.card, PRODUCT.readme);
     await answer((await plan(4)).ask.card, LIVE_DATA.no);
-    assert.equal((await plan(4)).ask.id, 'front-desk-model');
-  }, { files: { 'README.md': README } });
-});
-
-test('step 4 asks which model the front desk runs on: the standard one recommended, the strongest an opt-in that says it costs more', async () => {
-  await withProject(async ({ folder, plan, answer }) => {
-    answerStep3(folder, { realUsers: REAL_USERS.no });
-    await answer((await plan(4)).ask.card, PRODUCT.readme);
-    await answer((await plan(4)).ask.card, LIVE_DATA.no);
-    const asked = await plan(4);
-    assert.equal(asked.ask.id, 'front-desk-model');
-    const step = questionsStep();
-    const raw = (await step.plan({ folder, answers: answersFor(findRun(folder).id) })).ask.card;
-    assert.deepEqual(raw.options.map((o) => o.label), [FRONT_DESK_MODEL.standard, FRONT_DESK_MODEL.strongest]);
-    assert.equal(raw.recommend, FRONT_DESK_MODEL.standard);
-    assert.match(raw.options[1].says, /costs more/);
-    assert.match(raw.options[1].says, /later/, 'it says the choice can be made later too');
-    assert.doesNotMatch(JSON.stringify(raw), /\bfable\b|\bopus\b/i, 'plain words: no model names on the card');
-    await answer(asked.ask.card, FRONT_DESK_MODEL.strongest);
-    assert.equal(answersFor(findRun(folder).id)['4.front-desk-model'].label, FRONT_DESK_MODEL.strongest);
     assert.deepEqual(await plan(4), { ok: true, done: true });
-    const runId = findRun(folder).id;
-    const settled = readJournal().runs.find((r) => r.id === runId);
-    assert.equal(settled.changes.find((c) => c.step === 4).after.frontDeskModel, 'strongest');
   }, { files: { 'README.md': README } });
-});
-
-test('a project whose configuration already pins the front desk\'s model is not asked again, since setup never moves a pin', async () => {
-  await withProject(async ({ folder, plan, answer }) => {
-    answerStep3(folder, { realUsers: REAL_USERS.no });
-    await answer((await plan(4)).ask.card, PRODUCT.readme);
-    await answer((await plan(4)).ask.card, LIVE_DATA.no);
-    assert.deepEqual(await plan(4), { ok: true, done: true });
-    const runId = findRun(folder).id;
-    const settled = readJournal().runs.find((r) => r.id === runId);
-    assert.equal(Object.hasOwn(settled.changes.find((c) => c.step === 4).after, 'frontDeskModel'), false);
-  }, { files: { 'README.md': README, '.claude/wheelhouse.json': JSON.stringify({ v: 1, routing: { frontDesk: 'model-top-1' } }) } });
 });

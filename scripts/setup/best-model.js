@@ -1,8 +1,9 @@
 // scripts/setup/best-model.js
 // The model the front desk runs on (design section 8). By the director's ruling of 24 October 2026
 // it is Claude Code's most capable model short of the strongest, which Claude Code's alias `opus`
-// names; the strongest, which its alias `best` names, only when the director chooses it at setup
-// (step 4), since it costs more. Wheelhouse names no model itself, so setup asks Claude Code once
+// names, pinned by setup with no question. The strongest, which its alias `best` names, is never a
+// default: it waits for the director's own opt-in, which comes with the Thoroughness design, so
+// nothing in setup asks for it yet. Wheelhouse names no model itself, so setup asks Claude Code once
 // what the alias stands for on this computer and pins the full name it gives in the project's
 // routing table (`routing.frontDesk`); the pin moves only after the evaluation passes on a new
 // model (section 9.1), never by the alias moving on its own.
@@ -19,7 +20,7 @@ import { isModelName } from '../gate/guardrails.js';
 
 // Claude Code's alias for the front desk's model.
 export const FRONT_DESK_ALIAS = 'opus';
-// Claude Code's alias for its strongest model, pinned only on the director's choice.
+// Claude Code's alias for its strongest model, for the director's opt-in once it is designed.
 export const STRONGEST_ALIAS = 'best';
 // How long Claude Code may take to start and say which model it runs on.
 export const ALIAS_WAIT_MS = 60 * 1000;

@@ -18,11 +18,6 @@
 // signs them. Builds can't read the Mac's keychain unless it does, a quiet default no other project
 // hears of (the director's ruling of 24 October 2026); step 7 writes `signsApps` from the answer.
 //
-// Last, one plain question on the front desk's model (the director's ruling of 24 October 2026,
-// design section 8): the standard one, recommended, or the strongest, which costs more. Step 7
-// pins from the answer. A project whose configuration already pins the front desk's model is not
-// asked, since setup never moves a pin.
-//
 // The answers write to the project's records, which step 3 sets up, so until the folder is a
 // registered project with its records in place, the step waits rather than ask.
 import fs from 'node:fs';
@@ -33,11 +28,9 @@ import { projectForFolder } from '../lib/projects.js';
 import { scanContent } from '../state/secret-scan.js';
 import { hide } from '../lib/clean.js';
 import { REAL_USERS, LEVELS } from './host.js';
-import { isModelName } from '../gate/guardrails.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
-export const FRONT_DESK_MODEL = Object.freeze({ standard: 'Standard model', strongest: 'Strongest model' });
 export const PRODUCT = Object.freeze({ readme: 'The README\'s words', later: 'Describe it later' });
 // How long a step whose answers write to the project's records waits for step 3 to set them up.
 export const PROJECT_WAIT_MS = 30 * 1000;
@@ -228,34 +221,6 @@ function appleAppsAsk(name) {
   };
 }
 
-// Whether the configuration in `folder` already pins the front desk's model.
-function frontDeskPinned(folder) {
-  try {
-    return isModelName(JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'wheelhouse.json'), 'utf8'))?.routing?.frontDesk);
-  } catch {
-    return false;
-  }
-}
-
-// The last question: which model the front desk runs on.
-function frontDeskModelAsk(name) {
-  return {
-    id: 'front-desk-model',
-    card: {
-      level: 2,
-      what: `Setup step 4: which model should ${name}'s front desk, the assistant you talk to here, run on?`,
-      why: 'The front desk follows your rulings closely on a strong model; the strongest one costs more of your usage.',
-      options: [
-        { label: FRONT_DESK_MODEL.standard, says: 'A strong model, at the usual cost.' },
-        { label: FRONT_DESK_MODEL.strongest, says: 'The strongest model there is. It costs more of your usage each week; you can ask the front desk to switch to it later too.' },
-      ],
-      recommend: FRONT_DESK_MODEL.standard,
-      because: 'Wheelhouse is tested on it, and it follows your rulings closely',
-      meanwhile: MEANWHILE,
-    },
-  };
-}
-
 export function questionsStep() {
   return {
     n: 4,
@@ -274,8 +239,6 @@ export function questionsStep() {
       if (!live) return { ask: liveDataAsk(project.name) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
       if (apple === undefined) return { ask: appleAppsAsk(project.name) };
-      const model = frontDeskPinned(ctx.folder) ? null : answers['4.front-desk-model'];
-      if (model === undefined) return { ask: frontDeskModelAsk(project.name) };
       return {
         settled: {
           record: {
@@ -284,7 +247,6 @@ export function questionsStep() {
             locked: answers['3.locked']?.label === LEVELS.locked,
             liveData: live.label === LIVE_DATA.yes,
             ...(apple ? { signsApps: apple.label === SIGNS_APPS.yes } : {}),
-            ...(model ? { frontDeskModel: model.label === FRONT_DESK_MODEL.strongest ? 'strongest' : 'standard' } : {}),
           },
         },
       };

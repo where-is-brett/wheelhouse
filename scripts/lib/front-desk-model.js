@@ -3,11 +3,10 @@
 // pinned (design section 8). The front desk is meant to run on the model the evaluation passed on:
 // on a smaller one it follows the director's rulings less closely (docs/evals/front-desk.md,
 // scenarios 1 and 16), and the strongest costs more. Setup pins it in the project's routing table
-// (the standard model, or the strongest when the director chose it) and starts the front desk's
-// sessions on it,
-// but the director can still pick another in Claude's model menu, and that choice stands. So the
-// session start keeps, for this computer, the model the front desk's session started on, and the
-// board and the briefing show one plain line while it differs from the pin. It blocks nothing.
+// and starts the front desk's sessions on it, but the director can still pick another in Claude's
+// model menu, and that choice stands. So the session start keeps, for this computer, the model the
+// front desk's session started on, and the board and the briefing show one plain line while it
+// differs from the pin. It blocks nothing.
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectsDir } from './paths.js';

@@ -1,7 +1,7 @@
 // tests/scripts/setup/best-model.test.js
 // The front desk's model: what one of Claude Code's aliases stands for, read from a session's init
-// event. By default the alias is `opus`; `best`, the strongest model, only when the director chose
-// it at setup. `claude` is a stand-in; no session is started.
+// event. Setup's alias is `opus`; `best`, the strongest model, is kept for the director's opt-in,
+// which comes with the Thoroughness design. `claude` is a stand-in; no session is started.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ test('initModel reads the model from the first init event, past lines that are n
   assert.equal(initModel(undefined), null);
 });
 
-test('the front desk\'s alias is Claude Code\'s opus, and the strongest, asked only on the director\'s choice, is best', () => {
+test('the front desk\'s alias is Claude Code\'s opus, and the strongest, kept for the director\'s opt-in, is best', () => {
   assert.equal(FRONT_DESK_ALIAS, 'opus');
   assert.equal(STRONGEST_ALIAS, 'best');
 });

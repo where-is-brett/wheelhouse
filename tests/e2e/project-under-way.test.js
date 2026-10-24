@@ -21,7 +21,7 @@ import {
   standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow, listing,
 } from '../helpers/setup-e2e.js';
 import { HOST_LABELS, WAYS, REAL_USERS } from '../../scripts/setup/host.js';
-import { LIVE_DATA, PRODUCT, FRONT_DESK_MODEL } from '../../scripts/setup/questions.js';
+import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { listEvents } from '../../scripts/state/events.js';
 import { approveWorkLine, confirmLine } from '../../scripts/state/card-lines.js';
@@ -61,7 +61,7 @@ const SURVEY_CALLS = [
 
 const ANSWERS = {
   join: 'unused', 'real-users': REAL_USERS.no, host: HOST_LABELS.github, connection: WAYS.quick,
-  product: PRODUCT.readme, 'live-data': LIVE_DATA.no, 'front-desk-model': FRONT_DESK_MODEL.standard, 'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
+  product: PRODUCT.readme, 'live-data': LIVE_DATA.no, 'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
 };
 const byId = (id) => ANSWERS[Object.keys(ANSWERS).find((k) => id === k || id.startsWith(`${k}-`))];
 
