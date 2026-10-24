@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { run } from '../../scripts/lib/run.js';
+import { removeFolder } from './remove.js';
 
 // A bare repository under the temporary folder, for tests to push to and clone from.
 // With `repo` ('owner/name'), it sits at <root>/owner/name.git, so its address names the repository.
@@ -12,8 +13,12 @@ export async function makeBareRemote({ repo } = {}) {
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const made = await run('git', ['init', '--bare', '-b', 'main', dir]);
   if (made.code !== 0) throw new Error('git init --bare failed');
-  // Removal tries again: a helper's background work may still be writing into the repository.
-  return { url: dir, root, cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
+  // A push would start git's automatic gc in the repository, in the background, still writing into
+  // objects/ when a test removes it; the repository stays as pushed instead.
+  for (const [key, value] of [['receive.autogc', 'false'], ['gc.auto', '0']]) {
+    if ((await run('git', ['config', key, value], { cwd: dir })).code !== 0) throw new Error(`git config ${key} failed`);
+  }
+  return { url: dir, root, cleanup: () => removeFolder(root) };
 }
 
 // The injected push for tests: plain `git push`, with git's refusal to fast-forward

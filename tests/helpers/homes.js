@@ -6,12 +6,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { helperAddress } from '../../scripts/lib/paths.js';
+import { removeFolder } from './remove.js';
 
 // Temporary folders made through tempFolder, removed once the test file's tests are done.
 const made = [];
-// Removal tries again: a helper's or a session's background work may still be writing there.
 after(() => {
-  for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  for (const dir of made.splice(0)) removeFolder(dir);
 });
 
 // A new temporary folder whose name starts with `prefix`, removed after the file's tests.
@@ -51,7 +51,7 @@ export function withHome(fn, { prefix = 'wh-home-' } = {}) {
   process.env.WHEELHOUSE_HOME = home;
   const finish = () => {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
-    fs.rmSync(parent, { recursive: true, force: true });
+    removeFolder(parent);
   };
   let result;
   try {
