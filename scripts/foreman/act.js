@@ -1230,7 +1230,7 @@ async function secondReviewWait(ctx, views, work, pr, head) {
   if (routingFrom({ config, views, now: ctx.now }).extra?.secondReviewer !== true) return null;
   const area = await criticalAreaOf(ctx, config, views, work, head);
   if (area === 'no') return null;
-  // An agent that doesn't take the column (Copilot's) is never told to dispatch a second reviewer, so it has one
+  // An agent that doesn't take the column is never told to dispatch a second reviewer, so it has one
   // review, as the gate requires.
   if (!takesColumn(config)) return null;
   const clean = head === undefined ? 0 : cleanReviewsOf(ctx.project, pr, head);
