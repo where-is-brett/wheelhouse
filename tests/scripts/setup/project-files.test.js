@@ -29,6 +29,7 @@ import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, 
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
+import { copyTree } from '../../../scripts/lib/copy-tree.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -173,7 +174,8 @@ async function world({
       if (args[0] === 'plugin' && args[1] === 'install' && args.includes('--scope') && args[args.indexOf('--scope') + 1] === 'project') {
         const [plugin, marketplace] = args[2].split('@');
         const into = path.join(w.claudeHome, 'plugins', 'cache', marketplace, plugin);
-        fs.cpSync(k.roots[plugin], into, { recursive: true });
+        // Not fs.cpSync: on Windows it stops the process on a path like this one's "zoë".
+        copyTree(k.roots[plugin], into);
         const file = path.join(w.claudeHome, 'plugins', 'installed_plugins.json');
         let record = { version: 2, plugins: {} };
         try { record = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first install */ }

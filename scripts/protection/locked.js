@@ -17,6 +17,7 @@ import { credentialRules, cleanDomain } from './settings.js';
 import { readProject } from '../lib/projects.js';
 import { helperAddress, projectsDir, wheelhouseHome } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
+import { copyTree } from '../lib/copy-tree.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 // The plugin's folders Locked puts in the managed copy (under <dir>/wheelhouse/), beside Node.js (bin).
@@ -162,7 +163,7 @@ async function put({ list, dir, run, now, nodeSource, address, line }) {
   try {
     const own = path.join(stage, 'wheelhouse');
     fs.mkdirSync(own, { recursive: true });
-    for (const folder of LOCKED_FOLDERS) fs.cpSync(path.join(PLUGIN_ROOT, folder), path.join(own, folder), { recursive: true });
+    for (const folder of LOCKED_FOLDERS) copyTree(path.join(PLUGIN_ROOT, folder), path.join(own, folder));
     fs.writeFileSync(path.join(own, 'locked-projects.json'), `${JSON.stringify(list, null, 2)}\n`);
     const { version } = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
     fs.writeFileSync(path.join(own, 'installed.json'), `${JSON.stringify({ version, at: now().toISOString(), pluginRoot: fs.realpathSync(PLUGIN_ROOT) }, null, 2)}\n`);

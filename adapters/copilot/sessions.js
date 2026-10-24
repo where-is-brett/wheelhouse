@@ -36,6 +36,7 @@ import { run as realRun } from '../../scripts/lib/run.js';
 import { recordRunUsage } from '../../scripts/usage/store.js';
 import { copilotHome, file as hookFile, writeRegistration } from './hooks.js';
 import { levelAllowed, levelRules } from './permissions.js';
+import { copyTree } from '../../scripts/lib/copy-tree.js';
 
 // The kit's agents, copied into every session's own home (adapters/copilot/home/agents).
 const KIT_AGENTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'home', 'agents');
@@ -155,7 +156,7 @@ function refuseLinkedPath(dir) {
 // is never copied, and a copy that differs refuses the start.
 function copySkill(skill, into) {
   const target = path.join(into, skill.name);
-  fs.cpSync(skill.dir, target, { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+  copyTree(skill.dir, target, { overwrite: false });
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) throw new Error(`The ${skill.name} skill holds a link, which is never given to a session`);
