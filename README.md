@@ -39,12 +39,12 @@ What Wheelhouse protects you from, what it doesn't, and how to report a problem 
 
 Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.
 
-**Status:** `v0.1.0` is the first release, an early one for trying Wheelhouse out. Where this page says `v0.1.0`, use the latest release's name.
+**Status:** `v0.1.1` is an early release for trying Wheelhouse out. Where this page says `v0.1.1`, use the latest release's name.
 
 Open your product's folder in VS Code, open Copilot's chat in agent mode, and paste this line:
 
 ```text
-Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.1.0
+Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.1.1
 ```
 
 Copilot asks you before it runs each command, as it always does. What the line does, one step at a time:
