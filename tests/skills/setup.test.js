@@ -37,7 +37,7 @@ const readme = read('README.md');
 const COMMAND = setupCommand('/plugin', { platform: 'linux' });
 const TRIALS = COMMAND.replace('/scripts/setup/cli.js', '/scripts/health/trials.js');
 // A code span that names a form: a form's first word, alone or before its arguments (not a field such as `plan: null`).
-const FORM_WORDS = /^(?:plan|apply|status|resume|health|uninstall)(?=$| [a-z0-9<[])/;
+const FORM_WORDS = /^(?:plan|apply|status|resume|wait|health|uninstall)(?=$| [a-z0-9<[])/;
 
 function frontOf(text, file) {
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
@@ -141,6 +141,28 @@ test('the playbook closes the gaps its pressure runs found', () => {
   assert.match(playbook, /`status` says step 10's "own checks finished"/);
 });
 
+// From the rehearsal: Claude Code refuses a foreground `sleep`, so every wait goes through `wait <step>`.
+test('the playbook waits with `wait <step>`, never a sleep of its own', () => {
+  assert.match(playbook, /\*\*`wait` with `waitsFor`:\*\* the step waits for step `waitsFor` to finish\. Run `wait <step>`, saying nothing, then `plan <step>` again\./);
+  const nine = playbook.split('\n## Step 9, phone notifications\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(nine, /Run `wait 9` until it answers `waited: true` \(each call waits up to a minute and a half, then says how long is left\), then send exactly one test notification/);
+  assert.doesNotMatch(playbook, /\bsleep\b/);
+});
+
+// From the rehearsal on a project under way (docs/evals/rehearsal-project-under-way.md): with the
+// folder on a line of unfinished work, the session told the director to stash their changes (the
+// install's lines in .claude/settings.json with them) or to make that line the host's default; with
+// the helper unreachable, it sent them to a "Wheelhouse app" that doesn't exist.
+test('the playbook keeps a project under way safe when step 7 finds the folder on another line, and says how the helper starts', () => {
+  const wrong = playbook.split('\n## When something goes wrong\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(read('scripts/setup/project-files.js'), /but this folder is on \$\{current \?\? 'no branch'\}/, 'step 7 words it so');
+  assert.match(wrong, /\*\*"this folder is on <line>"\*\*/);
+  assert.match(wrong, /Never suggest putting their changes aside \(stash\), undoing, committing or deleting them, or changing the host's default branch/);
+  assert.match(wrong, /`git switch <branch>`/);
+  assert.match(read('scripts/host/helper-client.js'), /the host helper could not be reached/, 'the client words it so');
+  assert.match(wrong, /\*\*"the host helper could not be reached"\*\*[^\n]*session start starts it[^\n]*There is no Wheelhouse app to open/);
+});
+
 // Task R N1: uninstall's shortest cards point to `uninstall status` for the list, so the playbook
 // runs it and shows its lines before asking the card. Rulings R142, R146: once a stopped uninstall's
 // status, or plan, says first to start a new session, the card is not asked again in this one.
@@ -164,7 +186,7 @@ test('the README gives the Node.js line and the install line as they are', () =>
 test('the playbook\'s reading forms run under STOP', async () => {
   await as(shortHome(), async () => {
     setStop({ by: 'prompt' });
-    for (const form of ['resume', 'status', 'plan 3', 'health', 'uninstall plan', 'uninstall status']) {
+    for (const form of ['resume', 'status', 'plan 3', 'wait 9', 'health', 'uninstall plan', 'uninstall status']) {
       const input = { cwd: '/projects/shop', session_id: 's', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `${COMMAND} ${form}` } };
       assert.equal(await stopGuard(input, { projectOf: () => ({ project: 'o__p' }), pluginRoot: '/plugin', platform: 'linux' }), undefined, form);
     }

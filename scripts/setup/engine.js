@@ -84,7 +84,7 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { caEnv } from '../host/company-ca.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { wheelhouseHome, stateDir } from '../lib/paths.js';
+import { jobFolder, wheelhouseHome, stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { LEAN_FOLDER } from '../lean/project.js';
 import { CLICK_FRESH_MS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
@@ -593,7 +593,7 @@ export function setupRoutes({
     };
     try {
       const child = spawn(process.execPath, [RUN_STEP, stepsModule, run.folder, String(step.n), hash, run.id, clickedAt, deadline, userHome], {
-        cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
+        cwd: jobFolder(), detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...caEnv(wheelhouseHome()) },
       });
       child?.on?.('error', failed);
       child?.unref?.();

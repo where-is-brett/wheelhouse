@@ -104,6 +104,14 @@ export function bypassDir() {
   return path.join(wheelhouseHome(), 'bypass');
 }
 
+// The working folder a detached job (the helper, the receiver, the watcher, a background job) is started
+// in: the user's own home folder, which nothing of Wheelhouse's removes. Never the Wheelhouse home: on
+// Windows a folder that is a running program's working folder can't be removed, so a job working there
+// would stop uninstall, or a test, from removing it. The jobs name every file by its whole path.
+export function jobFolder() {
+  return os.homedir();
+}
+
 // The helper's socket file in `home`, or on Windows its named pipe. A pipe is one per computer, not
 // per folder, so the pipe of a home other than ~/.wheelhouse (an evaluation run's, a test's) carries
 // a short hash of that home's path, as its socket would be a file of that home's own.

@@ -788,8 +788,11 @@ async function firstBriefing(project, { client, now, load, survey, autonomy }) {
   const given = briefingIn({
     project, model, usage, sources, settings, since: seen.briefedAt, weeklySince: seen.weeklyAt, review: reviewOf(project, settings, at), at, room: CONTEXT_CHARS,
     survey, surveyAt: readSurveyAt(project), host, carrying, leaveOut: card === null ? [] : ['inFlight'],
+    // Locked was just chosen or passed over at setup: its weekly line waits for the next week's first
+    // briefing, which this briefing starts the count for.
+    holdLocked: true,
   });
-  markSeen(project, { briefedAt: at, ...(given.weeklyShown ? { weeklyAt: at } : {}), ...(given.surveyShown ? { surveyAt: given.surveyShown } : {}) });
+  markSeen(project, { briefedAt: at, weeklyAt: at, ...(given.surveyShown ? { surveyAt: given.surveyShown } : {}) });
   return { briefing: given.text, card };
 }
 

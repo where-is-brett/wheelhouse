@@ -7,7 +7,7 @@ import { briefingParts } from '../../../scripts/briefing/text.js';
 import { markRaised } from '../../../scripts/usage/figures.js';
 import { NOT_NOW_STEP } from '../../../scripts/board/model.js';
 import { verdict } from '../../../scripts/lib/calm-words.js';
-import { WINDOWS_LINE, UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
+import { WINDOWS_LINE, UNATTENDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE } from '../../../scripts/lib/platform-lines.js';
 import { frontDeskModelLine } from '../../../scripts/lib/front-desk-model.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -221,6 +221,24 @@ test('unconfirmed changes and what waits come straight from the board model', ()
       plus: { waiting: 0, changed: 0 }, raise: [], weekly: 0,
     });
   }
+});
+
+// From the rehearsal on a project under way (docs/evals/rehearsal-project-under-way.md): setup's first
+// briefing said "Locked would protect it more" minutes after the director chose Standard.
+test('the Locked line keeps the weekly rhythm, and setup\'s own briefing holds it back', () => {
+  const health = [
+    { level: 'ok', text: 'Protection: Standard' },
+    { level: 'watch', text: LOCKED_WOULD_LINE },
+    { level: 'watch', text: 'This project has no CI, so nothing can merge' },
+  ];
+  const model = board({ health });
+  const brief = (weeklySince, extra = {}) => briefingModel({ model, usage: null, since: at(19, 11), now: NOW, wasRaised: never, timeZone: 'UTC', weeklySince, ...extra });
+  assert.deepEqual(brief(null).watch, [LOCKED_WOULD_LINE, 'This project has no CI, so nothing can merge'], 'due on the week\'s first briefing');
+  assert.deepEqual(brief(at(19, 0)).watch, ['This project has no CI, so nothing can merge'], 'not again that week');
+  // Setup's first briefing, right after the director chose Standard: held back, so it isn't counted as shown.
+  const first = brief(null, { holdLocked: true });
+  assert.deepEqual(first.watch, ['This project has no CI, so nothing can merge']);
+  assert.equal(first.weekly, 0);
 });
 
 test('Unattended is repeated once each week, Monday in the director\'s time, first in what to watch', () => {

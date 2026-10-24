@@ -307,8 +307,11 @@ function checkPlain(kind, data) {
   const { must, may } = PLAIN_SHAPES[kind];
   const stray = Object.keys(data).filter((k) => !must.includes(k) && !may.includes(k));
   // Named, with the fields the kind takes, so a session can put the record right at once (scenario 36).
-  if (stray.length) bad(`has a field it should not: ${stray.join(', ')}. It takes ${listed(must)}${may.length ? `, and may take ${listed(may)}` : ''}`);
-  for (const k of must) if (data[k] === undefined) bad(`needs its ${k}`);
+  const takes = `It takes ${listed(must)}${may.length ? `, and may take ${listed(may)}` : ''}`;
+  if (stray.length) bad(`has a field it should not: ${stray.join(', ')}. ${takes}`);
+  // Every field missing, named at once, with the fields the kind takes.
+  const missing = must.filter((k) => data[k] === undefined);
+  if (missing.length) bad(`needs its ${listed(missing)}. ${takes}`);
   const text = (k) => { if (!isText(data[k])) bad(`needs ${k} to be text`); };
   const optionalText = (k) => { if (data[k] !== undefined && !isText(data[k])) bad(`has a ${k} that is not text`); };
   const slug = (k) => { if (!isSlug(data[k])) bad(`needs ${k} to be a short slug (lower-case letters, digits and hyphens, at most 40)`); };

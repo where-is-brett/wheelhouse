@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { isModelName } from '../gate/guardrails.js';
 import { helperClient } from '../host/helper-client.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../lib/build-loop.js';
-import { stateDir, wheelhouseHome } from '../lib/paths.js';
+import { jobFolder, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { routingInForce } from '../routing/in-force.js';
@@ -152,7 +152,7 @@ export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_R
   const home = wheelhouseHome();
   fs.mkdirSync(home, { recursive: true });
   const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'watcher', 'main.js'), project], {
-    cwd: home, env: sessionEnv(env), detached: true, windowsHide: true, stdio: 'ignore',
+    cwd: jobFolder(), env: sessionEnv(env), detached: true, windowsHide: true, stdio: 'ignore',
   });
   child?.on?.('error', () => {});
   child?.unref?.();

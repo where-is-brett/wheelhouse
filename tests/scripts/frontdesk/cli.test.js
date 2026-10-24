@@ -803,6 +803,11 @@ test('record works out the hash of the document a work or an amendment names, an
     const hash = hashOf('The total counts cancelled orders.\n');
     assert.deepEqual(helper.held.at(-1).data.doc, { path: 'docs/bugs/total.md', hash });
     assert.equal(bug.json.hash, hash, 'the hash is printed, for the approval card to name');
+    // Its path given as plain text, as the intake says ("names its brief as `doc`, by its path"), is
+    // taken the same way (the rehearsal on a project under way: a session gave it so and was refused).
+    const plain = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: 'docs/bugs/total.md' }), at);
+    assert.equal(plain.code, 0, plain.err);
+    assert.deepEqual(helper.held.at(-1).data.doc, { path: 'docs/bugs/total.md', hash });
 
     // A hash given must be the file's as it stands; a document that can't be read is refused.
     const wrong = await run(helper, ['record', 'work'], JSON.stringify({ ...work, doc: { path: 'docs/bugs/total.md', hash: DOC } }), at);

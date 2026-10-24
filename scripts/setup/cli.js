@@ -61,7 +61,10 @@ import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
+// The longest `wait <step>` waits in one call, well within the two minutes a command may run by
+// default; a longer wait is asked again.
+export const WAIT_MOST_MS = 90 * 1000;
 const STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
 const HASH = /^[0-9a-f]{64}$/;
 const BREAKS = /\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g;
@@ -96,6 +99,7 @@ async function plan(client, folder, step) {
 // Runs a form and resolves with the exit code. `out` and `err` take text to show.
 export async function main(argv, {
   cwd = process.cwd(), client, out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
+  now = () => Date.now(), sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
 } = {}) {
   try {
     const [form, ...rest] = argv;
@@ -117,6 +121,25 @@ export async function main(argv, {
       const got = await ask(helper.setup.status, { folder });
       const next = Number.isInteger(got.next) ? got.next : null;
       json({ lines: Array.isArray(got.lines) ? got.lines : [], next, plan: Number.isInteger(got.ask) ? await plan(helper, folder, got.ask) : null });
+    } else if (form === 'wait' && rest.length === 1) {
+      // Waits here, for the session, which can't sleep in the foreground: while the step's plan
+      // is a wait, up to WAIT_MOST_MS in all. { waited: true } once it is over, else { waiting }.
+      const step = stepOf(rest[0]);
+      const helper = client ?? helperClient();
+      const end = now() + WAIT_MOST_MS;
+      for (;;) {
+        const got = await plan(helper, folder, step);
+        if (got.wait === undefined) {
+          json({ step, waited: true });
+          break;
+        }
+        const left = end - now();
+        if (left <= 0) {
+          json({ step, waiting: got.wait });
+          break;
+        }
+        await sleep(Math.max(1, Math.min(got.wait, left)));
+      }
     } else if (form === 'uninstall' && rest[0] === 'plan' && rest.length === 1) {
       const { ok, ...answer } = await ask((client ?? helperClient()).setup.uninstall.plan, { folder }); // eslint-disable-line no-unused-vars
       json(answer);

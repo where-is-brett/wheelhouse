@@ -28,7 +28,7 @@
 // carrying it on (ruling A9). `earlier` is the survey a second look follows, when it was mentioned:
 // only what is new since it is said (briefingLines' `since`).
 import { oneLine, unusualLine, tokenWords, dollarWords, creditWords, NOT_NOW_STEP } from '../board/model.js';
-import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
+import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
 import { brokenCount } from '../board/health.js';
 import { FRONT_DESK_MODEL_LEAD } from '../lib/front-desk-model.js';
@@ -52,9 +52,9 @@ const BARE_MERGE = /^(Pull request #\d+|A pull request) merged$/;
 const UNCONFIRMED = /, not yet confirmed by you$/;
 // The board model's line for event records it couldn't read.
 const DAMAGED = /^\d+ records? couldn't be read$/;
-// The health lines given once a week: the Unattended lines, and the front desk on another model than
-// its pin, which the board shows all the while.
-const WEEKLY = [UNATTENDED_LINE, LOCKED_UNATTENDED_LINE];
+// The health lines given once a week: the Unattended lines, Locked's for a project with real users,
+// and the front desk on another model than its pin, which the board shows all the while.
+const WEEKLY = [UNATTENDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE];
 const isWeekly = (text) => WEEKLY.includes(text) || text.startsWith(FRONT_DESK_MODEL_LEAD);
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Anthropic's pages the sources check reads (sources/list.js), by id, as the director knows them.
@@ -226,7 +226,7 @@ function waitingEntry(w) {
   return entry;
 }
 
-// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review, survey, surveyAt, host, leaveOut, carrying, earlier }) -> Briefing.
+// briefingModel({ model, usage, sources, since, now, wasRaised, timeZone, weeklySince, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked }) -> Briefing.
 // `model` is boardModel's, `usage` usageFigures', `sources` the sources report, `since` the time of
 // the last briefing, `weeklySince` the time of the last briefing that showed the weekly lines.
 // `wasRaised(id)` says whether an unusual item was raised already (the usage store's by default).
@@ -235,7 +235,7 @@ function waitingEntry(w) {
 // `survey` is the latest survey as the views give it ({ id, data }), `surveyAt` the id of the one a
 // briefing last mentioned, `host` the project's ('github', 'gitlab' or null) and `leaveOut` the
 // survey's lines (see briefingLines) the caller says itself; `carrying` is briefingLines' own, and
-// `earlier` its `since`.
+// `earlier` its `since`. `holdLocked`, for setup's own briefing, leaves Locked's weekly line out.
 export function briefingModel(options) {
   try {
     return build(isRecord(options) ? options : {});
@@ -255,7 +255,7 @@ function foundLines(survey, surveyAt, host, leaveOut, carrying, earlier) {
   return { found: said(list(leaveOut)), id: survey.id };
 }
 
-function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false, earlier = null }) {
+function build({ model, usage, sources, since, now, wasRaised = realWasRaised, timeZone, weeklySince, review, survey, surveyAt, host = null, leaveOut = [], carrying = false, earlier = null, holdLocked = false }) {
   const briefing = EMPTY();
   const board = isRecord(model) ? model : {};
   const director = isRecord(board.director) ? board.director : {};
@@ -286,7 +286,8 @@ function build({ model, usage, sources, since, now, wasRaised = realWasRaised, t
   const shown = msOf(weeklySince);
   const due = part(() => weeklyDue(Number.isFinite(nowMs) && shown > nowMs ? NaN : shown, nowMs, timeZone), true);
   const standing = part(() => lines(records(director.health).filter((l) => l.level === 'watch' || l.level === 'stop').map((l) => l.text)), []);
-  const weekly = due ? standing.filter(isWeekly) : [];
+  // Setup's own briefing holds Locked's line back: the director chose minutes before (holdLocked).
+  const weekly = due ? standing.filter(isWeekly).filter((text) => !(holdLocked === true && text === LOCKED_WOULD_LINE)) : [];
   const health = standing.filter((text) => !isWeekly(text));
   const unusual = part(() => unusualItems(usage, typeof wasRaised === 'function' ? wasRaised : realWasRaised), []);
   const report = isRecord(sources) && (Number.isNaN(sinceMs) || msOf(sources.at) > sinceMs) ? sources : null;

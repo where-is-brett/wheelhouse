@@ -16,7 +16,7 @@ Breaking the letter of these rules is breaking their spirit.
 
 ## The command
 
-The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>`, `apply <step> <hash>`, `status`, `resume`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
+The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>`, `apply <step> <hash>`, `status`, `resume`, `wait <step>`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
 
 ## Asking a card
 
@@ -34,8 +34,8 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 2. Act on a plan by what it holds:
    - **`ask`:** ask `ask.card`. Then `plan <step>` again: the next answer is often a different question of the same step. Read each card; never assume it is the one before.
    - **`hash` and `card`, a Go-ahead card:** ask `card` before anything else; never run `plan` again over it. Only after the director's **Go ahead** on that card, run `apply <step> <hash>` with the full `hash` from that same plan. Never apply on typed words, on an earlier card's click, or with an earlier hash.
-   - **`wait` with `waitsFor`:** the step waits for step `waitsFor` to finish. Wait about `wait` milliseconds, saying nothing, then `plan <step>` again.
-   - **`wait` without `waitsFor`:** on step 9, see below. On step 10 it is your part: follow Step 10 below, never `plan 10` again in a loop. Otherwise read `why`: when it waits for the director (their changes, a Confirm), tell them in one line and offer to carry on later; when it waits for setup itself, wait and ask again.
+   - **`wait` with `waitsFor`:** the step waits for step `waitsFor` to finish. Run `wait <step>`, saying nothing, then `plan <step>` again.
+   - **`wait` without `waitsFor`:** on step 9, see below. On step 10 it is your part: follow Step 10 below, never `plan 10` again in a loop. Otherwise read `why`: when it waits for the director (their changes, a Confirm), tell them in one line and offer to carry on later; when it waits for setup itself, run `wait <step>` and ask again.
    - **`done: true`:** the step settled with nothing to click. When it has `said`, tell the director that line at once, in plain words. Then `resume`.
    - **`plan: null`:** every step left is running or done: check `status`.
 3. **After apply.** `{ started: true, done: true }`: the step has finished. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and ask the next card it gives. The next step's questions are asked while a long step runs; its Go-ahead card comes once that step is done.
@@ -49,13 +49,15 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 - **"needs the director's click":** ask the card again; never apply again without its click.
 - **"STOP is on":** tell the director to lift STOP first.
 - **A step that "did not finish"** (in `status`, or a refusal): tell the director plainly what it says and what they can do, then ask the card the plan now gives (step 3 asks again for the project's owner/name this way).
+- **"this folder is on <line>"** (step 7, on a project already under way): the director's unfinished work on that line is safe, and setup leaves it as it is. Tell them plainly that the folder has to be on the product's main line, which the refusal names, before setup can put its files there, and that changes not yet committed stay as they are. Never suggest putting their changes aside (stash), undoing, committing or deleting them, or changing the host's default branch: the Wheelhouse install's own lines in `.claude/settings.json` are among those changes. If they ask how, one command in a terminal in this folder does it, `git switch <branch>` with the branch the refusal names: it keeps changes not yet committed, or refuses and changes nothing. Then offer to carry on.
+- **"the host helper could not be reached"**: the helper does setup's work on this computer, and each session start starts it. Tell them to close this session and start a new one in this folder, then say "carry on with setup". There is no Wheelhouse app to open; never suggest one, or reinstalling.
 - **Any other refusal,** such as Node.js too old: say what happened and what the director can do, in its words made plain (install the LTS from nodejs.org, then ask again in the same conversation). Offer to carry on once it is done. Never do the fix yourself.
 - **Never retry in a loop.** The same refusal twice: stop and offer to carry on later. A wait, and `uninstall status` while uninstall runs, are not refusals: keep to their own rules.
 
 ## Step 9, phone notifications
 
 - A step 9 wait **with** `waitsFor` is the wait for another step: no push.
-- A step 9 wait **without** `waitsFor` means the director's screen is locked for the test. Wait the whole `wait`, then send exactly one test notification with the session's push tool, saying "Wheelhouse test: phone notifications reach you.", then `plan 9` again. One push, even when the director asks for more; no push at any other time, not even to try the tool.
+- A step 9 wait **without** `waitsFor` means the director's screen is locked for the test. Run `wait 9` until it answers `waited: true` (each call waits up to a minute and a half, then says how long is left), then send exactly one test notification with the session's push tool, saying "Wheelhouse test: phone notifications reach you.", then `plan 9` again. One push, even when the director asks for more; no push at any other time, not even to try the tool.
 - **Later:** setup stops here for now. Say in one line that the phone test and the health check wait, and offer to carry on later. Don't ask the card again this session, and don't try step 10.
 
 ## Step 10, the health check
