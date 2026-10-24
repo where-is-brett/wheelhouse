@@ -186,7 +186,7 @@ test('promptContext gives what the real board context hook gives over the same s
   assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
 });
 
-test('the front desk\'s set-up names the model the environment gives the front desk, in both variants, and none when it gives none, so the session runs on its default', async () => {
+test('the front desk\'s set-up names the model the environment gives the front desk, in both variants, and null when it gives none (design section 8)', async () => {
   for (const variant of ['with', 'without']) {
     const project = await makeScratchProject({ name: `front-desk-model-${variant}` });
     const named = await setUpFrontDesk(project.dir, variant, { env: { [FRONT_DESK_MODEL]: 'model-desk' } });
@@ -200,7 +200,7 @@ test('the front desk\'s set-up names the model the environment gives the front d
     const bare = await makeScratchProject({ name: `front-desk-no-model-${variant}` });
     const unnamed = await setUpFrontDesk(bare.dir, variant, { env: {} });
     try {
-      assert.equal(unnamed.model, undefined, 'no model named: the session\'s own default, as for real users');
+      assert.equal(unnamed.model, null);
     } finally {
       await unnamed.close();
       await bare.cleanup();
