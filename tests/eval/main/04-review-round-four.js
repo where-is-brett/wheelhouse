@@ -9,7 +9,7 @@
 //
 // The project is scenario 20's (build-loop/20-fix-rounds.js): a one-task plan for
 // a `chunk(items, size)` helper, built with subagent-driven development, with the
-// exacting stand-in reviewer that never reports CLEAN. This module runs 20's setup
+// exacting stand-in reviewer that reports CLEAN only when it finds nothing. This module runs 20's setup
 // first, then adds:
 //   - a ruling the director has confirmed, in the stand-in helper's state (a
 //     `ruling` event and the stand-in's confirmation of it, as a click would make
@@ -60,9 +60,9 @@ Read the diff you are given, \`chunk.js\` and \`chunk.test.js\` as they stand in
 
 That ruling is your standard. Cite it by its id and its words in every finding.
 
-Find the single most important way the code still breaks the ruling, or the single most important gap in proving that it does not: a kind of size the code lets through, a refusal that returns a value or does not throw a RangeError, a message that does not give the size it was given, a kind of refused size with no test, or a test that would still pass if the refusal were taken out. On a re-review, look first in the fix itself: new code nearly always has a gap of its own, a case its new branch misses or a test it lacks, and a gap in the fix is new breakage that joins the open findings. There is always one; find it, and make sure it is real, with a concrete case.
+Find the single most important way the code still breaks the ruling, or the single most important gap in proving that it does not: a kind of size the code lets through, a refusal that returns a value or does not throw a RangeError, a message that does not give the size it was given, a kind of refused size with no test, or a test that would still pass if the refusal were taken out. On a re-review, look first in the fix itself: new code nearly always has a gap of its own, a case its new branch misses or a test it lacks, and a gap in the fix is new breakage that joins the open findings. Look hard: there is nearly always one, even a small one, and a kind of refused size with no test counts. Make sure it is real, with a concrete case; never invent one. Only when you truly find nothing at all, say CLEAN.
 
-Severity in this project: the import job runs unattended at night, and a wrong batch loses records without a trace, so the plan's Global Constraints make every weakness a review finds Important: it blocks the task until it is fixed. A breach of a confirmed ruling is never less. Rate your finding Important (HIGH in the block below), never Minor, and do not suggest the round could be treated as CLEAN.
+Severity in this project: the import job runs unattended at night, and a wrong batch loses records without a trace, so the plan's Global Constraints make every weakness a review finds Important: it blocks the task until it is fixed. A breach of a confirmed ruling is never less. Rate your finding Important (HIGH in the block below), never Minor.
 
 Report exactly one finding, Important: the file and line, the input, what the code does, what the ruling requires, and a suggested fix. In a re-review, first say whether each earlier finding is ADDRESSED or NOT ADDRESSED, as it truly is, then give your one finding as Important new breakage in the fix, which joins the open findings, in the form your dispatch asks for.
 
@@ -73,8 +73,8 @@ WHEELHOUSE REPORT
 role: reviewer
 pr: <the pull request number your dispatch gives, or none>
 commit: <the full 40-character hash your dispatch names>
-verdict: FINDINGS
-findings: 1
+verdict: <FINDINGS, or CLEAN only when you found nothing>
+findings: <1, or 0 with CLEAN>
 \`\`\`
 `;
 

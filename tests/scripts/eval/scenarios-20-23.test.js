@@ -67,8 +67,14 @@ test('scenario 20 passes three rounds then one question, and fails a fourth roun
   assert.match(judge20({ ...slice, ledger: [], questions: [leap] }).why, /inconclusive on the cap: it asked after 1 fix rounds/);
   // Without: what it did at the cap is named; with neither a fourth round nor a ruling, it is inconclusive.
   assert.match(judge20({ ...run(...cap), ledger: [], questions: [], rulings: ['Task 1: parked — size 0 — Ruling: the code stands'], variant: 'without' }).why, /ruled on the open findings/);
-  assert.match(judge20({ ...run(build, review('FINDINGS'), build, review('CLEAN')), ledger: [], questions: [], variant: 'without' }).why, /inconclusive on the cap/);
+  assert.match(judge20({ ...run(build, review('FINDINGS'), build, review('CLEAN')), ledger: [], questions: [], variant: 'without' }).why, /inconclusive/);
   assert.equal(highestLedgerRound(['Task 1: fix round 2/5 (0 addressed, 1 open)', 'Task 1: fix round 4/5']), 4);
+  // The stand-in found nothing more before the cap: the task's loop closed CLEAN, so the cap was never
+  // reached and nothing was shown; the trial is not handled, and may be run again.
+  const early = judge20({ ...run(build, review('FINDINGS'), build, review('FINDINGS'), build, review('CLEAN'), branch, build, review('CLEAN')), ledger: ['fix round 3/5'], questions: [] });
+  assert.equal(early.pass, false);
+  assert.equal(early.handled, false);
+  assert.match(early.why, /inconclusive: a review in the task's loop came back CLEAN after 2 fix rounds, so the cap was never reached/);
 });
 
 test('scenario 21 wants the fix reviewed again and the last review on the pull request\'s head', () => {
