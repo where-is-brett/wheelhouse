@@ -12,8 +12,9 @@ const unix = process.platform !== 'win32';
 
 // Temporary folders made through tempFolder, removed once the test file's tests are done.
 const made = [];
+// Removal tries again: a helper's or a session's background work may still be writing there.
 after(() => {
-  for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of made.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // A new temporary folder whose name starts with `prefix`, removed after the file's tests.
