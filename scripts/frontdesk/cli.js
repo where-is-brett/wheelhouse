@@ -706,6 +706,8 @@ function readBackLine(readBack) {
 
 // A work event's document, or an amendment of the one file open work names, with its hash worked out.
 async function withHash(client, cwd, kind, input) {
+  // A document named by its path alone, as plain text, is the same as { path }.
+  if (kind === 'work' && typeof input.doc === 'string') return { ...input, doc: { path: input.doc, hash: documentHash(cwd, input.doc) } };
   if (kind === 'work' && isPlain(input.doc) && typeof input.doc.path === 'string') {
     return { ...input, doc: { ...input.doc, hash: documentHash(cwd, input.doc.path, input.doc.hash) } };
   }

@@ -490,13 +490,34 @@ test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refus
   });
   await withHome(async () => {
     const pages = await world({ defaultBranch: 'gh-pages' });
-    await assert.rejects(pages.plan(), /default branch .*gh-pages.*this folder is on main/);
+    const odd = await pages.plan().then(() => null, (error) => error.message);
+    assert.match(odd, /default branch .*gh-pages.*this folder is on main/);
+    // Setup never suggests changing the host's default branch, nor switching off the product's own line.
+    assert.doesNotMatch(odd, /the default on|Switch this folder/);
+    assert.match(odd, /Ask whoever looks after the repository on GitHub which line is the product's own/);
   });
   await withHome(async () => {
     // A product whose default branch is not main has its commit and protection there, named on the card.
     const trunk = await world({ defaultBranch: 'trunk', branch: 'trunk' });
     const planned = await trunk.plan();
     assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /trunk/);
+  });
+  await withHome(async () => {
+    // A project under way: the folder is on a line of the director's unfinished work, with the
+    // install's lines in .claude/settings.json not yet committed. The refusal never suggests making
+    // that line the host's default, says their work is left as it is, and says to keep the
+    // changes not yet committed (putting them aside would take the install's lines with them).
+    const working = await world({ stepOne: 'modified' });
+    await g(working.folder, 'checkout', '-q', '-b', 'ingredient-units');
+    fs.writeFileSync(path.join(working.folder, 'units.txt'), 'cups\n');
+    await g(working.folder, 'add', 'units.txt');
+    await g(working.folder, 'commit', '-q', '-m', 'Start units');
+    const refused = await working.plan().then(() => null, (error) => error.message);
+    assert.match(refused, /this folder is on ingredient-units/);
+    assert.doesNotMatch(refused, /the default on GitHub/);
+    assert.match(refused, /ingredient-units is left as it is/);
+    assert.match(refused, /Switch this folder to main/);
+    assert.match(refused, /keep the changes not yet committed as they are: the Wheelhouse install's own lines in \.claude\/settings\.json are among them/);
   });
   await withHome(async () => {
     // The director's own commit not yet on the host would go up with setup's: refused.
