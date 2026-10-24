@@ -99,6 +99,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       views: post('/state/views'), //   { project, cards?, review?, answers? } -> { ok, views, cards?, review?, answers? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; with answers: true, the card-answer events; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
+      columnReady: post('/state/column-ready'), // { project, column, pins, records } -> { ok, id, pushed }: a Thoroughness level ready (lean or lightest), recorded only when the helper's own read of the evaluation's records finds the whole bar passed on the project's pins now; refused under STOP
     },
     // The director's profile. Each answers { ok: false, why } while the profile isn't set up.
     profile: {

@@ -11,6 +11,10 @@ import { projectSettings } from '../protection/settings.js';
 import { fileURLToPath } from 'node:url';
 import { makeScratchProject } from '../../probes/lib/scratch.js';
 import { AGENTS } from '../agents/names.js';
+import { isModelName } from '../gate/guardrails.js';
+import { EFFORTS } from '../routing/thoroughness.js';
+import { promptWithColumn, roleOf } from '../routing/in-force.js';
+import { READY_LEVELS } from './ready.js';
 
 const VARIANTS = ['with', 'without'];
 
@@ -349,13 +353,17 @@ async function start(resolved, { lead = [], args, prompt, cwd, env, timeoutMs })
 // are not looked for in --help: `--permission-prompt-tool`, which a scenario that asks cards
 // needs (it is what gives a `claude -p` session AskUserQuestion, on 2.1.302), is
 // not listed there as a flag of its own. `socket`, `readable`, `writable` and `unreadable` are the run's own
-// for the sandbox (sessionSettings); `offered` lists denied tools the session is given (vettedOffer).
+// for the sandbox (sessionSettings); `offered` lists denied tools the session is given (vettedOffer). `effort` and
+// `fallback`, when given, are the thinking effort and the fallback model a Thoroughness level's column starts the
+// session with (`--effort`, one of EFFORTS, and `--fallback-model`, a model name), as the waker's calls pass them.
 export async function runSession({
   dir,
   prompt,
   pluginDirs,
   permissionMode,
   model,
+  effort = null,
+  fallback = null,
   maxTurns,
   env,
   appendSystemPrompt,
@@ -373,10 +381,12 @@ export async function runSession({
 }) {
   const extra = vettedExtraArgs(extraArgs);
   const offer = vettedOffer(offered, dir);
+  if (effort !== null && !EFFORTS.includes(effort)) throw new Error(`This isn't a thinking effort a session is started with: ${JSON.stringify(effort)}`);
+  if (fallback !== null && !isModelName(fallback)) throw new Error("The fallback model can't be passed to claude");
   const settings = sessionSettings({ socket, readable, writable, unreadable });
   // With the default command, find claude (on Windows, its .exe or .cmd); a command given is used as it is.
   const resolved = command === 'claude' ? resolveClaude({ env: { ...process.env, ...env } }) : { kind: 'direct', file: command };
-  const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
+  const flags = [...NEEDED_FLAGS, ...(model ? ['--model'] : []), ...(effort ? ['--effort'] : []), ...(fallback ? ['--fallback-model'] : []), ...(appendSystemPrompt ? ['--append-system-prompt'] : []), ...(resume ? ['--resume'] : [])];
   await checkFlags({ commandArgs, flags, env, resolved });
   // The session's settings, in a file of its own outside the project (a JSON argument would not
   // pass through claude.cmd on Windows), removed once the session is over.
@@ -393,6 +403,8 @@ export async function runSession({
     '--settings', settingsFile,
     ...pluginDirs.flatMap((pluginDir) => ['--plugin-dir', pluginDir]),
     ...(model ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
+    ...(fallback ? ['--fallback-model', fallback] : []),
     ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
     ...(resume ? ['--resume', resume] : []),
     ...extra,
@@ -490,8 +502,10 @@ export function describeRun({ id, variant, pass, why, usage }) {
 
 // The command line of `npm run eval`: scenario ids (24, or one leg, 27-route), or one of --all
 // (every suite), --suite <name> or --again (what the last run marked); --variant and --trials
-// with ids, --all or --suite; --agent <name>, one of AGENTS, the agent whose sessions run them.
-// `all`, `suite`, `again` and `agent` are in the answer only when given.
+// with ids, --all or --suite; --agent <name>, one of AGENTS, the agent whose sessions run them; --level <lean|lightest>,
+// the Thoroughness level whose column the feature sessions start on (never Thorough or premium). Or --ready
+// <lean|lightest> --project <name> alone: the readiness step after a level's run (scripts/eval/ready.js).
+// `all`, `suite`, `again`, `agent`, `level`, `ready` and `project` are in the answer only when given.
 export function parseArgs(argv) {
   const ids = [];
   let variants = VARIANTS;
@@ -500,6 +514,9 @@ export function parseArgs(argv) {
   let suite = null;
   let again = false;
   let agent = null;
+  let level = null;
+  let ready = null;
+  let project = null;
   let chose = false;
   for (let i = 0; i < argv.length; i += 1) {
     let arg = argv[i];
@@ -531,6 +548,18 @@ export function parseArgs(argv) {
       value ??= argv[++i];
       if (!AGENTS.includes(value)) throw new Error(`--agent must be one of ${AGENTS.join(', ')}, not ${value}`);
       agent = value;
+    } else if (arg === '--level') {
+      value ??= argv[++i];
+      if (!READY_LEVELS.includes(value)) throw new Error(`--level takes lean or lightest, not ${value}`);
+      level = value;
+    } else if (arg === '--ready') {
+      value ??= argv[++i];
+      if (!READY_LEVELS.includes(value)) throw new Error(`--ready takes lean or lightest, not ${value}`);
+      ready = value;
+    } else if (arg === '--project') {
+      value ??= argv[++i];
+      if (typeof value !== 'string' || value === '' || value.startsWith('--')) throw new Error('--project needs the project\'s name, as setup recorded it');
+      project = value;
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option ${arg}`);
     } else if (/^\d+$/.test(arg)) {
@@ -542,11 +571,20 @@ export function parseArgs(argv) {
       throw new Error(`Not a scenario number: ${arg}`);
     }
   }
+  if (ready !== null) {
+    if (ids.length > 0 || all || suite !== null || again || chose || agent !== null || level !== null) {
+      throw new Error('--ready runs nothing: give it only a level and --project, for example: npm run eval -- --ready lean --project <name>');
+    }
+    if (project === null) throw new Error('--ready needs --project <name>: the project whose state records the level ready');
+    return { ids: [], variants, trials, ready, project };
+  }
+  if (project !== null) throw new Error('--project goes only with --ready');
+  if (again && level !== null) throw new Error('--again runs what the last run marked, at its own level: give it no --level');
   const ways = [ids.length > 0 && 'scenario numbers', all && '--all', suite !== null && '--suite', again && '--again'].filter(Boolean);
   if (ways.length > 1) throw new Error(`Give one of scenario numbers, --all, --suite or --again, not ${ways.join(' and ')}`);
   if (again && chose) throw new Error('--again chooses its own variants and trials: give it no --variant or --trials');
   if (!ways.length) throw new Error('Name at least one scenario number, or --all, --suite <name> or --again, for example: npm run eval -- 24 --variant with');
-  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}) };
+  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}), ...(level !== null ? { level } : {}) };
 }
 
 // The local date, as the evaluations folder names a day's folder.
@@ -607,11 +645,19 @@ function saveRecord({ home, date, scenario, variant, trial, record }) {
 // the record's file, the trial it was saved under, whether the session was handled, its tokens
 // and its one printed line. `beforePrompt({ scenario, variant, dir, context, runner, home })`, when given,
 // runs after the set-up and may answer { why, usage?, evidence? } to refuse the trial (see above).
-export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession, beforePrompt }) {
+// `column`, in a run at a Thoroughness level (run.js, --level), is { level, pins, routing }: the set-up is given it as
+// its third argument, and a feature session (a set-up whose context says `session: 'feature'`) starts as the waker
+// would start it at that level: the `feature` role's model, effort and fallback (roleOf), and every prompt followed
+// by the column's lines for its subagents (promptWithColumn), a slash command's excepted. Any other session (a front desk's) keeps its own model.
+// The pass is given `column` for a feature session, else null, and the record names the level and the pins.
+export async function runScenario({ scenario, variant, trial = 1, home = os.homedir(), date = today(), runner = runSession, beforePrompt, column = null }) {
   const project = await makeScratchProject({ name: `eval-${scenario.id}` });
   let context = {};
   try {
-    context = (await scenario.setup(project.dir, variant)) ?? {};
+    context = (await scenario.setup(project.dir, variant, { column })) ?? {};
+    const atLevel = column === null ? {} : { level: column.level, pins: { ...column.pins } };
+    const feature = column !== null && context.session === 'feature' ? roleOf(column.routing, 'feature') : null;
+    if (feature !== null && !isModelName(feature.model)) throw new Error(`The ${column.level} column names no model for the feature session`);
     await commitSetup(project.dir);
     // A check the runner makes after set-up and before the prompt (run.js, needsSandbox). When it
     // refuses, the session is never started: the trial is a failed one that was not handled, with
@@ -629,6 +675,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         variant,
         trial,
         date,
+        ...atLevel,
         pass: false,
         why,
         handled: false,
@@ -650,7 +697,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     // the environment: no session starts, since one on the command line's default would be judged on
     // a model nobody chose, and that default moves.
     if (context.model === null) throw new Error(`This scenario needs its model named: set ${context.modelVariable ?? 'the model\'s variable'} in the shell for the run`);
-    const model = context.model ?? scenario.model;
+    const model = feature !== null ? feature.model : context.model ?? scenario.model;
     const prompts = Array.isArray(scenario.prompts) ? scenario.prompts : [scenario.prompt];
     const turns = [];
     let resume = null;
@@ -661,10 +708,13 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       }
       const ran = await runner({
         dir: project.dir,
-        prompt,
+        // A slash command (`/compact`) is a command, not a wake: it carries no lines.
+        prompt: feature !== null && !prompt.startsWith('/') ? promptWithColumn(prompt, column.routing) : prompt,
         pluginDirs: [...scenario.variants[variant].pluginDirs, ...(context.pluginDirs ?? [])],
         permissionMode: scenario.permissionMode ?? 'acceptEdits',
         model,
+        ...(feature?.effort ? { effort: feature.effort } : {}),
+        ...(feature?.fallback ? { fallback: feature.fallback } : {}),
         maxTurns: scenario.maxTurns ?? 30,
         // A long loop (several fix rounds) may need longer than runSession's default.
         ...(scenario.timeoutMs ? { timeoutMs: scenario.timeoutMs } : {}),
@@ -700,7 +750,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
     const sessionHandled = turns.every((t) => compactedTurn(t) || (t.handled ?? handledOf({ events: t.events, exitCode: t.exitCode })));
     let judged;
     try {
-      judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}), ...(raw === null ? {} : { raw }) });
+      judged = scenario.pass({ events: session.events, dir: project.dir, variant, context, column: feature !== null ? column : null, ...(several ? { turns: turns.map((t) => ({ prompt: t.prompt, events: t.events })) } : {}), ...(raw === null ? {} : { raw }) });
     } catch (error) {
       judged = { pass: false, why: `pass could not judge it: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -746,6 +796,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       variant,
       trial,
       date,
+      ...atLevel,
       pass,
       why,
       handled: shown,
@@ -754,6 +805,8 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
       usage: total,
       mainSessionUsage: sum(usageOf),
       ...(model ? { model } : {}),
+      ...(feature?.effort ? { effort: feature.effort } : {}),
+      ...(feature?.fallback ? { fallback: feature.fallback } : {}),
       models: [...new Set(turns.flatMap((t) => modelsUsed(t.events)))],
       subagents: subagents(session.events),
       finalText: finalText(turns.at(-1)?.events ?? []),

@@ -2,8 +2,8 @@
 // The usage cards (design section 14.6, "The usage nudge"): from the weekly allowance's reading, the level in force,
 // the director's mark and what the front desk has already offered, which card, if any, to put to the director now.
 // A pure function: callers pass what they have read, and the card is the composer's input (scripts/cards/compose.js)
-// with a record of the offer. It never switches anything: the director's pick of a card's first option is a setting
-// change the front desk writes and the director confirms the usual way (section 14.4).
+// with a record of the offer. It never switches anything: the director's click on a card's first option is the setting
+// change and their confirmation of it at once, which the prompt record signs (section 14.4; the director, 25 October 2026).
 import { ALWAYS_READY } from './in-force.js';
 import { LEVELS } from './thoroughness.js';
 
@@ -22,6 +22,15 @@ const SAME_WEEK_MS = 12 * HOUR_MS;
 
 const NAMES = { lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' };
 const nameOf = (level) => NAMES[level];
+
+// The label of a usage card's switch option, the first: the option whose click sets `to`. The prompt record counts
+// a click as the switch only on this label, for the card and level the offer's record names.
+export function switchLabelOf(card, to) {
+  if (!Object.hasOwn(NAMES, to)) return null;
+  if (card === 'return') return `Go back to ${nameOf(to)}`;
+  return SWITCHING.includes(card) ? `Switch to ${nameOf(to)} until it resets` : null;
+}
+
 const time = (x) => (typeof x === 'string' ? Date.parse(x) : NaN);
 
 // "Thursday at 09:00" in `timeZone` (this computer's own when it is undefined).
@@ -63,20 +72,21 @@ function levelBefore(offers, offer) {
 
 const SWITCHING = ['nudge', 'lightest', 'up'];
 
-// The card for each kind, as the composer's input for a product question. The words are section 14.6's; the
-// composer's recommendation is the option and "because", so the design's recommendation reads across the two.
+// The card for each kind, as the composer's input for a usage card, all but its target (the level its switch sets and
+// the offer's time, which `make` adds). The words are section 14.6's; the composer's recommendation is the option and
+// "because", so the design's recommendation reads across the two.
 function nudgeInput({ used, resets, level }) {
   return {
-    kind: 'question',
+    kind: 'usage',
     level: 3,
     ask: 'Switch to Lean until it resets?',
     what: `You've used ${Math.round(used)}% of this week's allowance. It resets on ${resets}.`,
     why: 'Only you choose how thorough the work is.',
     options: [
-      { label: 'Switch to Lean until it resets', says: 'Thoroughness changes to Lean until your allowance resets, once you confirm it.' },
+      { label: switchLabelOf('nudge', 'lean'), says: 'Thoroughness changes to Lean until your allowance resets.' },
       { label: `Stay on ${nameOf(level)}`, says: `Thoroughness stays on ${nameOf(level)}.` },
     ],
-    recommend: 'Switch to Lean until it resets',
+    recommend: switchLabelOf('nudge', 'lean'),
     because: 'work keeps going, a little lighter, so it\'s less likely to stop before the reset. I\'ll offer to switch back after the reset',
     meanwhile: 'Work carries on as it is.',
   };
@@ -84,13 +94,13 @@ function nudgeInput({ used, resets, level }) {
 
 function lightestInput({ used, resets }) {
   return {
-    kind: 'question',
+    kind: 'usage',
     level: 3,
     ask: 'Switch to Lightest until it resets?',
     what: `You've used ${Math.round(used)}% of this week's allowance, and you're on Lean. It resets on ${resets}.`,
     why: 'Lightest saves more, but it\'s less safe, so only you can choose it.',
     options: [
-      { label: 'Switch to Lightest until it resets', says: 'Thoroughness changes to Lightest until your allowance resets, once you confirm it.' },
+      { label: switchLabelOf('lightest', 'lightest'), says: 'Thoroughness changes to Lightest until your allowance resets.' },
       { label: 'Stay on Lean', says: 'Thoroughness stays on Lean.' },
     ],
     recommend: 'Stay on Lean',
@@ -101,16 +111,16 @@ function lightestInput({ used, resets }) {
 
 function upInput({ used, resets, level }) {
   return {
-    kind: 'question',
+    kind: 'usage',
     level: 3,
     ask: 'Plenty left: switch to Thorough until it resets?',
     what: `You've used ${Math.round(used)}% of this week's allowance, and it resets on ${resets}.`,
     why: 'Only you choose how thorough the work is.',
     options: [
-      { label: 'Switch to Thorough until it resets', says: 'Thoroughness changes to Thorough until your allowance resets, once you confirm it.' },
+      { label: switchLabelOf('up', 'thorough'), says: 'Thoroughness changes to Thorough until your allowance resets.' },
       { label: `Stay on ${nameOf(level)}`, says: `Thoroughness stays on ${nameOf(level)}.` },
     ],
-    recommend: 'Switch to Thorough until it resets',
+    recommend: switchLabelOf('up', 'thorough'),
     because: 'allowance left at the reset is lost, and Thorough checks risky work twice. I\'ll offer to switch back after the reset',
     meanwhile: 'Work carries on as it is.',
   };
@@ -118,16 +128,16 @@ function upInput({ used, resets, level }) {
 
 function returnInput({ day, before, level, when, saved }) {
   return {
-    kind: 'question',
+    kind: 'usage',
     level: 3,
     ask: `Go back to ${nameOf(before)}?`,
     what: `Your allowance reset ${when}. You switched to ${nameOf(level)} on ${day}${saved ? ' to save it' : ' to use what was left'}.`,
     why: 'Only you choose how thorough the work is.',
     options: [
-      { label: `Go back to ${nameOf(before)}`, says: `Thoroughness changes back to ${nameOf(before)}, once you confirm it.` },
+      { label: switchLabelOf('return', before), says: `Thoroughness changes back to ${nameOf(before)}.` },
       { label: `Stay on ${nameOf(level)}`, says: `Thoroughness stays on ${nameOf(level)}.` },
     ],
-    recommend: `Go back to ${nameOf(before)}`,
+    recommend: switchLabelOf('return', before),
     because: 'there\'s a full week\'s allowance again',
     meanwhile: `Work carries on on ${nameOf(level)}.`,
   };
@@ -142,8 +152,9 @@ function returnInput({ day, before, level, when, saved }) {
 // made (it names the offer's time), set after the offer and before its reset, never for one made another way.
 // `ready` the columns ready beyond Balanced and Thorough (readyColumns): a card whose switch is to one not ready isn't offered.
 // `now` a function or a time, `timeZone` the director's (this computer's own when undefined). `input` is the composer's
-// input; `switchLabel` the option whose pick is the change to `switchTo`; `record` what to keep once the card is
-// handed over (a return card's record names the reset of the week it closes). At most one card.
+// input, its target the switch's level and the offer's time; `switchLabel` the option whose click is the change to
+// `switchTo`; `record` what to keep once the card is handed over (a return card's record names the reset of the week it
+// closes), which the prompt record finds by the card's line. At most one card.
 export function nudgeCard({ allowance, level, mark, offers = [], switched = null, ready = [], now, timeZone }) {
   if (mark === 'off' || !Number.isFinite(mark) || !LEVELS.includes(level)) return null;
   const nowMs = typeof now === 'function' ? new Date(now()).getTime() : new Date(now ?? Date.now()).getTime();
@@ -158,12 +169,13 @@ export function nudgeCard({ allowance, level, mark, offers = [], switched = null
   // A card offers a column only once it is ready: Balanced and Thorough always are, Lean and Lightest from `ready`.
   const readyNow = (column) => ALWAYS_READY.includes(column) || (Array.isArray(ready) && ready.includes(column));
   const untilReset = resetMs - nowMs;
+  const at = new Date(nowMs).toISOString();
   const make = (card, input, switchTo, reset = resetMs) => ({
     card,
-    input,
+    input: { ...input, target: { to: switchTo, at } },
     switchLabel: input.options[0].label,
     switchTo,
-    record: { card, at: new Date(nowMs).toISOString(), reset: new Date(reset).toISOString(), from: level, to: switchTo },
+    record: { card, at, reset: new Date(reset).toISOString(), from: level, to: switchTo },
   });
 
   // Return: the first reading after a reset, when the level in force came from one of these cards.

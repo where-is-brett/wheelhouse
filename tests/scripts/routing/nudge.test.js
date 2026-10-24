@@ -1,7 +1,8 @@
 // tests/scripts/routing/nudge.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nudgeCard, weeklyOf, whenOf } from '../../../scripts/routing/nudge.js';
+import { nudgeCard, weeklyOf, whenOf, switchLabelOf } from '../../../scripts/routing/nudge.js';
+import { usageLine } from '../../../scripts/state/card-lines.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 
@@ -191,4 +192,22 @@ test('a card is offered only when its target column is ready; Thorough always is
   assert.equal(card({ level: 'lean', allowance: reading(91), ready: ['lean'] }), null, 'Lightest is not offered before it is ready');
   assert.equal(card({ level: 'lean', allowance: reading(91), ready: ['lightest'] }), 'lightest');
   assert.equal(card({ level: 'balanced', allowance: reading(10, NEAR), now: NEAR, ready: [] }), 'up', 'the upward card needs nothing ready');
+});
+
+test('each card is a usage card whose line names its switch\'s level and the offer\'s time, and whose switch is the change itself', () => {
+  const got = ask();
+  assert.equal(got.input.kind, 'usage');
+  assert.deepEqual(got.input.target, { to: 'lean', at: NOW });
+  const { question } = composeCard(got.input);
+  assert.equal(question.question.split('\n').at(-1), usageLine('lean', NOW));
+  assert.deepEqual(cardProblems(question), []);
+  // No second card follows the pick, so no option says one does.
+  for (const o of got.input.options) assert.doesNotMatch(o.says, /confirm/i);
+  assert.equal(got.input.options[0].says, 'Thoroughness changes to Lean until your allowance resets.');
+  assert.equal(switchLabelOf('nudge', 'lean'), 'Switch to Lean until it resets');
+  assert.equal(switchLabelOf('lightest', 'lightest'), 'Switch to Lightest until it resets');
+  assert.equal(switchLabelOf('up', 'thorough'), 'Switch to Thorough until it resets');
+  assert.equal(switchLabelOf('return', 'balanced'), 'Go back to Balanced');
+  assert.equal(switchLabelOf('return', 'premium'), null);
+  assert.equal(switchLabelOf('other', 'lean'), null);
 });

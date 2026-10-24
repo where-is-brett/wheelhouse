@@ -6,6 +6,8 @@
 // Usage: npm run eval -- <id…> [--variant with|without] [--trials n] [--agent <name>]
 //        npm run eval -- --all | --suite <name> [--variant with|without] [--trials n] [--agent <name>]
 //        npm run eval -- --again
+//        npm run eval -- <id…> --variant with --trials 3 --level lean|lightest
+//        npm run eval -- --ready lean|lightest --project <project>
 // A scenario is a file `<number>-<name>.js` in a suite; anything else there is
 // not one. A number names one scenario in one suite. A scenario whose pass has
 // more than one leg has a file per leg in its suite, each named `<number>-…`;
@@ -33,6 +35,15 @@
 // prompt, in both variants (checkSandbox): the session's settings keep it in the sandbox and a probe
 // session can't read a file the sandbox denies, else the trial is `fail (no sandbox)` and not
 // handled. On Windows such a trial is not run: `not run (no sandbox, check 10)`.
+// `--level lean|lightest` runs the feature sessions on that Thoroughness level's column (design section 14.6), as the
+// waker would start them with the level ready, on the pins WHEELHOUSE_EVAL_PINS gives in the shell (scripts/eval/
+// ready.js); it is refused without them, and never takes Thorough or premium. Its run record, each trial in it and
+// each trial's record name the level and the pins, and the run record keeps each trial file's hash. `--ready
+// lean|lightest --project <project>` runs nothing: it reads the run records for that level and those pins, and only
+// when, for one commit of the plugin, every scenario of the bar has its three passing `with` trials, and none failed
+// on that commit, asks the helper to record the
+// level ready for the project (`column-ready`); the helper reads and checks the records itself. Anything short says
+// which scenario and trial is missing or failed, and nothing is recorded.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -41,6 +52,8 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, totalUsageOf } from './harness.js';
 import { adapterFor } from '../agents/index.js';
 import { callsOf } from './feature-project.js';
+import { fileHash, levelRouting, pinsFrom, readiness } from './ready.js';
+import { helperClient } from '../host/helper-client.js';
 import { DEFAULT_AGENT, DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, declaredAgents, declaredLeg, runsOnAgent, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -371,6 +384,38 @@ export async function checkSandbox({ scenario, variant, dir, context = {}, runne
 // The `beforePrompt` runScenario is given for scenarios that need the sandbox.
 export const sandboxGate = ({ probe } = {}) => (args) => checkSandbox(args, probe ? { probe } : {});
 
+// ------------------------------------------------------------- a level's readiness
+
+// The hash of a trial's record file, or null when there is none.
+function hashOf(file) {
+  try {
+    return typeof file === 'string' ? fileHash(fs.readFileSync(file, 'utf8')) : null;
+  } catch {
+    return null;
+  }
+}
+
+const LEVEL_WORDS = { lean: 'Lean', lightest: 'Lightest' };
+
+// `--ready`: the bar's records for `level` on the pins from the shell (readiness), and, only on a full set, the
+// helper's record of the level ready for `project`. Resolves with 0 when the helper recorded it, else 1.
+async function readyStep({ level, project, home, print, env, helper }) {
+  const pins = pinsFrom(env);
+  const found = readiness({ evals: path.join(home, '.wheelhouse-evals'), level, pins });
+  if (!found.ok) {
+    print(`${LEVEL_WORDS[level]} is not ready on ${pins.mostCapable} and ${pins.midSized}${found.commit ? ` at build ${found.commit}, the latest run` : ''}, so nothing was recorded:`);
+    for (const gap of found.gaps) print(`  ${gap}`);
+    return 1;
+  }
+  const answer = await helper().state.columnReady({ project, column: level, pins, records: found.records });
+  if (answer?.ok !== true) {
+    print(`The helper did not record ${LEVEL_WORDS[level]} ready: ${answer?.refused ?? 'it gave no answer'}`);
+    return 1;
+  }
+  print(`${LEVEL_WORDS[level]} is recorded ready for ${project} on ${pins.mostCapable} and ${pins.midSized}, from ${found.records.length} trials of build ${found.commit}.`);
+  return 0;
+}
+
 // ------------------------------------------------------------------- the run
 
 // Runs what `argv` asks for. `root` holds the suites, `home` the evaluations folder, `run` runs one
@@ -393,9 +438,19 @@ export async function main(argv, {
   designed = DESIGNED,
   platform = process.platform,
   probe,
+  env = process.env,
+  helper = () => helperClient(),
 } = {}) {
   const args = parseArgs(argv);
+  if (args.ready !== undefined) return readyStep({ level: args.ready, project: args.project, home, print, env, helper });
   let agent = args.agent ?? null;
+  // A level's run: its column on the pins from the shell, on Claude Code, whose sessions take the column.
+  let column = null;
+  if (args.level !== undefined) {
+    if (agent !== null && agent !== DEFAULT_AGENT) throw new Error(`A level's run is made on Claude Code, whose sessions take the column, not on ${agent}`);
+    const pins = pinsFrom(env);
+    column = { level: args.level, pins, routing: levelRouting({ level: args.level, pins }) };
+  }
   const startedAt = now();
   const date = today(startedAt);
   // Each job: one leg of one scenario, in one variant, for some trials.
@@ -492,6 +547,7 @@ export async function main(argv, {
     version,
     commit: commit === undefined ? await buildCommit() : commit,
     ...(agent !== null ? { agent } : {}),
+    ...(column !== null ? { level: column.level, pins: { ...column.pins } } : {}),
     runs: [...carried],
     ...(e2e !== undefined ? { e2e } : {}),
   };
@@ -539,6 +595,7 @@ export async function main(argv, {
           variant,
           trial,
           round: job.round,
+          ...(column !== null ? { level: column.level, pins: { ...column.pins } } : {}),
           pass: false,
           handled: true,
           notRun: NOT_RUN_NO_SANDBOX,
@@ -552,7 +609,7 @@ export async function main(argv, {
       started += 1;
       let outcome;
       try {
-        outcome = await run({ scenario, variant, trial, home, date, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
+        outcome = await run({ scenario, variant, trial, home, date, column, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
       } catch (error) {
         // A trial that could not run is a failed one; the rest of the run carries on.
         const why = `could not run: ${error.message}`;
@@ -575,6 +632,7 @@ export async function main(argv, {
         why: outcome.why,
         usage: outcome.usage ?? { input: 0, output: 0 },
         file: outcome.file,
+        ...(column !== null ? { level: column.level, pins: { ...column.pins }, sha256: hashOf(outcome.file) } : {}),
       });
       save();
     }

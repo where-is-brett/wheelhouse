@@ -96,3 +96,14 @@ export function columnLines(routing) {
   if (routing?.extra?.secondReviewer === true) lines.push(SECOND_REVIEWER_LINE);
   return lines;
 }
+
+// A role's model, thinking effort and fallback from `routing`, as the adapter's calls take them (null where it names
+// none), or nothing when the routing doesn't name the role. The waker's, and the evaluation's for a level's run.
+export function roleOf(routing, role) {
+  const cell = routing?.roles?.[role];
+  return isPlain(cell) ? { model: cell.model ?? null, effort: cell.effort ?? null, fallback: cell.fallback ?? null } : {};
+}
+
+// A feature wake's prompt with the column for its subagents after it (columnLines), as the waker gives a session
+// whose adapter takes the column, and as the evaluation gives a feature session at a level.
+export const promptWithColumn = (prompt, routing) => [prompt, '', ...columnLines(routing)].join('\n');

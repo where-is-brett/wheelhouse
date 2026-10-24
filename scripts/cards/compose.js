@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -40,6 +40,7 @@ export const HEADERS = Object.freeze({
   uninstall: 'Uninstall',
   question: 'Question',
   'keep-control-files': 'Agent files',
+  usage: 'Thoroughness',
 });
 
 // The label whose click decides a kind, as the prompt record accepts it. An answer card's
@@ -68,7 +69,9 @@ export const DECIDING = Object.freeze({
 // trust card (ruling R80): another computer is trusted only by the click on the card itself; and so
 // is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
 // A keep-control-files card (ruling P7-31) is one too: the files are kept only on the click on the card itself.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files']);
+// So is a usage card (design section 14.6): its switch is the setting change and the director's confirmation of it at
+// once, so only the click on the card the session start offered counts.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). STOP is lifted or it
@@ -126,6 +129,8 @@ export const isProposal = (event) => isPlain(event) && (event.kind === 'setting'
   && typeof event.data?.because === 'string' && event.data.because.trim() !== '';
 
 const HEX = /^[0-9a-f]{12,64}$/;
+const USAGE_LEVELS = Object.freeze(['lightest', 'lean', 'balanced', 'thorough']);
+const ISO_MS = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
 const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 // The set lines without their line anchors: a part holding one anywhere is refused.
 const SET_FRAGMENTS = SET_LINES.map((p) => new RegExp(p.source.replace(/^\^/, '').replace(/\$$/, '')));
@@ -231,6 +236,10 @@ function lineFor(kind, target) {
     if (!slug(t.work) || !HEX.test(t.hash)) bad('needs a work id and the hash of what was found in its folder');
     return keepControlLine(t.work, t.hash);
   }
+  if (kind === 'usage') {
+    if (!USAGE_LEVELS.includes(t.to) || typeof t.at !== 'string' || !ISO_MS.test(t.at)) bad('needs the Thoroughness level its switch sets and the time the card was offered');
+    return usageLine(t.to, t.at);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -241,14 +250,14 @@ function lineFor(kind, target) {
 // the ruling's words, setup's step, the computer a trust card trusts, the project uninstall removes
 // Wheelhouse from. It names no other pull request or commit than the set line's (the project's own
 // name aside, which may look like one).
-// An answer card, a lift-STOP card, a baseline card and a product question name nothing more:
+// An answer card, a lift-STOP card, a baseline card, a usage card and a product question name nothing more:
 // a baseline card's first part is the figures themselves, which may hold any words or numbers.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
 // right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
 // the target's commit is the twelve characters the set line holds, so a longer name for the same
 // commit still counts as it.
 export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
-  if (kind === 'question' || kind === 'baseline' || !isPlain(target)) return null;
+  if (kind === 'question' || kind === 'usage' || kind === 'baseline' || !isPlain(target)) return null;
   const lower = what.replace(/\s+/g, ' ').toLowerCase();
   const names = (text) => lower.includes(String(text).replace(/\s+/g, ' ').toLowerCase());
   // An id or a branch is a whole word: "ci-fix" is not named by "ci-fix-2", but is by "ci-fix.".
@@ -299,10 +308,12 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
     if (seen.has(label)) fail(kind, 'options', `names ${label} twice`);
     seen.add(label);
     // A put-off button may leave out what it says: the card then uses the usual words.
-    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question';
+    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question' && kind !== 'usage';
     return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says) };
   });
-  if (kind === 'answer' || kind === 'question') {
+  // A usage card offers its own two options, the switch first (design section 14.6).
+  if (kind === 'usage' && list.length !== 2) fail(kind, 'options', 'must be its switch and its stay option');
+  if (kind === 'answer' || kind === 'question' || kind === 'usage') {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
     const own = kind === 'answer' && build && buildOptions(list);
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);

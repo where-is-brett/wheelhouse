@@ -591,16 +591,19 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const lastSurvey = sorted.filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object' && !Array.isArray(e.data)).at(-1);
   const survey = lastSurvey ? { id: lastSurvey.id, at: lastSurvey.at, data: lastSurvey.data } : null;
 
-  // The latest column-ready record of each column (design section 14.6): { <column>: { id, at, pins, records } }.
+  // The latest column-ready record of each column (design section 14.6): { <column>: { id, at, pins, records, commit? } }.
   // Which of them count is readyColumns', against the configuration's pins now.
   const columnsReady = {};
   for (const e of sorted) {
     if (e.kind !== 'column-ready' || !READY_COLUMNS.includes(e.data?.column) || !isPlainObject(e.data?.pins)) continue;
-    columnsReady[e.data.column] = { id: e.id, at: e.at, pins: e.data.pins, records: Array.isArray(e.data.records) ? e.data.records : [] };
+    columnsReady[e.data.column] = {
+      id: e.id, at: e.at, pins: e.data.pins, records: Array.isArray(e.data.records) ? e.data.records : [], ...(typeof e.data.commit === 'string' ? { commit: e.data.commit } : {}),
+    };
   }
 
-  // The usage cards the front desk's session start has offered, oldest first (design section 14.6): { id, card, at, reset, from, to }.
-  const usageCards = sorted.filter((e) => e.kind === 'usage-card' && isPlainObject(e.data))
+  // The usage cards the front desk's session start has offered, oldest first (design section 14.6): { id, card, at, reset,
+  // from, to, hash }. Only an offer an enrolled computer signed counts.
+  const usageCards = sorted.filter((e) => e.kind === 'usage-card' && isPlainObject(e.data) && verify(e, enrolled))
     .map((e) => ({ id: e.id, ...e.data }));
 
   const merges = sorted.filter((e) => e.kind === 'merge');

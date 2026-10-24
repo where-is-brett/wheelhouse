@@ -450,6 +450,7 @@ function topicOf(given) {
 export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
+  if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const { views } = await viewsOf(client, cwd);

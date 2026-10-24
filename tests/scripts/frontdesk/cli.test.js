@@ -612,6 +612,21 @@ test('under STOP neither a gate card nor a hold card is made', async () => {
   });
 });
 
+test('card refuses a usage card: only the session start composes one, from the allowance it reads', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    const usage = {
+      kind: 'usage', level: 3, ask: 'Switch to Lightest until it resets?', what: 'You have used 95% of this week\'s allowance.', why: 'Only you choose how thorough the work is.',
+      options: [{ label: 'Switch to Lightest until it resets', says: 'Thoroughness changes to Lightest.' }, { label: 'Stay on Lean', says: 'Thoroughness stays on Lean.' }],
+      recommend: 'Switch to Lightest until it resets', because: 'it saves the most', meanwhile: 'Work carries on.', target: { to: 'lightest', at: '2026-10-26T01:00:00.000Z' },
+    };
+    const out = await run(helper, ['card'], JSON.stringify(usage));
+    assert.notEqual(out.code, 0);
+    assert.match(out.err, /A usage card comes from the session start/);
+    assert.deepEqual(helper.writes(), []);
+  });
+});
+
 test('card fills a pull request\'s head and records the card once', async () => {
   await inHome(async () => {
     const helper = fakeHelper();

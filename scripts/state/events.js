@@ -19,15 +19,17 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'usage-card',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready',
 ];
-// `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
+// `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
+// the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
+// confirmation of the change, so only an offer this computer's hook signed counts.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
-// evaluation's, through the helper's own writer, so no session can mark a Thoroughness column ready; nothing writes
-// one yet.
+// evaluation's, through the helper's own writer (/state/column-ready, which reads and checks the evaluation's records
+// itself), so no session can mark a Thoroughness column ready.
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
@@ -257,17 +259,27 @@ const PLAIN_SHAPES = {
   // A Thoroughness column passed its evaluation (design section 14.6, "Settled for the builder"): the column (Lean,
   // Lightest, or the premium model's own pass), the pins it ran on (`tiers.pins`, each a model name or null) and the
   // evaluation's records. It counts only while the configuration's pins are the ones it ran on (views.js, readyColumns).
-  'column-ready': { must: ['column', 'pins', 'records'], may: [] },
+  // `commit` is the plugin's commit the counted run was made on (one counted run is one commit), as the helper records it.
+  'column-ready': { must: ['column', 'pins', 'records'], may: ['commit'] },
   // The front desk's session start offered a usage card (design section 14.6, "The usage nudge"): which (`nudge`,
   // `lightest`, `up` or `return`), when, the allowance week it belongs to (`reset`, the time the weekly allowance
-  // resets), the Thoroughness level in force (`from`) and the one the card offered (`to`). What a week has offered
-  // is read from these, so no card is offered twice in a week and a return card knows the level before.
-  'usage-card': { must: ['card', 'at', 'reset', 'from', 'to'], may: [] },
+  // resets), the Thoroughness level in force (`from`), the one the card offered (`to`), and the full hash of the card
+  // as composed (`hash`: its text, header and options), so a click counts only on that very card. What a week has
+  // offered is read from these, so no card is offered twice in a week and a return card knows the level before.
+  'usage-card': { must: ['card', 'at', 'reset', 'from', 'to', 'hash'], may: [] },
 };
 // The columns a column-ready record may name, the pins it may carry, and the most records it lists.
 // The usage cards a usage-card record may name, and the Thoroughness levels it may carry.
 export const USAGE_CARDS = Object.freeze(['nudge', 'lightest', 'up', 'return']);
 const USAGE_LEVELS = Object.freeze(['lightest', 'lean', 'balanced', 'thorough']);
+// The switch each usage card offers (scripts/routing/nudge.js): the nudge Lean from Balanced or Thorough, the second
+// card Lightest from Lean, the upward card Thorough from below it, and a return card the level before, not the one in force.
+const USAGE_FITS = Object.freeze({
+  nudge: (from, to) => to === 'lean' && (from === 'balanced' || from === 'thorough'),
+  lightest: (from, to) => to === 'lightest' && from === 'lean',
+  up: (from, to) => to === 'thorough' && from !== 'thorough',
+  return: (from, to) => from !== to,
+});
 export const READY_COLUMNS = Object.freeze(['lightest', 'lean', 'premium']);
 export const PIN_NAMES = Object.freeze(['mostCapable', 'midSized', 'premium']);
 export const READY_RECORDS = 50;
@@ -461,6 +473,8 @@ function checkPlain(kind, data) {
     if (!USAGE_CARDS.includes(data.card)) bad(`needs card to be ${listed([...USAGE_CARDS])}`);
     for (const k of ['at', 'reset']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
     for (const k of ['from', 'to']) if (!USAGE_LEVELS.includes(data[k])) bad(`needs ${k} to be a Thoroughness level`);
+    if (!USAGE_FITS[data.card]?.(data.from, data.to)) bad(`offers a switch from ${data.from} to ${data.to}, which a ${data.card} card never offers`);
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the card as composed');
   } else if (kind === 'column-ready') {
     if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
     const pins = data.pins;
@@ -468,6 +482,7 @@ function checkPlain(kind, data) {
       bad(`needs pins, each of ${listed([...PIN_NAMES])} a model name or null`);
     }
     if (!Array.isArray(data.records) || data.records.length > READY_RECORDS || !data.records.every(isText)) bad(`needs records to be a list of at most ${READY_RECORDS} names`);
+    if (data.commit !== undefined && (typeof data.commit !== 'string' || !/^[0-9a-f]{7,40}$/.test(data.commit))) bad('has a commit that is not a commit\'s hash');
   } else if (kind === 'survey') {
     const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
     if (data.v !== 1) bad('needs v to be 1');
