@@ -306,6 +306,21 @@ test('putting back what the plan lists leaves this computer\'s files as they wer
   });
 });
 
+// The director's ruling of 25 October 2026: step 7 switches a folder on a line of work to main, and
+// may keep changes at risk on a line of their own. Uninstall switches nothing back and deletes no line.
+test('step 7\'s switch of the folder and a line of kept changes are left as they are, and named', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    r.add(7, { kind: 'host', target: `${REPO}: this folder, from add-filters to main: add-filters-changes`, before: null, after: { action: 'keep', line: 'add-filters-changes', from: 'add-filters', files: ['CLAUDE.md'] } });
+    r.add(7, { kind: 'host', target: `${REPO}: this folder, from add-filters to main`, before: { branch: 'add-filters', sha: 'c'.repeat(40) }, after: { action: 'switch', from: 'add-filters', to: 'main', keep: 'add-filters-changes' } });
+    const got = await plan(world);
+    assert.equal(got.changes.some((c) => c.ids?.length && JSON.stringify(c).includes('add-filters')), false, 'nothing is switched back or deleted');
+    assert.equal(got.keep.find((k) => k.what === 'this folder\'s switch from add-filters to main').why, 'left as it is: your work stays on add-filters');
+    assert.equal(got.keep.find((k) => k.what === 'your changes kept on add-filters-changes').why, 'left as they are, on their own line');
+  });
+});
+
 test('a change made after setup is kept and named, never put back over the director\'s (Review Focus 2)', async () => {
   await withHome(async () => {
     const world = makeWorld();

@@ -564,6 +564,106 @@ test('the setup commit holds exactly the three files, and goes up before protect
   });
 });
 
+// The director's ruling of 25 October 2026 (design section 15, step 7): a folder on a line of
+// unfinished work is switched to the default branch with one click, its work kept on its line, and
+// step 7's own list follows. Changes not yet committed are never lost: carried across when git can
+// switch without touching them, otherwise first kept safe on a line of their own. Never a stash.
+const questionOf = (card) => composeCard({ ...card, target: { step: 7, hash: '0'.repeat(64) } }).question.question;
+const onLine = async (w, line) => {
+  await g(w.folder, 'checkout', '-q', '-b', line);
+  fs.writeFileSync(path.join(w.folder, 'filters.txt'), 'by price\n');
+  await g(w.folder, 'add', 'filters.txt');
+  await g(w.folder, 'commit', '-q', '-m', 'Start filters');
+  return g(w.folder, 'rev-parse', 'HEAD');
+};
+
+test('a folder on a line of unfinished work is switched to the default branch with one click, its work kept on its line', async () => {
+  await withHome(async () => {
+    const w = await world({ stepOne: 'modified' });
+    const lineTip = await onLine(w, 'add-filters');
+    // Changes not yet committed, to a file both lines hold alike, and a new file.
+    fs.appendFileSync(path.join(w.folder, 'README.md'), 'Draft words.\n');
+    fs.writeFileSync(path.join(w.folder, 'notes.md'), '# Notes\n');
+
+    const planned = await w.plan();
+    assert.deepEqual(planned.changes.map((c) => [c.kind, c.action, c.from, c.to]), [['host', 'switch', 'add-filters', 'main']]);
+    assert.equal(planned.director, 'One click');
+    const question = questionOf(planned.card);
+    assert.match(question, /^Setup step 7: your folder is on 'add-filters'\. Switch it to main to set up\? Your unfinished work stays saved on 'add-filters'\. Your changes not yet saved come along as they are\./);
+    assert.deepEqual(planned.card.options.map((o) => o.label), ['Go ahead', 'Not now']);
+
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(done.again, true, 'step 7 is planned again, on main');
+    assert.equal(await g(w.folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.equal(await g(w.folder, 'rev-parse', 'add-filters'), lineTip, 'the unfinished work stays on its line');
+    const status = await g(w.folder, 'status', '--porcelain');
+    assert.match(status, / M README\.md/);
+    assert.match(status, /\?\? notes\.md/);
+    assert.match(status, /M \.claude\/settings\.json/, 'the install\'s own lines come along too');
+    assert.equal(await g(w.folder, 'stash', 'list'), '', 'never a stash');
+    // The step is neither done nor running: resume plans it again.
+    const entry = done.run.steps[7] ?? {};
+    assert.equal(entry.doneAt, undefined);
+    assert.equal(entry.clickedAt, undefined);
+    assert.equal(entry.failed, undefined);
+    assert.deepEqual(done.run.changes.filter((c) => c.step === 7).map((c) => [c.kind, c.after?.action, c.after?.from, c.after?.to]), [['host', 'switch', 'add-filters', 'main']]);
+
+    const again = await w.plan();
+    assert.ok(again.changes.some((c) => c.action === 'commit'), 'then step 7\'s own list, on main');
+  });
+});
+
+test('changes a switch would put at risk are first kept safe on a line of their own, named for the director', async () => {
+  await withHome(async () => {
+    const w = await world({ stepOne: 'modified' });
+    await onLine(w, 'add-filters');
+    // The line changed CLAUDE.md in a commit, and the director has changed it again since: a
+    // switch to main would refuse, so these changes go on a line of their own first.
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Filter rule.\n');
+    await g(w.folder, 'commit', '-q', '-am', 'Filter rule');
+    const lineTip = await g(w.folder, 'rev-parse', 'HEAD');
+    fs.appendFileSync(path.join(w.folder, 'CLAUDE.md'), '- Draft rule.\n');
+    fs.writeFileSync(path.join(w.folder, 'notes.md'), '# Notes\n');
+    // A line of that name already exists, so the next free name is taken.
+    await g(w.folder, 'branch', 'add-filters-changes', 'main');
+
+    const planned = await w.plan();
+    const [change] = planned.changes;
+    assert.equal(change.action, 'switch');
+    assert.deepEqual(change.keep, { line: 'add-filters-changes-2', files: ['CLAUDE.md'] });
+    assert.match(questionOf(planned.card), /^Setup step 7: your folder is on 'add-filters'\. Switch it to main to set up\? Your unfinished work stays saved on 'add-filters'\. A switch would put your changes not yet saved to CLAUDE\.md at risk, so setup first keeps them safe on a line of their own, 'add-filters-changes-2'\. Your other changes not yet saved come along as they are\./);
+
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.folder, 'symbolic-ref', '--short', 'HEAD'), 'main');
+    assert.equal(await g(w.folder, 'rev-parse', 'add-filters'), lineTip);
+    // The kept line holds the director's draft, on top of their line's work.
+    assert.equal(await g(w.folder, 'rev-parse', 'add-filters-changes-2^'), lineTip);
+    assert.match(await g(w.folder, 'show', 'add-filters-changes-2:CLAUDE.md'), /- Draft rule\./);
+    assert.deepEqual((await g(w.folder, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'add-filters-changes-2')).split('\n'), ['CLAUDE.md']);
+    // The folder holds main's CLAUDE.md now; the other changes came along.
+    assert.doesNotMatch(fs.readFileSync(path.join(w.folder, 'CLAUDE.md'), 'utf8'), /Filter rule|Draft rule/);
+    assert.match(await g(w.folder, 'status', '--porcelain'), /\?\? notes\.md/);
+    assert.equal(await g(w.folder, 'stash', 'list'), '', 'never a stash');
+  });
+});
+
+test('the switch stops, changing nothing, when the folder moved since its card', async () => {
+  await withHome(async () => {
+    const w = await world({ stepOne: 'modified' });
+    await onLine(w, 'add-filters');
+    const planned = await w.plan();
+    fs.writeFileSync(path.join(w.folder, 'more.txt'), 'more\n');
+    await g(w.folder, 'add', 'more.txt');
+    await g(w.folder, 'commit', '-q', '-m', 'More');
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, false);
+    assert.match(done.reason, /changed since the card/);
+    assert.equal(await g(w.folder, 'symbolic-ref', '--short', 'HEAD'), 'add-filters');
+  });
+});
+
 test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refused plainly; a commit made but not pushed is pushed on the next Go ahead', async () => {
   await withHome(async () => {
     const own = await world({ defaultBranch: 'wheelhouse-state' });
@@ -582,23 +682,6 @@ test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refus
     const trunk = await world({ defaultBranch: 'trunk', branch: 'trunk' });
     const planned = await trunk.plan();
     assert.match(composeCard({ ...planned.card, target: { step: 7, hash: '0'.repeat(64) } }).question.question, /trunk/);
-  });
-  await withHome(async () => {
-    // A project under way: the folder is on a line of the director's unfinished work, with the
-    // install's lines in .claude/settings.json not yet committed. The refusal never suggests making
-    // that line the host's default, says their work is left as it is, and says to keep the
-    // changes not yet committed (putting them aside would take the install's lines with them).
-    const working = await world({ stepOne: 'modified' });
-    await g(working.folder, 'checkout', '-q', '-b', 'ingredient-units');
-    fs.writeFileSync(path.join(working.folder, 'units.txt'), 'cups\n');
-    await g(working.folder, 'add', 'units.txt');
-    await g(working.folder, 'commit', '-q', '-m', 'Start units');
-    const refused = await working.plan().then(() => null, (error) => error.message);
-    assert.match(refused, /this folder is on ingredient-units/);
-    assert.doesNotMatch(refused, /the default on GitHub/);
-    assert.match(refused, /ingredient-units is left as it is/);
-    assert.match(refused, /Switch this folder to main/);
-    assert.match(refused, /keep the changes not yet committed as they are: the Wheelhouse install's own lines in \.claude\/settings\.json are among them/);
   });
   await withHome(async () => {
     // The director's own commit not yet on the host would go up with setup's: refused.

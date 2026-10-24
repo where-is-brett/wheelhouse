@@ -291,9 +291,14 @@ export async function runApply({ step, runId, changes, ctx, current, copy = copy
     const one = oneLine(line);
     if (one !== null) markStep(runId, step.n, 'say', { now: ctx.now, line: one, when: current });
   };
+  let again = false;
   try {
-    record(await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes));
-    markStep(runId, step.n, 'doneAt', { now: ctx.now, when: current });
+    const made = await step.apply({ ...ctx, runId, record, applyJsonKey, say }, changes);
+    // `{ again: true, changes }`: a first part of the step's work is done, and the step is planned
+    // again from the start, its own list worked out afresh (step 7's switch of the folder).
+    again = made?.again === true;
+    record(again ? made.changes : made);
+    markStep(runId, step.n, again ? 'reset' : 'doneAt', { now: ctx.now, when: current });
   } catch (error) {
     const reason = (error instanceof Error ? error.message : '') || 'the step did not finish';
     try {
@@ -304,7 +309,7 @@ export async function runApply({ step, runId, changes, ctx, current, copy = copy
   try {
     await copy(runId, ctx.folder);
   } catch { /* copied by a later step */ }
-  return { ok: true };
+  return again ? { ok: true, again: true } : { ok: true };
 }
 
 // Copies a run's clicks and answers into the state of the project whose folder it is set up in,
