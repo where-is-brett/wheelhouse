@@ -213,10 +213,11 @@ test('the signing key is made while the project\'s lock is held', async () => {
   });
 });
 
-test('start starts the helper, and a watcher only for a project whose agent has its sessions part built', async () => {
+test('start starts the helper, and a watcher only for a project whose agent may start its sessions', async () => {
   const c = await computer();
   await c.as(async () => {
-    // A Lean project, a host project on Copilot (sessions not built yet) and one on Claude Code.
+    // A Lean project, a host project on Copilot (its sessions not switched on, so its foreman check refuses) and one
+    // on Claude Code.
     registerLean({ project: 'shop', folder: c.folder, now: () => T0 });
     const id = computerId();
     const hosted = (name) => {

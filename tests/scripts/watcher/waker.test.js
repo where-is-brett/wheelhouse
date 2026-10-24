@@ -645,7 +645,8 @@ test('on Windows the waker passes its level to the allow rules, and a failing re
   assert.deepEqual(allowedOf(fake.calls.at(-1)), []);
   await start(() => null, 'c');
   assert.deepEqual(allowedOf(fake.calls.at(-1)), []);
-  // Off Windows the answer is never asked for.
+  // Off Windows the answer is read too, for an adapter that works out its own rules (ruling P8-4), but Claude
+  // Code's allow rules don't follow it: an answer that throws there changes nothing.
   await waker(fake, { platform: 'darwin', windowsBuilds: () => { throw new Error('not asked'); } }).startFeature({ work: 'd', worktree: worktree() });
   assert.deepEqual(allowedOf(fake.calls.at(-1)), ALLOWED);
 }));

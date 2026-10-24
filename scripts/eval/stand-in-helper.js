@@ -140,8 +140,11 @@ export function standInViews(events, approved = {}, enrolled = []) {
 // the order it came, as { at, route, ...what it asked, ...what was answered }; events() gives the
 // state's events, those the state started with and those written since; views() the views of
 // them; confirm(id) records, signed by the stand-in's own key, the confirmation of the ruling,
-// level or setting `id`, as the director's click on its confirm card would.
-export async function startStandInHelper({ address, answers = {}, state = {}, onHook, home } = {}) {
+// level or setting `id`, as the director's click on its confirm card would; decide(number, asked)
+// gives the merge gate's decision /merge would answer for that pull request now, without recording
+// it. `reviewKinds`, when given, are the kinds of review the gate counts (gateDecision's, as the real
+// helper gives an agent's review module's kinds); not given, today's rule, any signed CLEAN review.
+export async function startStandInHelper({ address, answers = {}, state = {}, onHook, home, reviewKinds } = {}) {
   if (typeof address !== 'string' || address === '') throw new Error('The stand-in helper needs an address');
   // A scratch folder of its own, where checking an event's shape may name a stand-in computer, and
   // where its signing key is kept: the one computer enrolled. Removed on close.
@@ -163,6 +166,31 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
   const record = (entry) => {
     records.push({ at: new Date().toISOString(), ...entry });
   };
+  // The real gate's decision over the reviews and approvals the state holds, for the open pull
+  // request `number` at `sha`. As the real mergeAnswer: the caller may only raise STOP, bypass and
+  // the approval and guardrail conditions; the review is always required. CI always passed, the
+  // branch is up to date and there is no incident, so the review and the approval decide.
+  const decisionFor = (number, sha, body = {}) => {
+    const held = views();
+    const touchesGuardrails = body.touchesGuardrails === true;
+    return gateDecision({
+      stop: body.stop === true,
+      bypass: body.bypass === true,
+      holdsLock: true,
+      headSha: sha,
+      ci: { sha, state: 'success' },
+      reviewRequired: true,
+      approvalRequired: body.approvalRequired === true || touchesGuardrails,
+      touchesGuardrails,
+      review: latestFor(held.reviews, number),
+      approval: latestFor(held.approvals, number),
+      enrolled,
+      upToDate: true,
+      incident: { open: false },
+      provenance: { ok: true },
+      ...(reviewKinds === undefined ? {} : { reviewKinds }),
+    });
+  };
 
   const routes = {
     'GET /health': () => ({ ok: true, standIn: true }),
@@ -176,26 +204,7 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
         record({ route: 'merge', number: number ?? null, refused: true });
         return { ok: false, refused, reasons: [refused], guardrailPaths: [], criticalAreas: [] };
       }
-      const held = views();
-      // As the real mergeAnswer: the caller may only raise STOP, bypass and the approval and
-      // guardrail conditions; the review is always required.
-      const touchesGuardrails = body.touchesGuardrails === true;
-      const decision = gateDecision({
-        stop: body.stop === true,
-        bypass: body.bypass === true,
-        holdsLock: true,
-        headSha: sha,
-        ci: { sha, state: 'success' },
-        reviewRequired: true,
-        approvalRequired: body.approvalRequired === true || touchesGuardrails,
-        touchesGuardrails,
-        review: latestFor(held.reviews, number),
-        approval: latestFor(held.approvals, number),
-        enrolled,
-        upToDate: true,
-        incident: { open: false },
-        provenance: { ok: true },
-      });
+      const decision = decisionFor(number, sha, body);
       if (!decision.allow) {
         record({ route: 'merge', number, refused: true, reasons: decision.reasons });
         return { ok: false, refused: decision.reasons.join('; '), reasons: decision.reasons, guardrailPaths: [], criticalAreas: [] };
@@ -378,6 +387,11 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
     records: () => records.map((entry) => ({ ...entry })),
     events: () => events.map((event) => structuredClone(event)),
     views,
+    decide: (number, asked = {}) => {
+      const sha = Number.isInteger(number) ? opened.get(number) : undefined;
+      if (sha === undefined || merged.has(number)) return { allow: false, reasons: [`pull request ${number ?? 'none'} is not open`] };
+      return decisionFor(number, sha, asked);
+    },
     confirm: (id) => {
       const target = events.find((e) => e.id === id);
       if (target === undefined) throw new Error(`The state holds no event ${id} to confirm`);

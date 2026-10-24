@@ -87,6 +87,7 @@ import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from
 import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
 import { runReview } from '../review/clean-session.js';
 import { reviewsFor } from '../agents/reviews.js';
+import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
@@ -1734,18 +1735,34 @@ export async function startHelper({
   const ACTION_STEPS = {
     'lift-stop': 'lift-stop', runbook: 'runbook-step', 'ci-push': 'ci-push', 'keep-main': 'keep-main', 'undo-merge': 'runbook-step', 'undo-main': 'runbook-step',
     'keep-control-files': 'guardrail-change', // keeping a feature's files that steer agents as they are (ruling P7-31)
+    // An Ask allowance (ruling P8-8): Allow this time or Allow for this feature on a build question, and only there
+    // (allowanceQuestion); an answer to any other question is no step the window confirms.
+    answer: 'ask-allowance',
   };
   // The steps the window serves while STOP is on: Lift STOP, and a Lean undo, as the runbook's local steps carry on.
   const UNDER_STOP = ['lift-stop', 'undo-merge', 'undo-main'];
   const servedUnderStop = (deciding) => deciding.filter((d) => d.made.kind === 'action' && UNDER_STOP.includes(d.made.data?.action));
   // What /confirm's `card` is for the Lift STOP card, which has no id in the state.
   const LIFT_STOP_NAME = 'lift-stop';
-  function windowStep(project, made) {
+  function windowStep(project, made, shownAt) {
     if (made.kind === 'approval') return 'approval';
+    if (made.kind === 'action' && made.data?.action === 'answer') return allowanceQuestion(project, made.data, shownAt) === null ? null : ACTION_STEPS.answer;
     if (made.kind === 'action') return Object.hasOwn(ACTION_STEPS, made.data?.action) ? ACTION_STEPS[made.data.action] : null;
     if (made.kind !== 'confirmation') return null;
     const target = listEvents(stateDir(project), { report: () => {} }).find((e) => e.id === made.data?.confirms);
     return ['level', 'setting'].includes(target?.kind) && target.data?.value === 'unattended' ? 'unattended' : null;
+  }
+
+  // The build question an answer allows commands of, as the state holds it now, when the answer is an Ask allowance:
+  // its label is Allow this time or Allow for this feature, and it names the question's latest record (as the views
+  // read it) by its hash, which is a build question, word for word (isBuildQuestion), recorded no later than the
+  // card was (`shownAt`), so a card made from an earlier version of the question allows nothing. Else null.
+  function allowanceQuestion(project, data, shownAt) {
+    if (!ALLOWANCE_LABELS.includes(data?.label) || typeof data.questionId !== 'string' || typeof shownAt !== 'string') return null;
+    const asked = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'question' && e.data?.id === data.questionId).at(-1);
+    if (!asked || !isBuildQuestion(asked.data) || dataHash(asked.data) !== data.questionHash) return null;
+    if (typeof asked.at !== 'string' || asked.at > shownAt) return null;
+    return asked.data;
   }
 
   // What a click on `label` in the window would record for `card`: the signed record the same click earns in a
@@ -1766,7 +1783,7 @@ export async function startHelper({
       return null;
     }
     if (!got?.made || got.profile) return null;
-    const step = windowStep(project, got.made);
+    const step = windowStep(project, got.made, card.at);
     return step === null ? null : { made: got.made, step, lift: got.lift === true };
   }
 
@@ -1839,7 +1856,7 @@ export async function startHelper({
       const got = await windowEarned(project, event, label, ctx);
       if (got) deciding.push({ label, ...got });
     }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push or an approval');
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
     return { event, deciding };
   }
 
@@ -1865,6 +1882,10 @@ export async function startHelper({
       if (shown.deciding.length === 0) return STOP_REFUSAL;
     }
     const lines = String(shown.event.data.question).split(/\r?\n/);
+    // An Ask allowance's window also says what allowing the commands means (allowanceWindowLines), from the question
+    // the state holds, never the caller's words.
+    const allowance = shown.deciding.find((d) => d.step === ACTION_STEPS.answer);
+    if (allowance) lines.push(...allowanceWindowLines(allowanceQuestion(project, allowance.made.data, shown.event.at)?.commands));
     const header = typeof shown.event.data.header === 'string' && shown.event.data.header !== '' ? shown.event.data.header : null;
     const { choice } = await askWindow({ title: header === null ? 'Wheelhouse' : `Wheelhouse: ${header}`, lines, options: shown.deciding.map((d) => d.label) });
     const picked = shown.deciding.find((d) => d.label === choice);
@@ -2383,8 +2404,9 @@ export async function startHelper({
   // when its patch-id (against its merge base with the default branch) is the head's, and every
   // commit after it on the head's first-parent line is a clean update merge. A commit of the
   // feature's own after it, or an update merge whose resolution changed code, needs the head
-  // signed again. Read-only toward the host. Throws when the mirror cannot say.
-  function carryFacts({ project, number, headSha, defaultBranch, from }, ctx) {
+  // signed again. With `withConfig`, the default branch's configuration as fetched here too (`config`, undefined
+  // when it can't be read). Read-only toward the host. Throws when the mirror cannot say.
+  function carryFacts({ project, number, headSha, defaultBranch, from, withConfig = false }, ctx) {
     if (!plainBranch(defaultBranch)) throw new Error('the default branch is not known');
     if (typeof headSha !== 'string' || !FULL_SHA.test(headSha)) throw new Error('the head commit is not known');
     return oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
@@ -2413,17 +2435,25 @@ export async function startHelper({
         };
         const out = { upToDate: onTop.code === 0 };
         for (const [name, commit] of Object.entries(from)) out[name] = await holds(commit);
+        const configHere = () => baseConfig(async (args, what) => {
+          const answer = await git(args);
+          if (answer.code !== 0) throw new Error(`${what} failed`);
+          return answer.stdout;
+        });
         // An approval that still holds is compared on the pages the configuration at the default
         // branch (fetched above) lists: none when it can't be read.
         if (out.approval === true) {
           try {
-            out.pages = pagesOf(await baseConfig(async (args, what) => {
-              const answer = await git(args);
-              if (answer.code !== 0) throw new Error(`${what} failed`);
-              return answer.stdout;
-            }));
+            out.pages = pagesOf(await configHere());
           } catch {
             out.pages = [];
+          }
+        }
+        if (withConfig) {
+          try {
+            out.config = await configHere();
+          } catch {
+            out.config = undefined;
           }
         }
         return out;
@@ -2517,8 +2547,9 @@ export async function startHelper({
   // screenshots of the two commits match too, and they are compared only when `compare` says the
   // merge needs the approval. Anything the mirror can't say leaves the branch unknown (null, which
   // the gate refuses with its own reason) and nothing carried. The one rule behind /merge and
-  // /pr/carried.
-  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false }, ctx) {
+  // /pr/carried. With `withConfig`, it gives the default branch's configuration read in the same fetch too
+  // (`config`, undefined when it can't be read).
+  async function gateRecords({ project, number, headSha, views, adapter, withApproval = true, compare = false, withConfig = false }, ctx) {
     const review = latestFor(views.reviews, number);
     const approval = withApproval ? latestFor(views.approvals, number) : null;
     const from = {
@@ -2528,7 +2559,7 @@ export async function startHelper({
     let facts = { upToDate: null, review: false, approval: false };
     try {
       const defaultBranch = await defaultBranchOf(project, adapter);
-      facts = await carryFacts({ project, number, headSha, defaultBranch, from }, ctx);
+      facts = await carryFacts({ project, number, headSha, defaultBranch, from, withConfig }, ctx);
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
       /* not readable: not known whether it is up to date, and nothing carries */
@@ -2543,6 +2574,7 @@ export async function startHelper({
       upToDate: facts.upToDate === null ? null : facts.upToDate === true,
       review: facts.review === true ? { carried: true, record: review } : review,
       approval: shown ? { carried: true, record: approval } : approval,
+      ...(withConfig ? { config: facts.config } : {}),
     };
   }
 
@@ -2558,13 +2590,23 @@ export async function startHelper({
     const skipped = [];
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
     const reviews = views.reviews?.[String(number)] ?? {};
-    const earlier = Object.values(reviews).some((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
+    const cleanEarlier = Object.values(reviews).filter((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
     // read, so the watcher's poll costs no fetch, and upToDate is not known (false).
-    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier };
-    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false }, ctx);
+    if (latestFor(views.reviews, number)?.data?.verdict !== 'CLEAN') return { ok: true, review: 'none', upToDate: false, earlier: cleanEarlier.length > 0 };
+    const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false, withConfig: true }, ctx);
+    // Only a review of a kind the gate counts for the agent this computer runs (ruling P8-14), from the default
+    // branch's configuration as the merge reads it (here from the same fetch, so the poll costs no second one): null,
+    // today's rule, counts any kind. A configuration that can't be read leaves the agent unknown, so no kind counts
+    // ([]): no CLEAN is reported, and the watcher wakes no one for a merge the gate would weigh afresh.
+    const config = found.config !== undefined ? found.config : await defaultConfig(project, adapter, ctx);
+    const kinds = config === undefined ? [] : reviewKindsOf(config);
+    const counted = (record) => kinds === null || kinds.includes(record?.data?.reviewKind);
+    const earlier = cleanEarlier.some(counted);
+    const record = found.review?.carried === true ? found.review.record : found.review;
     const own = found.review?.data?.commit === pr.headSha && found.review?.data?.verdict === 'CLEAN';
-    return { ok: true, review: found.review?.carried === true || own ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
+    const clean = (found.review?.carried === true || own) && counted(record);
+    return { ok: true, review: clean ? 'clean' : 'none', upToDate: found.upToDate === true, earlier };
   }
 
   // --- the signed review in a clean session (rulings P7-14 to P7-18) ---
@@ -2724,6 +2766,8 @@ export async function startHelper({
       outcome = { ok: false, why: clean(error instanceof Error ? error.message : '', ctx.secrets) || 'the review could not be run' };
     }
     if (!outcome.ok) {
+      // Counted first, by the helper's own record, so a run whose note can't be written still counts (ruling P8-31).
+      try { recordFailedReview(project, headSha); } catch { /* an unwritten count leaves the record as it was */ }
       await reviewNote(project, `${NO_CLEAN_REVIEW(short)}: ${outcome.why}.`, ctx);
       return;
     }
@@ -2741,9 +2785,61 @@ export async function startHelper({
     }
   }
 
+  // The most failed runs of the helper's review a head may have (ruling P8-14).
+  const MOST_FAILED_REVIEWS = 3;
+  // The helper's own count of failed review runs by head commit (ruling P8-31): beside the project's mirror, outside
+  // the state repository, so no note the front desk or an agent writes counts, and a run counts whether or not its
+  // note was written. `{ <sha>: runs }`; null when the file is there but can't be read.
+  const failedReviewsFile = (project) => path.join(stateDir(project), '..', 'review-failures.json');
+  function readFailedReviews(project) {
+    let text;
+    try {
+      text = fs.readFileSync(failedReviewsFile(project), 'utf8');
+    } catch (error) {
+      return error?.code === 'ENOENT' ? {} : null;
+    }
+    try {
+      const read = JSON.parse(text);
+      return read !== null && typeof read === 'object' && !Array.isArray(read) ? read : null;
+    } catch {
+      return null;
+    }
+  }
+  // Adds one failed run for `headSha`, written whole. A record that can't be read is left as it is: it already
+  // refuses every review.
+  function recordFailedReview(project, headSha) {
+    const failed = readFailedReviews(project);
+    if (failed === null) return;
+    const runs = Number.isInteger(failed[headSha]) && failed[headSha] > 0 ? failed[headSha] : 0;
+    const file = failedReviewsFile(project);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(temp, `${JSON.stringify({ ...failed, [headSha]: runs + 1 }, null, 2)}\n`);
+      fs.renameSync(temp, file);
+    } catch (error) {
+      fs.rmSync(temp, { force: true });
+      throw error;
+    }
+  }
+  // Why the head `headSha` of pull request `number` gets no further review from the helper (ruling P8-14), or null:
+  // a signed `review` record of it, whatever its verdict or kind, or MOST_FAILED_REVIEWS failed runs in the helper's
+  // own count (refused too when that count can't be read). So a commit is reviewed once, and a run that fails is
+  // tried again only up to the limit: a fix needs a new commit.
+  function reviewSpent(project, number, headSha) {
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { damaged: [], now });
+    const short = headSha.slice(0, 7);
+    if (views.reviews?.[String(number)]?.[headSha] !== undefined) return `${short} has a signed review already`;
+    const failed = readFailedReviews(project);
+    if (failed === null) return "the helper's count of failed reviews can't be read";
+    const runs = Number.isInteger(failed[headSha]) ? failed[headSha] : 0;
+    return runs >= MOST_FAILED_REVIEWS ? `the review of ${short} has failed ${runs} times` : null;
+  }
+
   // POST /review/run { project, number } (ruling P7-18): the helper's own reviewer, in a clean session, of the open
   // pull request's head. Refused under STOP (it starts an agent), for an agent whose reviews aren't the helper's,
-  // and while the agent's clean session isn't switched on. One review at a time per project: answered at once with
+  // while the agent's clean session isn't switched on, and for a head that has had its review (reviewSpent: one review
+  // per commit). One review at a time per project: answered at once with
   // `started`, or `running` when one is under way; the review finishes in the background.
   async function doReviewRun({ project, number }, ctx) {
     if (stopped()) return STOP_REFUSAL;
@@ -2763,6 +2859,8 @@ export async function startHelper({
     if (found.unknown === true) return { ok: false, refused: "which agent this project runs on this computer can't be told, so no review is started" };
     if (found.module === null) return { ok: false, refused: "this project's agent reviews in its own session, not the helper's" };
     if (found.module.ready() !== true) return { ok: false, refused: "the helper's clean review session isn't switched on for this agent yet" };
+    const spent = reviewSpent(project, number, pr.headSha);
+    if (spent !== null) return { ok: false, refused: `${spent}; one review per commit: a fix needs a new commit` };
     if (stopped()) return STOP_REFUSAL;
     if (queues.has(key)) return { ok: true, running: true };
     oneAtATime(key, () => reviewJob({ project, number, pr, defaultBranch, module: found.module }, ctx)).catch(() => {});

@@ -129,6 +129,10 @@ export function tokenWords(value) {
   return `${Math.round(value)} tokens`;
 }
 export const dollarWords = (value) => `$${value < 1 ? value.toFixed(2) : Math.round(value)}`;
+// "12.5 credits": a session that reports its own use counts in credits (ruling P8-21).
+export const creditWords = (value) => `${value < 100 ? Math.round(value * 10) / 10 : Math.round(value)} ${value === 1 ? 'credit' : 'credits'}`;
+// What the board says of a credits figure no run gave: never 0.
+export const NOT_AVAILABLE = 'not available';
 
 // Section 9: what was written for the director to confirm and isn't confirmed yet. The views keep
 // these without effect, so nothing has been applied without confirmation; they are listed instead.
@@ -274,10 +278,10 @@ const findingsOf = (record) => (Number.isInteger(record?.data?.findings) && reco
 // The board and the briefing both say it this way.
 export function unusualLine(u) {
   if (!isRecord(u) || typeof u.tokens !== 'number' || typeof u.median !== 'number') return null;
-  const amount = u.unit === 'usd' ? dollarWords : tokenWords;
+  const amount = u.unit === 'usd' ? dollarWords : u.unit === 'credits' ? creditWords : tokenWords;
   const name = typeof u.id === 'string' ? u.id.slice(u.id.indexOf(':') + 1) : '';
   const who = u.kind === 'feature' ? `Work on ${oneLine(name)}` : u.kind === 'day' ? dayMonthYear(name) ?? 'One day' : 'One session';
-  const usual = u.unit === 'usd' ? dollarWords(u.median) : tokenWords(u.median).replace(' tokens', '');
+  const usual = u.unit === 'usd' ? dollarWords(u.median) : u.unit === 'credits' ? creditWords(u.median) : tokenWords(u.median).replace(' tokens', '');
   return cap(`${who} used ${amount(u.tokens)}, against a usual ${usual}: ${oneLine(u.cause)}`);
 }
 
@@ -444,7 +448,11 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
     ideas,
     health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
-      week: week ? { from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd) } : null,
+      week: week ? {
+        from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd),
+        // Only where sessions report their own use: their credits, null when none gave a figure.
+        ...(Object.hasOwn(week, 'credits') ? { credits: numberOrNull(week.credits) } : {}),
+      } : null,
       share: numberOrNull(week?.share),
       setting: 'report',
       unusual: part(missing, 'unusual use', () => unusualLines(figures?.unusual), []),
@@ -508,9 +516,11 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
     usage: {
       ...Object.fromEntries(['front-desk', 'foreman', 'feature'].map((role) => {
         const figure = figures?.byPart?.[role];
-        return [role, { tokens: numberOrNull(figure?.tokens), usd: numberOrNull(figure?.usd) }];
+        return [role, { tokens: numberOrNull(figure?.tokens), usd: numberOrNull(figure?.usd), ...(isRecord(figure) && Object.hasOwn(figure, 'credits') ? { credits: numberOrNull(figure.credits) } : {}) }];
       })),
       subagents: numberOrNull(figures?.bySubagents?.tokens),
+      // The agent's note on what the figures count, when its sessions report their own use.
+      ...(typeof figures?.words?.note === 'string' ? { note: oneLine(figures.words.note) } : {}),
     },
   };
 

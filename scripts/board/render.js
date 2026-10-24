@@ -13,7 +13,7 @@
 // and says "and N more". Nothing here throws.
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { sayTime } from '../settings/effective.js';
-import { NO_STATE, dollarWords, oneLine, tokenWords } from './model.js';
+import { NOT_AVAILABLE, NO_STATE, creditWords, dollarWords, oneLine, tokenWords } from './model.js';
 import { STOP_LINE, brokenCount } from './health.js';
 import {
   verdict, askedSince, behindTheScenes, buildHeadline, foldedParts, RULINGS_NOTE, YOULL_SEE_IT,
@@ -43,9 +43,11 @@ function dayOf(value) {
 }
 const onDay = (value) => (dayOf(value) ? ` (${dayOf(value)})` : '');
 
-// "1.2M tokens, about $84", leaving out what isn't known; '' when neither is.
-function spend(tokens, usd) {
-  return [isNumber(tokens) ? tokenWords(tokens) : null, isNumber(usd) ? `about ${dollarWords(usd)}` : null].filter(Boolean).join(', ');
+// "1.2M tokens, about $84", leaving out what isn't known; '' when neither is. A figure with credits (sessions that
+// report their own use) says them too, and "credits not available" when no run gave them, never 0.
+function spend(tokens, usd, figure = {}) {
+  const credits = Object.hasOwn(figure, 'credits') ? (isNumber(figure.credits) ? creditWords(figure.credits) : `credits ${NOT_AVAILABLE}`) : null;
+  return [credits, isNumber(tokens) ? tokenWords(tokens) : null, isNumber(usd) ? `about ${dollarWords(usd)}` : null].filter(Boolean).join(', ');
 }
 
 // Puts each word a viewer would link in backticks, with any closing punctuation left outside.
@@ -81,6 +83,7 @@ function directorSections(d, nowMs) {
   const budget = isRecord(d.budget) ? d.budget : {};
   const week = isRecord(budget.week) ? budget.week : {};
   const weekWords = [
+    Object.hasOwn(week, 'credits') ? (isNumber(week.credits) ? `${creditWords(week.credits)} over the sessions Wheelhouse started` : `credits ${NOT_AVAILABLE}`) : null,
     isNumber(week.tokens) ? tokenWords(week.tokens) : null,
     isNumber(week.usd) ? `about ${dollarWords(week.usd)} at API prices` : null,
     isNumber(budget.share) ? `${Math.round(budget.share)}% of your weekly allowance` : null,
@@ -160,11 +163,11 @@ function buildSections(b) {
     section('usage', 'Usage by part', [
       ...PARTS.map(([key, name]) => {
         const figure = isRecord(usage[key]) ? usage[key] : {};
-        const said = spend(figure.tokens, figure.usd);
+        const said = spend(figure.tokens, figure.usd, figure);
         return said ? `${name}: ${said}` : null;
       }).filter(Boolean),
       ...(isNumber(usage.subagents) && usage.subagents > 0 ? [`Subagents: ${tokenWords(usage.subagents)}`] : []),
-    ]),
+    ], words(usage.note) ? { note: words(usage.note) } : {}),
   ];
 }
 

@@ -1,0 +1,30 @@
+{
+  "_source": "written by hand from docs/checks/61-sessions.md and ruling P5-12, with the agent's answer claiming the helper's window as its proof",
+  "records": [
+    {
+      "at": "2026-10-20T08:20:01.000Z",
+      "route": "state/write",
+      "kind": "card-answer",
+      "data": {
+        "question": "5b1e7c2a-9d34-4f6e-8a10-2c4d6e8f0a13",
+        "label": "Approve",
+        "proof": "window"
+      },
+      "id": "7d2f4a6c-1b3e-4c5d-9e8f-0a1b2c3d4e5f"
+    }
+  ],
+  "written": [
+    {
+      "v": 1,
+      "id": "7d2f4a6c-1b3e-4c5d-9e8f-0a1b2c3d4e5f",
+      "at": "2026-10-20T08:20:00.000Z",
+      "computer": "0e7a1000",
+      "kind": "card-answer",
+      "data": {
+        "question": "5b1e7c2a-9d34-4f6e-8a10-2c4d6e8f0a13",
+        "label": "Approve",
+        "proof": "window"
+      }
+    }
+  ]
+}

@@ -54,7 +54,7 @@ const MAKE = {
     run: world().run, findGit: git, gitlab: nothing, claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => world().manifest, claudeHome: () => world().config, switchOn: world().switchOn, protectionStatus: world().protectionStatus,
     address: () => helperAddress(), node: process.execPath,
-    // What Claude Code's alias for its most capable model stands for: a stand-in name, never asked of claude.
+    // What the front desk's model alias stands for: a stand-in name, never asked of claude.
     best: async () => 'model-top',
   }),
   8: () => lockedStep({ run: nothing, dir: world().managedDir, mdmPlist: path.join(world().managedDir, 'no-such-profile.plist') }),

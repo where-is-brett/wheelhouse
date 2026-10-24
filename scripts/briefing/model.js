@@ -27,7 +27,7 @@
 // empty. At Autonomy Trusting (`carrying`), its line about work in flight says Wheelhouse is
 // carrying it on (ruling A9). `earlier` is the survey a second look follows, when it was mentioned:
 // only what is new since it is said (briefingLines' `since`).
-import { oneLine, unusualLine, tokenWords, dollarWords, NOT_NOW_STEP } from '../board/model.js';
+import { oneLine, unusualLine, tokenWords, dollarWords, creditWords, NOT_NOW_STEP } from '../board/model.js';
 import { UNATTENDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
 import { wasRaised as realWasRaised } from '../usage/figures.js';
 import { brokenCount } from '../board/health.js';
@@ -202,6 +202,8 @@ function reviewLine(review) {
 function usageLine(usage) {
   const week = isRecord(usage?.week) ? usage.week : {};
   const said = [
+    // Sessions that report their own use count in credits (ruling P8-21), over the sessions Wheelhouse started.
+    isNumber(week.credits) && week.credits >= 0 ? `${creditWords(week.credits)} over the sessions Wheelhouse started` : null,
     isNumber(week.tokens) && week.tokens >= 0 ? tokenWords(week.tokens) : null,
     isNumber(week.usd) && week.usd >= 0 ? `about ${dollarWords(week.usd)} at API prices` : null,
     isNumber(week.share) && week.share >= 0 ? `${Math.round(week.share)}% of your weekly allowance` : null,

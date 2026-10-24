@@ -1846,3 +1846,56 @@ test('every command checks the work id, and an unknown command is refused', () =
   refusedInOneLine(await act([], { client: fake.client }));
   assert.equal(fake.writes.length, 0);
 }));
+
+test('merge asks the helper once for its clean review when the gate lacks it, and a Claude Code refusal is as before (ruling P8-14)', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  const wt = worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/a.md' } });
+  views.features.mine = featureView('mine', { step: 'building', worktree: wt });
+  const head = 'b'.repeat(40);
+  const current = { ok: true, updated: false, head };
+  const noClean = `no review of ${head.slice(0, 7)} from a clean session: the helper's own reviewer hasn't passed it`;
+
+  // An agent whose reviews are the helper's: the gate refuses with NO_CLEAN_REVIEW, so the helper is asked once.
+  const wants = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: noClean, reasons: [noClean] } } });
+  const asked = await act(['merge', 'mine'], { client: wants.client });
+  assert.equal(asked.code, 0, asked.err);
+  assert.equal(asked.out, 'The helper is reviewing #12 in a clean session; the next merge-ready wakes the foreman.\n');
+  assert.deepEqual(wants.calls.map(([name, body]) => [name, body]), [
+    ['prState', { project: P, number: 12 }], ['updateBranch', { project: P, number: 12 }], ['merge', { project: P, number: 12 }], ['review', { project: P, number: 12 }],
+  ]);
+  assert.equal(JSON.parse(fs.readFileSync(featurePaths(wt).pr, 'utf8')).merged, undefined);
+
+  // With the approval missing too, the review comes first; one already running is said the same way.
+  const both = fakeClient({ views, answers: {
+    updateBranch: current, review: { ok: true, running: true },
+    merge: { ok: false, refused: 'x', reasons: [noClean, 'no approval'], needs: { approval: { pr: 12, commit: head } } },
+  } });
+  assert.equal((await act(['merge', 'mine'], { client: both.client })).out, 'The helper is reviewing #12 in a clean session; the next merge-ready wakes the foreman.\n');
+  assert.equal(both.calls.filter(([name]) => name === 'review').length, 1);
+
+  // The helper refuses the review (one review per commit): one line for the director, never tried again.
+  const spent = fakeClient({ views, answers: {
+    updateBranch: current, review: { ok: false, refused: 'bbbbbbb has a signed review already; one review per commit: a fix needs a new commit' },
+    merge: { ok: false, refused: noClean, reasons: [noClean] },
+  } });
+  const refusedReview = await act(['merge', 'mine'], { client: spent.client });
+  refusedInOneLine(refusedReview);
+  assert.match(refusedReview.err.trim(), /^Pull request #12 for mine was not merged: no review of bbbbbbb from a clean session: .*; and the helper's review wasn't started: bbbbbbb has a signed review already; one review per commit: a fix needs a new commit\. Ask the director; don't try again\.$/);
+  assert.equal(spent.calls.filter(([name]) => name === 'review').length, 1);
+
+  // Claude Code's gate reads no kind (its reviewKinds is null): its refusal never names NO_CLEAN_REVIEW, and the
+  // helper is not asked.
+  const claude = `no CLEAN review of ${head.slice(0, 7)}`;
+  const today = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: claude, reasons: [claude] } } });
+  const before = await act(['merge', 'mine'], { client: today.client });
+  refusedInOneLine(before);
+  assert.match(before.err.trim(), /^Pull request #12 for mine was not merged: no CLEAN review of bbbbbbb\. Ask the director; don't try again\.$/);
+  assert.deepEqual(today.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+  // A NO_CLEAN_REVIEW for another commit is not this head's, so nothing is asked.
+  const other = `no review of ${'c'.repeat(7)} from a clean session: the helper's own reviewer hasn't passed it`;
+  const stale = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: other, reasons: [other] } } });
+  refusedInOneLine(await act(['merge', 'mine'], { client: stale.client }));
+  assert.equal(stale.calls.filter(([name]) => name === 'review').length, 0);
+}));

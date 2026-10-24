@@ -2,13 +2,12 @@
 // The waker asks the project's agent before it starts anything (ruling P5-30, the four minors of ledger line 369):
 // the skip for an agent with no adapter holds only at Shape 1, where the call that starts a session refuses it and
 // the wake is kept; the foreman's check is asked right before its call is built; a feature is checked before its
-// session id is written; and a project whose agent's sessions part isn't built yet raises no card from a watcher
-// pass. Every session start is a stand-in, and no host program runs.
+// session id is written; and a project whose agent's sessions are switched off (Copilot's, ruling P8-1) raises no
+// card from a watcher pass. Every session start is a stand-in, and no host program runs.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { NOT_BUILT_YET } from '../../../scripts/agents/contract.js';
 import { computerId } from '../../../scripts/lib/paths.js';
 import { makeWaker, writeWake, watcherDir } from '../../../scripts/watcher/waker.js';
 import { runWatcher, healthFile } from '../../../scripts/watcher/main.js';
@@ -99,7 +98,7 @@ test('a feature is checked before its session id is written', () => withHome(asy
   assert.equal(calls.length, 0);
 }));
 
-test('a project whose agent\'s sessions part is pending gets no card from a watcher pass', () => withHome(async () => {
+test('a project whose agent\'s sessions are switched off gets no card from a watcher pass', () => withHome(async () => {
   hostStandIns.reset();
   await project();
   const config = projectConfig({ agents: { [computerId()]: 'copilot' } });
@@ -121,9 +120,9 @@ test('a project whose agent\'s sessions part is pending gets no card from a watc
   assert.equal(observed, 0, 'nothing is observed, so nothing is woken');
   assert.deepEqual([...new Set(asked)], ['config'], 'the helper is asked for nothing but the configuration: no card, no write');
   const health = JSON.parse(fs.readFileSync(healthFile(P), 'utf8'));
-  assert.match(health.lastError.message, /not built yet/);
-  assert.ok(logged.every((m) => /not built yet/.test(m)), logged.join('\n'));
+  assert.match(health.lastError.message, /aren't switched on yet/);
+  assert.ok(logged.every((m) => /aren't switched on yet/.test(m)), logged.join('\n'));
   assert.deepEqual(hostStandIns.calls(), [], 'no host program ran');
-  // The waker itself is refused as it is made, with the code that names the part.
-  assert.throws(() => waker({ config: configOf(config) }), (error) => error.code === NOT_BUILT_YET);
+  // The waker itself is refused as it is made, by the switch.
+  assert.throws(() => waker({ config: configOf(config) }), /aren't switched on yet/);
 }));

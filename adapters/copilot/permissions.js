@@ -79,8 +79,10 @@ function grantedCommands(grants) {
 
 // The command a shell rule names: `shell(npx wrangler:*)` and `shell(npx wrangler@*)` both name `npx wrangler`.
 const commandOf = (rule) => rule.slice('shell('.length, -1).replace(/(:\*|@\*)$/, '');
-// Whether a shell deny can reach a command an allow names: one is the other, or begins with it as whole words.
-const reaches = (deny, allowed) => deny === allowed || deny.startsWith(`${allowed} `) || allowed.startsWith(`${deny} `);
+// Whether a shell deny can reach a command an allow names: one begins with the other, as whole words or as plain
+// text, since no run has shown whether Copilot's `:*` matches whole words only; a deny is passed whenever either
+// reading could make it matter (ruling P8-11, failing closed).
+const reaches = (deny, allowed) => deny.startsWith(allowed) || allowed.startsWith(deny);
 
 // The shell denies a level passes (ruling P7-30): every one where the shell is allowed whole (`allowed` null);
 // elsewhere only those whose command one of the level's allows (a granted command or the runner) could reach, since a

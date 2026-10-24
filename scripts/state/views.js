@@ -391,7 +391,9 @@ function buildLoopViews(sorted, enrolled) {
   // An answer counts for the question as it was shown: it names the hash of the question's data, and
   // one question recorded again with other words or options needs a fresh answer. It keeps the
   // computer the click was made on, where a build-command grant holds: the computer that signed
-  // it, or null when that isn't the computer the answer names.
+  // it, or null when that isn't the computer the answer names. An answer that names its proof
+  // (`window` for a click in the helper's own window) keeps it, so a grant can be counted only
+  // from the proofs an agent's clicks bind by (buildGrants' `proofs`, ruling P8-8).
   const questions = {};
   for (const e of sorted) {
     if (e.kind === 'question' && isPlainKey(e.data?.id)) questions[e.data.id] = { question: { key: e.data.id, ...mark(e) }, answer: null };
@@ -400,7 +402,7 @@ function buildLoopViews(sorted, enrolled) {
     const q = questions[a.data.questionId];
     if (!q || typeof a.data.label !== 'string' || a.data.questionHash !== dataHash(q.question.data)) continue;
     if (Array.isArray(q.question.data.options) && q.question.data.options.some((o) => o?.label === a.data.label)) {
-      q.answer = { label: a.data.label, at: a.at, computer: signedOn(a) };
+      q.answer = { label: a.data.label, at: a.at, computer: signedOn(a), ...(typeof a.data.proof === 'string' ? { proof: a.data.proof } : {}) };
     }
   }
 
