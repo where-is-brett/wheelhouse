@@ -12,7 +12,8 @@ export async function makeBareRemote({ repo } = {}) {
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const made = await run('git', ['init', '--bare', '-b', 'main', dir]);
   if (made.code !== 0) throw new Error('git init --bare failed');
-  return { url: dir, root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  // Removal tries again: a helper's background work may still be writing into the repository.
+  return { url: dir, root, cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
 }
 
 // The injected push for tests: plain `git push`, with git's refusal to fast-forward

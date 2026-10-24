@@ -61,7 +61,7 @@ test('a link is hashed as its target text and not followed', (t) => {
   }
   assert.deepEqual(fingerprintTree(dir), {
     // A link to a folder is a single entry: its target's files are not walked.
-    hash: whole([['dirlink', outside], ['link.md', '../elsewhere/target.md'], ['real.md', 'real']]),
+    hash: whole([['dirlink', outside.split(path.sep).join('/')], ['link.md', '../elsewhere/target.md'], ['real.md', 'real']]),
     files: 3,
   });
   assert.deepEqual(fingerprintFile(path.join(dir, 'link.md')), { hash: whole([['link.md', '../elsewhere/target.md']]), files: 1 });

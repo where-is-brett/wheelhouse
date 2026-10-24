@@ -923,7 +923,10 @@ function standInClaude() {
   fs.writeFileSync(script, [
     "const fs = require('node:fs');",
     "const path = require('node:path');",
-    `fs.writeFileSync(path.join(${JSON.stringify(records)}, \`\${process.pid}.json\`), JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), env: process.env }));`,
+    // Written beside the records and renamed in, so the test never reads one half written.
+    `const staged = path.join(${JSON.stringify(dir)}, \`\${process.pid}.json\`);`,
+    "fs.writeFileSync(staged, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), env: process.env }));",
+    `fs.renameSync(staged, path.join(${JSON.stringify(records)}, \`\${process.pid}.json\`));`,
     '',
   ].join('\n'));
   if (process.platform === 'win32') fs.writeFileSync(path.join(dir, 'claude.cmd'), `@"${process.execPath}" "${script}" %*\r\n`);

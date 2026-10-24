@@ -76,7 +76,8 @@ async function unfencedGit(cwd, args) {
 // A recorded Copilot input (check 58), with the project's folder in place of <PROJECT>.
 function recorded(name, folder) {
   const text = fs.readFileSync(path.join(FIXTURES, `${name}.json`), 'utf8');
-  return JSON.parse(text.replaceAll('<PROJECT>', folder).replaceAll('<ID>', 's1'));
+  // Written as JSON writes it, so a Windows folder's backslashes are escaped.
+  return JSON.parse(text.replaceAll('<PROJECT>', JSON.stringify(folder).slice(1, -1)).replaceAll('<ID>', 's1'));
 }
 
 // The real entry, started as Copilot starts it: one Node.js, the event as its argument, the input on standard input.

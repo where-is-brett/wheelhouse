@@ -213,7 +213,7 @@ test('a hook named in git\'s configuration is refused, not run, by /test-merge a
   const slash = (p) => p.split(path.sep).join('/');
   const script = path.join(outside, 'mark.sh');
   fs.writeFileSync(script, `#!/bin/sh\necho "config hook $*" >> "${slash(marks)}"\n`, { mode: 0o755 });
-  const hookLines = ['[hook "reference-transaction"]', `\tcommand = ${slash(script)}`, '\tevent = reference-transaction', ''];
+  const hookLines = ['[hook "planted"]', `\tcommand = ${slash(script)}`, '\tevent = reference-transaction', ''];
   const config = path.join(outside, 'gitconfig');
   fs.writeFileSync(config, hookLines.join('\n'));
   const remote = await remoteWith({ base: { 'app.js': 'base\n' }, branches: { a: { 'app.js': 'a\n' }, b: { 'b.js': 'b\n' } } });
@@ -236,12 +236,12 @@ test('a hook named in git\'s configuration is refused, not run, by /test-merge a
     // In the mirror's own configuration: refused by /test-merge, and by a push's copy into the mirror.
     await withHelper(home, async (client) => {
       assert.equal((await client.testMerge({ project: 'o__p', a: 'a', b: 'b' })).ok, true);
-      for (const line of [['hook.reference-transaction.command', slash(script)], ['hook.reference-transaction.event', 'reference-transaction']]) {
+      for (const line of [['hook.planted.command', slash(script)], ['hook.planted.event', 'reference-transaction']]) {
         await run('git', ['config', ...line], { cwd: mirrorOf() });
       }
       const answer = await client.testMerge({ project: 'o__p', a: 'a', b: 'b' });
       assert.equal(answer.ok, false);
-      assert.match(answer.refused, /hook\.reference-transaction\.(command|event)/);
+      assert.match(answer.refused, /hook\.planted\.(command|event)/);
       const written = await client.state.write({ project: 'o__p', kind: 'note', data: { text: 'x' } });
       assert.equal(written.pushed, false, JSON.stringify(written));
       assert.equal(fs.existsSync(marks), false, fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : '');

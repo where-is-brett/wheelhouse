@@ -24,6 +24,7 @@ import { planHash } from '../../../scripts/setup/steps.js';
 import { caFile, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
+import { searchPathIn } from '../../helpers/env.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -256,7 +257,7 @@ test('a long step\'s own process starts with the company\'s certificate for Node
       assert.equal(spawned.length, 1);
       const { env } = spawned[0][2];
       assert.equal(env.NODE_EXTRA_CA_CERTS, made ? caFile(home) : process.env.NODE_EXTRA_CA_CERTS);
-      assert.equal(env.PATH, process.env.PATH, 'the rest of the environment is carried on');
+      assert.equal(searchPathIn(env), process.env.PATH, 'the rest of the environment is carried on');
     }, { spawn });
   }
 });

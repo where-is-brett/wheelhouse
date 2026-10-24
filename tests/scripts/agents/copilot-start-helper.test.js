@@ -5,7 +5,7 @@
 // the watchers an agent's built sessions part needs, and uninstall takes away what no other project needs. No real
 // launch agent, registry entry, ~/.wheelhouse or ~/.copilot is touched: every home is temporary, the helper's
 // client and every spawn are stand-ins, and `reg` is never run.
-import { test, after, afterEach } from 'node:test';
+import { test as nodeTest, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -30,6 +30,11 @@ import { registeredLeanProjects, leanState } from '../../../scripts/lean/project
 import {
   planInstall, install, startAll, planUninstall, uninstall, main, CHANGED, STOP_ON, STOP_CARRIED, RUNNING, NOT_STARTED,
 } from '../../../scripts/agents/copilot/start-helper.js';
+
+// These install the helper as on a Mac (a launch agent, and a Mac's paths for Node.js and the plugin),
+// so on Windows they are left to the Mac's run; Windows's Run entry is checked in
+// tests/scripts/lib/login-start.test.js.
+const test = process.platform === 'win32' ? (name, fn) => nodeTest(name, { skip: 'the helper is installed here as on a Mac' }, fn) : nodeTest;
 
 const shims = standInTools();
 const hostLog = [];

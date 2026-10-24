@@ -20,6 +20,8 @@ import { standInTools } from '../../helpers/host-stand-ins.js';
 import { P, config as projectConfig, project } from '../../helpers/foreman.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// A Mac's plugin folder, for the sessions written as on a Mac on every system.
+const MAC_ROOT = '/plugins/wheelhouse';
 const RECORDED = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'agents', 'claude-argv.json'), 'utf8'));
 const sessions = adapterFor('claude-code').sessions;
 const T0 = '2026-10-19T09:00:00.000Z';
@@ -201,7 +203,7 @@ test('the agent comes from the default branch\'s configuration, never from the w
   await w.w.wakeForeman(foremanWake());
   assert.equal(w.calls.length, 1);
   assert.equal(w.calls[0].file, 'claude');
-  const long = foremanSession({ project: P, config: projectConfig(), pluginRoot: ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' } });
+  const long = foremanSession({ project: P, config: projectConfig(), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' } });
   assert.equal(long.file, 'claude');
   // And the other way: the default branch names one, the working copy does not.
   fs.rmSync(path.join(checkout, '.claude', 'wheelhouse.json'));
@@ -239,7 +241,7 @@ test('when this computer\'s id can\'t be read, a configuration with an agents ma
 
 test('the foreman\'s long session asks the project\'s adapter too', () => withHome(async () => {
   const checkout = await project();
-  const call = foremanSession({ project: P, config: projectConfig(), pluginRoot: ROOT, platform: 'darwin', env: { PATH: '/bin' }, claude: { kind: 'direct', file: 'claude' } });
+  const call = foremanSession({ project: P, config: projectConfig(), pluginRoot: MAC_ROOT, platform: 'darwin', env: { PATH: '/bin' }, claude: { kind: 'direct', file: 'claude' } });
   assert.equal(call.file, 'claude');
   assert.equal(call.args[0].startsWith('Wheelhouse foreman: you are the long-lived foreman of '), true);
   assert.equal(call.options.cwd, checkout);
@@ -248,7 +250,7 @@ test('the foreman\'s long session asks the project\'s adapter too', () => withHo
   assert.equal(sessionsOfProject(null), sessions);
 
   assert.throws(() => foremanSession({
-    project: P, config: projectConfig({ agents: { [computerId()]: 'model-x' } }), pluginRoot: ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' },
+    project: P, config: projectConfig({ agents: { [computerId()]: 'model-x' } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' },
   }), /no adapter for the agent "model-x"/);
 }));
 

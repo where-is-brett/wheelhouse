@@ -28,14 +28,20 @@ jobs:
         # before every push, so a draft pull request leaves macOS out.
         os: ${{ fromJSON(github.event.pull_request.draft && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
-    # The tests take a few minutes; a hung run stops here, not at GitHub's six hours.
-    timeout-minutes: 15
+    # The tests take a few minutes on Linux and macOS, and up to most of an hour on Windows, where
+    # starting a process is slow; a hung run stops here, not at GitHub's six hours.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 15 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - run: npm test
+      - if: matrix.os != 'windows-latest'
+        run: npm test
+      # npm test with a longer limit per test file: on Windows the end-to-end build loop's file
+      # runs past npm test's eight minutes, as each of its tests takes a minute or more there.
+      - if: matrix.os == 'windows-latest'
+        run: node --test --import ./tests/helpers/test-home.js --test-timeout=1500000 "tests/**/*.test.js"
 
   validate:
     runs-on: ubuntu-latest

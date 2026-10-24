@@ -17,6 +17,8 @@ import { withHome } from '../../helpers/homes.js';
 import { P, config, fakeClient, project } from '../../helpers/foreman.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// A Mac's plugin folder, for the starts written as on a Mac on every system.
+const MAC_ROOT = '/plugins/wheelhouse';
 const DEAD_PID = 2 ** 22 + 12345; // above any pid the system hands out
 
 // A stand-in spawn: keeps each call; `running` makes the started watcher take its lock.
@@ -103,7 +105,7 @@ test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the fore
   const launched = [];
   const launch = async (file, args, opts) => { launched.push({ file, args, opts }); return 0; };
   const r = await start([P], {
-    client, spawn: watcher.spawn, launch, pluginRoot: ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' },
+    client, spawn: watcher.spawn, launch, pluginRoot: MAC_ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' },
     env: { PATH: '/bin', CLAUDECODE: '1', wheelhouse_role: 'front-desk' },
   });
   assert.equal(r.code, 0, r.err);
@@ -122,7 +124,7 @@ test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the fore
   assert.ok(args[0].startsWith('Wheelhouse foreman:'), args[0]);
   assert.ok(args[0].startsWith(FOREMAN_PROMPT_LEAD));
   assert.deepEqual(args.slice(1), [
-    '--settings', settings, '--permission-mode', 'acceptEdits', '--model', 'model-a', '--allowedTools', ...foremanTools(ROOT, { platform: 'darwin' }),
+    '--settings', settings, '--permission-mode', 'acceptEdits', '--model', 'model-a', '--allowedTools', ...foremanTools(MAC_ROOT, { platform: 'darwin' }),
   ]);
   assert.equal(opts.env.WHEELHOUSE_ROLE, 'foreman');
   assert.equal(opts.env.wheelhouse_role, undefined, 'no other spelling of the role is passed on');
@@ -136,7 +138,7 @@ test('the Shape 2 start says the mod hands on the wakes', () => withHome(async (
   await project();
   const { client } = fakeClient({ cfg: config({ watcherShape: 2 }) });
   const r = await start([P], {
-    client, launch: async () => 0, pluginRoot: ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' }, env: {},
+    client, launch: async () => 0, pluginRoot: MAC_ROOT, platform: 'darwin', claude: { kind: 'direct', file: 'claude' }, env: {},
   });
   assert.equal(r.code, 0, r.err);
   assert.equal(MONITOR_NOTE, 'The mod in this session hands it the watcher\'s wakes.');

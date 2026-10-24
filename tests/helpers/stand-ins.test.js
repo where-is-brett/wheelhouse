@@ -11,7 +11,9 @@ const TESTS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SELF = fileURLToPath(import.meta.url);
 
 for (const form of ['script', 'node']) {
-  test(`${form} form: gh, curl and security are found first on the PATH, logged and refused`, () => {
+  // A shell script doesn't shadow gh.exe, so Windows uses the node form only (host-stand-ins.js).
+  const skip = form === 'script' && process.platform === 'win32' && 'the script form shadows the real programs on macOS and Linux only';
+  test(`${form} form: gh, curl and security are found first on the PATH, logged and refused`, { skip }, () => {
     const s = standInTools({ form });
     try {
       for (const [name, args] of [['gh', ['pr', 'close', '12']], ['curl', ['fetch', 'https://github.com/']], ['security', ['find-generic-password']]]) {
@@ -26,7 +28,7 @@ for (const form of ['script', 'node']) {
     }
   });
 
-  test(`${form} form: an accepted call exits 0 and is logged`, () => {
+  test(`${form} form: an accepted call exits 0 and is logged`, { skip }, () => {
     const s = standInTools({ form, accept: { gh: [['pr', 'close']] } });
     try {
       assert.equal(spawnSync('gh', ['pr', 'close', '12'], { encoding: 'utf8' }).status, 0);
@@ -37,7 +39,7 @@ for (const form of ['script', 'node']) {
     }
   });
 
-  test(`${form} form: an answered call prints its answer, exits 0 and is logged`, () => {
+  test(`${form} form: an answered call prints its answer, exits 0 and is logged`, { skip }, () => {
     const listed = `${JSON.stringify([{ number: 7, title: 'It\'s "quoted" $HOME' }])}\n`;
     const s = standInTools({ form, answer: { gh: [{ args: ['pr', 'list'], stdout: listed }] } });
     try {

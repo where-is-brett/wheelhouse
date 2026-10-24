@@ -581,7 +581,8 @@ export function saidAbout(text, request, route) {
   return parts.some((part, i) => request.test(part) && (route.test(part) || (i + 1 < parts.length && route.test(parts[i + 1]))));
 }
 
-// A document the session left in the project whose hash is `hash`, or null.
+// A document the session left in the project whose hash is `hash`, as the repository names it
+// (forward slashes on every system), or null.
 export function documentWithHash(dir, hash) {
   const visit = (folder, depth) => {
     let entries = [];
@@ -597,7 +598,7 @@ export function documentWithHash(dir, hash) {
         const found = visit(full, depth + 1);
         if (found) return found;
       } else if (entry.isFile() && /\.(?:md|txt)$/.test(entry.name)) {
-        if (briefHash(fs.readFileSync(full, 'utf8')) === hash) return path.relative(dir, full);
+        if (briefHash(fs.readFileSync(full, 'utf8')) === hash) return path.relative(dir, full).split(path.sep).join('/');
       }
     }
     return null;
