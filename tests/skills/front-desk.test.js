@@ -113,7 +113,9 @@ test('the playbook and the intake name only commands, views, record kinds and ca
   }
   // The listed commands are cli.js's own, and the views those `views` takes.
   const listed = /<command>`: (.*?)\. Type/.exec(playbook.replaceAll(ROOT_VARIABLE, '/plugin'))?.[1] ?? '';
-  for (const name of known) assert.ok(listed.includes(`\`${name}`), `the playbook lists ${name}`);
+  // All but `confirm`, which Claude Code's front desk never needs: an agent whose chat clicks can't bind is told of it
+  // by its own cards line (ruling P8-7).
+  for (const name of known.filter((n) => n !== 'confirm')) assert.ok(listed.includes(`\`${name}`), `the playbook lists ${name}`);
   const views = /`views <name>` \(([^)]*)\)/.exec(playbook)?.[1] ?? '';
   assert.deepEqual([...views.matchAll(/`([a-z]+)`/g)].map((m) => m[1]), VIEW_NAMES);
 });

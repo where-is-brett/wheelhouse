@@ -1,7 +1,7 @@
 // tests/scripts/setup/best-model.test.js
 // The front desk's model: what one of Claude Code's aliases stands for, read from a session's init
-// event. Setup's alias is `opus`; `best`, the strongest model, is kept for the director's opt-in,
-// which comes with the Thoroughness design. `claude` is a stand-in; no session is started.
+// event. Setup's alias is `opus`; `best`, the strongest model, is kept for the premium model's
+// opt-in (design section 14.6). `claude` is a stand-in; no session is started.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

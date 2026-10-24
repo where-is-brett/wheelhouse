@@ -3,8 +3,8 @@
 // build-loop, front-desk, main, mod, real-use and any added later) in real
 // headless Claude Code sessions. Each run is a real session that costs tokens,
 // so it is run on purpose, never from `npm test`.
-// Usage: npm run eval -- <id…> [--variant with|without] [--trials n]
-//        npm run eval -- --all | --suite <name> [--variant with|without] [--trials n]
+// Usage: npm run eval -- <id…> [--variant with|without] [--trials n] [--agent <name>]
+//        npm run eval -- --all | --suite <name> [--variant with|without] [--trials n] [--agent <name>]
 //        npm run eval -- --again
 // A scenario is a file `<number>-<name>.js` in a suite; anything else there is
 // not one. A number names one scenario in one suite. A scenario whose pass has
@@ -22,6 +22,13 @@
 // as <time>.md. The build loop's scenarios (20 to 35) are in tests/eval/build-loop/,
 // the front desk's (1 to 19) in tests/eval/front-desk/ and the mod's (36 and 37) in
 // tests/eval/mod/, a file's number read without its leading zero (01-…).
+// `--agent <name>` runs the sessions on that agent, through its adapter's evaluation runner
+// (adapterFor(name).evalRunner.run); without it they run through runSession, as they always have.
+// A scenario whose `agents` lists the agents it runs on is left out of a run on any other (no
+// `agents`: it runs on every agent), never imported, and no row of its report; only its own variants
+// run. A scenario named on the command line that is not run, or not in the one variant asked for,
+// makes the run fail. A run on a named agent counts the scenarios that agent names as its own among
+// the designed set its report accounts for.
 // A scenario with `needsSandbox: true` (15 and 18) is checked after its set-up and before its
 // prompt, in both variants (checkSandbox): the session's settings keep it in the sandbox and a probe
 // session can't read a file the sandbox denies, else the trial is `fail (no sandbox)` and not
@@ -32,8 +39,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, totalUsageOf } from './harness.js';
+import { adapterFor } from '../agents/index.js';
 import { callsOf } from './feature-project.js';
-import { DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, declaredLeg, shownPath, summarise, summaryText } from './summary.js';
+import { DEFAULT_AGENT, DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, declaredAgents, declaredLeg, runsOnAgent, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -97,12 +105,19 @@ export function findScenario(id, { root = EVAL_ROOT } = {}) {
 }
 
 // Every leg of scenario `id` (a number), or the one leg `id` names (27-route), with its file and
-// suite, in file order.
-async function loadEntries(id, { root = EVAL_ROOT } = {}) {
+// suite, in file order. With `agent`, only the files that declare they run on it (declaredAgents)
+// are loaded; the others are never imported.
+async function loadEntries(id, { root = EVAL_ROOT, agent = null } = {}) {
   const { leg } = parseId(id);
   const entries = [];
   for (const file of findScenarioFiles(id, { root })) {
+    const declared = declaredAgents(file);
+    if (agent !== null && !runsOnAgent(declared, agent)) continue;
     const scenario = (await import(pathToFileURL(file).href)).default;
+    // The agents read from the text must be the module's own, or a file could be passed over wrongly.
+    if (JSON.stringify(declared) !== JSON.stringify(Array.isArray(scenario?.agents) ? scenario.agents : null)) {
+      throw new Error(`${path.basename(file)} declares its agents in a form that can't be read from its text: write \`agents: ['…']\` on a line of its own`);
+    }
     if (leg !== null && scenario?.leg !== leg) throw new Error(`${file} does not export leg ${leg} of scenario ${id}`);
     // A file copied from another and left with its id would join that scenario's row.
     const number = Number(SCENARIO_FILE.exec(path.basename(file))[1]);
@@ -380,6 +395,7 @@ export async function main(argv, {
   probe,
 } = {}) {
   const args = parseArgs(argv);
+  let agent = args.agent ?? null;
   const startedAt = now();
   const date = today(startedAt);
   // Each job: one leg of one scenario, in one variant, for some trials.
@@ -388,10 +404,15 @@ export async function main(argv, {
   let e2e;
   let from = null;
   let carriedFrom = null;
+  // Whether a scenario named on the command line is not run at all, or not in a variant asked for.
+  let short = false;
 
   if (args.again) {
     const last = latestRunRecord(home);
     if (!last) throw new Error('No run to run again: run npm run eval -- --all first');
+    const recorded = typeof last.record.agent === 'string' ? last.record.agent : null;
+    if (agent !== null && agent !== recorded) throw new Error(`--again runs on the agent the run it repeats ran on (${recorded ?? 'the default'}): give it no --agent, or that one`);
+    agent = recorded;
     from = last.file;
     print(`Running again what ${last.file} marked`);
     if (last.newer) print(`  (a newer run record, ${last.newer}, is not a whole run, so it was passed over)`);
@@ -408,8 +429,9 @@ export async function main(argv, {
     carriedFrom = { date: last.record.date ?? null, version: last.record.version ?? null, commit: last.record.commit ?? null };
     e2e = last.record.e2e;
     for (const row of marked) {
-      // Every leg in its files, a leg the record lacks included (a run cut short between legs).
-      const entries = await loadEntries(row.id, { root });
+      // Every leg in its files that runs on the agent, a leg the record lacks included (a run cut short between legs).
+      const entries = await loadEntries(row.id, { root, agent: agent ?? DEFAULT_AGENT });
+      if (!entries.length) throw new Error(`Scenario ${row.id}'s legs in ${last.file} are not in its files any more`);
       for (const variant of row.again) {
         // Every leg's new trials take the same numbers, so a trial is judged across its legs.
         const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, carried)));
@@ -428,14 +450,31 @@ export async function main(argv, {
     }
     // A record saved that day is never written over: the trials follow the last one there, with
     // the same numbers for every leg, so a trial is judged across its legs.
+    const on = agent ?? DEFAULT_AGENT;
+    // A variant named with --variant must run for every scenario named.
+    const chosen = args.variants.length === 1;
     for (const id of ids) {
-      const entries = await loadEntries(id, { root });
+      const entries = await loadEntries(id, { root, agent: on });
+      if (entries.length === 0) {
+        if (args.ids.length > 0) {
+          print(`${id}: not run (it does not run on ${on})`);
+          short = true;
+        }
+        continue;
+      }
+      if (args.ids.length > 0 && chosen && entries.some((entry) => entry.scenario.variants?.[args.variants[0]] === undefined)) {
+        print(`${id}: not run in ${args.variants[0]} (it has no such variant)`);
+        short = true;
+      }
       const trialsOf = Object.fromEntries(args.variants.map((variant) => {
         const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, [])));
         return [variant, Array.from({ length: args.trials }, (_, i) => after + 1 + i)];
       }));
       for (const entry of entries) {
-        for (const variant of args.variants) jobs.push({ ...entry, variant, trials: trialsOf[variant], round: 'first' });
+        // Only the variants the scenario has (a scenario of one agent's may have `with` alone).
+        for (const variant of args.variants.filter((v) => entry.scenario.variants?.[v] !== undefined)) {
+          jobs.push({ ...entry, variant, trials: trialsOf[variant], round: 'first' });
+        }
       }
     }
   }
@@ -452,6 +491,7 @@ export async function main(argv, {
     ...(carriedFrom ? { carried: carriedFrom } : {}),
     version,
     commit: commit === undefined ? await buildCommit() : commit,
+    ...(agent !== null ? { agent } : {}),
     runs: [...carried],
     ...(e2e !== undefined ? { e2e } : {}),
   };
@@ -477,6 +517,8 @@ export async function main(argv, {
   }
 
   const gate = sandboxGate({ probe });
+  // The agent's own runner, when the run names one; otherwise runScenario's own, runSession.
+  const runner = agent === null ? null : adapterFor(agent).evalRunner.run;
   let failed = 0;
   let skipped = 0;
   let started = 0;
@@ -510,7 +552,7 @@ export async function main(argv, {
       started += 1;
       let outcome;
       try {
-        outcome = await run({ scenario, variant, trial, home, date, ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
+        outcome = await run({ scenario, variant, trial, home, date, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
       } catch (error) {
         // A trial that could not run is a failed one; the rest of the run carries on.
         const why = `could not run: ${error.message}`;
@@ -550,8 +592,9 @@ export async function main(argv, {
     print(`  report: ${reportFile}`);
     return summary.passed ? 0 : 1;
   }
-  // Nothing was run at all (every trial needed a sandbox this computer lacks): no pass.
-  if (skipped > 0 && started === 0) return 1;
+  // Nothing was run at all (every trial needed a sandbox this computer lacks, or none has the variant
+  // asked for), or a scenario named was not run on this agent or in a variant asked for: no pass.
+  if (started === 0 || short) return 1;
   return failed ? 1 : 0;
 }
 

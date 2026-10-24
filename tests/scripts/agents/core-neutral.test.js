@@ -20,6 +20,7 @@ const ALLOWED_CORE_FILES = {
   'README.md': 'the README\'s section "On GitHub Copilot" gives the one request line that sets Wheelhouse up in VS Code with Copilot',
   'scripts/audit/report.js': 'imports the levels, proofs and review kinds from the design\'s numbers file, copilot-numbers.js, and names no agent otherwise',
   'HANDOVER.md': 'the handover says where the work stands, the Copilot build among it',
+  'lineage/manifest.json': 'the manifest records the Copilot CLI version Wheelhouse is pinned to (its `agents`, ruling P8-18), written by buildManifest from scripts/agents/pins.js',
 };
 
 function trackedFiles() {

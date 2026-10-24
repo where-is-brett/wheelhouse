@@ -11,7 +11,7 @@ import sessions from './sessions.js';
 import tools from './tools.js';
 import toolSheet from './tool-sheet.js';
 import translate from './translate.js';
-import { main as runEvals } from '../../scripts/eval/run.js';
+import { runSession } from '../../scripts/eval/harness.js';
 
 export default Object.freeze({
   identity,
@@ -27,5 +27,6 @@ export default Object.freeze({
   // The playbooks' general words, mapped to Claude Code's tools (tool-sheet.md); the session start hands it over.
   toolSheet,
   safetyLine,
-  evalRunner: Object.freeze({ run: ({ argv = [], ...options } = {}) => runEvals(argv, options) }),
+  // One evaluation session through `claude -p` (scripts/eval/harness.js), the runner `npm run eval` has always used.
+  evalRunner: Object.freeze({ run: runSession }),
 });

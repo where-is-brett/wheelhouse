@@ -172,3 +172,35 @@ test('under STOP the session starts no further program', async () => {
     assert.equal(seen.length, after, String(after));
   }
 });
+
+test('STOP coming on while the session runs ends the session, and nothing of it is taken (ruling P8-14)', async () => {
+  const dir = tempFolder('wh-review-stop-');
+  const folder = path.join(dir, 'folder');
+  fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder, 'change.diff'), '+x\n');
+  const knobsFile = path.join(dir, 'knobs.json');
+  fs.writeFileSync(knobsFile, JSON.stringify({ version: COPILOT_VERSION, record: path.join(dir, 'seen.jsonl') }));
+  const from = path.join(dir, 'from');
+  fs.mkdirSync(from);
+  fs.writeFileSync(path.join(from, 'config.json'), JSON.stringify({ loggedInUsers: [{ login: 'someone' }] }));
+  let stop = false;
+  let ended = null;
+  // The listings run as the stand-in; the session runs until its signal is aborted, as run.js ends a program.
+  const fakeRun = (file, args, options) => {
+    if (file !== 'copilot-review-stand-in') return hostGuard(file, args, options);
+    if (args[0] !== '-p') return run(process.execPath, [FAKE, knobsFile, ...args], options);
+    stop = true;
+    return new Promise((resolve) => {
+      options.signal.addEventListener('abort', () => { ended = Date.now(); resolve({ code: 1, stdout: '', stderr: '', stopped: true }); }, { once: true });
+    });
+  };
+  const started = Date.now();
+  const result = await runSession({
+    folder, prompt: `Review pull request 7, at its head commit ${SHA}.`, env: { PATH: process.env.PATH, HOME: '/h' },
+    copilot: { kind: 'direct', file: 'copilot-review-stand-in' }, run: fakeRun, signedInFrom: from, tmp: dir, stopped: () => stop, stopPollMs: 20,
+  });
+  assert.ok(ended !== null, 'the session was ended');
+  assert.ok(ended - started < 60_000);
+  assert.deepEqual(result, { clean: false, reasons: ['STOP is on'], answer: null, firstLine: null, stopped: true });
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('wheelhouse-review-home-')), [], 'its home goes too');
+});
