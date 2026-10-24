@@ -733,6 +733,123 @@ const listed = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0
 // shorter card says the same in fewer words. On a joining computer (`joining`, ruling R78) it says
 // that nothing is committed and protection stays as it is, and names each shared file in
 // `differ`, which differs from what is committed and is left as it is.
+// ---- A folder on a line of unfinished work (the director's ruling of 25 October 2026) ----
+//
+// Setup puts its files on the default branch, so a folder on another line of the director's is
+// switched to it with one click, on a card of its own, and step 7's own list follows on the default
+// branch (the engine plans the step again: runApply's `again`). The director's work stays on its
+// line, which the survey then finds as work under way. Changes not yet committed are never lost:
+// those git can carry across are carried; those a switch would refuse or overwrite (they touch a
+// file the two lines hold differently) are first committed on a line of their own, named for the
+// director from their line's name. Never a stash, a reset or anything that undoes their work.
+
+// The commit that keeps the director's changes on a line of their own.
+export const KEEP_MESSAGE = 'Changes not yet saved, kept safe by Wheelhouse setup';
+
+// What the switch goes to: the default branch here, moved on to the host's copy first when it is
+// only behind it. { sha, move } with `move` the ref to start from, or null when there is nothing to
+// switch to here.
+async function switchTarget(git, { branch, remoteUrl }) {
+  const local = await git.out(['rev-parse', '-q', '--verify', `refs/heads/${branch}^{commit}`]);
+  let tracking = null;
+  for (const name of ((await git.out(['remote'])) ?? '').split('\n').filter(Boolean)) {
+    const url = await git.out(['remote', 'get-url', name]);
+    if (url === null || !sameRemote(url, remoteUrl)) continue;
+    const sha = await git.out(['rev-parse', '-q', '--verify', `refs/remotes/${name}/${branch}^{commit}`]);
+    if (sha !== null) tracking = { ref: `refs/remotes/${name}/${branch}`, sha };
+    break;
+  }
+  if (local !== null && (tracking === null || local === tracking.sha || !(await git.ok(['merge-base', '--is-ancestor', local, tracking.sha])))) return { sha: local, move: null };
+  return tracking === null ? null : { sha: tracking.sha, move: tracking.ref };
+}
+
+// The paths git lists as changed and not yet committed, untracked files among them.
+async function uncommitted(git) {
+  const listed = (await git.raw(['status', '--porcelain=v1', '-z', '--untracked-files=all'])) ?? '';
+  const paths = [];
+  const parts = listed.split('\0');
+  for (let i = 0; i < parts.length; i += 1) {
+    const entry = parts[i];
+    if (entry.length < 4) continue;
+    paths.push(entry.slice(3));
+    // A rename or a copy names the path it came from next.
+    if (entry[0] === 'R' || entry[0] === 'C') {
+      paths.push(parts[i + 1]);
+      i += 1;
+    }
+  }
+  return [...new Set(paths)];
+}
+
+// The switch of a folder on line `from` to `branch`, as a change for step 7's card, or null when
+// there is nothing here to switch to, or when the project's settings themselves would be at risk
+// (they hold the install's lines, which must stay in the folder).
+async function switchChange(git, { from, branch, remoteUrl, repo }) {
+  const target = await switchTarget(git, { branch, remoteUrl });
+  if (target === null) return null;
+  const head = await git.must(['rev-parse', 'HEAD'], 'read this folder\'s latest commit');
+  const changed = await uncommitted(git);
+  const differs = new Set(((await git.raw(['diff', '--name-only', '-z', head, target.sha])) ?? '').split('\0').filter(Boolean));
+  const atRisk = changed.filter((p) => differs.has(p)).sort();
+  if (atRisk.includes(SETTINGS)) return null;
+  let keep = null;
+  if (atRisk.length > 0) {
+    let line = `${from}-changes`;
+    for (let n = 2; await git.ok(['rev-parse', '-q', '--verify', `refs/heads/${line}`]); n += 1) line = `${from}-changes-${n}`;
+    keep = { line, files: atRisk };
+  }
+  return {
+    kind: 'host', target: `${repo}: this folder, from ${from} to ${branch}`, action: 'switch', from, to: branch, head, at: target.sha, move: target.move,
+    carries: changed.length > atRisk.length, ...(keep ? { keep } : {}),
+  };
+}
+
+// The switch's card, in the director's ruling's words.
+export function switchCard(change) {
+  const { from, to, keep, carries } = change;
+  const kept = keep ? ` A switch would put your changes not yet saved to ${listed(keep.files)} at risk, so setup first keeps them safe on a line of their own, '${keep.line}'.` : '';
+  const along = carries ? ` Your ${keep ? 'other ' : ''}changes not yet saved come along as they are.` : '';
+  return {
+    kind: 'setup',
+    level: 3,
+    what: `Setup step 7: your folder is on '${from}'. Switch it to ${to} to set up? Your unfinished work stays saved on '${from}'.${kept}${along}`,
+    why: `Wheelhouse puts its files on ${to} and merges into it from then on; once setup is done, your work on '${from}' is picked up as work under way.`,
+    options: [
+      { label: SETUP_LABEL, says: `Setup switches this folder to ${to}, then shows step 7's list.` },
+      { label: 'Not now', says: 'Setup waits here; nothing changes.' },
+    ],
+    recommend: SETUP_LABEL,
+    because: 'setup\'s files go on the default branch, and your work stays where it is',
+    meanwhile: 'Setup waits here; nothing changes.',
+  };
+}
+
+// Makes the switch on the card: the folder read again first (still on the line, at the commit the
+// card was worked out from), the changes at risk committed on their own line, then the switch. Each
+// is recorded before it is made. Gives step 7's `again`, so its own list is worked out on main.
+async function switchFolder(ctx, c, { git, project, author }) {
+  const moved = () => new Error('This folder changed since the card, so nothing was switched: ask for the plan again');
+  if ((await git.out(['symbolic-ref', '--short', '-q', 'HEAD'])) !== c.from) throw moved();
+  if ((await git.out(['rev-parse', '-q', '--verify', 'HEAD'])) !== c.head) throw moved();
+  if (c.move !== null && (await git.out(['rev-parse', '-q', '--verify', `${c.move}^{commit}`])) !== c.at) throw moved();
+  if (c.keep) {
+    ctx.record({ id: newId('chg'), kind: 'host', target: `${c.target}: ${c.keep.line}`, before: null, after: { action: 'keep', line: c.keep.line, from: c.from, files: [...c.keep.files] }, project });
+    await git.must(['switch', '-q', '-c', c.keep.line], `make the line ${c.keep.line}`);
+    await git.must(['add', '-A', '--', ...c.keep.files], `keep your changes on ${c.keep.line}`);
+    await git.must([
+      '-c', `user.name=${author.name}`, '-c', `user.email=${author.email}`, '-c', 'commit.gpgsign=false',
+      'commit', '-q', '--no-verify', '-m', KEEP_MESSAGE, '--', ...c.keep.files,
+    ], `keep your changes on ${c.keep.line}`);
+  }
+  ctx.record({ id: newId('chg'), kind: 'host', target: c.target, before: { branch: c.from, sha: c.head }, after: { action: 'switch', from: c.from, to: c.to, ...(c.keep ? { keep: c.keep.line } : {}) }, project });
+  const where = c.keep ? c.keep.line : c.from;
+  const local = await git.out(['rev-parse', '-q', '--verify', `refs/heads/${c.to}`]);
+  if (c.move !== null && local !== null) await git.must(['branch', '-q', '-f', c.to, c.move], `bring ${c.to} up to the host's copy`);
+  const switched = c.move !== null && local === null ? await git.ok(['switch', '-q', '-c', c.to, c.move]) : await git.ok(['switch', '-q', c.to]);
+  if (!switched) throw new Error(`git could not switch this folder to ${c.to} without touching your changes not yet saved, so it is left on ${where}, as it was: ask for the plan again`);
+  return { again: true, changes: [] };
+}
+
 export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null }) {
   const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
@@ -939,9 +1056,13 @@ export function projectFilesStep({
         // Setup never suggests changing the host's default branch. A folder on a line named as a
         // product's own usually is (main, master) may mean the host's default is the odd one out,
         // which is for whoever looks after the repository to say. Any other line is a line of
-        // work: the folder switches to the default, and changes not yet committed come along. Put
-        // aside, the install's lines in the project's settings would go with them.
+        // work: the folder switches to the default with one click (switchChange), and changes not
+        // yet committed come along or are kept on a line of their own. Where it can't, the folder
+        // switches by hand; put aside, the install's lines in the project's settings would go with
+        // the changes not yet committed.
         const mainLine = current === 'main' || current === 'master';
+        const switching = current && !mainLine ? await switchChange(git, { from: current, branch, remoteUrl: record.remoteUrl, repo }) : null;
+        if (switching !== null) return { changes: [switching], card: switchCard(switching), director: 'One click' };
         const installLines = (await git.out(['status', '--porcelain', '--', SETTINGS])) ? `: the Wheelhouse install's own lines in ${SETTINGS} are among them` : '';
         const what = mainLine
           ? `Ask whoever looks after the repository on ${NAME[host]} which line is the product's own, then ask again`
@@ -1053,6 +1174,15 @@ export function projectFilesStep({
       const { host, repo } = record;
       const folder = ctx.folder;
       const at = (rel) => path.join(folder, ...rel.split('/'));
+
+      // 0. A folder on a line of work: the switch alone, then the step is planned again on main.
+      const switching = changes.find((c) => c.kind === 'host' && c.action === 'switch');
+      if (switching) {
+        halt();
+        const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
+        const author = switching.keep ? await commitAuthor({ host, run, base: record.connection?.baseUrl }) : null;
+        return switchFolder(ctx, switching, { git, project, author });
+      }
 
       // 1. The files, each recorded before it is written.
       for (const c of changes) {

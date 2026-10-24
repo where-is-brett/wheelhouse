@@ -46,7 +46,7 @@ import { journalFile, readJournal } from '../lib/setup-run.js';
 export { journalFile, readJournal };
 
 const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env', 'answer'];
-const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed', 'say'];
+const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed', 'say', 'reset'];
 // The longest line a running step may say to the director (ruling R40).
 export const SAY_CHARS = 500;
 const CHANGED = { put: false, why: 'changed since setup' };
@@ -204,6 +204,8 @@ export function markStep(runId, step, field, { now = () => new Date(), reason, l
     const entry = run.steps[step] ?? {};
     if (typeof when === 'function' && !when(structuredClone(entry))) return false;
     if (field === 'failed') entry.failed = reason;
+    // A step that made a first part of its work and is planned again from the start (step 7's switch).
+    else if (field === 'reset') for (const k of ['shownAt', 'clickedAt', 'doneAt', 'failed', 'say']) delete entry[k];
     else if (field === 'say') entry.say = { line: line.trim(), at };
     else {
       entry[field] = at;
