@@ -655,6 +655,8 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         permissionMode: scenario.permissionMode ?? 'acceptEdits',
         model,
         maxTurns: scenario.maxTurns ?? 30,
+        // A long loop (several fix rounds) may need longer than runSession's default.
+        ...(scenario.timeoutMs ? { timeoutMs: scenario.timeoutMs } : {}),
         ...(context.env ? { env: context.env } : {}),
         ...(context.appendSystemPrompt ? { appendSystemPrompt: context.appendSystemPrompt } : {}),
         ...(scenario.extraArgs ? { extraArgs: scenario.extraArgs } : {}),

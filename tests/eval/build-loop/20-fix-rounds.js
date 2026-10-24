@@ -184,6 +184,8 @@ export default {
 
   permissionMode: 'acceptEdits',
   maxTurns: 100,
+  // Three fix rounds, each built and reviewed, then the question: longer than a session's default 20 minutes.
+  timeoutMs: 45 * 60 * 1000,
 
   pass: ({ events, dir, variant }) => {
     const calls = callsOf(events);
