@@ -490,7 +490,11 @@ test('a default branch that is Wheelhouse\'s own, or not the folder\'s, is refus
   });
   await withHome(async () => {
     const pages = await world({ defaultBranch: 'gh-pages' });
-    await assert.rejects(pages.plan(), /default branch .*gh-pages.*this folder is on main/);
+    const odd = await pages.plan().then(() => null, (error) => error.message);
+    assert.match(odd, /default branch .*gh-pages.*this folder is on main/);
+    // Setup never suggests changing the host's default branch, nor switching off the product's own line.
+    assert.doesNotMatch(odd, /the default on|Switch this folder/);
+    assert.match(odd, /Ask whoever looks after the repository on GitHub which line is the product's own/);
   });
   await withHome(async () => {
     // A product whose default branch is not main has its commit and protection there, named on the card.

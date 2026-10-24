@@ -21,7 +21,7 @@ A made-up but ordinary project, `recipe-box` (a small Node.js app), on a stand-i
 - **The world** was setup's end-to-end world from the same tag (`tests/helpers/setup-e2e.js`): a real helper on a socket in a scratch Wheelhouse home, setup's ten real steps on a stand-in computer, a host of bare repositories, stand-ins for `gh`, `claude`, `curl` and the rest on the PATH. Installs (gh, the kits) and the host's protection are stood in, so steps 2 and 7 are faster here than on a real computer.
 - **Isolation.** A scratch `CLAUDE_CONFIG_DIR` has no sign-in ("Not logged in", as checks 36 and 37 found), so the session used the computer's own sign-in with the evaluation harness's isolation instead: project and local settings only, no MCP servers, the harness's denied tools, the plugin from a copy of the tag (`--plugin-dir`, nothing written to `~/.claude`), reads of the director's own places denied. The real `~/.wheelhouse` was never written; the kits' Claude Code folder was the scratch one. Only the runs' transcripts went to `~/.claude/projects`.
 - **No sandbox at first.** A project not yet set up has no sandbox; step 7 writes the project's own, and Claude Code picked it up mid-session, as it would for the director.
-- **Usage.** Six runs, about 9M input tokens in the rehearsal sessions (nearly all cache reads).
+- **Usage.** Eight real sessions (three stopped early while the rehearsal itself was put right), about 12M input tokens in all, nearly all cache reads, on Sonnet.
 
 What couldn't be driven headless: the trust dialog (the folder stayed untrusted, so the project's own allow rules were ignored, which changed nothing here); Locked's password box (Standard was chosen); the phone itself (the push was turned away by a hook, as the eval harness does); Claude Desktop's own screens.
 
@@ -60,7 +60,7 @@ In fact a plain `git switch main` carries the changes not yet committed across, 
 
 **Fixed:**
 
-- `scripts/setup/project-files.js`: the refusal no longer suggests making a line of work the default (only a line named `main` or `master`, as for a host whose default is `gh-pages`). It says the line is left as it is, and to keep the changes not yet committed as they are, naming the install's lines in `.claude/settings.json` when they are among them.
+- `scripts/setup/project-files.js`: the refusal never suggests changing the host's default branch. For a line of work, it says the line is left as it is, to switch the folder to the default, and to keep the changes not yet committed as they are, naming the install's lines in `.claude/settings.json` when they are among them. For a folder on `main` or `master` while the host's default is another line (`gh-pages`, say), it says to ask whoever looks after the repository which line is the product's own.
 - `skills/setup/SKILL.md`: a rule for this refusal. Say the director's work is safe and left as it is. Never suggest stashing, undoing, committing or deleting their changes, or changing the host's default branch. If they ask how, give one command, `git switch <branch>`.
 
 **Left as a card:** whether setup should do the switch itself, or fit around the line. See "For the director" below.
@@ -79,7 +79,25 @@ On step 9's two-minute wait, the session first ran `sleep 118` in the foreground
 
 Step 5 said "Found 9 rules in the project; they're followed as they are." One of those rules is "Push straight to main for small fixes", which step 7's protection blocks a few seconds later. Another is "Use American English in the interface". The first briefing says "Mine come first where they differ", but only after setup. The step 7 card says "protection sends later changes through Wheelhouse's checks". It doesn't say this ends the project's own habit of pushing straight to main, which matters if other people push to it. Left for the designer: a wording change on step 5's line, and possibly a line on step 7's card when a rule found says to push to the default branch.
 
-### 5. Smaller things seen
+### 5. Recording the carried-on work took three refusals (fixed)
+
+After **Carry on with it**, the front desk wrote a brief for each piece and recorded it. Its first `record work` was refused for a missing `title`, the next for a missing `dependsOn`, and the third because `doc` was a plain path. The intake playbook says a work event names its document "by its path", but the command took only `{ "path": … }`. The fourth try went through. The same happened for the second piece's record, one refusal fewer.
+
+**Fixed:**
+
+- `scripts/state/events.js`: a record missing fields names every missing field at once, and the fields the kind takes, as a stray field's refusal already did.
+- `scripts/frontdesk/cli.js`: a work event's `doc` given as a plain path is taken as `{ path }`, and its hash worked out.
+
+### 6. The green ending (run 6)
+
+With the folder switched, setup ended green (12 of 12). Then:
+
+- **The carry-on card** read: "Wheelhouse found work already under way in recipe-box: 1 change waiting to be merged on GitHub, and 1 piece of unfinished work on this computer. Shall I carry them on?" It was plain, and the open pull request and the director's own line were both counted.
+- **The briefing** said the other agent setup's line once ("AGENTS.md and 3 more files … Mine come first where they differ. I can move them into an archive folder, which you can undo at any time."), as designed.
+- **The briefing also said "Locked would protect it more"**, a few minutes after the director chose Standard. This is fair as a health line, but it re-raises a choice just made. Left for the designer.
+- **Each piece got its own approval card**, which explained "pull request", "merge" and "review" in plain words. The session's closing words were right: the original work isn't changed, and the director's changes not yet committed (`src/recipes.js`, `notes.md`) were left alone.
+
+### 7. Smaller things seen
 
 - **Step 7's card is one long sentence** (about 600 characters: settings, the CLAUDE.md section, local settings, `.wheelhouse/`, the front desk's model, `.env`, the kits, the commit, protection, the release). It is accurate, but hard to read for a director. This is the known "the pane needs real design" item.
 - **Step 7 adds a "Compact instructions" section to the project's own `CLAUDE.md`**, keeping the director's text. The card says so ("keeping yours"); nothing went wrong.
@@ -90,9 +108,10 @@ Step 5 said "Found 9 rules in the project; they're followed as they are." One of
 
 These came from how the rehearsal was built, and were checked against real use:
 
-- **The keys trial failed** ("read keys folder: refused / could not run"). `scripts/health/trials.js` reads the real `~/.wheelhouse/keys`. In real use the helper's signing key has made that folder by step 10. Here the key lives in the scratch home, and inside a denied folder a missing path answers ENOENT, not EPERM (tried directly: a sandboxed `readdirSync` of a missing folder under a denied one gives ENOENT). Run 6 took that one line as refused.
+- **The keys trial failed** ("read keys folder: refused / could not run"). `scripts/health/trials.js` reads the real `~/.wheelhouse/keys`. In real use the helper's signing key has made that folder by step 10. Here the key lives in the scratch home, and inside a denied folder a missing path answers ENOENT, not EPERM (tried directly: a sandboxed `readdirSync` of a missing folder under a denied one gives ENOENT). Run 6 took that one line as refused, through a hook of the rehearsal's own.
 - **The helper was unreachable after step 7**, in one run: the scratch home was under `/var/folders`, which macOS also spells `/private/var/folders`, and the sandbox's socket rule named the other spelling. The real home, `~/.wheelhouse`, has one spelling.
 - **The eval harness's sandbox hides the harness's own repository**, which here was the plugin's copy, so the first run couldn't load the setup command.
+- **Run 6 had no push tool**: the rehearsal switched off Claude Code's background traffic, to keep its marketplace refresh out of `~/.claude`, and that removes the push tool too. The session said plainly that it couldn't send the test and left step 9 open, which was right; the rehearsal's own answer, "It arrived", was not what a director would have clicked.
 - **The test stand-ins include `security`**, which Claude Code needs to read its sign-in, so the session got the stand-ins without it.
 
 ## For the director
@@ -102,7 +121,8 @@ These came from how the rehearsal was built, and were checked against real use:
 - *What this is:* most projects already under way have their folder on a line of work, not on the main line. Setup puts its files on the main line, so today it stops and asks you to switch the folder yourself, with a command in a terminal.
 - *Why it comes to you:* it decides what setup may do with your own unfinished work and your folder.
 - *The options:*
-  1. **Setup switches the folder for you, on your click** (recommended). Step 7's card lists "switch this folder to main; your unfinished work stays on ingredient-units, and your changes not yet committed come along". It does this only when git can switch without touching your changes; otherwise it says why and waits.
-  2. **Setup leaves the folder where it is** and makes its commit on the main line on its own. Your folder never moves. This is more work, and your folder won't hold Wheelhouse's files until you next bring in the main line.
-  3. **Keep it as it is now**: setup stops and you switch the folder yourself (one command, `git switch main`).
+  1. **Setup switches the folder for you, on your click** (recommended). Step 7's card lists "switch this folder to main; your unfinished work stays on ingredient-units, and your changes not yet committed come along". It does this only when git can switch without touching your changes; otherwise it says why and waits. Everything after step 7 works as it does today, as the folder ends up on the main line with setup's commit in it.
+  2. **Setup leaves the folder where it is** and makes its commit on the main line through the helper's own copy of the repository. Your folder never moves, which fits round a project best. But it is a bigger change: setup's three files would have to be worked out from the main line's versions, not the folder's. The health check, uninstall and the session start all expect the folder to hold setup's commit. And your folder holds Wheelhouse's protections only as changes not yet committed until you next bring in the main line.
+  3. **Keep it as it is now**: setup stops and you switch the folder yourself, with one command, `git switch main`.
+- *Recommendation:* 1. It is a small, contained change to step 7 and keeps everything else as tested. 2 is worth designing later, with the setup redesign that follows the first real setup.
 - *What happens meanwhile:* setup stops at step 7 with plain words and one safe command. Steps 1 to 6 stay done.

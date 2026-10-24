@@ -936,13 +936,17 @@ export function projectFilesStep({
       const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
       const current = await git.out(['symbolic-ref', '--short', '-q', 'HEAD']);
       if (current !== branch) {
-        // A line named as a product's own usually is may be the default the host should have; any
-        // other is a line of work, which never becomes the default on setup's word. Changes not
-        // yet committed come along when the folder switches; put aside, the install's lines in
-        // the project's settings would go with them.
+        // Setup never suggests changing the host's default branch. A folder on a line named as a
+        // product's own usually is (main, master) may mean the host's default is the odd one out,
+        // which is for whoever looks after the repository to say. Any other line is a line of
+        // work: the folder switches to the default, and changes not yet committed come along. Put
+        // aside, the install's lines in the project's settings would go with them.
         const mainLine = current === 'main' || current === 'master';
         const installLines = (await git.out(['status', '--porcelain', '--', SETTINGS])) ? `: the Wheelhouse install's own lines in ${SETTINGS} are among them` : '';
-        throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on.${current ? ` ${current} is left as it is.` : ''} Switch this folder to ${branch}${mainLine ? `, or make ${current} the default on ${NAME[host]}` : ''}, then ask again; keep the changes not yet committed as they are${installLines}`);
+        const what = mainLine
+          ? `Ask whoever looks after the repository on ${NAME[host]} which line is the product's own, then ask again`
+          : `${current ? `${current} is left as it is. ` : ''}Switch this folder to ${branch}, then ask again; keep the changes not yet committed as they are${installLines}`;
+        throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on. ${what}`);
       }
       const tip = await remoteTip(git, record.remoteUrl, branch);
       if (tip === null) throw new Error(`${branch} is not on ${NAME[host]} yet, so setup's commit has nothing to go on: run step 3 again, then ask again`);
