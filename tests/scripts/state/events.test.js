@@ -405,6 +405,8 @@ test('a column-ready record names the column, the pins it ran on and the evaluat
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('column-ready'), true);
     assert.equal(PROTECTED_KINDS.includes('column-ready'), false);
+    // No session can mark a column ready: only the helper records one.
+    assert.equal(HELPER_ONLY_KINDS.includes('column-ready'), true);
     const data = { column: 'lean', pins: { mostCapable: 'model-top', midSized: 'model-mid', premium: null }, records: ['eval-1'] };
     assert.deepEqual(makeEvent({ kind: 'column-ready', data }).data, data);
     for (const column of ['lightest', 'premium']) assert.equal(makeEvent({ kind: 'column-ready', data: { ...data, column } }).data.column, column);
@@ -735,8 +737,8 @@ test('a survey record carries every part of the survey, each in its own shape', 
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
-    // Only the helper itself records a survey: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey']);
+    // Only the helper itself records a survey or a column's readiness: no caller writes one.
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);

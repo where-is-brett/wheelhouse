@@ -245,6 +245,7 @@ test('the brief names the subagent roles and no model: the models and efforts co
   assert.match(text, /wheelhouse:reviewer/);
   assert.match(text, /wheelhouse:tester/);
   assert.match(text, /come with each wake/);
+  assert.match(text, /holds the same lines as its `column`/);
   assert.match(text, /`effort`/);
   const none = renderBrief({ fields: { ...fields('quick'), routing: {} }, pluginRoot });
   assert.ok(!/model-/.test(none), 'a new brief carries no models at all');

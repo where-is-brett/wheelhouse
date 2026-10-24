@@ -74,6 +74,6 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 
 # Models by role
 
-The model and thinking effort for each subagent role come with each wake: the prompt that starts or wakes you lists them, one line per role. Set each dispatch's `model` and `effort` fields from the latest list. Where a role's model is "the session's own", leave `model` out. Follow any other line that comes with the list. Never choose a model or an effort yourself. The roles:
+The model and thinking effort for each subagent role come with each wake: the prompt that starts or wakes you lists them, one line per role. When the prompt doesn't, the newest wake file in `.wheelhouse/feature/wakes/` holds the same lines as its `column`. Set each dispatch's `model` and `effort` fields from the latest list. Where a role's model is "the session's own", leave `model` out. Follow any other line that comes with the list. Never choose a model or an effort yourself. The roles:
 
 {{models}}

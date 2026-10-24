@@ -156,4 +156,8 @@ export function finalAnswer(stdout) {
   return last;
 }
 
-export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, finalAnswer });
+// The waker puts the Thoroughness column for a feature's subagents into its prompt only for an adapter that says it
+// takes it (scripts/watcher/waker.js): Claude Code's sessions pass each subagent its model and effort.
+export const takesColumn = true;
+
+export default Object.freeze({ checkForeman, checkFeature, foremanCall, featureStartCall, featureResumeCall, finalAnswer, takesColumn });

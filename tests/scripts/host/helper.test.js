@@ -1454,6 +1454,11 @@ test('/survey/again takes a survey once when the last one missed the host, and n
       assert.equal(forged.ok, false);
       assert.match(forged.refused, /only the helper/);
       assert.equal(surveysIn().length, 0);
+      // Nor a Thoroughness column's readiness.
+      const ready = await client.state.write({ project: 'o__p', kind: 'column-ready', data: { column: 'lean', pins: { mostCapable: 'model-top', midSized: 'model-mid' }, records: ['eval-1'] } });
+      assert.equal(ready.ok, false);
+      assert.match(ready.refused, /only the helper/);
+      assert.equal(listEvents(stateDir('o__p'), { report: () => {} }).some((e) => e.kind === 'column-ready'), false);
       // No survey yet: none taken.
       assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: true, taken: false });
       // The host reached: none taken.

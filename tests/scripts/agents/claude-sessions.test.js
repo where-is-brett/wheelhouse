@@ -164,7 +164,7 @@ test('the waker asks the project\'s adapter for the foreman\'s call, the feature
     seen.push({ name, options });
     return { file: `agent-${name}`, args: [name, options.prompt], input: 'in', verbatim: false, env: { PATH: '/p', MARK: name } };
   };
-  const stand = { checkForeman: (config) => seen.push({ name: 'check-foreman', config }), checkFeature: (config) => seen.push({ name: 'check', config }), foremanCall: answer('foreman'), featureStartCall: answer('start'), featureResumeCall: answer('resume'), finalAnswer: () => null };
+  const stand = { checkForeman: (config) => seen.push({ name: 'check-foreman', config }), checkFeature: (config) => seen.push({ name: 'check', config }), foremanCall: answer('foreman'), featureStartCall: answer('start'), featureResumeCall: answer('resume'), finalAnswer: () => null, takesColumn: true };
   const worktree = path.join(checkout, '.claude', 'worktrees', 'wt-1');
   fs.mkdirSync(featurePaths(worktree).dir, { recursive: true });
   fs.writeFileSync(featurePaths(worktree).brief, 'The brief.\n');

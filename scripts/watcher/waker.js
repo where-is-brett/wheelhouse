@@ -66,6 +66,9 @@
 //     foreman's command started, or one from before a restart) is read the same
 //     way once its record ends;
 //   - `pruneActivity({ project, now })`, called by prune;
+//   - `takesColumn: true`, for an agent whose sessions pass each subagent its model and effort (Claude Code's): only
+//     then does a feature's prompt carry the Thoroughness column's lines, and a Shape 2 wake's copy its `column`;
+//     another agent's prompt stays one line naming its file, as a .cmd shim needs;
 //   - `grantProofs`, the proofs an answer must name for its build-command grant to count (buildGrants'
 //     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only a click in the helper's own window.
 //     Without it, every verified answer counts, as before.
@@ -79,7 +82,10 @@
 // pins in force) and gives the adapter the role's model, thinking effort and
 // fallback: `foreman` for the foreman, `feature` for a feature session. A
 // feature's prompt also carries the column for the subagents it dispatches
-// (columnLines). A session already running is never changed: it keeps what it
+// (columnLines), when its adapter says it takes it (`takesColumn`). At Shape 2,
+// whose wake lines must stay one line, the column goes as `column` in the
+// copy of each wake the session reads, and in a wake of its own written into
+// a feature's wakes folder before its START line. A session already running is never changed: it keeps what it
 // started with until its next start. The column's own lines (a level that
 // isn't ready, say) go to `onNote`, the watcher's log, once each time they
 // change. Anything that can't be read gives Balanced.
@@ -491,10 +497,17 @@ export function featureWakesDir(worktree) {
 // with COPYFILE_EXCL, so it never follows a link left in its place; and the
 // folder is checked once more after. If it moved, the copy is removed and the
 // wake counts as not delivered. `beforeCopy(dir)` is for tests.
-function copyWake(project, file, place, { beforeCopy = () => {} } = {}) {
+function copyWake(project, file, place, { beforeCopy = () => {}, add = null } = {}) {
   const moved = () => { throw new Error("The wakes folder isn't a real folder where it should be"); };
-  const text = readCapped(file, WAKE_BYTES);
-  if (text === null) throw new Error("The wake's record can't be read");
+  const read = readCapped(file, WAKE_BYTES);
+  if (read === null) throw new Error("The wake's record can't be read");
+  // `add`, fields written into the copy beside the record's own (Shape 2's `column`); the record is never changed.
+  let text = read;
+  if (add !== null) {
+    const record = readWake(file);
+    if (record === null) throw new Error("The wake's record can't be read");
+    text = `${JSON.stringify({ ...record, ...add }, null, 2)}\n`;
+  }
   const temp = path.join(watcherFolder(project, 'copies'), `${crypto.randomUUID()}.json`);
   fs.writeFileSync(temp, text, { flag: 'wx' });
   try {
@@ -773,11 +786,21 @@ export function makeWaker({
     return isPlain(cell) ? { model: cell.model ?? null, effort: cell.effort ?? null, fallback: cell.fallback ?? null } : {};
   };
   // A feature's prompt with the column for its subagents after it.
-  const withColumn = (prompt, found) => [prompt, '', ...columnLines(found)].join('\n');
+  // Only for an adapter that says it takes the column (`takesColumn`): another agent's prompt stays one line, and
+  // never names models it can't use.
+  const withColumn = (adapter, prompt, found) => (adapter?.takesColumn === true ? [prompt, '', ...columnLines(found)].join('\n') : prompt);
+  // At Shape 2 the column goes in the copy of the wake the session reads, as `column`, since its prompt is one line.
+  const shape2Column = () => {
+    let adapter = null;
+    try {
+      adapter = sessionsOf();
+    } catch { /* no adapter: no column */ }
+    return adapter?.takesColumn === true ? { column: columnLines(columnNow()) } : null;
+  };
   // Start times, asked of this system for every running pid at once and kept a minute.
   const startTimes = makeStartTimes({ now });
   const timeOf = startTimeOf ?? ((pid, others, options) => startTimes.get(pid, others, options));
-  const copyInto = (file, place) => copyWake(project, file, place, { beforeCopy });
+  const copyInto = (file, place, add = null) => copyWake(project, file, place, { beforeCopy, add });
 
   // --- The outbox ---
   const outboxFail = () => { throw new Error("The watcher's outbox can't be read or written"); };
@@ -1317,7 +1340,7 @@ export function makeWaker({
       if (stopped()) break;
       let copy;
       try {
-        if (e.to === 'foreman') copy = copyInto(e.file, foremanWakesDir(checkoutOf()));
+        if (e.to === 'foreman') copy = copyInto(e.file, foremanWakesDir(checkoutOf()), shape2Column());
         else {
           const worktree = locate(e.work);
           if (worktree === null) {
@@ -1325,7 +1348,7 @@ export function makeWaker({
             continue;
           }
           if (await controlHeld(e.work, worktree, [e.id])) continue;
-          copy = copyInto(e.file, featureWakesDir(worktree));
+          copy = copyInto(e.file, featureWakesDir(worktree), shape2Column());
         }
       } catch (error) {
         settle([e.id], 'failed', error.message);
@@ -1423,7 +1446,7 @@ export function makeWaker({
             cwd,
             check: (adapter) => adapter.checkFeature(config),
             build: (adapter) => adapter.featureResumeCall({
-              config, project, work, sessionId: session, prompt: withColumn(PROMPTS.feature(copy), column), allowed: feature.allowed, env: baseEnv, claude, platform,
+              config, project, work, sessionId: session, prompt: withColumn(adapter, PROMPTS.feature(copy), column), allowed: feature.allowed, env: baseEnv, claude, platform,
               ...feature.inputs, ...roleOf(column, 'feature'),
             }),
             file: gathered.entry.file,
@@ -1478,6 +1501,9 @@ export function makeWaker({
         // left, started again, may hold some an earlier session planted (ruling P7-33).
         if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
         if (shape === 2) {
+          // The column for its subagents, in a wake of its own in the feature's wakes folder, which its brief names.
+          const add = shape2Column();
+          if (add !== null) copyInto(writeWake(project, { to: 'feature', work, events: [], digest: [], dropped: 0 }, { now }), featureWakesDir(worktree), add);
           print(`START feature ${work} ${worktree}`);
           return { printed: true };
         }
@@ -1497,7 +1523,7 @@ export function makeWaker({
           cwd: worktree,
           check: (adapter) => adapter.checkFeature(config),
           build: (adapter) => adapter.featureStartCall({
-            config, project, work, sessionId, prompt: withColumn(PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
+            config, project, work, sessionId, prompt: withColumn(adapter, PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
             ...feature.inputs, ...roleOf(column, 'feature'),
           }),
           file: brief,

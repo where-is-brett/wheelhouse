@@ -1168,11 +1168,17 @@ async function releaseMerged(ctx, pr, merged) {
   await ctx.write('merge', { pr, ...commit, forUsers: merged.briefing });
 }
 
-// The verified CLEAN reviews of pull request `pr` at `head` on record, each counted once.
+// The verified CLEAN reviews of pull request `pr` at `head` on record, each counted once: by its record's id, which a
+// record sent again (from a session's pending folder, say) keeps, and its signer. Two reviewers' records may hold
+// the same data (the same verdict, model and version), so the data alone never makes two reviews one.
 function cleanReviewsOf(project, pr, head) {
   const enrolled = readEnrolled();
-  return stateEvents(project).filter((e) => e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head
-    && e.data.verdict === 'CLEAN' && verify(e, enrolled)).length;
+  const seen = new Set();
+  for (const e of stateEvents(project)) {
+    if (!(e.kind === 'review' && isPlain(e.data) && e.data.pr === pr && e.data.commit === head && e.data.verdict === 'CLEAN' && verify(e, enrolled))) continue;
+    seen.add(`${e.sig.computer}:${e.id}`);
+  }
+  return seen.size;
 }
 
 // Whether `work`'s change is in one of the project's critical areas: the files its plan names and those its branch
@@ -1199,7 +1205,8 @@ async function inCriticalArea(ctx, config, views, work, head) {
 // (design section 14.6): the foreman's check, asked before the gate is; the gate's own condition stays as it is.
 // Null when the merge may go to the gate, else the line saying why it waits.
 async function secondReviewWait(ctx, views, work, pr, head) {
-  // Without the configuration nothing here can be told, and the gate, which reads it too, refuses on its own.
+  // A configuration that can't be read falls back to Balanced, whose one review is the gate's to weigh as always; the
+  // gate itself is unchanged, and reads the configuration again for its own conditions.
   let config;
   try {
     config = await ctx.config();

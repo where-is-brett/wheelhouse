@@ -1651,7 +1651,15 @@ test('at Thorough, work in a critical area goes to the gate only once two review
   assert.equal((await act(['merge', 'mine'], { client: flatClient })).code, 0);
   assert.deepEqual(flat.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
 
-  // A second CLEAN review on the head: it goes to the gate.
+  // A record kept twice in the state (sent again) never counts as two: here review 1 is the only one counted.
+  const first = review(5);
+  const copy = path.join(stateDir(P), eventPath(first).replace(/\.json$/, '-again.json'));
+  fs.writeFileSync(copy, JSON.stringify(first));
+  const sentAgain = scene('thorough', ['src/pay/a.js']);
+  assert.match((await act(['merge', 'mine'], { client: sentAgain.client })).out, /: 1 so far/);
+  fs.rmSync(copy);
+
+  // A second reviewer's CLEAN record on the head, with the same data as the first: it goes to the gate.
   review(4);
   const two = scene('thorough', ['src/pay/a.js']);
   const merged = await act(['merge', 'mine'], { client: two.client });

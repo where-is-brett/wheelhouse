@@ -25,8 +25,10 @@ export const PLAIN_KINDS = [
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
-// helper, when setup finishes and when it is taken again.
-export const HELPER_ONLY_KINDS = ['survey'];
+// helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
+// evaluation's, through the helper's own writer, so no session can mark a Thoroughness column ready; nothing writes
+// one yet.
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 const MAX_RETRIES = 3;
 

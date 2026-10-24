@@ -1197,3 +1197,54 @@ test('with no pins, every start is as before: the flat models, at Balanced whate
   await waker(bare, { alive: () => false, routing }).wakeForeman(writeWake(P, bundle('b')));
   assert.deepEqual(sessionFlags(bare.calls[0].args), { model: 'model-a', effort: null, fallback: null });
 }));
+
+test('at Shape 2 the column goes in each wake\'s copy as `column`, and in a wake of its own before a START line, the lines staying one line', () => withHome(async () => {
+  checkout();
+  const lines = [];
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  const lean = () => ({
+    level: 'lean',
+    roles: { builder: { model: 'model-mid', effort: 'medium', fallback: 'model-top' }, reviewer: { model: 'model-mid', effort: 'medium', fallback: null } },
+    extra: { builderCap: 1 },
+    lines: [],
+  });
+  const w = waker({ run: () => { throw new Error('Shape 2 starts nothing'); }, alive: () => true }, { shape: 2, print: (line) => lines.push(line), locate: () => dir, routing: lean });
+  const foreman = writeWake(P, bundle('e1'));
+  const feature = writeWake(P, featureBundle('login-page'));
+  const recordBefore = fs.readFileSync(feature, 'utf8');
+  await w.wakeForeman(foreman);
+  await w.wakeFeature('login-page', feature);
+  await w.startFeature({ work: 'login-page', worktree: dir });
+  assert.equal(lines.length, 3);
+  for (const line of lines) assert.doesNotMatch(line, /[\r\n]/);
+  const column = [
+    'The models and efforts for the subagents you dispatch this wake (Thoroughness: Lean):',
+    'builder: model model-mid, effort medium',
+    'reviewer: model model-mid, effort medium',
+    'When a task is sent back by its review, build it again at effort high.',
+  ];
+  const copyOf = (line) => JSON.parse(fs.readFileSync(line.split(' ').at(-1), 'utf8'));
+  assert.deepEqual(copyOf(lines[0]).column, column);
+  const featureCopy = copyOf(lines[1]);
+  assert.deepEqual(featureCopy.column, column);
+  // The copy is the record with the column beside it; the record itself is unchanged.
+  assert.deepEqual({ ...featureCopy, column: undefined }, { ...JSON.parse(recordBefore), column: undefined });
+  assert.equal(fs.readFileSync(feature, 'utf8'), recordBefore);
+  // The START line's own wake, in the feature's wakes folder, carries the column for the session's first dispatches.
+  assert.equal(lines[2], `START feature login-page ${dir}`);
+  const wakes = path.join(featurePaths(dir).dir, 'wakes');
+  const own = fs.readdirSync(wakes).map((name) => JSON.parse(fs.readFileSync(path.join(wakes, name), 'utf8'))).filter((x) => x.events.length === 0);
+  assert.equal(own.length, 1);
+  assert.deepEqual(own[0].column, column);
+  assert.equal(own[0].to, 'feature');
+  assert.equal(own[0].work, 'login-page');
+
+  // An adapter that doesn't take the column gets copies that are the record, as before.
+  const plain = [];
+  const stand = { checkForeman: () => {}, checkFeature: () => {}, foremanCall: () => ({}), featureStartCall: () => ({}), featureResumeCall: () => ({}), finalAnswer: () => null };
+  const other = waker({ run: () => { throw new Error('Shape 2 starts nothing'); }, alive: () => true }, { shape: 2, print: (line) => plain.push(line), locate: () => dir, routing: lean, sessions: stand });
+  const again = writeWake(P, featureBundle('login-page', 'y'));
+  await other.wakeFeature('login-page', again);
+  assert.equal(fs.readFileSync(plain[0].split(' ').at(-1), 'utf8'), fs.readFileSync(again, 'utf8'));
+}));
