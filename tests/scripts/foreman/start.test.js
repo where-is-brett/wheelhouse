@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
@@ -57,7 +58,8 @@ test('start starts the watcher once', () => withHome(async (home) => {
   assert.equal(call.opts.detached, true);
   assert.equal(call.opts.windowsHide, true);
   assert.equal(call.opts.stdio, 'ignore');
-  assert.equal(call.opts.cwd, home);
+  // In a folder the watcher never pins: not the Wheelhouse home, which uninstall removes.
+  assert.equal(call.opts.cwd, os.homedir());
   assert.equal(first.out, `Started the watcher for ${P}.\n`);
 
   // While it runs, a second start starts nothing.

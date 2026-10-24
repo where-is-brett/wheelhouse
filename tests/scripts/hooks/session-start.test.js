@@ -108,7 +108,8 @@ test('a helper that does not answer is started, detached and hidden', async () =
     assert.equal(f.calls.spawn[0].opts.detached, true);
     assert.equal(f.calls.spawn[0].opts.windowsHide, true);
     assert.equal(f.calls.spawn[0].opts.stdio, 'ignore');
-    assert.equal(f.calls.spawn[0].opts.cwd, home);
+    // In a folder the helper never pins: not the Wheelhouse home, which uninstall removes.
+    assert.equal(f.calls.spawn[0].opts.cwd, os.homedir());
     assert.ok(fs.statSync(home).isDirectory());
     assert.equal(f.calls.unref, 1);
     assert.equal(f.calls.sync, 1);
@@ -543,14 +544,8 @@ test('session-start exits in time with its context when the helper never answers
     // The watcher the session start may have started runs on, in the home: it is stopped too.
     await as(home, () => stopWatcher(P)).catch(() => {});
     server.close();
-    try {
-      removeFolder(home);
-    } catch (error) {
-      // The session start's detached jobs (the weekly one, the watcher) run with the home as their working folder,
-      // which Windows won't let go of while they run: there what is inside goes, and the empty folder is left to the
-      // system's temporary folder. Anywhere else, or with anything left inside, the failure stands.
-      if (process.platform !== 'win32' || error.code !== 'EBUSY' || fs.readdirSync(home).length > 0) throw error;
-    }
+    // The detached jobs work in a folder of their own (jobFolder), so none holds the home.
+    removeFolder(home);
   }
 });
 
