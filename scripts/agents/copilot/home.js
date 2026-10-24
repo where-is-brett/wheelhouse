@@ -8,6 +8,8 @@
 //
 //   node scripts/agents/copilot/home.js           prints the paths that differ from adapters/copilot/home/, exit 1 if any
 //   node scripts/agents/copilot/home.js --write   replaces adapters/copilot/home/ with what buildHome gives
+//   node scripts/agents/copilot/home.js --plugin  adds the plugin's folder to that check (adapters/copilot/plugin/)
+//   --write also writes the plugin: the same skills and agents, with the plugin's manifest and no hooks
 //   --root <folder> builds from, and writes under, another copy of the tree (the tests use it)
 //
 // The kit is plain text and byte-stable: LF line endings, paths in order, every file ending in one newline.
@@ -23,6 +25,8 @@ import { startedAsScript } from '../../lib/started-as-script.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const HOME_DIR = 'adapters/copilot/home';
+// The Copilot CLI plugin (design section 8.3, ruling P8-15): its own root, holding the kit's skills and agents and nothing else.
+export const PLUGIN_DIR = 'adapters/copilot/plugin';
 const BUILD_COMMAND = 'npm run copilot-home';
 
 // Ruling P4-9: the names Claude Code gives its tools, in backticks, become Copilot's.
@@ -88,6 +92,15 @@ const COMMAND_SKILLS = Object.freeze({
 // source stays without it and the kit adds it, straight before the heading that opens the steps that need Node.js.
 const FRONT_DESK_LEAN_LINE = 'At Lean, follow wheelhouse-lean for the record, the board, building and merging.';
 const FRONT_DESK_LEAN_ANCHOR = '\n## The command\n';
+// The kit's front desk at Middle and Full (review Minor 2, rulings P8-7 and P8-8): on Copilot a click in the chat
+// binds nothing, so a card a confirmed click decides goes to the helper's window through the Wheelhouse command's
+// `confirm <card>`. Claude Code's front desk keeps its own words; the kit adds this at the end of its Cards section.
+const FRONT_DESK_CONFIRM_LINE = '- **A card a confirmed click decides, at Middle and Full:** on Copilot a click in the chat doesn\'t count, because no hook can sign it. '
+  + 'For a build question\'s Allow this time or Allow for this feature, and for Lift STOP, a guardrail change, Unattended, a runbook step or a CI push, '
+  + 'tell the director in one plain line that a click in the chat doesn\'t count here and that the helper\'s own window will show the card. '
+  + 'Then run `confirm <card>` with the card\'s id from `views waiting` (or `confirm lift-stop`): it shows the card in that window, where their click is the one that counts, and waits for it. '
+  + 'Say only what it prints: `"recorded":true` means the click was recorded; anything else, say in one plain line that nothing was decided.';
+const FRONT_DESK_CONFIRM_ANCHOR = '\n## Carrying work on, and archiving another setup\'s instructions\n';
 // The intake's Lean line (ruling P5-38), after its overview, so a Lean chat with no Wheelhouse command takes each
 // `cli.js` step from Lean's playbook; skills/intake stays Claude Code's, word for word, and the kit adds it.
 const INTAKE_LEAN_LINE = 'At Lean, where no Wheelhouse command runs, follow wheelhouse-lean\'s Intake at Lean in place of each `cli.js` step.';
@@ -174,11 +187,21 @@ function withLeanLine(text, rel, { line, anchor }) {
   return text.replace(anchor, () => `\n${line}\n${anchor}`);
 }
 
+// A line added as the last item of a list straight before a heading of the source (the front desk's Cards section
+// ends before "## Carrying work on, ..."). A source without that heading, once, is an error.
+function withCardsLine(text, rel, { line, anchor }) {
+  if (text.split(anchor).length !== 2) throw new Error(`${rel} has no single "${anchor.trim()}" heading to put the line before`);
+  return text.replace(anchor, () => `${line}\n${anchor}`);
+}
+
 function skillFrom(root, { name, source }) {
   const { front, body } = parse(readSource(root, source), source);
   const file = `skills/wheelhouse-${name}/SKILL.md`;
   let rest = fillKitWords(renameSkills(mapToolWords(withoutPathComment(body, source), source)), source);
-  if (name === 'front-desk') rest = withLeanLine(rest, source, { line: FRONT_DESK_LEAN_LINE, anchor: FRONT_DESK_LEAN_ANCHOR });
+  if (name === 'front-desk') {
+    rest = withLeanLine(rest, source, { line: FRONT_DESK_LEAN_LINE, anchor: FRONT_DESK_LEAN_ANCHOR });
+    rest = withCardsLine(rest, source, { line: FRONT_DESK_CONFIRM_LINE, anchor: FRONT_DESK_CONFIRM_ANCHOR });
+  }
   if (name === 'intake') rest = withLeanLine(rest, source, { line: INTAKE_LEAN_LINE, anchor: INTAKE_LEAN_ANCHOR });
   return [file, assemble({ file, source, front: { name: `wheelhouse-${name}`, description: front.description }, rest })];
 }
@@ -325,15 +348,66 @@ export function writeHome({ root = REPO } = {}) {
   return [...built.keys()];
 }
 
+// ---- The plugin ----
+
+// The plugin as a map from relative path to text: the kit's skills and agents (the same bytes, with the path comment saying
+// where the copy sits), the manifest that names them and the MANIFEST. No hooks key and no hooks folder: Copilot would
+// load them, and the hooks are the person's own (check 56).
+export function buildPlugin({ root = REPO } = {}) {
+  const files = new Map();
+  for (const [file, text] of buildHome({ root })) {
+    if (!file.startsWith('skills/') && !file.startsWith('agents/')) continue;
+    const comment = `<!-- ${HOME_DIR}/${file} `;
+    if (!text.includes(`\n${comment}`)) throw new Error(`${file} does not carry its path comment`);
+    files.set(file, text.replace(`\n${comment}`, `\n<!-- ${PLUGIN_DIR}/${file} `));
+  }
+  let version = '0.0.0';
+  try {
+    version = JSON.parse(readSource(root, 'package.json')).version ?? version;
+  } catch { /* a copy of the tree without package.json gets the placeholder */ }
+  files.set('plugin.json', `${JSON.stringify({
+    name: 'wheelhouse',
+    version,
+    description: 'Wheelhouse\'s skills and agents for Copilot CLI. It carries no hooks.',
+    skills: 'skills/',
+    agents: 'agents/',
+  }, null, 2)}\n`);
+  files.set('MANIFEST.txt', manifestOf(files));
+  return new Map([...files.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+}
+
+// Where the committed plugin differs from what buildPlugin gives, as repository-relative paths.
+export function checkPlugin({ root = REPO } = {}) {
+  const built = buildPlugin({ root });
+  const have = committedFiles(path.join(root, ...PLUGIN_DIR.split('/')));
+  const differ = new Set();
+  for (const [file, text] of built) if (have.get(file) !== text) differ.add(file);
+  for (const file of have.keys()) if (!built.has(file)) differ.add(file);
+  return [...differ].sort().map((file) => `${PLUGIN_DIR}/${file}`);
+}
+
+export function writePlugin({ root = REPO } = {}) {
+  const built = buildPlugin({ root });
+  const dir = path.join(root, ...PLUGIN_DIR.split('/'));
+  fs.rmSync(dir, { recursive: true, force: true });
+  for (const [file, text] of built) {
+    const target = path.join(dir, ...file.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+  }
+  return [...built.keys()];
+}
+
 function main(argv) {
   const rootAt = argv.indexOf('--root');
   const root = rootAt >= 0 ? path.resolve(argv[rootAt + 1]) : REPO;
   if (argv.includes('--write')) {
     const written = writeHome({ root });
-    process.stdout.write(`Wrote ${written.length} files to ${HOME_DIR}\n`);
+    const plugin = writePlugin({ root });
+    process.stdout.write(`Wrote ${written.length} files to ${HOME_DIR} and ${plugin.length} to ${PLUGIN_DIR}\n`);
     return 0;
   }
-  const differ = checkHome({ root });
+  const differ = [...checkHome({ root }), ...(argv.includes('--plugin') ? checkPlugin({ root }) : [])];
   if (differ.length > 0) process.stdout.write(`${differ.join('\n')}\n`);
   return differ.length > 0 ? 1 : 0;
 }

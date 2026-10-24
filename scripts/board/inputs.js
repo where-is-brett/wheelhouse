@@ -25,6 +25,7 @@ import { projectOf } from '../hooks/kit.js';
 import { localViews } from '../hooks/session-start.js';
 import { listEvents } from '../state/events.js';
 import { usageFigures, weeklyShare } from '../usage/figures.js';
+import { agentInFolder } from '../agents/names.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { readProfileViews, profileRemote } from '../profile/store.js';
 import { stopState } from '../lib/stop.js';
@@ -82,8 +83,9 @@ function readSources() {
 
 // The usage figures the glance needs: the week's share alone, never the days. A clock that
 // can't be read gives no share.
-function glanceUsage(clock, clockRead) {
-  const { share, shareAt } = clockRead ? attempt(() => weeklyShare({ now: clock }), {}) : {};
+// The allowance read is Claude's: a project on another agent (ruling P8-32) shows no share of it.
+function glanceUsage(clock, clockRead, otherAgent = false) {
+  const { share, shareAt } = clockRead && !otherAgent ? attempt(() => weeklyShare({ now: clock }), {}) : {};
   return { week: { share: share ?? null, shareAt: shareAt ?? null }, missing: [] };
 }
 
@@ -144,7 +146,11 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     project: isRecord(views?.settings) ? views.settings : {}, profile: isRecord(profileViews?.settings) ? profileViews.settings : {}, now: clock,
   }));
   const factor = settings?.unusualFactor?.value;
-  const usage = offline ? glanceUsage(clock, clockRead) : attempt(() => usageFigures({ project, now: clock, factor }));
+  // The agent the project runs on here: a Lean project's record names it, else the project's configuration.
+  const usageAgent = attempt(() => (lean === true ? readLean(project)?.agent : agentInFolder(record.folder, { computerId: computerId() }))) ?? null;
+  const usage = offline
+    ? glanceUsage(clock, clockRead, typeof usageAgent === 'string' && usageAgent !== 'claude-code')
+    : attempt(() => usageFigures({ project, now: clock, factor, agent: usageAgent }));
   const sources = offline ? null : readSources();
 
   const known = await helperFacts(project, { client, address, now: clock, offline, clockRead, waitMs }).catch(() => ({}));

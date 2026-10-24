@@ -1,0 +1,7 @@
+{
+  "name": "wheelhouse",
+  "version": "0.0.0",
+  "description": "Wheelhouse's skills and agents for Copilot CLI. It carries no hooks.",
+  "skills": "skills/",
+  "agents": "agents/"
+}

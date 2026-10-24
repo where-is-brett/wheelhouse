@@ -119,15 +119,21 @@ function kitsOf(mismatches, short) {
 // An upstream of null is the manifest itself, which couldn't be read. `short` names the kits
 // without their paths.
 export function holdInput(hold, { short = false } = {}) {
-  const { mismatches } = hold.data;
+  const { mismatches, why } = hold.data;
   const unread = mismatches.some((m) => m.upstream === null);
   return {
     kind: 'question',
     level: 3,
-    what: unread
+    // A hold that says why (an agent's own, ruling P8-23) says that in place of the kits.
+    what: typeof why === 'string' && why !== ''
+      ? `${why.replace(/\.+$/, '')}. Edits and commands are held in this project until it passes.`
+      : unread
       ? 'Wheelhouse\'s own list of the kits it expects can\'t be read, so the installed kits can\'t be checked. Edits and commands are held in this project until they can be.'
       : `The installed kits differ from the ones Wheelhouse is pinned to: ${kitsOf(mismatches, short)}. Edits and commands are held in this project until they match.`,
-    why: 'Putting the pinned kits back is yours to do on this computer, so it comes to you. No click here lifts the hold: once they are back, the next session start finds them matching and lifts it.',
+    // An agent's own hold says what lifts it (ruling P8-32); the session start's is lifted by a matching start.
+    why: typeof hold.data.lifts === 'string' && hold.data.lifts !== ''
+      ? hold.data.lifts
+      : 'Putting the pinned kits back is yours to do on this computer, so it comes to you. No click here lifts the hold: once they are back, the next session start finds them matching and lifts it.',
     options: [
       { label: 'Show me how', says: 'I go through putting the pinned kits back, step by step.' },
       { label: 'Leave it for now', says: 'The hold stays, and nothing is edited or built until the kits match.' },

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TRIALS_AGAIN } from '../lib/measure-numbers.js';
+import { agentOfConfig } from '../agents/names.js';
 
 export const REPO = fileURLToPath(new URL('../../', import.meta.url));
 export const EVAL_ROOT = path.join(REPO, 'tests', 'eval');
@@ -56,6 +57,20 @@ export function coveredScenarios({ dir = E2E_DIR } = {}) {
   return found.map(({ id, test, file }) => ({ id, test, file }));
 }
 
+// The agent a run that names none runs on: the one a project with no agent named runs on.
+export const DEFAULT_AGENT = agentOfConfig(null);
+
+// The agents a scenario file declares it runs on (its module's `agents: ['…']`), read from its text so
+// the file need not be loaded, or null when it declares none (it runs on every agent). run.js checks
+// it against the module whenever it loads one.
+export function declaredAgents(file) {
+  const found = /^\s*agents:\s*\[([^\]]*)\]/m.exec(fs.readFileSync(file, 'utf8'));
+  return found === null ? null : [...found[1].matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1]);
+}
+
+// Whether a scenario declaring `agents` (declaredAgents) runs on `agent`.
+export const runsOnAgent = (agents, agent) => agents === null || agents.includes(agent);
+
 // The leg a scenario file declares (its module's `leg: '<name>'`), read from its text so the
 // file need not be loaded; null for a scenario's main leg.
 export function declaredLeg(file) {
@@ -78,7 +93,7 @@ function writtenScenarios(root) {
   for (const suite of suites) {
     for (const name of fs.readdirSync(path.join(root, suite)).sort()) {
       const match = SCENARIO_FILE.exec(name);
-      if (match) found.push({ number: Number(match[1]), suite, file: name, leg: declaredLeg(path.join(root, suite, name)) });
+      if (match) found.push({ number: Number(match[1]), suite, file: name, agents: declaredAgents(path.join(root, suite, name)), leg: declaredLeg(path.join(root, suite, name)) });
     }
   }
   return found;
@@ -245,7 +260,13 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     if (!byId.has(run.id)) byId.set(run.id, []);
     byId.get(run.id).push(run);
   }
-  const written = writtenScenarios(root);
+  // The scenarios that don't run on the run's agent (`agents`) are no rows of its report; those that
+  // name it are among the designed set it must account for.
+  const agent = typeof record?.agent === 'string' ? record.agent : DEFAULT_AGENT;
+  const all = writtenScenarios(root);
+  const written = all.filter((scenario) => runsOnAgent(scenario.agents, agent));
+  const named = typeof record?.agent === 'string' ? all.filter((scenario) => scenario.agents?.includes(agent)).map((scenario) => scenario.number) : [];
+  designed = [...new Set([...designed, ...named])];
   const legsOf = (id) => [...new Set(written.filter((scenario) => scenario.number === id).map((scenario) => scenario.leg))];
   const rows = [...byId.entries()].map(([id, scenarioRuns]) => rowFor(id, scenarioRuns, legsOf(id)));
   for (const scenario of written) {
@@ -270,6 +291,7 @@ export function summarise(record, { root = EVAL_ROOT, e2eDir = E2E_DIR, designed
     // The day the run's results are filed under (the computer's own date), else the day it began.
     date: record?.date ?? (typeof record?.at === 'string' ? record.at.slice(0, 10) : null),
     how: record?.how ?? null,
+    agent: typeof record?.agent === 'string' ? record.agent : null,
     carried: record?.carried ?? null,
     tokens: sum(runs),
     // A run cut short (no `finished` in its record) never passes, whatever it holds (ruling E25).
@@ -315,7 +337,8 @@ export function summaryText(summary) {
     `on Wheelhouse ${summary.version ?? '(version unknown)'}`,
     summary.commit ? `build ${summary.commit}` : null,
   ].filter(Boolean);
-  lines.push(`${facts.join(', ')}. Each scenario runs in real \`claude -p\` sessions, in a throwaway copy, with and without Wheelhouse; the end-to-end tests run with \`node --test\`.`, '');
+  const sessions = summary.agent ? `sessions of the ${summary.agent} agent, through its adapter's runner` : '`claude -p` sessions';
+  lines.push(`${facts.join(', ')}. Each scenario runs in real ${sessions}, in a throwaway copy, with and without Wheelhouse; the end-to-end tests run with \`node --test\`.`, '');
 
   if (summary.carried) {
     const c = summary.carried;

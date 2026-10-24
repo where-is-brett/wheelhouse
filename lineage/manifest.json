@@ -118,5 +118,10 @@
   "claudeCode": {
     "floor": "2.1.299"
   },
+  "agents": {
+    "copilot": {
+      "cli": "1.0.101"
+    }
+  },
   "models": "the routing table in .claude/wheelhouse.json"
 }

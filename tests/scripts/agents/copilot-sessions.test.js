@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import { isPendingPart } from '../../../scripts/agents/contract.js';
-import { ACTIVITY_DAYS, HOOK_FILE } from '../../../scripts/lib/copilot-numbers.js';
+import { ACTIVITY_DAYS, BACKGROUND_SESSIONS_READY, HOOK_FILE } from '../../../scripts/lib/copilot-numbers.js';
 import { quoteForCmd, resolveClaude, resolveCommand } from '../../../scripts/lib/claude.js';
 import { scanContent, scanText } from '../../../scripts/state/secret-scan.js';
 import { makeEvent, ACTIVITY_COMMANDS, PLAIN_KINDS, REFUSAL_KINDS } from '../../../scripts/state/events.js';
@@ -20,10 +20,14 @@ import { registration } from '../../../adapters/copilot/hooks.js';
 import copilot from '../../../adapters/copilot/index.js';
 import { levelRules } from '../../../adapters/copilot/permissions.js';
 import sessions, {
-  CMD_LINE_MOST, MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv, featureResumeCall,
-  featureStartCall, finalAnswer, foremanCall, pruneActivity, refusalOf, refusalsOf, sessionHome, sessionIdOf,
-  sessionUsage, writeSessionHome,
+  CMD_LINE_MOST, MOST_COMMANDS, REFUSAL_KIND_NAMES, SIGN_IN_KEYS, activityFile, activitySummary, checkFeature, checkForeman, copilotSessionEnv,
+  featureResumeCall as resumeCallOff, featureStartCall as startCallOff, finalAnswer, foremanCall as foremanCallOff, pruneActivity, refusalOf,
+  refusalsOf, sessionHome, sessionIdOf, sessionUsage, sessionsPart, writeSessionHome,
 } from '../../../adapters/copilot/sessions.js';
+
+// Every call checks the switch itself (ruling P8-1), so the calls are built here from the part switched on; the
+// exported ones refuse (the first test).
+const { featureResumeCall, featureStartCall, foremanCall } = sessionsPart({ ready: true });
 
 const stand = standInTools();
 after(() => stand.restore());
@@ -78,10 +82,18 @@ const foreman = (extra = {}) => foremanCall({
 // The value after `flag` in `args`.
 const valueOf = (args, flag) => args[args.indexOf(flag) + 1];
 
-test('the registry\'s sessions part stays pending until Part 8 switches it on (P7-1)', () => {
-  assert.ok(isPendingPart(sessions));
+test('the registry\'s sessions part is built, and its checks refuse while the switch is off (P8-1)', () => {
+  assert.equal(isPendingPart(sessions), false);
   assert.equal(copilot.sessions, sessions);
-  assert.ok(copilot.pending.includes('sessions'));
+  assert.ok(!copilot.pending.includes('sessions'));
+  assert.equal(BACKGROUND_SESSIONS_READY, false);
+  assert.throws(() => sessions.checkForeman({}), /aren't switched on yet/);
+  assert.throws(() => sessions.checkFeature({}), /aren't switched on yet/);
+  assert.throws(() => checkForeman({}), /aren't switched on yet/);
+  // The calls themselves refuse too, whoever asks, before anything is built.
+  for (const call of [foremanCallOff, startCallOff, resumeCallOff, sessions.foremanCall, sessions.featureStartCall, sessions.featureResumeCall]) {
+    assert.throws(() => call({}), /aren't switched on yet/);
+  }
 });
 
 test('each call has --no-ask-user and the level\'s rules', () => {
@@ -152,10 +164,14 @@ test('the model comes from the routing table\'s Copilot column, and none is pass
   assert.throws(() => checkFeature(bad), /builder's model/);
   assert.throws(() => start({ config: bad }), /builder's model/);
   assert.throws(() => checkForeman({ agentRouting: { copilot: { foreman: 7 } } }), /foreman's model/);
-  assert.doesNotThrow(() => checkFeature(ROUTED));
-  assert.doesNotThrow(() => checkForeman({}));
+  // A model that can be passed is no refusal: switched on, the checks pass (ruling P8-1 keeps them refusing until
+  // then, for their own reason).
+  const on = sessionsPart({ ready: true });
+  assert.doesNotThrow(() => on.checkFeature(ROUTED));
+  assert.doesNotThrow(() => on.checkForeman({}));
+  assert.throws(() => checkFeature(ROUTED), /aren't switched on yet/);
   // Claude Code's session mode is not read.
-  assert.doesNotThrow(() => checkFeature({ sessionMode: 'bypassPermissions' }));
+  assert.doesNotThrow(() => on.checkFeature({ sessionMode: 'bypassPermissions' }));
 });
 
 test('a .cmd shim is called through quoteForCmd', () => {

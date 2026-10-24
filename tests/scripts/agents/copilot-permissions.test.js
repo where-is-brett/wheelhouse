@@ -18,7 +18,10 @@ import { projectSettings } from '../../../scripts/protection/settings.js';
 import { guardedCommand } from '../../../scripts/windows/low.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, buildGrants } from '../../../scripts/protection/windows-builds.js';
 import { LOOP_TOOLS, levelAllowed, levelRules } from '../../../adapters/copilot/permissions.js';
-import { featureResumeCall, featureStartCall, writeSessionHome } from '../../../adapters/copilot/sessions.js';
+import { sessionsPart, writeSessionHome } from '../../../adapters/copilot/sessions.js';
+
+// The calls check the switch themselves (ruling P8-1), so they are built from the part switched on.
+const { featureResumeCall, featureStartCall } = sessionsPart({ ready: true });
 
 const stand = standInTools();
 after(() => stand.restore());
@@ -86,7 +89,9 @@ test('a shell deny is passed where the level\'s allows could reach it (P7-30)', 
   assert.ok(!at('ask', ['npm test']).some((r) => r.startsWith('shell(npx')));
   // A granted command inside a denied one is reached too: the deny beats it.
   assert.ok(at('ask', ['npx wrangler deploy']).includes('shell(npx wrangler:*)'));
-  assert.ok(!at('ask', ['npx wranglerish']).includes('shell(npx wrangler:*)'));
+  // A plain prefix reaches too (ruling P8-11): no run has shown whether `:*` matches whole words only.
+  assert.ok(at('ask', ['npx wranglerish']).includes('shell(npx wrangler:*)'));
+  assert.ok(!at('ask', ['npm test']).includes('shell(npx wrangler:*)'));
   // A granted git brings git's denies; Guarded's runner reaches none of them.
   const git = at('ask', ['git']);
   for (const rule of ['shell(git push:*)', 'shell(git credential:*)']) assert.ok(git.includes(rule), rule);

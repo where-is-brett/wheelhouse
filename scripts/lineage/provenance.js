@@ -1,7 +1,8 @@
 // scripts/lineage/provenance.js
 // What built a pull request or a report: the Wheelhouse version, the upstream commits, the
 // register's version, the Claude Code version, the models and whether the fingerprints
-// matched. The helper stamps it as a short block in every pull request's body, from the
+// matched. A session of another agent (ruling P8-19) also names the agent, its version, the
+// editor's version and the agent's runtime's, four lines more, each "not known" when it is. The helper stamps it as a short block in every pull request's body, from the
 // session's provenance.json on this computer (written at session start), and the merge gate
 // reads the block back and checks it against the installed Wheelhouse's own manifest.
 import fs from 'node:fs';
@@ -19,6 +20,11 @@ const FILE_BYTES = 64 * 1024;
 const VALUE = /^[A-Za-z0-9._:@+/-]{1,128}$/;
 const UPSTREAM_NAME = /^[a-z0-9-]{1,64}$/;
 const UNKNOWN = 'unknown';
+// What the agent's four lines say of a version not known.
+const NOT_KNOWN = 'not known';
+// The agent's four lines, each its line's words and its field.
+const AGENT_LINES = Object.freeze([['Agent', 'agent'], ['Agent version', 'agentVersion'], ['Editor', 'editor'], ['Runtime', 'runtime']]);
+const AGENT_FIELDS = AGENT_LINES.map(([, field]) => field);
 const FINGERPRINTS = ['match', 'mismatch'];
 // Claude Code's own name for an entry it made up rather than a model wrote.
 const SYNTHETIC = '<synthetic>';
@@ -32,6 +38,7 @@ export const WHY = Object.freeze({
   upstream: 'an upstream commit differs',
   fingerprints: 'the fingerprints did not match',
   claudeCode: 'Claude Code is older than the floor',
+  agent: 'the agent is older than its pin',
 });
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -89,13 +96,16 @@ export function sessionProvenance({ project, sessionId, readEntries = (file) => 
   try {
     entries = typeof kept.transcript === 'string' && kept.transcript !== '' ? readEntries(kept.transcript) : [];
   } catch { /* none read */ }
+  const agent = valueOrNull(kept.agent);
+  const keptModels = (Array.isArray(kept.models) ? kept.models : []).filter((m, i, all) => valueOrNull(m) !== null && all.indexOf(m) === i);
   return {
     wheelhouse: valueOrNull(kept.wheelhouse),
     upstreams,
     register: valueOrNull(kept.register),
     claudeCode: claudeCodeOf(entries) ?? valueOrNull(kept.claudeCode),
-    models: modelsOf(entries),
+    models: agent === null || (Array.isArray(entries) && entries.length > 0) ? modelsOf(entries) : keptModels,
     fingerprints: kept.fingerprints,
+    ...(agent === null ? {} : Object.fromEntries(AGENT_FIELDS.map((field) => [field, valueOrNull(kept[field])]))),
   };
 }
 
@@ -111,6 +121,7 @@ export function provenanceBlock(provenance) {
     ...upstreams.map(([name, sha]) => `- Upstream ${name}: ${shown(sha)}`),
     `- Register: ${shown(p.register)}`,
     `- Claude Code: ${shown(p.claudeCode)}`,
+    ...(valueOrNull(p.agent) === null ? [] : AGENT_LINES.map(([words, field]) => `- ${words}: ${valueOrNull(p[field]) ?? NOT_KNOWN}`)),
     `- Models: ${models.length > 0 ? models.join(', ') : 'none'}`,
     `- Fingerprints: ${FINGERPRINTS.includes(p.fingerprints) ? p.fingerprints : 'mismatch'}`,
     END,
@@ -160,9 +171,12 @@ export function parseProvenance(body) {
       found.upstreams[upstream[1]] = read(value);
       continue;
     }
-    const field = { Wheelhouse: 'wheelhouse', Register: 'register', 'Claude Code': 'claudeCode', Models: 'models', Fingerprints: 'fingerprints' }[key];
+    const field = { Wheelhouse: 'wheelhouse', Register: 'register', 'Claude Code': 'claudeCode', Models: 'models', Fingerprints: 'fingerprints', ...Object.fromEntries(AGENT_LINES) }[key];
     if (field === undefined || Object.hasOwn(found, field)) return null;
-    if (field === 'models') {
+    if (AGENT_FIELDS.includes(field)) {
+      if (value !== NOT_KNOWN && !VALUE.test(value)) return null;
+      found[field] = value === NOT_KNOWN ? null : value;
+    } else if (field === 'models') {
       const models = value === 'none' ? [] : value.split(', ');
       if (models.some((model) => !VALUE.test(model))) return null;
       found.models = models;
@@ -176,9 +190,13 @@ export function parseProvenance(body) {
   }
   const fields = ['wheelhouse', 'register', 'claudeCode', 'models', 'fingerprints'];
   if (!fields.every((field) => Object.hasOwn(found, field))) return null;
+  // The agent's four lines come together or not at all, and an agent line names one.
+  const agentLines = AGENT_FIELDS.filter((field) => Object.hasOwn(found, field));
+  if (agentLines.length !== 0 && (agentLines.length !== AGENT_FIELDS.length || found.agent === null)) return null;
   return {
     wheelhouse: found.wheelhouse, upstreams: found.upstreams, register: found.register,
     claudeCode: found.claudeCode, models: found.models, fingerprints: found.fingerprints,
+    ...(agentLines.length === 0 ? {} : Object.fromEntries(AGENT_FIELDS.map((field) => [field, found[field]]))),
   };
 }
 
@@ -193,7 +211,9 @@ function atLeast(a, b) {
 
 // Whether `provenance` is what `manifest` says Wheelhouse runs on: the same Wheelhouse version,
 // every upstream at the manifest's commit (and no other), the fingerprints matched, and Claude
-// Code at or above the floor. `why` is one of WHY.
+// Code at or above the floor; or, for a session of another agent, that agent's version at or above
+// the manifest's pin for it (its `agents`), a version not known or an agent with no pin failing.
+// `why` is one of WHY.
 export function provenanceMatches(provenance, manifest) {
   if (!isObject(provenance)) return { ok: false, why: WHY.none };
   if (!isObject(manifest)) return { ok: false, why: WHY.manifest };
@@ -203,6 +223,11 @@ export function provenanceMatches(provenance, manifest) {
   const same = Object.keys(upstreams).length === wanted.length && wanted.every((u) => upstreams[u.name] === u.sha);
   if (!same) return { ok: false, why: WHY.upstream };
   if (provenance.fingerprints !== 'match') return { ok: false, why: WHY.fingerprints };
+  if (typeof provenance.agent === 'string') {
+    const pin = isObject(manifest.agents) && Object.hasOwn(manifest.agents, provenance.agent) ? manifest.agents[provenance.agent]?.cli : undefined;
+    if (!atLeast(provenance.agentVersion, pin)) return { ok: false, why: WHY.agent };
+    return { ok: true };
+  }
   if (!atLeast(provenance.claudeCode, manifest.claudeCode?.floor)) return { ok: false, why: WHY.claudeCode };
   return { ok: true };
 }

@@ -43,14 +43,119 @@ function liftMark(project) {
   return path.join(projectHome(project), 'lineage', 'lifted.json');
 }
 
-// Whether the project is held. Anything at the hold file's place counts.
+// An agent's own hold, beside the session start's (rulings P8-13, P8-23, P8-32, P8-33): `lineage/hold-<name>.json`,
+// written and removed by that agent's own starter (its kits, or a new version of the agent that hasn't passed the
+// safety checks), never by the session start's check, so a matching check can't lift it. `name` is a plain name. The
+// file is { agent, at, mismatches, why?, lifts?, recorded?, ...what the starter keeps }: `agent` is the agent whose
+// starter wrote it, `why` what holds the work and `lifts` what lifts it, each one line, which the hook and the card say.
+//
+// Every agent's hold counts here, whatever the project runs on: which agent that is is read in one place only, the
+// project's configuration on its default branch, which the watcher holds (ruling P8-33), and nothing here can read
+// it without git. A hold of an agent the project no longer runs is removed by the watcher (clearOtherAgentHolds),
+// and only when that configuration and the main checkout's say the same other agent; until then it stands.
+const AGENT_HOLD_NAME = /^[a-z0-9-]{1,64}$/;
+const AGENT_HOLD_FILE = /^hold-[a-z0-9-]{1,64}\.json$/;
+export function agentHoldFile(project, name) {
+  if (typeof name !== 'string' || !AGENT_HOLD_NAME.test(name)) throw new Error(`An agent's hold needs a plain name: ${JSON.stringify(name)}`);
+  return path.join(projectHome(project), 'lineage', `hold-${name}.json`);
+}
+
+// The agents' holds in the project's lineage folder, each { file, held } (held null when it can't be read), or null
+// when the folder is there but can't be read.
+function agentHolds(project) {
+  const dir = path.dirname(holdFile(project));
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (error) {
+    return error?.code === 'ENOENT' ? [] : null;
+  }
+  return names.filter((name) => AGENT_HOLD_FILE.test(name)).map((name) => {
+    const held = readJson(path.join(dir, name));
+    return { file: path.join(dir, name), held: held !== null && typeof held === 'object' && !Array.isArray(held) ? held : null };
+  });
+}
+
+// Whether the project's lineage folder holds any agent's hold file, for the watcher to look no further (and read
+// nothing else) when it holds none. A folder that can't be read holds none it could remove.
+export function hasAgentHolds(project) {
+  return (agentHolds(project) ?? []).length > 0;
+}
+
+// Whether the project is held: by the session start's hold file, or by any agent's own. Anything at the hold file's
+// place counts, and so does a lineage folder that can't be read.
 export function isHeld(project) {
   try {
     fs.lstatSync(holdFile(project));
     return true;
   } catch (error) {
-    return error?.code !== 'ENOENT';
+    if (error?.code !== 'ENOENT') return true;
   }
+  const holds = agentHolds(project);
+  return holds === null || holds.length > 0;
+}
+
+// What holds the project, for the hook to say: null when the session start's hold stands, it isn't held, or nothing
+// better than the hook's own words can be said; otherwise an agent's hold's `why` and `lifts`.
+export function agentHoldWords(project) {
+  if (fs.lstatSync(holdFile(project), { throwIfNoEntry: false }) !== undefined) return null;
+  const held = (agentHolds(project) ?? []).map((h) => h.held).find((h) => h !== null && typeof h.lifts === 'string');
+  if (held === undefined) return null;
+  return `${typeof held.why === 'string' ? held.why.replace(/\.+$/, '') : 'the skill kits kept for its sessions differ from its manifest'}. ${held.lifts}`;
+}
+
+// Removes the holds of agents other than the one the project runs here, for the watcher (ruling P8-33): `agent` is
+// the agent its default branch's configuration names for this computer, the one the watcher starts sessions with, and
+// `checkoutAgent` the one the main checkout's configuration names. Only when both are known and say the same is a
+// hold of another agent removed: where they differ (a change not yet pulled, a local edit) or either can't be read,
+// every hold stands. A hold that can't be read, or names no agent, stands. Gives how many were removed.
+export function clearOtherAgentHolds(project, { agent, checkoutAgent }) {
+  if (typeof agent !== 'string' || agent === '' || agent !== checkoutAgent) return 0;
+  let removed = 0;
+  for (const { file, held } of agentHolds(project) ?? []) {
+    if (held === null || typeof held.agent !== 'string' || held.agent === agent) continue;
+    fs.rmSync(file, { force: true });
+    removed += 1;
+  }
+  return removed;
+}
+
+// An agent's hold as its file keeps it, or null when there is none or it can't be read.
+export function readAgentHold(project, name) {
+  const held = readJson(agentHoldFile(project, name));
+  return held !== null && typeof held === 'object' && Array.isArray(held.mismatches) ? held : null;
+}
+
+// Writes `agent`'s hold for `mismatches` (each { upstream, path }), with `why`, `lifts` and anything else in `keep`
+// kept in the file. Gives { set, recorded }: `recorded` is whether the hold that stood already had this set put in
+// the state, so its lineage-hold record isn't raised again.
+export function holdAgentWork({ project, name, agent, mismatches, why, lifts, keep = {}, now = () => new Date() }) {
+  if (typeof agent !== 'string' || !AGENT_HOLD_NAME.test(agent)) throw new Error("An agent's hold needs the agent's name");
+  const file = agentHoldFile(project, name);
+  const set = mismatchSet(mismatches);
+  const recorded = readJson(file)?.recorded === set;
+  writeFileMade(file, {
+    ...keep, agent, at: now().toISOString(), mismatches,
+    ...(typeof why === 'string' ? { why } : {}), ...(typeof lifts === 'string' ? { lifts } : {}), ...(recorded ? { recorded: set } : {}),
+  });
+  return { set, recorded };
+}
+
+// Notes in an agent's hold that its set `set` is in the state now. Nothing is written when the hold is gone or holds
+// another set.
+export function markAgentRecorded(project, name, set) {
+  const held = readAgentHold(project, name);
+  if (held === null || mismatchSet(held.mismatches) !== set) return false;
+  writeFileMade(agentHoldFile(project, name), { ...held, recorded: set });
+  return true;
+}
+
+// Removes an agent's hold. Its card closes once no hold of the project is left (recordLift). Gives whether one was there.
+export function liftAgentWork(project, name) {
+  const file = agentHoldFile(project, name);
+  const there = fs.lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  fs.rmSync(file, { force: true });
+  return there;
 }
 
 // What the session start records of a session: projects/<p>/sessions/<session_id>/provenance.json.
@@ -247,8 +352,12 @@ export function warningLines(mismatches, { kept = true } = {}) {
   return [...byUpstream].map(([upstream, paths]) => `Lineage: the installed ${upstream} files differ from Wheelhouse's manifest (${namedPaths(paths)}). ${kept ? HELD_LINE : NOT_HELD_LINE}`);
 }
 
-// Writes the session's provenance: what it runs on, and whether the fingerprints matched.
-export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok, claudeCode, transcript }) {
+// Writes the session's provenance: what it runs on, and whether the fingerprints matched. A session of an agent
+// other than Claude Code (ruling P8-19) names it (`agent`), its version (`agentVersion`), the editor's and the
+// agent's runtime's versions (`editor`, `runtime`) and the models its run used (`models`, as it has no transcript to
+// read them from); each is null when not known. Claude Code's session start gives none of them, and its file is as
+// it was.
+export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok, claudeCode, transcript, agent, agentVersion, editor, runtime, models }) {
   const file = provenanceFile(project, sessionId);
   if (file === null) return null;
   const provenance = {
@@ -258,6 +367,9 @@ export function writeProvenance({ project, sessionId, root = ROOT, upstreams, ok
     claudeCode: claudeCode ?? null,
     fingerprints: ok ? 'match' : 'mismatch',
     transcript: typeof transcript === 'string' ? transcript : null,
+    ...(typeof agent === 'string' ? {
+      agent, agentVersion: agentVersion ?? null, editor: editor ?? null, runtime: runtime ?? null, models: Array.isArray(models) ? models : [],
+    } : {}),
   };
   writeFileMade(file, provenance);
   return provenance;

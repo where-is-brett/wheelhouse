@@ -25,6 +25,24 @@ export const BUILD_QUESTION_OPTIONS = Object.freeze([
   { label: BUILD_QUESTION_LABELS.notNow, says: 'The feature waits, and the foreman raises it with your next briefing.' },
 ].map((o) => Object.freeze(o)));
 
+// The labels whose click allows a build question's commands: an Ask allowance (ruling P8-8).
+export const ALLOWANCE_LABELS = Object.freeze([BUILD_QUESTION_LABELS.once, BUILD_QUESTION_LABELS.feature]);
+
+// The lines the helper's own window adds below a build question's card when it confirms an Ask allowance (design
+// section 6.4 of the other agents' design, level 3 Ask): the commands by name and what they run, that a command
+// allowed can do whatever the person's account can, and that one run can leave lasting changes. Plain words with
+// no term the glossary would explain; the commands are the question's own, as the state holds them.
+export function allowanceWindowLines(commands) {
+  const named = (Array.isArray(commands) ? commands : []).filter((c) => typeof c === 'string' && c !== '');
+  return [
+    '',
+    `Allowing this lets the builder run: ${named.join('; ')}.`,
+    'Each runs whatever the project\'s own files tell it to, and the builder can change those files first.',
+    'Once allowed, it can do whatever your account can on this computer.',
+    'One run can leave lasting changes, here or anywhere else your account reaches.',
+  ];
+}
+
 // Whether `command` is a build command of the configuration's `buildCommands`, or local git:
 // one of them, or one of them with more words after it (`npm run build` is `npm run`'s), and
 // one an allow rule can hold.
@@ -96,12 +114,17 @@ export function isBuildQuestion(q) {
 // at or after the click, or with a click from before the feature's current life began (work
 // closed and queued again keeps its question ids and answers), and nothing is granted to a
 // feature the views don't hold. The commands are the question's; featureAllowRules gives a
-// rule only for those still configured.
-export function buildGrants({ views, work, used, computer }) {
+// rule only for those still configured. With `proofs`, a list, an answer counts only when it
+// names one of them as its proof: an agent whose hooks don't sign counts a grant only
+// from a click in the helper's own window (ruling P8-8), never an answer some other route signed.
+// Anything given there but a list counts none. Without `proofs`, every verified answer counts, as
+// Claude Code's signed answers always have.
+export function buildGrants({ views, work, used, computer, proofs }) {
   const life = isPlain(views?.features) && Object.hasOwn(views.features, work) ? views.features[work] : null;
   const feature = isPlain(life) ? life.data : null;
   if (!isPlain(feature) || feature.step === 'closed' || typeof computer !== 'string' || typeof life.began !== 'string') return [];
   const report = isPlain(views.reports) && Object.hasOwn(views.reports, work) ? views.reports[work] : null;
+  if (proofs !== undefined && !Array.isArray(proofs)) return [];
   const ran = used instanceof Set ? used : Array.isArray(used) ? new Set(used) : null;
   const questions = isPlain(views.questions) ? views.questions : {};
   const grants = [];
@@ -110,6 +133,7 @@ export function buildGrants({ views, work, used, computer }) {
     const answer = entry?.answer;
     if (!isBuildQuestion(data) || data.work !== work) continue;
     if (!isPlain(answer) || answer.computer !== computer || typeof answer.at !== 'string') continue;
+    if (proofs !== undefined && !(typeof answer.proof === 'string' && proofs.includes(answer.proof))) continue;
     const scope = SCOPES.get(answer.label);
     if (scope === undefined) continue;
     if (answer.at < life.began || (typeof report?.at === 'string' && report.at >= answer.at)) continue;

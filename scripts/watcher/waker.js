@@ -47,6 +47,30 @@
 // for Claude Code, found by scripts/agents/project-agent.js); the waker gives it
 // the prompt, the foreman's tools or the feature's allow rules, and runs what it
 // is given. The allow rules stay here: they follow the build-command levels.
+// Every feature call is also given its level's inputs, read here on every
+// system (levelInputs), for an adapter that works out its own rules; Claude
+// Code's ignores them.
+//
+// What an adapter may add (ruling P8-2), each asked for only when it is there:
+//   - `prepare({ project, target })`, run before every start: a throw refuses
+//     the start before anything is run, the error's `records` are raised, each
+//     once, and its `raised(record)`, when it has one, is told of each once it
+//     is in the state; a prepare that answers `{ lifted: true }` removed a hold
+//     of the project's, and its lift is recorded (liftHolds);
+//   - a call's `output`, a file the child's stdout and stderr are appended to,
+//     with `afterRun({ stdout, code, call, target, project, at })` reading what the run
+//     appended once it ends: its `{ ok, why }` settles the wakes in place of the
+//     exit code, its `records` are written through `raise`, and, for a call
+//     with `idFromRun`, its `sessionId` is the one kept for the feature's wakes
+//     (ruling P8-3). A run whose exit this watcher didn't see (one the
+//     foreman's command started, or one from before a restart) is read the same
+//     way once its record ends;
+//   - `pruneActivity({ project, now })`, called by prune;
+//   - `grantProofs`, the proofs an answer must name for its build-command grant to count (buildGrants'
+//     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only a click in the helper's own window.
+//     Without it, every verified answer counts, as before.
+// A feature call that says the level it runs at (`level`) has it recorded as a
+// `level` record when it changes (ruling P8-5).
 //
 // The wake files. The record of each wake is written under the watcher's
 // folder, projects/<p>/watcher/wakes/, which no session can read or write.
@@ -59,7 +83,8 @@
 //
 // The outbox. Every wake goes into projects/<p>/watcher/outbox.json first.
 // When its session is started it is marked in flight, and it leaves the
-// outbox only when that process exits with 0. A process that exits otherwise,
+// outbox only when that process exits with 0 (or, for a run whose output is
+// kept, when its adapter's afterRun reads it as done). A process that exits otherwise,
 // or cannot be started, puts its wakes back with a wait of 1, 5, then 15
 // minutes; from the third failure on, each is reported (health.json's
 // `lastError`) and it keeps trying every 15 minutes. A watcher that restarts
@@ -108,6 +133,8 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
+import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
+import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { stopState } from '../lib/stop.js';
@@ -120,7 +147,8 @@ import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.j
 import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
-import { guardedCommand, guardedReady, labelWorktree } from '../windows/low.js';
+import { hostApprovalReady } from '../host/approval-ready.js';
+import { guardedCommand, guardedReady, labelWorktree, readSelfTest } from '../windows/low.js';
 
 // A path as one shell word the foreman can type as it is: bare when it holds
 // only plain characters, otherwise in single quotes, which bash reads
@@ -158,6 +186,16 @@ export const BACKOFF_MS = Object.freeze([MINUTE, 5 * MINUTE, 15 * MINUTE]);
 export const FAILURES_REPORTED = 3;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// A session id a run named itself: a plain word, as a `--resume=` argument takes it.
+const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// A feature whose first run hasn't named its session yet.
+const STARTING = Symbol('starting');
+// What a check made just before a run starts throws when STOP has come on: the wake goes again.
+class StopNow extends Error {
+  constructor() {
+    super('STOP is on: no session is started');
+  }
+}
 const WAKE_BYTES = 8 * 1024 * 1024;
 const SMALL_BYTES = 64 * 1024;
 
@@ -201,6 +239,8 @@ const outboxLock = (project) => path.join(watcherDir(project), 'outbox.lock');
 export const runningFile = (project, target) => path.join(watcherDir(project), 'running', `${target}.json`);
 export const sessionFile = (project, work) => path.join(watcherDir(project), 'sessions', `${work}.json`);
 export const grantsUsedFile = (project) => path.join(watcherDir(project), 'grants-used.json');
+// The level the project's builders last ran at on this computer, as the last `level` record named it (ruling P8-5).
+export const levelFile = (project) => path.join(watcherDir(project), 'level.json');
 
 // Makes `sub` under the watcher's folder, refusing any part of it that is there
 // but is not a real folder (a link above all). Returns the folder.
@@ -273,10 +313,14 @@ function recordGrantsUsed(project, ids) {
 // The level of build commands on this computer and the director's grants to
 // the feature `work`, read from the views as locateFeature reads them, with
 // the Guarded runner's command. Guarded counts only while this computer's
-// self-test passes (guardedReady). Anything that can't be read is Ask with no
-// grants.
+// self-test passes (guardedReady). Beside them, the facts a level's rules are
+// worked out from on every system (ruling P8-4): whether the project has real
+// users (its `phase` setting is `launched`), whether the self-test found the
+// helper's keys unreadable to builds, and whether the host's approval is ready.
+// Anything that can't be read is Ask with no grants, and real users. With `proofs`, a grant counts only from an
+// answer naming one of them (buildGrants).
 export function windowsBuildsOf(project, { pluginRoot = PLUGIN_ROOT, now = () => new Date(), platform = process.platform } = {}) {
-  return (work) => {
+  return (work, { proofs } = {}) => {
     try {
       const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
       const computer = computerId();
@@ -289,11 +333,14 @@ export function windowsBuildsOf(project, { pluginRoot = PLUGIN_ROOT, now = () =>
       } catch { /* no runner to name: Guarded gives the grants alone */ }
       return {
         level: buildsLevel({ views, computer, locked, guardedReady: guardedReady({ home, now, platform }) }),
-        grants: buildGrants({ views, work, used: readGrantsUsed(project), computer }),
+        grants: buildGrants({ views, work, used: readGrantsUsed(project), computer, ...(proofs === undefined ? {} : { proofs }) }),
         guardedCommand: runner,
+        realUsers: views.settings?.phase?.value === 'launched',
+        keysUnreadable: readSelfTest({ home, now, platform })?.keysReadHeld === true,
+        hostApproval: hostApprovalReady() === true,
       };
     } catch {
-      return { level: 'ask', grants: [], guardedCommand: null };
+      return { level: 'ask', grants: [], guardedCommand: null, realUsers: true, keysUnreadable: false, hostApproval: false };
     }
   };
 }
@@ -497,19 +544,34 @@ export function locateFeature(project) {
   };
 }
 
-// Starts `file` with `args` detached from the watcher, with no window and no
-// output kept; `input`, when given, is written to its stdin. Resolves once the
-// process has started, with its pid and a promise of its exit code.
-export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false } = {}) {
+// Opens `file` for the child's output: appended to, made if missing (readable
+// by this account only), and never through a link where the system can refuse
+// one.
+function openOutput(file) {
+  const { O_WRONLY, O_CREAT, O_APPEND, O_NOFOLLOW } = fs.constants;
+  return fs.openSync(file, O_WRONLY | O_CREAT | O_APPEND | (O_NOFOLLOW ?? 0), 0o600);
+}
+
+// Starts `file` with `args` detached from the watcher, with no window; `input`,
+// when given, is written to its stdin. Its output is kept only when `output`
+// names a file: its stdout and stderr are appended there (ruling P8-2), and
+// otherwise thrown away. Resolves once the process has started, with its pid
+// and a promise of its exit code.
+export function spawnDetached(file, args, { cwd, env, input = '', windowsVerbatimArguments = false, output = null } = {}) {
   return new Promise((resolve, reject) => {
     let child;
+    let fd = null;
     try {
+      if (typeof output === 'string') fd = openOutput(output);
       child = spawn(file, args, {
-        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments, stdio: [input ? 'pipe' : 'ignore', 'ignore', 'ignore'],
+        cwd, env, detached: true, windowsHide: true, shell: false, windowsVerbatimArguments, stdio: [input ? 'pipe' : 'ignore', fd ?? 'ignore', fd ?? 'ignore'],
       });
     } catch (error) {
       reject(error);
       return;
+    } finally {
+      // The child holds its own copy from here.
+      if (fd !== null) fs.closeSync(fd);
     }
     const exited = new Promise((done) => { child.once('exit', (code) => done(Number.isInteger(code) ? code : 1)); });
     child.once('error', reject);
@@ -584,6 +646,31 @@ export function makeStartTimes({ platform = process.platform, run = runProgram, 
 }
 
 const bootTime = () => Date.now() - os.uptime() * 1000;
+
+// The size of a run's output file before the run, so only what the run itself
+// appended is read after it (a wake appends to its session's file).
+function outputSize(file) {
+  const stat = lstatOf(file);
+  return stat?.isFile() ? stat.size : 0;
+}
+
+// What a run appended to its output file from `from` on, at most the last
+// WAKE_BYTES of it; empty when the file isn't a regular file.
+function readOutput(file, from) {
+  const stat = lstatOf(file);
+  if (!stat?.isFile()) return '';
+  const start = Math.max(Number.isInteger(from) && from >= 0 ? from : 0, stat.size - WAKE_BYTES);
+  const length = stat.size - start;
+  if (length <= 0) return '';
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const read = fs.readSync(fd, buffer, 0, length, start);
+    return buffer.subarray(0, read).toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 // --- The waker ---
 
@@ -717,10 +804,32 @@ export function makeWaker({
     const r = readJson(runningFile(project, target));
     return isPlain(r) && typeof r.at === 'string' ? r : null;
   };
-  const forget = (target, pid) => {
-    const r = readRunning(target);
-    if (r !== null && r.pid === pid) fs.rmSync(runningFile(project, target), { force: true });
+  // Takes the target's record away, whole, when `matches(record)`: it is renamed aside first, which only one
+  // process can do, so two that see the same run end (the exit handler of the waker that started it, and another
+  // waker's endRecord) never both act on it. A record that doesn't match is put back. Returns the record taken, or
+  // null.
+  const claimRecord = (target, matches) => {
+    const file = runningFile(project, target);
+    const aside = path.join(path.dirname(file), `.${target}.${crypto.randomUUID()}.claim`);
+    try {
+      fs.renameSync(file, aside);
+    } catch {
+      return null;
+    }
+    const r = readJson(aside);
+    if (isPlain(r) && typeof r.at === 'string' && matches(r)) {
+      fs.rmSync(aside, { force: true });
+      return r;
+    }
+    try {
+      if (lstatOf(file) === null) fs.renameSync(aside, file);
+    } finally {
+      fs.rmSync(aside, { force: true });
+    }
+    return null;
   };
+  // Ends the target's record when it is this process's; says whether it was.
+  const forget = (target, pid) => claimRecord(target, (r) => r.pid === pid) !== null;
 
   // The pids of every recorded running process, so their start times are asked for together.
   const runningPids = () => {
@@ -756,41 +865,150 @@ export function makeWaker({
     return { live: r };
   }
 
-  // Ends a record that has ended: its wakes go again (an overrun counts as a failure).
-  function endRecord(target, state) {
+  const nameOf = (target) => (target === 'foreman' ? 'foreman' : target.slice('feature-'.length));
+
+  // The sessions part that ran `target`'s run, for reading its output: none to ask (no adapter for the agent, or
+  // one with no afterRun) gives null.
+  const readerOf = () => {
+    try {
+      const adapter = sessionsOf();
+      return typeof adapter.afterRun === 'function' ? adapter : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // What a run whose output was kept (`kept`: the record's `run`, { output, from, usageFile, idFromRun }) leaves,
+  // read by the adapter's afterRun from what the run appended (ruling P8-2): its records written through `raise`
+  // (a record that can't be written is reported, and the run still settles), a first run's session id kept for
+  // its wakes (ruling P8-3), and its wakes settled by its outcome, never by its exit code.
+  async function finishRun(adapter, target, kept, code, entries) {
+    let result;
+    try {
+      result = adapter.afterRun({ stdout: readOutput(kept.output, kept.from), code, call: kept, target, project, at: now().toISOString() });
+    } catch (error) {
+      result = { ok: false, why: `its output couldn't be read: ${error instanceof Error ? error.message : 'unknown error'}`, sessionId: null, records: [] };
+    }
+    for (const record of list(result?.records)) {
+      try {
+        await raise(record);
+      } catch (error) {
+        onError(`What the ${nameOf(target)} session did couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    if (target !== 'foreman' && kept.idFromRun === true) keepStartedId(nameOf(target), result?.sessionId ?? null);
+    if (result?.ok === true) settle(entries, 'done');
+    else {
+      const why = typeof result?.why === 'string' ? result.why : 'its run gave no outcome';
+      settle(entries, 'failed', why);
+      if (entries.length === 0) onError(`The ${nameOf(target)} session's run failed: ${why}`);
+    }
+  }
+
+  // Ends a record that has ended: its wakes go again (an overrun counts as a failure). A run whose output was kept
+  // is read instead, so a run whose exit this watcher never saw (a start made by the foreman's command, or a
+  // watcher that restarted) still leaves its records and its session id, and its wakes settle by its outcome.
+  // A record another process has already taken is left to it.
+  async function endRecord(target, state) {
     const ids = list(state.ended.entries).filter((x) => typeof x === 'string');
-    fs.rmSync(runningFile(project, target), { force: true });
+    const same = (r) => r.at === state.ended.at && r.pid === state.ended.pid && r.state === state.ended.state;
+    if (claimRecord(target, same) === null) return;
+    const kept = isPlain(state.ended.run) && typeof state.ended.run.output === 'string' ? state.ended.run : null;
     if (state.why === 'overran') {
       const minutes = Math.round(maxRunOf(target) / MINUTE);
-      onError(`The ${target === 'foreman' ? 'foreman' : target.slice('feature-'.length)} session ran past its ${minutes} minutes`);
+      onError(`The ${nameOf(target)} session ran past its ${minutes} minutes`);
       settle(ids, 'failed', 'its session ran past its time');
+    } else if (kept !== null && state.ended.state !== 'starting' && readerOf() !== null) {
+      await finishRun(readerOf(), target, kept, null, ids);
     } else {
       settle(ids, 'again');
     }
   }
 
-  // Starts the session `call` describes (the adapter's { file, args, env, input, verbatim }) for `target`,
-  // recording it as starting first and as running after. Resolves with the pid; the exit code settles `entries`.
-  async function launch({ target, cwd, call, file, entries = [] }) {
+  // Raises a `level` record when the level a feature's call runs at differs from the one last recorded on this
+  // computer, and keeps the new one (ruling P8-5): `{ level, work, at }`, with no `key`, so the views never take it
+  // for a level the director set, and no `pr`, so the audit reads it as the project's. A record that can't be
+  // written is reported and tried again at the next start.
+  async function noteLevel(level, work) {
+    if (typeof level !== 'string' || level === '') return;
+    const kept = readJson(levelFile(project));
+    if (isPlain(kept) && kept.level === level) return;
+    try {
+      await raise({ kind: 'level', data: { level, work, at: now().toISOString() } });
+    } catch (error) {
+      onError(`The level builders run at here (${level}) couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return;
+    }
+    watcherFolder(project);
+    writeJsonFile(levelFile(project), { level });
+  }
+
+  // Starts a session for `target`. In order: `check(adapter)` (the adapter's own check, which refuses by
+  // throwing); the adapter's `prepare({ project, target })` when it has one (an adapter whose sessions run from a
+  // home of their own writes it there: a throw refuses the start, and the records it carries are raised, each once);
+  // `build(adapter)`, the call ({ file, args, env, input, verbatim, output?, level?, idFromRun? }); `beforeRun(call)`,
+  // which may refuse; the call's level noted (noteLevel, for a feature), so a refused start records none; the session
+  // recorded as starting; `afterRecord(call)`, which writes what must only exist beside that record (a feature's
+  // session record, so no other process finds it with no run recorded); then run, and recorded as running.
+  // Resolves with the pid. When the call names an `output` file, the child's output is appended there and read once
+  // it exits (finishRun); otherwise its exit code settles `entries`, as it always has.
+  async function launch({ target, cwd, check, build, file, entries = [], beforeRun = () => {}, afterRecord = () => {} }) {
+    const adapter = sessionsOf();
+    check(adapter);
+    if (typeof adapter.prepare === 'function') {
+      let prepared;
+      try {
+        prepared = await adapter.prepare({ project, target });
+      } catch (error) {
+        for (const record of list(error?.records)) {
+          const said = `${record?.kind}:${JSON.stringify(record?.data?.mismatches ?? record?.data ?? null)}`;
+          if (raisedPrepare.has(said)) continue;
+          try {
+            await raise(record);
+            raisedPrepare.add(said);
+          } catch {
+            continue; // raised again at the next start
+          }
+          // The adapter keeps that its record is in the state, so a later start (or another watcher) raises it no more.
+          try {
+            if (typeof error?.raised === 'function') error.raised(record);
+          } catch { /* raised again, at worst */ }
+        }
+        throw error;
+      }
+      if (prepared?.lifted === true) await liftHolds();
+    }
+    const call = build(adapter);
+    beforeRun(call);
+    if (target !== 'foreman') await noteLevel(call.level, nameOf(target));
     const { env } = call;
+    const kept = typeof call.output === 'string'
+      ? { output: call.output, from: outputSize(call.output), ...(typeof call.usageFile === 'string' ? { usageFile: call.usageFile } : {}), idFromRun: call.idFromRun === true }
+      : null;
     watcherFolder(project, 'running');
     const file0 = runningFile(project, target);
     const at = now().toISOString();
-    writeJsonFile(file0, { state: 'starting', at, file, entries });
+    writeJsonFile(file0, { state: 'starting', at, file, entries, ...(kept ? { run: kept } : {}) });
     let started;
     try {
-      started = await run(call.file, call.args, { cwd, env, input: call.input, windowsVerbatimArguments: call.verbatim });
-      if (!Number.isInteger(started?.pid)) throw new Error('claude did not start');
+      afterRecord(call);
+      started = await run(call.file, call.args, {
+        cwd, env, input: call.input, windowsVerbatimArguments: call.verbatim, ...(kept ? { output: kept.output } : {}),
+      });
+      if (!Number.isInteger(started?.pid)) throw new Error('the session did not start');
     } catch (error) {
       fs.rmSync(file0, { force: true });
       throw error;
     }
     const startTime = await timeOf(started.pid, [], { fresh: true });
-    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries });
+    writeJsonFile(file0, { state: 'running', pid: started.pid, startTime, at, file, entries, ...(kept ? { run: kept } : {}) });
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
-        forget(target, started.pid);
-        if (code === 0) settle(entries, 'done');
+        const mine = forget(target, started.pid);
+        if (kept !== null && typeof adapter.afterRun === 'function') {
+          // A record already ended elsewhere (endRecord) has been read there.
+          if (mine) await finishRun(adapter, target, kept, code, entries);
+        } else if (code === 0) settle(entries, 'done');
         else {
           settle(entries, 'failed', `its session exited with code ${code}`);
           if (entries.length === 0) onError(`The ${target.slice('feature-'.length)} session exited with code ${code}`);
@@ -800,20 +1018,39 @@ export function makeWaker({
     }
     return started.pid;
   }
+  // The records a refused prepare raised, each once for this waker.
+  const raisedPrepare = new Set();
 
-  // The call that starts a fresh foreman to read `prompt`'s wake, asked of the adapter right after its check.
-  const foremanCall = (prompt) => {
-    const adapter = sessionsOf();
-    adapter.checkForeman(config);
-    return adapter.foremanCall({
-      config, prompt, tools: foremanTools, env: baseEnv, claude,
-    });
-  };
-  // What windowsBuilds answers for `work`, or Ask with no grants when it can't answer.
-  const windowsAnswer = (work) => {
+  // A prepare that removed a hold of the project's (an agent's own, ruling P8-32): its lift is recorded here, through
+  // `raise`, as the session start and the mod's tick record one, so its card closes on a computer with neither. It
+  // informs: a lift that can't be recorded is kept, as recordLift keeps one, and the start goes on.
+  async function liftHolds() {
+    try {
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+      const client = { state: { write: async (body) => { await raise({ kind: body.kind, data: body.data }); return { ok: true }; } } };
+      await recordLift({ project, views, computer: computerId(), now, client });
+    } catch (error) {
+      onError(`A lifted hold's card couldn't be closed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  // The foreman's start for `prompt`'s wake: its check asked right before its call is built.
+  const startForeman = (cwd, prompt, gathered) => launch({
+    target: 'foreman',
+    cwd,
+    check: (adapter) => adapter.checkForeman(config),
+    build: (adapter) => adapter.foremanCall({
+      config, project, prompt, tools: foremanTools, env: baseEnv, claude, platform,
+    }),
+    file: gathered.entry.file,
+    entries: [gathered.entry.id],
+  });
+  // What windowsBuilds answers for `work`, or Ask with no grants and real users when it can't answer. `proofs` is
+  // the adapter's grantProofs, passed only when the adapter has them.
+  const windowsAnswer = (work, proofs) => {
     let answer;
     try {
-      answer = buildsOf(work);
+      answer = proofs === undefined ? buildsOf(work) : buildsOf(work, { proofs });
     } catch {
       answer = null;
     }
@@ -821,42 +1058,69 @@ export function makeWaker({
       level: LEVELS.includes(answer?.level) ? answer.level : 'ask',
       grants: Array.isArray(answer?.grants) ? answer.grants.filter(isPlain) : [],
       guardedCommand: typeof answer?.guardedCommand === 'string' ? answer.guardedCommand : null,
+      realUsers: answer?.realUsers !== false,
+      keysUnreadable: answer?.keysUnreadable === true,
+      hostApproval: answer?.hostApproval === true,
     };
   };
   // Labels the worktree for the low runner: by default with Windows' own icacls, the common
   // folder being the main checkout's .git.
   const label = labelGuarded ?? ((worktree) => labelWorktree(worktree, { run: runProgram, commonDir: path.join(checkoutOf(), '.git') }));
-  // The feature session's allow rules for `work` in `worktree`, and the Allow this time grants they
-  // give, which are recorded as used before the run starts (Windows only). The record is read
-  // again here, so a grant goes to one run whatever windowsBuilds answers. At Guarded the worktree
-  // is labelled first; if it can't be, the run gets the Ask rules (failing closed) and says so.
-  const featureRules = async (work, worktree) => {
-    sessionsOf().checkFeature(config); // before anything is labelled or recorded
-    let allowed;
-    let runs = [];
-    if (platform === 'win32') {
-      const answer = windowsAnswer(work);
-      const { grants, guardedCommand } = answer;
-      let { level } = answer;
-      if (level === 'guarded') {
-        try {
-          if (guardedCommand === null) throw new Error('the runner\'s command can\'t be given');
-          await label(worktree);
-        } catch (error) {
-          onError(`The ${work} worktree couldn't be made ready for Guarded, so this run asks for build commands: ${error instanceof Error ? error.message : 'unknown error'}`);
-          level = 'ask';
-        }
+  // What a feature session's call is given for `work` in `worktree` (ruling P8-4), read on every system from
+  // trusted sources only:
+  //   - `allowed`, Claude Code's allow rules, exactly as before: on Windows they follow the level of build commands
+  //     and the director's grants, elsewhere the feature's allow rules alone;
+  //   - `inputs`, a level's inputs for an adapter that works out its own rules: the level and the
+  //     grants still in force, the Guarded runner's command, the worktree, the project's web domains, whether the
+  //     project has real users, whether the self-test found the keys unreadable, whether the host's approval is
+  //     ready, and whether Unattended is confirmed (its level reads `unattended` only from its own card);
+  //   - `recordUsed(call)`, which records the Allow this time grants given as used before the run starts, so a
+  //     grant goes to one run whatever windowsBuilds answers: on Windows, and wherever the call says the level it
+  //     runs at (an adapter that took the grants).
+  // At Guarded the worktree is labelled first (Windows only); if it can't be, the run gets the Ask rules (failing
+  // closed) and says so. Anything that can't be read is Ask with no grants and real users.
+  const levelInputs = async (work, worktree) => {
+    const sessions = sessionsOf();
+    sessions.checkFeature(config); // before anything is labelled or recorded
+    // An adapter's grantProofs that aren't a list of names count no grant (failing closed).
+    const named = sessions.grantProofs;
+    const proofs = named === undefined ? undefined : Array.isArray(named) && named.every((p) => typeof p === 'string') ? [...named] : [];
+    const answer = windowsAnswer(work, proofs);
+    const { grants, guardedCommand } = answer;
+    let { level } = answer;
+    if (platform === 'win32' && level === 'guarded') {
+      try {
+        if (guardedCommand === null) throw new Error('the runner\'s command can\'t be given');
+        await label(worktree);
+      } catch (error) {
+        onError(`The ${work} worktree couldn't be made ready for Guarded, so this run asks for build commands: ${error instanceof Error ? error.message : 'unknown error'}`);
+        level = 'ask';
       }
-      const used = readGrantsUsed(project);
-      const given = grants.filter((g) => g.scope !== 'run' || (used !== null && !used.includes(g.questionId)));
-      allowed = featureAllowRules(config, { platform, level, grants: given, guardedCommand });
-      // Used up at every level: a grant given while Unattended or Guarded is on is spent with
-      // this run, so it is not there for a later run once the level goes back to Ask.
-      runs = given.filter((g) => g.scope === 'run' && typeof g.questionId === 'string').map((g) => g.questionId);
-    } else {
-      allowed = featureAllowRules(config, { platform });
     }
-    return { allowed, recordUsed: () => recordGrantsUsed(project, runs) };
+    const used = readGrantsUsed(project);
+    const given = grants.filter((g) => g.scope !== 'run' || (used !== null && !used.includes(g.questionId)));
+    const allowed = platform === 'win32'
+      ? featureAllowRules(config, { platform, level, grants: given, guardedCommand })
+      : featureAllowRules(config, { platform });
+    // Used up at every level: a grant given while Unattended or Guarded is on is spent with
+    // this run, so it is not there for a later run once the level goes back to Ask.
+    const runs = given.filter((g) => g.scope === 'run' && typeof g.questionId === 'string').map((g) => g.questionId);
+    const inputs = {
+      level,
+      grants: given,
+      guardedCommand,
+      worktree,
+      domains: Array.isArray(config?.webDomains) ? config.webDomains : [],
+      realUsers: answer.realUsers,
+      keysUnreadable: answer.keysUnreadable,
+      hostApproval: answer.hostApproval,
+      unattendedConfirmed: level === 'unattended',
+    };
+    return {
+      allowed,
+      inputs,
+      recordUsed: (call) => recordGrantsUsed(project, platform === 'win32' || typeof call?.level === 'string' ? runs : []),
+    };
   };
 
   const checkoutOf = () => {
@@ -865,11 +1129,31 @@ export function makeWaker({
     return folder;
   };
 
-  // The session id the watcher made for the feature in this worktree, or null.
+  // The session id the watcher kept for the feature in this worktree: the one it made, or, for an adapter whose
+  // sessions name their own (`fromRun`), the one the first run gave (ruling P8-3). STARTING while that first run
+  // hasn't given it yet; null when there is none.
   const keptSession = (work, worktree) => {
     const kept = readJson(sessionFile(project, work));
-    if (!isPlain(kept) || typeof kept.sessionId !== 'string' || !UUID.test(kept.sessionId)) return null;
-    return typeof kept.worktree === 'string' && path.resolve(kept.worktree) === path.resolve(worktree) ? kept.sessionId : null;
+    if (!isPlain(kept) || typeof kept.worktree !== 'string' || path.resolve(kept.worktree) !== path.resolve(worktree)) return null;
+    if (kept.fromRun === true) {
+      if (kept.sessionId === null) return STARTING;
+      return typeof kept.sessionId === 'string' && RUN_ID.test(kept.sessionId) ? kept.sessionId : null;
+    }
+    return typeof kept.sessionId === 'string' && UUID.test(kept.sessionId) ? kept.sessionId : null;
+  };
+
+  // Keeps the session id a feature's first run gave, for its wakes; a first run that gave none leaves no session
+  // to wake, so its record is removed and the foreman's next start begins it again (ruling P8-3).
+  const keepStartedId = (work, id) => {
+    const file = sessionFile(project, work);
+    const kept = readJson(file);
+    if (!isPlain(kept) || kept.fromRun !== true || kept.sessionId !== null) return;
+    if (typeof id === 'string' && RUN_ID.test(id)) {
+      writeJsonFile(file, { ...kept, sessionId: id });
+      return;
+    }
+    fs.rmSync(file, { force: true });
+    onError(`The ${work} session's first run gave no session id; it is started again by the foreman's next \`act start\``);
   };
 
   // Whether the feature's wakes `ids` are held by the files in `worktree` that steer agents: when
@@ -1012,13 +1296,24 @@ export function makeWaker({
     return delivered;
   }
 
+  // The features with a record of a running session, so a run whose exit wasn't seen here is read once it ends.
+  const runningWorks = () => {
+    let names;
+    try {
+      names = fs.readdirSync(path.join(watcherDir(project), 'running'));
+    } catch {
+      return [];
+    }
+    return names.filter((n) => n.startsWith('feature-') && n.endsWith('.json')).map((n) => n.slice('feature-'.length, -'.json'.length)).filter((w) => SLUG.test(w));
+  };
+
   async function deliverByStart() {
     const delivered = [];
-    const works = [...new Set(load().filter((e) => e.to === 'feature').map((e) => e.work))];
+    const works = [...new Set([...load().filter((e) => e.to === 'feature').map((e) => e.work), ...runningWorks()])];
     for (const work of [undefined, ...works]) {
       const target = targetOf(work);
       const state = await stateOf(target);
-      if (state?.ended) endRecord(target, state);
+      if (state?.ended) await endRecord(target, state);
       else if (state?.live) continue;
       let entries = load();
       const mine = (e) => (work === undefined ? e.to === 'foreman' : e.to === 'feature' && e.work === work);
@@ -1040,6 +1335,14 @@ export function makeWaker({
           continue;
         }
         session = keptSession(work, cwd);
+        if (session === STARTING) {
+          // Its first run ended with no id kept for it (its record has gone): there is no session to wake. A record
+          // younger than a start's own time may belong to a start still being made elsewhere: it waits.
+          const since = Date.parse(readJson(sessionFile(project, work))?.at ?? '');
+          if (!Number.isNaN(since) && now().getTime() - since < STARTING_MS) continue;
+          keepStartedId(work, null);
+          continue;
+        }
         if (session === null) {
           if (!unstarted.has(work)) onError(`The ${work} session was not started by the watcher, so its wakes wait`);
           unstarted.add(work); // said once
@@ -1064,26 +1367,31 @@ export function makeWaker({
       try {
         let pid;
         if (work === undefined) {
-          pid = await launch({
-            target, cwd, call: foremanCall(PROMPTS.foreman(copy, wakeCommand)), file: gathered.entry.file, entries: [gathered.entry.id],
-          });
+          pid = await startForeman(cwd, PROMPTS.foreman(copy, wakeCommand), gathered);
         } else {
-          const feature = await featureRules(work, cwd);
-          // Built before the grants are recorded as used, so a call that can't be built uses none up.
-          const call = sessionsOf().featureResumeCall({
-            config, sessionId: session, prompt: PROMPTS.feature(copy), allowed: feature.allowed, env: baseEnv, claude,
-          });
-          if (stopped()) {
-            settle([gathered.entry.id], 'again');
-            return delivered;
-          }
-          feature.recordUsed();
+          const feature = await levelInputs(work, cwd);
           pid = await launch({
-            target, cwd, call, file: gathered.entry.file, entries: [gathered.entry.id],
+            target,
+            cwd,
+            check: (adapter) => adapter.checkFeature(config),
+            build: (adapter) => adapter.featureResumeCall({
+              config, project, work, sessionId: session, prompt: PROMPTS.feature(copy), allowed: feature.allowed, env: baseEnv, claude, platform, ...feature.inputs,
+            }),
+            file: gathered.entry.file,
+            entries: [gathered.entry.id],
+            // Built before the grants are recorded as used, so a call that can't be built uses none up.
+            beforeRun: (call) => {
+              if (stopped()) throw new StopNow();
+              feature.recordUsed(call);
+            },
           });
         }
         delivered.push({ to: work === undefined ? 'foreman' : 'feature', work, file: copy, pid });
       } catch (error) {
+        if (error instanceof StopNow) {
+          settle([gathered.entry.id], 'again');
+          return delivered;
+        }
         settle([gathered.entry.id], 'failed', error.message);
       }
     }
@@ -1127,23 +1435,35 @@ export function makeWaker({
         const target = targetOf(work);
         const state = await stateOf(target);
         if (state?.live) throw new Error(`The ${work} session is already running`);
-        if (state?.ended) endRecord(target, state);
-        // Checked before the session's id is written, so a refused start leaves nothing behind.
+        if (state?.ended) await endRecord(target, state);
+        // Checked before anything is written, so a refused start leaves nothing behind.
         sessionsOf().checkFeature(config);
         const sessionId = crypto.randomUUID();
-        watcherFolder(project, 'sessions');
-        writeJsonFile(sessionFile(project, work), { sessionId, worktree, at: now().toISOString() });
         if (stopped()) throw new Error('STOP is on: no session is started');
-        const feature = await featureRules(work, worktree);
-        const call = sessionsOf().featureStartCall({
-          config, sessionId, prompt: PROMPTS.start, allowed: feature.allowed, env: baseEnv, claude,
-        });
-        if (stopped()) throw new Error('STOP is on: no session is started');
-        feature.recordUsed();
+        const feature = await levelInputs(work, worktree);
+        let named = sessionId;
         const pid = await launch({
-          target, cwd: worktree, call, file: brief,
+          target,
+          cwd: worktree,
+          check: (adapter) => adapter.checkFeature(config),
+          build: (adapter) => adapter.featureStartCall({
+            config, project, work, sessionId, prompt: PROMPTS.start, allowed: feature.allowed, env: baseEnv, claude, platform, ...feature.inputs,
+          }),
+          file: brief,
+          beforeRun: (call) => {
+            if (stopped()) throw new Error('STOP is on: no session is started');
+            feature.recordUsed(call);
+          },
+          // The session's id is kept before the run starts, once its record is written: the one made here, or, for
+          // an adapter whose sessions name their own (`idFromRun`), none yet, which the first run's output gives
+          // (ruling P8-3).
+          afterRecord: (call) => {
+            named = call.idFromRun === true ? null : sessionId;
+            watcherFolder(project, 'sessions');
+            writeJsonFile(sessionFile(project, work), { sessionId: named, worktree, at: now().toISOString(), ...(named === null ? { fromRun: true } : {}) });
+          },
         });
-        return { pid, sessionId };
+        return { pid, sessionId: named };
       });
     },
     // Delivers what has been waiting: a session has ended, STOP has lifted, a wait has passed.
@@ -1160,6 +1480,31 @@ export function makeWaker({
         if (typeof checkout === 'string') {
           const dir = path.join(checkout, '.wheelhouse', 'foreman', 'wakes');
           if (lstatOf(dir)?.isDirectory() && realOf(dir) === path.join(realOf(checkout) ?? '', '.wheelhouse', 'foreman', 'wakes')) pruneFolder(dir, keep, t);
+        }
+        // A hold of an agent the project no longer runs on here goes, and its card closes (ruling P8-33): the agent is
+        // read from the default branch's configuration this waker runs on, and the hold goes only when the main
+        // checkout's names the same agent; otherwise it stands. A project with no agent's hold has nothing to look at,
+        // so nothing more is read (not even this computer's id).
+        try {
+          if (hasAgentHolds(project)) {
+            const id = computerId();
+            const agent = agentOfConfig(config, { computerId: id });
+            const checkoutAgent = typeof checkout === 'string' ? agentInFolder(checkout, { computerId: id }) : null;
+            if (clearOtherAgentHolds(project, { agent, checkoutAgent }) > 0) await liftHolds();
+          }
+        } catch (error) {
+          onError(`Another agent's hold couldn't be looked at: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
+        // And the sessions' kept output past its days, when the adapter keeps any (ruling P8-2).
+        let adapter = null;
+        try {
+          adapter = sessionsOf();
+        } catch { /* no adapter to ask */ }
+        // A prune that throws (a link where the activity folder should be) removes nothing, and says so.
+        try {
+          if (typeof adapter?.pruneActivity === 'function') adapter.pruneActivity({ project, now });
+        } catch (error) {
+          onError(`The sessions' old activity couldn't be pruned: ${error instanceof Error ? error.message : 'unknown error'}`);
         }
       });
     },
