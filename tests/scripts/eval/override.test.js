@@ -37,3 +37,8 @@ test('the override has seven numbered rules, each with a quoted line naming what
 test('each Superpowers sentence is quoted word for word', () => {
   for (const anchor of anchors) assert.ok(text.includes(`"${anchor}"`), `missing: ${anchor}`);
 });
+
+test('rule 1 counts only BLOCKER and HIGH findings as open, as Superpowers counts Critical and Important (scenario 21)', () => {
+  const rule = text.split(/^(?=\*\*\d\. )/m)[1];
+  assert.match(rule, /A finding is open when Wheelhouse's reviewer rates it BLOCKER or HIGH, as Superpowers' Critical and Important are; MEDIUM and LOW are minors: record them in the ledger as deferred, and they never extend the loop or go to the director\./);
+});
