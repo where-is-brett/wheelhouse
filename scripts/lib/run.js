@@ -58,15 +58,20 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      const killed = platform === 'win32' && Number.isInteger(child.pid) ? killer('taskkill', ['/pid', String(child.pid), '/T', '/F']) : null;
-      child.kill('SIGKILL');
       // A grandchild may still hold the pipes open; stop waiting for them.
       child.stdout.destroy();
       child.stderr.destroy();
       const result = { code: 1, ...text(), ...ending };
+      // On Windows taskkill walks the tree from the program, so the program itself is killed only after it: killed
+      // first, its children would be left running, holding their folders.
+      const killed = platform === 'win32' && Number.isInteger(child.pid) ? killer('taskkill', ['/pid', String(child.pid), '/T', '/F']) : null;
       let waited = null;
       Promise.race([Promise.resolve(killed), new Promise((done) => { waited = setTimeout(done, KILL_WAIT_MS); })])
-        .catch(() => {}).then(() => { clearTimeout(waited); resolve(result); });
+        .catch(() => {}).then(() => {
+          clearTimeout(waited);
+          child.kill('SIGKILL');
+          resolve(result);
+        });
     };
     const onAbort = () => end({ stopped: true });
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) timer = setTimeout(() => end({ timedOut: true }), timeoutMs);

@@ -21,7 +21,9 @@ import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HE
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { writeCaFile } from '../../../scripts/host/company-ca.js';
-import { tempFolder } from '../../helpers/homes.js';
+import { as, tempFolder } from '../../helpers/homes.js';
+import { removeFolder } from '../../helpers/remove.js';
+import { stopWatcher } from '../../../scripts/foreman/start.js';
 import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
@@ -538,9 +540,10 @@ test('session-start exits in time with its context when the helper never answers
     if (process.platform === 'win32') {
       for (let tries = 0; tries < 600 && !lowNodeReady({ home }); tries += 1) await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    // The watcher the session start may have started runs on, in the home: it is stopped too.
+    await as(home, () => stopWatcher(P)).catch(() => {});
     server.close();
-    // On Windows a stopped process's files may be held a moment longer: removal tries again.
-    fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    removeFolder(home);
   }
 });
 

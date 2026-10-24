@@ -85,7 +85,8 @@ async function seedBare(dir, branch = 'main', { stepOne = 'committed', gitignore
       const committed = stepOne === 'committed' ? { ...OWN_SETTINGS, enabledPlugins: { ...STEP_ONE, ...OWN_SETTINGS.enabledPlugins } } : OWN_SETTINGS;
       fs.writeFileSync(path.join(work, '.claude', 'settings.json'), `${JSON.stringify(committed, null, 2)}\n`);
     }
-    await g(work, 'add', '-A');
+    // Committed as written, CRLF included, whatever this computer's git would do with line endings.
+    await g(work, '-c', 'core.autocrlf=false', 'add', '-A');
     await g(work, 'commit', '-q', '-m', 'The director\'s first commit');
     await g(work, 'push', '-q', dir, branch);
   } finally {
