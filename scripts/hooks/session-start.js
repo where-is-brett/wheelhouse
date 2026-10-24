@@ -76,6 +76,7 @@ import { agentOfInput } from '../agents/of-input.js';
 import { readAllowance } from '../usage/figures.js';
 import { weeklyOf } from '../routing/nudge.js';
 import { usageOffer } from '../routing/offer.js';
+import { columnsReadyOf } from '../routing/in-force.js';
 import { TOOL_SHEETS } from '../agents/tool-sheets.js';
 import { frontDeskCommand, knowsNoSystemCa } from '../protection/settings.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -452,7 +453,7 @@ async function trustNotes({ client, left, up, now }) {
 // The usage card for this week's allowance, if one is due (design section 14.6): its line for the front desk, and
 // the offer kept as a usage-card record, so the same card isn't offered again. The reading is the weekly file's, which
 // costs no reasoning; the mark is the director's own, from their profile. It informs, so a failure gives no line.
-async function usageNotes({ client, left, up, project, views, now, allowance = () => weeklyOf(readAllowance()), timeZone }) {
+async function usageNotes({ client, left, up, project, views, now, allowance = () => weeklyOf(readAllowance()), timeZone, ready = columnsReadyOf }) {
   try {
     const reading = allowance();
     if (reading === null || reading === undefined) return [];
@@ -461,7 +462,7 @@ async function usageNotes({ client, left, up, project, views, now, allowance = (
       const got = await left(client.profile.views({}));
       if (got?.ok === true && got.views?.settings && typeof got.views.settings === 'object') profile = got.views.settings;
     }
-    const offer = usageOffer({ views, profile, allowance: reading, now, timeZone });
+    const offer = usageOffer({ views, profile, allowance: reading, ready: ready({ project }), now, timeZone });
     if (offer === null) return [];
     // Written at once when the helper is up, so a second session start before the next sync doesn't offer it again.
     const body = { project, kind: 'usage-card', data: offer.record };
@@ -693,7 +694,7 @@ export async function decide(input, deps = {}) {
   // comes at a later session start.
   if (deskSession && (setup === null || stepDone(setup.run, 3))) notes.push(...await trustNotes({ client: clientNow(), left, up: Boolean(up), now }));
   // Then the usage card, with the same left-over time; also only the front desk's.
-  if (deskSession && setupLine === null) notes.push(...await usageNotes({ client: clientNow(), left, up: Boolean(up), project, views, now, allowance: deps.allowance, timeZone: deps.timeZone }));
+  if (deskSession && setupLine === null) notes.push(...await usageNotes({ client: clientNow(), left, up: Boolean(up), project, views, now, allowance: deps.allowance, timeZone: deps.timeZone, ...(deps.columnsReady ? { ready: deps.columnsReady } : {}) }));
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
   // Anything that fails here, the computer's id included, shows Ask and leaves the rest of the
   // reload as it is.

@@ -152,6 +152,7 @@ import { run as runProgram } from '../lib/run.js';
 import { LookRefusal, safeGit } from '../lib/safe-git.js';
 import { readProject } from '../lib/projects.js';
 import { sameRemote } from '../state/git.js';
+import { sessionsOfProject } from '../agents/project-agent.js';
 import { readReadyRecord } from '../survey/ready-record.js';
 import {
   GUARDED_SETTING_WORDS, UNATTENDED_CARD, buildsLevel, isBuildQuestion, settingKey,
@@ -1182,20 +1183,32 @@ function cleanReviewsOf(project, pr, head) {
 }
 
 // Whether `work`'s change is in one of the project's critical areas: the files its plan names and those its branch
-// changes from the default branch at `head`. When git can't say, it counts as in one, so the check is never skipped.
-async function inCriticalArea(ctx, config, views, work, head) {
+// changes from the default branch at `head`. 'yes', 'no', or 'unknown' when git can't say, which counts as in one, so
+// the check is never skipped.
+async function criticalAreaOf(ctx, config, views, work, head) {
   const areas = Array.isArray(config?.criticalAreas) ? config.criticalAreas : [];
-  if (areas.length === 0) return false;
+  if (areas.length === 0) return 'no';
   const planned = featureOf(views, work)?.files;
   const paths = Array.isArray(planned) ? planned.filter((x) => typeof x === 'string') : [];
-  if (classifyChange({ paths, config }).criticalAreas.length > 0) return true;
-  if (head === undefined) return true;
+  if (classifyChange({ paths, config }).criticalAreas.length > 0) return 'yes';
+  if (head === undefined) return 'unknown';
   try {
     const git = fencedGit(ctx, checkoutOf(ctx.project), 'nothing was merged');
     const diff = await git(['diff', '--name-only', '-z', `refs/remotes/origin/HEAD...${head}`]);
-    if (diff.code !== 0) return true;
+    if (diff.code !== 0) return 'unknown';
     const changed = String(diff.stdout ?? '').split('\0').filter((x) => x !== '');
-    return classifyChange({ paths: changed, config }).criticalAreas.length > 0;
+    return classifyChange({ paths: changed, config }).criticalAreas.length > 0 ? 'yes' : 'no';
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Whether the agent the project runs here passes each subagent its column (`takesColumn`), so its feature session
+// can dispatch a second reviewer at Thorough. When which agent that is can't be told, it counts as one that does:
+// the second review is never dropped on a guess.
+function takesColumn(config) {
+  try {
+    return sessionsOfProject(config).takesColumn === true;
   } catch {
     return true;
   }
@@ -1215,10 +1228,19 @@ async function secondReviewWait(ctx, views, work, pr, head) {
     return null;
   }
   if (routingFrom({ config, views, now: ctx.now }).extra?.secondReviewer !== true) return null;
-  if (!(await inCriticalArea(ctx, config, views, work, head))) return null;
+  const area = await criticalAreaOf(ctx, config, views, work, head);
+  if (area === 'no') return null;
+  // An agent that doesn't take the column (Copilot's) is never told to dispatch a second reviewer, so it has one
+  // review, as the gate requires.
+  if (!takesColumn(config)) return null;
   const clean = head === undefined ? 0 : cleanReviewsOf(ctx.project, pr, head);
   if (clean >= 2) return null;
-  return `Pull request #${pr} for ${work} is in a critical area, and at Thorough it merges only once two fresh reviewers have each reported CLEAN on ${head === undefined ? 'its head' : short(head)}: ${clean} so far. `
+  const merges = `at Thorough it merges only once two fresh reviewers have each reported CLEAN on ${head === undefined ? 'its head' : short(head)}: ${clean} so far. `;
+  if (area === 'unknown') {
+    return `Pull request #${pr} for ${work} is treated as in a critical area, because git couldn't say which files it changes, and ${merges}`
+      + "It waits for the feature session's second reviewer; if none comes, ask the director.";
+  }
+  return `Pull request #${pr} for ${work} is in a critical area, and ${merges}`
     + "It waits for the feature session's second reviewer; nothing to do.";
 }
 

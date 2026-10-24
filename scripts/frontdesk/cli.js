@@ -71,6 +71,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
+import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
@@ -114,6 +115,16 @@ const TOPIC = new RegExp(`^${ID}$`);
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
 const said = (answer, otherwise) => answer?.refused ?? answer?.why ?? otherwise;
+
+// The columns ready beyond Balanced and Thorough for the project `cwd` is in; none when it can't be read.
+function readyIn(cwd) {
+  try {
+    const found = projectOf(cwd);
+    return found === null ? [] : columnsReadyOf({ project: found.project });
+  } catch {
+    return [];
+  }
+}
 
 // --- Asking the helper ---
 
@@ -614,7 +625,7 @@ export function settingCard(event, words) {
 // card can carry is never written: the card is composed before the setting is. The profile gives
 // its own id, so a profile setting's card is tried first under a stand-in id and composed again
 // under the real one; a project's setting is written under the id its card was composed with.
-export async function writeSetting({ client, cwd, data, words, makeId = () => crypto.randomUUID() }) {
+export async function writeSetting({ client, cwd, data, words, ready, makeId = () => crypto.randomUUID() }) {
   try {
     checkSetting(data.key, data.value, data.until);
   } catch (error) {
@@ -624,6 +635,16 @@ export async function writeSetting({ client, cwd, data, words, makeId = () => cr
   // by an agent (design section 12.2); the front desk may write only the off switch, Ask.
   if (definitionOf(data.key) === WINDOWS_BUILD_COMMANDS && data.value !== 'ask') {
     throw new CliError('Build commands on Windows are turned on only by a click on their own card; the front desk can set them back to ask');
+  }
+  // A Thoroughness level is set only once its column is ready, as the settings pane's press holds it (`ready` is the
+  // columns ready beyond Balanced and Thorough; none given means none).
+  if (data.key === 'efficiency' && !ALWAYS_READY.includes(data.value) && !(Array.isArray(ready) && ready.includes(data.value))) {
+    throw new CliError(`${data.value[0].toUpperCase()}${data.value.slice(1)} isn't ready yet, so Thoroughness stays as it is`);
+  }
+  // The premium model's paid-credits and within-plan modes are turned on only by the separate opt-in cards (design
+  // section 14.6), never by one generic Confirm; the front desk can set it back to off.
+  if (data.key === 'premium' && data.value !== 'off') {
+    throw new CliError('The premium model is turned on only through its own opt-in cards; the front desk can set it back to off');
   }
   // The person's own GitHub App decides which app holds the narrow keys (ruling R56): only setup
   // records it, from the app GitHub shows for it.
@@ -726,7 +747,7 @@ async function withHash(client, cwd, kind, input) {
 // needs no card (writeSetting). A ruling keeps its words exactly as given: its card is composed
 // first, under the id the ruling is then written with, so a ruling whose words no card can carry
 // is never written. The confirm card is recorded as asked.
-export async function record({ client, cwd, kind, input, now, makeId = () => crypto.randomUUID() }) {
+export async function record({ client, cwd, kind, input, now, ready, makeId = () => crypto.randomUUID() }) {
   if (!RECORD_KINDS.includes(kind)) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
   if (!isPlain(input)) throw new CliError(`Give the ${kind} as a JSON object on standard input`);
   // The delegation review's note is written by `review` alone, so a review is never recorded as done that wasn't.
@@ -743,7 +764,7 @@ export async function record({ client, cwd, kind, input, now, makeId = () => cry
       // The time of the usage card whose pick this is, which the card's line gives; it ties a return card to this switch.
       ...(typeof input.usageCard === 'string' && !Number.isNaN(Date.parse(input.usageCard)) ? { usageCard: input.usageCard } : {}) };
     const words = countsAtOnce({ kind: 'setting', data }) ? null : await wordsOf(client, (await viewsOf(client, cwd)).views, now);
-    const got = await writeSetting({ client, cwd, data, words, makeId });
+    const got = await writeSetting({ client, cwd, data, words, makeId, ready: ready ?? readyIn(cwd) });
     if (got.card === undefined) return got;
     return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
   }
@@ -1130,7 +1151,7 @@ function only(rest, count, usage) {
 // Runs a command and resolves with the exit code. `input` stands in for standard input, which is
 // read only by the commands that take it; `out` and `err` take text to show.
 export async function main(argv, {
-  cwd = process.cwd(), client, input, now = () => new Date(), makeId,
+  cwd = process.cwd(), client, input, now = () => new Date(), makeId, columnsReady,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
 } = {}) {
   try {
@@ -1160,7 +1181,7 @@ export async function main(argv, {
     } else if (command === 'record') {
       only(rest, 1, `Give the kind to record: record <kind>, one of ${RECORD_KINDS.join(', ')}`);
       if (!RECORD_KINDS.includes(rest[0])) throw new CliError(`record takes one of: ${RECORD_KINDS.join(', ')}`);
-      json(await record({ client: helper, cwd: here, kind: rest[0], input: parsed(await stdin()), now, ...(makeId ? { makeId } : {}) }));
+      json(await record({ client: helper, cwd: here, kind: rest[0], input: parsed(await stdin()), now, ...(makeId ? { makeId } : {}), ...(columnsReady ? { ready: columnsReady } : {}) }));
     } else if (command === 'similar') {
       // The request's words as the arguments, which STOP lets through, or its text on standard input.
       json(await similar({ client: helper, cwd: here, text: rest.length > 0 ? rest.join(' ') : await stdin() }));

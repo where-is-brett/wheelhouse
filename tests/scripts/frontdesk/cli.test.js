@@ -119,11 +119,14 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
 }
 
 // Runs one command; resolves with { code, out, err, json }.
-async function run(helper, argv, input, { cwd = CWD } = {}) {
+async function run(helper, argv, input, opts) {
+  return runWith(helper, argv, input, opts);
+}
+async function runWith(helper, argv, input, { cwd = CWD, ready } = {}) {
   let out = '';
   let err = '';
   const code = await main(argv, {
-    cwd, client: helper.client, input, now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
+    cwd, client: helper.client, input, ...(ready ? { columnsReady: ready } : {}), now: () => NOW, out: (t) => { out += t; }, err: (t) => { err += t; },
   });
   let json;
   try { json = JSON.parse(out); } catch { json = undefined; }
@@ -867,10 +870,39 @@ test('a setting made by a usage card\'s pick carries the time of the card\'s off
   await inHome(async () => {
     const helper = fakeHelper();
     const at = '2026-10-26T01:00:00.000Z';
+    const ready = ['lean'];
+    const run = (h, argv, input) => runWith(h, argv, input, { ready });
     assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'lean', usageCard: at, other: 1 }))).code, 0);
     assert.deepEqual(helper.writes()[0].data, { key: 'efficiency', value: 'lean', usageCard: at, words: 'Thoroughness: Lean' });
     assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'lean', usageCard: 'not a time' }))).code, 0);
     assert.equal('usageCard' in helper.writes()[1].data, false);
+  });
+});
+
+test('a Thoroughness level whose column is not ready is refused, in plain words, before it reaches the helper', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    for (const value of ['lean', 'lightest']) {
+      const out = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value }));
+      assert.equal(out.code, 1);
+      assert.match(out.err, /isn't ready yet, so Thoroughness stays as it is/);
+    }
+    assert.equal((await runWith(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'thorough' }))).code, 0);
+    assert.equal((await runWith(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'lightest' }), { ready: ['lean'] })).code, 1);
+    assert.equal((await runWith(helper, ['record', 'setting'], JSON.stringify({ key: 'efficiency', value: 'lightest' }), { ready: ['lean', 'lightest'] })).code, 0);
+  });
+});
+
+test('the premium model can be set back to off but never turned on by the front desk', async () => {
+  await inHome(async () => {
+    const helper = fakeHelper();
+    for (const value of ['within-plan', 'paid-too']) {
+      const out = await run(helper, ['record', 'setting'], JSON.stringify({ key: 'premium', value }));
+      assert.equal(out.code, 1);
+      assert.match(out.err, /turned on only through its own opt-in cards/);
+    }
+    assert.deepEqual(helper.writes(), []);
+    assert.equal((await run(helper, ['record', 'setting'], JSON.stringify({ key: 'premium', value: 'off' }))).code, 0);
   });
 });
 

@@ -11,7 +11,7 @@ const RESET = '2026-10-28T22:00:00.000Z';
 const NOW = '2026-10-26T01:00:00.000Z'; // Monday 12:00 Sydney: about 3 days to the reset
 const NEAR = '2026-10-28T01:00:00.000Z'; // Wednesday 12:00 Sydney: 21 hours to the reset
 const reading = (used, at = NOW, resetsAt = RESET) => ({ used, resetsAt, at });
-const ask = (more) => nudgeCard({ allowance: reading(76), level: 'balanced', mark: 75, offers: [], now: NOW, timeZone: TZ, ...more });
+const ask = (more) => nudgeCard({ allowance: reading(76), level: 'balanced', mark: 75, offers: [], ready: ['lean', 'lightest'], now: NOW, timeZone: TZ, ...more });
 const card = (more) => ask(more)?.card ?? null;
 
 test('at the mark, Balanced or Thorough is offered Lean, with the reset in the director\'s own time zone', () => {
@@ -182,4 +182,13 @@ test('boundaries: exactly a day or two days to the reset, exactly at the mark, a
   // Exactly a day old is still read; a millisecond more is stale.
   assert.equal(card({ allowance: reading(80, ahead(-86400000)) }), 'nudge');
   assert.equal(card({ allowance: reading(80, ahead(-86400001)) }), null);
+});
+
+test('a card is offered only when its target column is ready; Thorough always is', () => {
+  assert.equal(card({ ready: [] }), null, 'Lean is not offered before it is ready');
+  assert.equal(card({ ready: ['lightest'] }), null);
+  assert.equal(card({ ready: ['lean'] }), 'nudge');
+  assert.equal(card({ level: 'lean', allowance: reading(91), ready: ['lean'] }), null, 'Lightest is not offered before it is ready');
+  assert.equal(card({ level: 'lean', allowance: reading(91), ready: ['lightest'] }), 'lightest');
+  assert.equal(card({ level: 'balanced', allowance: reading(10, NEAR), now: NEAR, ready: [] }), 'up', 'the upward card needs nothing ready');
 });

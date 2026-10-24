@@ -16,12 +16,12 @@ const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 // usageOffer({ views, profile, allowance, now, timeZone }) -> null, or { line, record }.
 // `views` is the project's state views (`settings`, `usageCards`), `profile` the director's own settings view,
-// `allowance` the weekly window (weeklyOf). Anything that can't be read or composed gives null: it informs.
-export function usageOffer({ views, profile, allowance, now, timeZone }) {
+// `allowance` the weekly window (weeklyOf), `ready` the columns ready beyond Balanced and Thorough (readyColumns). Anything that can't be read or composed gives null: it informs.
+export function usageOffer({ views, profile, allowance, ready = [], now, timeZone }) {
   try {
     const settings = effectiveSettings({ project: isPlain(views?.settings) ? views.settings : {}, profile: isPlain(profile) ? profile : {}, now });
     const got = nudgeCard({
-      allowance, level: levelOf(settings), mark: settings.usageMark?.value, offers: Array.isArray(views?.usageCards) ? views.usageCards : [], switched: isPlain(views?.settings?.efficiency) ? views.settings.efficiency : null, now, timeZone,
+      allowance, level: levelOf(settings), mark: settings.usageMark?.value, offers: Array.isArray(views?.usageCards) ? views.usageCards : [], switched: isPlain(views?.settings?.efficiency) ? views.settings.efficiency : null, ready, now, timeZone,
     });
     if (got === null) return null;
     const { question } = composeCard(got.input);

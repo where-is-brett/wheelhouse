@@ -4,6 +4,7 @@
 // A pure function: callers pass what they have read, and the card is the composer's input (scripts/cards/compose.js)
 // with a record of the offer. It never switches anything: the director's pick of a card's first option is a setting
 // change the front desk writes and the director confirms the usual way (section 14.4).
+import { ALWAYS_READY } from './in-force.js';
 import { LEVELS } from './thoroughness.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -139,10 +140,11 @@ function returnInput({ day, before, level, when, saved }) {
 // each { card, at, reset, from, to }: what an allowance week has offered is read from them, by the reset they name.
 // `switched` the accepted `efficiency` setting ({ at, value, usageCard }): a return card is for a switch a card's pick
 // made (it names the offer's time), set after the offer and before its reset, never for one made another way.
+// `ready` the columns ready beyond Balanced and Thorough (readyColumns): a card whose switch is to one not ready isn't offered.
 // `now` a function or a time, `timeZone` the director's (this computer's own when undefined). `input` is the composer's
 // input; `switchLabel` the option whose pick is the change to `switchTo`; `record` what to keep once the card is
 // handed over (a return card's record names the reset of the week it closes). At most one card.
-export function nudgeCard({ allowance, level, mark, offers = [], switched = null, now, timeZone }) {
+export function nudgeCard({ allowance, level, mark, offers = [], switched = null, ready = [], now, timeZone }) {
   if (mark === 'off' || !Number.isFinite(mark) || !LEVELS.includes(level)) return null;
   const nowMs = typeof now === 'function' ? new Date(now()).getTime() : new Date(now ?? Date.now()).getTime();
   if (!allowance || !Number.isFinite(allowance.used) || Number.isNaN(time(allowance.resetsAt)) || Number.isNaN(time(allowance.at))) return null;
@@ -153,6 +155,8 @@ export function nudgeCard({ allowance, level, mark, offers = [], switched = null
   const week = list.filter((o) => sameWeek(o.reset, allowance.resetsAt));
   const offered = (card) => week.some((o) => o.card === card);
   const used = allowance.used;
+  // A card offers a column only once it is ready: Balanced and Thorough always are, Lean and Lightest from `ready`.
+  const readyNow = (column) => ALWAYS_READY.includes(column) || (Array.isArray(ready) && ready.includes(column));
   const untilReset = resetMs - nowMs;
   const make = (card, input, switchTo, reset = resetMs) => ({
     card,
@@ -169,17 +173,17 @@ export function nudgeCard({ allowance, level, mark, offers = [], switched = null
     .sort((a, b) => time(a.at) - time(b.at)).at(-1);
   if (origin && !list.some((o) => o.card === 'return' && sameWeek(o.reset, origin.reset))) {
     const before = levelBefore(list, origin);
-    if (before !== level) {
+    if (before !== level && readyNow(before)) {
       return make('return', returnInput({
         day: dayOf(origin.at, timeZone), before, level, when: passedWords(origin.reset, nowMs, timeZone), saved: origin.card !== 'up',
       }), before, time(origin.reset));
     }
   }
   const resets = whenOf(allowance.resetsAt, timeZone);
-  if ((level === 'balanced' || level === 'thorough') && used >= mark && untilReset > DOWN_MIN_MS && !offered('nudge')) {
+  if ((level === 'balanced' || level === 'thorough') && used >= mark && untilReset > DOWN_MIN_MS && !offered('nudge') && readyNow('lean')) {
     return make('nudge', nudgeInput({ used, resets, level }), 'lean');
   }
-  if (level === 'lean' && used >= LIGHTEST_AT && untilReset > DOWN_MIN_MS && !offered('lightest')) {
+  if (level === 'lean' && used >= LIGHTEST_AT && untilReset > DOWN_MIN_MS && !offered('lightest') && readyNow('lightest')) {
     return make('lightest', lightestInput({ used, resets }), 'lightest');
   }
   if (used < UP_BELOW && untilReset > 0 && untilReset < UP_WITHIN_MS && level !== 'thorough'

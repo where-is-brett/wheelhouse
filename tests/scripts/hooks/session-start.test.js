@@ -1668,7 +1668,7 @@ const kept = (project) => {
 test('the front desk is handed the usage card when the allowance passes the mark, with the setting change to make, and the offer is recorded', async () => {
   await withHome(async () => {
     const f = fake();
-    const out = await run(f, { now: () => new Date(USAGE_NOW), allowance: weekly(76), timeZone: 'Australia/Sydney' });
+    const out = await run(f, { columnsReady: () => ['lean', 'lightest'], now: () => new Date(USAGE_NOW), allowance: weekly(76), timeZone: 'Australia/Sydney' });
     const [line, ...more] = usageLines(out);
     assert.deepEqual(more, []);
     const card = usageCard(line);
@@ -1680,10 +1680,17 @@ test('the front desk is handed the usage card when the allowance passes the mark
   });
 });
 
+test('no switch to Lean is offered while the Lean column is not ready', async () => {
+  await withHome(async () => {
+    const out = await run(fake(), { columnsReady: () => [], now: () => new Date(USAGE_NOW), allowance: weekly(99) });
+    assert.equal(usageLines(out).length, 0);
+  });
+});
+
 test('no usage card below the mark, with no reading, for the director\'s mark off, once offered this week, or outside the front desk', async () => {
   await withHome(async () => {
     const now = () => new Date(USAGE_NOW);
-    const none = async (extra, f = fake(), input = {}) => usageLines(await run(f, { now, ...extra }, input)).length;
+    const none = async (extra, f = fake(), input = {}) => usageLines(await run(f, { now, columnsReady: () => ['lean', 'lightest'], ...extra }, input)).length;
     assert.equal(await none({ allowance: weekly(74) }), 0);
     assert.equal(await none({ allowance: () => null }), 0);
     assert.equal(await none({ allowance: weekly(80, '2026-10-24T00:00:00.000Z') }), 0);
@@ -1705,7 +1712,7 @@ test('a usage offer the helper did not take is kept to send at a later start', a
   await withHome(async () => {
     const f = fake();
     f.client.state.write = async () => ({ ok: false });
-    await run(f, { now: () => new Date(USAGE_NOW), allowance: weekly(80) });
+    await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
     assert.deepEqual(kept(P).filter((r) => r.body?.kind === 'usage-card').map((r) => r.body.data.card), ['nudge']);
   });
 });

@@ -1643,7 +1643,10 @@ test('at Thorough, work in a critical area goes to the gate only once two review
   assert.deepEqual(elsewhere.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
   // A head git doesn't know can't be told apart: it counts as in a critical area.
   const unknown = scene('thorough', ['src/other.js']);
-  assert.match((await act(['merge', 'mine'], { client: unknown.client })).out, /in a critical area.*: 1 so far/);
+  const unsure = (await act(['merge', 'mine'], { client: unknown.client })).out;
+  assert.match(unsure, /in a critical area.*: 1 so far/);
+  assert.match(unsure, /because git couldn't say which files it changes/);
+  assert.doesNotMatch(unsure, /nothing to do/);
 
   // With no pins Thorough can't run: Balanced, so one review is the gate's to weigh.
   const flat = scene('thorough', ['src/pay/a.js']);
@@ -1665,6 +1668,26 @@ test('at Thorough, work in a critical area goes to the gate only once two review
   const merged = await act(['merge', 'mine'], { client: two.client });
   assert.equal(merged.code, 0, merged.err);
   assert.deepEqual(two.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+}));
+
+test('at Thorough, work run by an agent that does not take the column waits for one review, as the gate requires', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  const head = 'b'.repeat(40);
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/a.md' } }), files: ['src/pay/a.js'] });
+  views.settings = { efficiency: { key: 'efficiency', value: 'thorough' } };
+  recordInState('review', { pr: 12, commit: head, verdict: 'CLEAN', findings: 0 }, T0 - 60000);
+  const cfg = (agent) => config({ ...(agent ? { agents: { [computerId()]: agent } } : {}), criticalAreas: [{ name: 'payments', paths: ['src/pay/**'], checks: [] }], tiers: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } } });
+  const answers = { updateBranch: { ok: true, updated: false, head } };
+  const copilot = fakeClient({ views, cfg: cfg('copilot'), answers });
+  assert.equal((await act(['merge', 'mine'], { client: copilot.client })).code, 0);
+  assert.deepEqual(copilot.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+  const claude = fakeClient({ views, cfg: cfg(), answers });
+  assert.match((await act(['merge', 'mine'], { client: claude.client })).out, /: 1 so far/);
+  assert.deepEqual(claude.calls.map(([name]) => name), ['prState', 'updateBranch']);
 }));
 
 test('at Thorough, a project with no critical areas merges as before', () => withHome(async () => {
