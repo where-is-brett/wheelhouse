@@ -41,19 +41,20 @@ export function implementLines() {
 
 // --- Rendering ---
 
+// The subagent roles, in the order the wake's prompt lists them (scripts/routing/in-force.js, SUBAGENT_ROLES).
 const ROLES = Object.freeze([
   ['builder', 'wheelhouse:builder', 'builds each task'],
   ['mechanical', 'wheelhouse:builder', 'builds a mechanical task'],
+  ['builderCritical', 'wheelhouse:builder', 'builds a task in a critical area'],
   ['reviewer', 'wheelhouse:reviewer', 'reviews each task and the whole branch'],
   ['reviewerCritical', 'wheelhouse:reviewer', 'reviews work in a critical area'],
   ['tester', 'wheelhouse:tester', 'tries the product against the done contract'],
 ]);
 
-function modelLines(routing) {
-  return ROLES.map(([role, agent, job]) => {
-    const model = Object.hasOwn(routing, role) && typeof routing[role] === 'string' && routing[role] !== '' ? routing[role] : null;
-    return `- ${role} (\`${agent}\`, ${job}): ${model ?? "the session's own default"}`;
-  }).join('\n');
+// The roles by name, with no model: the models and efforts come with each wake (design section 14.6), so the
+// brief's `routing` is no longer read. An older brief that carries one keeps it, unread.
+function roleLines() {
+  return ROLES.map(([role, agent, job]) => `- ${role} (\`${agent}\`, ${job})`).join('\n');
 }
 
 // The template's words on build commands on Windows (design section 12.2): one block for Ask,
@@ -102,7 +103,7 @@ function appetiteLine({ sessions, tokens }) {
 
 // The brief's text for `fields`: its JSON block, then the override, the goal and
 // done contract, the appetite, the rulings, the lane's loop, how to ask, how to
-// finish and the models by role. `pluginRoot` is put into the commands the brief
+// finish and the subagent roles. `pluginRoot` is put into the commands the brief
 // names, so the session can run them as written. `implementText`, when given, is
 // the installed /implement skill's text after its front matter; it must hold the
 // same five lines as the quick lane's template, or this throws. `windowsBuilds` is null off
@@ -146,7 +147,7 @@ export function renderBrief({ fields, pluginRoot, implementText, windowsBuilds =
     appetite: appetiteLine(f.appetite),
     rulings: f.rulings.length === 0 ? 'No rulings apply yet.' : f.rulings.map((r) => `- ${r.id}: ${r.words}`).join('\n'),
     laneText,
-    models: modelLines(f.routing),
+    models: roleLines(),
   });
   return `${block}\n${text}`;
 }

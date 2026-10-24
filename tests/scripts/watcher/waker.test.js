@@ -31,6 +31,17 @@ const SESSION = '0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
 const OTHER_SESSION = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ALLOWED = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'];
+// A flat routing table with no pins runs at Balanced: its models as written, Balanced's efforts.
+const FLAT_COLUMN = [
+  'The models and efforts for the subagents you dispatch this wake (Thoroughness: Balanced):',
+  'builder: model model-b, effort medium',
+  "mechanical: model the session's own, effort medium",
+  "builderCritical: model the session's own, effort high",
+  "reviewer: model the session's own, effort high",
+  "reviewerCritical: model the session's own, effort high",
+  "tester: model the session's own, effort medium",
+];
+const withColumn = (prompt, column = FLAT_COLUMN) => [prompt, '', ...column].join('\n');
 
 const config = (over = {}) => readConfig(JSON.stringify({
   v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [],
@@ -153,7 +164,7 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   const [call] = fake.calls;
   const copy = path.join(main, '.wheelhouse', 'foreman', 'wakes', path.basename(record));
   assert.equal(call.file, 'claude');
-  assert.deepEqual(call.args, ['-p', foremanPrompt(copy), '--permission-mode', 'plan', '--model', 'model-a']);
+  assert.deepEqual(call.args, ['-p', foremanPrompt(copy), '--permission-mode', 'plan', '--model', 'model-a', '--effort', 'medium']);
   // The prompt gives the first command whole, so the first step needs no skill and no ${CLAUDE_PLUGIN_ROOT}.
   assert.ok(call.args[1].startsWith(`Wheelhouse foreman: follow wheelhouse:foreman to handle ${copy}. First run: node '`), call.args[1]);
   assert.ok(call.args[1].includes(`${foremanCommands(PLUGIN_ROOT).wake} read `), call.args[1]);
@@ -167,14 +178,14 @@ test('a foreman bundle starts one fresh foreman with the configured model and mo
   // desk's model in the main folder's local settings never reaches the foreman.
   const other = fakeRun();
   await waker(other, { config: config({ routing: {} }) }).wakeForeman(writeWake(P, bundle('e2')));
-  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'default']);
+  assert.deepEqual(other.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'default', '--effort', 'medium']);
 }));
 
 test('the foreman\'s tools, when given, are passed with --allowedTools', () => withHome(async () => {
   checkout();
   const fake = fakeRun();
   await waker(fake, { foremanTools: ['Bash(node:*)', 'Read'] }).wakeForeman(writeWake(P, bundle('e1')));
-  assert.deepEqual(fake.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--allowedTools', 'Bash(node:*)', 'Read']);
+  assert.deepEqual(fake.calls[0].args.slice(2), ['--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', 'Bash(node:*)', 'Read']);
   assert.throws(() => waker(fake, { foremanTools: [''] }), /tool/);
   assert.throws(() => waker(fake, { foremanTools: 'Read' }), /tool/);
 }));
@@ -418,8 +429,8 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
   assert.equal(call.cwd, login);
   assert.deepEqual(call.args, [
-    '-p', `Wheelhouse: read ${copy}`, '--resume', SESSION,
-    '--permission-mode', 'dontAsk', '--model', 'model-b', '--allowedTools', ...ALLOWED,
+    '-p', withColumn(`Wheelhouse: read ${copy}`), '--resume', SESSION,
+    '--permission-mode', 'dontAsk', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED,
   ]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'));
   assert.equal(Object.hasOwn(call.env, 'WHEELHOUSE_ROLE'), false, 'a feature session is not the foreman, whatever the watcher inherited');
@@ -493,8 +504,8 @@ test('startFeature starts a session with an id of the watcher\'s own, in the wor
   const [call] = fake.calls;
   assert.equal(call.cwd, dir);
   assert.deepEqual(call.args, [
-    '-p', 'Read .wheelhouse/feature/brief.md and follow it.', '--session-id', started.sessionId,
-    '--permission-mode', 'acceptEdits', '--model', 'model-b', '--allowedTools', ...ALLOWED,
+    '-p', withColumn('Read .wheelhouse/feature/brief.md and follow it.'), '--session-id', started.sessionId,
+    '--permission-mode', 'acceptEdits', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED,
   ]);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);
   assert.equal(PROMPTS.start, 'Read .wheelhouse/feature/brief.md and follow it.');
@@ -1037,3 +1048,152 @@ test('start times are asked for every running pid in one call, and kept a minute
   assert.equal(await mac.get(11, [12]), 'Mon Oct 19 08:00:00 2026');
   assert.deepEqual(ps, [['ps', ['-o', 'pid=,lstart=', '-p', '11,12']]]);
 });
+
+// ---- The Thoroughness column at each session start (design section 14.6) ----
+
+const PINS = { mostCapable: 'model-top', midSized: 'model-mid', premium: 'model-premium' };
+const tiered = (over = {}) => config({ tiers: { pins: PINS }, ...over });
+
+// Keeps a state event in the project's clone, as the sync leaves it.
+function keepEvent(event) {
+  const file = path.join(stateDir(P), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event)}\n`);
+}
+let minute = 0;
+// A setting the director confirmed, read by the waker from the local clone.
+function confirmSetting(key, value) {
+  minute += 2;
+  const setting = makeEvent({ kind: 'setting', data: { key, value }, now: () => new Date(T0 - 600 * MIN + minute * MIN) });
+  keepEvent(setting);
+  keepEvent(makeEvent({ kind: 'confirmation', data: confirmationFor(setting).data, now: () => new Date(T0 - 600 * MIN + (minute + 1) * MIN) }));
+}
+const columnReady = (column, pins = PINS) => {
+  minute += 2;
+  keepEvent(makeEvent({ kind: 'column-ready', data: { column, pins, records: [`eval-${column}`] }, now: () => new Date(T0 - 600 * MIN + minute * MIN) }));
+};
+const flagOf = (args, flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : null);
+const sessionFlags = (args) => ({ model: flagOf(args, '--model'), effort: flagOf(args, '--effort'), fallback: flagOf(args, '--fallback-model') });
+
+test('each wake reads the level in force and gives the foreman and a feature that column\'s model, effort and fallback', () => withHome(async () => {
+  checkout();
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  const notes = [];
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  // A fresh waker for each start, as the watcher's own loop would wake with the processes before it gone.
+  const wakeForeman = async () => {
+    const fake = fakeRun();
+    await waker(fake, { config: tiered(), alive: () => false, onNote: (line) => notes.push(line) }).wakeForeman(writeWake(P, bundle(`e${minute}`)));
+    return fake.calls[0];
+  };
+  const startFeature = async () => {
+    const fake = fakeRun();
+    await waker(fake, { config: tiered(), alive: () => false, platform: 'darwin', onNote: (line) => notes.push(line) })
+      .startFeature({ work: 'login-page', worktree: dir, briefFile: featurePaths(dir).brief });
+    return fake.calls[0];
+  };
+
+  // Nothing set: Balanced, on the pins.
+  assert.deepEqual(sessionFlags((await wakeForeman()).args), { model: 'model-mid', effort: 'medium', fallback: 'model-top' });
+  let feature = await startFeature();
+  assert.deepEqual(sessionFlags(feature.args), { model: 'model-top', effort: 'high', fallback: 'model-mid' });
+  assert.match(feature.args[1], /Thoroughness: Balanced/);
+  assert.match(feature.args[1], /\nbuilder: model model-top, effort medium\n/);
+  assert.match(feature.args[1], /\nreviewer: model model-mid, effort high\n/);
+  assert.doesNotMatch(feature.args[1], /build it again|second fresh reviewer/);
+  assert.deepEqual(notes, []);
+
+  // Lean, not ready yet: Balanced, said once in the watcher's log.
+  confirmSetting('efficiency', 'lean');
+  assert.deepEqual(sessionFlags((await wakeForeman()).args), { model: 'model-mid', effort: 'medium', fallback: 'model-top' });
+  assert.deepEqual(notes, ["Thoroughness: Lean isn't ready yet, so work runs at Balanced."]);
+
+  // Lean, ready on these pins.
+  columnReady('lean');
+  assert.deepEqual(sessionFlags((await wakeForeman()).args), { model: 'model-mid', effort: 'low', fallback: 'model-top' });
+  feature = await startFeature();
+  assert.deepEqual(sessionFlags(feature.args), { model: 'model-top', effort: 'medium', fallback: 'model-mid' });
+  assert.match(feature.args[1], /\nbuilder: model model-mid, effort medium\n/);
+  assert.match(feature.args[1], /\nWhen a task is sent back by its review, build it again at effort high\.$/);
+
+  // Lightest, ready: the lighter model designs too.
+  confirmSetting('efficiency', 'lightest');
+  columnReady('lightest');
+  feature = await startFeature();
+  assert.deepEqual(sessionFlags(feature.args), { model: 'model-mid', effort: 'high', fallback: 'model-top' });
+  assert.match(feature.args[1], /\nreviewerCritical: model model-mid, effort high\n/);
+  assert.match(feature.args[1], /build it again at effort high/);
+
+  // Thorough: always ready. The premium model only with the director's opt-in and its own ready record.
+  confirmSetting('efficiency', 'thorough');
+  assert.deepEqual(sessionFlags((await wakeForeman()).args), { model: 'model-top', effort: 'medium', fallback: 'model-mid' });
+  feature = await startFeature();
+  assert.deepEqual(sessionFlags(feature.args), { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' });
+  assert.match(feature.args[1], /\nCritical-area work gets a second fresh reviewer; both must report CLEAN\.$/);
+  assert.doesNotMatch(feature.args[1], /build it again/);
+  confirmSetting('premium', 'paid-too');
+  assert.equal(sessionFlags((await startFeature()).args).model, 'model-top', 'no premium ready record yet');
+  columnReady('premium');
+  feature = await startFeature();
+  assert.deepEqual(sessionFlags(feature.args), { model: 'model-premium', effort: 'high', fallback: 'model-top' });
+  assert.match(feature.args[1], /\nbuilderCritical: model model-premium, effort high\n/);
+  // The foreman never takes the premium model.
+  assert.equal(sessionFlags((await wakeForeman()).args).model, 'model-top');
+
+  // A pin moved since Lean's evaluation: Lean waits again, at Balanced.
+  confirmSetting('efficiency', 'lean');
+  const moved = fakeRun();
+  await waker(moved, { config: tiered({ tiers: { pins: { ...PINS, midSized: 'model-mid-2' } } }), alive: () => false }).wakeForeman(writeWake(P, bundle('moved')));
+  assert.deepEqual(sessionFlags(moved.calls[0].args), { model: 'model-mid-2', effort: 'medium', fallback: 'model-top' });
+}));
+
+test('a column that can\'t be read gives Balanced, and its lines are noted once each time they change', () => withHome(async () => {
+  checkout();
+  const notes = [];
+  const fake = fakeRun();
+  const lines = [['Thoroughness: Lean isn\'t ready yet, so work runs at Balanced.']];
+  let calls = 0;
+  const w = waker(fake, {
+    config: tiered(),
+    alive: () => false,
+    onNote: (line) => notes.push(line),
+    routing: () => {
+      calls += 1;
+      if (calls === 1) throw new Error('unreadable');
+      if (calls === 2) return 'not a column';
+      return { level: 'balanced', roles: { foreman: { model: 'model-mid', effort: 'medium', fallback: null } }, extra: {}, lines: lines[0] };
+    },
+  });
+  await w.wakeForeman(writeWake(P, bundle('a')));
+  assert.deepEqual(sessionFlags(fake.calls[0].args), { model: 'model-mid', effort: 'medium', fallback: 'model-top' }, 'Balanced from the configuration');
+  fake.end(fake.calls[0].pid);
+  await w.wakeForeman(writeWake(P, bundle('b')));
+  assert.deepEqual(sessionFlags(fake.calls[1].args), { model: 'model-mid', effort: 'medium', fallback: 'model-top' });
+  fake.end(fake.calls[1].pid);
+  await w.wakeForeman(writeWake(P, bundle('c')));
+  fake.end(fake.calls[2].pid);
+  await w.wakeForeman(writeWake(P, bundle('d')));
+  assert.equal(fake.calls.length, 4);
+  assert.deepEqual(notes, lines[0], 'said once');
+  // An effort the adapter can't pass refuses the start; nothing runs on a guess.
+  const bad = fakeRun();
+  const errors = [];
+  const w2 = waker(bad, { alive: () => false, onError: (m) => errors.push(m), routing: () => ({ level: 'balanced', roles: { foreman: { model: 'model-a', effort: 'max', fallback: null } }, extra: {}, lines: [] }) });
+  await w2.wakeForeman(writeWake(P, bundle('e')));
+  assert.equal(bad.calls.length, 0);
+}));
+
+test('with no pins, every start is as before: the flat models, at Balanced whatever the level', () => withHome(async () => {
+  checkout();
+  const notes = [];
+  const fake = fakeRun();
+  const routing = () => ({ level: 'balanced', roles: {}, extra: {}, lines: [] });
+  await waker(fake, { alive: () => false, onNote: (l) => notes.push(l) }).wakeForeman(writeWake(P, bundle('a')));
+  assert.deepEqual(sessionFlags(fake.calls[0].args), { model: 'model-a', effort: 'medium', fallback: null });
+  // A column that names no role leaves each to the flat table, with no effort.
+  const bare = fakeRun();
+  await waker(bare, { alive: () => false, routing }).wakeForeman(writeWake(P, bundle('b')));
+  assert.deepEqual(sessionFlags(bare.calls[0].args), { model: 'model-a', effort: null, fallback: null });
+}));

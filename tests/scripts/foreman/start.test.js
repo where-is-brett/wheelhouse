@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
+import { foremanSession, main, startWatcher, stopWatcher, stopForeman, watcherRunning, FOREMAN_PROMPT_LEAD, MONITOR_NOTE } from '../../../scripts/foreman/start.js';
 import { foremanTools } from '../../../scripts/foreman/tools.js';
 import { FOREMAN_FALLBACK_COMPACT } from '../../../scripts/lib/build-loop.js';
 import { healthFile, lockFile } from '../../../scripts/watcher/main.js';
@@ -124,7 +124,7 @@ test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the fore
   assert.ok(args[0].startsWith('Wheelhouse foreman:'), args[0]);
   assert.ok(args[0].startsWith(FOREMAN_PROMPT_LEAD));
   assert.deepEqual(args.slice(1), [
-    '--settings', settings, '--permission-mode', 'acceptEdits', '--model', 'model-a', '--allowedTools', ...foremanTools(MAC_ROOT, { platform: 'darwin' }),
+    '--settings', settings, '--permission-mode', 'acceptEdits', '--model', 'model-a', '--effort', 'medium', '--allowedTools', ...foremanTools(MAC_ROOT, { platform: 'darwin' }),
   ]);
   assert.equal(opts.env.WHEELHOUSE_ROLE, 'foreman');
   assert.equal(opts.env.wheelhouse_role, undefined, 'no other spelling of the role is passed on');
@@ -132,6 +132,28 @@ test('Shape 2: the foreman\'s long session compacts at 100,000, runs as the fore
   assert.equal(opts.env.PATH, '/bin');
   assert.equal(opts.cwd, checkout);
   assert.equal(opts.stdio, 'inherit');
+}));
+
+test('the foreman\'s long session takes the foreman\'s model, effort and fallback from the column in force when it starts', () => withHome(async () => {
+  await project();
+  const pins = { mostCapable: 'model-top', midSized: 'model-mid' };
+  const said = [];
+  const at = (column) => foremanSession({
+    project: P, config: config({ watcherShape: 2, tiers: { pins } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' },
+    routing: () => column, say: (line) => said.push(line),
+  }).args;
+  const flags = (args) => args.slice(args.indexOf('--model'), args.indexOf('--allowedTools'));
+  assert.deepEqual(flags(at({ roles: { foreman: { model: 'model-mid', effort: 'low', fallback: 'model-top' } }, lines: ['a line'] })), ['--model', 'model-mid', '--effort', 'low', '--fallback-model', 'model-top']);
+  assert.deepEqual(said, ['a line']);
+  // Read from the state when not given: nothing set is Balanced on the pins.
+  const read = foremanSession({ project: P, config: config({ watcherShape: 2, tiers: { pins } }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' } }).args;
+  assert.deepEqual(flags(read), ['--model', 'model-mid', '--effort', 'medium', '--fallback-model', 'model-top']);
+  // A column that can't be read leaves the flat table's model, as before.
+  assert.deepEqual(flags(at(undefined)), ['--model', 'model-a']);
+  const broken = foremanSession({
+    project: P, config: config({ watcherShape: 2 }), pluginRoot: MAC_ROOT, platform: 'darwin', env: {}, claude: { kind: 'direct', file: 'claude' }, routing: () => { throw new Error('no'); },
+  }).args;
+  assert.deepEqual(flags(broken), ['--model', 'model-a']);
 }));
 
 test('the Shape 2 start says the mod hands on the wakes', () => withHome(async () => {

@@ -401,6 +401,22 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
   });
 });
 
+test('a column-ready record names the column, the pins it ran on and the evaluation\'s records', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('column-ready'), true);
+    assert.equal(PROTECTED_KINDS.includes('column-ready'), false);
+    const data = { column: 'lean', pins: { mostCapable: 'model-top', midSized: 'model-mid', premium: null }, records: ['eval-1'] };
+    assert.deepEqual(makeEvent({ kind: 'column-ready', data }).data, data);
+    for (const column of ['lightest', 'premium']) assert.equal(makeEvent({ kind: 'column-ready', data: { ...data, column } }).data.column, column);
+    for (const bad of [
+      null, { column: 'lean', pins: data.pins }, { ...data, extra: 1 },
+      { ...data, column: 'balanced' }, { ...data, column: 'thorough' }, { ...data, column: 'Lean' },
+      { ...data, pins: null }, { ...data, pins: [] }, { ...data, pins: { other: 'model-top' } }, { ...data, pins: { mostCapable: '-flag' } }, { ...data, pins: { midSized: 7 } },
+      { ...data, records: 'eval-1' }, { ...data, records: [''] }, { ...data, records: [7] }, { ...data, records: Array.from({ length: 51 }, (_, i) => `r${i}`) },
+    ]) assert.throws(() => makeEvent({ kind: 'column-ready', data: bad }), /column-ready event/, JSON.stringify(bad));
+  });
+});
+
 test('a lineage-lift record says when, and which holds it lifts', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);

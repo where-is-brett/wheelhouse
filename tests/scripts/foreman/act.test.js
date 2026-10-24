@@ -126,7 +126,8 @@ test('start makes the worktree on feature/<work>, writes the brief, records it, 
     done: ['A CSV file downloads', 'Its columns match the table'],
     appetite: { sessions: 1, tokens: 200000 },
     rulings: [{ id: 'r-1', words: 'Prices show two decimal places' }],
-    routing: { foreman: 'model-a', builder: 'model-b', reviewer: 'model-c' },
+    // No models: the watcher gives each wake the column in force.
+    routing: {},
     shownFirst: true,
   });
 

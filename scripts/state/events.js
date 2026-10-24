@@ -13,12 +13,13 @@ import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
 import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
+import { isModelName } from '../gate/guardrails.js';
 
 export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one.
 export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file'];
@@ -251,7 +252,15 @@ const PLAIN_SHAPES = {
   // because the last one couldn't reach the host (ruling P3). Each part is checked as the survey
   // makes it, and at most as many as it looks at.
   survey: { must: ['v', 'hostReached', 'requests', 'pushed', 'local', 'more', 'instructions', 'scheduled', 'secrets', 'rules'], may: ['again'] },
+  // A Thoroughness column passed its evaluation (design section 14.6, "Settled for the builder"): the column (Lean,
+  // Lightest, or the premium model's own pass), the pins it ran on (`tiers.pins`, each a model name or null) and the
+  // evaluation's records. It counts only while the configuration's pins are the ones it ran on (views.js, readyColumns).
+  'column-ready': { must: ['column', 'pins', 'records'], may: [] },
 };
+// The columns a column-ready record may name, the pins it may carry, and the most records it lists.
+export const READY_COLUMNS = Object.freeze(['lightest', 'lean', 'premium']);
+export const PIN_NAMES = Object.freeze(['mostCapable', 'midSized', 'premium']);
+export const READY_RECORDS = 50;
 // The most paths a control-file record names.
 export const CONTROL_PATHS = 50;
 export const CONTROL_WHY = Object.freeze(['changed', 'no-record', 'too-many']);
@@ -435,6 +444,13 @@ function checkPlain(kind, data) {
     if (data.work !== undefined) slug('work');
     if (data.usage !== undefined && !isPlain(data.usage)) bad('has a usage that is not an object');
     if (data.at !== undefined && (typeof data.at !== 'string' || Number.isNaN(Date.parse(data.at)))) bad('has an at that is not a time');
+  } else if (kind === 'column-ready') {
+    if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
+    const pins = data.pins;
+    if (!isPlain(pins) || !Object.keys(pins).every((k) => PIN_NAMES.includes(k)) || !Object.values(pins).every((m) => m === null || isModelName(m))) {
+      bad(`needs pins, each of ${listed([...PIN_NAMES])} a model name or null`);
+    }
+    if (!Array.isArray(data.records) || data.records.length > READY_RECORDS || !data.records.every(isText)) bad(`needs records to be a list of at most ${READY_RECORDS} names`);
   } else if (kind === 'survey') {
     const list = (x, most, one) => Array.isArray(x) && x.length <= most && x.every(one);
     if (data.v !== 1) bad('needs v to be 1');

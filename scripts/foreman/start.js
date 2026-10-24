@@ -15,8 +15,10 @@
 // and the foreman's session it started (stopForeman), first of all (ruling R89).
 //
 // Shape 2: starts the foreman's long session in the project's main checkout:
-// `claude` with its explicit mode (sessionModeOf) and model
-// (config.routing.foreman), its own settings file in the watcher's folder with
+// `claude` with its explicit mode (sessionModeOf), and the model, thinking
+// effort and fallback of the `foreman` role in the Thoroughness column in force
+// when it starts (scripts/routing/in-force.js; Balanced when that can't be
+// read), which hold until the session ends; its own settings file in the watcher's folder with
 // `autoCompactWindow` at FOREMAN_FALLBACK_COMPACT so it compacts early, the
 // foreman's tools with --allowedTools, the environment less the host session's
 // variables with WHEELHOUSE_ROLE=foreman (ruling R26; the waker sets it for
@@ -35,6 +37,7 @@ import { FOREMAN_FALLBACK_COMPACT } from '../lib/build-loop.js';
 import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { sessionsOfProject } from '../agents/project-agent.js';
+import { routingInForce } from '../routing/in-force.js';
 import { healthFile, lockFile, projectConfig } from '../watcher/main.js';
 import {
   pidAlive, processStartTime, runningFile, sessionEnv, watcherFolder, writeJsonFile,
@@ -158,8 +161,10 @@ export function startWatcher(project, { spawn = nodeSpawn, pluginRoot = PLUGIN_R
 
 // The foreman's long session (Shape 2): what to run, where, and with what. Writes its settings file. The
 // command line and environment are the project's adapter's (`sessions` is that part of it, given only by tests).
+// `routing` reads the column in force (routingInForce by default); its lines are said through `say`.
 export function foremanSession({
   project, config, pluginRoot = PLUGIN_ROOT, platform = process.platform, env = process.env, claude = null, sessions = null,
+  routing = () => routingInForce(project, config), say = () => {},
 }) {
   const checkout = readProject(project)?.folder;
   if (typeof checkout !== 'string') refuse("The project's folder isn't known on this computer");
@@ -169,8 +174,15 @@ export function foremanSession({
   const settings = path.join(watcherFolder(project), 'foreman-settings.json');
   writeJsonFile(settings, { autoCompactWindow: FOREMAN_FALLBACK_COMPACT });
   const prompt = `${FOREMAN_PROMPT_LEAD} you are the long-lived foreman of ${project}. At each wake, follow the wheelhouse:foreman skill.`;
+  let column = null;
+  try {
+    column = routing();
+  } catch { /* the flat table's model, as before */ }
+  for (const line of Array.isArray(column?.lines) ? column.lines : []) if (typeof line === 'string') say(line);
+  const cell = column?.roles?.foreman;
+  const role = cell !== null && typeof cell === 'object' ? { model: cell.model ?? null, effort: cell.effort ?? null, fallback: cell.fallback ?? null } : {};
   const call = adapter.foremanCall({
-    config, pluginRoot, prompt, platform, env, claude, settings, long: true,
+    config, pluginRoot, prompt, platform, env, claude, settings, long: true, ...role,
   });
   return {
     file: call.file,
@@ -207,7 +219,7 @@ export async function main(argv, {
     if (read.config === null) refuse(`The project's configuration can't be read from its default branch: ${read.why}`);
     const config = read.config;
     if (config.watcherShape === 2) {
-      const session = foremanSession({ project, config, pluginRoot, platform, env, claude });
+      const session = foremanSession({ project, config, pluginRoot, platform, env, claude, say: (line) => err(`${line}\n`) });
       err(`${MONITOR_NOTE}\n`);
       return await launch(session.file, session.args, session.options);
     }

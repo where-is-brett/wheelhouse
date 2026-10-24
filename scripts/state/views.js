@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
-import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS } from './events.js';
+import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
 import { approvalLine, ciPushLine, confirmLine } from './card-lines.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
@@ -589,6 +589,14 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const lastSurvey = sorted.filter((e) => e.kind === 'survey' && e.data !== null && typeof e.data === 'object' && !Array.isArray(e.data)).at(-1);
   const survey = lastSurvey ? { id: lastSurvey.id, at: lastSurvey.at, data: lastSurvey.data } : null;
 
+  // The latest column-ready record of each column (design section 14.6): { <column>: { id, at, pins, records } }.
+  // Which of them count is readyColumns', against the configuration's pins now.
+  const columnsReady = {};
+  for (const e of sorted) {
+    if (e.kind !== 'column-ready' || !READY_COLUMNS.includes(e.data?.column) || !isPlainObject(e.data?.pins)) continue;
+    columnsReady[e.data.column] = { id: e.id, at: e.at, pins: e.data.pins, records: Array.isArray(e.data.records) ? e.data.records : [] };
+  }
+
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
@@ -614,6 +622,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     lineageHolds,
     controlFiles: controlFiles.standing,
     survey,
+    columnsReady,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,
@@ -625,6 +634,26 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
       lastEventAt: sorted.length > 0 ? sorted.at(-1).at : null,
     },
   };
+}
+
+const isPlainObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// The pins each column's evaluation depends on: a column is ready only while these are the ones it ran on.
+const COLUMN_PINS = Object.freeze({ lightest: ['mostCapable', 'midSized'], lean: ['mostCapable', 'midSized'], premium: ['mostCapable', 'premium'] });
+
+// The columns ready now: each whose latest column-ready record (the `columnsReady` view) ran on the pins
+// `config.tiers.pins` holds now, for the pins that column uses. A configuration with no pins has none ready, and so
+// has a premium record without a premium pin. Anything that can't be read counts as not ready.
+export function readyColumns(view, config) {
+  const now = config?.tiers?.pins;
+  if (!isPlainObject(view) || !isPlainObject(now)) return [];
+  const pinOf = (pins, name) => (PIN_NAMES.includes(name) && typeof pins?.[name] === 'string' ? pins[name] : null);
+  return READY_COLUMNS.filter((column) => {
+    const kept = view[column];
+    if (!isPlainObject(kept) || !isPlainObject(kept.pins)) return false;
+    if (column === 'premium' && pinOf(now, 'premium') === null) return false;
+    return COLUMN_PINS[column].every((name) => pinOf(kept.pins, name) === pinOf(now, name));
+  });
 }
 
 // The profile's events, or none when there is no profile or it can't be read.

@@ -584,9 +584,10 @@ async function start(ctx, work, rest) {
   // The brief's plan comes before the one the session records, so a brief that
   // named one could never move on to slice 2 (R87, R88).
   if (plan && slices > 1) refuse('--plan names one plan, so it can\'t be given for work in several slices: each slice\'s plan is recorded by its session');
-  const routing = Object.fromEntries(Object.entries(config.routing ?? {}).filter(([, m]) => typeof m === 'string' && m !== ''));
+  // The brief carries no models: the watcher gives each wake the column in force (design section 14.6).
+  // `routing` stays in the brief's shape, empty, so an older brief's is still read (and ignored).
   const fields = {
-    v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing, shownFirst: entry.approval?.shownFirst === true,
+    v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing: {}, shownFirst: entry.approval?.shownFirst === true,
     ...(plan ? { plan } : {}), ...(slices ? { slices } : {}),
     ...(entry.work.data.from === undefined ? {} : { from: entry.work.data.from }),
   };
