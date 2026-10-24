@@ -139,8 +139,9 @@ test('in a Locked project the managed copy names the plugin folder recorded in i
     assert.ok(!named.includes(ownRoot), 'the managed copy\'s own folder is not named');
     // With no record, the hook's own folder.
     fs.rmSync(path.join(managed, 'wheelhouse', 'installed.json'));
-    const own = textOf(await start(BASE, { deps: { dir: managed, self, pluginRoot: ownRoot } }));
-    assert.ok(own.includes(`The Wheelhouse command is ${frontDeskCommand(ownRoot, { platform: 'darwin', noSystemCa: knowsNoSystemCa() })}`), own);
+    // The hook's own folder is a path of this system's, so its command is written as this system writes it.
+    const own = textOf(await start(BASE, { deps: { dir: managed, self, pluginRoot: ownRoot, platform: process.platform } }));
+    assert.ok(own.includes(`The Wheelhouse command is ${frontDeskCommand(ownRoot, { platform: process.platform, noSystemCa: knowsNoSystemCa() })}`), own);
     // The plugin's own copy (not inside the managed folder) names its own folder even when a record exists.
     fs.writeFileSync(path.join(managed, 'wheelhouse', 'installed.json'), JSON.stringify({ version: '1', pluginRoot: plugin }));
     const pluginCopy = textOf(await start(BASE, { deps: { dir: managed, self: '/plugin/root/scripts/hooks/session-start.js' } }));

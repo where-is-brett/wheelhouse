@@ -26,7 +26,7 @@ import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { selfTestFile } from '../../../scripts/windows/low.js';
+import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
@@ -532,6 +532,11 @@ test('session-start exits in time with its context when the helper never answers
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    // On Windows the session start also copies Node.js into the home in the background, for the Guarded runner:
+    // the folder is removed once that copy is whole.
+    if (process.platform === 'win32') {
+      for (let tries = 0; tries < 600 && !lowNodeReady({ home }); tries += 1) await new Promise((resolve) => setTimeout(resolve, 100));
     }
     server.close();
     // On Windows a stopped process's files may be held a moment longer: removal tries again.

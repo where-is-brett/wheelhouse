@@ -159,7 +159,8 @@ export async function inTempTree(project, { run, at, env = {} }, fn) {
     return await fn(tree, gitAt(tree, { run, env }));
   } finally {
     await store.call(['worktree', 'remove', '--force', tree]).catch(() => {});
-    fs.rmSync(parent, { recursive: true, force: true });
+    // Windows can hold a folder a moment after the programs in it have ended: removal tries again.
+    fs.rmSync(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     await store.call(['worktree', 'prune']).catch(() => {});
   }
 }
@@ -458,7 +459,7 @@ export async function adoptProject({ project, folder, run = realRun, now = () =>
     putBack();
     throw error;
   } finally {
-    fs.rmSync(parent, { recursive: true, force: true });
+    fs.rmSync(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
   // The chat's own record, kept until now in the project, becomes events once. A STOP it leaves on stays on.

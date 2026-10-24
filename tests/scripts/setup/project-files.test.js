@@ -126,7 +126,11 @@ async function world({
   w.user = tempFolder('wh-user zoë ');
   w.folder = path.join(w.user, 'Projects', 'Shop');
   fs.mkdirSync(path.dirname(w.folder), { recursive: true });
-  const cloned = await realRun('git', ['clone', '-q', w.bare, w.folder]);
+  // Line endings as committed on every system: a Windows git's own setting would turn them into CRLF here, and
+  // a folder with CRLF has a test of its own.
+  // Line endings as committed on every system: a Windows git's own setting would turn them into CRLF here, and a
+  // folder with CRLF has a test of its own.
+  const cloned = await realRun('git', ['-c', 'core.autocrlf=false', 'clone', '-q', w.bare, w.folder]);
   if (cloned.code !== 0) throw new Error(cloned.stderr);
   w.folder = fs.realpathSync.native(w.folder);
   fs.mkdirSync(path.join(w.folder, '.claude'), { recursive: true });
@@ -794,8 +798,8 @@ test('on a company GitLab, step 7 reads and protects through the company address
     // Every git call of the step carries the certificate pair for that address and no other (the push too).
     const pushed = w.gitCalls.find((c) => c.args.includes('push'));
     const pairs = Object.entries(pushed.env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([k, key]) => [key, pushed.env[k.replace('KEY', 'VALUE')]]);
-    // The certificate's setting as this system has it: on Windows git's own store (schannel), elsewhere the file.
-    const [wanted] = gitCaConfig(COMPANY, file);
+    // The step runs here as on a Mac (w.ctx), so its certificate setting is the Mac's: the file.
+    const [wanted] = gitCaConfig(COMPANY, file, 'darwin');
     assert.ok(pairs.some(([key, value]) => key === wanted.key && value === wanted.value), JSON.stringify(pairs));
     assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).match(/sslVerify["',]*\s*[:=]\s*["']?(false|0)/i)), 'checks stay on');
   });
@@ -1076,7 +1080,7 @@ test('a new product\'s uncommitted CLAUDE.md is put in setup\'s commit on Put th
 // answers from step 4. Gives the run.
 async function secondComputer(w) {
   const folder = path.join(w.user, 'Projects', 'Shop on the laptop');
-  const cloned = await realRun('git', ['clone', '-q', w.bare, folder]);
+  const cloned = await realRun('git', ['-c', 'core.autocrlf=false', 'clone', '-q', w.bare, folder]);
   if (cloned.code !== 0) throw new Error(cloned.stderr);
   w.folder = fs.realpathSync.native(folder);
   writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO } });

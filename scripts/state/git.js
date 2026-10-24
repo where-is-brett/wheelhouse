@@ -59,4 +59,4 @@ export function remoteKey(url) {
 }
 
 // Whether two remote addresses name the same repository.
-export const sameRemote = (a, b) => { const same = remoteKey(a) === remoteKey(b); if (!same && process.env.WH_DIAG) console.error('WH_DIAG remote', JSON.stringify([a, b, remoteKey(a), remoteKey(b)])); return same; };
+export const sameRemote = (a, b) => remoteKey(a) === remoteKey(b);
