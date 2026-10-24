@@ -18,7 +18,7 @@ import {
   standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow, listing, differences,
 } from '../helpers/setup-e2e.js';
 import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, PROFILE_REPO, fromOtherComputer } from '../../scripts/setup/host.js';
-import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
+import { LIVE_DATA, PRODUCT, FRONT_DESK_MODEL } from '../../scripts/setup/questions.js';
 import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { SETUP_FILES, COMMIT_MESSAGE } from '../../scripts/setup/project-files.js';
@@ -89,7 +89,7 @@ function fresh() {
 // digest after its name).
 const NEW_ANSWERS = {
   join: NEW_PRODUCT, 'real-users': REAL_USERS.no, host: HOST_LABELS.github, connection: WAYS.quick,
-  product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
+  product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no, 'front-desk-model': FRONT_DESK_MODEL.standard,
   'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
 };
 // The board at the end of a log `follow` gave.
@@ -149,7 +149,7 @@ test('a new product: every step\'s card, its click, and a green board at the end
       [1, 'settled'],
       [2, 'go ahead'],
       [3, 'join'], [3, 'real-users'], [3, 'host'], [3, 'connection'], [3, 'go ahead'],
-      [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'],
+      [4, 'product-before-launch'], [4, 'live-data'], [4, 'front-desk-model'], [4, 'settled'],
       [5, 'settled'],
       [6, 'go ahead'],
       [7, 'go ahead'],
@@ -274,7 +274,7 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
     assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.goAhead ? 'go ahead' : 'settled')]), [
       [1, 'settled'], [2, 'go ahead'],
       [3, 'real-users'], [3, 'connection'], [3, 'go ahead'],
-      [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'],
+      [4, 'product-before-launch'], [4, 'live-data'], [4, 'front-desk-model'], [4, 'settled'],
       [5, 'settled'],
     ]);
     assert.match(log.find((e) => e.step === 3 && e.goAhead).card.question, /a-director\/Harbour-Log on GitHub, kept as it is/);
@@ -382,7 +382,7 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
     // The director answers, and setup carries on from step 4, through step 5.
     const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 5 });
     assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.settled ? 'settled' : 'other')]), [
-      [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'], [5, 'settled'],
+      [4, 'product-before-launch'], [4, 'live-data'], [4, 'front-desk-model'], [4, 'settled'], [5, 'settled'],
     ]);
     const now = await a.setupRun();
     assert.equal(now.id, stopped.id, 'the same run, carried on');

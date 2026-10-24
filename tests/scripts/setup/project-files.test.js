@@ -21,7 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
-import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
+import { LIVE_DATA, SIGNS_APPS, FRONT_DESK_MODEL } from '../../../scripts/setup/questions.js';
+import { FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../../../scripts/setup/best-model.js';
 import { readConfig, ROLES, DEFAULT_BUILD_COMMANDS, DEFAULT_HOT_FILES } from '../../../scripts/gate/guardrails.js';
 import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lineage/manifest.js';
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
@@ -56,7 +57,7 @@ const GITLAB_USER = { username: 'a-director', id: 77, name: 'A Director' };
 // The product's own .gitignore, as most hold it: .env files already kept out of git.
 const COVERED = '.env\n.env.*\n';
 const SHA = { superpowers: 'a'.repeat(40), 'mattpocock-skills': 'b'.repeat(40) };
-// What Claude Code's alias for its most capable model stands for here: a stand-in name.
+// What the front desk's model alias stands for here: a stand-in name.
 const BEST_MODEL = 'model-top-1';
 
 // ---- The world: a product on a stand-in host, connected as step 3 leaves it ----
@@ -115,7 +116,7 @@ function kits(root) {
 async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
 } = {}) {
-  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, bestAsked: 0 };
+  const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, bestAsked: 0, aliases: [] };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
   fs.writeFileSync(w.noGlobal, '');
   const hostRoot = tempFolder('wh-host-');
@@ -209,7 +210,7 @@ async function world({
     manifest: () => w.manifest, claudeHome: () => w.claudeHome, switchOn: w.switchOn, protectionStatus: w.status,
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
-    best: async () => { w.bestAsked += 1; return w.best; },
+    best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return w.best; },
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
   w.ctx = (extra = {}) => ({ folder: w.folder, step: 7, now: () => T0, platform: 'darwin', userHome: w.user, answers: w.answers, ...extra });
@@ -325,13 +326,15 @@ test('the starter configuration pins the front desk\'s model when setup was give
   assert.equal(starterConfig({ answers }).routing.frontDesk, null);
 });
 
-test('step 7 pins the front desk to what the most capable model\'s alias stands for, in the configuration and this computer\'s settings, and says so on its card', async () => {
+test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, in the configuration and this computer\'s settings, and says so on its card', async () => {
   await withHome(async () => {
     const w = await world();
     const planned = await w.plan();
     assert.equal(w.bestAsked, 1);
+    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS], 'never the strongest, unless the director chose it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}, the most capable model`));
+    assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}\\b`));
+    assert.doesNotMatch(text, /strongest/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
     assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, BEST_MODEL);
@@ -342,6 +345,41 @@ test('step 7 pins the front desk to what the most capable model\'s alias stands 
     const again = await w.plan();
     assert.equal(w.bestAsked, 1);
     assert.deepEqual(again.changes.filter((c) => c.kind === 'json-key' || c.kind === 'file'), []);
+  });
+});
+
+test('the director\'s choice of the strongest model at step 4 pins what Claude Code\'s best alias stands for, and the card says it costs more', async () => {
+  await withHome(async () => {
+    const w = await world();
+    w.answers = { ...w.answers, '4.front-desk-model': { label: FRONT_DESK_MODEL.strongest, text: null, at: T0.toISOString() } };
+    w.best = 'model-strongest-1';
+    const planned = await w.plan();
+    assert.deepEqual(w.aliases, [STRONGEST_ALIAS]);
+    const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
+    assert.match(text, /the front desk runs on model-strongest-1, the strongest model, as you chose; it costs more of your usage/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(w.json('.claude/wheelhouse.json').routing.frontDesk, 'model-strongest-1');
+    assert.equal(w.json('.claude/settings.local.json').model, 'model-strongest-1');
+  });
+  // The standard answer is the default's alias.
+  await withHome(async () => {
+    const w = await world();
+    w.answers = { ...w.answers, '4.front-desk-model': { label: FRONT_DESK_MODEL.standard, text: null, at: T0.toISOString() } };
+    await w.plan();
+    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS]);
+  });
+});
+
+test('a choice changed within a setup run asks Claude Code again, for the alias now chosen', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    await w.step.plan(w.ctx({ runId: run.id }));
+    await w.step.plan(w.ctx({ runId: run.id }));
+    w.answers = { ...w.answers, '4.front-desk-model': { label: FRONT_DESK_MODEL.strongest, text: null, at: T0.toISOString() } };
+    await w.step.plan(w.ctx({ runId: run.id }));
+    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, STRONGEST_ALIAS]);
   });
 });
 
@@ -396,7 +434,7 @@ test('when Claude Code can\'t say what its most capable model is, step 7 goes on
     w.best = null;
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /the front desk's model is left as it is: Claude Code didn't say which is its most capable/);
+    assert.match(text, /the front desk's model is left as it is: Claude Code didn't say which model to use/);
     assert.ok(!planned.changes.some((c) => c.key?.[0] === 'model'));
   });
 });

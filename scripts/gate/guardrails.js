@@ -23,7 +23,8 @@
 //   - routing: each role's model name, or null for the command line's own
 //     default (the default for every role, so Wheelhouse names no model). Setup
 //     pins `frontDesk` in the project's own table to the full name Claude Code's
-//     alias for its most capable model stands for (setup/best-model.js), and the
+//     alias `opus` stands for, or `best` when the director chose the strongest
+//     model at setup (setup/best-model.js), and the
 //     pin moves only after the evaluation passes on a new model (design section 8).
 //     A name may not start with `-`, so it can never read as a flag. Other
 //     roles in the table are kept.

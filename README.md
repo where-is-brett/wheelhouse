@@ -33,7 +33,7 @@ Setup goes one step at a time. Each step shows you a card listing exactly what i
 
 Where your conversations, transcripts and records go, and what uninstall removes and keeps, is in [`docs/data.md`](docs/data.md).
 
-What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab.
+What Wheelhouse protects you from, what it doesn't, and how to report a problem are in [`SECURITY.md`](SECURITY.md). Setup switches these protections on by itself; on a Mac you can also choose **Make it stricter** when it asks how to connect to GitHub or GitLab. Setup also asks which model the front desk runs on: the standard one is recommended, and the strongest costs more of your weekly usage.
 
 ## On GitHub Copilot
 
