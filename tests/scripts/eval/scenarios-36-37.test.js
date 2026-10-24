@@ -314,7 +314,7 @@ test('37 alone is offered PushNotification, and its project\'s local settings tu
       // The session is given what the real session start gives: the front desk's line, the tool sheet and the command line.
       const [plugin] = context.pluginDirs;
       assert.equal(context.appendSystemPrompt, [FRONT_DESK_LINE, ...toolSheetLines('claude-code', { pluginRoot: plugin })].join('\n'));
-      assert.ok(context.appendSystemPrompt.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
+      assert.ok(context.appendSystemPrompt.includes(`The Wheelhouse command is node ${knowsNoSystemCa() ? '--no-use-system-ca ' : ''}"${plugin.replaceAll('\\', '/')}/scripts/frontdesk/cli.js"`), 'the command line names the scratch plugin\'s cli.js');
       assert.ok(fs.existsSync(path.join(plugin, 'scripts', 'frontdesk', 'cli.js')), 'and the scratch plugin holds that file');
       for (const [hook, said] of hooks.map((h, i) => [h, [SHOWN, phone][i]])) {
         // Each fails closed: a hook that can't run refuses the call (F107).

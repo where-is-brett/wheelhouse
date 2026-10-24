@@ -38,6 +38,7 @@ import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { journalFile } from '../../../scripts/lib/setup-run.js';
 import { beforeTimer, nodeStartMs } from '../../helpers/until.js';
+import { searchPathIn } from '../../helpers/env.js';
 
 const P = 'owner__name';
 
@@ -123,7 +124,7 @@ test('a helper started once setup has made the company\'s certificate gets it fo
     const after = fake();
     await run(after);
     assert.equal(after.calls.spawn[0].opts.env.NODE_EXTRA_CA_CERTS, file);
-    assert.equal(after.calls.spawn[0].opts.env.PATH, process.env.PATH);
+    assert.equal(searchPathIn(after.calls.spawn[0].opts.env), process.env.PATH);
     assert.equal(after.calls.spawn[0].opts.detached, true);
   });
 });

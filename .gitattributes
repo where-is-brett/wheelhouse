@@ -1,0 +1,5 @@
+# .gitattributes
+# Every text file is checked out with LF line endings on every system. Windows git would
+# otherwise write CRLF, and the templates, fixtures, certificates and fingerprinted skills are
+# read as they are in the repository.
+* text=auto eol=lf

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempFolder as madeFolder } from '../../helpers/homes.js';
+import { searchPathIn } from '../../helpers/env.js';
 import { projectSettings } from '../../../scripts/protection/settings.js';
 import {
   DENIED_TOOLS,
@@ -235,7 +236,7 @@ test('runSession keeps the session away from the director\'s own: an environment
   // The environment: only the allowlist and what the run sets.
   for (const name of Object.keys(planted)) assert.equal(env[name], undefined, name);
   assert.equal(env.WHEELHOUSE_HOME, '/tmp/eval-home');
-  assert.equal(env.PATH, process.env.PATH);
+  assert.equal(searchPathIn(env), process.env.PATH);
   assert.equal(env.HOME, process.env.HOME);
   assert.ok(Object.keys(env).every((name) => SESSION_ENV.test(name) || name === 'WHEELHOUSE_HOME' || /^__CF|^_$|^SHLVL$|^PWD$|^OLDPWD$/.test(name)), Object.keys(env).join(' '));
 });

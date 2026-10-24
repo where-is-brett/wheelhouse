@@ -41,7 +41,8 @@ const guardDeps = { dir: MANAGED, platform: 'linux', home: '/home/model-a', plug
 // A fixture with the project's folder in place of <PROJECT>.
 function fixture(name) {
   const text = fs.readFileSync(path.join(FIXTURES, name), 'utf8');
-  return JSON.parse(text.replaceAll('<PROJECT>', MAIN));
+  // Written as JSON writes it, so a Windows folder's backslashes are escaped.
+  return JSON.parse(text.replaceAll('<PROJECT>', JSON.stringify(MAIN).slice(1, -1)));
 }
 const files = fs.readdirSync(FIXTURES).sort();
 const camelFiles = files.filter((f) => f.startsWith('camel-'));
