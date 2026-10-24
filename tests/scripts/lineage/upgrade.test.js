@@ -302,6 +302,10 @@ async function wheelhouseRepo() {
     'scripts/lineage/manifest.js': fs.readFileSync(MANIFEST_SOURCE, 'utf8'),
   });
   await g(root, 'init', '--quiet', '-b', 'main');
+  // land commits with the maintainer's own identity; the checkout carries one, as the
+  // maintainer's would, so the commit doesn't depend on this computer's git settings.
+  await g(root, 'config', 'user.name', 'T');
+  await g(root, 'config', 'user.email', 't@invalid');
   await g(root, 'add', '.');
   await g(root, 'commit', '--quiet', '-m', 'start');
   return { root, dir, manifest };

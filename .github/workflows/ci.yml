@@ -28,8 +28,9 @@ jobs:
         # before every push, so a draft pull request leaves macOS out.
         os: ${{ fromJSON(github.event.pull_request.draft && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
-    # The tests take a few minutes; a hung run stops here, not at GitHub's six hours.
-    timeout-minutes: 15
+    # The tests take a few minutes on Linux and macOS, and about half an hour on Windows, where
+    # starting a process is slow; a hung run stops here, not at GitHub's six hours.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 15 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

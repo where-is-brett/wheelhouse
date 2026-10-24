@@ -43,6 +43,10 @@ const LOOK = 'config --includes --name-only --list -z';
 const lookless = (file, args, options) => (args.join(' ') === LOOK ? Promise.resolve({ code: 0, stdout: '', stderr: '' }) : run(file, args, options));
 const hookCommand = (mark) => `echo ran >> "${mark}"`;
 const ran = (mark) => fs.existsSync(mark);
+// Only the search path, as the base for a run that carries nothing else from this process: with no
+// PATH at all, Node looks git up in /usr/bin and /bin, which on a Mac with git from elsewhere is
+// another, older git than every other call here uses.
+const searchPath = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() === 'PATH'));
 
 test('a hook declared in git\'s global config never runs in setup\'s git, though plain git runs it', async () => {
   const r = await repository();
@@ -275,7 +279,7 @@ test('an ext:: origin allowed by an included config runs for plain git, and in s
   assert.equal(ran(t.mark), false);
   // The transports alone stop it too, with the look left out: https only, or https and a local path.
   for (const env of [setupGitEnv({ host: 'github' }), reaching(setupGitEnv({ host: 'github' }), t.root)]) {
-    const got = await run('git', ['fetch', '-q', 'origin', 'main'], { cwd: t.work, env: isolated(env), baseEnv: {} });
+    const got = await run('git', ['fetch', '-q', 'origin', 'main'], { cwd: t.work, env: isolated(env), baseEnv: searchPath });
     assert.notEqual(got.code, 0);
     assert.match(got.stderr, /transport 'ext' not allowed/);
     assert.equal(ran(t.mark), false, env.GIT_ALLOW_PROTOCOL ?? 'https');
@@ -313,7 +317,9 @@ async function oldLooseObjects(t, seed) {
 
 test('a garbage-collection hook runs in a plain commit\'s automatic maintenance, and is refused by name in setup\'s git, whose maintenance is off (ruling R111)', async () => {
   const t = await workTree();
-  for (const [key, value] of [['gc.auto', '1'], ['gc.pruneExpire', '1.hour.ago'], ['gc.autoDetach', 'false'], ['maintenance.autoDetach', 'false']]) await t.plain(['config', key, value]);
+  // Git 2.56's default maintenance strategy leaves gc out of a commit's automatic maintenance, so
+  // the gc task is turned on by name and plain git runs it on every version.
+  for (const [key, value] of [['gc.auto', '1'], ['gc.pruneExpire', '1.hour.ago'], ['gc.autoDetach', 'false'], ['maintenance.autoDetach', 'false'], ['maintenance.gc.enabled', 'true']]) await t.plain(['config', key, value]);
   await t.plain(['config', 'gc.recentObjectsHook', `echo ran >> "${t.mark}"`]);
   await oldLooseObjects(t, 'control');
   await t.plain(['commit', '-q', '--allow-empty', '-m', 'control']);
@@ -323,9 +329,9 @@ test('a garbage-collection hook runs in a plain commit\'s automatic maintenance,
   const identity = ['-c', 'user.name=T', '-c', 'user.email=t@invalid'];
   const git = setupGit({ env: setupGitEnv({ host: 'github' }), cwd: t.work });
   await assert.rejects(git([...identity, 'commit', '-q', '--allow-empty', '-m', 'setup']),
-    { message: unlistedSettingsLine(['gc.auto', 'gc.pruneexpire', 'gc.autodetach', 'gc.recentobjectshook', 'maintenance.autodetach']) });
+    { message: unlistedSettingsLine(['gc.auto', 'gc.pruneexpire', 'gc.autodetach', 'gc.recentobjectshook', 'maintenance.autodetach', 'maintenance.gc.enabled']) });
   // The fence alone, with the look left out: no automatic maintenance, so the hook never runs.
-  const got = await run('git', [...identity, 'commit', '-q', '--allow-empty', '-m', 'fenced'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: {} });
+  const got = await run('git', [...identity, 'commit', '-q', '--allow-empty', '-m', 'fenced'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: searchPath });
   assert.equal(got.code, 0);
   assert.equal(ran(t.mark), false);
 });
@@ -387,7 +393,7 @@ test('a hook in a submodule\'s own config runs when a fetch goes into the submod
     GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_FILE, GIT_ALLOW_PROTOCOL: 'https:file',
     GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: NULL_FILE, GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false',
   };
-  await run('git', ['fetch', '-q', control.superBare, '+refs/heads/main:refs/remotes/origin/main'], { cwd: control.project, env: before, baseEnv: {} });
+  await run('git', ['fetch', '-q', control.superBare, '+refs/heads/main:refs/remotes/origin/main'], { cwd: control.project, env: before, baseEnv: searchPath });
   assert.equal(ran(control.mark), true, 'git ran the submodule\'s hook: its own git there carries none of the parent\'s settings');
   const s = await withSubmodule();
   const env = reaching(setupGitEnv({ host: 'github' }), s.superBare);
@@ -423,7 +429,7 @@ test('a resolve address with certificate checks off sends plain git\'s https to 
   await assert.rejects(git(['ls-remote', url]), { message: unlistedSettingsLine(['http.curloptresolve', 'http.sslverify']) });
   assert.equal(counted.calls, 1, 'only the look ran');
   // The fence: whatever the repository's own http.sslVerify says, setup's git checks certificates.
-  const seen = await run('git', ['config', '--get', 'http.sslVerify'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: {} });
+  const seen = await run('git', ['config', '--get', 'http.sslVerify'], { cwd: t.work, env: isolated(setupGitEnv({ host: 'github' })), baseEnv: searchPath });
   assert.equal(seen.stdout.trim(), 'true');
   // A planted certificate or key in place of the checks off, or either for github.com alone: each refused by name.
   for (const [key, value] of [

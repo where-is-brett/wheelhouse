@@ -1,5 +1,5 @@
 {
-  "gitVersion": "git version 2.54.0 (Apple Git-157)",
+  "gitVersion": "git version 2.56.0",
   "note": "Keys of git help --config in the whole-section entries of the project allowed list (and pull, color, advice). Updated only after each new key has been looked at.",
   "sections": {
     "advice": [
@@ -29,6 +29,7 @@
       "advice.pushNonFFMatching",
       "advice.pushNonFastForward",
       "advice.pushRefNeedsUpdate",
+      "advice.pushRepoLooksLikeRef",
       "advice.pushUnqualifiedRefName",
       "advice.pushUpdateRejected",
       "advice.rebaseTodoError",
@@ -197,6 +198,7 @@
       "log.excludeDecoration",
       "log.follow",
       "log.graphColors",
+      "log.graphIndent",
       "log.initialDecorationSet",
       "log.mailmap",
       "log.showRoot",

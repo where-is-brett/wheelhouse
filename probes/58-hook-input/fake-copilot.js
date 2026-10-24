@@ -62,7 +62,10 @@ function fire(event, tool, toolArgs) {
     const input = !tool ? base
       : pascal ? { session_id: 'stand-in', cwd, hook_event_name: r.event, tool_name: CLAUDE_NAMES[tool] ?? tool, tool_input: toolArgs }
         : { ...base, toolName: tool, toolArgs: JSON.stringify(toolArgs) };
-    const out = spawnSync(r.command, { shell: true, input: JSON.stringify(input), cwd, env: process.env, encoding: 'utf8', timeout: r.timeoutSec * 1000 });
+    // Each hook is one program call. On macOS and Linux the shell is replaced by it (exec), so a time-out
+    // kills the hook itself: Linux's dash would otherwise keep it as a child that outlives the kill.
+    const command = process.platform === 'win32' ? r.command : `exec ${r.command}`;
+    const out = spawnSync(command, { shell: true, input: JSON.stringify(input), cwd, env: process.env, encoding: 'utf8', timeout: r.timeoutSec * 1000 });
     if (!/^pre/i.test(event)) continue;
     if (out.error || out.signal) continue; // a time-out lets the call through
     if (out.status !== 0) denied = true;
