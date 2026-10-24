@@ -22,6 +22,7 @@ import { rulesInput } from '../../helpers/rules-card.js';
 import { beforeTimer } from '../../helpers/until.js';
 import { nudgeCard } from '../../../scripts/routing/nudge.js';
 import { buildViews } from '../../../scripts/state/views.js';
+import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -1372,15 +1373,22 @@ const USAGE_RESET = '2026-10-19T09:00:00.000Z';
 // An up card, offered at NOW: under 40% used with the reset under two days off.
 const upCard = () => nudgeCard({ allowance: { used: 20, resetsAt: USAGE_RESET, at: USAGE_AT }, level: 'balanced', mark: 75, now: NOW, timeZone: 'UTC' });
 const usageQuestion = (got) => composeCard(got.input).question;
-const usageClick = (q, label, opts = {}) => input({ [q.question]: label }, { options: q.options, ...opts });
+// The click as AskUserQuestion hands it to the hook: the card as asked, header and options' descriptions too.
+const usageClick = (q, label, { options = q.options, multi = false } = {}) => ({
+  cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+  tool_input: { questions: [{ ...q, options, multiSelect: multi }], answers: { [q.question]: label } },
+  tool_response: { answers: { [q.question]: label } },
+});
 const usageDeps = (client, more = {}) => ({ ...deps(client), ready: () => [], ...more });
-const keepOffer = (record) => keepEvent(makeEvent({ kind: 'usage-card', data: record, now: () => new Date(Date.parse(record.at)) }));
+// The offer as the session start keeps it: signed, with the hash of the card it composed.
+const offerOf = (got) => makeEvent({ kind: 'usage-card', data: { ...got.record, hash: cardHash(usageQuestion(got)) }, now: () => new Date(Date.parse(got.record.at)) });
+const keepOffer = (got) => keepEvent(offerOf(got));
 
 test('the switch option on a usage card records the setting with its signed confirmation, and no second card', async () => {
   await withHome(async () => {
     const got = upCard();
     assert.equal(got.card, 'up');
-    keepOffer(got.record);
+    keepOffer(got);
     const q = usageQuestion(got);
     assert.equal(cardProblems(q).length, 0);
     assert.doesNotMatch(q.question, /Reply code:/, 'only the click on the card counts: no reply code');
@@ -1413,7 +1421,7 @@ test('the switch option on a usage card records the setting with its signed conf
     assert.equal(after.switchTo, 'balanced');
 
     // The return card's own pick switches back the same way, in one card.
-    keepOffer(after.record);
+    keepOffer(after);
     const back = fake();
     const at = new Date('2026-10-19T10:06:00.000Z');
     await decide(usageClick(usageQuestion(after), after.switchLabel), { ...usageDeps(back), now: () => at });
@@ -1425,7 +1433,7 @@ test('the switch option on a usage card records the setting with its signed conf
 test('the stay option on a usage card changes nothing and is kept as the card\'s answer', async () => {
   await withHome(async () => {
     const got = upCard();
-    keepOffer(got.record);
+    keepOffer(got);
     const q = usageQuestion(got);
     const c = fake();
     await decide(usageClick(q, 'Stay on Balanced'), usageDeps(c));
@@ -1445,7 +1453,7 @@ test('a usage card\'s switch counts only as the director\'s own click on the car
     };
     // No offer in the state: a card an agent wrote itself confirms nothing.
     await nothing(usageClick(q, got.switchLabel));
-    keepOffer(got.record);
+    keepOffer(got);
     // Typed text that reads as the switch, a multiple choice, and an answer the tool didn't give back are not clicks.
     await nothing(usageClick(q, got.switchLabel, { options: [{ label: 'Stay on Balanced' }] }));
     await nothing(usageClick(q, got.switchLabel, { multi: true }));
@@ -1463,7 +1471,7 @@ test('a usage card\'s switch counts only as the director\'s own click on the car
     await nothing(usageClick(q, got.switchLabel), { now: () => new Date('2026-10-19T09:00:00.000Z') });
     // A level that isn't ready is never set by a card.
     const lean = nudgeCard({ allowance: { used: 80, resetsAt: '2026-10-21T09:00:00.000Z', at: USAGE_AT }, level: 'balanced', mark: 75, ready: ['lean'], now: NOW, timeZone: 'UTC' });
-    keepOffer(lean.record);
+    keepOffer(lean);
     await nothing(usageClick(usageQuestion(lean), lean.switchLabel), { ready: () => [] });
     const c = fake();
     await decide(usageClick(usageQuestion(lean), lean.switchLabel), usageDeps(c, { ready: () => ['lean'] }));
@@ -1474,7 +1482,7 @@ test('a usage card\'s switch counts only as the director\'s own click on the car
 test('a usage card\'s switch is taken once: a second pick of the same card records nothing', async () => {
   await withHome(async () => {
     const got = upCard();
-    keepOffer(got.record);
+    keepOffer(got);
     const q = usageQuestion(got);
     const c = fake();
     await decide(usageClick(q, got.switchLabel), usageDeps(c));
@@ -1490,12 +1498,60 @@ test('a usage card\'s switch is taken once: a second pick of the same card recor
 test('a usage card carrying a reply code line gets no shown record, so no reply can stand for its switch', async () => {
   await withHome(async () => {
     const got = upCard();
-    keepOffer(got.record);
+    keepOffer(got);
     const q = usageQuestion(got);
     const line = setLineOf(q.question);
     const coded = { ...q, question: `${q.question}\n${replyCodeLine(replyCode(line))}` };
     const c = fake();
     await decide(usageClick(coded, 'Stay on Balanced'), usageDeps(c));
     assert.deepEqual(c.calls.record.filter((r) => r.event.kind === 'shown'), []);
+  });
+});
+
+test('a usage card\'s switch counts only against an offer this computer signed, for the very card it composed', async () => {
+  await withHome(async () => {
+    const nothing = async (q, label) => {
+      const c = fake();
+      await decide(usageClick(q, label), usageDeps(c, { ready: () => ['lean', 'lightest'] }));
+      assert.deepEqual(c.calls.record, []);
+    };
+    // A second card at Lean, offering Lightest, with its safety cost on the card.
+    const light = nudgeCard({ allowance: { used: 95, resetsAt: '2026-10-21T09:00:00.000Z', at: USAGE_AT }, level: 'lean', mark: 75, ready: ['lean', 'lightest'], now: NOW, timeZone: 'UTC' });
+    assert.equal(light.card, 'lightest');
+    const q = usageQuestion(light);
+    // An offer written as a plain record, with no signature, or one signed by a key this computer doesn't trust, or made on another computer.
+    const signed = offerOf(light);
+    const { sig, ...plain } = signed;
+    keepEvent(plain);
+    await nothing(q, light.switchLabel);
+    fs.rmSync(path.join(stateDir(P), eventPath(plain)));
+    keepEvent({ ...signed, computer: 'ffffffff' });
+    await nothing(q, light.switchLabel);
+    fs.rmSync(path.join(stateDir(P), eventPath({ ...signed, computer: 'ffffffff' })));
+    keepEvent(signed);
+    // The card reworded, its safety cost left out, earns nothing: only the card the session start composed counts.
+    const cut = { ...q, question: q.question.replace(/Lightest saves more, but it's less safe, so only you can choose it\./, 'Only you choose how thorough the work is.') };
+    assert.notEqual(cut.question, q.question);
+    await nothing(cut, light.switchLabel);
+    const quiet = { ...q, options: q.options.map((o) => ({ ...o, description: o.description.replace(/ On Lightest.*$/, '') })) };
+    await nothing(quiet, light.switchLabel);
+    // The card as composed does.
+    const c = fake();
+    await decide(usageClick(q, light.switchLabel), usageDeps(c, { ready: () => ['lean', 'lightest'] }));
+    assert.equal(c.calls.record[0].target.data.value, 'lightest');
+  });
+});
+
+test('a usage card\'s switch still waiting to be sent counts as taken: a second pick records nothing', async () => {
+  await withHome(async () => {
+    const got = upCard();
+    keepOffer(got);
+    const q = usageQuestion(got);
+    const down = fake({ refuse: true });
+    await decide(usageClick(q, got.switchLabel), usageDeps(down));
+    assert.equal(down.calls.record.length, 1, 'tried once, and kept in pending/');
+    const again = fake();
+    await decide(usageClick(q, got.switchLabel), usageDeps(again));
+    assert.deepEqual(again.calls.record, []);
   });
 });

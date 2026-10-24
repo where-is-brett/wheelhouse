@@ -46,7 +46,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import tools from '../../adapters/claude-code/tools.js';
 import { runAndExit, projectOf, beingSetUp } from './kit.js';
-import { keep, taken, sendPending, withinBudget, BUDGET_MS } from './pending.js';
+import { keep, taken, sendPending, withinBudget, pendingDir, BUDGET_MS } from './pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
 import { liftStop as defaultLift, stopState as defaultStopState } from '../lib/stop.js';
@@ -70,7 +70,7 @@ import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
 import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
-import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
+import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -197,29 +197,57 @@ function keepControlOf(project, question) {
   return hashes.size === 1 ? { action: 'keep-control-files', work: m[1], hash: [...hashes][0] } : null;
 }
 
-// How long a return card's switch counts after it is offered; a card that switches down or up counts until the reset
-// its offer names.
+// How long a return card's switch counts after it is offered, a designer's call (design section 14.6 says only that
+// it is offered at the first front-desk turn after the reset): a week, the allowance week it opens. A card that
+// switches down or up counts until the reset its offer names.
 const RETURN_DAYS = 7;
 
+// The settings kept in pending/ with their confirmations, still to be sent: a usage card's switch taken there is taken.
+function pendingSettings(project) {
+  let names = [];
+  try {
+    names = fs.readdirSync(pendingDir(project)).filter((n) => n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    try {
+      const { route, body } = JSON.parse(fs.readFileSync(path.join(pendingDir(project), name), 'utf8'));
+      return route === 'record' && body?.target?.kind === 'setting' ? [body.target] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 // The records a click on a usage card's switch earns (design section 14.6; the director, 25 October 2026): the card
-// carries one set line, a usage card's, naming the level and the time of an offer the state holds; the label is that
+// carries one set line, a usage card's, naming the level and the time of an offer the state holds, signed by this
+// computer's own enrolled key (the session start's); the card is the very card that offer names by its hash (text,
+// header and options), so a card reworded, the Lightest card's safety cost left out, earns nothing; the label is that
 // offer's switch option; the offer's week isn't over; the level is ready (`ready`, the columns ready beyond Balanced
-// and Thorough, as the settings pane's press holds it); and no setting in the state came from that offer yet. The
+// and Thorough, as the settings pane's press holds it); and no setting in the state, or waiting in pending/, came from
+// that offer yet. The
 // setting is made here, with the offer's time, and goes with its confirmation, as setup's confirmed records do, so it
 // is in force once the helper takes them. Null for anything else, the stay option among them.
-function usageOf(project, question, label, now, ready) {
+function usageOf(project, question, label, shown, now, ready) {
   const lines = setLinesOf(question);
   const m = lines.length === 1 ? USAGE_LINE.exec(lines[0]) : null;
   if (!m) return null;
   const [, to, at] = m;
-  const offers = new Set(held(project, 'usage-card').filter((e) => e.data?.at === at && e.data?.to === to).map((e) => `${e.data.card} ${e.data.reset}`));
+  const hash = cardHash(shown);
+  if (hash === null || shown.question !== question) return null;
+  const enrolled = readEnrolled();
+  const own = computerId();
+  const offers = new Set(held(project, 'usage-card')
+    .filter((e) => e.data?.at === at && e.data?.to === to && e.data?.hash === hash && e.computer === own && e.sig?.computer === own && verify(e, enrolled))
+    .map((e) => `${e.data.card} ${e.data.reset}`));
   if (offers.size !== 1) return null;
   const [card, reset] = [...offers][0].split(' ');
   if (label !== switchLabelOf(card, to)) return null;
   const until = card === 'return' ? Date.parse(at) + RETURN_DAYS * DAY : Date.parse(reset);
   if (!(now().getTime() < until)) return null;
   if (!ALWAYS_READY.includes(to) && !ready({ project }).includes(to)) return null;
-  if (held(project, 'setting').some((e) => e.data?.usageCard === at)) return null;
+  if ([...held(project, 'setting'), ...pendingSettings(project)].some((e) => e.data?.usageCard === at)) return null;
   const target = makeEvent({ kind: 'setting', data: { key: 'efficiency', value: to, usageCard: at, words: settingWords('efficiency', to) }, now });
   return { made: confirmationFor(target), target };
 }
@@ -230,14 +258,15 @@ function usageOf(project, question, label, now, ready) {
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
 // shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one. A usage card's
 // switch gives `target` too, the setting its confirmation carries.
-export async function earned({ project, question, label, client, now, left, stopState = defaultStopState, shownAt, ready = columnsReadyOf }) {
+export async function earned({ project, question, label, card, client, now, left, stopState = defaultStopState, shownAt, ready = columnsReadyOf }) {
   const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   // A card with an answer line is a question card: its buttons are answers, whatever else it says.
   if (question.includes('Answer question q-')) {
     const answer = answerOf(project, question, label);
     return answer ? action(answer) : null;
   }
-  if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, now, ready);
+  // `card` is the question as AskUserQuestion was given it; a reply or a pane press has none, so earns nothing here.
+  if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, card, now, ready);
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];

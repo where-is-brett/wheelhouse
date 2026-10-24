@@ -34,6 +34,7 @@ import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
+import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { startRun, markStep, addChanges, newId, closeRun } from '../../../scripts/setup/journal.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
@@ -58,7 +59,7 @@ function withHome(fn) {
 const VIEWS = { rulebook: [], levels: {}, waiting: [], unconfirmed: [], damaged: [] };
 
 function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync = { ok: true } } = {}) {
-  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0, writes: [] };
+  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0, writes: [], records: [] };
   let started = false;
   return {
     calls,
@@ -68,7 +69,7 @@ function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync =
         sync: async () => { calls.sync += 1; return sync; },
         views: async () => { calls.views += 1; return { ok: true, views }; },
         write: async (body) => { calls.writes.push(body); return { ok: true }; },
-        record: async () => ({ ok: true }),
+        record: async (body) => { calls.records.push(body); return { ok: true }; },
       },
     },
     spawn: (file, args, opts) => { calls.spawn.push({ file, args, opts }); started = startsUp; return { unref() { calls.unref += 1; }, on() {} }; },
@@ -1650,6 +1651,13 @@ test('the Wheelhouse command line carries the flag that turns the system certifi
 
 // ---- The usage cards (design section 14.6) ----
 
+// A home whose computer has its signing key, as one set up has: the session start signs each usage card's offer.
+const withKeyHome = (fn) => withHome(async (home) => {
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+  return fn(home);
+});
+
 const USAGE_NOW = '2026-10-26T01:00:00.000Z';
 const USAGE_RESET = '2026-10-28T22:00:00.000Z';
 const weekly = (used, at = USAGE_NOW) => () => ({ used, resetsAt: USAGE_RESET, at });
@@ -1661,7 +1669,7 @@ const kept = (project) => {
 };
 
 test('the front desk is handed the usage card when the allowance passes the mark, its switch the change itself, and the offer is recorded', async () => {
-  await withHome(async () => {
+  await withKeyHome(async () => {
     const f = fake();
     const out = await run(f, { columnsReady: () => ['lean', 'lightest'], now: () => new Date(USAGE_NOW), allowance: weekly(76), timeZone: 'Australia/Sydney' });
     const [line, ...more] = usageLines(out);
@@ -1672,19 +1680,25 @@ test('the front desk is handed the usage card when the allowance passes the mark
     assert.deepEqual(card.options.map((o) => o.label), ['Switch to Lean until it resets', 'Stay on Balanced', 'Suggest a change…']);
     assert.match(card.question, /\nSwitch Thoroughness to lean, as the usage card of 2026-10-26T01:00:00\.000Z offers$/);
     assert.match(line, /The director's click on "Switch to Lean until it resets" is the change itself, recorded and confirmed by that click: record nothing and ask no confirm card\./);
-    assert.deepEqual(f.calls.writes.filter((w) => w.kind === 'usage-card'), [{ project: P, kind: 'usage-card', data: { card: 'nudge', at: USAGE_NOW, reset: USAGE_RESET, from: 'balanced', to: 'lean' } }]);
+    // The offer is signed with this computer's key and sent through /state/record, with the hash of the card handed out.
+    assert.deepEqual(f.calls.writes.filter((w) => w.kind === 'usage-card'), []);
+    const offers = f.calls.records.filter((r) => r.event?.kind === 'usage-card');
+    assert.equal(offers.length, 1);
+    assert.equal(offers[0].project, P);
+    assert.deepEqual(offers[0].event.data, { card: 'nudge', at: USAGE_NOW, reset: USAGE_RESET, from: 'balanced', to: 'lean', hash: cardHash(card) });
+    assert.ok(verify(offers[0].event, readEnrolled()));
   });
 });
 
 test('no switch to Lean is offered while the Lean column is not ready', async () => {
-  await withHome(async () => {
+  await withKeyHome(async () => {
     const out = await run(fake(), { columnsReady: () => [], now: () => new Date(USAGE_NOW), allowance: weekly(99) });
     assert.equal(usageLines(out).length, 0);
   });
 });
 
 test('no usage card below the mark, with no reading, for the director\'s mark off, once offered this week, or outside the front desk', async () => {
-  await withHome(async () => {
+  await withKeyHome(async () => {
     const now = () => new Date(USAGE_NOW);
     const none = async (extra, f = fake(), input = {}) => usageLines(await run(f, { now, columnsReady: () => ['lean', 'lightest'], ...extra }, input)).length;
     assert.equal(await none({ allowance: weekly(74) }), 0);
@@ -1704,12 +1718,21 @@ test('no usage card below the mark, with no reading, for the director\'s mark of
   });
 });
 
-test('a usage card is handed out only once the helper has taken its offer, since its switch counts only for an offer the state holds', async () => {
+test('with no signing key on this computer no usage card is handed out, since its offer can\'t be signed', async () => {
   await withHome(async () => {
     const f = fake();
-    f.client.state.write = async () => ({ ok: false });
     const out = await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
     assert.equal(usageLines(out).length, 0);
-    assert.deepEqual(kept(P).filter((r) => r.body?.kind === 'usage-card'), [], 'not kept, so the card is offered at a later start');
+    assert.deepEqual(f.calls.records.filter((r) => r.event?.kind === 'usage-card'), []);
+  });
+});
+
+test('a usage card is handed out only once the helper has taken its offer, since its switch counts only for an offer the state holds', async () => {
+  await withKeyHome(async () => {
+    const f = fake();
+    f.client.state.record = async () => ({ ok: false });
+    const out = await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
+    assert.equal(usageLines(out).length, 0);
+    assert.deepEqual(kept(P).filter((r) => r.body?.event?.kind === 'usage-card' || r.body?.kind === 'usage-card'), [], 'not kept, so the card is offered at a later start');
   });
 });

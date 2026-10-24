@@ -425,14 +425,28 @@ test('a column-ready record names the column, the pins it ran on and the evaluat
   });
 });
 
-test('a usage-card record says which card, when, the allowance week and the levels', async () => {
+test('a usage-card record says which card, when, the allowance week, the levels and the hash of the card shown, signed', async () => {
   await withHome(() => {
-    assert.equal(PLAIN_KINDS.includes('usage-card'), true);
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    // Signed by the session start, so no session can write an offer a click would count against.
+    assert.equal(PLAIN_KINDS.includes('usage-card'), false);
+    assert.equal(PROTECTED_KINDS.includes('usage-card'), true);
     assert.equal(HELPER_ONLY_KINDS.includes('usage-card'), false);
-    const data = { card: 'nudge', at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from: 'balanced', to: 'lean' };
-    assert.deepEqual(makeEvent({ kind: 'usage-card', data }).data, data);
-    for (const bad of [null, { ...data, card: 'other' }, { ...data, at: 'now' }, { ...data, reset: 3 }, { ...data, from: 'best' }, { ...data, to: undefined }, { ...data, extra: 1 }]) {
+    const data = { card: 'nudge', at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from: 'balanced', to: 'lean', hash: 'ab'.repeat(32) };
+    const made = makeEvent({ kind: 'usage-card', data });
+    assert.deepEqual(made.data, data);
+    assert.ok(verify(made, readEnrolled()));
+    for (const bad of [null, { ...data, card: 'other' }, { ...data, at: 'now' }, { ...data, reset: 3 }, { ...data, from: 'best' }, { ...data, to: undefined }, { ...data, extra: 1 }, { ...data, hash: undefined }, { ...data, hash: 'ab' }]) {
       assert.throws(() => makeEvent({ kind: 'usage-card', data: bad }), /usage-card event/, JSON.stringify(bad));
+    }
+    // Each card offers its own switch: the nudge Lean from Balanced or Thorough, the second card Lightest from Lean,
+    // the upward card Thorough from below it, a return card another level than the one in force.
+    const fits = [['nudge', 'balanced', 'lean'], ['nudge', 'thorough', 'lean'], ['lightest', 'lean', 'lightest'], ['up', 'lean', 'thorough'], ['up', 'lightest', 'thorough'], ['up', 'balanced', 'thorough'], ['return', 'lean', 'balanced'], ['return', 'thorough', 'balanced']];
+    for (const [card, from, to] of fits) assert.doesNotThrow(() => makeEvent({ kind: 'usage-card', data: { ...data, card, from, to } }), `${card} ${from} ${to}`);
+    const misfits = [['nudge', 'balanced', 'lightest'], ['nudge', 'lean', 'lean'], ['lightest', 'balanced', 'lightest'], ['lightest', 'lean', 'lean'], ['up', 'balanced', 'lightest'], ['up', 'thorough', 'thorough'], ['return', 'lean', 'lean']];
+    for (const [card, from, to] of misfits) {
+      assert.throws(() => makeEvent({ kind: 'usage-card', data: { ...data, card, from, to } }), /usage-card event/, `${card} ${from} ${to}`);
     }
   });
 });

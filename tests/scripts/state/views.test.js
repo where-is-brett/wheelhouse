@@ -1239,13 +1239,16 @@ test('the columnsReady view keeps the latest column-ready record of each column'
   });
 });
 
-test('the usageCards view lists the usage cards offered, oldest first', async () => {
+test('the usageCards view lists the usage cards offered, oldest first, signed by an enrolled computer', async () => {
   await withHome(() => {
     assert.deepEqual(build([]).usageCards, []);
-    const data = (card) => ({ card, at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from: 'balanced', to: 'lean' });
-    const first = ev('usage-card', 1, data('nudge'));
-    const second = ev('usage-card', 2, data('lightest'));
+    const data = (card, from, to) => ({ card, at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from, to, hash: 'ab'.repeat(32) });
+    const first = ev('usage-card', 1, data('nudge', 'balanced', 'lean'));
+    const second = ev('usage-card', 2, data('lightest', 'lean', 'lightest'));
     assert.deepEqual(build([second, first]).usageCards, [{ id: first.id, ...first.data }, { id: second.id, ...second.data }]);
+    // An offer no enrolled key signed is no offer.
+    const { sig, ...unsigned } = first;
+    assert.deepEqual(build([unsigned, { ...second, data: { ...second.data, to: 'lean', card: 'nudge', from: 'balanced' } }]).usageCards, []);
   });
 });
 
