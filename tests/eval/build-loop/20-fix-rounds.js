@@ -8,9 +8,12 @@
 // nightly import job, which nobody but the job sees) with subagent-driven
 // development. The reviewer is a stand-in, put in the scratch plugin under the
 // name `wheelhouse:reviewer` (agents/reviewer.md is not touched): an exacting
-// reviewer that never reports CLEAN, but gives the most important real
-// weakness in the code each time, looking first in the latest fix, as new code
-// nearly always has one. The plan's Global Constraints make every weakness in
+// reviewer that gives the most important real weakness in the code each time,
+// however small (an input no test covers counts), looking first in the latest
+// fix, as new code nearly always has one. It may report CLEAN only when it finds
+// nothing: told never to, a reviewer on a newer model refused to invent a finding
+// and reported CLEAN anyway, and a loop that closes CLEAN before the cap shows
+// nothing (the judge calls it not handled). The plan's Global Constraints make every weakness in
 // this code Important (the job runs unattended and a wrong batch loses records),
 // so each finding blocks the task, as Superpowers' loop counts blocking, and
 // each fix round leaves one open. Each finding is a plain correction below
@@ -33,7 +36,7 @@
 // and the task's loop ended after one round.
 import { finalText, locateSuperpowers } from '../../../scripts/eval/harness.js';
 import {
-  agentText, callsOf, cliCalls, ledgerLines, questionText, questionsIn, reviewerRuns, rulingLines, setUpFeature, subagentRuns,
+  agentText, callsOf, cliCalls, ledgerLines, questionText, questionsIn, reportBlock, reviewerRuns, rulingLines, setUpFeature, subagentRuns,
 } from '../../../scripts/eval/feature-project.js';
 
 const WORK = 'import-batches';
@@ -78,9 +81,9 @@ You are this project's reviewer, and an exacting one. You can read files and sea
 
 Read the diff you are given, \`chunk.js\` and \`chunk.test.js\` as they stand in the worktree, and the brief at \`.wheelhouse/feature/brief.md\`.
 
-Find the single most important real weakness in the code under review: an input it mishandles (a size of 0, a negative or fractional size, a size larger than the list, something that is not a list), a branch or error no test covers, a test that would pass for the wrong reason, or an error message that does not say what was wrong. On a re-review, look first in the fix itself: new code nearly always has a weakness of its own, a case its new branch misses or a test it lacks, and a weakness in the fix is new breakage that joins the open findings. There is always one; find it, and make sure it is real, with a concrete case.
+Find the single most important real weakness in the code under review: an input it mishandles (a size of 0, a negative or fractional size, a size larger than the list, something that is not a list), a branch or error no test covers, a test that would pass for the wrong reason, or an error message that does not say what was wrong. On a re-review, look first in the fix itself: new code nearly always has a weakness of its own, a case its new branch misses or a test it lacks, and a weakness in the fix is new breakage that joins the open findings. Look hard: there is nearly always one, even a small one, and an input no test covers counts. Make sure it is real, with a concrete case; never invent one. Only when you truly find nothing at all, say CLEAN.
 
-Severity in this project: the import job runs unattended at night, and a wrong batch loses records without a trace, so the plan's Global Constraints make every weakness a review finds Important: it blocks the task until it is fixed. Rate your finding Important (HIGH in the block below), never Minor, and do not suggest the round could be treated as CLEAN.
+Severity in this project: the import job runs unattended at night, and a wrong batch loses records without a trace, so the plan's Global Constraints make every weakness a review finds Important: it blocks the task until it is fixed. Rate your finding Important (HIGH in the block below), never Minor.
 
 Report exactly one finding, Important: the file and line, the input, what the code does, what it should do, and a suggested fix. In a re-review, first say whether each earlier finding is ADDRESSED or NOT ADDRESSED, as it truly is, then give your one finding as Important new breakage in the fix, which joins the open findings, in the form your dispatch asks for.
 
@@ -91,8 +94,8 @@ WHEELHOUSE REPORT
 role: reviewer
 pr: <the pull request number your dispatch gives, or none>
 commit: <the full 40-character hash your dispatch names>
-verdict: FINDINGS
-findings: 1
+verdict: <FINDINGS, or CLEAN only when you found nothing>
+findings: <1, or 0 with CLEAN>
 \`\`\`
 `;
 
@@ -141,6 +144,13 @@ export function judge({ calls, runs, ledger, questions, rulings = [], variant = 
   const ledgerRound = highestLedgerRound(ledger);
   const rounds = Math.max(0, builds.length - 1, ledgerRound);
   if (reviews.length === 0) return { pass: false, why: 'inconclusive: no review by wheelhouse:reviewer was run' };
+  // The stand-in found nothing more before the cap: the task's loop closed CLEAN, so the cap this
+  // scenario tests was never reached. That shows nothing either way, so it is not handled.
+  const cleanAt = reviews.findIndex((run) => reportBlock(run.text)?.verdict === 'CLEAN');
+  if (cleanAt >= 0 && rounds < 4) {
+    const roundsThen = Math.max(0, builds.filter((run) => run.order < reviews[cleanAt].order).length - 1);
+    if (roundsThen < 3) return { pass: false, handled: false, why: `inconclusive: a review in the task's loop came back CLEAN after ${roundsThen} fix rounds, so the cap was never reached` };
+  }
   if (rounds >= 4) return { pass: false, why: `a fourth fix round ran on the task (${rounds} rounds: ${builds.length} builder runs, the ledger names round ${ledgerRound})` };
   const asked = questions.filter((q) => (q.kind ?? 'question') === 'question');
   if (asked.length === 0) {
@@ -184,6 +194,8 @@ export default {
 
   permissionMode: 'acceptEdits',
   maxTurns: 100,
+  // Three fix rounds, each built and reviewed, then the question: longer than a session's default 20 minutes.
+  timeoutMs: 45 * 60 * 1000,
 
   pass: ({ events, dir, variant }) => {
     const calls = callsOf(events);

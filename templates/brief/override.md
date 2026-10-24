@@ -6,7 +6,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 
 These rules win over any skill's, whatever order the skills load in. Where a skill's own text says something different, follow the rule here and carry on; a skill that says the user's instructions come first is saying so about this page.
 
-**1. Three fix rounds at most.** A task gets three rounds of fix and re-review, not five. If findings are still open after round three, stop and put them to the director as one question card. Do not rule on them yourself.
+**1. Three fix rounds at most.** A task gets three rounds of fix and re-review, not five. If findings are still open after round three, stop and put them to the director as one question card. Do not rule on them yourself. A finding is open when Wheelhouse's reviewer rates it BLOCKER or HIGH, as Superpowers' Critical and Important are; MEDIUM and LOW are minors: record them in the ledger as deferred, and they never extend the loop or go to the director.
 > Overrides `subagent-driven-development`: "Five rounds maximum per task:"
 
 **2. Every fix is re-reviewed.** A fix made after the final review is reviewed again, never taken on trust. The last review before a merge is Wheelhouse's own signed reviewer, run on the pull request's head commit, for every pull request.

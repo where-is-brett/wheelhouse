@@ -659,6 +659,19 @@ test('runScenario passes a context from setup, and the scenario\'s extra argumen
   assert.deepEqual(written.evidence, { seen: 1 });
 });
 
+test('runScenario gives the session a longer time limit when the scenario sets one, and the default otherwise', async () => {
+  const home = tempFolder('harness-home-');
+  const seen = [];
+  const scenario = (id, timeoutMs) => ({
+    id, title: 'a stand-in', setup: async () => ({}), prompt: 'x', ...(timeoutMs ? { timeoutMs } : {}),
+    variants: { with: { pluginDirs: [] }, without: { pluginDirs: [] } }, pass: () => ({ pass: true, why: 'ok' }),
+  });
+  const runner = async (options) => { seen.push(options.timeoutMs); return { events, exitCode: 0, usage: usageOf(events) }; };
+  await runScenario({ scenario: scenario(88, 40 * 60 * 1000), variant: 'with', home, date: '2026-10-18', runner });
+  await runScenario({ scenario: scenario(87), variant: 'with', home, date: '2026-10-18', runner });
+  assert.deepEqual(seen, [40 * 60 * 1000, undefined], 'unset, runSession keeps its own default');
+});
+
 test('runScenario gives the session the model its set-up names before the scenario\'s own, and keeps it in the record', async () => {
   const home = tempFolder('harness-home-');
   const seen = [];
