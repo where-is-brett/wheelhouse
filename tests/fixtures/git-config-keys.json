@@ -1,5 +1,5 @@
 {
-  "gitVersion": "git version 2.56.0",
+  "gitVersion": "git version 2.56.0 (and 2.56.0.windows.2)",
   "note": "Keys of git help --config in the whole-section entries of the project allowed list (and pull, color, advice). Updated only after each new key has been looked at.",
   "sections": {
     "advice": [
@@ -20,6 +20,7 @@
       "advice.ignoredHook",
       "advice.implicitIdentity",
       "advice.mergeConflict",
+      "advice.nameTooLong",
       "advice.nestedTag",
       "advice.objectNameWarning",
       "advice.pushAlreadyExists",
@@ -49,6 +50,7 @@
       "advice.submodulesNotUpdated",
       "advice.suggestDetachingHead",
       "advice.updateSparsePath",
+      "advice.useCoreFSMonitorConfig",
       "advice.waitingForEditor",
       "advice.worktreeAddOrphan"
     ],

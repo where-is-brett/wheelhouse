@@ -30,6 +30,9 @@ after(() => shims.restore());
 const T0 = new Date('2026-10-23T01:00:00.000Z');
 const MAC_NODE = '/Users/Ann O\'Neil/.local/node/bin/node';
 const MAC_ROOT = '/Users/Ann O\'Neil/.copilot/wheelhouse/v1.0.0';
+// A Mac's sign-in start written into a real folder needs a Mac's paths for it, so on Windows those
+// tests are left to the Mac's run.
+const onMacPaths = { skip: process.platform === 'win32' ? 'a Mac\'s launch agent is written into a real folder here' : false };
 const WIN_NODE = 'C:\\Program Files\\nodejs\\node.exe';
 const WIN_ROOT = 'C:\\Users\\Ann O\'Neil\\.copilot\\wheelhouse\\v1.0.0';
 
@@ -59,7 +62,7 @@ function fakeReg(values = new Map()) {
   return { run: fake, calls, values };
 }
 
-test('the plist runs start-helper with full paths', async () => {
+test('the plist runs start-helper with full paths', onMacPaths, async () => {
   const userHome = shortHome();
   const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
   assert.equal(entry.kind, 'launch-agent');
@@ -139,7 +142,7 @@ async function projectFolder(parent) {
   return folder;
 }
 
-test('no entry on a work computer', async () => {
+test('no entry on a work computer', onMacPaths, async () => {
   const home = shortHome();
   const userHome = shortHome();
   const folder = await projectFolder(shortHome());
@@ -171,7 +174,7 @@ test('no entry on a work computer', async () => {
   });
 });
 
-test('uninstall removes the entry it made and nothing else', async () => {
+test('uninstall removes the entry it made and nothing else', onMacPaths, async () => {
   // macOS: another launch agent in the folder stays, and so does ours once it was changed by someone else.
   const userHome = shortHome();
   const home = shortHome();

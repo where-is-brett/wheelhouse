@@ -41,7 +41,9 @@ async function repository() {
 // transports do alone.
 const LOOK = 'config --includes --name-only --list -z';
 const lookless = (file, args, options) => (args.join(' ') === LOOK ? Promise.resolve({ code: 0, stdout: '', stderr: '' }) : run(file, args, options));
-const hookCommand = (mark) => `echo ran >> "${mark}"`;
+// A path as written into a config file: forward slashes, as git's config reads a backslash as an escape.
+const slash = (p) => p.split(path.sep).join('/');
+const hookCommand = (mark) => `echo ran >> "${slash(mark)}"`;
 const ran = (mark) => fs.existsSync(mark);
 // Only the search path, as the base for a run that carries nothing else from this process: with no
 // PATH at all, Node looks git up in /usr/bin and /bin, which on a Mac with git from elsewhere is
@@ -267,7 +269,7 @@ test('a remote named by setup\'s own address sends plain git\'s ls-remote and pu
 test('an ext:: origin allowed by an included config runs for plain git, and in setup\'s git is refused by name and can\'t run (ruling R111)', async () => {
   const t = await workTree();
   const included = path.join(t.root, 'included');
-  fs.writeFileSync(included, `[protocol "ext"]\n\tallow = always\n[remote "origin"]\n\turl = "ext::sh -c touch% ${t.mark}"\n`);
+  fs.writeFileSync(included, `[protocol "ext"]\n\tallow = always\n[remote "origin"]\n\turl = "ext::sh -c touch% ${slash(t.mark)}"\n`);
   // The include comes before origin's own https address, so git's first address for origin is ext::.
   await t.plain(['config', 'include.path', included]);
   await t.plain(['remote', 'add', 'origin', 'https://github.com/where-is-brett/nothing.git']);
