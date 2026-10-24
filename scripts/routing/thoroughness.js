@@ -3,7 +3,7 @@
 // role but the front desk, and the extra checks that go with the level. The columns are the design's table, and a
 // cell names a class of model; the project's `tiers.pins` (scripts/gate/guardrails.js) says which model is each class.
 // Nothing here reads a file or a setting: callers pass what they have read.
-import { ROLES } from '../gate/guardrails.js';
+import { ROLES, isModelName } from '../gate/guardrails.js';
 
 export const LEVELS = Object.freeze(['lightest', 'lean', 'balanced', 'thorough']);
 export const EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh']);
@@ -16,11 +16,11 @@ const column = (cells) => Object.freeze(cells);
 export const COLUMNS = Object.freeze({
   lightest: column({
     foreman: cell(S, 'low'), feature: cell(S, 'high'), builderCritical: cell(S, 'high'), reviewerCritical: cell(S, 'high'),
-    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium'), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
+    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium', { rework: 'high' }), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
   }),
   lean: column({
     foreman: cell(S, 'low'), feature: cell(M, 'medium'), builderCritical: cell(M, 'medium'), reviewerCritical: cell(M, 'high'),
-    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium'), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
+    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium', { rework: 'high' }), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
   }),
   balanced: column({
     foreman: cell(S, 'medium'), feature: cell(M, 'high'), builderCritical: cell(M, 'high'), reviewerCritical: cell(M, 'high'),
@@ -51,17 +51,23 @@ const fallbackFor = (role, model, other) => (role === 'reviewerCritical' || othe
 // premium model is paid for. A level that can't be used runs at Balanced, with a line saying so.
 export function resolveRouting({ config, level, ready = [], premium = 'off', billing = 'unknown' }) {
   const lines = [];
+  const readyList = Array.isArray(ready) ? ready.filter((x) => typeof x === 'string') : [];
   let chosen = LEVELS.includes(level) ? level : 'balanced';
-  if (chosen !== 'balanced' && !ready.includes(chosen)) {
+  if (chosen !== 'balanced' && !readyList.includes(chosen)) {
     lines.push(`Thoroughness: ${capitalised(chosen)} isn't ready yet, so work runs at Balanced.`);
     chosen = 'balanced';
   }
-  const pins = config.tiers?.pins;
+  // A pin that isn't a model name counts as missing; no pin at all means no pins.
+  const given = config?.tiers?.pins;
+  const pin = (name) => (isModelName(given?.[name]) ? given[name] : null);
+  const pins = given !== null && typeof given === 'object' && !Array.isArray(given)
+    ? { mostCapable: pin('mostCapable'), midSized: pin('midSized'), premium: pin('premium') }
+    : undefined;
   if (pins === undefined && chosen !== 'balanced') {
     lines.push('Thoroughness: only Balanced until setup sets the models for each level.');
     chosen = 'balanced';
   }
-  const flat = (role) => config.routing[role] ?? null;
+  const flat = (role) => config?.routing?.[role] ?? null;
   const roles = {};
   let lightFallsBack = false;
   for (const role of ROLES) {
@@ -71,8 +77,8 @@ export function resolveRouting({ config, level, ready = [], premium = 'off', bil
       roles[role] = { model: flat(role), effort: spec.effort, fallback: null };
       continue;
     }
-    const top = pins.mostCapable ?? null;
-    const mid = pins.midSized ?? null;
+    const top = pins.mostCapable;
+    const mid = pins.midSized;
     let model;
     if (spec.class === 'mostCapable') model = top ?? flat(role);
     else if (mid !== null) model = mid;
@@ -85,7 +91,7 @@ export function resolveRouting({ config, level, ready = [], premium = 'off', bil
   }
   if (lightFallsBack) lines.push("The lighter model isn't set, so its work runs on the most capable model.");
 
-  const premiumWanted = chosen === 'thorough' && PREMIUM_MODES.includes(premium) && pins?.premium && ready.includes('premium');
+  const premiumWanted = chosen === 'thorough' && PREMIUM_MODES.includes(premium) && pins?.premium && readyList.includes('premium');
   if (premiumWanted) {
     if (premium === 'paid-too' || billing === 'within-plan') {
       for (const role of PREMIUM_ROLES) roles[role] = { model: pins.premium, effort: 'high', fallback: fallbackFor(role, pins.premium, pins.mostCapable) };

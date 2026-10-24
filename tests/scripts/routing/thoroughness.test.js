@@ -21,11 +21,11 @@ test('COLUMNS matches the design table cell for cell, and is frozen', () => {
   const S = 'midSized';
   assert.deepEqual(COLUMNS.lightest, {
     foreman: cell(S, 'low'), feature: cell(S, 'high'), builderCritical: cell(S, 'high'), reviewerCritical: cell(S, 'high'),
-    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium'), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
+    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium', { rework: 'high' }), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
   });
   assert.deepEqual(COLUMNS.lean, {
     foreman: cell(S, 'low'), feature: cell(M, 'medium'), builderCritical: cell(M, 'medium'), reviewerCritical: cell(M, 'high'),
-    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium'), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
+    builder: cell(S, 'medium', { rework: 'high' }), tester: cell(S, 'medium', { rework: 'high' }), mechanical: cell(S, 'low'), reviewer: cell(S, 'medium'),
   });
   assert.deepEqual(COLUMNS.balanced, {
     foreman: cell(S, 'medium'), feature: cell(M, 'high'), builderCritical: cell(M, 'high'), reviewerCritical: cell(M, 'high'),
@@ -169,4 +169,31 @@ test('levelOf and premiumOf read a settings view, falling back to the safe value
   assert.equal(premiumOf({ premium: { value: 'yes' } }), 'off');
   assert.equal(premiumOf({}), 'off');
   assert.equal(premiumOf(null), 'off');
+});
+
+test('a ready list that is not a list of names lets nothing through', () => {
+  for (const ready of ['thorough;premium-pending', null, undefined, 7, {}, [1, null]]) {
+    const r = resolveRouting({ config: pinned, level: 'thorough', ready, premium: 'paid-too' });
+    assert.equal(r.level, 'balanced', String(ready));
+    assert.equal(r.roles.feature.model, 'model-top');
+  }
+  const r = resolveRouting({ config: pinned, level: 'thorough', ready: ['thorough', 7, null, 'premium'], premium: 'paid-too' });
+  assert.equal(r.roles.feature.model, 'model-premium');
+});
+
+test('a pin that is not a model name counts as missing', () => {
+  const bad = { tiers: { pins: { mostCapable: '--flag', midSized: 'model-mid', premium: 'a b' } } };
+  const config = { ...configWith({}), ...bad };
+  const r = resolveRouting({ config, level: 'thorough', ready: [...ALL, 'premium'], premium: 'paid-too' });
+  assert.equal(r.roles.feature.model, null);
+  assert.equal(r.roles.mechanical.model, 'model-mid');
+  assert.equal(r.roles.feature.fallback, null);
+});
+
+test('a missing or odd configuration is no pins and no routing', () => {
+  for (const config of [undefined, null, 'x', {}, { tiers: null }, { tiers: { pins: [] } }, { tiers: { pins: 'x' } }]) {
+    const r = resolveRouting({ config, level: 'lean', ready: ALL });
+    assert.equal(r.level, 'balanced');
+    assert.equal(r.roles.builder.model, null);
+  }
 });
