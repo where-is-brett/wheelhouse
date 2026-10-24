@@ -174,6 +174,19 @@ test('the model comes from the routing table\'s Copilot column, and none is pass
   assert.doesNotThrow(() => on.checkFeature({ sessionMode: 'bypassPermissions' }));
 });
 
+test('the column\'s model, effort and fallback are taken and ignored: Copilot\'s columns come with its own routing table (check 75)', () => {
+  const column = { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' };
+  for (const [call, name] of [[start, 'start'], [resume, 'resume'], [foreman, 'foreman']]) {
+    const plain = call();
+    const given = call(column);
+    assert.deepEqual(given.args.filter((a) => !a.includes('.usage.json') && !a.includes('.logs')), plain.args.filter((a) => !a.includes('.usage.json') && !a.includes('.logs')), name);
+    assert.ok(!given.args.some((a) => /effort|fallback|model-top|model-mid/.test(a)), name);
+    assert.ok(!Object.keys(given.env).some((k) => /EFFORT/i.test(k)), name);
+  }
+  // Even an effort Claude Code's adapter would refuse is ignored here, not passed.
+  assert.ok(!start({ effort: 'max', fallback: '--yolo', model: 'a b' }).args.some((a) => /max|--yolo|a b/.test(a)));
+});
+
 test('a .cmd shim is called through quoteForCmd', () => {
   const shim = { kind: 'cmd', file: 'C:\\Users\\Ann O\'Neil\\npm\\copilot.cmd' };
   const call = start({ copilot: shim, platform: 'win32', runId: 'run-0001' });

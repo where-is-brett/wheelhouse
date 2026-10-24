@@ -31,6 +31,9 @@ import { localViews } from '../hooks/session-start.js';
 import { readProfileViews } from '../profile/store.js';
 import { helperClient } from '../host/helper-client.js';
 import { stateDir, profileDir } from '../lib/paths.js';
+import { readSmallText } from '../hooks/kit.js';
+import { readConfig, isModelName } from '../gate/guardrails.js';
+import path from 'node:path';
 
 export const ADVANCED = 'Advanced settings: ask the front desk';
 const ASK = 'Changed by asking the front desk';
@@ -63,7 +66,8 @@ const LEVEL_WORDS = {
   autonomy: { cautious: 'Cautious', balanced: 'Balanced', trusting: 'Trusting' },
   showFirst: { always: 'Always', visual: 'Visual changes', asked: 'Only when asked' },
   milestones: { demos: 'Midpoint demos', 'to-the-end': 'Run to the end', ask: 'Ask per feature' },
-  efficiency: { lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' },
+  efficiency: { lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' },
+  usageMark: { off: 'Off', 50: 'At 50%', 65: 'At 65%', 75: 'At 75%', 90: 'At 90%' },
   budget: { report: 'Report only', 'weekly-share': 'Weekly share', 'per-feature': 'Per feature' },
   pace: { 1: '1', 2: '2', 3: '3' },
   briefing: { short: 'Short', standard: 'Standard', detailed: 'Detailed' },
@@ -77,17 +81,37 @@ const PANE = {
   presence: { label: 'Availability', kind: 'presence' },
   milestones: { label: 'Feature milestones', kind: 'levels' },
   efficiency: { label: 'Thoroughness', kind: 'levels' },
+  premium: { label: 'Premium model', kind: 'none', why: ASK },
   budget: { label: 'Budget', kind: 'none', why: BUDGET_WHY },
   pace: { label: 'Builders at once', kind: 'levels' },
   briefing: { label: 'Briefing length', kind: 'levels' },
   briefingGapHours: { label: 'Hours before a new briefing', kind: 'none', why: ASK },
   explanations: { label: 'Explanations', kind: 'levels' },
   notifications: { label: 'Notifications', kind: 'none', why: ASK },
+  usageMark: { label: 'Usage nudge', kind: 'levels' },
   boardTab: { label: 'Board opens on', kind: 'levels' },
   hours: { label: 'Working hours', kind: 'none', why: ASK },
   phase: { label: 'Product phase', kind: 'levels' },
   protection: { label: 'Protection', kind: 'none', why: ASK },
 };
+
+// Thoroughness levels whose columns are ready whatever the state says; Lean and Lightest are
+// ready only when the state's `column-ready` list holds them.
+const ALWAYS_READY = ['balanced', 'thorough'];
+const isReady = (level, ready) => ALWAYS_READY.includes(level) || (Array.isArray(ready) && ready.includes(level));
+const NOT_READY = 'not ready yet';
+const LIGHTEST_NOTE = 'Lightest: the lighter model also designs and checks risky work, so mistakes are likelier to slip through. Every check still runs.';
+
+// Whether the project's configuration (in its main `folder`) holds a premium model pin. A
+// configuration that can't be read holds none.
+export function premiumPinIn(folder) {
+  try {
+    const text = typeof folder === 'string' && folder !== '' ? readSmallText(path.join(folder, '.claude', 'wheelhouse.json')) : null;
+    return text !== null && isModelName(readConfig(text).tiers?.pins?.premium);
+  } catch {
+    return false;
+  }
+}
 
 // How a level reads: the design's word for it, else the value as said.
 const wordOf = (key, value) => LEVEL_WORDS[key]?.[value] ?? say(value);
@@ -240,7 +264,7 @@ function heldOf(effective, key) {
   return { value: structuredClone(SETTINGS[key].default), from: 'default' };
 }
 
-function rowOf(key, { effective, changes, nowMs, timeZone, locked }) {
+function rowOf(key, { effective, changes, nowMs, timeZone, locked, ready }) {
   const spec = PANE[key];
   const base = { key, label: spec.label };
   if (key === 'protection') {
@@ -258,7 +282,11 @@ function rowOf(key, { effective, changes, nowMs, timeZone, locked }) {
     return { ...out, current: sayPresence(held, nowMs, timeZone), choices, here: true };
   }
   if (spec.kind === 'levels') {
-    const choices = SETTINGS[key].levels.map((level) => ({ id: String(level), label: wordOf(key, level), chosen: level === held.value }));
+    const choices = SETTINGS[key].levels.map((level) => ({
+      id: String(level),
+      label: key === 'efficiency' && !isReady(level, ready) ? `${wordOf(key, level)}: ${NOT_READY}` : wordOf(key, level),
+      chosen: level === held.value,
+    }));
     return { ...out, current: wordOf(key, held.value), choices, here: true };
   }
   const current = key === 'budget' ? wordOf(key, held.value) : sayValue(key, held.value);
@@ -271,7 +299,7 @@ const PROJECT_NOTE = 'Only for this project. A pick changes it at once and count
 const YOU_NOTE = 'These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you.';
 const WINDOWS_LEVELS = { ask: 'Ask', guarded: 'Guarded', unattended: 'Unattended' };
 // The settings the front desk changes: a value and Change….
-const CHANGE_KEYS = ['protection', 'briefingGapHours', 'notifications', 'hours'];
+const CHANGE_KEYS = ['protection', 'premium', 'briefingGapHours', 'notifications', 'hours'];
 
 // A pane row as a group's row: a select for a setting with levels, a change for one the front desk
 // changes, else a value alone. `changed` goes with it while the change can still be undone.
@@ -292,8 +320,8 @@ function groupRow(row) {
 // The Settings view's groups, each { id, title, note, rows }, in the order of design section
 // 23.6. `stop` is stopState's answer (Halted since the time it was set, else Working); `windows`
 // is the level this computer runs build commands at. Every row is plain data. Never throws.
-export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows } = {}) {
-  const byKey = new Map(settingsRows({ effective, changes, now, timeZone, locked }).map((row) => [row.key, groupRow(row)]));
+export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows, ready, premiumPin } = {}) {
+  const byKey = new Map(settingsRows({ effective, changes, now, timeZone, locked, ready }).map((row) => [row.key, groupRow(row)]));
   const pick = (...keys) => keys.map((key) => byKey.get(key));
   const halted = isRecord(stop) && stop.on === true;
   const sinceMs = halted && typeof stop.at === 'string' ? Date.parse(stop.at) : NaN;
@@ -304,14 +332,14 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
     {
       id: 'project',
       title: 'This project',
-      note: PROJECT_NOTE,
-      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', 'phase'), build, ...pick('budget', 'protection')],
+      note: heldOf(effective, 'efficiency').value === 'lightest' ? `${PROJECT_NOTE} ${LIGHTEST_NOTE}` : PROJECT_NOTE,
+      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumPin === true ? ['premium'] : []), 'phase'), build, ...pick('budget', 'protection')],
     },
     {
       id: 'you',
       title: 'You, in every project',
       note: YOU_NOTE,
-      rows: pick('presence', 'briefing', 'briefingGapHours', 'explanations', 'boardTab', 'notifications', 'hours'),
+      rows: pick('presence', 'briefing', 'briefingGapHours', 'explanations', 'usageMark', 'boardTab', 'notifications', 'hours'),
     },
     { id: 'advanced', title: 'Advanced settings', note: '', rows: [{ key: 'advanced', label: 'Advanced settings', value: '', kind: 'change' }] },
   ];
@@ -321,8 +349,8 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
 // `effective` is effectiveSettings' answer; `changes` is changesFor's, which gives a row
 // `changed: { at, undo: true }` while its latest change can still be undone; `locked` is whether
 // the project is Locked, when the caller knows it. Every row is plain data. Never throws.
-export function settingsRows({ effective, changes, now = () => new Date(), timeZone, locked } = {}) {
-  const context = { effective, changes, nowMs: instantOf(now), timeZone, locked };
+export function settingsRows({ effective, changes, now = () => new Date(), timeZone, locked, ready } = {}) {
+  const context = { effective, changes, nowMs: instantOf(now), timeZone, locked, ready };
   return Object.keys(PANE).map((key) => rowOf(key, context));
 }
 
@@ -423,21 +451,22 @@ function eventOf(home, project, id, data) {
 
 // pressSetting({ project, key, choice, client, now, timeZone, budget, changes, stopState })
 //   -> Promise<{ made, says }>
+// `ready` is the Thoroughness levels whose columns are ready beyond Balanced and Thorough.
 // `choice` is a choice's id, or `undo`, which sets the value in force before the row's latest
 // change while that change is under UNDO_MS old (`changes` is changesFor's answer, read from the
 // views when not given); pressed later, it says it is too late.
 // `made` is true once the setting is written and its confirmation signed. A setting written but
 // not confirmed is not in force, and the press says it waits for the director's Confirm. Records
 // nothing for a choice that isn't offered or that the catalogue refuses. Never throws.
-export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace(), changes, stopState = defaultStopState } = {}) {
+export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace(), changes, stopState = defaultStopState, ready } = {}) {
   try {
-    return await press({ project, key, choice, client, now, timeZone, budget, changes, stopState });
+    return await press({ project, key, choice, client, now, timeZone, budget, changes, stopState, ready });
   } catch {
     return no(SAYS.failed);
   }
 }
 
-async function press({ project, key, choice, client, now, timeZone, budget, changes, stopState }) {
+async function press({ project, key, choice, client, now, timeZone, budget, changes, stopState, ready }) {
   const clock = typeof now === 'function' ? now : () => new Date(now);
   if (stopState().on) return no(SAYS.stopOn);
   const undoing = choice === 'undo';
@@ -449,6 +478,7 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
     const past = key === 'presence' && choice === 'away-evening' && Number.isFinite(instantOf(clock));
     return no(past ? `It's past ${AWAY.evening}, so Away until ${AWAY.evening} isn't offered now` : SAYS.notOffered);
   }
+  if (key === 'efficiency' && !isReady(picked.value, ready)) return no(`${wordOf(key, picked.value)} isn't ready yet, so Thoroughness stays as it is`);
   try {
     checkSetting(key, picked.value, picked.until);
   } catch (error) {

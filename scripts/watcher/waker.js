@@ -8,8 +8,8 @@
 //     - the foreman: a fresh `claude -p "Wheelhouse foreman: follow
 //       wheelhouse:foreman to handle <file>. First run: <wake command> read
 //       <file>"` (see PROMPTS)
-//       in the project's main checkout, with the foreman's model from
-//       `config.routing.foreman`, `--permission-mode` from `config.sessionMode`,
+//       in the project's main checkout, with the foreman's model and effort
+//       from the Thoroughness column in force (below), `--permission-mode` from `config.sessionMode`,
 //       `--allowedTools` from `foremanTools` when there are any, and
 //       WHEELHOUSE_ROLE=foreman in its environment;
 //     - a new feature: `claude -p --session-id <id> "Read
@@ -19,7 +19,7 @@
 //       its worktree. Only the id the watcher kept is resumed, never one from
 //       a file the session can write. The mode and model are given again,
 //       since check 27 found `--resume` needs them.
-//     A feature session gets the builder's model from `config.routing.builder`
+//     A feature session gets the `feature` role's model and effort from the column in force
 //     and the feature allow rules with --allowedTools, since `claude -p` does
 //     not apply the allow rules of a committed .claude/settings.json (check
 //     25). On Windows they follow the level of build commands on this computer
@@ -66,11 +66,29 @@
 //     foreman's command started, or one from before a restart) is read the same
 //     way once its record ends;
 //   - `pruneActivity({ project, now })`, called by prune;
+//   - `takesColumn: true`, for an agent whose sessions pass each subagent its model and effort (Claude Code's): only
+//     then does a feature's prompt carry the Thoroughness column's lines, and a Shape 2 wake's copy its `column`;
+//     another agent's prompt stays one line naming its file, as a .cmd shim needs;
 //   - `grantProofs`, the proofs an answer must name for its build-command grant to count (buildGrants'
 //     `proofs`, ruling P8-8): an agent whose hooks don't sign counts only a click in the helper's own window.
 //     Without it, every verified answer counts, as before.
 // A feature call that says the level it runs at (`level`) has it recorded as a
 // `level` record when it changes (ruling P8-5).
+//
+// The Thoroughness column (design section 14.6). At every start of the foreman
+// or a feature session, at Shape 1, the waker reads the column in force
+// (`routing`, by default scripts/routing/in-force.js's routingInForce: the
+// level and premium settings, and the columns whose evaluation passed on the
+// pins in force) and gives the adapter the role's model, thinking effort and
+// fallback: `foreman` for the foreman, `feature` for a feature session. A
+// feature's prompt also carries the column for the subagents it dispatches
+// (columnLines), when its adapter says it takes it (`takesColumn`). At Shape 2,
+// whose wake lines must stay one line, the column goes as `column` in the
+// copy of each wake the session reads, and in a wake of its own written into
+// a feature's wakes folder before its START line. A session already running is never changed: it keeps what it
+// started with until its next start. The column's own lines (a level that
+// isn't ready, say) go to `onNote`, the watcher's log, once each time they
+// change. Anything that can't be read gives Balanced.
 //
 // The wake files. The record of each wake is written under the watcher's
 // folder, projects/<p>/watcher/wakes/, which no session can read or write.
@@ -147,6 +165,7 @@ import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.j
 import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
+import { balancedRouting, columnLines, routingInForce } from '../routing/in-force.js';
 import { hostApprovalReady } from '../host/approval-ready.js';
 import { guardedCommand, guardedReady, labelWorktree, readSelfTest } from '../windows/low.js';
 
@@ -478,10 +497,17 @@ export function featureWakesDir(worktree) {
 // with COPYFILE_EXCL, so it never follows a link left in its place; and the
 // folder is checked once more after. If it moved, the copy is removed and the
 // wake counts as not delivered. `beforeCopy(dir)` is for tests.
-function copyWake(project, file, place, { beforeCopy = () => {} } = {}) {
+function copyWake(project, file, place, { beforeCopy = () => {}, add = null } = {}) {
   const moved = () => { throw new Error("The wakes folder isn't a real folder where it should be"); };
-  const text = readCapped(file, WAKE_BYTES);
-  if (text === null) throw new Error("The wake's record can't be read");
+  const read = readCapped(file, WAKE_BYTES);
+  if (read === null) throw new Error("The wake's record can't be read");
+  // `add`, fields written into the copy beside the record's own (Shape 2's `column`); the record is never changed.
+  let text = read;
+  if (add !== null) {
+    const record = readWake(file);
+    if (record === null) throw new Error("The wake's record can't be read");
+    text = `${JSON.stringify({ ...record, ...add }, null, 2)}\n`;
+  }
   const temp = path.join(watcherFolder(project, 'copies'), `${crypto.randomUUID()}.json`);
   fs.writeFileSync(temp, text, { flag: 'wx' });
   try {
@@ -695,6 +721,8 @@ export function makeWaker({
   platform = process.platform,
   pluginRoot = PLUGIN_ROOT,
   onError = () => {},
+  onNote = () => {},
+  routing = null,
   raise = async () => {},
   walkCap = WALK_CAP,
   beforeCopy = () => {},
@@ -730,10 +758,49 @@ export function makeWaker({
   }
   watcherDir(project); // a project name that is not a folder name throws here
   const buildsOf = windowsBuilds ?? windowsBuildsOf(project, { pluginRoot, now, platform });
+  // The column in force now, read at each session start; Balanced when it can't be read. Its lines are noted once
+  // each time they change.
+  let noted = null;
+  const columnNow = () => {
+    let found;
+    try {
+      found = routing === null ? routingInForce(project, config, { now }) : routing();
+    } catch {
+      found = null;
+    }
+    if (!isPlain(found) || !isPlain(found.roles)) found = balancedRouting(config);
+    const said = list(found.lines).filter((line) => typeof line === 'string' && line !== '');
+    if (said.join('\n') !== noted) {
+      noted = said.join('\n');
+      for (const line of said) {
+        try {
+          onNote(line);
+        } catch { /* a note that can't be said is said at the next change */ }
+      }
+    }
+    return found;
+  };
+  // A role's model, effort and fallback from the column, for the adapter (null where it names none).
+  const roleOf = (found, role) => {
+    const cell = found.roles[role];
+    return isPlain(cell) ? { model: cell.model ?? null, effort: cell.effort ?? null, fallback: cell.fallback ?? null } : {};
+  };
+  // A feature's prompt with the column for its subagents after it.
+  // Only for an adapter that says it takes the column (`takesColumn`): another agent's prompt stays one line, and
+  // never names models it can't use.
+  const withColumn = (adapter, prompt, found) => (adapter?.takesColumn === true ? [prompt, '', ...columnLines(found)].join('\n') : prompt);
+  // At Shape 2 the column goes in the copy of the wake the session reads, as `column`, since its prompt is one line.
+  const shape2Column = () => {
+    let adapter = null;
+    try {
+      adapter = sessionsOf();
+    } catch { /* no adapter: no column */ }
+    return adapter?.takesColumn === true ? { column: columnLines(columnNow()) } : null;
+  };
   // Start times, asked of this system for every running pid at once and kept a minute.
   const startTimes = makeStartTimes({ now });
   const timeOf = startTimeOf ?? ((pid, others, options) => startTimes.get(pid, others, options));
-  const copyInto = (file, place) => copyWake(project, file, place, { beforeCopy });
+  const copyInto = (file, place, add = null) => copyWake(project, file, place, { beforeCopy, add });
 
   // --- The outbox ---
   const outboxFail = () => { throw new Error("The watcher's outbox can't be read or written"); };
@@ -1035,16 +1102,19 @@ export function makeWaker({
   }
 
   // The foreman's start for `prompt`'s wake: its check asked right before its call is built.
-  const startForeman = (cwd, prompt, gathered) => launch({
-    target: 'foreman',
-    cwd,
-    check: (adapter) => adapter.checkForeman(config),
-    build: (adapter) => adapter.foremanCall({
-      config, project, prompt, tools: foremanTools, env: baseEnv, claude, platform,
-    }),
-    file: gathered.entry.file,
-    entries: [gathered.entry.id],
-  });
+  const startForeman = (cwd, prompt, gathered) => {
+    const column = columnNow();
+    return launch({
+      target: 'foreman',
+      cwd,
+      check: (adapter) => adapter.checkForeman(config),
+      build: (adapter) => adapter.foremanCall({
+        config, project, prompt, tools: foremanTools, env: baseEnv, claude, platform, ...roleOf(column, 'foreman'),
+      }),
+      file: gathered.entry.file,
+      entries: [gathered.entry.id],
+    });
+  };
   // What windowsBuilds answers for `work`, or Ask with no grants and real users when it can't answer. `proofs` is
   // the adapter's grantProofs, passed only when the adapter has them.
   const windowsAnswer = (work, proofs) => {
@@ -1270,7 +1340,7 @@ export function makeWaker({
       if (stopped()) break;
       let copy;
       try {
-        if (e.to === 'foreman') copy = copyInto(e.file, foremanWakesDir(checkoutOf()));
+        if (e.to === 'foreman') copy = copyInto(e.file, foremanWakesDir(checkoutOf()), shape2Column());
         else {
           const worktree = locate(e.work);
           if (worktree === null) {
@@ -1278,7 +1348,7 @@ export function makeWaker({
             continue;
           }
           if (await controlHeld(e.work, worktree, [e.id])) continue;
-          copy = copyInto(e.file, featureWakesDir(worktree));
+          copy = copyInto(e.file, featureWakesDir(worktree), shape2Column());
         }
       } catch (error) {
         settle([e.id], 'failed', error.message);
@@ -1370,12 +1440,14 @@ export function makeWaker({
           pid = await startForeman(cwd, PROMPTS.foreman(copy, wakeCommand), gathered);
         } else {
           const feature = await levelInputs(work, cwd);
+          const column = columnNow();
           pid = await launch({
             target,
             cwd,
             check: (adapter) => adapter.checkFeature(config),
             build: (adapter) => adapter.featureResumeCall({
-              config, project, work, sessionId: session, prompt: PROMPTS.feature(copy), allowed: feature.allowed, env: baseEnv, claude, platform, ...feature.inputs,
+              config, project, work, sessionId: session, prompt: withColumn(adapter, PROMPTS.feature(copy), column), allowed: feature.allowed, env: baseEnv, claude, platform,
+              ...feature.inputs, ...roleOf(column, 'feature'),
             }),
             file: gathered.entry.file,
             entries: [gathered.entry.id],
@@ -1429,6 +1501,9 @@ export function makeWaker({
         // left, started again, may hold some an earlier session planted (ruling P7-33).
         if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
         if (shape === 2) {
+          // The column for its subagents, in a wake of its own in the feature's wakes folder, which its brief names.
+          const add = shape2Column();
+          if (add !== null) copyInto(writeWake(project, { to: 'feature', work, events: [], digest: [], dropped: 0 }, { now }), featureWakesDir(worktree), add);
           print(`START feature ${work} ${worktree}`);
           return { printed: true };
         }
@@ -1441,13 +1516,15 @@ export function makeWaker({
         const sessionId = crypto.randomUUID();
         if (stopped()) throw new Error('STOP is on: no session is started');
         const feature = await levelInputs(work, worktree);
+        const column = columnNow();
         let named = sessionId;
         const pid = await launch({
           target,
           cwd: worktree,
           check: (adapter) => adapter.checkFeature(config),
           build: (adapter) => adapter.featureStartCall({
-            config, project, work, sessionId, prompt: PROMPTS.start, allowed: feature.allowed, env: baseEnv, claude, platform, ...feature.inputs,
+            config, project, work, sessionId, prompt: withColumn(adapter, PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
+            ...feature.inputs, ...roleOf(column, 'feature'),
           }),
           file: brief,
           beforeRun: (call) => {

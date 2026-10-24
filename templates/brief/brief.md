@@ -33,7 +33,7 @@ Turn each line into a test before any code. When those tests pass, the work is d
 - **The lane only goes up.** If the work proves bigger than this lane, stop. Report `partial` with what you found; the foreman puts the work in the right lane.
 - **Check before you say it is done.** Start `superpowers:verification-before-completion` first, run the checks and read their output.
 - **Conflicts.** When a wake says your branch conflicts with the default branch, merge the default branch into your branch, resolve each conflict so both sides' intent survives, then run the checks and have the result reviewed again.
-- **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model named under "Models by role". Never dispatch a general-purpose subagent for either.
+- **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model and effort the wake gives for its role (see "Models by role"). Never dispatch a general-purpose subagent for either.
 - **Dispatching a reviewer.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the reviewer that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
 - **Fix rounds.** A fix and its re-review is one round. After {{fixRounds}} rounds, put what is still open to the director with `ask`.
 <!-- builds:ask -->
@@ -74,6 +74,6 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 
 # Models by role
 
-Every subagent you start gets the model named here for its role, set in the dispatch's `model` field. A role with no model named uses the session's own default: leave the field out. Never choose a model yourself.
+The model and thinking effort for each subagent role come with each wake: the prompt that starts or wakes you lists them, one line per role. When the prompt doesn't, the newest wake file in `.wheelhouse/feature/wakes/` holds the same lines as its `column`. Set each dispatch's `model` and `effort` fields from the latest list. Where a role's model is "the session's own", leave `model` out. Follow any other line that comes with the list. Never choose a model or an effort yourself. The roles:
 
 {{models}}

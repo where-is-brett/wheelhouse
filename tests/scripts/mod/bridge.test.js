@@ -1077,3 +1077,54 @@ test('a pane origin is the only one the bridge takes for why, suggest and settin
   const refused = { suggestCard: spy('suggest', { made: false, says: 'That card changed while you were reading. Here is the new one.' }) };
   assert.deepEqual(await handle({ ...requests[1], origin: 'pane' }, deps(refused)), { ok: false, says: 'That card changed while you were reading. Here is the new one.' });
 }));
+
+test('the settings pane is given the ready columns and whether the project has a premium pin', () => withHome(async () => {
+  const folder = tempFolder('wh-bridge-main-');
+  fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
+  const configWith = (pins) => fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({
+    v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], ...(pins === undefined ? {} : { tiers: { pins } }),
+  }));
+  const seen = [];
+  const asked = [];
+  const extra = (columnsReady) => ({
+    projectOf: () => ({ project: P, record: { folder }, locked: false }),
+    readEffective: () => ({}),
+    readChanges: () => ({}),
+    stopState: async () => ({ on: false }),
+    computer: () => 'c1',
+    settingsRows: (inputs) => { seen.push(['rows', inputs.ready]); return []; },
+    settingsGroups: (inputs) => { seen.push(['groups', inputs.ready, inputs.premiumPin]); return []; },
+    pressSetting: async (args) => { seen.push(['press', args.ready]); return { made: true }; },
+    ...(columnsReady === undefined ? {} : { columnsReady: (args) => { asked.push(args); return columnsReady(args); } }),
+  });
+
+  configWith({ mostCapable: 'model-top', midSized: 'model-mid', premium: 'model-premium' });
+  assert.equal((await handle({ cmd: 'settings', cwd: folder }, deps(extra(() => ['lean'])))).ok, true);
+  assert.deepEqual(seen, [['rows', ['lean']], ['groups', ['lean'], true]]);
+  assert.deepEqual(asked, [{ project: P }]);
+  seen.length = 0;
+  assert.equal((await handle({ cmd: 'setting', origin: 'pane', cwd: folder, key: 'efficiency', choice: 'lean' }, deps(extra(() => ['lean', 'lightest'])))).ok, true);
+  assert.deepEqual(seen, [['press', ['lean', 'lightest']]]);
+
+  // No premium pin: no Premium model row. A reader that throws, or answers anything but a list, gives none ready.
+  configWith({ mostCapable: 'model-top', midSized: 'model-mid' });
+  seen.length = 0;
+  await handle({ cmd: 'settings', cwd: folder }, deps(extra(() => { throw new Error('unreadable'); })));
+  await handle({ cmd: 'settings', cwd: folder }, deps(extra(() => 'lean')));
+  assert.deepEqual(seen, [['rows', []], ['groups', [], false], ['rows', []], ['groups', [], false]]);
+  // A configuration that can't be read has no premium pin.
+  fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), '{');
+  seen.length = 0;
+  await handle({ cmd: 'settings', cwd: folder }, deps(extra(() => [])));
+  assert.deepEqual(seen.at(-1), ['groups', [], false]);
+
+  // The default reader: the columnsReady view on disk, against the registered project's configuration.
+  configWith({ mostCapable: 'model-top', midSized: 'model-mid' });
+  writeProject(P, { folder, remoteUrl: 'https://github.com/owner/name.git', host: 'github', repo: 'owner/name', connection: { host: 'github', mode: 'quick', project: 'owner/name' } });
+  const views = path.join(path.dirname(stateDir(P)), 'views');
+  fs.mkdirSync(views, { recursive: true });
+  fs.writeFileSync(path.join(views, 'columnsReady.json'), JSON.stringify({ lean: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } }, lightest: { pins: { mostCapable: 'model-top', midSized: 'model-old' } } }));
+  seen.length = 0;
+  await handle({ cmd: 'settings', cwd: folder }, deps(extra()));
+  assert.deepEqual(seen[0], ['rows', ['lean']]);
+}));

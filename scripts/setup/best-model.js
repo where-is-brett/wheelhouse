@@ -20,6 +20,10 @@ import { isModelName } from '../gate/guardrails.js';
 
 // Claude Code's alias for the front desk's model.
 export const FRONT_DESK_ALIAS = 'opus';
+// Claude Code's alias for the mid-sized model, which the Thoroughness setting's Lean and Lightest
+// columns move most building and routine checking to (design section 14.6). Setup pins what it
+// stands for as `tiers.pins.midSized`, asked once like the front desk's.
+export const MID_SIZED_ALIAS = 'sonnet';
 // Claude Code's alias for its strongest model, for the premium model's opt-in (design section 14.6).
 export const STRONGEST_ALIAS = 'best';
 // How long Claude Code may take to start and say which model it runs on.

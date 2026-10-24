@@ -202,7 +202,7 @@ export async function runWatcher({
       if (settings !== null && wake === null) {
         try {
           wake = waker ?? makeWaker({
-            shape, project, config: settings, now, onError: fault, raise: raiseRecord(project, client, { now }), ...wakerOptions,
+            shape, project, config: settings, now, onError: fault, onNote: log, raise: raiseRecord(project, client, { now }), ...wakerOptions,
           });
         } catch (error) {
           fault(`The watcher can't wake sessions with this configuration: ${error.message}`);

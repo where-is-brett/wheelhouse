@@ -976,7 +976,9 @@ test('Shape 1: the foreman\'s start, run by the helper\'s child, starts claude f
     const after = (flag) => (run.argv.includes(flag) ? run.argv[run.argv.indexOf(flag) + 1] : null);
     assert.equal(after('--session-id'), sessionId);
     assert.equal(after('--permission-mode'), 'acceptEdits');
-    if (process.platform !== 'win32') assert.equal(after('-p'), PROMPTS.start);
+    // The brief's prompt, then the column for the subagents the session dispatches.
+    if (process.platform !== 'win32') assert.ok(after('-p').startsWith(`${PROMPTS.start}\n\nThe models and efforts for the subagents`), after('-p'));
+    assert.equal(after('--effort'), 'high');
 
     // Claude Code's sign-in reaches the session through the helper's child; no key, no host-session
     // marker and no foreman role do.

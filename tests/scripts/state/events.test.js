@@ -407,6 +407,36 @@ test('a gate-asks record names the click the gate waits for: an approval of a he
   });
 });
 
+test('a column-ready record names the column, the pins it ran on and the evaluation\'s records', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('column-ready'), true);
+    assert.equal(PROTECTED_KINDS.includes('column-ready'), false);
+    // No session can mark a column ready: only the helper records one.
+    assert.equal(HELPER_ONLY_KINDS.includes('column-ready'), true);
+    const data = { column: 'lean', pins: { mostCapable: 'model-top', midSized: 'model-mid', premium: null }, records: ['eval-1'] };
+    assert.deepEqual(makeEvent({ kind: 'column-ready', data }).data, data);
+    for (const column of ['lightest', 'premium']) assert.equal(makeEvent({ kind: 'column-ready', data: { ...data, column } }).data.column, column);
+    for (const bad of [
+      null, { column: 'lean', pins: data.pins }, { ...data, extra: 1 },
+      { ...data, column: 'balanced' }, { ...data, column: 'thorough' }, { ...data, column: 'Lean' },
+      { ...data, pins: null }, { ...data, pins: [] }, { ...data, pins: { other: 'model-top' } }, { ...data, pins: { mostCapable: '-flag' } }, { ...data, pins: { midSized: 7 } },
+      { ...data, records: 'eval-1' }, { ...data, records: [''] }, { ...data, records: [7] }, { ...data, records: Array.from({ length: 51 }, (_, i) => `r${i}`) },
+    ]) assert.throws(() => makeEvent({ kind: 'column-ready', data: bad }), /column-ready event/, JSON.stringify(bad));
+  });
+});
+
+test('a usage-card record says which card, when, the allowance week and the levels', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('usage-card'), true);
+    assert.equal(HELPER_ONLY_KINDS.includes('usage-card'), false);
+    const data = { card: 'nudge', at: '2026-10-26T01:00:00.000Z', reset: '2026-10-28T22:00:00.000Z', from: 'balanced', to: 'lean' };
+    assert.deepEqual(makeEvent({ kind: 'usage-card', data }).data, data);
+    for (const bad of [null, { ...data, card: 'other' }, { ...data, at: 'now' }, { ...data, reset: 3 }, { ...data, from: 'best' }, { ...data, to: undefined }, { ...data, extra: 1 }]) {
+      assert.throws(() => makeEvent({ kind: 'usage-card', data: bad }), /usage-card event/, JSON.stringify(bad));
+    }
+  });
+});
+
 test('a lineage-lift record says when, and which holds it lifts', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);
@@ -725,8 +755,8 @@ test('a survey record carries every part of the survey, each in its own shape', 
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
-    // Only the helper itself records a survey: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey']);
+    // Only the helper itself records a survey or a column's readiness: no caller writes one.
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);

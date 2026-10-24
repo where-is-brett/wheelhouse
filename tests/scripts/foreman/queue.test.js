@@ -109,6 +109,19 @@ test('pace allows three building, one in the feature lane', () => {
   assert.deepEqual(lane.hold, [{ work: 'f2', why: 'pace' }]);
 });
 
+test('at Lean and Lightest the foreman builds one at a time: a builder cap beside pace', () => {
+  const work = worksOf(mkWork('f1', 'feature', 1, { place: 1 }), mkWork('s1', 'small', 2, { place: 2 }), mkWork('b1', 'bug', 3, { place: 3 }));
+  const capped = next({ work, builderCap: 1 });
+  assert.deepEqual(capped.start, ['f1']);
+  assert.deepEqual(capped.hold, [{ work: 's1', why: 'pace' }, { work: 'b1', why: 'pace' }]);
+  // One building already: nothing more starts.
+  assert.deepEqual(next({ work, builderCap: 1, features: featuresOf(mkFeature('s1', 'building', 6)) }).start, []);
+  // No cap, or a cap that isn't a count of builders, is pace alone; a cap never raises pace.
+  for (const builderCap of [null, undefined, 0, -1, 1.5, '1', 9]) {
+    assert.deepEqual(next({ work, builderCap }).start, ['f1', 's1', 'b1'], String(builderCap));
+  }
+});
+
 test('work is taken in order of place, then age', () => {
   const work = worksOf(
     mkWork('late', 'small', 1), mkWork('b', 'small', 3, { place: 2 }), mkWork('a', 'small', 5, { place: 1 }), mkWork('c', 'small', 2, { place: 2 }),

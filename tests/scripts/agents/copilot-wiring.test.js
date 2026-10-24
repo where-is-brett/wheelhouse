@@ -196,6 +196,32 @@ test('a Copilot project\'s foreman and features are started by the Copilot adapt
   assert.equal(wake.env.COPILOT_HOME, sessionHome(P, `feature-${WORK}`));
 }));
 
+test('a Copilot feature, started and woken through a .cmd shim, gets a one-line prompt with no column, so the shim takes it', () => withHome(async () => {
+  const checkout = await project();
+  const on = copilotOn();
+  assert.equal(on.takesColumn, undefined, 'Copilot does not take the Thoroughness column');
+  const shim = { kind: 'cmd', file: 'C:\\tools\\copilot.cmd' };
+  const part = {
+    ...on,
+    featureStartCall: (options) => on.featureStartCall({ ...options, copilot: shim }),
+    featureResumeCall: (options) => on.featureResumeCall({ ...options, copilot: shim }),
+  };
+  const { w, fake, errors } = copilotWaker({ part, config: copilotConfig({ tiers: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } } }) });
+  const dir = feature(checkout);
+  await w.startFeature({ work: WORK, worktree: dir });
+  assert.equal(fake.calls.length, 1, errors.join('; '));
+  const start = fake.calls[0];
+  assert.equal(start.file, 'cmd.exe');
+  const line = start.args.at(-1);
+  assert.doesNotMatch(line, /[\r\n]|Thoroughness|model-top|model-mid/);
+  fake.finish(0, lines(ev.answer('Done.'), ev.result(ID)));
+  await until(() => keptId().sessionId === ID, { what: 'the first run\'s session id' });
+  await w.wakeFeature(WORK, featureWake(T0 + 1000));
+  assert.equal(fake.calls.length, 2, errors.join('; '));
+  assert.equal(fake.calls[1].file, 'cmd.exe');
+  assert.doesNotMatch(fake.calls[1].args.at(-1), /[\r\n]|Thoroughness|model-top/);
+}));
+
 test('a Copilot run with no result event is a failed wake whatever its exit code', () => withHome(async () => {
   await project();
   const clock = { t: T0 };
