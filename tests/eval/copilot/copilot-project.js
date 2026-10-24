@@ -88,7 +88,7 @@ export async function setUpCopilotProject(dir, { files = {}, branch = null, seed
     const events = typeof seed === 'function' ? seed({ head }) : seed;
     const signs = typeof signed === 'function' ? signed({ head }) : signed;
     registerEvalProject(dir, home);
-    const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
+    const address = helperAddress({ home });
     const prs = Object.fromEntries(Object.entries(pullRequests).map(([number, sha]) => [number, sha === 'head' ? head : sha]));
     helper = await startStandInHelper({ address, home, state: { events, pullRequests: prs, signed: signs }, ...(reviewKinds === undefined ? {} : { reviewKinds }) });
     const sessionHome = await writeEvalHome(home, { kits: kits ?? {} });

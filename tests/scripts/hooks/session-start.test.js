@@ -21,12 +21,14 @@ import { checkLineage, holdFile, MANIFEST_UNREADABLE, MANIFEST_UNREADABLE_NOT_HE
 import { pendingDir } from '../../../scripts/hooks/pending.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 import { writeCaFile } from '../../../scripts/host/company-ca.js';
-import { tempFolder } from '../../helpers/homes.js';
+import { as, tempFolder } from '../../helpers/homes.js';
+import { removeFolder } from '../../helpers/remove.js';
+import { stopWatcher } from '../../../scripts/foreman/start.js';
 import { beingSetUp, removedFrom } from '../../../scripts/hooks/kit.js';
 import { lineageFixture, SHA } from '../../helpers/lineage.js';
 import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lines.js';
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { selfTestFile } from '../../../scripts/windows/low.js';
+import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
 import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
@@ -494,8 +496,8 @@ test('session-start exits in time with its context when the helper never answers
       }
     });
   });
-  // The script asks the usual address: a socket in the home folder, or on Windows the user's pipe.
-  const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
+  // The script asks the usual address: a socket in the home folder, or on Windows that home's pipe.
+  const address = helperAddress({ home });
   await new Promise((resolve) => server.listen(address, resolve));
   // The receiver the session starts goes to a port of its own, and is stopped afterwards.
   const receiverPort = await new Promise((resolve) => {
@@ -518,16 +520,37 @@ test('session-start exits in time with its context when the helper never answers
     assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, new RegExp(NOT_SYNCED));
     assert.ok(fs.existsSync(path.join(home, 'usage', 'sessions', 's1.json')), 'the session\'s part is recorded');
   } finally {
-    for (let tries = 0; tries < 40; tries += 1) {
-      try {
-        process.kill(Number.parseInt(fs.readFileSync(path.join(home, 'usage', 'receiver.pid'), 'utf8'), 10));
+    // The receiver is stopped once it has written its pid (a slow start on Windows takes seconds), and
+    // waited for until it has gone, so it holds nothing in the folder when it is removed.
+    const alive = (pid) => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    };
+    for (let tries = 0; tries < 300; tries += 1) {
+      let pid = null;
+      try { pid = Number.parseInt(fs.readFileSync(path.join(home, 'usage', 'receiver.pid'), 'utf8'), 10); } catch { /* not written yet */ }
+      if (Number.isInteger(pid)) {
+        try { process.kill(pid); } catch { /* not running */ }
+        for (let wait = 0; wait < 100 && alive(pid); wait += 1) await new Promise((resolve) => setTimeout(resolve, 50));
         break;
-      } catch { /* not written yet, or not running */ }
+      }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    // On Windows the session start also copies Node.js into the home in the background, for the Guarded runner:
+    // the folder is removed once that copy is whole.
+    if (process.platform === 'win32') {
+      for (let tries = 0; tries < 600 && !lowNodeReady({ home }); tries += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    // The watcher the session start may have started runs on, in the home: it is stopped too.
+    await as(home, () => stopWatcher(P)).catch(() => {});
     server.close();
-    // On Windows the killed receiver may hold its folder a moment longer: removal tries again.
-    fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    try {
+      removeFolder(home);
+    } catch (error) {
+      // The session start's detached jobs (the weekly one, the watcher) run with the home as their working folder,
+      // which Windows won't let go of while they run: there what is inside goes, and the empty folder is left to the
+      // system's temporary folder. Anywhere else, or with anything left inside, the failure stands.
+      if (process.platform !== 'win32' || error.code !== 'EBUSY' || fs.readdirSync(home).length > 0) throw error;
+    }
   }
 });
 

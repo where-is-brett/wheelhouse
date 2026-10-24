@@ -33,8 +33,9 @@ const world = () => {
 const nothing = async () => { throw new Error('nothing is run here'); };
 const noApp = path.join(os.tmpdir(), 'wh-no-such-app.json');
 const git = async () => ({ ok: true, path: 'git' });
-// Setup fetches gh for macOS and Windows only, so on Linux (a CI runner) step 2 runs as on a Mac.
-const asMacOnLinux = (step) => (process.platform !== 'linux' ? step : {
+// The stand-in world's tools and allow rule are a Mac's, and setup fetches gh for macOS and Windows only, so on
+// Linux and Windows (CI's runners) step 2 runs as on a Mac; Windows' own step 2 is tried in tools.test.js.
+const asMac = (step) => (process.platform === 'darwin' ? step : {
   ...step,
   plan: (ctx, ...rest) => step.plan({ ...ctx, platform: 'darwin' }, ...rest),
   apply: (ctx, ...rest) => step.apply({ ...ctx, platform: 'darwin' }, ...rest),
@@ -42,7 +43,7 @@ const asMacOnLinux = (step) => (process.platform !== 'linux' ? step : {
 
 const MAKE = {
   1: () => installStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
-  2: () => asMacOnLinux(toolsStep({ run: world().toolsRun, fetch: world().fetch, env: {} })),
+  2: () => asMac(toolsStep({ run: world().toolsRun, fetch: world().fetch, env: {} })),
   3: () => hostStep({
     run: world().run, fetch: nothing, appFile: noApp, hostUrl: world().hostUrl, findGit: git, gitlab: nothing,
     open: async () => {}, sleep: async () => {},

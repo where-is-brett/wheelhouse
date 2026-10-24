@@ -196,7 +196,8 @@ test('mergeSettings looks at own keys only and keeps constructor and __proto__ a
 test('the local settings name the status line only when the director has none of their own', () => {
   const address = '/h/.wheelhouse/helper.sock';
   const base = { address, node: '/usr/local/bin/node', pluginRoot: '/plugins/wheelhouse' };
-  const command = '"/usr/local/bin/node" "/plugins/wheelhouse/scripts/statusline.js"';
+  // The script's path is joined as this system joins it.
+  const command = `"/usr/local/bin/node" "${path.join('/plugins/wheelhouse', 'scripts', 'statusline.js')}"`;
   assert.deepEqual(localSettings({ ...base, ownStatusLine: null }).statusLine, { type: 'command', command });
   assert.deepEqual(localSettings(base).statusLine, { type: 'command', command });
   assert.equal(localSettings({ ...base, ownStatusLine: { type: 'command', command: 'my-line.sh' } }).statusLine, undefined);

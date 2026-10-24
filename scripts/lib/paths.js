@@ -104,10 +104,15 @@ export function bypassDir() {
   return path.join(wheelhouseHome(), 'bypass');
 }
 
-// The helper's socket file, or on Windows its named pipe.
-export function helperAddress({ platform = process.platform, user = os.userInfo().username } = {}) {
+// The helper's socket file in `home`, or on Windows its named pipe. A pipe is one per computer, not
+// per folder, so the pipe of a home other than ~/.wheelhouse (an evaluation run's, a test's) carries
+// a short hash of that home's path, as its socket would be a file of that home's own.
+export function helperAddress({ platform = process.platform, user = os.userInfo().username, home = wheelhouseHome() } = {}) {
   if (platform === 'win32') {
-    return `\\\\.\\pipe\\wheelhouse-${String(user).replace(/[^A-Za-z0-9_.-]/g, '_')}-helper`;
+    const spelt = (dir) => path.win32.resolve(dir).toLowerCase();
+    const own = spelt(home) === spelt(path.join(os.homedir(), '.wheelhouse'))
+      ? '' : `-${crypto.createHash('sha256').update(spelt(home)).digest('hex').slice(0, 12)}`;
+    return `\\\\.\\pipe\\wheelhouse-${String(user).replace(/[^A-Za-z0-9_.-]/g, '_')}${own}-helper`;
   }
-  return path.join(wheelhouseHome(), 'helper.sock');
+  return path.join(home, 'helper.sock');
 }

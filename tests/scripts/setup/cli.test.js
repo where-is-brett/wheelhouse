@@ -230,9 +230,9 @@ test('the uninstall forms ask the helper\'s uninstall routes for this folder, ap
   const status = await run(['uninstall', 'status'], { client: c });
   assert.equal(status.out, 'Uninstall is done.\nLocked: Locked is off.\nOpen the pull request: https://github.com/o/shop/pull/3\n');
   assert.deepEqual(c.calls, [
-    ['uninstall plan', { folder: '/x/Projects/shop' }],
-    ['uninstall apply', { folder: '/x/Projects/shop', hash: H }],
-    ['uninstall status', { folder: '/x/Projects/shop' }],
+    ['uninstall plan', { folder: path.resolve('/x/Projects/shop') }],
+    ['uninstall apply', { folder: path.resolve('/x/Projects/shop'), hash: H }],
+    ['uninstall status', { folder: path.resolve('/x/Projects/shop') }],
   ]);
   // A short hash, and any other words, are refused before the helper is asked.
   for (const argv of [['uninstall', 'apply', 'abc'], ['uninstall'], ['uninstall', 'plan', 'now'], ['uninstall', 'status', 'x'], ['uninstall', 'apply']]) {

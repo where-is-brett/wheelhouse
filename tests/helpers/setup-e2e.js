@@ -57,6 +57,7 @@ import { lockFile } from '../../scripts/watcher/main.js';
 import { g } from './git-fixture.js';
 import { shortHome, tempFolder, testAddress } from './homes.js';
 import { standInTools } from './host-stand-ins.js';
+import { removeFolder } from './remove.js';
 
 // Where the computers' worlds are kept for the steps module the helper loads (setup-e2e-steps.js):
 // globalThis[WORLDS], a Map from each computer's Wheelhouse home to its world.
@@ -172,7 +173,7 @@ async function seedBare(dir, { readme }) {
     await g(work, 'commit', '-q', '-m', 'Initial commit');
     await g(work, 'push', '-q', dir, 'main');
   } finally {
-    fs.rmSync(work, { recursive: true, force: true });
+    removeFolder(work);
   }
 }
 
@@ -205,7 +206,7 @@ export function standInHost({ shims = null } = {}) {
       await g(work, 'commit', '-q', '-m', 'The director\'s own work');
       await g(work, 'push', '-q', host.url({ repo }), 'main');
     } finally {
-      fs.rmSync(work, { recursive: true, force: true });
+      removeFolder(work);
     }
   };
   // A pull request's or a branch's tip on the host, or null.

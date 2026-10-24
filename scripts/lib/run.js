@@ -2,12 +2,18 @@
 import { spawn } from 'node:child_process';
 
 // Ends a process and everything it started, on Windows, where killing the process
-// alone leaves its children running and holding the pipes.
+// alone leaves its children running and holding the pipes and their folders. Resolves once
+// taskkill has finished (or could not start), so the caller can remove what they held.
 function taskkill(file, args) {
-  try {
-    spawn(file, args, { stdio: 'ignore', windowsHide: true, shell: false }).on('error', () => {}).unref();
-  } catch { /* the process may already be gone */ }
+  return new Promise((resolve) => {
+    try {
+      spawn(file, args, { stdio: 'ignore', windowsHide: true, shell: false }).on('error', resolve).on('exit', resolve);
+    } catch { resolve(); /* the process may already be gone */ }
+  });
 }
+
+// How long an ending waits for taskkill before answering anyway.
+const KILL_WAIT_MS = 10000;
 
 // The environment with every GIT_* variable taken out, so git run from inside
 // a hook or another git command does not pick up that command's repository,
@@ -20,7 +26,7 @@ export function withoutGitVars(env = process.env) {
 // unless given); `input`, when given, is written to stdin and stdin is closed.
 // With `timeoutMs`, a program still running then is killed and the result
 // carries `timedOut: true`; on Windows it is ended with `taskkill /pid <pid> /T /F`, which
-// takes its children too (`platform` and `killer` are for tests). With `signal` (an AbortSignal), the
+// takes its children too, and the result comes once taskkill has finished (`platform` and `killer` are for tests). With `signal` (an AbortSignal), the
 // program is ended the same way when the signal is aborted, and the result carries `stopped: true`. A variable in `env`
 // whose value is undefined or null is removed from the environment. With `limit` (bytes), only about the newest `limit`
 // bytes of each stream are kept while it runs. With `windowsVerbatimArguments` (Windows only), the
@@ -52,12 +58,20 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      if (platform === 'win32' && Number.isInteger(child.pid)) killer('taskkill', ['/pid', String(child.pid), '/T', '/F']);
-      child.kill('SIGKILL');
       // A grandchild may still hold the pipes open; stop waiting for them.
       child.stdout.destroy();
       child.stderr.destroy();
-      resolve({ code: 1, ...text(), ...ending });
+      const result = { code: 1, ...text(), ...ending };
+      // On Windows taskkill walks the tree from the program, so the program itself is killed only after it: killed
+      // first, its children would be left running, holding their folders.
+      const killed = platform === 'win32' && Number.isInteger(child.pid) ? killer('taskkill', ['/pid', String(child.pid), '/T', '/F']) : null;
+      let waited = null;
+      Promise.race([Promise.resolve(killed), new Promise((done) => { waited = setTimeout(done, KILL_WAIT_MS); })])
+        .catch(() => {}).then(() => {
+          clearTimeout(waited);
+          child.kill('SIGKILL');
+          resolve(result);
+        });
     };
     const onAbort = () => end({ stopped: true });
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) timer = setTimeout(() => end({ timedOut: true }), timeoutMs);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { git } from '../../../scripts/state/git.js';
+import { git, remoteKey, sameRemote } from '../../../scripts/state/git.js';
 import { run } from '../../../scripts/lib/run.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -80,4 +80,12 @@ test('plain http on loopback is reached only when the caller allowed it', async 
       assert.doesNotMatch(open.stderr, /not allowed/);
     });
   } finally { server.close(); }
+});
+
+test('a Windows path names one repository however git writes it: file://C:/, file:///C:/, backslashes or doubled slashes', () => {
+  const plain = remoteKey('C:\\work\\shop.git');
+  for (const same of ['file://C:/work/shop.git', 'file:///C:/work/shop.git', 'C:/work/shop', 'C://work//shop.git']) assert.equal(remoteKey(same), plain, same);
+  assert.equal(sameRemote('file://C:/work/shop.git', 'C:\\work\\other.git'), false);
+  // A scheme of two letters or more is still an address.
+  assert.equal(remoteKey('ssh://git@github.com/o/p.git'), 'host:github.com/o/p');
 });

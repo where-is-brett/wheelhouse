@@ -68,11 +68,20 @@ test('paths work under a home folder named "with space é"', () => {
 });
 
 test('helperAddress is a named pipe on Windows and a socket file elsewhere', () => {
-  assert.equal(helperAddress({ platform: 'win32', user: 'Jo Smith' }), '\\\\.\\pipe\\wheelhouse-Jo_Smith-helper');
-  assert.equal(helperAddress({ platform: 'win32', user: 'a.b-c_d' }), '\\\\.\\pipe\\wheelhouse-a.b-c_d-helper');
+  const own = path.join(os.homedir(), '.wheelhouse');
+  assert.equal(helperAddress({ platform: 'win32', user: 'Jo Smith', home: own }), '\\\\.\\pipe\\wheelhouse-Jo_Smith-helper');
+  assert.equal(helperAddress({ platform: 'win32', user: 'a.b-c_d', home: own }), '\\\\.\\pipe\\wheelhouse-a.b-c_d-helper');
   withHome('home', (home) => {
     assert.equal(helperAddress({ platform: 'linux' }), path.join(home, 'helper.sock'));
   });
+});
+
+test('on Windows another home\'s pipe carries a hash of that home, so it is never the director\'s own', () => {
+  const pipe = (home) => helperAddress({ platform: 'win32', user: 'jo', home });
+  assert.match(pipe('C:\\runs\\one'), /^\\\\\.\\pipe\\wheelhouse-jo-[0-9a-f]{12}-helper$/);
+  assert.notEqual(pipe('C:\\runs\\one'), pipe('C:\\runs\\two'));
+  assert.equal(pipe('C:\\Runs\\One'), pipe('c:/runs/one'), 'one folder however it is spelt');
+  withHome('home', () => assert.equal(helperAddress({ platform: 'win32', user: 'jo' }), pipe(process.env.WHEELHOUSE_HOME)));
 });
 
 test('projectSlug joins owner and name, and refuses a name with a slash or ..', () => {

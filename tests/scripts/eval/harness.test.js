@@ -238,7 +238,10 @@ test('runSession keeps the session away from the director\'s own: an environment
   assert.equal(env.WHEELHOUSE_HOME, '/tmp/eval-home');
   assert.equal(searchPathIn(env), process.env.PATH);
   assert.equal(env.HOME, process.env.HOME);
-  assert.ok(Object.keys(env).every((name) => SESSION_ENV.test(name) || name === 'WHEELHOUSE_HOME' || /^__CF|^_$|^SHLVL$|^PWD$|^OLDPWD$/.test(name)), Object.keys(env).join(' '));
+  // Beside the list: what a shell adds on macOS and Linux, and on Windows the two that Node's
+  // process start (libuv) copies from this process into any environment it is given.
+  assert.ok(Object.keys(env).every((name) => SESSION_ENV.test(name) || name === 'WHEELHOUSE_HOME' || /^__CF|^_$|^SHLVL$|^PWD$|^OLDPWD$/.test(name)
+    || (process.platform === 'win32' && /^(?:LOGONSERVER|USERDOMAIN)$/.test(name))), Object.keys(env).join(' '));
 });
 
 // A plain run of the fake, with `options` on top; resolves with what the fake saw.

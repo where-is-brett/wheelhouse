@@ -183,7 +183,10 @@ test('promptContext gives what the real board context hook gives over the same s
     assert.match(text, /\n\nOne thing needs you\. Nothing is broken\.\n\n/);
     assert.match(text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\./);
   }
-  assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
+  // On Windows the no-sandbox health line comes first, so at this length the profile's line is among
+  // the ones counted after the blocked pull request.
+  if (process.platform === 'win32') assert.match(block(real, 'To watch'), /\nand 2 more$/);
+  else assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
 });
 
 test('the front desk\'s set-up names the model the environment gives the front desk, in both variants, and null when it gives none (design section 8)', async () => {

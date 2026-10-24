@@ -149,14 +149,14 @@ test('the helper answers on a socket, and on a named pipe on Windows', async () 
       const state = await client.prState({ project: 'o__p', number: 7 });
       assert.deepEqual(state, { ok: true, result: { headSha: HEAD, mergeable: 'mergeable', state: 'open', body: BODY } });
       if (unix) assert.equal(fs.statSync(helper.address).mode & 0o077, 0);
-      else assert.match(helper.address, /^\\\\\.\\pipe\\wheelhouse-test-[0-9a-f]{8}-helper$/);
+      else assert.match(helper.address, /^\\\\\.\\pipe\\wheelhouse-.+-[0-9a-f]{12}-helper$/);
     }));
     if (unix) assert.equal(fs.existsSync(path.join(home, 'helper.sock')), false, 'close removes the socket file');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('the Windows address is a named pipe for the user', () => {
-  assert.equal(helperAddress({ platform: 'win32', user: 'Zoë Smith' }), '\\\\.\\pipe\\wheelhouse-Zo__Smith-helper');
+  assert.equal(helperAddress({ platform: 'win32', user: 'Zoë Smith', home: path.join(os.homedir(), '.wheelhouse') }), '\\\\.\\pipe\\wheelhouse-Zo__Smith-helper');
 });
 
 test('a socket path that is too long is refused with a plain error', { skip: unixOnly }, async () => {

@@ -19,6 +19,7 @@ import { fingerprintTree } from '../../lineage/fingerprint.js';
 import { fetchUpstream, readManifest } from '../../lineage/manifest.js';
 import { holdAgentWork, liftAgentWork, markAgentRecorded } from '../../lineage/check.js';
 import { wheelhouseHome } from '../../lib/paths.js';
+import { copyTree } from '../../lib/copy-tree.js';
 
 const NAME = /^[a-z0-9-]{1,64}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -103,7 +104,7 @@ export async function ensureKits({ manifest = readManifest(), fetchTo = fetchUps
           if (fingerprintTree(from).hash !== folder.hash) throw new Error('differs');
           const into = path.join(keep, ...partsOf(folder.path));
           fs.mkdirSync(path.dirname(into), { recursive: true });
-          fs.cpSync(from, into, { recursive: true, errorOnExist: true, force: false });
+          copyTree(from, into, { overwrite: false });
         } catch {
           wrong.push({ upstream: upstream.name, path: folder.path });
         }

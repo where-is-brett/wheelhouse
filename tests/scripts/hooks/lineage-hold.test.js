@@ -259,7 +259,8 @@ test('from the managed copy, the check command at the plugin folder Locked recor
     fs.mkdirSync(path.join(dir, 'wheelhouse'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'wheelhouse', 'installed.json'), JSON.stringify({ pluginRoot: '/recorded/root' }));
     const self = path.join(dir, 'wheelhouse', 'scripts', 'hooks', 'lineage-hold.js');
-    const managed = { ...deps(home), self, pluginRoot: path.join(dir, 'wheelhouse') };
+    // The managed copy's own folder is a path of this system's, so its command is read as this system reads it.
+    const managed = { ...deps(home), self, pluginRoot: path.join(dir, 'wheelhouse'), platform: process.platform };
     assert.equal(await decide(bash(main, 'node /recorded/root/scripts/lineage/check.js'), managed), undefined);
     assert.equal(await decide(bash(main, `node ${slash(dir)}/wheelhouse/scripts/lineage/check.js`), managed), undefined);
     assert.ok(denied(await decide(bash(main, 'node /recorded/root/scripts/lineage/check.js'), deps(home))), 'the plugin\'s copy reads no record');

@@ -40,10 +40,15 @@ export function remoteKey(url) {
     const full = bare(path.resolve(p));
     return `path:${caseBlind ? full.toLowerCase() : full}`;
   };
-  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/(?:[^/@]*@)?([^/:]*)(?::(\d*))?(\/.*)?$/.exec(text);
+  // A scheme is two letters or more: `C://x` is a Windows path whose separators were doubled, not an address.
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]+):\/\/(?:[^/@]*@)?([^/:]*)(?::(\d*))?(\/.*)?$/.exec(text);
   if (scheme) {
     const kind = scheme[1].toLowerCase();
-    if (kind === 'file') return local(decodeURIComponent((scheme[4] ?? '/').replace(/^\/([A-Za-z]:)/, '$1')));
+    if (kind === 'file') {
+      // file:///C:/x, and git's file://C:/x, whose drive reads as the host.
+      const drive = /^[A-Za-z]$/.test(scheme[2]) && scheme[3] === '' ? `${scheme[2]}:` : '';
+      return local(drive + decodeURIComponent((scheme[4] ?? '/').replace(/^\/([A-Za-z]:)/, '$1')));
+    }
     // The port stays unless it is the scheme's own default, so another port names another server.
     const port = scheme[3] && DEFAULT_PORT[kind] !== scheme[3] ? `:${scheme[3]}` : '';
     return `host:${scheme[2].toLowerCase()}${port}/${bare((scheme[4] ?? '').replace(/^\/+/, '')).toLowerCase()}`;

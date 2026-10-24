@@ -748,8 +748,12 @@ test('the route reviews a commit once: a head with a signed review, of any verdi
     await runOnce();
     await runOnce();
     // The third failed run counts though its note can't be written (the state clone is made read-only meanwhile).
+    // A folder's mode stops no write on Windows, so there the note is written and only the count is checked;
+    // the run on macOS and Linux checks the unwritten note.
+    const windows = process.platform === 'win32';
     const state = await as(project.home, () => stateDir('o__p'));
     const lock = (mode) => {
+      if (windows) return;
       for (const entry of fs.readdirSync(state, { recursive: true, withFileTypes: true })) if (entry.isDirectory()) fs.chmodSync(path.join(entry.parentPath, entry.name), mode);
       fs.chmodSync(state, mode);
     };
@@ -762,7 +766,7 @@ test('the route reviews a commit once: a head with a signed review, of any verdi
       lock(0o755);
     }
     const notesAfter = (await as(project.home, () => listEvents(stateDir('o__p'), { report: () => {} }))).filter((e) => e.kind === 'note').length;
-    assert.equal(notesAfter, notesBefore, 'the third run wrote no note');
+    if (!windows) assert.equal(notesAfter, notesBefore, 'the third run wrote no note');
     // Three failed runs by the helper's count: no fourth.
     const fourth = standInReview({ answer: answerFor('CLEAN') });
     await withHelper(project, () => fourth.module, async (client) => {

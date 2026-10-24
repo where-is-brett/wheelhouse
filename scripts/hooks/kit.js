@@ -65,11 +65,16 @@ export { managedDir, lockedProjects };
 const caseBlind = process.platform === 'win32' || process.platform === 'darwin';
 const keyOf = (p) => (caseBlind ? p.toLowerCase() : p);
 
+// The real path of `p`; for a path not there (yet), its nearest folder that is, with the rest after
+// it, so one place is spelt one way: on Windows a short name (RUNNER~1) and its long one, on macOS
+// /var and /private/var.
 function realPath(p) {
   try {
     return fs.realpathSync.native(p);
   } catch {
-    return path.resolve(p);
+    const resolved = path.resolve(p);
+    const parent = path.dirname(resolved);
+    return parent === resolved ? resolved : path.join(realPath(parent), path.basename(resolved));
   }
 }
 

@@ -117,7 +117,8 @@ test('a caller\'s options.env cannot lift the fence', async () => {
   assert.equal(await hooksPath({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'CORE.hookspath', GIT_CONFIG_VALUE_0: '/evil' }), NULL_FILE);
   const other = fs.realpathSync.native(tempFolder('wh-safe-git-other-'));
   await plain(['init', '-q', other], other);
-  const top = async (env, options) => (await git2(['rev-parse', '--show-toplevel'], { env, ...options })).stdout.trim();
+  // git on Windows answers with "/"; resolved, it is spelt as the folder is.
+  const top = async (env, options) => path.resolve((await git2(['rev-parse', '--show-toplevel'], { env, ...options })).stdout.trim());
   assert.equal(await top({ GIT_DIR: path.join(other, '.git') }), r.root);
   assert.equal(await top({ GIT_WORK_TREE: other }), r.root);
   // A caller's own settings are kept.

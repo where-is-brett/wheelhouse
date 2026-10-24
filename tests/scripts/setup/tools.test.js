@@ -249,7 +249,9 @@ test('the installer is picked by matching the release\'s names, and only one may
 
 // ---- gh and glab ----
 
-test('gh is fetched into the tools folder and the adapter runs that copy', async () => {
+// It fetches the Mac build and has the adapter run it as a Mac does, so on Windows it is skipped there;
+// the Windows build's fetch is checked in 'an installer path with a space is quoted'.
+test('gh is fetched into the tools folder and the adapter runs that copy', { skip: process.platform === 'win32' && 'the Mac build, run as on a Mac' }, async () => {
   await withHome(async () => {
     const net = internet();
     const m = machine({});
@@ -534,7 +536,7 @@ test('glab is fetched from GitLab\'s release, picked from its links and checked 
       glabUrl('glab_1.123.0_darwin_arm64.tar.gz'),
     ]);
     assert.equal(fs.readFileSync(path.join(toolFolder('glab'), 'version'), 'utf8'), `${GLAB_TAG}\n`);
-    assert.equal(toolPath('glab'), got.path);
+    assert.equal(toolPath('glab', { platform: 'darwin' }), got.path, 'the Mac build, found as a Mac finds it');
   });
 });
 

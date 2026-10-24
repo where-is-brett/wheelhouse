@@ -303,7 +303,8 @@ test('a Lean project with the helper, from the session start to the helper stopp
     await git(stateDir('shop'), ['merge-base', '--is-ancestor', held, 'refs/heads/wheelhouse-state']);
     const files = (await git(c.copy, ['ls-tree', '-r', '--name-only', held])).split('\n');
     const mergeEvent = c.events().find((e) => e.kind === 'merge');
-    for (const e of [mergeEvent, undoClick]) assert.ok(files.includes(eventPath(e)), `the copy holds ${e.kind}`);
+    // git names files with "/" on any system.
+    for (const e of [mergeEvent, undoClick]) assert.ok(files.includes(eventPath(e).split(path.sep).join('/')), `the copy holds ${e.kind}`);
 
     // The main version moved outside the helper (P5-27): said at the session start, a merge waits, Keep it in the
     // window decides it.

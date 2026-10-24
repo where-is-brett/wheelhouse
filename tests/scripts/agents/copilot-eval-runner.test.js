@@ -254,7 +254,9 @@ test('the sign-in comes from the evaluation\'s own source when one is named, nev
   assert.throws(() => signInSource({ env: { [SIGN_IN_VARIABLE]: 'relative/home' } }), /whole path/);
 });
 
-test('with no command given, the session starts the copilot the PATH finds first: here the stand-in, which notes the call and refuses, so no real Copilot runs', async () => {
+// On Windows the stand-in copilot is node under another name, which acts as the stand-in only through NODE_OPTIONS,
+// and the session's environment, an allowlist, drops that; the run on macOS and Linux, whose stand-in is a script, checks it.
+test('with no command given, the session starts the copilot the PATH finds first: here the stand-in, which notes the call and refuses, so no real Copilot runs', { skip: process.platform === 'win32' && 'the Windows stand-in needs NODE_OPTIONS, which the session\'s environment drops' }, async () => {
   stand.reset();
   const { dir, home } = scratch();
   const outcome = await run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home }, kits: KITS });
@@ -262,7 +264,7 @@ test('with no command given, the session starts the copilot the PATH finds first
   assert.equal(outcome.handled, false);
   assert.match(outcome.stderr, /copilot is not run in this test/);
   const calls = stand.calls();
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 1, calls.join('\n'));
   assert.match(calls[0], /^copilot -p Say hello\. --output-format json /);
   stand.reset();
 });

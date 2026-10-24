@@ -28,7 +28,8 @@ import { buildManifest, checkInstalled, MARKETPLACE } from '../../../scripts/lin
 import { SWITCHED_OFF_PLUGINS, setupCommand, frontDeskCommand, projectSettings, KEYCHAINS } from '../../../scripts/protection/settings.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
-import { caFile } from '../../../scripts/host/company-ca.js';
+import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
+import { copyTree } from '../../../scripts/lib/copy-tree.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { cloneState } from '../../../scripts/state/clone.js';
@@ -84,7 +85,8 @@ async function seedBare(dir, branch = 'main', { stepOne = 'committed', gitignore
       const committed = stepOne === 'committed' ? { ...OWN_SETTINGS, enabledPlugins: { ...STEP_ONE, ...OWN_SETTINGS.enabledPlugins } } : OWN_SETTINGS;
       fs.writeFileSync(path.join(work, '.claude', 'settings.json'), `${JSON.stringify(committed, null, 2)}\n`);
     }
-    await g(work, 'add', '-A');
+    // Committed as written, CRLF included, whatever this computer's git would do with line endings.
+    await g(work, '-c', 'core.autocrlf=false', 'add', '-A');
     await g(work, 'commit', '-q', '-m', 'The director\'s first commit');
     await g(work, 'push', '-q', dir, branch);
   } finally {
@@ -125,7 +127,11 @@ async function world({
   w.user = tempFolder('wh-user zoë ');
   w.folder = path.join(w.user, 'Projects', 'Shop');
   fs.mkdirSync(path.dirname(w.folder), { recursive: true });
-  const cloned = await realRun('git', ['clone', '-q', w.bare, w.folder]);
+  // Line endings as committed on every system: a Windows git's own setting would turn them into CRLF here, and
+  // a folder with CRLF has a test of its own.
+  // Line endings as committed on every system: a Windows git's own setting would turn them into CRLF here, and a
+  // folder with CRLF has a test of its own.
+  const cloned = await realRun('git', ['-c', 'core.autocrlf=false', 'clone', '-q', w.bare, w.folder]);
   if (cloned.code !== 0) throw new Error(cloned.stderr);
   w.folder = fs.realpathSync.native(w.folder);
   fs.mkdirSync(path.join(w.folder, '.claude'), { recursive: true });
@@ -173,7 +179,8 @@ async function world({
       if (args[0] === 'plugin' && args[1] === 'install' && args.includes('--scope') && args[args.indexOf('--scope') + 1] === 'project') {
         const [plugin, marketplace] = args[2].split('@');
         const into = path.join(w.claudeHome, 'plugins', 'cache', marketplace, plugin);
-        fs.cpSync(k.roots[plugin], into, { recursive: true });
+        // Not fs.cpSync: on Windows it stops the process on a path like this one's "zoë".
+        copyTree(k.roots[plugin], into);
         const file = path.join(w.claudeHome, 'plugins', 'installed_plugins.json');
         let record = { version: 2, plugins: {} };
         try { record = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first install */ }
@@ -792,7 +799,9 @@ test('on a company GitLab, step 7 reads and protects through the company address
     // Every git call of the step carries the certificate pair for that address and no other (the push too).
     const pushed = w.gitCalls.find((c) => c.args.includes('push'));
     const pairs = Object.entries(pushed.env).filter(([k]) => /^GIT_CONFIG_KEY_\d+$/.test(k)).map(([k, key]) => [key, pushed.env[k.replace('KEY', 'VALUE')]]);
-    assert.ok(pairs.some(([key, value]) => key === `http.${COMPANY}/.sslCAInfo` && value === file), JSON.stringify(pairs));
+    // The step runs here as on a Mac (w.ctx), so its certificate setting is the Mac's: the file.
+    const [wanted] = gitCaConfig(COMPANY, file, 'darwin');
+    assert.ok(pairs.some(([key, value]) => key === wanted.key && value === wanted.value), JSON.stringify(pairs));
     assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).match(/sslVerify["',]*\s*[:=]\s*["']?(false|0)/i)), 'checks stay on');
   });
   // Without the file the pair is not added, and the public service is asked at its own address.
@@ -802,7 +811,7 @@ test('on a company GitLab, step 7 reads and protects through the company address
     assert.equal(done.ok, true, done.reason);
     assert.deepEqual(w.asked, [undefined, undefined]);
     assert.ok(w.api.every((a) => a.url.startsWith('https://gitlab.com/api/v4/')));
-    assert.ok(w.gitCalls.every((c) => !JSON.stringify(c.env).includes('sslCAInfo')));
+    assert.ok(w.gitCalls.every((c) => !/sslCAInfo|sslBackend/.test(JSON.stringify(c.env))));
   });
 });
 
@@ -1072,7 +1081,7 @@ test('a new product\'s uncommitted CLAUDE.md is put in setup\'s commit on Put th
 // answers from step 4. Gives the run.
 async function secondComputer(w) {
   const folder = path.join(w.user, 'Projects', 'Shop on the laptop');
-  const cloned = await realRun('git', ['clone', '-q', w.bare, folder]);
+  const cloned = await realRun('git', ['-c', 'core.autocrlf=false', 'clone', '-q', w.bare, folder]);
   if (cloned.code !== 0) throw new Error(cloned.stderr);
   w.folder = fs.realpathSync.native(folder);
   writeProject(SLUG, { folder: w.folder, remoteUrl: w.bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO } });

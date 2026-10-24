@@ -94,7 +94,8 @@ test('each recorded Copilot input translates to the Claude Code input the guards
     }
     let expected;
     if (raw.toolName === undefined) expected = common;
-    else if (raw.toolName === 'apply_patch') expected = [{ ...common, tool_name: 'Edit', tool_input: { file_path: path.join(MAIN, 'out.txt'), patch: raw.toolArgs } }];
+    // The path as the patch names it: the recording's "<PROJECT>/out.txt", with "/" on any system.
+    else if (raw.toolName === 'apply_patch') expected = [{ ...common, tool_name: 'Edit', tool_input: { file_path: `${MAIN}/out.txt`, patch: raw.toolArgs } }];
     else expected = { ...common, ...expectedTool(raw) };
     assert.deepEqual(toGuardInput(raw, event), expected, file);
     // The entry may name the event in Claude Code's spelling too.

@@ -311,7 +311,7 @@ export async function setUpFrontDesk(dir, variant, {
       appendSystemPrompt = undefined;
     }
 
-    const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
+    const address = helperAddress({ home });
     const failures = plugin ? path.join(plugin, 'hooks', 'failed.jsonl') : null;
     if (plugin) write(plugin, 'hooks/context.js', hookScript(address, failures));
     // What the board context hook keeps in seen.json: the director's last prompt, the last briefing.

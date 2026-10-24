@@ -20,10 +20,17 @@ import { STEPS as TEST_STEPS } from './setup-steps.js';
 const world = () => globalThis.wheelhouseJoiningWorld;
 const nothing = async () => { throw new Error('nothing is run here'); };
 const noApp = path.join(os.tmpdir(), 'wh-no-such-app.json');
+// The world's plugin folder is a Mac path, which Windows writes no allow rule for, so on Windows step 2 runs as on a Mac;
+// Windows' own step 2 is tried in tools.test.js.
+const asMac = (step) => (process.platform !== 'win32' ? step : {
+  ...step,
+  plan: (ctx, ...rest) => step.plan({ ...ctx, platform: 'darwin' }, ...rest),
+  apply: (ctx, ...rest) => step.apply({ ...ctx, platform: 'darwin' }, ...rest),
+});
 
 const MAKE = {
   1: () => installStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
-  2: () => toolsStep({ run: quietRun, fetch: nothing, pluginRoot: world().pluginRoot, env: {} }),
+  2: () => asMac(toolsStep({ run: quietRun, fetch: nothing, pluginRoot: world().pluginRoot, env: {} })),
   3: () => hostStep({
     run: world().run, appFile: noApp, hostUrl: world().hostUrl, findGit: async () => ({ ok: true, path: 'git' }), gitlab: nothing,
     open: async () => {}, sleep: async () => {},
