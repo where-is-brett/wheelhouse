@@ -340,6 +340,7 @@ export function pluginRoots(dir, self, pluginRoot) {
 export function isInside(folder, file) {
   const base = keyOf(realPath(folder));
   const target = keyOf(realPath(file));
+  if (process.env.WH_DIAG) console.error('WH_DIAG inside', JSON.stringify([folder, file, base, target]));
   return target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
 }
 

@@ -116,6 +116,18 @@ test('on Windows a timed-out command is killed with its children', async () => {
   assert.deepEqual(sent, []);
 });
 
+test('on Windows the answer waits until taskkill has finished, so what the command held can be removed', async () => {
+  let finish;
+  let finished = false;
+  const killer = () => new Promise((resolve) => { finish = () => { finished = true; resolve(); }; });
+  const answered = run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 100, platform: 'win32', killer });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  setTimeout(() => finish(), 50);
+  const result = await answered;
+  assert.equal(result.timedOut, true);
+  assert.equal(finished, true, 'answered only after taskkill finished');
+});
+
 test('run gives stdout as bytes with encoding buffer', async () => {
   const result = await run(process.execPath, ['-e', 'process.stdout.write(Buffer.from([0, 255, 104, 105]))'], { encoding: 'buffer' });
   assert.equal(result.code, 0);
