@@ -145,7 +145,11 @@ test('installLocked refuses on Windows, with the quick connection, and with an M
   });
 });
 
-test('installLocked stages under the Wheelhouse home, and asks once with every path quoted, in a safe order', async () => {
+// Locked is offered on macOS only (the director's decision of 17 October 2026): the tests that run its
+// administrator script, a Mac shell script over Mac paths, are run on the Mac and skipped on Windows.
+const MAC_ONLY = process.platform === 'win32' && 'Locked\'s install runs on macOS only';
+
+test('installLocked stages under the Wheelhouse home, and asks once with every path quoted, in a safe order', { skip: MAC_ONLY }, async () => {
   await withHome(async (home) => {
     const a = makeProject('a', { domains: ['a.example.com'] });
     const b = makeProject('b', { domains: ['b.example.com'] });
@@ -220,7 +224,7 @@ test('installLocked stages under the Wheelhouse home, and asks once with every p
   });
 });
 
-test('the domains come from every registered project, cleaned', async () => {
+test('the domains come from every registered project, cleaned', { skip: MAC_ONLY }, async () => {
   await withHome(async () => {
     const a = makeProject('a', { domains: ['Mixed.Example.com', 'https://bad.example/x', '*'] });
     const c = makeProject('c', { domains: ['c.example.com'] });
@@ -289,7 +293,7 @@ test('installLocked never overwrites a computer-wide file that is not Wheelhouse
   });
 });
 
-test('updateLocked rebuilds and reinstalls with one prompt, refreshing the recorded plugin root', async () => {
+test('updateLocked rebuilds and reinstalls with one prompt, refreshing the recorded plugin root', { skip: MAC_ONLY }, async () => {
   await withHome(async () => {
     const a = makeProject('a', { domains: ['a.example.com'] });
     const dir = temp('wh-locked-dir-');
@@ -312,7 +316,7 @@ test('updateLocked rebuilds and reinstalls with one prompt, refreshing the recor
   });
 });
 
-test('leaving the last Locked project removes everything; leaving one of two keeps the other', async () => {
+test('leaving the last Locked project removes everything; leaving one of two keeps the other', { skip: MAC_ONLY }, async () => {
   await withHome(async () => {
     const a = makeProject('a', { domains: ['a.example.com'] });
     const b = makeProject('b', { domains: ['b.example.com'] });
