@@ -9,7 +9,8 @@ import path from 'node:path';
 import { callsOf, subagentRuns } from '../../../scripts/eval/feature-project.js';
 import { locateMattSkills } from '../../../scripts/eval/harness.js';
 import { filesWritten, isSourceFile, isTestFile, judge as judge27 } from '../../eval/build-loop/27-bug-route.js';
-import { implementers, judge as judge33, routingFrom, sameModel, sessionModel } from '../../eval/build-loop/33-models.js';
+import scenario33, { columnRouting, implementers, judge as judge33, routingFrom, sameModel, sessionModel } from '../../eval/build-loop/33-models.js';
+import { levelRouting } from '../../../scripts/eval/ready.js';
 import { isReview, judge as judge34 } from '../../eval/build-loop/34-read-only-reviewer.js';
 
 // The events of tool calls, each answered: [name, input, resultText, { isError, parent, id }].
@@ -104,6 +105,30 @@ test("scenario 33 wants each implementer dispatched with the builder role's mode
   // A general-purpose implementer counts; a subagent's own dispatch does not.
   const general = stream(['Agent', { description: 'Implement Task 1: limits', model: 'model-b' }, 'done'], ['Agent', { description: 'Look around', model: 'model-z' }, 'x', { parent: 'p1' }]);
   assert.equal(implementers(general).length, 1);
+});
+
+test("scenario 33 at a level wants the column's builder (or mechanical) model, with no routing from the shell", () => {
+  const pins = { mostCapable: 'model-top', midSized: 'model-mid' };
+  const lean = { level: 'lean', pins, routing: levelRouting({ level: 'lean', pins }) };
+  assert.deepEqual(columnRouting(lean), { builder: 'model-mid', mechanical: 'model-mid', reviewer: 'model-mid' });
+  const before = process.env.WHEELHOUSE_EVAL_ROUTING;
+  delete process.env.WHEELHOUSE_EVAL_ROUTING;
+  try {
+    const pass = (events) => scenario33.pass({ events, variant: 'with', column: lean });
+    const run = (model, ...worked) => [init('model-top'), ...events(builder(model)), result('model-top', ...worked)];
+    assert.equal(pass(run('model-mid', 'vendor-model-mid-1')).pass, true);
+    assert.match(pass(run('model-top', 'model-top')).why, /dispatched with model-top, not the builder role's model/);
+    assert.match(pass(run(undefined)).why, /none set/);
+    // At Lightest every role runs on the session's own model: the dispatch must still name it.
+    const lightest = { level: 'lightest', pins, routing: levelRouting({ level: 'lightest', pins }) };
+    const session = (model) => [init('model-mid'), ...events(builder(model)), result('model-mid')];
+    assert.equal(scenario33.pass({ events: session('model-mid'), variant: 'with', column: lightest }).pass, true);
+    assert.match(scenario33.pass({ events: session(undefined), variant: 'with', column: lightest }).why, /none set/);
+    // Without a level, the shell's routing is still needed.
+    assert.throws(() => scenario33.pass({ events: session('model-mid'), variant: 'with', column: null }), /needs WHEELHOUSE_EVAL_ROUTING/);
+  } finally {
+    if (before !== undefined) process.env.WHEELHOUSE_EVAL_ROUTING = before;
+  }
 });
 
 // --- 34 ---

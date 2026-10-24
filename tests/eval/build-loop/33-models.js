@@ -23,6 +23,12 @@
 // the session picked. Both variants load Wheelhouse's agents in a scratch
 // plugin. Judged from each dispatch's `model` input, the session's model in
 // the init event, and the result event's modelUsage.
+//
+// In a run at a Thoroughness level (`--level lean|lightest`, scripts/eval/ready.js), the routing is the level's
+// column instead: the session is started as the waker would start it, its prompt carrying the column's lines, and
+// the implementer must be dispatched with the column's builder (or mechanical) model. WHEELHOUSE_EVAL_ROUTING is
+// not read then. At Lightest the builder runs on the session's own model, so the dispatch must name it outright: a
+// dispatch that sets no model fails, as it always does.
 import { locateSuperpowers } from '../../../scripts/eval/harness.js';
 import { agentText, callsOf, setUpFeature } from '../../../scripts/eval/feature-project.js';
 
@@ -86,6 +92,15 @@ export function routingFrom(env = process.env) {
   return { mechanical: table.builder, ...table };
 }
 
+// The routing table a level's column gives (run.js, --level): its builder, mechanical and reviewer roles' models.
+export function columnRouting(column) {
+  const roles = column?.routing?.roles ?? {};
+  const table = {};
+  for (const role of ['builder', 'mechanical', 'reviewer']) if (typeof roles[role]?.model === 'string') table[role] = roles[role].model;
+  if (typeof table.builder !== 'string') throw new Error(`The ${column?.level ?? 'level'}'s column names no builder model`);
+  return { mechanical: table.builder, ...table };
+}
+
 // Two names for one model: equal, or one the alias inside the other's full name.
 export function sameModel(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a === '' || b === '') return false;
@@ -119,10 +134,11 @@ const named = (call) => (typeof call.input.model === 'string' && call.input.mode
 // The pass: every implementer dispatched with the brief's model for the
 // builder role (or the mechanical role), a model that is not the session's
 // own, and that model among those that worked. Without, the brief carries no
-// routing; the judgement says what the session picked.
-export function judge({ calls, routing, session, worked = [], variant = 'with' }) {
+// routing; the judgement says what the session picked. At a level (`atLevel`) the builder's model may be the
+// session's own (Lightest): the check then rests on each dispatch naming it.
+export function judge({ calls, routing, session, worked = [], variant = 'with', atLevel = false }) {
   const wanted = [routing.builder, routing.mechanical].filter(Boolean);
-  if (wanted.some((model) => sameModel(model, session))) {
+  if (!atLevel && wanted.some((model) => sameModel(model, session))) {
     return { pass: false, why: 'inconclusive: the routing table gives the builder the session\'s own model, so the check would pass by default' };
   }
   const built = implementers(calls);
@@ -149,8 +165,8 @@ export default {
   id: 33,
   title: "The implementer's model is the one the routing table names for its role",
 
-  setup: (dir, variant) => {
-    const routing = routingFrom();
+  setup: (dir, variant, { column = null } = {}) => {
+    const routing = column ? columnRouting(column) : routingFrom();
     return setUpFeature(dir, {
       work: WORK,
       lane: 'feature',
@@ -159,7 +175,7 @@ export default {
       plan: { path: PLAN, text: plan },
       brief: variant === 'with' ? 'wheelhouse' : plainBrief,
       agents: { builder: agentText('builder'), reviewer: agentText('reviewer'), tester: agentText('tester') },
-      routing: variant === 'with' ? routing : {},
+      routing: variant === 'with' && !column ? routing : {},
     });
   },
 
@@ -173,7 +189,7 @@ export default {
   permissionMode: 'acceptEdits',
   maxTurns: 80,
 
-  pass: ({ events, variant }) => judge({
-    calls: callsOf(events), routing: routingFrom(), session: sessionModel(events), worked: modelsWorked(events), variant,
+  pass: ({ events, variant, column = null }) => judge({
+    calls: callsOf(events), routing: column ? columnRouting(column) : routingFrom(), session: sessionModel(events), worked: modelsWorked(events), variant, atLevel: column !== null,
   }),
 };

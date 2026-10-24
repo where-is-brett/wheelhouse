@@ -165,7 +165,7 @@ import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.j
 import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
-import { balancedRouting, columnLines, routingInForce } from '../routing/in-force.js';
+import { balancedRouting, columnLines, promptWithColumn, roleOf, routingInForce } from '../routing/in-force.js';
 import { hostApprovalReady } from '../host/approval-ready.js';
 import { guardedCommand, guardedReady, labelWorktree, readSelfTest } from '../windows/low.js';
 
@@ -780,15 +780,11 @@ export function makeWaker({
     }
     return found;
   };
-  // A role's model, effort and fallback from the column, for the adapter (null where it names none).
-  const roleOf = (found, role) => {
-    const cell = found.roles[role];
-    return isPlain(cell) ? { model: cell.model ?? null, effort: cell.effort ?? null, fallback: cell.fallback ?? null } : {};
-  };
+  // A role's model, effort and fallback from the column, for the adapter (null where it names none): roleOf.
   // A feature's prompt with the column for its subagents after it.
   // Only for an adapter that says it takes the column (`takesColumn`): another agent's prompt stays one line, and
   // never names models it can't use.
-  const withColumn = (adapter, prompt, found) => (adapter?.takesColumn === true ? [prompt, '', ...columnLines(found)].join('\n') : prompt);
+  const withColumn = (adapter, prompt, found) => (adapter?.takesColumn === true ? promptWithColumn(prompt, found) : prompt);
   // At Shape 2 the column goes in the copy of the wake the session reads, as `column`, since its prompt is one line.
   const shape2Column = () => {
     let adapter = null;

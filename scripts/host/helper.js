@@ -66,6 +66,7 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
+import { READY_LEVELS, readiness, samePins } from '../eval/ready.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, PROFILE_HOLDS_KEYS, holdsKeys, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
@@ -856,6 +857,8 @@ export async function startHelper({
   // Setup's steps (a module exporting STEPS), the user's own home, whose Projects folder setup may
   // act in, and how a long step's own process is started (scripts/setup/engine.js).
   setupSteps = STEPS_MODULE, userHome = os.homedir(), spawn = nodeSpawn,
+  // The evaluations folder whose records a Thoroughness level's readiness is read from (scripts/eval/run.js).
+  evalsFolder = path.join(userHome, '.wheelhouse-evals'),
   // What the helper does once the last uninstall on this computer has finished (scripts/setup/
   // uninstall.js): given its own close, by default it closes; the real helper (helper-main.js) then
   // exits.
@@ -1550,6 +1553,33 @@ export async function startHelper({
       return { ok: false, refused: error instanceof Error ? error.message : 'the survey could not be recorded' };
     }
   }
+  // A Thoroughness level ready (design section 14.6, "Where ready lives"): the helper's own writer of a column-ready
+  // record, a kind no caller writes (HELPER_ONLY_KINDS). It takes no one's word: the level must be Lean or Lightest, the
+  // pins the ones the configuration in the project's main folder holds now, and the records named must each be a
+  // trial an evaluation run saved under this computer's evaluations folder, which the helper reads and checks itself
+  // (scripts/eval/ready.js): the bar's every scenario with its three passing `with` trials at that level on those pins,
+  // each record's text the one its run saved and naming no premium model, and no trial of the bar failed there.
+  // Anything short is refused, saying which scenario and trial, and nothing is written. Called in the state's queue.
+  async function doColumnReady({ project, column, pins, records }, ctx) {
+    if (!READY_LEVELS.includes(column)) refuse('only Lean or Lightest is recorded ready this way');
+    const record = recordOf(project);
+    let config;
+    try {
+      config = readConfig(fs.readFileSync(path.join(record.folder, ...CONFIG_FILE.split('/')), 'utf8'));
+    } catch {
+      refuse('the project\'s configuration can\'t be read, so its pins aren\'t known');
+    }
+    const held = config?.tiers?.pins;
+    if (!samePins(pins, held) || Object.keys(pins).length !== 2) refuse('those pins are not the most capable and mid-sized models the project\'s configuration holds now');
+    if (!Array.isArray(records) || records.length === 0) refuse('the evaluation\'s records are not named');
+    const found = readiness({ evals: evalsFolder, level: column, pins, premium: typeof held.premium === 'string' ? held.premium : null, given: records });
+    if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
+    const event = makeEvent({ kind: 'column-ready', data: { column, pins: { mostCapable: pins.mostCapable, midSized: pins.midSized }, records: found.records }, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await freshViews(() => writeViews(project, { now }));
+    return written({ event, result });
+  }
+
   // finishSetup's writer: the project's own context, in the state's queue, refused under STOP.
   async function writeSetupSurvey(project, data) {
     try {
@@ -3576,6 +3606,7 @@ export async function startHelper({
     '/lean/undo': doLeanUndo,
     '/lean/copy': doLeanCopy,
     '/state/record': signedIn(stateRoute(doRecord)),
+    '/state/column-ready': stateRoute(doColumnReady, { write: true }),
     // A Lean project's state has no remote, so there is nothing to pull or push.
     '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
