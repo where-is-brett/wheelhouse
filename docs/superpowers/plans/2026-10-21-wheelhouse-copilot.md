@@ -130,7 +130,7 @@ adapters/copilot/                         index.js, translate.js, tools.js, hook
                                           sandbox.js, tool-sheet.md, safety-line.js, eval-runner.js
 adapters/copilot/home/                    the Lean kit as copied into ~/.copilot/: skills/, agents/, instructions/, hooks/ (from Part 5 Task 8: the hook file and the guard), MANIFEST.txt
 adapters/copilot/plugin/                  com.github.copilot/ (the Copilot-only parts; no hooks)
-plugin.json                               the root Agent Plugins manifest, beside .claude-plugin/
+adapters/copilot/plugin/plugin.json       the Agent Plugins manifest, in the plugin's own root (no root plugin.json; ruling P8-15)
 scripts/agents/copilot/                   home.js (builds the Lean kit), tier.js, facts.js, versions.js, start-helper.js, sandbox-test.js
 scripts/hooks/copilot-entry.js            the one Node.js start per Copilot hook call, running the guards in order
 adapters/copilot/lean-guard.sh            Lean's shell guard for a Mac with no Node.js (Part 5 Task 8)
