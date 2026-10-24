@@ -268,9 +268,9 @@ const wordsIn = (text) => text.split(/\s+/).filter(Boolean).length;
 // is the id of the survey whose lines the text showed whole (none when it was cut), or whose every
 // line the caller said itself. Throws when it can't be built.
 export function briefingIn({
-  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier,
+  project, model, usage, sources, settings, since, weeklySince, review, at, briefingModel = realBriefingModel, room, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked,
 }) {
-  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier });
+  const briefing = briefingModel({ model, usage, sources, since, weeklySince, now: at, review, survey, surveyAt, host, leaveOut, carrying, earlier, holdLocked });
   const length = settings?.briefing?.value;
   const limit = Object.hasOwn(BRIEFING_WORDS, length) ? BRIEFING_WORDS[length] : BRIEFING_WORDS.standard;
   const words = wordsOf(project, settings, model);

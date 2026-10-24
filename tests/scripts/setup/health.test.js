@@ -26,7 +26,8 @@ import { setStop, liftStop, stopState } from '../../../scripts/lib/stop.js';
 import { TRIAL_MARKER } from '../../../scripts/health/trials.js';
 import { STOPPED } from '../../../scripts/setup/host.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
-import { readSurveyAt } from '../../../scripts/briefing/seen.js';
+import { readSurveyAt, readSeen } from '../../../scripts/briefing/seen.js';
+import { LOCKED_WOULD_LINE } from '../../../scripts/lib/platform-lines.js';
 import { setLineOf, setupLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote, g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -914,6 +915,23 @@ const finishWith = (survey, { autonomy, client, load = boardAt(autonomy) }) => f
 const CARD_ASK = 'Wheelhouse found work already under way in Cafe-Menu: 1 change waiting to be merged on GitHub, and 2 pieces of unfinished work on this computer. Shall I carry them on?';
 // The briefing's plain words may say "merged" in other words, as the board-context hook gives it.
 const TRUSTING_LINE = /Already under way here: 1 change waiting to be \w+ on GitHub, and 2 pieces of unfinished work on this computer\. I'm carrying them on, one brief each; say stop if you'd rather I didn't\./;
+
+// From the rehearsal on a project under way: setup's first briefing said "Locked would protect it more"
+// minutes after the director chose Standard. It holds the line back and starts the weekly rhythm, so
+// the line comes back at the next week's first briefing.
+test('setup\'s first briefing holds Locked\'s line back and starts the weekly rhythm', async () => {
+  await withProject(async () => {
+    const load = async () => ({
+      project: SLUG,
+      model: { project: SLUG, builtAt: T0.toISOString(), director: { health: [{ level: 'watch', text: LOCKED_WOULD_LINE }] }, build: {}, missing: [] },
+      settings: { autonomy: { value: 'balanced', from: 'project' } },
+    });
+    const done = await finishWith(EMPTY_SURVEY, { autonomy: 'balanced', client: writingClient([]), load });
+    assert.equal(typeof done.briefing, 'string');
+    assert.doesNotMatch(done.briefing, /Locked/);
+    assert.equal(readSeen(SLUG, { now: T0 }).weeklyAt, T0.toISOString());
+  });
+});
 
 test('at Cautious and Balanced, setup ends with the carry-on card, recorded as a front-desk card and asked, and the briefing leaves out its line', async () => {
   for (const autonomy of ['cautious', 'balanced', undefined]) {
