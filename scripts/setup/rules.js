@@ -325,6 +325,27 @@ export function rulesOf(folder, { userHome, env, before } = {}) {
   return out;
 }
 
+// A rule that sends changes straight to the main line, which step 7's protection keeps off: a push,
+// commit or merge straight or directly to main, master, trunk or the default branch, unless it says
+// not to.
+const STRAIGHT_TO_MAIN = /\b(?:push|commit|merge)\w*\s+(?:\w+\s+){0,2}?(?:straight|directly)\s+(?:in)?to\s+(?:the\s+)?(?:main|master|trunk|default branch)\b/i;
+const SAYS_NOT_TO = /(?<![\p{L}\p{N}])(?:never|don['’]t|do not|avoid|no)(?![\p{L}\p{N}])/iu;
+export const overriddenByProtection = (rule) => STRAIGHT_TO_MAIN.test(rule.words) && !SAYS_NOT_TO.test(rule.words);
+
+// A rule's words as a quote, cut short past QUOTE_CHARS so the line stays within what setup says.
+const QUOTE_CHARS = 120;
+const quote = (words) => `"${words.length > QUOTE_CHARS ? `${words.slice(0, QUOTE_CHARS - 1).trimEnd()}…` : words}"`;
+
+// What step 5 says of the rules found: how many, followed as they are, but for any protection keeps off.
+export function rulesLine(rules) {
+  if (rules.length === 0) return 'No rules found to follow.';
+  const head = `Found ${rules.length} rules in the project; they're followed as they are`;
+  const off = rules.filter(overriddenByProtection);
+  if (off.length === 0) return `${head}.`;
+  if (off.length === 1) return `${head}, except your rule ${quote(off[0].words)} where it pushes straight to the main line: that stays off, as changes go through Wheelhouse's checks.`;
+  return `${head}, except ${off.length} rules that push straight to the main line (${off.map((r) => quote(r.words)).join('; ')}): those stay off, as changes go through Wheelhouse's checks.`;
+}
+
 export function rulesStep({ env = process.env } = {}) {
   return {
     n: 5,
@@ -334,9 +355,9 @@ export function rulesStep({ env = process.env } = {}) {
       // The run's own sessions, after it began, are not the director's past words.
       const startedAt = readJournal().runs.find((r) => r?.id === ctx.runId)?.startedAt;
       const before = typeof startedAt === 'string' ? startedAt : (ctx.now?.() ?? new Date()).toISOString();
-      const n = rulesOf(ctx.folder, { userHome: ctx.userHome, env, before }).length;
-      ctx.say?.(n === 0 ? 'No rules found to follow.' : `Found ${n} rules in the project; they're followed as they are.`);
-      return { settled: { record: { rules: n } } };
+      const rules = rulesOf(ctx.folder, { userHome: ctx.userHome, env, before });
+      ctx.say?.(rulesLine(rules));
+      return { settled: { record: { rules: rules.length } } };
     },
     async apply() {
       return [];

@@ -71,13 +71,13 @@ When the setup command answered "the host helper could not be reached: is it run
 
 **Fixed:** `skills/setup/SKILL.md` names the refusal: a new session in this folder starts the helper, then "carry on with setup", and there is no Wheelhouse app to suggest.
 
-### 3. The step 9 wait cost a refused call (left)
+### 3. The step 9 wait cost a refused call (fixed)
 
-On step 9's two-minute wait, the session first ran `sleep 118` in the foreground. Claude Code 2.1.302 refuses that ("Blocked: sleep … use run_in_background"). The session then ran it in the background and was woken when it ended, so the push went out on time. It costs one refused call each time. Every playbook "wait" works this way (setup's `wait`, uninstall's once-a-minute status). A line on the Claude Code tool sheet, naming a background command as the way to wait, would remove the stumble. Left, as it touches every playbook and the Copilot sheet.
+On step 9's two-minute wait, the session first ran `sleep 118` in the foreground. Claude Code 2.1.302 refuses that ("Blocked: sleep … use run_in_background"). The session then ran it in the background and was woken when it ended, so the push went out on time. It costs one refused call each time. Every playbook "wait" works this way (setup's `wait`, uninstall's once-a-minute status). **Fixed** (pull request after #75): `scripts/setup/cli.js` has a `wait <step>` form, which waits in the command itself while the step's plan is a wait, up to a minute and a half a call, then answers `waited: true` or how long is left. The setup playbook uses it for every wait, step 9's included, and STOP lets it through as a reading form. Uninstall's once-a-minute status is unchanged.
 
-### 4. Step 5 says the project's rules are "followed as they are", even one protection now blocks (left)
+### 4. Step 5 says the project's rules are "followed as they are", even one protection now blocks (fixed)
 
-Step 5 said "Found 9 rules in the project; they're followed as they are." One of those rules is "Push straight to main for small fixes", which step 7's protection blocks a few seconds later. Another is "Use American English in the interface". The first briefing says "Mine come first where they differ", but only after setup. The step 7 card says "protection sends later changes through Wheelhouse's checks". It doesn't say this ends the project's own habit of pushing straight to main, which matters if other people push to it. Left for the designer: a wording change on step 5's line, and possibly a line on step 7's card when a rule found says to push to the default branch.
+Step 5 said "Found 9 rules in the project; they're followed as they are." One of those rules is "Push straight to main for small fixes", which step 7's protection blocks a few seconds later. Another is "Use American English in the interface". The first briefing says "Mine come first where they differ", but only after setup. The step 7 card says "protection sends later changes through Wheelhouse's checks". It doesn't say this ends the project's own habit of pushing straight to main, which matters if other people push to it. **Fixed** (pull request after #75): step 5's line names a rule that pushes, commits or merges straight to the main line and says it stays off: 'Found 9 rules in the project; they're followed as they are, except your rule "Push straight to main for small fixes; …" where it pushes straight to the main line: that stays off, as changes go through Wheelhouse's checks.' A rule that says not to ("Never push straight to main") isn't named.
 
 ### 5. Recording the carried-on work took three refusals (fixed)
 
@@ -94,7 +94,7 @@ With the folder switched, setup ended green (12 of 12). Then:
 
 - **The carry-on card** read: "Wheelhouse found work already under way in recipe-box: 1 change waiting to be merged on GitHub, and 1 piece of unfinished work on this computer. Shall I carry them on?" It was plain, and the open pull request and the director's own line were both counted.
 - **The briefing** said the other agent setup's line once ("AGENTS.md and 3 more files … Mine come first where they differ. I can move them into an archive folder, which you can undo at any time."), as designed.
-- **The briefing also said "Locked would protect it more"**, a few minutes after the director chose Standard. This is fair as a health line, but it re-raises a choice just made. Left for the designer.
+- **The briefing also said "Locked would protect it more"**, a few minutes after the director chose Standard. This is fair as a health line, but it re-raises a choice just made. **Fixed** (pull request after #75): the line is now one of the briefing's weekly lines. Setup's own briefing holds it back and starts the weekly count, so it comes back at the next week's first briefing. The board shows it all the while, as before.
 - **Each piece got its own approval card**, which explained "pull request", "merge" and "review" in plain words. The session's closing words were right: the original work isn't changed, and the director's changes not yet committed (`src/recipes.js`, `notes.md`) were left alone.
 
 ### 7. Smaller things seen

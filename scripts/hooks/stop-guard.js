@@ -109,8 +109,9 @@ export function isFrontDeskRead(command, pluginRoots, platform) {
 }
 
 // Setup's commands that only read (scripts/setup/cli.js), by their exact words: `status`,
-// `plan <step>` and `resume`, which asks for the status and then the plan of the first step
-// neither done nor running, and so reads no more than those two. The helper answers both under STOP, changing nothing
+// `plan <step>`, `wait <step>`, which asks that plan again while it waits, and `resume`, which asks
+// for the status and then the plan of the first step neither done nor running, and so reads no more
+// than those two. The helper answers both under STOP, changing nothing
 // a step lists: `plan` writes only setup's own records, including a step settled on answers the
 // director already gave (ruling R52). `health`, followed by up to MOST_TRIAL_LINES lines each as
 // the safety trials print them (scripts/lib/trial-lines.js), reads step 10's board (ruling R41); under
@@ -124,7 +125,7 @@ function isSetupRead(command, pluginRoots, platform) {
   if (args === null) return false;
   if (args[0] === 'health') return args.length - 1 <= MOST_TRIAL_LINES && args.slice(1).every((l) => parseTrialLine(l) !== null);
   if (args[0] === 'uninstall') return args.length === 2 && ['plan', 'status'].includes(args[1]);
-  return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && args[0] === 'plan' && SETUP_STEP.test(args[1]));
+  return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && ['plan', 'wait'].includes(args[0]) && SETUP_STEP.test(args[1]));
 }
 
 // A wake file as the foreman is told it: one word naming a .json file, never a flag.

@@ -11,7 +11,7 @@ import { computerId, stateDir } from '../lib/paths.js';
 import { readConfig } from '../gate/guardrails.js';
 import { findBrowser as realFindBrowser, isChrome } from '../screens/browser.js';
 import { readSmallText } from '../hooks/kit.js';
-import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE } from '../lib/platform-lines.js';
+import { WINDOWS_LINE, UNATTENDED_LINE, GUARDED_LINE, LOCKED_UNATTENDED_LINE, LOCKED_WOULD_LINE } from '../lib/platform-lines.js';
 import { HELPER_WAIT_MS, HOST_FACTS_MAX_AGE_MS } from '../lib/core-numbers.js';
 import { FREE_PLAN_LINE, fakedTestsGap } from '../host/protection.js';
 import { NO_HELPER } from '../hooks/session-start.js';
@@ -193,7 +193,7 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
     add('stop', since ? `${STOP_LINE}, since ${since}` : STOP_LINE);
   }
   add('ok', locked ? 'Protection: Locked' : 'Protection: Standard');
-  if (!locked && realUsers && platform === 'darwin') add('watch', 'This project has real users: Locked would protect it more');
+  if (!locked && realUsers && platform === 'darwin') add('watch', LOCKED_WOULD_LINE);
   // Quick is the Mac's default, since the sandbox denies its sign-in files and the keychain (check 73),
   // so it brings no line there; on Windows, where nothing does, it is a calm note (design section 22).
   if (record?.connection?.mode === 'quick' && platform !== 'darwin') add('ok', QUICK_LINE);

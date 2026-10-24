@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { main } from '../../../scripts/setup/cli.js';
+import { main, USAGE, WAIT_MOST_MS } from '../../../scripts/setup/cli.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -31,10 +31,10 @@ const T0 = new Date('2026-10-19T03:00:00.000Z');
 const H = 'ab'.repeat(32);
 
 // Runs the command with a client, and gives back its exit code and what it wrote.
-async function run(argv, { client, cwd = '/x/Projects/shop' } = {}) {
+async function run(argv, { client, cwd = '/x/Projects/shop', ...rest } = {}) {
   let out = '';
   let err = '';
-  const code = await main(argv, { client, cwd, out: (t) => { out += t; }, err: (t) => { err += t; } });
+  const code = await main(argv, { client, cwd, out: (t) => { out += t; }, err: (t) => { err += t; }, ...rest });
   return { code, out, err };
 }
 
@@ -202,7 +202,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -211,7 +211,7 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {
@@ -240,4 +240,35 @@ test('the uninstall forms ask the helper\'s uninstall routes for this folder, ap
     assert.equal(got.code, 1, argv.join(' '));
   }
   assert.equal(c.calls.length, 3);
+});
+
+// From the rehearsal on a project under way (docs/evals/rehearsal-project-under-way.md): Claude Code
+// refuses a foreground `sleep`, so the session's first try at step 9's two-minute wait was refused
+// each time. `wait <step>` waits in the command itself, asking the step's plan again as it goes, up
+// to WAIT_MOST_MS a call, so it stays within a command's own time limit.
+test('wait <step> waits while the step\'s plan is a wait, up to WAIT_MOST_MS a call, and says when it is over', async () => {
+  let clock = T0.getTime();
+  const slept = [];
+  const timing = { now: () => clock, sleep: async (ms) => { slept.push(ms); clock += ms; } };
+  const until = (end) => () => (clock < end ? { ok: true, wait: end - clock, why: 'the director\'s screen is locked' } : { ok: true, ask: { step: 9, id: 'push-arrived', card: {} } });
+  const soon = fakeClient({ plan: until(T0.getTime() + 30000) });
+  const over = await run(['wait', '9'], { client: soon, ...timing });
+  assert.equal(over.code, 0, over.err);
+  assert.deepEqual(JSON.parse(over.out), { step: 9, waited: true });
+  assert.deepEqual(slept, [30000]);
+  // A wait longer than a call waits WAIT_MOST_MS, then says how long is left.
+  clock = T0.getTime();
+  slept.length = 0;
+  const long = fakeClient({ plan: until(T0.getTime() + WAIT_MOST_MS + 20000) });
+  const part = await run(['wait', '9'], { client: long, ...timing });
+  assert.deepEqual(JSON.parse(part.out), { step: 9, waiting: 20000 });
+  assert.equal(slept.reduce((a, b) => a + b, 0), WAIT_MOST_MS);
+  assert.ok(WAIT_MOST_MS <= 100000, 'well within the two minutes a command may run by default');
+  // A step that isn't waiting is over at once, and a refusal is said as the helper gave it.
+  const none = await run(['wait', '3'], { client: fakeClient({ plan: { ok: true, ask: { step: 3, id: 'x', card: {} } } }), ...timing });
+  assert.deepEqual(JSON.parse(none.out), { step: 3, waited: true });
+  const refused = await run(['wait', '3'], { client: fakeClient({ plan: { ok: false, refused: 'STOP is on' } }), ...timing });
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /STOP is on/);
+  assert.match(USAGE, /wait <step>/);
 });

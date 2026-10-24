@@ -175,6 +175,25 @@ test('install steps, code and command lines are not rules', () => {
   assert.deepEqual(findRules(folder).map((r) => r.words), ['Run the tests before every pull request.', 'Always show prices in dollars.']);
 });
 
+// From the rehearsal on a project under way (docs/evals/rehearsal-project-under-way.md): step 5 said
+// "they're followed as they are" of a rule protection blocks a few seconds later.
+test('step 5 names a rule Wheelhouse\'s protection keeps off: pushing straight to the main line', async () => {
+  await withProject(async ({ plan, folder }) => {
+    lay(folder, {
+      'CLAUDE.md': '- Push straight to main for small fixes; open a pull request for anything bigger.\n- Never push straight to main on Fridays.\n- Keep commits small.\n',
+    });
+    assert.deepEqual(await plan(5), {
+      ok: true,
+      done: true,
+      said: 'Found 3 rules in the project; they\'re followed as they are, except your rule "Push straight to main for small fixes; open a pull request for anything bigger." where it pushes straight to the main line: that stays off, as changes go through Wheelhouse\'s checks.',
+    });
+  });
+  await withProject(async ({ plan, folder }) => {
+    lay(folder, { 'CLAUDE.md': '- Always commit directly to master.\n- Push directly to the default branch when it is urgent.\n' });
+    assert.match((await plan(5)).said, /^Found 2 rules in the project; they're followed as they are, except 2 rules that push straight to the main line \("Always commit directly to master\."; "Push directly to the default branch when it is urgent\."\): those stay off, as changes go through Wheelhouse's checks\.$/);
+  });
+});
+
 test('step 5 asks nothing: it settles at once with how many rules it found, and says so', async () => {
   await withProject(async ({ plan, folder }) => {
     assert.deepEqual(await plan(5), { ok: true, done: true, said: 'No rules found to follow.' });
