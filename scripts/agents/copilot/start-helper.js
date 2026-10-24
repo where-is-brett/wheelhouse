@@ -43,7 +43,7 @@ import { copilotHome, file as hookFile, writeRegistration } from '../../../adapt
 import identity from '../../../adapters/copilot/identity.js';
 import { run as realRun } from '../../lib/run.js';
 import { canonicalJson } from '../../lib/canonical.js';
-import { computerId, wheelhouseHome } from '../../lib/paths.js';
+import { computerId, jobFolder, wheelhouseHome } from '../../lib/paths.js';
 import { stopState } from '../../lib/stop.js';
 import { projectForFolder, readProject, registeredProjects } from '../../lib/projects.js';
 import { loginEntry, installLoginStart, removeLoginStart, loginStartRecord } from '../../lib/login-start.js';
@@ -251,7 +251,7 @@ export async function startAll({
       fs.mkdirSync(home, { recursive: true });
       // Started in Wheelhouse's own folder, never the project's.
       const child = spawn(process.execPath, [path.join(pluginRoot, 'scripts', 'host', 'helper-main.js')], {
-        cwd: home, detached: true, windowsHide: true, stdio: 'ignore', env: { ...env, ...caEnv(home) },
+        cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore', env: { ...env, ...caEnv(home) },
       });
       child?.on?.('error', () => {});
       child?.unref?.();

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startBackground as startWithBackground, weeklyDue } from '../../../scripts/lib/background.js';
+import { jobFolder } from '../../../scripts/lib/paths.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 
 const ROOT = '/plugin/root';
@@ -113,7 +114,9 @@ test('the receiver is started only when its health check does not answer', async
     assert.equal(call.opts.detached, true);
     assert.equal(call.opts.windowsHide, true);
     assert.equal(call.opts.stdio, 'ignore');
-    assert.equal(call.opts.cwd, home);
+    // In a folder the job never pins: not the Wheelhouse home, which uninstall removes.
+    assert.equal(call.opts.cwd, jobFolder());
+    assert.ok(!path.resolve(call.opts.cwd).startsWith(path.resolve(home)));
     // The lock is not left behind.
     assert.equal(fs.existsSync(path.join(home, 'usage', 'receiver.lock')), false);
   });

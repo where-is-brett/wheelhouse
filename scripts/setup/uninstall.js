@@ -121,7 +121,7 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
-import { wheelhouseHome, keysDir, profileDir, projectsDir, computerId } from '../lib/paths.js';
+import { wheelhouseHome, jobFolder, keysDir, profileDir, projectsDir, computerId } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
 import { loginStartRecord } from '../lib/login-start.js';
@@ -1250,7 +1250,7 @@ export function uninstallRoutes({
       };
       try {
         const child = spawn(process.execPath, [UNINSTALL_RUN, folder, got.hash, clickedAt, deadline, userHome], {
-          cwd: wheelhouseHome(), detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
+          cwd: jobFolder(), detached: true, stdio: 'ignore', windowsHide: true, env: process.env,
         });
         child?.on?.('error', failed);
         child?.on?.('exit', ended);
