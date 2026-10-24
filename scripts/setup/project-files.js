@@ -936,7 +936,13 @@ export function projectFilesStep({
       const git = await gitFor({ host, platform, folder, remoteUrl: record.remoteUrl, base: record.connection?.baseUrl });
       const current = await git.out(['symbolic-ref', '--short', '-q', 'HEAD']);
       if (current !== branch) {
-        throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on. Switch this folder to ${branch}${current ? `, or make ${current} the default on ${NAME[host]}` : ''}, then ask again`);
+        // A line named as a product's own usually is may be the default the host should have; any
+        // other is a line of work, which never becomes the default on setup's word. Changes not
+        // yet committed come along when the folder switches; put aside, the install's lines in
+        // the project's settings would go with them.
+        const mainLine = current === 'main' || current === 'master';
+        const installLines = (await git.out(['status', '--porcelain', '--', SETTINGS])) ? `: the Wheelhouse install's own lines in ${SETTINGS} are among them` : '';
+        throw new Error(`${NAME[host]}'s default branch for ${repo} is ${branch}, but this folder is on ${current ?? 'no branch'}: Wheelhouse puts its files on the default branch and merges into it from then on.${current ? ` ${current} is left as it is.` : ''} Switch this folder to ${branch}${mainLine ? `, or make ${current} the default on ${NAME[host]}` : ''}, then ask again; keep the changes not yet committed as they are${installLines}`);
       }
       const tip = await remoteTip(git, record.remoteUrl, branch);
       if (tip === null) throw new Error(`${branch} is not on ${NAME[host]} yet, so setup's commit has nothing to go on: run step 3 again, then ask again`);
