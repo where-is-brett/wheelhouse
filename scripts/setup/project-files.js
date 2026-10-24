@@ -290,7 +290,7 @@ function configFrom(existing, starter) {
   const missing = Object.keys(wanted).filter((name) => classPin(out, name) === null);
   if (missing.length > 0) {
     const held = isObject(out.tiers?.pins) ? out.tiers.pins : {};
-    out.tiers = { pins: { ...held, ...Object.fromEntries(missing.map((name) => [name, wanted[name]])) } };
+    out.tiers = { ...(isObject(out.tiers) ? out.tiers : {}), pins: { ...held, ...Object.fromEntries(missing.map((name) => [name, wanted[name]])) } };
   }
   return out;
 }

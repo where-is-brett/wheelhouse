@@ -19,6 +19,8 @@ import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
 import { fileURLToPath } from 'node:url';
 import { copySetupRecords, keepClick, keepAnswer } from '../../../scripts/setup/clicks.js';
+import { projectsDir } from '../../../scripts/lib/paths.js';
+import { projectForFolder } from '../../../scripts/lib/projects.js';
 import { startRun, findRun, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { stepDone } from '../../../scripts/lib/setup-run.js';
 import { LIVE_DATA, SIGNS_APPS } from '../../../scripts/setup/questions.js';
@@ -400,6 +402,32 @@ test('step 7 writes both class pins, the card says once what the lighter model d
     const t2 = composeCard({ ...again.card, target: { step: 7, hash: planHash(again.changes) } }).question.question;
     assert.doesNotMatch(t2, /lighter model/);
   });
+});
+
+test('a cache file in the older per-run shape is asked again and rewritten in the new shape', async () => {
+  await withHome(async () => {
+    const w = await world();
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    const file = path.join(projectsDir(), projectForFolder(w.folder).project, 'setup-best-model.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify({ runId: run.id, alias: FRONT_DESK_ALIAS, model: 'model-old' })}\n`);
+    await w.step.plan(w.ctx({ runId: run.id }));
+    assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, MID_SIZED_ALIAS], 'both asked again');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { runId: run.id, models: { [FRONT_DESK_ALIAS]: BEST_MODEL, [MID_SIZED_ALIAS]: MID_MODEL } });
+  });
+});
+
+test('adding a missing pin keeps the pins held and the rest of tiers', () => {
+  const answers = { '4.live-data': { label: LIVE_DATA.no, text: null } };
+  const starter = starterConfig({ answers, frontDesk: BEST_MODEL, midSized: MID_MODEL });
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-tiers-'));
+  try {
+    fs.mkdirSync(path.join(folder, '.claude'));
+    fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ ...starterConfig({ answers }), tiers: { pins: { mostCapable: 'model-chosen', premium: 'model-prem' } } }));
+    const changes = projectFilesChange({ folder, config: starter, release: { ref: REF }, local: { address: ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT, platform: 'darwin' } });
+    const edits = changes.filter((c) => c.target.endsWith('wheelhouse.json') && c.key?.[0] === 'tiers').map((c) => `${c.key.join('.')} ${c.after}`);
+    assert.deepEqual(edits, [`tiers.pins.midSized ${MID_MODEL}`], 'only the missing pin is added; mostCapable and premium stay');
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('a mid-sized alias that can\'t be resolved leaves the pin out and the card says Lean and Lightest wait', async () => {
