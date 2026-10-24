@@ -92,8 +92,11 @@ export const endedBy = (reports, id, workEntry) => ENDED.includes(reports?.[id]?
 // work that is not shown to them first and doesn't start from a ready-made change. Work whose feature has closed, or whose report ended it, is
 // out of the queue until a `work` event recorded after that queues it again (ruling R102). `now` is
 // accepted for the interface; the order never reads the clock. With `fiveHourTight` nothing starts,
-// and the newest slot-holding feature pauses.
-export function nextWork({ work, features, reports, now, fiveHourTight }) {
+// and the newest slot-holding feature pauses. `builderCap`, when it is a whole number from 1, is the most that
+// build at once beside pace (the Thoroughness level's, design section 14.6: one at Lean and Lightest); it never
+// raises pace.
+export function nextWork({ work, features, reports, now, fiveHourTight, builderCap = null }) {
+  const most = Number.isInteger(builderCap) && builderCap >= 1 ? Math.min(PACE.building, builderCap) : PACE.building;
   const laneOf = (id) => work?.[id]?.work?.data?.lane;
   const stepOf = (id) => features?.[id]?.data?.step;
   const holdsSlot = (id) => stepOf(id) === 'building' || (stepOf(id) === 'started' && NO_PLAN.includes(laneOf(id)));
@@ -129,7 +132,7 @@ export function nextWork({ work, features, reports, now, fiveHourTight }) {
       hold.push({ work: id, why: 'unapproved' });
     } else if ((w.data.dependsOn ?? []).some((dep) => reports?.[dep]?.data?.outcome !== 'merged')) {
       hold.push({ work: id, why: 'dependency' });
-    } else if (fiveHourTight || building >= PACE.building || (lane === FEATURE_LANE && featureLane >= PACE.featureLane)) {
+    } else if (fiveHourTight || building >= most || (lane === FEATURE_LANE && featureLane >= PACE.featureLane)) {
       hold.push({ work: id, why: 'pace' });
     } else {
       start.push(id);

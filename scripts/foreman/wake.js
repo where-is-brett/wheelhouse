@@ -81,6 +81,7 @@ import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
 import { listEvents } from '../state/events.js';
+import { routingFrom } from '../routing/in-force.js';
 import { projectConfig } from '../watcher/main.js';
 import { inWorktreesFolder, plainWorktreePath, recordedBriefs } from '../watcher/sources.js';
 import { readCursor } from '../watcher/core.js';
@@ -182,8 +183,10 @@ export async function loadViews(project, client, { kept = false } = {}) {
       questions: isPlain(views.questions) ? views.questions : {},
       rulebook: Array.isArray(views.rulebook) ? views.rulebook : [],
       incidents: { open: Array.isArray(views.incidents?.open) ? views.incidents.open.filter(isPlain) : [] },
-      // The settings and the proposals not yet confirmed, for the level of build commands on Windows.
+      // The settings and the proposals not yet confirmed, for the level of build commands on Windows, and the
+      // Thoroughness columns ready, for the level in force (scripts/routing/in-force.js).
       settings: isPlain(views.settings) ? views.settings : {},
+      columnsReady: isPlain(views.columnsReady) ? views.columnsReady : {},
       unconfirmed: Array.isArray(views.unconfirmed) ? views.unconfirmed.filter(isPlain) : [],
     },
     fresh,
@@ -368,27 +371,34 @@ function unstartedWithPlan(views, id) {
   return !NO_PLAN.includes(laneOf(views, id)) && currentFeatureOf(views, id) === null;
 }
 
-function queueWithout(views, leaveOut, now) {
+function queueWithout(views, leaveOut, now, builderCap) {
   const work = Object.fromEntries(Object.entries(views.work).filter(([id]) => !leaveOut(id)));
-  return nextWork({ work, features: views.features, reports: views.reports, now, fiveHourTight: FIVE_HOUR_TIGHT });
+  return nextWork({ work, features: views.features, reports: views.reports, now, fiveHourTight: FIVE_HOUR_TIGHT, builderCap });
+}
+
+// The most that build at once beside pace at the Thoroughness level in force for `config` and the views' settings
+// (EXTRA's builderCap: one at Lean and Lightest), or null for pace alone. Anything that can't be read is Balanced's.
+export function builderCapOf(views, config, now) {
+  const cap = routingFrom({ config, views, now }).extra?.builderCap;
+  return Number.isInteger(cap) && cap >= 1 ? cap : null;
 }
 
 // The queue for starting sessions: nextWork, with work still planning left out.
-export function queueToStart(views, { now } = {}) {
-  return queueWithout(views, (id) => planning(views, id), now);
+export function queueToStart(views, { now, builderCap = null } = {}) {
+  return queueWithout(views, (id) => planning(views, id), now, builderCap);
 }
 
 // The queue for building: nextWork, with work that has no plan yet left out
 // (still planning, or small or feature work not started), except `keep`.
-export function queueToBuild(views, { now, keep = null } = {}) {
-  return queueWithout(views, (id) => id !== keep && (planning(views, id) || unstartedWithPlan(views, id)), now);
+export function queueToBuild(views, { now, keep = null, builderCap = null } = {}) {
+  return queueWithout(views, (id) => id !== keep && (planning(views, id) || unstartedWithPlan(views, id)), now, builderCap);
 }
 
 // Whether `work`'s plan may take a building slot now: `{ ok }` or `{ ok: false, why }`.
-export function slotFor(views, work, { now } = {}) {
+export function slotFor(views, work, { now, builderCap = null } = {}) {
   const f = featureOf(views, work) ?? { work };
   const features = { ...views.features, [work]: { ...(views.features[work] ?? { key: work }), data: { ...f, step: 'planned' } } };
-  const q = queueToBuild({ ...views, features }, { now, keep: work });
+  const q = queueToBuild({ ...views, features }, { now, keep: work, builderCap });
   if (q.start.includes(work)) return { ok: true };
   return { ok: false, why: q.hold.find((h) => h.work === work)?.why ?? 'unknown' };
 }
@@ -441,7 +451,7 @@ function heldLine(work, ctx) {
   const halt = haltFor(ctx.halt, laneOf(ctx.views, work));
   const wait = own ?? halt?.why ?? (ctx.config === null
     ? null
-    : waitText(clashFor(ctx.views, ctx.config, work, Array.isArray(f.files) ? f.files : []), slotFor(ctx.views, work, { now: ctx.now })));
+    : waitText(clashFor(ctx.views, ctx.config, work, Array.isArray(f.files) ? f.files : []), slotFor(ctx.views, work, { now: ctx.now, builderCap: builderCapOf(ctx.views, ctx.config, ctx.now) })));
   return wait === null
     ? 'it is planned work held until it may build; the queue below says whether it may build now. Nothing to do'
     : `it waits: ${wait}. Nothing to do`;
@@ -517,7 +527,7 @@ function planReadyLine(head, work, ctx) {
     return `${head}: its plan can't be read: ${oneLine(error.message)}. Ask the director: act ask`;
   }
   const clash = clashFor(ctx.views, ctx.config, work, found.files);
-  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? haltFor(ctx.halt, lane)?.why ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now }));
+  const wait = openPrWait(worktreeOf(ctx.project, ctx.views, work)) ?? haltFor(ctx.halt, lane)?.why ?? waitText(clash, slotFor(ctx.views, work, { now: ctx.now, builderCap: builderCapOf(ctx.views, ctx.config, ctx.now) }));
   const plan = `plan ${oneLine(found.plan, 120)}, ${plural(found.files.length, 'file')}`;
   return `${head}: ${plan}. ${wait === null ? 'It clears the clash check and a slot is free' : `It waits: ${wait}`}. Next: act plan-ready ${work}`;
 }
@@ -559,7 +569,8 @@ function queueLines(ctx) {
   };
 
   // Work not started: what may open a session now.
-  const toStart = queueToStart(views, { now });
+  const builderCap = builderCapOf(views, config, now);
+  const toStart = queueToStart(views, { now, builderCap });
   for (const id of toStart.start) {
     if (!recorded(id)) lines.push(`- start ${id} (${laneOf(views, id)}): approved. ${startLine(id)}`);
   }
@@ -577,7 +588,7 @@ function queueLines(ctx) {
   }
 
   // Recorded plans: which may build now, and why the rest wait.
-  const toBuild = queueToBuild(views, { now });
+  const toBuild = queueToBuild(views, { now, builderCap });
   const held = new Map(toBuild.hold.map((h) => [h.work, h.why]));
   for (const [id, f] of Object.entries(views.features)) {
     const step = f?.data?.step;
@@ -616,7 +627,8 @@ function queueLines(ctx) {
   const building = steps.filter(([id, f]) => f.data.step === 'building' || (f.data.step === 'started' && NO_PLAN.includes(laneOf(views, id)))).map(([id]) => id);
   const paused = (why) => steps.filter(([, f]) => f.data.step === 'paused' && pausedBy(f.data) === why).map(([id]) => id);
   if (planning.length > 0) lines.push(`Planning: ${planning.join(', ')}.`);
-  lines.push(`Building (${building.length} of ${PACE.building}): ${building.length > 0 ? building.join(', ') : 'none'}.`);
+  lines.push(`Building (${building.length} of ${builderCap === null ? PACE.building : Math.min(PACE.building, builderCap)}): ${building.length > 0 ? building.join(', ') : 'none'}.`);
+  if (builderCap !== null) lines.push(`Thoroughness: ${builderCap === 1 ? 'one builds' : `${builderCap} build`} at a time at this level.`);
   if (paused('five-hour').length > 0) lines.push(`Paused for the five-hour window: ${paused('five-hour').join(', ')}.`);
   if (paused('director').length > 0) lines.push(`Paused by the director: ${paused('director').join(', ')}. Only their amendment beginning "Resume" lifts it.`);
   if (q.pause.length === 0) lines.push('Pause: none. The five-hour window is not known yet, so it is taken as not tight.');

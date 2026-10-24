@@ -606,6 +606,36 @@ test('small work held for pace may open a session to plan (R60)', () => withHome
   assert.match(bug.err, /a-bug can't start: no building slot is free \(pace\)/);
 }));
 
+test('at Lean and Lightest the foreman lets one build at a time, beside pace; at Balanced pace alone', () => withHome(async () => {
+  await project({ git: true });
+  const pins = { mostCapable: 'model-top', midSized: 'model-mid' };
+  const scene = (level, ready) => {
+    const views = startViews();
+    views.work.b1 = workView('b1', { since: '2026-10-19T06:00:00.000Z' });
+    views.features.b1 = featureView('b1', { step: 'building' });
+    views.work['a-bug'] = workView('a-bug', { lane: 'bug', approved: false });
+    views.settings = { efficiency: { key: 'efficiency', value: level } };
+    views.columnsReady = ready ? { lean: { pins }, lightest: { pins } } : {};
+    return fakeClient({ views, cfg: config({ tiers: { pins } }) });
+  };
+  const bugStart = ['start', 'a-bug', ...START.slice(2, -2)];
+  // Small work held may still open a session to plan (R60).
+  const lean = scene('lean', true);
+  const r = await act(START, { client: lean.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^It is held \(no building slot is free \(pace\)\), so its session plans and then waits\.$/m);
+  for (const level of ['lean', 'lightest']) {
+    const fake = scene(level, true);
+    const bug = await act(bugStart, { client: fake.client, wakerFor: fakeWaker().wakerFor });
+    refusedInOneLine(bug);
+    assert.match(bug.err, /a-bug can't start: no building slot is free \(pace\)/, level);
+  }
+  // Lean not ready on these pins: Balanced, so pace alone, and the bug starts beside the one building.
+  const balanced = scene('lean', false);
+  const bug = await act(bugStart, { client: balanced.client, wakerFor: fakeWaker().wakerFor });
+  assert.equal(bug.code, 0, bug.err);
+}));
+
 // --- plan-ready, build, pause and resume ---
 
 async function planScene({ otherFiles = ['src/other.js'], building = 1 } = {}) {
@@ -1571,6 +1601,73 @@ test('merge brings the pull request up to date, then merges it, or waits for CI 
 
   views.features.nopr = featureView('nopr', { step: 'building', worktree: worktree(checkout, 'nopr') });
   refusedInOneLine(await act(['merge', 'nopr'], { client: ok.client }));
+}));
+
+test('at Thorough, work in a critical area goes to the gate only once two reviewers have each reported CLEAN on its head', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  const head = 'b'.repeat(40);
+  const scene = (level, files, at = head) => {
+    const views = emptyViews();
+    views.work.mine = workView('mine');
+    views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/a.md' } }), files });
+    views.settings = { efficiency: { key: 'efficiency', value: level } };
+    return fakeClient({
+      views,
+      cfg: config({ criticalAreas: [{ name: 'payments', paths: ['src/pay/**'], checks: [] }], tiers: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } } }),
+      answers: { updateBranch: { ok: true, updated: false, head: at } },
+    });
+  };
+  const review = (n, verdict = 'CLEAN', commit = head) => recordInState('review', { pr: 12, commit, verdict, findings: 0 }, T0 - 60000 + n);
+
+  // Balanced: one review is the gate's to weigh, as always.
+  const balanced = scene('balanced', ['src/pay/a.js']);
+  assert.equal((await act(['merge', 'mine'], { client: balanced.client })).code, 0);
+  assert.deepEqual(balanced.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+
+  // Thorough, a critical area, one CLEAN review: it waits, and the gate isn't asked.
+  review(1);
+  review(2, 'FINDINGS');
+  review(3, 'CLEAN', 'c'.repeat(40));
+  const one = scene('thorough', ['src/pay/a.js']);
+  const waits = await act(['merge', 'mine'], { client: one.client });
+  assert.equal(waits.code, 0, waits.err);
+  assert.equal(waits.out, "Pull request #12 for mine is in a critical area, and at Thorough it merges only once two fresh reviewers have each reported CLEAN on bbbbbbbbbbbb: 1 so far. It waits for the feature session's second reviewer; nothing to do.\n");
+  assert.deepEqual(one.calls.map(([name]) => name), ['prState', 'updateBranch']);
+
+  // Outside the critical areas, as its plan and git both say, one review is the gate's to weigh.
+  const main = String((await runProgram('git', ['rev-parse', 'HEAD'], { cwd: checkout })).stdout).trim();
+  const elsewhere = scene('thorough', ['src/other.js'], main);
+  assert.equal((await act(['merge', 'mine'], { client: elsewhere.client })).code, 0);
+  assert.deepEqual(elsewhere.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+  // A head git doesn't know can't be told apart: it counts as in a critical area.
+  const unknown = scene('thorough', ['src/other.js']);
+  assert.match((await act(['merge', 'mine'], { client: unknown.client })).out, /in a critical area.*: 1 so far/);
+
+  // With no pins Thorough can't run: Balanced, so one review is the gate's to weigh.
+  const flat = scene('thorough', ['src/pay/a.js']);
+  const flatClient = { ...flat.client, config: async () => ({ ok: true, config: config({ criticalAreas: [{ name: 'payments', paths: ['src/pay/**'], checks: [] }] }) }) };
+  assert.equal((await act(['merge', 'mine'], { client: flatClient })).code, 0);
+  assert.deepEqual(flat.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+
+  // A second CLEAN review on the head: it goes to the gate.
+  review(4);
+  const two = scene('thorough', ['src/pay/a.js']);
+  const merged = await act(['merge', 'mine'], { client: two.client });
+  assert.equal(merged.code, 0, merged.err);
+  assert.deepEqual(two.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
+}));
+
+test('at Thorough, a project with no critical areas merges as before', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  views.work.mine = workView('mine');
+  views.features.mine = featureView('mine', { step: 'building', worktree: worktree(checkout, 'mine', { pr: { pr: 12, plan: 'docs/plans/a.md' } }), files: ['src/pay/a.js'] });
+  views.settings = { efficiency: { key: 'efficiency', value: 'thorough' } };
+  const fake = fakeClient({ views, cfg: config({ tiers: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } } }), answers: { updateBranch: { ok: true, updated: false, head: 'b'.repeat(40) } } });
+  assert.equal((await act(['merge', 'mine'], { client: fake.client })).code, 0);
+  assert.deepEqual(fake.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
 }));
 
 test('a merged pins-only release records its briefing line once, as the merge\'s words for users (F73)', () => withHome(async () => {

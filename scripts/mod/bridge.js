@@ -58,6 +58,7 @@ import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
+import { columnsReadyOf } from '../routing/in-force.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
@@ -124,6 +125,8 @@ const DEFAULTS = {
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
   readChanges: defaultChanges,
+  // The Thoroughness columns ready on the pins in force, for the pane's levels (scripts/routing/in-force.js).
+  columnsReady: columnsReadyOf,
   // The bridge's own time zone, which the pane's times are worked out in.
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   loadInputs: loadBoardInputs,
@@ -254,7 +257,7 @@ async function suggest(req, d) {
 }
 
 // The Thoroughness levels beyond Balanced and Thorough whose columns are ready: the state's
-// `column-ready` list when a reader is given, else none.
+// `column-ready` list, as the `columnsReady` reader gives it, or none when it can't be read.
 function readyOf(project, d) {
   try {
     const list = typeof d.columnsReady === 'function' ? d.columnsReady({ project }) : [];
