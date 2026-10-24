@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -20,6 +20,7 @@ import { withHome as inOwnHome } from '../../helpers/homes.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
 const DOC = 'fedcba9876543210'.repeat(4);
+const USAGE_AT = '2026-10-26T01:00:00.000Z';
 const NOW = new Date('2026-10-18T05:00:00.000Z');
 const P = 'owner__name';
 
@@ -71,6 +72,11 @@ const INPUTS = {
     ...common, recommend: 'Confirm', kind: 'keep-control-files', what: 'The export-csv feature\'s folder has a new or changed file that steers agents.',
     options: [says('Confirm')], target: { work: 'export-csv', hash: DOC },
   },
+  usage: {
+    ...common, recommend: 'Switch to Lean until it resets', kind: 'usage', ask: 'Switch to Lean until it resets?', what: 'You\'ve used 76% of this week\'s allowance.',
+    options: [{ label: 'Switch to Lean until it resets', says: 'Thoroughness changes to Lean until your allowance resets.' }, { label: 'Stay on Balanced', says: 'Thoroughness stays on Balanced.' }],
+    target: { to: 'lean', at: USAGE_AT },
+  },
 };
 const LINES = {
   approval: approvalLine(7, FULL),
@@ -90,6 +96,7 @@ const LINES = {
   uninstall: uninstallLine('cafe menu', DOC),
   question: null,
   'keep-control-files': keepControlLine('export-csv', DOC),
+  usage: usageLine('lean', USAGE_AT),
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
 const refused = (over, pattern, kind = 'approval') => assert.throws(() => composeCard(input(kind, over)), pattern);
@@ -121,7 +128,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -185,6 +192,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     'lift-incident': 'End the incident?',
     'incident-fix': 'Merge this fix?',
     'keep-control-files': 'Keep these files as they are?',
+    usage: 'Switch to Lean until it resets?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));
@@ -763,4 +771,19 @@ test('uninstall\'s card (ruling R90): level 4, no reply code, Remove it and Not 
   refused({ target: { project: 'cafe\nmenu', hash: DOC } }, /target/, 'uninstall');
   refused({ target: { project: ' cafe', hash: DOC } }, /target/, 'uninstall');
   refused({ target: { project: 'cafe menu', hash: 'xyz' } }, /target/, 'uninstall');
+});
+
+test('a usage card offers its switch and its stay option, then Suggest a change…, with its line and no reply code', () => {
+  const { question, card } = composeCard(input('usage'));
+  assert.deepEqual(card.options, ['Switch to Lean until it resets', 'Stay on Balanced', 'Suggest a change…']);
+  assert.equal(card.header, 'Thoroughness');
+  assert.equal(lines(question.question).at(-1), usageLine('lean', USAGE_AT));
+  assert.equal(card.code, null);
+  const two = INPUTS.usage.options;
+  refused({ options: [two[0]] }, /must be its switch and its stay option/, 'usage');
+  refused({ options: [...two, { label: 'Stay on Lean', says: 'Thoroughness stays on Lean.' }] }, /must be its switch and its stay option/, 'usage');
+  refused({ options: [two[0], { label: 'Not now', says: 'Later.' }] }, /must not use Not now/, 'usage');
+  refused({ target: { to: 'premium', at: USAGE_AT } }, /needs the Thoroughness level its switch sets/, 'usage');
+  refused({ target: { to: 'lean', at: '26 October 2026' } }, /needs the Thoroughness level its switch sets/, 'usage');
+  refused({ target: undefined }, /target is needed/, 'usage');
 });

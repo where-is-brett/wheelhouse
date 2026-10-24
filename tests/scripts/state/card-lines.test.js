@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET,
+  replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE,
   uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine,
@@ -64,6 +64,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
     trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), uninstallLine('o__Cafe-Menu', FULL),
+    usageLine('lean', '2026-10-26T01:00:00.000Z'),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
 });
@@ -147,4 +148,13 @@ test('the line of setup\'s card of the rules found names how many rules and the 
   }
   // It is not read as a confirm line for one event.
   assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(confirmAllLine(FULL, 3))).length, 1);
+});
+
+test('a usage card\'s line names the level and the offer\'s time, and reads back as exactly one set line', () => {
+  const line = usageLine('lightest', '2026-10-26T01:00:00.000Z');
+  assert.equal(line, 'Switch Thoroughness to lightest, as the usage card of 2026-10-26T01:00:00.000Z offers');
+  assert.deepEqual(USAGE_LINE.exec(line).slice(1), ['lightest', '2026-10-26T01:00:00.000Z']);
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
+  assert.equal(USAGE_LINE.test(usageLine('premium', '2026-10-26T01:00:00.000Z')), false);
+  assert.equal(USAGE_LINE.test(usageLine('lean', '2026-10-26T01:00:00Z')), false);
 });

@@ -9,8 +9,10 @@ import { nudgeCard } from './nudge.js';
 
 // The words before a usage card's AskUserQuestion input, as JSON on the same line.
 export const USAGE_ASK = 'A usage card for the director: ask it with AskUserQuestion, exactly as given, as a question of its own: ';
-// What to do on the pick of the card's first option: the setting change, confirmed the usual way (design section 14.4).
-export const usageDo = (label, level, at) => ` If the director picks "${label}", record the setting with the Wheelhouse command, \`record setting\` with {"key":"efficiency","value":"${level}","usageCard":"${at}"}, and ask the confirm card it prints. Any other pick changes nothing.`;
+// What a pick of the card's first option does: the director's click is the setting change and their confirmation of
+// it at once, which the prompt record signs (design section 14.4; the director, 25 October 2026), so the front desk
+// records nothing and asks no confirm card.
+export const usageDo = (label) => ` The director's click on "${label}" is the change itself, recorded and confirmed by that click: record nothing and ask no confirm card. Any other pick changes nothing.`;
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
@@ -25,7 +27,7 @@ export function usageOffer({ views, profile, allowance, ready = [], now, timeZon
     });
     if (got === null) return null;
     const { question } = composeCard(got.input);
-    return { line: `${USAGE_ASK}${JSON.stringify(question)}.${usageDo(got.switchLabel, got.switchTo, got.record.at)}`, record: got.record };
+    return { line: `${USAGE_ASK}${JSON.stringify(question)}.${usageDo(got.switchLabel)}`, record: got.record };
   } catch {
     return null;
   }

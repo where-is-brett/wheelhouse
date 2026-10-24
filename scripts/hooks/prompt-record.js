@@ -37,6 +37,11 @@
 // and the full hash of the list, only on the very card the helper composed and recorded as shown for
 // a folder holding this session's folder, word for word. It has no reply code. Its plain answer goes
 // to a project as any card's does.
+// A usage card offers a Thoroughness switch (design section 14.6): the click on its switch option is the setting
+// change and the director's confirmation of it at once (the director, 25 October 2026). On the card the session
+// start offered, whose line names an offer the state holds, it earns the setting, made here, and its signed
+// confirmation, which carries it, as a Confirm click on the setting's confirm card would confirm it. Its other
+// option earns nothing. It has no reply code.
 import fs from 'node:fs';
 import path from 'node:path';
 import tools from '../../adapters/claude-code/tools.js';
@@ -56,12 +61,15 @@ import {
 } from '../state/card-lines.js';
 import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
+import { settingWords } from '../settings/effective.js';
+import { switchLabelOf } from '../routing/nudge.js';
+import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -189,18 +197,47 @@ function keepControlOf(project, question) {
   return hashes.size === 1 ? { action: 'keep-control-files', work: m[1], hash: [...hashes][0] } : null;
 }
 
+// How long a return card's switch counts after it is offered; a card that switches down or up counts until the reset
+// its offer names.
+const RETURN_DAYS = 7;
+
+// The records a click on a usage card's switch earns (design section 14.6; the director, 25 October 2026): the card
+// carries one set line, a usage card's, naming the level and the time of an offer the state holds; the label is that
+// offer's switch option; the offer's week isn't over; the level is ready (`ready`, the columns ready beyond Balanced
+// and Thorough, as the settings pane's press holds it); and no setting in the state came from that offer yet. The
+// setting is made here, with the offer's time, and goes with its confirmation, as setup's confirmed records do, so it
+// is in force once the helper takes them. Null for anything else, the stay option among them.
+function usageOf(project, question, label, now, ready) {
+  const lines = setLinesOf(question);
+  const m = lines.length === 1 ? USAGE_LINE.exec(lines[0]) : null;
+  if (!m) return null;
+  const [, to, at] = m;
+  const offers = new Set(held(project, 'usage-card').filter((e) => e.data?.at === at && e.data?.to === to).map((e) => `${e.data.card} ${e.data.reset}`));
+  if (offers.size !== 1) return null;
+  const [card, reset] = [...offers][0].split(' ');
+  if (label !== switchLabelOf(card, to)) return null;
+  const until = card === 'return' ? Date.parse(at) + RETURN_DAYS * DAY : Date.parse(reset);
+  if (!(now().getTime() < until)) return null;
+  if (!ALWAYS_READY.includes(to) && !ready({ project }).includes(to)) return null;
+  if (held(project, 'setting').some((e) => e.data?.usageCard === at)) return null;
+  const target = makeEvent({ kind: 'setting', data: { key: 'efficiency', value: to, usageCard: at, words: settingWords('efficiency', to) }, now });
+  return { made: confirmationFor(target), target };
+}
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
-// shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one.
-export async function earned({ project, question, label, client, now, left, stopState = defaultStopState, shownAt }) {
+// shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one. A usage card's
+// switch gives `target` too, the setting its confirmation carries.
+export async function earned({ project, question, label, client, now, left, stopState = defaultStopState, shownAt, ready = columnsReadyOf }) {
   const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   // A card with an answer line is a question card: its buttons are answers, whatever else it says.
   if (question.includes('Answer question q-')) {
     const answer = answerOf(project, question, label);
     return answer ? action(answer) : null;
   }
+  if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, now, ready);
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];
@@ -488,7 +525,7 @@ export { sendPending, BUDGET_MS };
 export function keepEarned(project, got, { now, liftStop = defaultLift }) {
   const event = makeEvent({ ...got.made, now });
   const route = got.profile ? 'profile-record' : 'record';
-  const body = got.profile ? { event } : { project, event };
+  const body = got.profile ? { event } : { project, event, ...(got.target === undefined ? {} : { target: got.target }) };
   const file = keep(project, route, body, now);
   try {
     if (got.lift) liftStop();
@@ -522,9 +559,9 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, setup's card of the rules found, a trust card, uninstall's card and a Keep card have
-    // no reply code (rulings R36, R80, R90, P7-31): only the click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card and a usage card
+    // have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -540,7 +577,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
 // On an agent whose hooks only read (`writeVia: 'helper'`), nothing here runs: no click is signed, kept or sent,
 // and `earned` is never asked. Such an agent's chat click is recorded by the helper (/cards/chat-click), unsigned
 // and naming its proof (rulings P5-12, P5-17).
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, writeVia = 'self' } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, writeVia = 'self' } = {}) {
   if (writeVia !== 'self') return undefined;
   if (input.tool_name !== tools.ask) return undefined;
   const answered = clicks(input);
@@ -595,7 +632,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const click of out) {
     if (!click.signable || setupAsked.has(click.question)) continue;
     try {
-      const got = await earned({ project, ...click, client: api, now: clock, left, stopState });
+      const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }) });
       if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.

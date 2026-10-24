@@ -453,6 +453,8 @@ async function trustNotes({ client, left, up, now }) {
 // The usage card for this week's allowance, if one is due (design section 14.6): its line for the front desk, and
 // the offer kept as a usage-card record, so the same card isn't offered again. The reading is the weekly file's, which
 // costs no reasoning; the mark is the director's own, from their profile. It informs, so a failure gives no line.
+// The card is handed out only once the helper has taken the record: the click on its switch counts only for an offer
+// the state holds (the prompt record), so a record not taken is not kept either, and the card is offered later.
 async function usageNotes({ client, left, up, project, views, now, allowance = () => weeklyOf(readAllowance()), timeZone, ready = columnsReadyOf }) {
   try {
     const reading = allowance();
@@ -464,11 +466,10 @@ async function usageNotes({ client, left, up, project, views, now, allowance = (
     }
     const offer = usageOffer({ views, profile, allowance: reading, ready: ready({ project }), now, timeZone });
     if (offer === null) return [];
-    // Written at once when the helper is up, so a second session start before the next sync doesn't offer it again.
+    // Written at once, so a second session start before the next sync doesn't offer it again.
     const body = { project, kind: 'usage-card', data: offer.record };
     const wrote = up && typeof client?.state?.write === 'function' ? await left(client.state.write(body)) : null;
-    if (wrote?.ok !== true) keep(project, 'write', body, now);
-    return [offer.line];
+    return wrote?.ok === true ? [offer.line] : [];
   } catch {
     return [];
   }

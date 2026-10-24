@@ -176,6 +176,14 @@ export function keepControlLine(work, hash) {
 }
 export const KEEP_CONTROL_LINE = new RegExp(`^Keep the files that steer agents in (${ID})'s folder as they are, ([0-9a-f]{12})$`);
 
+// The line on a usage card (design section 14.6): the Thoroughness level its switch option sets and
+// the time the card was offered, which its usage-card record keeps, so the click on that option
+// stands for that offer's switch and no other. It is the director's confirmation of the change itself.
+export function usageLine(level, at) {
+  return `Switch Thoroughness to ${level}, as the usage card of ${at} offers`;
+}
+export const USAGE_LINE = /^Switch Thoroughness to (lightest|lean|balanced|thorough), as the usage card of ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z) offers$/;
+
 // A reply code: four characters of CODE_ALPHABET, the first eight bytes of the SHA-256 of a set
 // line read as one number and written in base 30, so one line always has one code and the codes
 // come out evenly. A card shows it as replyCodeLine(code).
@@ -198,7 +206,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
 // setup's line for a step, its line for the rules found, the baseline card's line, the trust
-// card's line, uninstall's line and the line keeping a feature's files that steer agents.
+// card's line, uninstall's line, the line keeping a feature's files that steer agents and a usage card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -216,6 +224,7 @@ export const SET_LINES = [
   new RegExp(TRUST_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
   new RegExp(KEEP_CONTROL_LINE.source, 'm'),
+  new RegExp(USAGE_LINE.source, 'm'),
 ];
 
 // Every set line a question carries, in the order the patterns are listed.

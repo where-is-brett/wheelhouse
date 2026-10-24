@@ -1660,7 +1660,7 @@ const kept = (project) => {
   return fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')).map((n) => JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'))) : [];
 };
 
-test('the front desk is handed the usage card when the allowance passes the mark, with the setting change to make, and the offer is recorded', async () => {
+test('the front desk is handed the usage card when the allowance passes the mark, its switch the change itself, and the offer is recorded', async () => {
   await withHome(async () => {
     const f = fake();
     const out = await run(f, { columnsReady: () => ['lean', 'lightest'], now: () => new Date(USAGE_NOW), allowance: weekly(76), timeZone: 'Australia/Sydney' });
@@ -1670,7 +1670,8 @@ test('the front desk is handed the usage card when the allowance passes the mark
     assert.deepEqual(cardProblems(card.question), []);
     assert.match(card.question, /You've used 76% of this week's allowance\. It resets on Thursday at 09:00\./);
     assert.deepEqual(card.options.map((o) => o.label), ['Switch to Lean until it resets', 'Stay on Balanced', 'Suggest a change…']);
-    assert.match(line, /If the director picks "Switch to Lean until it resets", record the setting .*\{"key":"efficiency","value":"lean","usageCard":"2026-10-26T01:00:00.000Z"\}/);
+    assert.match(card.question, /\nSwitch Thoroughness to lean, as the usage card of 2026-10-26T01:00:00\.000Z offers$/);
+    assert.match(line, /The director's click on "Switch to Lean until it resets" is the change itself, recorded and confirmed by that click: record nothing and ask no confirm card\./);
     assert.deepEqual(f.calls.writes.filter((w) => w.kind === 'usage-card'), [{ project: P, kind: 'usage-card', data: { card: 'nudge', at: USAGE_NOW, reset: USAGE_RESET, from: 'balanced', to: 'lean' } }]);
   });
 });
@@ -1703,11 +1704,12 @@ test('no usage card below the mark, with no reading, for the director\'s mark of
   });
 });
 
-test('a usage offer the helper did not take is kept to send at a later start', async () => {
+test('a usage card is handed out only once the helper has taken its offer, since its switch counts only for an offer the state holds', async () => {
   await withHome(async () => {
     const f = fake();
     f.client.state.write = async () => ({ ok: false });
-    await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
-    assert.deepEqual(kept(P).filter((r) => r.body?.kind === 'usage-card').map((r) => r.body.data.card), ['nudge']);
+    const out = await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
+    assert.equal(usageLines(out).length, 0);
+    assert.deepEqual(kept(P).filter((r) => r.body?.kind === 'usage-card'), [], 'not kept, so the card is offered at a later start');
   });
 });
