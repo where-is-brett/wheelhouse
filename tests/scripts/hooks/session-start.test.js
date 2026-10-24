@@ -526,7 +526,8 @@ test('session-start exits in time with its context when the helper never answers
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     server.close();
-    fs.rmSync(home, { recursive: true, force: true });
+    // On Windows the killed receiver may hold its folder a moment longer: removal tries again.
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 
@@ -1276,7 +1277,7 @@ test('the guards act in a folder being set up', async () => {
 // from (whose director may set it up again), are told the tool sheet and where the command is.
 test('a folder being set up, and one Wheelhouse was removed from, are given the tool sheet and the command line', async () => {
   await withHome(async () => {
-    const sheet = toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: process.platform });
+    const sheet = toolSheetLines('claude-code', { pluginRoot: PLUGIN_ROOT, platform: 'darwin' });
     const folder = fs.realpathSync.native(tempFolder('wh-sheet-setup '));
     const T = Date.parse('2026-10-20T03:00:00.000Z');
     const run = startRun({ folder, now: () => new Date(T) });

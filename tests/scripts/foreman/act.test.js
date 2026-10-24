@@ -505,9 +505,11 @@ test('the foreman refuses, naming it, a worktree in a checkout whose config sets
   const marker = path.join(checkout, 'ran.txt');
   const script = path.join(checkout, 'mark.sh');
   fs.writeFileSync(script, `#!/bin/sh\necho ran > "${marker}"\n`, { mode: 0o755 });
+  // Forward slashes, as git's config reads a backslash as an escape.
+  const named = script.split(path.sep).join('/');
   const cases = [
-    ['core.alternateRefsCommand', `[core]\n\talternateRefsCommand = ${script}\n`],
-    ['hook.x.command', `[hook "x"]\n\tevent = post-checkout\n\tcommand = ${script}\n`],
+    ['core.alternateRefsCommand', `[core]\n\talternateRefsCommand = ${named}\n`],
+    ['hook.x.command', `[hook "x"]\n\tevent = post-checkout\n\tcommand = ${named}\n`],
   ];
   for (const [key, section] of cases) {
     fs.writeFileSync(config, `${plain}${section}`);
