@@ -147,7 +147,7 @@ export async function setUpFeature(dir, {
       pluginDirs.push(plugin);
     }
 
-    const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
+    const address = helperAddress({ home });
     helper = await startStandInHelper({ address, home });
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });

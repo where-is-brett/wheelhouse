@@ -214,7 +214,7 @@ test('the readers tell the product\'s code from the front desk\'s papers, and fi
   assert.equal(saidAbout('Intro.\n\n**1. Gift cards**\n\nI\'ve treated this as for later.', /gift/i, /later/i), true, 'the paragraph after the one naming the request counts');
   assert.equal(saidAbout('Gift cards are lovely.\n\nNoted.\n\nFor later.', /gift/i, /later/i), false);
   write(dir, 'docs/designs/x.md', 'CSV, not Excel.\n');
-  assert.equal(documentWithHash(dir, briefHash('CSV, not Excel.\n')), path.join('docs', 'designs', 'x.md'));
+  assert.equal(documentWithHash(dir, briefHash('CSV, not Excel.\n')), 'docs/designs/x.md', 'with "/" on any system');
   assert.equal(documentWithHash(dir, 'f'.repeat(64)), null);
 });
 

@@ -494,8 +494,8 @@ test('session-start exits in time with its context when the helper never answers
       }
     });
   });
-  // The script asks the usual address: a socket in the home folder, or on Windows the user's pipe.
-  const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
+  // The script asks the usual address: a socket in the home folder, or on Windows that home's pipe.
+  const address = helperAddress({ home });
   await new Promise((resolve) => server.listen(address, resolve));
   // The receiver the session starts goes to a port of its own, and is stopped afterwards.
   const receiverPort = await new Promise((resolve) => {

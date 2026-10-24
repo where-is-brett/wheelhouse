@@ -8,6 +8,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// On Windows the temporary folder can come spelt with a short name (C:\Users\RUNNER~1 on CI's
+// runner) while git and the real path give the long one, so a test's own folder and what the code
+// reads back from git would name one place two ways. Each process, and what it starts, uses the
+// long spelling.
+if (process.platform === 'win32') {
+  const long = fs.realpathSync.native(os.tmpdir());
+  process.env.TEMP = long;
+  process.env.TMP = long;
+}
+
 if (!process.env.WHEELHOUSE_HOME) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-test-home-'));
   process.env.WHEELHOUSE_HOME = home;

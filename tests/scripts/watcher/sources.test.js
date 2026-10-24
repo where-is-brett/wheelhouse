@@ -414,9 +414,9 @@ test('worktree paths from state are followed only inside the project\'s checkout
   fs.writeFileSync(file, 'x');
   // A missing worktree outside the checkout is not gone: it is not one of the project's.
   const missing = path.join(tempFolder('wh-outside-'), 'removed');
-  // Inside by its spelling, outside by its real path.
-  const escape = path.join(checkout(), '.claude', 'worktrees', 'escape');
-  if (unix) fs.symlinkSync(outside, path.join(checkout(), '.claude', 'worktrees', 'up'));
+  // Inside by its spelling, outside by its real path: a link, on Windows a junction (which needs no
+  // administrator).
+  fs.symlinkSync(outside, path.join(checkout(), '.claude', 'worktrees', 'up'), unix ? undefined : 'junction');
   // In the checkout, but not in its .claude/worktrees/; and that folder itself.
   const elsewhere = path.join(checkout(), 'src');
   fs.mkdirSync(featurePaths(elsewhere).dir, { recursive: true });
@@ -426,7 +426,7 @@ test('worktree paths from state are followed only inside the project\'s checkout
   fs.writeFileSync(featurePaths(folder).status, JSON.stringify(status('the-folder')));
   const gonePlaces = [['missing-in-checkout', path.join(checkout(), 'removed')], ['missing-folder', path.join(checkout(), '.claude', 'worktrees-old', 'x')]];
   for (const [work, wt] of [
-    ['outside', outside], ['a-file', file], ['missing', missing], ['escape', unix ? path.join(checkout(), '.claude', 'worktrees', 'up', '.') : escape],
+    ['outside', outside], ['a-file', file], ['missing', missing], ['escape', path.join(checkout(), '.claude', 'worktrees', 'up', '.')],
     ['elsewhere', elsewhere], ['the-folder', folder], ...gonePlaces,
   ]) {
     record('feature', { work, step: 'building', worktree: wt, branch: work }, 0);

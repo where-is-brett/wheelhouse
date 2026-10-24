@@ -11,7 +11,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { adapterFor } from '../../../scripts/agents/index.js';
 import { checkAdapter, isPendingPart } from '../../../scripts/agents/contract.js';
 import { sessionsOfProject } from '../../../scripts/agents/project-agent.js';
@@ -19,6 +19,7 @@ import { ensureKits, kitFolder, kitSkills } from '../../../scripts/agents/copilo
 import { foremanSession } from '../../../scripts/foreman/start.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { fingerprintTree } from '../../../scripts/lineage/fingerprint.js';
+import { fetchUpstream } from '../../../scripts/lineage/manifest.js';
 import { BACKGROUND_SESSIONS_READY } from '../../../scripts/lib/copilot-numbers.js';
 import { computerId, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { makeEvent } from '../../../scripts/state/events.js';
@@ -483,15 +484,15 @@ test('the pinned kits are fetched once, checked, and copied into each session\'s
   await g(source, 'commit', '-q', '-m', 'Kit');
   const sha = await g(source, 'rev-parse', 'HEAD');
   const upstream = {
-    name: 'kit-a', plugin: 'kit-a', repo: 'https://example.invalid/kit-a.git', ref: 'v1', sha,
+    name: 'kit-a', plugin: 'kit-a', repo: pathToFileURL(source).href, ref: 'v1', sha,
     folders: ['skills/alpha', 'skills/beta'].map((f) => ({ path: f, hash: fingerprintTree(path.join(source, f)).hash })), files: [],
   };
   const manifest = { upstreams: [upstream] };
   const fetched = [];
+  // Wheelhouse's own fetch, so the copy has the line endings a real one has on Windows too.
   const fetchTo = async (u, dir) => {
     fetched.push(u.name);
-    await g(dir, 'clone', '-q', source, '.');
-    await g(dir, '-c', 'advice.detachedHead=false', 'checkout', '-q', u.sha);
+    await fetchUpstream(u, dir);
   };
 
   assert.deepEqual(await ensureKits({ manifest, fetchTo }), ['kit-a']);
