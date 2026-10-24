@@ -66,7 +66,7 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
-import { READY_LEVELS, readiness, samePins } from '../eval/ready.js';
+import { READY_LEVELS, readiness, samePins } from '../routing/column-ready.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, PROFILE_HOLDS_KEYS, holdsKeys, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
@@ -1557,7 +1557,7 @@ export async function startHelper({
   // record, a kind no caller writes (HELPER_ONLY_KINDS). It takes no one's word: the level must be Lean or Lightest, the
   // pins the ones the configuration in the project's main folder holds now, and the records named must each be a
   // trial an evaluation run saved under this computer's evaluations folder, which the helper reads and checks itself
-  // (scripts/eval/ready.js): the bar's every scenario with its three passing `with` trials at that level on those pins,
+  // (scripts/routing/column-ready.js): the bar's every scenario with its three passing `with` trials at that level on those pins,
   // each record's text the one its run saved and naming no premium model, and no trial of the bar failed there.
   // Anything short is refused, saying which scenario and trial, and nothing is written. Called in the state's queue.
   async function doColumnReady({ project, column, pins, records }, ctx) {

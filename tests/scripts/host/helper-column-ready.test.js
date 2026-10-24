@@ -16,7 +16,7 @@ import { listEvents } from '../../../scripts/state/events.js';
 import { readyColumns } from '../../../scripts/state/views.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { readiness } from '../../../scripts/eval/ready.js';
+import { readiness } from '../../../scripts/routing/column-ready.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { barRun, PINS } from '../../helpers/ready-records.js';
