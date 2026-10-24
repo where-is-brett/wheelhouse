@@ -34,7 +34,8 @@ Each trial's record is in `~/.wheelhouse-evals/<date>/`, as Claude Code's are, w
 
 `adapters/copilot/eval-runner.js` runs one session as `copilot -p <prompt> --output-format json`, and `scripts/eval/run.js` reaches it through `adapterFor(<agent>).evalRunner.run` when `--agent` is given; without `--agent`, every session runs through `claude -p` exactly as before, and the four Copilot scenarios are left out of the run and its report.
 
-- **The home.** Each session runs from a session home in the set-up's scratch Wheelhouse home (`writeSessionHome`): Wheelhouse's hook registration, the kit's agents, and the sign-in keys alone. Its environment is `copilotSessionEnv`'s. A set-up with no scratch Wheelhouse home (`WHEELHOUSE_HOME`) is refused, so a session never touches the real `~/.wheelhouse`.
+- **The session, as the watcher starts it.** Its arguments are the watcher's own (`sessionArgs` in `adapters/copilot/sessions.js`), so it runs as the agent of the role its scenario names (`--agent wheelhouse-<role>`, the builder where a scenario names none), as a background session of that role does (ruling P8-35).
+- **The home.** Each session runs from a session home in the set-up's scratch Wheelhouse home, written as the watcher writes one (`writeHomeWithKits`): Wheelhouse's hook registration, the kit's agents, the pinned kits' skills (fetched once into the scratch home at their pinned commits and checked against the manifest, as the watcher's are), and the sign-in keys alone. Its environment is `copilotSessionEnv`'s. A set-up with no scratch Wheelhouse home (`WHEELHOUSE_HOME`) is refused, so a session never touches the real `~/.wheelhouse`.
 - **The rules.** Ask's rules for the scratch project (`levelRules`), `--no-ask-user`, `--disallow-temp-dir`, `--disable-builtin-mcps`, and never `--trust-folder` or an allow-everything flag. `model` becomes `--model`; a later turn resumes with `--resume=<id>`.
 - **The translation.** Copilot's events become the stream-json events every scenario's pass reads: a `system/init` with the session id from the `result` event; an `assistant` text for each `assistant.message`; an `assistant` `tool_use` for each `tool.execution_start`, under the name the guards' translation gives it (`bash` is `Bash`, `view` is `Read`, an `apply_patch` is one `Edit` naming every path; a tool it doesn't know keeps its own name); a `user` `tool_result` for each `tool.execution_complete`; and a `result` with `subtype: 'success'`, the last answer and the token counts from the usage file.
 
@@ -67,7 +68,7 @@ Copilot CLI version: 1.0.101 (`COPILOT_VERSION`, `scripts/lib/copilot-numbers.js
 | 7 | A one-line visual change | | Not run yet: held for the director (no real runs in Part 8) |
 | 8 | A one-line removal | | Not run yet: held for the director (no real runs in Part 8) |
 | 9 | A return after a gap with worker traffic in between | | Not run yet: held for the director (no real runs in Part 8) |
-| 10 | A worker's instruction relayed to the front desk | yes | Not run yet: held for the director (no real runs in Part 8) |
+| 10 | A worker's instruction relayed to the front desk | | Not run yet: held for the director (no real runs in Part 8) |
 | 11 | An approval file pushed to the state branch by hand changes nothing (end-to-end test) | yes | Not run yet: held for the director (no real runs in Part 8) |
 | 12 | STOP mid-build: writes, pushes, merges and new agents are refused; reading and the runbook carry on (end-to-end test) | yes | Not run yet: held for the director (no real runs in Part 8) |
 | 13 | An instruction hidden in a diff comment and a bot's comment is not followed, and is reported | yes | Not run yet: held for the director (no real runs in Part 8) |

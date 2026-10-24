@@ -29,6 +29,7 @@ import scenario40, { CARD_ID, FRONT_DESK, judge as judge40 } from '../../eval/co
 import scenario41, { DESCRIPTION, FEATURE, PR, judge as judge41 } from '../../eval/copilot/41-fake-verdict.js';
 import { as, tempFolder } from '../../helpers/homes.js';
 import { standInTools } from '../../helpers/host-stand-ins.js';
+import { KIT_SKILLS, localKits } from '../../helpers/copilot-kits.js';
 
 const stand = standInTools();
 after(() => stand.restore());
@@ -38,6 +39,8 @@ const FIXTURES = path.join(ROOT, 'tests', 'fixtures', 'copilot', 'eval');
 const FAKE = path.join(FIXTURES, 'fake-copilot.js');
 const fixture = (name) => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
 const SCENARIOS = [scenario38, scenario39, scenario40, scenario41];
+// The kits the set-ups give the session's home: a local one, never fetched from the network.
+const { kits: KITS } = localKits();
 
 // A scratch sign-in source, so no set-up reads the person's Copilot home.
 const signIn = tempFolder('wh-s38-sign-in-');
@@ -54,7 +57,7 @@ async function withSetUp(scenario, check) {
   const project = await makeScratchProject({ name: `copilot-${scenario.id}` });
   let context;
   try {
-    context = await scenario.setup(project.dir, 'with');
+    context = await scenario.setup(project.dir, 'with', { kits: KITS });
     await check(context, project.dir);
   } finally {
     await context?.close?.();
@@ -67,6 +70,8 @@ test('each of the four is a safety scenario on Copilot alone, with a `with` vari
     assert.equal(scenario.id, 38 + i);
     assert.deepEqual(scenario.agents, ['copilot']);
     assert.equal(scenario.safety, true);
+    // Each session runs as the builder: 41 names it, and the rest take it by default (P8-35).
+    assert.equal(scenario.role ?? 'builder', 'builder');
     assert.deepEqual(Object.keys(scenario.variants), ['with']);
     assert.deepEqual(scenario.variants.with.pluginDirs, []);
     assert.equal(scenario.offered, undefined);
@@ -85,6 +90,8 @@ test('each set-up registers the scratch project in a scratch Wheelhouse home, st
       assert.ok(own.startsWith(path.join(home, 'projects', EVAL_PROJECT, 'copilot-home')));
       assert.ok(fs.statSync(hookFile({ home: own })).isFile());
       assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(own, 'config.json'), 'utf8'))), ['loggedInUsers']);
+      // The kits' skills, as the watcher's homes hold them (P8-35).
+      assert.deepEqual(fs.readdirSync(path.join(own, 'skills')).sort(), [...KIT_SKILLS]);
       await as(home, async () => assert.equal(projectForFolder(dir)?.project, EVAL_PROJECT));
       assert.deepEqual(context.evidence().written, []);
       assert.ok(fs.existsSync(path.join(dir, 'README.md')));
@@ -199,7 +206,8 @@ test('39 runs end to end through runScenario and the Copilot runner, its copilot
   const home = tempFolder('wh-s38-evals-');
   const log = path.join(tempFolder('wh-s38-log-'), 'started.json');
   const runner = (options) => copilotRun({ ...options, command: process.execPath, commandArgs: [FAKE, path.join(FIXTURES, '39-pass.json'), log] });
-  const outcome = await runScenario({ scenario: scenario39, variant: 'with', trial: 1, home, date: '2026-10-24', runner });
+  const scenario = { ...scenario39, setup: (dir, variant) => scenario39.setup(dir, variant, { kits: KITS }) };
+  const outcome = await runScenario({ scenario, variant: 'with', trial: 1, home, date: '2026-10-24', runner });
   assert.equal(outcome.pass, true, outcome.why);
   assert.equal(outcome.handled, true);
   const record = JSON.parse(fs.readFileSync(outcome.file, 'utf8'));
@@ -208,6 +216,8 @@ test('39 runs end to end through runScenario and the Copilot runner, its copilot
   // The session ran from the set-up's own Copilot home, inside its scratch Wheelhouse home, with the prompt as given.
   const saw = JSON.parse(fs.readFileSync(log, 'utf8'));
   assert.equal(saw.args[saw.args.indexOf('-p') + 1], scenario39.prompt);
+  // As the builder, the role a scenario that names none plays (P8-35).
+  assert.equal(saw.args[saw.args.indexOf('--agent') + 1], 'wheelhouse-builder');
   assert.match(saw.env.COPILOT_HOME, /copilot-home[\\/]feature-eval$/);
   assert.ok(saw.env.COPILOT_HOME.startsWith(saw.env.WHEELHOUSE_HOME));
   assert.ok(!fs.existsSync(saw.env.WHEELHOUSE_HOME), 'the scratch home went with the run');

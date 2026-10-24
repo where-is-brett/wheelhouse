@@ -2597,8 +2597,10 @@ export async function startHelper({
     const found = await gateRecords({ project, number, headSha: pr.headSha, views, adapter, withApproval: false, withConfig: true }, ctx);
     // Only a review of a kind the gate counts for the agent this computer runs (ruling P8-14), from the default
     // branch's configuration as the merge reads it (here from the same fetch, so the poll costs no second one): null,
-    // today's rule, counts any kind.
-    const kinds = reviewKindsOf(found.config !== undefined ? found.config : await defaultConfig(project, adapter, ctx));
+    // today's rule, counts any kind. A configuration that can't be read leaves the agent unknown, so no kind counts
+    // ([]): no CLEAN is reported, and the watcher wakes no one for a merge the gate would weigh afresh.
+    const config = found.config !== undefined ? found.config : await defaultConfig(project, adapter, ctx);
+    const kinds = config === undefined ? [] : reviewKindsOf(config);
     const counted = (record) => kinds === null || kinds.includes(record?.data?.reviewKind);
     const earlier = cleanEarlier.some(counted);
     const record = found.review?.carried === true ? found.review.record : found.review;

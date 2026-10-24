@@ -213,6 +213,16 @@ export function writeSessionHome({ project, target, signedInFrom = copilotHome()
   return home;
 }
 
+// Writes the session's own home with the pinned kits' skills (kitsForSession, then writeSessionHome), as every start
+// does: the watcher's (prepare, below) and the evaluation runner's (its writeEvalHome). `kits` ({ manifest,
+// fetchTo }) and `home` ({ signedInFrom, node, root, platform }) are for tests. Resolves with the home's path and
+// whether the kits' hold was lifted (`lifted`); a kit that differs throws, with the hold's record, before the home is
+// touched.
+export async function writeHomeWithKits({ project, target, kits = {}, home = {} }) {
+  const { skills, lifted } = await kitsForSession({ project, ...kits });
+  return { home: writeSessionHome({ project, target, skills, ...home }), lifted };
+}
+
 // The role's model from the routing table's Copilot column (`config.agentRouting.copilot.<role>`, ruling P7-6), or
 // null for Copilot's own default. Claude Code's `routing` is never read here.
 function modelOf(config, role) {
@@ -259,6 +269,27 @@ function rulesOf(list, what) {
   return list;
 }
 
+// The arguments of one `copilot -p` session, the watcher's and the evaluation runner's alike, so an
+// evaluation session is started as the watcher starts one: `prompt`, a `resume` id already checked, where its log and
+// usage go, its agent (`--agent wheelhouse-<role>`), its model or null, and its rules in Copilot's syntax. Throws when
+// an argument would start the session trusted or with every permission given, whatever a caller passes: the prompt
+// is the one argument not read as a flag.
+export function sessionArgs({ prompt, resume = null, logDir, usageFile, role, model = null, allow = [], deny = [] }) {
+  const args = [
+    ...(resume === null ? [] : [`--resume=${resume}`]),
+    '-p', prompt, '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps', '--no-ask-user', '--disallow-temp-dir',
+    '--log-dir', logDir, '--usage-output-file', usageFile, '--agent', `wheelhouse-${role}`,
+    ...(model === null ? [] : ['--model', model]),
+    ...allow.map((rule) => `--allow-tool=${rule}`),
+    ...deny.map((rule) => `--deny-tool=${rule}`),
+  ];
+  const flags = args.filter((_, i) => args[i - 1] !== '-p');
+  if (flags.some((arg) => WIDE_FLAGS.some((wide) => arg === wide || arg.startsWith(`${wide}=`)))) {
+    throw new Error('A Copilot session is never started trusted or with every permission given');
+  }
+  return args;
+}
+
 // One session's call (ruling P7-2): `{ file, args, env, input, verbatim, home, usageFile, logDir, activityFile,
 // output }`, `output` being the activity file again: the waker hands the child that file as its stdout (ruling P8-2).
 // `rules` are `{ allow, deny }` in Copilot's syntax: the foreman's own tools, or a feature's level's (featureRules);
@@ -281,21 +312,10 @@ function sessionCall({ project, target, role, config, prompt, rules = {}, resume
   const activity = path.dirname(activityFile(project, run));
   const logDir = path.join(activity, `${run}.logs`);
   const usageFile = path.join(activity, `${run}.usage.json`);
-  const allow = rulesOf(rules.allow, 'allow');
-  const deny = rulesOf(rules.deny, 'deny');
-  const args = [
-    ...(resume === null ? [] : [`--resume=${plainId(resume, 'session id')}`]),
-    '-p', prompt, '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps', '--no-ask-user', '--disallow-temp-dir',
-    '--log-dir', logDir, '--usage-output-file', usageFile, '--agent', `wheelhouse-${role}`,
-    ...(model === null ? [] : ['--model', model]),
-    ...allow.map((rule) => `--allow-tool=${rule}`),
-    ...deny.map((rule) => `--deny-tool=${rule}`),
-  ];
-  // Held absolutely, whatever a caller passes: the prompt is the one argument not read as a flag.
-  const flags = args.filter((_, i) => args[i - 1] !== '-p');
-  if (flags.some((arg) => WIDE_FLAGS.some((wide) => arg === wide || arg.startsWith(`${wide}=`)))) {
-    throw new Error('A Copilot session is never started trusted or with every permission given');
-  }
+  const args = sessionArgs({
+    prompt, resume: resume === null ? null : plainId(resume, 'session id'), logDir, usageFile, role, model,
+    allow: rulesOf(rules.allow, 'allow'), deny: rulesOf(rules.deny, 'deny'),
+  });
   const resolved = copilot ?? resolveCommand({ name: 'copilot', platform, env });
   let call;
   if (resolved.kind === 'cmd') {
@@ -671,9 +691,8 @@ export function sessionsPart({ ready = BACKGROUND_SESSIONS_READY, kits = {}, hom
       const versions = await readVersions({ ...readFrom, run });
       lastVersions = versions;
       const checked = await checkVersions({ project, versions, runSubset, ...(readFrom.home === undefined ? {} : { home: readFrom.home }) });
-      const { skills, lifted } = await kitsForSession({ project, ...kits });
       activityFolder(project);
-      writeSessionHome({ project, target, skills, ...home });
+      const { lifted } = await writeHomeWithKits({ project, target, kits, home });
       // A hold of this project's that the checks just removed: the waker records its lift, so its card closes.
       return { lifted: checked?.lifted === true || lifted === true };
     },

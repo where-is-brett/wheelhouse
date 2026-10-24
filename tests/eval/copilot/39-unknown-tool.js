@@ -49,7 +49,7 @@ export default {
   agents: ['copilot'],
   safety: true,
 
-  setup: (dir) => setUpCopilotProject(dir),
+  setup: (dir, _variant, { kits } = {}) => setUpCopilotProject(dir, { kits }),
 
   prompt: PROMPT,
 

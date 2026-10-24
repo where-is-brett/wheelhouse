@@ -801,6 +801,22 @@ test('the route reviews a commit once: a head with a signed review, of any verdi
   }
 });
 
+test('/pr/carried counts no CLEAN where the default branch\'s configuration can\'t be read: which agent runs here, and so which kinds count, is not known (final review Minor 5)', async () => {
+  for (const modules of [() => ({ ...standInReview({ answer: answerFor('CLEAN') }).module }), reviewsFor]) {
+    const project = await reviewProject({ change: { 'src/k.js': 'k\n' }, base: { '.claude/wheelhouse.json': '{ not json\n' } });
+    try {
+      await plant(project, 'review', { pr: 7, commit: project.head, verdict: 'CLEAN' }, 1000);
+      await withHelper(project, modules, async (client) => {
+        const answer = await client.carried({ project: 'o__p', number: 7 });
+        assert.equal(answer.ok, true, answer.refused);
+        assert.equal(answer.review, 'none');
+      });
+    } finally {
+      project.cleanup();
+    }
+  }
+});
+
 test('/pr/carried counts a review only of a kind the gate counts for this computer\'s agent; Claude Code\'s counts any, as before (ruling P8-14)', async () => {
   const counted = { module: { ...standInReview({ answer: answerFor('CLEAN') }).module } };
   for (const [agent, modules, data, expected] of [

@@ -14,9 +14,13 @@
 // - It takes runSession's arguments. `pluginDirs`, `permissionMode`, `settingSources`, `maxTurns`, `extraArgs`,
 //   `offered`, `appendSystemPrompt` and the sandbox's `socket`, `readable`, `writable` and `unreadable` are Claude
 //   Code's and have no Copilot form, so they are ignored. `model` becomes `--model`, `resume` `--resume=<id>`.
-// - Its home is a session home (sessions.js writeSessionHome) in the run's scratch Wheelhouse home, the set-up's
-//   WHEELHOUSE_HOME, never the real ~/.wheelhouse: Wheelhouse's hook registration, the kit's agents, and the sign-in
-//   keys alone. A set-up that wrote the home itself (one whose guard is changed, 38) names it as COPILOT_HOME.
+// - It is started as the watcher starts one (ruling P8-35): its arguments are sessions.js sessionArgs, the watcher's
+//   own, with `--agent wheelhouse-<role>`, the role the scenario names (`role`, the builder when it names none).
+// - Its home is a session home in the run's scratch Wheelhouse home, the set-up's WHEELHOUSE_HOME, never the real
+//   ~/.wheelhouse, written as the watcher writes one (sessions.js writeHomeWithKits): Wheelhouse's hook registration,
+//   the kit's agents, the pinned kits' skills, fetched once into the scratch home and checked against the manifest,
+//   and the sign-in keys alone. A set-up that wrote the home itself (one whose guard is changed, 38) names it as
+//   COPILOT_HOME.
 // - Its environment is copilotSessionEnv's: the few variables a session keeps, and COPILOT_HOME.
 // - Its rules are Ask's (permissions.js levelRules, made for the scratch project), with `--no-ask-user`, the
 //   temporary folder shut off, and never `--trust-folder` or an allow-everything flag. A scenario may name the
@@ -35,7 +39,7 @@ import { run as realRun } from '../../scripts/lib/run.js';
 import { assertUnderTmp } from '../../probes/lib/scratch.js';
 import { copilotHome, file as hookFile } from './hooks.js';
 import { levelRules } from './permissions.js';
-import { CMD_LINE_MOST, WIDE_FLAGS, copilotSessionEnv, sessionUsage, writeSessionHome } from './sessions.js';
+import { CMD_LINE_MOST, copilotSessionEnv, sessionArgs, sessionUsage, writeHomeWithKits } from './sessions.js';
 import { toGuardInput } from './translate.js';
 
 // The session home's target: a feature's, so it sits where a builder's would (sessions.js sessionHome).
@@ -49,6 +53,8 @@ export const SIGN_IN_VARIABLE = 'WHEELHOUSE_EVAL_COPILOT_SIGN_IN';
 const SESSION_MS = 20 * 60 * 1000;
 
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// A role's name, as the kit's agents are named (`home/agents/wheelhouse-<role>.agent.md`).
+const ROLE = /^[a-z][a-z-]{0,31}$/;
 // What a command a scenario names may not hold: anything that could widen or end its `shell(..:*)` rule.
 const RULE_BREAKERS = /[*,()\u0000-\u001f\u007f]/;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -65,17 +71,28 @@ const inside = (folder, p) => {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 };
 
-// What `fn` gives with WHEELHOUSE_HOME naming `home` for that moment, so whatever it writes or names lands in the
-// run's scratch home. `fn` must not wait on anything.
+// What `fn` gives with WHEELHOUSE_HOME naming `home` meanwhile, so whatever it writes or names lands in the run's
+// scratch home. An `fn` that waits (the kits' fetch) keeps it named until it settles: the evaluation runs one trial at
+// a time (scripts/eval/run.js), and no session is running while a home is written.
 function inHome(home, fn) {
   const was = process.env.WHEELHOUSE_HOME;
-  process.env.WHEELHOUSE_HOME = home;
-  try {
-    return fn();
-  } finally {
+  const restore = () => {
     if (was === undefined) delete process.env.WHEELHOUSE_HOME;
     else process.env.WHEELHOUSE_HOME = was;
+  };
+  process.env.WHEELHOUSE_HOME = home;
+  let result;
+  try {
+    result = fn();
+  } catch (error) {
+    restore();
+    throw error;
   }
+  if (typeof result?.then !== 'function') {
+    restore();
+    return result;
+  }
+  return result.finally(restore);
 }
 
 // The Copilot home an evaluation's sessions sign in from: SIGN_IN_VARIABLE's folder when it is set, which must not be
@@ -102,16 +119,19 @@ function scratchHome(env) {
   return realOr(home);
 }
 
-// Writes the evaluation's session home in the scratch Wheelhouse home `home`, and answers its path.
-export function writeEvalHome(home, { signedInFrom = signInSource(), node = process.execPath, platform = process.platform } = {}) {
+// Writes the evaluation's session home in the scratch Wheelhouse home `home` as the watcher writes one
+// (writeHomeWithKits), and resolves with its path. `kits` ({ manifest, fetchTo }) is for tests, which never fetch from
+// the network; given none, the manifest's pinned kits are fetched into the scratch home once.
+export async function writeEvalHome(home, { signedInFrom = signInSource(), node = process.execPath, platform = process.platform, kits = {} } = {}) {
   assertUnderTmp(home);
-  return inHome(home, () => writeSessionHome({ project: EVAL_PROJECT, target: EVAL_TARGET, signedInFrom, node, platform }));
+  const written = await inHome(home, () => writeHomeWithKits({ project: EVAL_PROJECT, target: EVAL_TARGET, kits, home: { signedInFrom, node, platform } }));
+  return written.home;
 }
 
 // The session home a run uses: the one its set-up wrote (COPILOT_HOME), which must lie in the scratch home and hold
 // Wheelhouse's hook file, else one written afresh now. Copilot's own state survives a rewrite, so a resumed turn
 // finds its session.
-function homeFor(home, env, signedInFrom, platform) {
+async function homeFor(home, env, signedInFrom, platform, kits) {
   const given = env?.COPILOT_HOME;
   if (typeof given === 'string' && given !== '') {
     if (!inside(home, given)) throw new Error('A Copilot evaluation session\'s home must lie in its scratch Wheelhouse home');
@@ -120,7 +140,7 @@ function homeFor(home, env, signedInFrom, platform) {
     }
     return given;
   }
-  return writeEvalHome(home, { signedInFrom: signedInFrom ?? signInSource(), platform });
+  return writeEvalHome(home, { signedInFrom: signedInFrom ?? signInSource(), platform, kits });
 }
 
 // The rules: Ask's for the scratch project, and one shell rule for each command the scenario names.
@@ -237,7 +257,8 @@ export function translateEvents(raw, { usage = null, dir = '/' } = {}) {
 
 // One evaluation session through `copilot -p` in the scratch project `dir` (see the head of this file). `command` and
 // `commandArgs` are for tests: a stand-in for copilot. `signedInFrom` is the Copilot home the sign-in keys come from
-// (signInSource when not given). Resolves with runSession's outcome and `raw`.
+// (signInSource when not given). `role` is the scenario's (the builder when it names none), and `kits` is for tests,
+// as writeEvalHome's. Resolves with runSession's outcome and `raw`.
 export async function run({
   dir,
   prompt,
@@ -245,6 +266,8 @@ export async function run({
   resume = null,
   env = {},
   commands = [],
+  role = 'builder',
+  kits = {},
   timeoutMs = SESSION_MS,
   signedInFrom = null,
   command = 'copilot',
@@ -257,26 +280,19 @@ export async function run({
   if (prompt.startsWith('-')) throw new Error('A Copilot evaluation session\'s prompt can\'t start with a dash');
   if (model !== null && model !== undefined && !isModelName(model)) throw new Error(`This model can't be passed to copilot: ${JSON.stringify(model)}`);
   if (resume !== null && resume !== undefined && !PLAIN_ID.test(resume)) throw new Error(`This session id can't be resumed: ${JSON.stringify(resume)}`);
+  if (typeof role !== 'string' || !ROLE.test(role)) throw new Error(`This role can't name a session's agent: ${JSON.stringify(role)}`);
   const given = isObject(env) ? env : {};
   const home = scratchHome(given);
-  const ownHome = homeFor(home, given, signedInFrom, platform);
+  const ownHome = await homeFor(home, given, signedInFrom, platform, kits);
+  if (!fs.lstatSync(path.join(ownHome, 'agents', `wheelhouse-${role}.agent.md`), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`This Copilot evaluation session's home has no agent for the ${role}, so no session is started`);
+  }
   const rules = rulesFor(home, dir, commands, platform);
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-copilot-eval-'));
   const logDir = path.join(scratch, 'logs');
   const usageFile = path.join(scratch, 'usage.json');
   try {
-    const args = [
-      ...(resume ? [`--resume=${resume}`] : []),
-      '-p', prompt, '--output-format', 'json', '--no-auto-update', '--disable-builtin-mcps', '--no-ask-user', '--disallow-temp-dir',
-      '--log-dir', logDir, '--usage-output-file', usageFile,
-      ...(model ? ['--model', model] : []),
-      ...rules.allow.map((rule) => `--allow-tool=${rule}`),
-      ...rules.deny.map((rule) => `--deny-tool=${rule}`),
-    ];
-    const flags = args.filter((_, i) => args[i - 1] !== '-p');
-    if (flags.some((arg) => WIDE_FLAGS.some((wide) => arg === wide || arg.startsWith(`${wide}=`)))) {
-      throw new Error('A Copilot evaluation session is never started trusted or with every permission given');
-    }
+    const args = sessionArgs({ prompt, resume: resume || null, logDir, usageFile, role, model: model || null, allow: rules.allow, deny: rules.deny });
     const environment = copilotSessionEnv({ ...process.env, ...given }, { home: ownHome, platform });
     const call = callOf({ command, commandArgs, args, env: environment, platform });
     const result = await realRun(call.file, call.args, { cwd: dir, env: environment, baseEnv: {}, input: '', timeoutMs, windowsVerbatimArguments: call.verbatim });

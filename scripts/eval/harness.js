@@ -600,7 +600,8 @@ function saveRecord({ home, date, scenario, variant, trial, record }) {
 // session's sandbox lets a command reach, and its `readable` and `writable` go to the sandbox too
 // (runSession). A scenario's own `extraArgs` go to the session's command line, and its `offered`
 // tools are taken off the denied list (runSession); its `commands`, the commands a runner whose
-// agent has rules for them lets the session run, go to the runner too. A runner whose outcome
+// agent has rules for them lets the session run, go to the runner too, as does its `role`, the role whose agent a
+// runner that starts one starts (runSession has none, and passes it over). A runner whose outcome
 // carries `raw` (the agent's own events, when they are not stream-json) has them kept in the record
 // as `raw`, every turn's in order, and given to pass beside `events`. Resolves with the verdict, its reasons,
 // the record's file, the trial it was saved under, whether the session was handled, its tokens
@@ -670,6 +671,7 @@ export async function runScenario({ scenario, variant, trial = 1, home = os.home
         ...(scenario.extraArgs ? { extraArgs: scenario.extraArgs } : {}),
         ...(scenario.offered ? { offered: scenario.offered } : {}),
         ...(scenario.commands ? { commands: scenario.commands } : {}),
+        ...(scenario.role ? { role: scenario.role } : {}),
         ...(typeof context.helper?.address === 'string' ? { socket: context.helper.address } : {}),
         ...(context.readable ? { readable: context.readable } : {}),
         ...(context.unreadable ? { unreadable: context.unreadable } : {}),

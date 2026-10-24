@@ -133,7 +133,7 @@ import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
-import { clearOtherAgentHolds, recordLift } from '../lineage/check.js';
+import { clearOtherAgentHolds, hasAgentHolds, recordLift } from '../lineage/check.js';
 import { agentInFolder, agentOfConfig } from '../agents/names.js';
 import { run as runProgram } from '../lib/run.js';
 import { takeStartLock } from '../lib/start-lock.js';
@@ -1483,12 +1483,15 @@ export function makeWaker({
         }
         // A hold of an agent the project no longer runs on here goes, and its card closes (ruling P8-33): the agent is
         // read from the default branch's configuration this waker runs on, and the hold goes only when the main
-        // checkout's names the same agent; otherwise it stands.
+        // checkout's names the same agent; otherwise it stands. A project with no agent's hold has nothing to look at,
+        // so nothing more is read (not even this computer's id).
         try {
-          const id = computerId();
-          const agent = agentOfConfig(config, { computerId: id });
-          const checkoutAgent = typeof checkout === 'string' ? agentInFolder(checkout, { computerId: id }) : null;
-          if (clearOtherAgentHolds(project, { agent, checkoutAgent }) > 0) await liftHolds();
+          if (hasAgentHolds(project)) {
+            const id = computerId();
+            const agent = agentOfConfig(config, { computerId: id });
+            const checkoutAgent = typeof checkout === 'string' ? agentInFolder(checkout, { computerId: id }) : null;
+            if (clearOtherAgentHolds(project, { agent, checkoutAgent }) > 0) await liftHolds();
+          }
         } catch (error) {
           onError(`Another agent's hold couldn't be looked at: ${error instanceof Error ? error.message : 'unknown error'}`);
         }
@@ -1497,7 +1500,12 @@ export function makeWaker({
         try {
           adapter = sessionsOf();
         } catch { /* no adapter to ask */ }
-        if (typeof adapter?.pruneActivity === 'function') adapter.pruneActivity({ project, now });
+        // A prune that throws (a link where the activity folder should be) removes nothing, and says so.
+        try {
+          if (typeof adapter?.pruneActivity === 'function') adapter.pruneActivity({ project, now });
+        } catch (error) {
+          onError(`The sessions' old activity couldn't be pruned: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
       });
     },
     // The wakes not yet delivered, oldest first.

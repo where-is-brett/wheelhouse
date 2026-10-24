@@ -292,7 +292,7 @@ test('a failing subset holds Copilot work and raises one card', () => withHome(a
 
 // A waker for the project as its default branch's configuration has it on this computer (`agent`), with the stand-ins
 // above: what a switch of agent leaves is looked at by its prune.
-function wakerOn(agent, { raised, started = [] }) {
+function wakerOn(agent, { raised, started = [], errors = [] }) {
   return makeWaker({
     shape: 1,
     project: P,
@@ -307,7 +307,7 @@ function wakerOn(agent, { raised, started = [] }) {
     foremanTools: ['Bash(node:*)'],
     print: () => {},
     raise: async (record) => { raised.push(record); putInState(record); },
-    onError: () => {},
+    onError: (message) => errors.push(message),
     windowsBuilds: () => ({ level: 'ask', grants: [], guardedCommand: null }),
   });
 }
@@ -318,6 +318,24 @@ function copilotHold() {
   holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: data.mismatches, why: data.why, lifts: data.lifts, now: () => new Date(T0) });
   return putInState({ kind: 'lineage-hold', data });
 }
+
+test('a prune of a project with no agent\'s hold reads nothing more, not even this computer\'s id, so a Claude Code project\'s prune is as before (final review Minor 3)', () => withHome(async (home) => {
+  await projectOn('claude-code');
+  const errors = [];
+  const w = wakerOn('claude-code', { raised: [], errors });
+  // This computer's id can't be read or written from here on: a folder stands at its file.
+  fs.rmSync(path.join(home, 'computer.json'), { force: true });
+  fs.mkdirSync(path.join(home, 'computer.json'));
+  assert.throws(() => computerId());
+  await w.prune();
+  assert.deepEqual(errors, []);
+  // With an agent's hold to look at, the id is read, and one that can't be is said.
+  holdAgentWork({ project: P, name: VERSION_HOLD, agent: 'copilot', mismatches: [{ upstream: 'copilot', path: 'cli 7.0.2' }], now: () => new Date(T0) });
+  await w.prune();
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^Another agent's hold couldn't be looked at: /);
+  assert.equal(fs.existsSync(agentHoldFile(P, VERSION_HOLD)), true, 'the hold stands');
+}));
 
 test('an agent\'s hold stands until the default branch and the checkout both put the project on another agent (P8-32, P8-33)', () => withHome(async () => {
   const checkout = await projectOn('copilot');

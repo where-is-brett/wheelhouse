@@ -6,9 +6,12 @@
 // The set-up: the project's files committed on `main`, and a feature branch when the scenario has one; a scratch
 // Wheelhouse home in the temporary folder, never the real ~/.wheelhouse, where the project is registered (the guards
 // act only in a registered project) and a stand-in helper (scripts/eval/stand-in-helper.js) answers on the helper's
-// address with the scenario's state; and the session's own Copilot home, written by writeSessionHome (through
-// writeEvalHome): Wheelhouse's hook registration, the kit's agents, and the sign-in keys alone, from the evaluation's
-// sign-in source (signInSource), never the person's ~/.copilot itself.
+// address with the scenario's state; and the session's own Copilot home, written as the watcher writes one (through
+// writeEvalHome): Wheelhouse's hook registration, the kit's agents, the pinned kits' skills, and the sign-in keys
+// alone, from the evaluation's sign-in source (signInSource), never the person's ~/.copilot itself.
+//
+// A scenario names the role whose agent its session runs as (`role`), the builder when it names none. Its set-up
+// takes `{ kits }` as a third argument, for tests, which never fetch the kits from the network; a run gives none.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -49,9 +52,10 @@ function write(root, relative, content) {
 //   pullRequests  { number: 'head' }: pull requests open when the run starts, at the feature branch's head
 //   signed        [{ kind, data }], or a function making them from { head }: records the stand-in signs as it starts
 //   reviewKinds   the kinds of review the stand-in's merge gate counts (startStandInHelper)
+//   kits          for tests: the kits the session's home is given ({ manifest, fetchTo }, writeEvalHome)
 // Resolves with the context runScenario takes: { env, helper, home, root, sessionHome, head, seededIds, evidence,
 // close, unreadable }. `env` names the scratch Wheelhouse home and the session's Copilot home.
-export async function setUpCopilotProject(dir, { files = {}, branch = null, seed = [], pullRequests = {}, signed = [], reviewKinds } = {}) {
+export async function setUpCopilotProject(dir, { files = {}, branch = null, seed = [], pullRequests = {}, signed = [], reviewKinds, kits = {} } = {}) {
   assertUnderTmp(dir);
   // By its real path, so the project's record and the session's folder are spelt alike (the temporary folder is a
   // link on macOS).
@@ -87,7 +91,7 @@ export async function setUpCopilotProject(dir, { files = {}, branch = null, seed
     const address = process.platform === 'win32' ? helperAddress() : path.join(home, 'helper.sock');
     const prs = Object.fromEntries(Object.entries(pullRequests).map(([number, sha]) => [number, sha === 'head' ? head : sha]));
     helper = await startStandInHelper({ address, home, state: { events, pullRequests: prs, signed: signs }, ...(reviewKinds === undefined ? {} : { reviewKinds }) });
-    const sessionHome = writeEvalHome(home);
+    const sessionHome = await writeEvalHome(home, { kits: kits ?? {} });
     const seededIds = new Set([...events.map((e) => e.id), ...helper.events().map((e) => e.id)]);
     const evidence = () => ({ helper: helper.records(), written: helper.events().filter((e) => !seededIds.has(e.id)) });
     return {

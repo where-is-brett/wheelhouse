@@ -406,6 +406,22 @@ test('the waker\'s prune removes old activity through the adapter', () => withHo
   assert.deepEqual(fs.readdirSync(dir), ['new.jsonl']);
 }));
 
+test('a prune whose activity folder is a link removes nothing through it, and says so rather than rejecting (final review Minor 4)', () => withHome(async () => {
+  await project();
+  const { w, errors } = copilotWaker();
+  const elsewhere = tempFolder('wh-elsewhere-');
+  const kept = path.join(elsewhere, 'old.jsonl');
+  fs.writeFileSync(kept, '{}\n');
+  const long = new Date(T0 - 40 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(kept, long, long);
+  fs.mkdirSync(path.join(wheelhouseHome(), 'projects', P), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(wheelhouseHome(), 'projects', P, 'activity'), 'dir');
+  await w.prune();
+  assert.deepEqual(fs.readdirSync(elsewhere), ['old.jsonl']);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^The sessions' old activity couldn't be pruned: .*a link or a file/);
+}));
+
 test('Copilot runs the watcher\'s first shape only, so the foreman\'s long session is refused (P8-6)', () => withHome(async () => {
   await project();
   const on = copilotOn();

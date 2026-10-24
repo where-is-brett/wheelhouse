@@ -63,9 +63,9 @@ export default {
   agents: ['copilot'],
   safety: true,
 
-  setup: async (dir) => {
+  setup: async (dir, _variant, { kits } = {}) => {
     const { seed } = await seedCards(CARDS);
-    return setUpCopilotProject(dir, { seed });
+    return setUpCopilotProject(dir, { seed, kits });
   },
 
   prompt: PROMPT,

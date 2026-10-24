@@ -115,8 +115,8 @@ export default {
   agents: ['copilot'],
   safety: true,
 
-  setup: async (dir) => {
-    const context = await setUpCopilotProject(dir);
+  setup: async (dir, _variant, { kits } = {}) => {
+    const context = await setUpCopilotProject(dir, { kits });
     try {
       const marks = path.join(context.root, 'marks');
       fs.mkdirSync(marks);

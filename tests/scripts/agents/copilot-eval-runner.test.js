@@ -20,8 +20,9 @@ import {
   EVAL_TARGET, SIGN_IN_VARIABLE, rawEvents, rawText, run, signInSource, translateEvents, writeEvalHome,
 } from '../../../adapters/copilot/eval-runner.js';
 import { copilotHome, file as hookFile } from '../../../adapters/copilot/hooks.js';
-import { SIGN_IN_KEYS, SUBSET, WIDE_FLAGS, safetySubset } from '../../../adapters/copilot/sessions.js';
-import { tempFolder } from '../../helpers/homes.js';
+import { SIGN_IN_KEYS, SUBSET, WIDE_FLAGS, safetySubset, sessionsPart } from '../../../adapters/copilot/sessions.js';
+import { tempFolder, withHome } from '../../helpers/homes.js';
+import { KIT_SKILLS, localKits } from '../../helpers/copilot-kits.js';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 
 const stand = standInTools();
@@ -46,6 +47,9 @@ after(() => {
   else process.env[SIGN_IN_VARIABLE] = signInWas;
 });
 
+// The kits every session's home here is given: a local one, never fetched from the network.
+const { kits: KITS, fetched } = localKits();
+
 // A scratch project (a git repository) and a scratch Wheelhouse home, both in the temporary folder.
 function scratch() {
   const dir = fs.realpathSync(tempFolder('wh-cer-project-'));
@@ -58,7 +62,7 @@ function scratch() {
 async function viaStandIn(file, { env = {}, ...options } = {}) {
   const { dir, home } = scratch();
   const log = path.join(tempFolder('wh-cer-log-'), 'started.json');
-  const outcome = await run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home, ...env }, command: process.execPath, commandArgs: [FAKE, file, log], ...options });
+  const outcome = await run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home, ...env }, kits: KITS, command: process.execPath, commandArgs: [FAKE, file, log], ...options });
   return { outcome, saw: JSON.parse(fs.readFileSync(log, 'utf8')), dir, home };
 }
 
@@ -151,11 +155,68 @@ test('a session runs `copilot -p` from a clean home of its own in the scratch Wh
   assert.deepEqual(Object.keys(config), ['loggedInUsers']);
   assert.ok(Object.keys(config).every((key) => SIGN_IN_KEYS.includes(key)));
   assert.ok(fs.readdirSync(path.join(own, 'agents')).length > 0);
+  // It runs as the builder, the role a scenario that names none plays, and its home holds the kits' skills (P8-35).
+  assert.equal(args[args.indexOf('--agent') + 1], 'wheelhouse-builder');
+  assert.deepEqual(fs.readdirSync(path.join(own, 'skills')).sort(), [...KIT_SKILLS]);
 });
+
+test('a scenario\'s role names the session\'s agent, and a role with no agent in the home, or that isn\'t a plain name, starts nothing (P8-35)', async () => {
+  const { saw } = await viaStandIn(fixtureFile({ events: [] }), { role: 'tester' });
+  assert.equal(saw.args[saw.args.indexOf('--agent') + 1], 'wheelhouse-tester');
+  assert.equal(saw.args.filter((a) => a === '--agent').length, 1);
+  const { dir, home } = scratch();
+  const call = (role) => run({ dir, prompt: 'Say hello.', role, env: { WHEELHOUSE_HOME: home }, kits: KITS, command: process.execPath, commandArgs: [FAKE, fixtureFile({ events: [] }), path.join(home, 'log.json')] });
+  await assert.rejects(call('front-desk'), /no agent for the front-desk/);
+  for (const bad of ['Builder', '../builder', 'builder --yolo', '']) await assert.rejects(call(bad), /can't name a session's agent/);
+  assert.ok(!fs.existsSync(path.join(home, 'log.json')), 'no session was started');
+});
+
+test('an evaluation session is started as the watcher starts the same role\'s: the same arguments and the same home, apart from the prompt and the paths (P8-35)', () => withHome(async (wakerHome) => {
+  const versions = { run: async () => { throw new Error('no copilot is started here'); }, runSubset: async () => ({ ok: true }) };
+  const part = sessionsPart({ ready: true, kits: KITS, home: { signedInFrom: signIn, node: process.execPath, root: ROOT }, versions });
+  // The watcher's: its feature's home written before the start, then the builder's call, at Ask, the level the
+  // evaluation's rules are.
+  const worktree = fs.realpathSync(tempFolder('wh-cer-worktree-'));
+  await part.prepare({ project: EVAL_PROJECT, target: EVAL_TARGET });
+  const waker = part.featureStartCall({ config: {}, project: EVAL_PROJECT, work: EVAL_TARGET.slice('feature-'.length), prompt: 'The watcher\'s prompt.', worktree, level: 'ask', grants: [], env: process.env, copilot: { kind: 'direct', file: 'copilot' } });
+  // The evaluation's.
+  const { saw, dir, home } = await viaStandIn(fixtureFile({ events: [] }));
+
+  const valueAfter = (args, flag) => args[args.indexOf(flag) + 1];
+  const plain = (args, { prompt, project, root }) => {
+    const swapped = new Map([[prompt, '<PROMPT>'], [valueAfter(args, '--log-dir'), '<LOG>'], [valueAfter(args, '--usage-output-file'), '<USAGE>']]);
+    return args.map((a) => swapped.get(a) ?? a.replaceAll(project, '<WORKTREE>').replaceAll(root, '<HOME>'));
+  };
+  const slashed = (p) => p.split(path.sep).join('/');
+  const watcherArgs = plain(waker.args, { prompt: 'The watcher\'s prompt.', project: slashed(worktree), root: slashed(wakerHome) });
+  const evalArgs = plain(saw.args, { prompt: 'Say hello.', project: slashed(dir), root: slashed(home) });
+  assert.deepEqual(evalArgs, watcherArgs);
+  assert.equal(valueAfter(evalArgs, '--agent'), 'wheelhouse-builder');
+
+  // The homes: the same files, each the same apart from the Wheelhouse home's own path.
+  const tree = (own, root) => {
+    const files = {};
+    const walk = (at) => {
+      for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+        const full = path.join(at, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else files[slashed(path.relative(own, full))] = fs.readFileSync(full, 'utf8').replaceAll(root, '<HOME>');
+      }
+    };
+    walk(own);
+    return files;
+  };
+  const watcherHome = waker.home;
+  const evalHome = saw.env.COPILOT_HOME;
+  assert.notEqual(watcherHome, evalHome);
+  assert.deepEqual(tree(evalHome, home), tree(watcherHome, wakerHome));
+  assert.ok(Object.keys(tree(evalHome, home)).some((f) => f.startsWith('skills/alpha/')));
+  assert.ok(fetched.length >= 2, 'each Wheelhouse home fetched its own kits, from the local kit');
+}));
 
 test('a resumed turn passes --resume=<id>, a scenario\'s commands are one shell rule each, and a home the set-up wrote is used as it is', async () => {
   const { home } = scratch();
-  const own = writeEvalHome(home);
+  const own = await writeEvalHome(home, { kits: KITS });
   fs.writeFileSync(path.join(own, 'marker'), 'the set-up\'s own');
   const { saw } = await (async () => {
     const { dir } = scratch();
@@ -171,7 +232,7 @@ test('a resumed turn passes --resume=<id>, a scenario\'s commands are one shell 
 
 test('a session refuses to start without a scratch Wheelhouse home, outside the temporary folder, from a home outside it, or with what a rule or the command line can\'t hold', async () => {
   const { dir, home } = scratch();
-  const call = (options) => run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home }, command: process.execPath, commandArgs: [FAKE, fixtureFile({ events: [] }), path.join(home, 'log.json')], ...options });
+  const call = (options) => run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home }, kits: KITS, command: process.execPath, commandArgs: [FAKE, fixtureFile({ events: [] }), path.join(home, 'log.json')], ...options });
   await assert.rejects(call({ env: {} }), /scratch Wheelhouse home/);
   await assert.rejects(call({ env: { WHEELHOUSE_HOME: path.join(os.homedir(), '.wheelhouse') } }), /outside the temporary folder|real Wheelhouse home/);
   await assert.rejects(call({ env: { WHEELHOUSE_HOME: home, COPILOT_HOME: tempFolder('wh-cer-elsewhere-') } }), /must lie in its scratch Wheelhouse home/);
@@ -196,7 +257,7 @@ test('the sign-in comes from the evaluation\'s own source when one is named, nev
 test('with no command given, the session starts the copilot the PATH finds first: here the stand-in, which notes the call and refuses, so no real Copilot runs', async () => {
   stand.reset();
   const { dir, home } = scratch();
-  const outcome = await run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home } });
+  const outcome = await run({ dir, prompt: 'Say hello.', env: { WHEELHOUSE_HOME: home }, kits: KITS });
   assert.equal(outcome.exitCode, 1);
   assert.equal(outcome.handled, false);
   assert.match(outcome.stderr, /copilot is not run in this test/);

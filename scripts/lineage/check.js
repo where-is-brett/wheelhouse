@@ -76,6 +76,12 @@ function agentHolds(project) {
   });
 }
 
+// Whether the project's lineage folder holds any agent's hold file, for the watcher to look no further (and read
+// nothing else) when it holds none. A folder that can't be read holds none it could remove.
+export function hasAgentHolds(project) {
+  return (agentHolds(project) ?? []).length > 0;
+}
+
 // Whether the project is held: by the session start's hold file, or by any agent's own. Anything at the hold file's
 // place counts, and so does a lineage folder that can't be read.
 export function isHeld(project) {
