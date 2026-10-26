@@ -198,7 +198,7 @@ export const SETUP_DONE = Object.freeze({
 // just now: the test of an earlier setup on this computer, or a test that didn't arrive.
 export const PHONE_TESTED_EARLIER = 'Phone notifications reached your phone in an earlier setup.';
 export const PHONE_TEST_MISSED = 'The test notification didn\'t arrive. The board says what to check.';
-export const PHONE_SKIPPED = 'Phone notifications skipped for now. Ask the front desk to set them up whenever you like.';
+export const PHONE_SKIPPED = 'Phone notifications skipped for now: ask the front desk to set them up any time.';
 // The line that opens a setup step: its place among the steps this computer runs and its minutes.
 export const setupStepLine = (position, total, minutes) => `Step ${position} of ${total} · about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
 // What carries on while the director's step is asked, and that it needs nothing from them.
