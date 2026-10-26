@@ -33,7 +33,7 @@ import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
 import { listEvents } from '../../scripts/state/events.js';
 import { readJournal } from '../../scripts/setup/journal.js';
 import { healthGreen, firstUnfinished, runClosed, stepsFor, joinedRepo, SETUP_STEPS, JOINING_STEPS } from '../../scripts/lib/setup-run.js';
-import { clicksDir, usedDir } from '../../scripts/lib/setup-clicks.js';
+import { clicksDir, usedDir, keptAnswers } from '../../scripts/lib/setup-clicks.js';
 import { readEnrolled, ownKey, verify } from '../../scripts/state/signing.js';
 import { readProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
@@ -97,7 +97,7 @@ const log10 = (log) => log.at(-1).health;
 const byId = (answers) => (id) => answers[Object.keys(answers).find((k) => id === k || id.startsWith(`${k}-`))];
 
 // The signed setup clicks kept on a computer, each with whether the helper used it.
-const keptClicks = (c) => c.act(() => fs.readdirSync(clicksDir()).map((name) => JSON.parse(fs.readFileSync(path.join(clicksDir(), name), 'utf8')))
+const keptClicks = (c) => c.act(() => (fs.existsSync(clicksDir()) ? fs.readdirSync(clicksDir()) : []).map((name) => JSON.parse(fs.readFileSync(path.join(clicksDir(), name), 'utf8')))
   .map((event) => ({ event, used: fs.existsSync(path.join(usedDir(), event.id)), signed: verify(event, readEnrolled()) })));
 
 const lsRemote = async (url, ref) => (await realRun('git', ['ls-remote', url, ref])).stdout.trim();
@@ -129,7 +129,7 @@ test('the end-to-end tests\' git reads no global or system config (ruling R144)'
   }
 });
 
-test('a new product: every step\'s card, its click, and a green board at the end', { skip: SKIP }, async () => {
+test('a new product: one card, its Go ahead, every step with no more cards, a green board, then the phone', { skip: SKIP }, async () => {
   const { host, a } = fresh();
   try {
     await a.start();
@@ -141,36 +141,35 @@ test('a new product: every step\'s card, its click, and a green board at the end
     assert.ok(own);
     assert.deepEqual(await a.act(() => readEnrolled().map((e) => e.computer)), [own.computer]);
 
-    const log = await follow(a, { answer: byId(NEW_ANSWERS) });
+    const log = await follow(a, { answer: byId(NEW_ANSWERS), phone: true });
 
-    // Every step, in order: the questions asked, a Go-ahead card for each step that changes
-    // something, and the steps with nothing to click settling on their own.
-    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]), [
+    // The one card first, its Go ahead, then every step in order with no card: each list the Go
+    // ahead covers is applied as it comes, and the steps with nothing to click settle on their own.
+    // The phone comes last, once the board is green (design section 15.1).
+    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,12}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]), [
+      [0, 'plan'],
       [1, 'settled'],
-      [2, 'go ahead'],
-      [3, 'join'], [3, 'real-users'], [3, 'host'], [3, 'connection'], [3, 'go ahead'],
-      [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'],
+      [2, 'covered'],
+      [3, 'covered'],
+      [4, 'settled'],
       [5, 'settled'],
-      [6, 'go ahead'],
-      [7, 'go ahead'],
+      [6, 'covered'],
+      [7, 'covered'],
       [8, 'settled'],
-      [9, 'phone-ready'], [9, 'wait'], [9, 'push-arrived'], [9, 'settled'],
-      [10, 'go ahead'],
+      [10, 'covered'],
       [10, 'health'],
+      [9, 'phone-ready'], [9, 'wait'], [9, 'push-arrived'], [9, 'settled'],
     ]);
-    // Each Go-ahead card names its step and the hash of its list in its set line; apply refused it
-    // until the director's click, which the prompt record signed and the helper used once.
-    const clicks = await keptClicks(a);
-    for (const { step, goAhead, card, refusedBefore } of log.filter((e) => e.goAhead)) {
-      assert.equal(setLineOf(card.question), setupLine(step, goAhead), `step ${step}`);
-      assert.match(refusedBefore, /needs the director's click on its card/, `step ${step}`);
-      const mine = clicks.filter((k) => k.event.data.step === step && k.event.data.hash === goAhead);
-      assert.equal(mine.length, 1, `step ${step}: one click on its card`);
-      assert.equal(mine[0].signed, true, `step ${step}: signed by this computer's enrolled key`);
-      assert.equal(mine[0].used, true, `step ${step}: used by the helper`);
-      assert.equal(mine[0].event.data.question, card.question, `step ${step}: the click names the card as shown`);
-    }
-    assert.equal(clicks.length, log.filter((e) => e.goAhead).length, 'no click but the director\'s on each Go-ahead card');
+    // The one card: a plain line each, and two options, Go ahead recommended.
+    const one = log[0];
+    assert.equal(one.label, 'Go ahead');
+    // No step's own Go ahead was clicked: the one card's answer, signed by this computer's enrolled
+    // key, stood for each of them, and was never used up.
+    assert.deepEqual(await keptClicks(a), []);
+    const consent = await a.act(() => keptAnswers((readJournal().runs[0]).id).filter((e) => e.data.step === 0));
+    assert.equal(consent.length, 1);
+    assert.equal(consent[0].data.label, 'Go ahead');
+    assert.equal(await a.act(() => verify(consent[0], readEnrolled())), true);
 
     // Step 2 fetched gh, missing here, into Wheelhouse's own tools folder, from its release page
     // as tools.js checks it, and every later gh call ran that copy.
@@ -179,7 +178,7 @@ test('a new product: every step\'s card, its click, and a green board at the end
     assert.equal(await a.act(() => toolPath('gh')), path.join(a.home, 'tools', 'gh', 'bin', 'gh'));
 
     // The board is green, setup's ending ran, and the journal says the run is finished.
-    const { health } = log.at(-1);
+    const { health } = log.find((e) => e.health);
     assert.equal(health.green, true, health.lines.join('\n'));
     assert.ok(health.lines.slice(0, -1).every((l) => /^(Passed|Board):/.test(l)), health.lines.join('\n'));
     assert.match(health.lines.at(-1), /^All \d+ checks passed\. Wheelhouse is ready\.$/);
@@ -190,7 +189,7 @@ test('a new product: every step\'s card, its click, and a green board at the end
     const run = await a.setupRun();
     assert.equal(healthGreen(run), true);
     assert.equal(firstUnfinished(run), null);
-    // The director's time, as the timed runs read it: each card's shown, clicked and done times.
+    // The director's time, as the timed runs read it: each step's shown, started and done times.
     for (const { n } of SETUP_STEPS) assert.equal(typeof run.steps[n]?.doneAt, 'string', `step ${n}, ${SETUP_TITLES[n]}`);
     for (const { step } of log.filter((e) => e.goAhead)) {
       const t = run.steps[step];

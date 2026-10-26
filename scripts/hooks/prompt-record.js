@@ -440,7 +440,7 @@ function keepSetupClicks(cwd, out, now, project = null) {
         throw error;
       }
       queued.push(...kept.filter((k) => !k.later));
-    } catch { /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
+    } catch (e) { if (process.env.SETUP_E2E_DEBUG) process.stderr.write(`KEEP ${e.stack}\n`); /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
   }
   return queued;
 }

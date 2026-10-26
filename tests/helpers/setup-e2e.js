@@ -488,6 +488,19 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     clock.tick();
   });
 
+  // The director's answers on several cards asked together, in one AskUserQuestion (Customise's,
+  // design section 15.1): `labels` in the cards' order.
+  c.clickAll = (cards, labels) => c.act(async () => {
+    const checked = await cardCheck({ session_id: session, cwd: folder, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: { questions: cards } }, { dir: managedDir, now: clock.now });
+    if (checked?.hookSpecificOutput?.permissionDecision === 'deny') throw new Error(`the card check refused the cards: ${checked.hookSpecificOutput.permissionDecisionReason}`);
+    const answers = Object.fromEntries(cards.map((card, i) => [card.question, labels[i]]));
+    await promptRecord({
+      session_id: session, cwd: folder, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+      tool_input: { questions: cards, answers }, tool_response: { answers },
+    }, { client: c.client, now: clock.now, dir: managedDir });
+    clock.tick();
+  });
+
   // A session start in the product folder, as Claude Code calls the hook: its context lines, without the tool
   // sheet and the command line (tests/skills/tool-names.test.js pins those), so setup's own lines read as they are.
   c.sessionStart = () => c.act(async () => {
@@ -535,17 +548,31 @@ export const GREEN_LINES = Object.entries(SESSION_CHECKS).map(([name, check]) =>
 // is clicked, after apply is shown to refuse it without the click, then applied; step 9's wait is
 // waited out on the clock; and step 10's open trial is reported with the session's trial lines.
 // Gives what happened, in order: { step, ask, label, unanswered? }, { step, goAhead: hash,
-// refusedBefore } (a step planned again after it, such as step 7's switch, comes again), { step, settled: true, said? }, { step, wait }, { step: 10, health }.
-export async function follow(c, { answer, through = 10, lines = GREEN_LINES, most = 80 } = {}) {
+// refusedBefore } (a step planned again after it, such as step 7's switch, comes again), or
+// { step, goAhead, covered: true } for a list the one card's Go ahead covers, { step, settled: true,
+// said? }, { step, wait }, { step: 10, health }. The one card (step 0) is answered Go ahead unless
+// `answer` says otherwise, and Customise's cards are answered together. With `phone`, it goes on
+// past a green board to step 9, which comes last (design section 15.1).
+export async function follow(c, { answer, through = 10, lines = GREEN_LINES, most = 80, phone = false } = {}) {
   const log = [];
   const done = async (n) => typeof (await c.setupRun())?.steps?.[n]?.doneAt === 'string';
   for (let i = 0; i < most; i += 1) {
     const resumed = await c.cli('resume');
     const plan = resumed.plan;
+    if (process.env.SETUP_E2E_DEBUG) process.stderr.write(`PLAN ${JSON.stringify({ step: plan?.step, ask: plan?.ask?.id, asks: plan?.asks?.map((x) => x.id), done: plan?.done, wait: plan?.why, covered: plan?.covered, hash: Boolean(plan?.hash) })}\n`);
     if (plan === null) return log;
     if (plan.step > through) return log;
-    if (plan.ask) {
-      const label = answer(plan.ask.id, plan);
+    if (plan.asks) {
+      // Customise's cards, asked together (design section 15.1).
+      const labels = plan.asks.map((a) => answer(a.id, plan, a));
+      plan.asks.forEach((a, i) => {
+        if (labels[i] === undefined) throw new Error(`no answer for step ${a.step}'s question ${a.id}`);
+        log.push({ step: a.step, ask: a.id, label: labels[i], together: plan.asks.length });
+      });
+      await c.clickAll(plan.asks.map((a) => a.card), labels);
+    } else if (plan.ask) {
+      // The one card is answered Go ahead unless `answer` says otherwise.
+      const label = answer(plan.ask.id, plan) ?? (plan.step === 0 ? 'Go ahead' : undefined);
       if (label === undefined) throw new Error(`no answer for step ${plan.step}'s question ${plan.ask.id}`);
       log.push({ step: plan.step, ask: plan.ask.id, label, ...(plan.unanswered ? { unanswered: plan.unanswered } : {}) });
       await c.click(plan.ask.card, label);
@@ -556,10 +583,18 @@ export async function follow(c, { answer, through = 10, lines = GREEN_LINES, mos
       await c.standInWatcher(named.trials.project);
       const health = await c.cli('health', ...lines);
       log.push({ step: 10, health });
-      return log;
+      // The phone is offered once setup is finished (design section 15.1): followed on to it only
+      // when asked to go on past the board.
+      if (!health.green || !phone) return log;
     } else if (plan.wait !== undefined) {
       log.push({ step: plan.step, wait: plan.why });
       c.clock.tick(plan.step === 9 && plan.waitsFor === undefined ? PUSH_TEST_WAIT_MS : 1000);
+    } else if (plan.covered) {
+      // Covered by the one card's Go ahead: applied with no card (design section 15.1).
+      await c.cli('apply', String(plan.step), plan.hash);
+      log.push({ step: plan.step, goAhead: plan.hash, card: plan.card, covered: true });
+      const entry = (await c.setupRun())?.steps?.[plan.step] ?? {};
+      if (!(await done(plan.step)) && (entry.failed || entry.clickedAt)) throw new Error(`step ${plan.step} did not finish: ${entry.failed}`);
     } else {
       const before = await c.cliTry('apply', String(plan.step), plan.hash);
       if (before.ok || !before.refused.includes(NEEDS_CLICK)) throw new Error(`step ${plan.step} was not refused without its click: ${JSON.stringify(before)}`);
