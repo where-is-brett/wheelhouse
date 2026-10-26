@@ -201,3 +201,33 @@ test('readConfig: tiers.pins holds up to three model names or null, and the flat
   ];
   for (const extra of bad) assert.throws(() => readConfig(JSON.stringify({ ...base, ...extra })), /can't be read/, JSON.stringify(extra));
 });
+
+test('a plugin\'s own parts are guardrails in a project that is a plugin, and ordinary folders elsewhere', () => {
+  const paths = ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'hooks/hooks.json', 'skills/setup/SKILL.md', 'agents/builder.md',
+    'commands/setup.md', 'output-styles/plain.md', '.lsp.json'];
+  const plain = ['scripts/hooks/tool-guard.js', 'src/hooks/useCart.js', 'docs/skills.md', 'README.md'];
+  const plugin = { ...empty, plugin: true };
+  assert.deepEqual(classifyChange({ paths: [...paths, ...plain], config: plugin }).guardrailPaths, paths);
+  assert.equal(classifyChange({ paths: ['Hooks/hooks.json'], config: plugin }).touchesGuardrails, true, 'case is ignored, as for the rest');
+  assert.deepEqual(classifyChange({ paths: [...paths.slice(2, 7), ...plain], config: empty }).guardrailPaths, [], 'not a plugin: a web app\'s hooks/ is its own');
+  assert.equal(classifyChange({ paths: ['hooks/useCart.js'], config: { ...empty, plugin: false } }).touchesGuardrails, false);
+});
+
+test('the configuration file can\'t say the project isn\'t a plugin', () => {
+  const config = readConfig(JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], plugin: false }));
+  assert.equal(Object.hasOwn(config, 'plugin'), false);
+});
+
+test('Wheelhouse\'s own configuration reads, and its safety checks need the director when it manages itself', async () => {
+  const fs = await import('node:fs');
+  const own = readConfig(fs.readFileSync(new URL('../../../.claude/wheelhouse.json', import.meta.url), 'utf8'));
+  const config = { ...own, plugin: true };
+  for (const file of ['scripts/hooks/tool-guard.js', 'scripts/gate/conditions.js', 'scripts/host/helper.js', 'scripts/protection/settings.js',
+    'scripts/setup/host.js', 'scripts/state/events.js', 'scripts/lib/projects.js', 'scripts/briefing/text.js', 'adapters/copilot/lean-guard.sh', 'hooks/register.ts', 'hooks/hooks.json', 'agents/reviewer.md',
+    'skills/setup/SKILL.md', '.claude-plugin/plugin.json', 'lineage/manifest.json']) {
+    assert.equal(classifyChange({ paths: [file], config }).touchesGuardrails, true, file);
+  }
+  for (const file of ['docs/specs/x.md', 'tests/e2e/setup.test.js', 'templates/brief/lanes/quick.md', 'README.md']) {
+    assert.equal(classifyChange({ paths: [file], config }).touchesGuardrails, false, file);
+  }
+});

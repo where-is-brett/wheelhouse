@@ -767,8 +767,12 @@ async function refuseSettingsIn({ dir, run, gitPath }) {
   if (fs.existsSync(path.join(dir, '.git'))) await refuseUnlistedSettings({ run, gitPath, cwd: dir });
 }
 
-// A repository on the host as the director's sign-in sees it: { repo, id, defaultBranch }, or null
-// when there is none. Anything but "not found" stops the step, said plainly.
+// A repository on the host as the director's sign-in sees it: { repo, id, defaultBranch, private },
+// or null when there is none. `private` is true only when the host says so (a `visibility` of
+// `private`, or GitHub's `private` where it gives no visibility), false when it says otherwise (an
+// `internal` repository counts as not private: everyone in the enterprise, or signed in to that
+// GitLab, can read it), and null when it says nothing.
+// Anything but "not found" stops the step, said plainly.
 async function repoInfo({ host, repo, run, api }) {
   if (host === 'github') {
     const got = await ask(run, host, ['api', `repos/${repo}`]);
@@ -778,12 +782,30 @@ async function repoInfo({ host, repo, run, api }) {
     }
     const body = json(got.stdout);
     if (typeof body?.full_name !== 'string') throw new Error(`GitHub's answer about ${repo} could not be read`);
-    return { repo: body.full_name, id: body.id ?? null, defaultBranch: body.default_branch ?? null };
+    // GitHub's `visibility` (public, private or internal, where every member of an enterprise can read
+    // it) says more than its `private`, which is true for an internal repository too.
+    const shut = typeof body.visibility === 'string' ? body.visibility === 'private' : typeof body.private === 'boolean' ? body.private : null;
+    return { repo: body.full_name, id: body.id ?? null, defaultBranch: body.default_branch ?? null, private: shut };
   }
   const got = await api.get(projectPath(repo));
   if (got.status === 404) return null;
   if (got.status !== 200 || typeof got.body?.path_with_namespace !== 'string') throw new Error(`GitLab could not be asked about ${repo} with your sign-in (HTTP ${got.status})`);
-  return { repo: got.body.path_with_namespace, id: got.body.id, defaultBranch: got.body.default_branch ?? null };
+  const visibility = got.body.visibility;
+  return { repo: got.body.path_with_namespace, id: got.body.id, defaultBranch: got.body.default_branch ?? null, private: typeof visibility === 'string' ? visibility === 'private' : null };
+}
+
+// Wheelhouse's records (the state and lock branches on the product's repository, and the profile
+// repository) hold the director's own words, the cards, the briefs, the survey and the names of
+// work not yet pushed, so they are never put where anyone can read them: a repository the host
+// doesn't say is private is refused, with no card, and nothing is pushed to it
+// (docs/research/self-hosting-2026-10.md, design section 22).
+export const notPrivate = ({ host, repo, profile = false }) => (profile
+  ? `${repo} on ${NAME[host]} is not private, and Wheelhouse keeps your settings and backups in it, so setup has stopped: make it private in its settings on ${NAME[host]}, then a fresh Go ahead tries again`
+  : `${repo} on ${NAME[host]} is not private, and Wheelhouse keeps its records (your answers, its cards and its plans) on the project's own repository, so setup has stopped before putting anything there: a public project can't use Wheelhouse yet`);
+
+function mustBePrivate(info, { host, profile = false }) {
+  if (info.private !== true) throw new Error(notPrivate({ host, repo: info.repo, profile }));
+  return info;
 }
 
 // Makes a private repository on the director's own account; `readme` gives it a first commit on main.
@@ -801,7 +823,7 @@ async function createRepo({ host, owner, name, readme, run, api }) {
   }
   const info = await repoInfo({ host, repo, run, api });
   if (info === null) throw new Error(`${repo} on ${NAME[host]} was made but can't be found`);
-  return info;
+  return mustBePrivate(info, { host, profile: !readme });
 }
 
 // Whether setup made this repository itself, in any run uninstall hasn't closed: a retry then
@@ -1024,7 +1046,7 @@ export async function makeRepos({
       // A new product's name already taken on the account, by a repository setup didn't make, is not
       // taken over; the profile repository, made on another computer, is used as it is.
       if (readme && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: rename this folder, or connect it to that repository, then ask again`);
-      return found;
+      return mustBePrivate(found, { host, profile: !readme });
     }
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
     return createRepo({ host, owner: account, name: repoName, readme, run, api });
@@ -1727,6 +1749,8 @@ export function hostStep({
           throw new Error(joinMissLine({ host, wanted: join.name, found }));
         }
         [joined] = found;
+        // A public project is refused before this folder is checked out or the profile made.
+        mustBePrivate(joined, { host });
         answerRecord({ joined: joined.repo, found: true });
         halt();
       }
@@ -1743,8 +1767,13 @@ export function hostStep({
       // An app of their own on an organisation reaches only that organisation's repositories, never
       // the profile on the director's own account.
       const appReachesProfile = !narrowApp?.own || sameLogin(narrowApp.owner ?? projectOwner, user);
-      // An existing product's repository must hold a branch of its own before the state branch goes
-      // up, or the state branch would become its default (ruling R34).
+      // An existing product's repository must be private before anything of Wheelhouse's goes near
+      // it, and must hold a branch of its own before the state branch goes up, or the state branch
+      // would become its default (ruling R34).
+      if (made === null && joined === null) {
+        const existing = await repoInfo({ host, repo: projectRepo, run, api });
+        if (existing !== null) mustBePrivate(existing, { host });
+      }
       if (made === null && joined === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: urlFor({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
       // A joining computer's folder, checked out to the project in place, on its default branch.
       if (joined !== null) {
@@ -1762,6 +1791,7 @@ export function hostStep({
       });
       const project = await repoInfo({ host, repo: projectRepo, run, api });
       if (project === null) throw new Error(`${projectRepo} on ${NAME[host]} can't be found with your sign-in`);
+      mustBePrivate(project, { host });
       const profile = profileRemote();
       if (profile === null) throw new Error('The profile could not be read back after it was written');
       halt();

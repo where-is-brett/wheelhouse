@@ -212,7 +212,7 @@ async function world({
   // GitLab's API, reached as directorGitlabApi reaches it with glab's sign-in: the token only in the header.
   w.fetch = async (url, init = {}) => {
     w.api.push({ url, auth: init.headers?.Authorization ?? null });
-    const body = url.endsWith(`/projects/${encodeURIComponent(REPO)}`) ? { id: 41, path_with_namespace: REPO, default_branch: defaultBranch } : null;
+    const body = url.endsWith(`/projects/${encodeURIComponent(REPO)}`) ? { id: 41, path_with_namespace: REPO, default_branch: defaultBranch, visibility: 'private' } : null;
     return { status: body ? 200 : 404, text: async () => JSON.stringify(body) };
   };
   w.status = async () => ({ available: true, on: w.protection.length > 0, line: 'read' });

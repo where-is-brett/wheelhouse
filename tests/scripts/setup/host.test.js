@@ -14,7 +14,7 @@ import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation, CERTIFICATE_GIVEN,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, notPrivate,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
 import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
@@ -110,7 +110,7 @@ function standIn(state = {}) {
     if (args[0] === 'api' && args[1].startsWith('repos/')) {
       const repo = args[1].slice('repos/'.length);
       const found = w.repos[repo];
-      return found ? answer(JSON.stringify({ full_name: repo, id: found.id, default_branch: 'main' })) : answer('', 1, 'gh: Not Found (HTTP 404)');
+      return found ? answer(JSON.stringify({ full_name: repo, id: found.id, default_branch: 'main', private: 'private' in found ? found.private : true, ...('visibility' in found ? { visibility: found.visibility } : {}) })) : answer('', 1, 'gh: Not Found (HTTP 404)');
     }
     if (args[0] === 'api' && args[1].startsWith('apps/')) {
       const app = w.apps?.[args[1].slice('apps/'.length)];
@@ -132,7 +132,7 @@ function standIn(state = {}) {
       if (p.startsWith('/groups?')) return { status: 200, body: (w.groups ?? []).map((full_path) => ({ full_path })) };
       const key = decodeURIComponent(p.replace(/^\/projects\//, ''));
       const [repo, found] = Object.entries(w.repos).find(([r, v]) => r === key || String(v.id) === key) ?? [];
-      return found ? { status: 200, body: { id: found.id, path_with_namespace: repo, default_branch: 'main' } } : { status: 404, body: null };
+      return found ? { status: 200, body: { id: found.id, path_with_namespace: repo, default_branch: 'main', visibility: found.visibility ?? 'private' } } : { status: 404, body: null };
     },
     async post(p, body) {
       w.calls.push({ api: 'post', path: p, body });
@@ -1022,6 +1022,49 @@ test('an existing product whose repository is empty is refused before its state 
     await g(work, 'push', '-q', w.hostUrl({ repo: `${USER}/empty` }), 'main');
     await applyStep(step, folder, planned.changes, { answers: planned.answers });
     assert.equal(await g(w.hostUrl({ repo: `${USER}/empty` }), 'symbolic-ref', 'HEAD'), 'refs/heads/main');
+  });
+});
+
+test('a repository the host does not say is private is refused before anything of Wheelhouse\'s goes near it (docs/research/self-hosting-2026-10.md)', async () => {
+  for (const [label, host, origin, seen] of [
+    ['a public GitHub repository', HOST_LABELS.github, `https://github.com/${USER}/open.git`, { private: false }],
+    ['a GitHub answer that says nothing of it', HOST_LABELS.github, `https://github.com/${USER}/open.git`, { private: null }],
+    ['an internal GitHub repository, which GitHub also calls private', HOST_LABELS.github, `https://github.com/${USER}/open.git`, { private: true, visibility: 'internal' }],
+    ['a public GitLab project', HOST_LABELS.gitlab, `https://gitlab.com/${USER}/open.git`, { visibility: 'public' }],
+    ['an internal GitLab project', HOST_LABELS.gitlab, `https://gitlab.com/${USER}/open.git`, { visibility: 'internal' }],
+  ]) {
+    await withHome(async () => {
+      const w = standIn();
+      Object.assign(await w.add(`${USER}/open`), seen);
+      const folder = productFolder('open');
+      await withOrigin(folder, origin);
+      const step = stepFor(w);
+      const way = host === HOST_LABELS.gitlab ? WAYS.narrow : WAYS.quick;
+      const planned = await answerAll(step, ctxFor(folder), choose({ host, way }));
+      const hostName = host === HOST_LABELS.gitlab ? 'gitlab' : 'github';
+      await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }),
+        (error) => error.message === notPrivate({ host: hostName, repo: `${USER}/open` }), label);
+      assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), [], `${label}: nothing was made`);
+      assert.equal((await realRun('git', ['ls-remote', '--heads', w.hostUrl({ repo: `${USER}/open` }), 'wheelhouse-state'])).stdout, '', `${label}: no state branch`);
+      assert.equal(readProject(slugFor(`${USER}/open`)), null, `${label}: no record`);
+    });
+  }
+  assert.match(notPrivate({ host: 'github', repo: `${USER}/open` }), /^a-director\/open on GitHub is not private, .* a public project can't use Wheelhouse yet$/);
+});
+
+test('a profile repository that is not private is refused, and nothing is written to it', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    await w.add(`${USER}/shop`);
+    Object.assign(await w.add(`${USER}/${PROFILE_REPO}`, { readme: false }), { private: false });
+    const folder = productFolder('shop');
+    await withOrigin(folder, `https://github.com/${USER}/shop.git`);
+    const step = stepFor(w);
+    const planned = await answerAll(step, ctxFor(folder), choose());
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }),
+      (error) => error.message === notPrivate({ host: 'github', repo: `${USER}/${PROFILE_REPO}`, profile: true }));
+    assert.equal(profileRemote(), null);
+    assert.equal((await realRun('git', ['ls-remote', '--heads', w.hostUrl({ repo: `${USER}/shop` }), 'wheelhouse-state'])).stdout, '');
   });
 });
 
@@ -2157,6 +2200,24 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(repoNamed(' cafe-co/Cafe-Menu.git '), 'cafe-co/Cafe-Menu');
     assert.equal(repoNamed('Cafe-Menu'), 'Cafe-Menu');
     for (const bad of ['', 'a b', '../x', 'o/..', 'https://github.com/o/x']) assert.equal(repoNamed(bad), null, bad);
+  });
+});
+
+test('a second computer joining a project that is not private is refused before its folder is checked out or the profile joined', async () => {
+  await withHome(async () => {
+    const w = standIn({ memberships: [{ state: 'active', role: 'member', organization: { login: 'cafe-co' } }] });
+    await w.add(`${USER}/${PROFILE_REPO}`, { readme: false });
+    await seedProject(w, 'cafe-co/Cafe-Menu');
+    w.repos['cafe-co/Cafe-Menu'].private = false;
+    const step = stepFor(w);
+    const folder = emptyFolder();
+    const planned = await answerJoin(step, ctxFor(folder), joining());
+    const run = startRun({ folder, now: () => NOW });
+    await assert.rejects(applyIn(step, folder, run.id, planned.changes, { answers: planned.answers }),
+      (error) => error.message === notPrivate({ host: 'github', repo: 'cafe-co/Cafe-Menu' }));
+    assert.equal(fs.existsSync(path.join(folder, '.git')), false, 'the folder is not checked out');
+    assert.equal(profileRemote(), null, 'the profile is not joined');
+    assert.equal(fs.existsSync(path.join(stateDir(slugFor('cafe-co/Cafe-Menu')), '.git')), false);
   });
 });
 

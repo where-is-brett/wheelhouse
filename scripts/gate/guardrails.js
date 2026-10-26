@@ -67,6 +67,15 @@ import { AGENTS } from '../agents/names.js';
 // agent (scripts/lib/agent-control.js), in any project.
 export const GUARDRAILS = ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL];
 export const CI_FILES = ['.github/workflows/**', '.github/actions/**', '.gitlab-ci.yml', '.gitlab/**'];
+// A project that is itself a Claude Code plugin (its default branch holds .claude-plugin/plugin.json,
+// as Wheelhouse's own repository does) ships these files to every session that installs it: its
+// manifest and marketplace, hooks, skills, agents, commands, output styles and language servers. A
+// change to one steers agents once released, so it is a guardrail there, needing the director and an
+// independent review (docs/research/self-hosting-2026-10.md). Builders still write them: they are
+// the product's own source, so they are not on the tool guard's list (agent-control.js). Elsewhere
+// they are ordinary folders (a web app's `hooks/`), so the list applies only to a plugin.
+export const PLUGIN_PARTS = Object.freeze(['.claude-plugin/**', 'hooks/**', 'skills/**', 'agents/**', 'commands/**', 'output-styles/**', '.lsp.json']);
+export const PLUGIN_MANIFEST = '.claude-plugin/plugin.json';
 
 const UNREADABLE = 'The project\'s Wheelhouse configuration can\'t be read';
 
@@ -162,6 +171,9 @@ export function readConfig(text) {
     throw new Error(UNREADABLE);
   }
   if (!shapeOk(parsed)) throw new Error(UNREADABLE);
+  // Whether the project is a plugin is read by the helper from the default branch's tree, never
+  // from this file, so the file can't say it isn't one.
+  delete parsed.plugin;
   return withDefaults(parsed);
 }
 
@@ -169,9 +181,12 @@ export function readConfig(text) {
 // the real one, and a false match only fails closed.
 const matchesAny = (patterns, file) => patterns.some((p) => matchGlob(p, file, { ignoreCase: true }));
 
+// `config.plugin` is true when the default branch is a Claude Code plugin's (the helper sets it), and
+// adds its parts to the guardrails.
 export function classifyChange({ paths, config }) {
   const patterns = [
     ...GUARDRAILS, ...CI_FILES, ...config.ciFiles, ...config.criticalAreas.flatMap((a) => a.checks),
+    ...(config.plugin === true ? PLUGIN_PARTS : []),
   ];
   const guardrailPaths = paths.filter((file) => matchesAny(patterns, file));
   const criticalAreas = config.criticalAreas
