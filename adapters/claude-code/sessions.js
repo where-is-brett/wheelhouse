@@ -4,7 +4,7 @@
 // project's adapter for these calls; this is the Claude Code adapter's answer. It imports no module that
 // reaches the hook kit or the waker, so the waker and the registry can both load it without a cycle.
 import { DEFAULT_SESSION_MODE, SESSION_MODES, isModelName } from '../../scripts/gate/guardrails.js';
-import { invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
+import { FOREGROUND_ONLY, invocation, isClaudeSignIn, resolveClaude, withoutHostVariables } from '../../scripts/lib/claude.js';
 import { PLUGIN_ROOT, foremanTools } from '../../scripts/foreman/tools.js';
 import { EFFORTS } from '../../scripts/routing/thoroughness.js';
 
@@ -73,6 +73,7 @@ export function sessionEnv(env) {
 //   - the foreman's long session (`long: true`), with the prompt first and no -p, its own `settings` file,
 //     and --allowedTools always given (by default the foreman's own tools for `pluginRoot`).
 // `model`, `effort` and `fallback` are the foreman's from the column in force, when given (effortArgs).
+// Its environment is sessionEnv's, with the role and FOREGROUND_ONLY, as a feature session's is.
 // Returns { file, args, env, input, verbatim }.
 export function foremanCall({
   config, pluginRoot = PLUGIN_ROOT, prompt, platform = process.platform, env = process.env, claude = null, tools = null, settings = null, long = false,
@@ -92,7 +93,7 @@ export function foremanCall({
   // In the long session the prompt goes first: --allowedTools takes every word after it.
   const resolved = claude ?? resolveClaude(long ? { platform, env } : { env });
   const call = long ? invocation(resolved, [prompt], args) : invocation(resolved, [], args, prompt);
-  return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman' } };
+  return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman', ...FOREGROUND_ONLY } };
 }
 
 // Whether a foreman session can be started under `config`: throws, in plain words, when its mode is bypass or
@@ -127,7 +128,7 @@ function featureCall({
     ...(allowed.length > 0 ? ['--allowedTools', ...allowed] : []),
   ];
   const call = invocation(claude ?? resolveClaude({ platform, env }), [], args, prompt);
-  return { ...call, env: sessionEnv(env) };
+  return { ...call, env: { ...sessionEnv(env), ...FOREGROUND_ONLY } };
 }
 
 // A new feature session, which takes `sessionId` as its own. Returns { file, args, env, input, verbatim }.
