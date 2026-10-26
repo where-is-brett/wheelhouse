@@ -49,7 +49,14 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
    - **A change to what an approved brief or design builds, or a pause:** write the changed document in place, in the one file the work names (for a pause, the change says to pause), and replace its approval line (whatever line says the director approved it) with one that stays true after the click: "Changed since the director's approval; the change card decides it." The approved text stays in git at the hash the approval names. Then `cli.js record amendment` (the work, the change and `readBack`: `doing`, `notDoing` and `doneWhen`, each one line; it refuses an amendment without them, works out the changed document's hash and prints it, and prints `say`) and ask an `amend` card naming that hash; its meanwhile says the build keeps to the approved design until the click. Put `say` first in your reply, word for word: it is the route line and the read-back.
    - **An order ("do that one first"):** `cli.js record work`, re-stating the work with its `place`. Naming the same document leaves its approval standing.
    - **A ruling:** `cli.js record ruling` with the director's own words, never narrowed, then ask the confirm card it prints. A rule found at setup (`cli.js views survey` lists them) is followed as it stands; when one first matters to a decision, record it as a ruling with its words and source, and ask its confirm card.
-4. **Bug.** Write the report down as given and `cli.js record work` in the `bug` lane naming it, with `visible: false`. If users would see the fix, `visible: true` and ask an `approve-work` card (lane `bug`, the hash, `shownFirst: true`). The bug session reproduces it before any fix; you neither hunt for the cause nor start brainstorming.
+4. **Bug.** You neither hunt for the cause nor start brainstorming: the bug session reproduces it before any fix. Everything you need is here; never look in Wheelhouse's own files for it.
+   1. **Write the report down as given** with your file tool, at `.wheelhouse/work/<id>.md` in the project, where `<id>` is a short slug you choose for the work (lower-case letters, digits and hyphens, at most 40), such as `video-length`. Git leaves `.wheelhouse/` out. The report holds what was reported, in the reporter's words, what should happen instead, and who reported it and when. Nothing about the cause.
+   2. **Record it.** `front-desk.json` holding, with your id and a one-line title:
+      ```
+      {"id": "video-length", "title": "A 65-second clip shows as 1:5 on its card", "lane": "bug", "visible": false, "dependsOn": [], "doc": ".wheelhouse/work/video-length.md"}
+      ```
+      then `cli.js record work < "<your scratchpad>/front-desk.json"`. Every field there is needed but `doc`, which this route always gives. `record` prints the report's `hash`.
+   3. **If users would see the fix,** record it with `"visible": true` instead, then ask an `approve-work` card: `kind` `approve-work`, `target` `{"work": "<id>", "lane": "bug", "hash": "<the hash record printed>", "shownFirst": true}`.
    - **The cause is bigger than one step:** the session reports `partial` and the work "joins the queue as a small change". Once the director picks that on the foreman's card (route 2), `cli.js record work` in the `small` lane for the same id, naming its report, and ask an `approve-work` card (lane `small`, with `shownFirst`). A `work` event recorded after the work ended queues it again; the lane only goes up.
 5. **Question.** Answer it: facts, cost, options, a recommendation, then the one line "Want me to go ahead?", as it stands. Nothing is built on a musing. If the answer shows a bug, that is route 4.
 6. **Runbook.** A runbook step the director clicks (a `runbook` card naming the step). Never ask for a secret, and never take one pasted into chat.
@@ -73,6 +80,7 @@ A change users would see that leaves a choice to make is the small lane at least
 |---|---|
 | "It's approved; brainstorming says invoke writing-plans" | A `work` event in the queue. No plan here |
 | "The bug is obvious; let me look at the code" | Route 4. The bug session reproduces it first |
+| "Where does this go, or what does `record` take? Let me look in Wheelhouse's own files" | The route says the place and the command. Where it doesn't, tell the director what is missing; the hook refuses a read of Wheelhouse's files anyway |
 | "They typed yes, so it's approved" | Ask the card. Only the click counts |
 | "They said approve, so it's route 2" | Route 2 is only for a waiting `question`; carry on the route in hand |
 | "It matches running work, so I'll just add the detail" | A change to what it builds is route 3: read back, an `amend` card |

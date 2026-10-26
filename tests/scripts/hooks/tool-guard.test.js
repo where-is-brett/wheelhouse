@@ -141,7 +141,45 @@ test('writes to ~/.claude, the plugin and settings.local.json are refused; reads
       }
       assert.ok(denied(await run(base, home, call(main, 'NotebookEdit', { notebook_path: path.join(home, '.claude', 'x.ipynb') }))));
       assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(home, '.claude', 'settings.json') })), undefined);
-      assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(PLUGIN, 'hooks', 'hooks.json') })), undefined);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  });
+});
+
+// Scenario 27's route leg: a front desk once grepped the plugin's own command to learn where a bug's
+// report goes. An agent runs the plugin's scripts with node, as its playbook names them, and reads none.
+test('an agent runs the plugin\'s scripts with node but reads none of its files, by a file tool or the shell', async () => {
+  const cli = path.join(PLUGIN, 'scripts', 'frontdesk', 'cli.js');
+  await withHome(async (home) => {
+    const { base, main } = makeProject();
+    try {
+      const why = (out) => out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      for (const input of [
+        call(main, 'Read', { file_path: cli }),
+        call(main, 'Read', { file_path: path.join(PLUGIN, 'hooks', 'hooks.json') }),
+        call(main, 'Grep', { pattern: 'doc', path: path.join(PLUGIN, 'scripts') }),
+        call(main, 'Glob', { pattern: '**/*.js', path: PLUGIN }),
+        call(main, 'Glob', { pattern: `${PLUGIN}/scripts/**/*.js` }),
+        call(main, 'Bash', { command: `cd "${path.join(PLUGIN, 'scripts', 'frontdesk')}"; ls; grep -rn "doc" *.js` }),
+        call(main, 'Bash', { command: `grep -rn "brief" "${path.join(PLUGIN, 'scripts', 'frontdesk')}/"*.js | head -30` }),
+        call(main, 'Bash', { command: `cat ${cli}` }),
+        call(main, 'Bash', { command: `node "${cli}" views work; sed -n 1,40p "${cli}"` }),
+        call(main, 'Bash', { command: `rg --glob=x ${PLUGIN}` }),
+        call(main, 'Bash', { command: `find . --root=${PLUGIN}` }),
+      ]) {
+        const out = await run(base, home, input);
+        assert.ok(denied(out), JSON.stringify(input.tool_input));
+        assert.match(why(out), /your playbook names each command/);
+      }
+      // Its commands run as every playbook gives them: the script node runs, with a file for input.
+      for (const command of [
+        `node --no-use-system-ca "${cli}" similar "A 65-second clip shows as 1:5."`,
+        `node "${cli}" record work < ".wheelhouse/front-desk.json"`,
+        `node "${cli}" views work 2>/dev/null`,
+        `& node "${cli}" cards`,
+      ]) assert.equal(await run(base, home, call(main, 'Bash', { command })), undefined, command);
+      // The project's own files and ~/.claude stay readable.
+      assert.equal(await run(base, home, call(main, 'Read', { file_path: path.join(main, 'src.txt') })), undefined);
+      assert.equal(await run(base, home, call(main, 'Bash', { command: 'grep -rn "doc" .' })), undefined);
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   });
 });
