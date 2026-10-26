@@ -34,7 +34,9 @@ const nothing = async () => { throw new Error('nothing is run here'); };
 const noApp = path.join(os.tmpdir(), 'wh-no-such-app.json');
 const git = async () => ({ ok: true, path: 'git' });
 // The stand-in world's tools and allow rule are a Mac's, and setup fetches gh for macOS and Windows only, so on
-// Linux and Windows (CI's runners) step 2 runs as on a Mac; Windows' own step 2 is tried in tools.test.js.
+// Linux and Windows (CI's runners) step 2 runs as on a Mac; Windows' own step 2 is tried in tools.test.js. Step 3
+// does too: the stand-in host serves Quick only, which the one card recommends on a Mac (design section 15.1), and
+// a narrow way elsewhere is tried in host.test.js.
 const asMac = (step) => (process.platform === 'darwin' ? step : {
   ...step,
   plan: (ctx, ...rest) => step.plan({ ...ctx, platform: 'darwin' }, ...rest),
@@ -44,10 +46,10 @@ const asMac = (step) => (process.platform === 'darwin' ? step : {
 const MAKE = {
   1: () => installStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
   2: () => asMac(toolsStep({ run: world().toolsRun, fetch: world().fetch, env: {} })),
-  3: () => hostStep({
+  3: () => asMac(hostStep({
     run: world().run, fetch: nothing, appFile: noApp, hostUrl: world().hostUrl, findGit: git, gitlab: nothing,
     open: async () => {}, sleep: async () => {},
-  }),
+  })),
   4: () => questionsStep(),
   5: () => rulesStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
   6: () => computerStep({ run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
