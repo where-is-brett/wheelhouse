@@ -60,12 +60,11 @@ function effortArgs({ effort, fallback }) {
 // every spelling of WHEELHOUSE_ROLE taken out, but for Claude Code's sign-in
 // variables (scripts/lib/claude.js), spelt exactly, so a session signs in as the
 // one that started the watcher or the foreman did: CLAUDE_CODE_USE_BEDROCK,
-// CLAUDE_CODE_OAUTH_TOKEN and the like start "CLAUDE", as the host session's do. Then FOREGROUND_ONLY, over
-// anything the host set: every subagent is waited for.
+// CLAUDE_CODE_OAUTH_TOKEN and the like start "CLAUDE", as the host session's do.
 export function sessionEnv(env) {
   const kept = Object.entries(env).filter(([name]) => isClaudeSignIn(name));
   const rest = Object.entries(withoutHostVariables(env)).filter(([name]) => name.toUpperCase() !== ROLE_VARIABLE);
-  return { ...Object.fromEntries([...rest, ...kept]), ...FOREGROUND_ONLY };
+  return Object.fromEntries([...rest, ...kept]);
 }
 
 // The foreman's session. Two kinds:
@@ -74,6 +73,7 @@ export function sessionEnv(env) {
 //   - the foreman's long session (`long: true`), with the prompt first and no -p, its own `settings` file,
 //     and --allowedTools always given (by default the foreman's own tools for `pluginRoot`).
 // `model`, `effort` and `fallback` are the foreman's from the column in force, when given (effortArgs).
+// Its environment is sessionEnv's, with the role and FOREGROUND_ONLY, as a feature session's is.
 // Returns { file, args, env, input, verbatim }.
 export function foremanCall({
   config, pluginRoot = PLUGIN_ROOT, prompt, platform = process.platform, env = process.env, claude = null, tools = null, settings = null, long = false,
@@ -93,7 +93,7 @@ export function foremanCall({
   // In the long session the prompt goes first: --allowedTools takes every word after it.
   const resolved = claude ?? resolveClaude(long ? { platform, env } : { env });
   const call = long ? invocation(resolved, [prompt], args) : invocation(resolved, [], args, prompt);
-  return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman' } };
+  return { ...call, env: { ...sessionEnv(env), [ROLE_VARIABLE]: 'foreman', ...FOREGROUND_ONLY } };
 }
 
 // Whether a foreman session can be started under `config`: throws, in plain words, when its mode is bypass or
@@ -128,7 +128,7 @@ function featureCall({
     ...(allowed.length > 0 ? ['--allowedTools', ...allowed] : []),
   ];
   const call = invocation(claude ?? resolveClaude({ platform, env }), [], args, prompt);
-  return { ...call, env: sessionEnv(env) };
+  return { ...call, env: { ...sessionEnv(env), ...FOREGROUND_ONLY } };
 }
 
 // A new feature session, which takes `sessionId` as its own. Returns { file, args, env, input, verbatim }.
