@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { FOREGROUND_ONLY } from '../../../scripts/lib/claude.js';
 import { REPO_ROOT, callsOf, commitCalls, mergeCalls, repositoryReadable, reportBlock, reviewerRuns, rulingLines, setUpFeature, subagentRuns } from '../../../scripts/eval/feature-project.js';
 import { importClosure } from '../../../scripts/eval/front-desk.js';
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
@@ -157,6 +158,18 @@ test('a feature\'s set-up names what its sandbox must read and write: the reposi
     const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: project.dir, encoding: 'utf8' }).trim();
     assert.deepEqual(context.writable, [fs.realpathSync(common)]);
     assert.equal(fs.realpathSync(common), fs.realpathSync(path.join(context.main, '.git')));
+  } finally {
+    await context.close();
+    await project.cleanup();
+  }
+});
+
+test('a feature\'s session in the evaluation runs its subagents in the foreground, as the waker starts one (FOREGROUND_ONLY)', async () => {
+  const project = await makeScratchProject({ name: 'feature-foreground' });
+  const context = await setUpFeature(project.dir, { work: 'x', lane: 'small', goal: 'g', done: ['d'], brief: 'wheelhouse' });
+  try {
+    for (const [name, value] of Object.entries(FOREGROUND_ONLY)) assert.equal(context.env[name], value, name);
+    assert.equal(context.env.WHEELHOUSE_HOME, context.home);
   } finally {
     await context.close();
     await project.cleanup();

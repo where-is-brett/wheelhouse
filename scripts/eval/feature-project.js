@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renderBrief } from '../feature/brief.js';
 import { ATTRIBUTION_OFF } from '../protection/settings.js';
+import { FOREGROUND_ONLY } from '../lib/claude.js';
 import { helperAddress } from '../lib/paths.js';
 import { locateSuperpowers } from './harness.js';
 import { startStandInHelper } from './stand-in-helper.js';
@@ -153,7 +154,7 @@ export async function setUpFeature(dir, {
     // What the run's record keeps beside the events: the helper's records and the feature files.
     const evidence = () => ({ helper: helper.records(), questions: questionsIn(dir), ledger: ledgerLines(dir) });
     return {
-      session: 'feature', env: { WHEELHOUSE_HOME: home }, pluginDirs, helper, home, main, readable: repositoryReadable(), unreadable: [helper.keyFolder], writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
+      session: 'feature', env: { WHEELHOUSE_HOME: home, ...FOREGROUND_ONLY }, pluginDirs, helper, home, main, readable: repositoryReadable(), unreadable: [helper.keyFolder], writable: [fs.realpathSync(path.join(main, '.git'))], evidence, close,
     };
   } catch (error) {
     await close();
