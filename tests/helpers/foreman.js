@@ -114,7 +114,9 @@ export function fakeClient({ views = emptyViews(), cfg = config(), answers = {} 
     state: {
       views: async () => ({ ok: true, views: structuredClone(views) }),
       write: async ({ project: p, kind, data, id }) => {
-        writes.push({ project: p, kind, data, id, handledFirst: readHandled(P, { now: () => new Date(T0 + 1000 * tick) }).has(id) });
+        // Read at the tests' own time, which the commands record at: by the real clock, entries
+        // recorded at T0 fall out of the watcher's look-back once T0 is a week past.
+        writes.push({ project: p, kind, data, id, handledFirst: readHandled(P, { now: () => new Date(T0) }).has(id) });
         lay(kind, data, id);
         putInState({ ...makeEvent({ kind, data, now: () => new Date(T0 + 1000 * tick) }), id });
         return { ok: true, id, pushed: true };
