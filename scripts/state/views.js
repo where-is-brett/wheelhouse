@@ -10,6 +10,7 @@ import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, WHY } from '../lib/calm-words.js';
+import { premiumState } from '../routing/premium.js';
 
 const byOrder = (a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const isPlainKey = (k) => typeof k === 'string' && k !== '';
@@ -468,12 +469,17 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const accepted = (kind) => {
     const out = {};
     const all = sorted.filter((e) => e.kind === kind && isPlainKey(e.data?.key));
-    const accepts = (e) => confirmed.has(e.id) || countsAtOnce(e);
+    // The premium model is allowed only by a click on its own card (design section 14.6), whose setting names that card:
+    // a premium setting that allows it and names none counts for nothing, however it was confirmed.
+    const ownCard = (e) => kind !== 'setting' || e.data.key !== 'premium' || e.data.value === 'off' || typeof e.data.premiumCard === 'string';
+    const accepts = (e) => (confirmed.has(e.id) || countsAtOnce(e)) && ownCard(e);
     for (const e of all) {
       if (!accepts(e)) continue;
       const entry = { key: e.data.key, id: e.id, at: e.at, value: e.data.value };
       // A setting a usage card's pick made says which offer (its time), so a return card is for that switch alone.
       if (kind === 'setting' && typeof e.data.usageCard === 'string') entry.usageCard = e.data.usageCard;
+      // And one the premium model's card made says which offer, so its check is for that Yes alone.
+      if (kind === 'setting' && typeof e.data.premiumCard === 'string') entry.premiumCard = e.data.premiumCard;
       if (kind === 'setting') {
         // A setting may end on its own (until) and remembers the accepted value it replaced.
         const prior = out[e.data.key];
@@ -495,7 +501,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
       out[e.data.key] = entry;
     }
     for (const e of all) {
-      if (accepts(e)) continue;
+      if (accepts(e) || !ownCard(e)) continue;
       const kept = out[e.data.key];
       if (!kept || byOrder(kept, e) < 0) unconfirmed.push({ kind, id: e.id, at: e.at, key: e.data.key, data: e.data });
     }
@@ -606,6 +612,10 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
   const usageCards = sorted.filter((e) => e.kind === 'usage-card' && isPlainObject(e.data) && verify(e, enrolled))
     .map((e) => ({ id: e.id, ...e.data }));
 
+  // The premium model's opt-in (design section 14.6): the setting in force, the helper's check for it, and whether the
+  // account is known not to have it (scripts/routing/premium.js).
+  const premium = premiumState({ setting: settings.premium, events: sorted, signed: (e) => verify(e, enrolled) });
+
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
 
@@ -633,6 +643,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     survey,
     columnsReady,
     usageCards,
+    premium,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,

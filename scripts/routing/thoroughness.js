@@ -46,6 +46,9 @@ const PREMIUM_ROLES = Object.freeze(['feature', 'builderCritical']);
 // A role with no other model to fall back on, or none different from its own, has no fallback.
 const fallbackFor = (role, model, other) => (role === 'reviewerCritical' || other === undefined || other === null || other === model ? null : other);
 
+// The board's one line while the premium model is in use (design section 14.6).
+export const PREMIUM_IN_USE = 'Premium model in use for design and risky work.';
+
 // What each role runs on at a level. `config` is a read configuration (readConfig), `ready` the levels (and `premium`)
 // whose models have passed the evaluation, `premium` the premium setting and `billing` what is known of how the
 // premium model is paid for. A level that can't be used runs at Balanced, with a line saying so.
@@ -95,6 +98,7 @@ export function resolveRouting({ config, level, ready = [], premium = 'off', bil
   if (premiumWanted) {
     if (premium === 'paid-too' || billing === 'within-plan') {
       for (const role of PREMIUM_ROLES) roles[role] = { model: pins.premium, effort: 'high', fallback: fallbackFor(role, pins.premium, pins.mostCapable) };
+      lines.push(PREMIUM_IN_USE);
     } else lines.push('Premium model not used: it might have been paid from credits.');
   }
   return { level: chosen, roles, extra: EXTRA[chosen], lines };

@@ -20,7 +20,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 
 ## The command
 
-The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work` or `survey`), `explain <term>`, `review`, `preview <n>`, `carry-on <n>`, `archive`, `restore`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
+The Wheelhouse command the session start named, then `<command>`: `cards`, `card`, `again <n>`, `why <n>`, `suggest <card id> <work id> <the change>`, `record <kind>`, `similar "<the request's words>"`, `views <name>` (`rulebook`, `waiting`, `ideas`, `glossary`, `settings`, `levels`, `work` or `survey`), `explain <term>`, `review`, `preview <n>`, `carry-on <n>`, `archive`, `restore`, `premium-card`, `premium-check`. Type the command exactly as the session start gave it, with nothing after `<command>` but its arguments or the `<` input that `card` and `record` take; one command per call. In the examples below, `<the Wheelhouse command>` stands for it.
 
 `card` and `record` read their JSON from a file, never a heredoc or a pipe, which Claude Code asks about each time. Write the JSON with the Write tool to `front-desk.json` in your scratchpad folder (the temporary folder your system prompt names: you write there without being asked, and it is outside the project, so nothing reaches git), then give its full path as the command's input. When a command is refused and its input needs correcting, write the file again with the Write tool, never `sed` or another shell edit. A ruling, `front-desk.json` holding:
 
@@ -74,6 +74,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 - **A chat pick of Suggest a change…:** Ask "What would you change?" in one line, then do as for the pane's suggestion.
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
 - **Talk it through:** one question at a time.
+- **The premium model** (Claude's largest model, for design and risky work at Thorough only): when the director asks for it, or presses Change… on its row, run `premium-card`. When it prints a card, ask it exactly as given, as a question of its own; when it prints a sentence instead, say it. Never offer the premium model any other way, never at another level, and never `record setting` for it, except to set it back to off. After a click on one of its Allow options, run `premium-check` and say its one line. You never run on it yourself.
 
 ## Carrying work on, and archiving another setup's instructions
 

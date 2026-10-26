@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -77,6 +77,12 @@ const INPUTS = {
     options: [{ label: 'Switch to Lean until it resets', says: 'Thoroughness changes to Lean until your allowance resets.' }, { label: 'Stay on Balanced', says: 'Thoroughness stays on Balanced.' }],
     target: { to: 'lean', at: USAGE_AT },
   },
+  premium: {
+    ...common, level: 4, checks: 'Every check still runs.', recommend: 'Allow it within my plan', kind: 'premium', ask: 'Allow the premium model at Thorough?',
+    what: 'Claude has a larger model than the one Wheelhouse uses now.',
+    options: [{ label: 'Allow it within my plan', says: 'It is used within your plan.' }, { label: 'Allow it, paid credits too', says: 'It may be paid from your usage credits.' }, { label: 'Not now', says: 'Nothing changes.' }],
+    target: { at: USAGE_AT },
+  },
 };
 const LINES = {
   approval: approvalLine(7, FULL),
@@ -97,6 +103,7 @@ const LINES = {
   question: null,
   'keep-control-files': keepControlLine('export-csv', DOC),
   usage: usageLine('lean', USAGE_AT),
+  premium: premiumLine(USAGE_AT),
 };
 const input = (kind, over = {}) => ({ ...INPUTS[kind], ...over });
 const refused = (over, pattern, kind = 'approval') => assert.throws(() => composeCard(input(kind, over)), pattern);
@@ -128,7 +135,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage', 'premium']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -193,6 +200,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     'incident-fix': 'Merge this fix?',
     'keep-control-files': 'Keep these files as they are?',
     usage: 'Switch to Lean until it resets?',
+    premium: 'Allow the premium model at Thorough?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));
@@ -795,4 +803,19 @@ test('a usage card offers its switch and its stay option, then Suggest a change�
   refused({ target: { to: 'premium', at: USAGE_AT } }, /needs the Thoroughness level its switch sets/, 'usage');
   refused({ target: { to: 'lean', at: '26 October 2026' } }, /needs the Thoroughness level its switch sets/, 'usage');
   refused({ target: undefined }, /target is needed/, 'usage');
+});
+
+test('the premium model\'s card offers its Allow options, then Not now and Suggest a change…, with its line and no reply code', () => {
+  const { question, card } = composeCard(input('premium'));
+  assert.deepEqual(card.options, ['Allow it within my plan', 'Allow it, paid credits too', 'Not now', 'Suggest a change…']);
+  assert.equal(card.header, 'Premium');
+  assert.equal(lines(question.question).at(-1), premiumLine(USAGE_AT));
+  assert.equal(card.code, null);
+  const [within, paid, later] = INPUTS.premium.options;
+  refused({ options: [within] }, /must be its Allow options, then Not now/, 'premium');
+  refused({ options: [within, paid] }, /must be its Allow options, then Not now/, 'premium');
+  refused({ options: [later, within] }, /must be its Allow options, then Not now/, 'premium');
+  refused({ options: [{ label: 'Show me', says: 'Shows it.' }, later] }, /must be its Allow options, then Not now/, 'premium');
+  refused({ level: 3, checks: undefined }, /premium/, 'premium');
+  refused({ target: { at: '26 October 2026' } }, /needs the time the card was offered/, 'premium');
 });
