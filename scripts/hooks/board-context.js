@@ -59,7 +59,7 @@ import { readProfileViews } from '../profile/store.js';
 import { sessionRole, recordRole } from '../lib/role.js';
 import { cardsLineFor } from '../agents/card-words.js';
 import { existingCard } from '../cards/visit.js';
-import { controlFilesDue, gateAsksDue, holdsDue } from '../cards/build-loop.js';
+import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
 import { questionProblem } from '../cards/compose.js';
 import { answerLine, confirmLine } from '../state/card-lines.js';
 import { listEvents } from '../state/events.js';
@@ -240,7 +240,7 @@ export function cardsDue(views, at) {
       && questionProblem(entry.question?.data) === null).length;
   const gate = gateAsksDue(views, at);
   for (const due of gate) if (due.again !== undefined) fresh.add(due.again);
-  const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length;
+  const made = gate.filter((due) => due.make).length + holdsDue(views).length + controlFilesDue(views).length + premiumFailuresDue(views).length;
   return Math.min(CARD.questions, fresh.size + questions + made);
 }
 

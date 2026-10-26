@@ -404,12 +404,28 @@ function hashOf(file) {
 }
 
 const LEVEL_WORDS = { lean: 'Lean', lightest: 'Lightest', premium: 'The premium model' };
+
+// After the premium model's run, or a readiness step that found it short: the helper reads the records itself and,
+// on a handled failure, records it once, which brings the director one card (design section 14.6). It informs:
+// what it says is printed, and a helper that can't be asked is said too, so the run is asked again later.
+async function reportPremiumFailure({ project, helper, print }) {
+  let answer;
+  try {
+    answer = await helper().premium.failed({ project });
+  } catch {
+    answer = null;
+  }
+  if (answer?.ok !== true) print(`The helper couldn't be asked whether the premium model's evaluation failed for ${project}: ${answer?.refused ?? 'it gave no answer'}. Run the readiness step again to tell the director.`);
+  else if (answer.recorded === true) print(`The premium model's evaluation failed for ${project}, so it stays off; the director gets one card saying so.`);
+}
 const pinWords = (pins) => (pins.premium ? `${pins.premium}, with ${pins.mostCapable} and ${pins.midSized}` : `${pins.mostCapable} and ${pins.midSized}`);
 
 // Whether the director's Yes allows the premium model's run for `project` (design section 14.6, "Two Yeses"): the
-// premium setting in force, as the helper reads it, allows paid credits, and the premium pin its own check found is the
-// one the shell names. Within the plan alone it never runs, since Wheelhouse can't tell beforehand whether a run would
-// be paid from credits. Throws in plain words otherwise, before anything starts.
+// premium setting in force, as the helper reads it, allows paid credits, the premium pin its own check found is the
+// one the shell names, the other two are the configuration's, and no failure of an earlier run under this Yes (one cut
+// short, say) is still to be recorded: the helper is asked to record any first. Within the plan alone it never runs,
+// since Wheelhouse can't tell beforehand whether a run would be paid from credits. Resolves with the Yes's id, which the
+// run record names; throws in plain words otherwise, before anything starts.
 async function premiumAllowed({ project, pins, helper }) {
   let answer;
   try {
@@ -423,17 +439,40 @@ async function premiumAllowed({ project, pins, helper }) {
       ? `The premium model is allowed for ${project} within the plan only, and Wheelhouse can't tell beforehand whether a run would be paid from credits, so nothing was run`
       : `The premium model isn't allowed for ${project}, so nothing was run`);
   }
+  if (answer.failed === true) throw new Error(`The premium model's evaluation failed for ${project} under the director's Yes, so nothing more is run on it until they allow it again`);
   if (answer.pin !== pins.premium) throw new Error(`The premium pin the director's Yes covers for ${project} is ${answer.pin ?? 'not set yet'}, not ${pins.premium}, so nothing was run`);
+  if (answer.pins?.mostCapable !== pins.mostCapable || answer.pins?.midSized !== pins.midSized) {
+    throw new Error(`The other two models in the shell aren't the ones ${project}'s configuration pins, so nothing was run`);
+  }
+  if (typeof answer.yes !== 'string' || answer.yes === '') throw new Error(`The helper didn't name the director's Yes for ${project}, so nothing was run`);
+  let earlier;
+  try {
+    earlier = await helper().premium.failed({ project });
+  } catch {
+    earlier = null;
+  }
+  if (earlier?.ok !== true) throw new Error(`The helper couldn't say whether an earlier run failed for ${project}, so nothing was run`);
+  if (earlier.recorded === true) throw new Error(`An earlier run of the premium model failed for ${project} under the director's Yes, so nothing more is run on it; the director gets one card saying so`);
+  return answer.yes;
 }
 
 // `--ready`: the bar's records for `level` on the pins from the shell (readiness), and, only on a full set, the
 // helper's record of the level ready for `project`. Resolves with 0 when the helper recorded it, else 1.
 async function readyStep({ level, project, home, print, env, helper }) {
   const pins = pinsFrom(env, level);
-  const found = readiness({ evals: path.join(home, '.wheelhouse-evals'), level, pins });
+  // The premium pass counts only the runs made under the director's Yes in force.
+  let yes = null;
+  if (level === PREMIUM_LEVEL) {
+    try {
+      const answer = await helper().premium.state({ project });
+      yes = typeof answer?.yes === 'string' ? answer.yes : null;
+    } catch { /* no Yes: no runs count */ }
+  }
+  const found = readiness({ evals: path.join(home, '.wheelhouse-evals'), level, pins, yes });
   if (!found.ok) {
     print(`${LEVEL_WORDS[level]} is not ready on ${pinWords(pins)}${found.commit ? ` at build ${found.commit}, the latest run` : ''}, so nothing was recorded:`);
     for (const gap of found.gaps) print(`  ${gap}`);
+    if (level === PREMIUM_LEVEL) await reportPremiumFailure({ project, helper, print });
     return 1;
   }
   const answer = await helper().state.columnReady({ project, column: level, pins, records: found.records });
@@ -478,8 +517,8 @@ export async function main(argv, {
   if (args.level !== undefined) {
     if (agent !== null && agent !== DEFAULT_AGENT) throw new Error(`A level's run is made on Claude Code, whose sessions take the column, not on ${agent}`);
     const pins = pinsFrom(env, args.level);
-    if (args.level === PREMIUM_LEVEL) await premiumAllowed({ project: args.project, pins, helper });
-    column = { level: args.level, pins, routing: levelRouting({ level: args.level, pins }) };
+    const yes = args.level === PREMIUM_LEVEL ? await premiumAllowed({ project: args.project, pins, helper }) : null;
+    column = { level: args.level, pins, routing: levelRouting({ level: args.level, pins }), ...(yes === null ? {} : { yes }) };
   }
   const startedAt = now();
   const date = today(startedAt);
@@ -577,7 +616,7 @@ export async function main(argv, {
     version,
     commit: commit === undefined ? await buildCommit() : commit,
     ...(agent !== null ? { agent } : {}),
-    ...(column !== null ? { level: column.level, pins: { ...column.pins } } : {}),
+    ...(column !== null ? { level: column.level, pins: { ...column.pins }, ...(column.yes ? { yes: column.yes } : {}) } : {}),
     runs: [...carried],
     ...(e2e !== undefined ? { e2e } : {}),
   };
@@ -608,9 +647,13 @@ export async function main(argv, {
   let failed = 0;
   let skipped = 0;
   let started = 0;
+  // The premium model's run stops at its first handled failure, so no more is spent on a model that won't pass.
+  let stopped = false;
   for (const job of jobs) {
+    if (stopped) break;
     const { scenario, suite, variant } = job;
     for (const trial of job.trials) {
+      if (stopped) break;
       // The sandbox does not run on native Windows (check 10): a scenario that needs it is not run
       // there, which is no failure and is never run again (ruling E30).
       if (scenario.needsSandbox === true && platform === 'win32') {
@@ -665,11 +708,16 @@ export async function main(argv, {
         ...(column !== null ? { level: column.level, pins: { ...column.pins }, sha256: hashOf(outcome.file) } : {}),
       });
       save();
+      if (column?.level === PREMIUM_LEVEL && outcome.pass !== true && outcome.handled !== false) {
+        print('  The premium model failed a trial, so its run stops here.');
+        stopped = true;
+      }
     }
   }
   record.finished = now().toISOString();
   save();
   print(`  run record: ${recordFile}`);
+  if (column?.level === PREMIUM_LEVEL && failed > 0) await reportPremiumFailure({ project: args.project, helper, print });
 
   if (args.all || args.again) {
     const summary = summarise(record, { root, e2eDir, designed });

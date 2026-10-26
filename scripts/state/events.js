@@ -19,7 +19,7 @@ export const PLAIN_KINDS = [
   'request', 'ruling', 'level', 'glossary', 'idea', 'rejection', 'card', 'card-answer',
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
-  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready',
+  'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -27,8 +27,9 @@ export const PLAIN_KINDS = [
 // `premium-card` is the helper's offer of the premium model's card (design section 14.6), signed the same way: a click on
 // one of its Allow options is the director's confirmation of the premium setting it names. So is `premium-check`, the
 // helper's own reading of what Claude Code's premium alias stands for after the director's Yes (/premium/check): the
-// premium pin is the model it names, so only a check this computer's helper signed counts.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check'];
+// premium pin is the model it names, so only a check this computer's helper signed counts. And `premium-failed`, the
+// helper's own reading that the premium model's evaluation failed for a Yes, which brings the director its card.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -281,7 +282,17 @@ const PLAIN_SHAPES = {
   // the alias named (`model`, or null when it named none), and whether that is a premium model the account has
   // (`found`: false when the alias named nothing, or named the most capable model, as it does on an account without one).
   'premium-check': { must: ['setting', 'model', 'found'], may: [] },
+  // The premium model's evaluation failed for a Yes (design section 14.6, "What the Yes starts"), as the helper read
+  // the evaluation's records itself: the premium setting the Yes made, the model it ran on, and the trials that failed
+  // (at most FAILED_NAMED, each a scenario and trial in plain words). It brings the director one card.
+  'premium-failed': { must: ['setting', 'model', 'failed'], may: [] },
+  // A premium wake was refused for a usage limit or billing (design section 14.6, "When it can't be used"), as the
+  // watcher read its output: why (`limit` or `billing`), when, until when the premium model rests, and the feature
+  // whose wake it was. Its wake runs again on the most capable model, and the board says so in one line meanwhile.
+  'premium-rest': { must: ['why', 'at', 'until'], may: ['work'] },
 };
+// The most trials a premium-failed record names.
+export const FAILED_NAMED = 10;
 // The columns a column-ready record may name, the pins it may carry, and the most records it lists.
 // The usage cards a usage-card record may name, and the Thoroughness levels it may carry.
 export const USAGE_CARDS = Object.freeze(['nudge', 'lightest', 'up', 'return']);
@@ -500,6 +511,16 @@ function checkPlain(kind, data) {
     if (data.model !== null && !isModelName(data.model)) bad('needs model to be a model name or null');
     if (typeof data.found !== 'boolean') bad('needs found to be true or false');
     if (data.found === true && data.model === null) bad('can\'t have found a model it doesn\'t name');
+  } else if (kind === 'premium-failed') {
+    if (typeof data.setting !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(data.setting)) bad('needs setting to be the id of the premium setting its Yes made');
+    if (!isModelName(data.model)) bad('needs model to be a model name');
+    if (!Array.isArray(data.failed) || data.failed.length === 0 || data.failed.length > FAILED_NAMED || !data.failed.every((f) => typeof f === 'string' && f !== '' && f.length <= 200)) {
+      bad(`needs failed to be a list of 1 to ${FAILED_NAMED} trials`);
+    }
+  } else if (kind === 'premium-rest') {
+    if (data.why !== 'limit' && data.why !== 'billing') bad('needs why to be limit or billing');
+    for (const k of ['at', 'until']) if (typeof data[k] !== 'string' || Number.isNaN(Date.parse(data[k]))) bad(`needs ${k} to be a time`);
+    if (data.work !== undefined && (typeof data.work !== 'string' || !/^[a-z0-9-]{1,40}$/.test(data.work))) bad('has a work that is not a work id');
   } else if (kind === 'column-ready') {
     if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
     const pins = data.pins;

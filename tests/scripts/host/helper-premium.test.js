@@ -234,15 +234,19 @@ test('a check Claude Code can\'t answer records nothing, and the Yes stands to b
 test('the premium model\'s pass is recorded only on the pin the helper\'s check found, and the configuration\'s counts for nothing', async () => {
   const c = await computer();
   try {
-    barRun(c.evals, { level: 'premium', pins: PREMIUM_PINS });
-    const { records } = readiness({ evals: c.evals, level: 'premium', pins: PREMIUM_PINS });
     await c.withHelper(async (client) => {
-      const early = await client.state.columnReady({ project: P, column: 'premium', pins: PREMIUM_PINS, records });
+      const early = await client.state.columnReady({ project: P, column: 'premium', pins: PREMIUM_PINS, records: ['2026-10-25/20-with-1.json'] });
       assert.match(early.refused, /no pin/);
       await atThorough(c, client);
       const question = cardOf((await client.premium.card({ project: P })).line);
       await click(c, client, question, ALLOW_PAID);
       await client.premium.check({ project: P });
+      // A full pass made under another Yes counts for nothing under this one.
+      barRun(c.evals, { level: 'premium', pins: PREMIUM_PINS, yes: '99999999-2222-4333-8444-555555555555', at: '2026-10-25T07:00:00.000Z' });
+      const yes = (await c.views()).premium.setting;
+      assert.equal(readiness({ evals: c.evals, level: 'premium', pins: PREMIUM_PINS, yes }).ok, false);
+      barRun(c.evals, { level: 'premium', pins: PREMIUM_PINS, yes });
+      const { records } = readiness({ evals: c.evals, level: 'premium', pins: PREMIUM_PINS, yes });
       const agents = await client.state.columnReady({ project: P, column: 'premium', pins: { ...PINS, premium: 'model-agent' }, records });
       assert.match(agents.refused, /pins are not/);
       const answer = await client.state.columnReady({ project: P, column: 'premium', pins: PREMIUM_PINS, records });
@@ -281,6 +285,70 @@ test('under STOP the helper offers no card and checks nothing', async () => {
       assert.match((await client.premium.card({ project: P })).refused, /STOP/);
       assert.match((await client.premium.check({ project: P })).refused, /STOP/);
       assert.deepEqual(c.asked, []);
+    });
+  } finally { c.cleanup(); }
+});
+
+// --- When its evaluation fails (design section 14.6, "What the Yes starts") ---
+
+test('a failed evaluation is recorded once per Yes from the helper\'s own read, keeps it off, and a new Yes starts afresh', async () => {
+  const c = await computer();
+  try {
+    await c.withHelper(async (client) => {
+      await atThorough(c, client);
+      assert.equal((await client.premium.failed({ project: P })).recorded, false, 'no pin, no evaluation');
+      await click(c, client, cardOf((await client.premium.card({ project: P })).line), ALLOW_PAID);
+      await client.premium.check({ project: P });
+      // No run yet, or only passes, or a failure under another Yes: nothing to record.
+      assert.match((await client.premium.failed({ project: P })).why, /no trial/);
+      const yes = (await c.views()).premium.setting;
+      barRun(c.evals, { level: 'premium', pins: PREMIUM_PINS, yes: '99999999-2222-4333-8444-555555555555', fail: () => true, at: '2026-10-25T07:00:00.000Z' });
+      assert.match((await client.premium.failed({ project: P })).why, /no trial/);
+      // Failed under this Yes, on other pins for the other two classes: still recorded.
+      barRun(c.evals, { level: 'premium', pins: { ...PREMIUM_PINS, midSized: 'model-mid-other' }, yes, fail: (s, t) => s === '22' && t === 2 });
+      const got = await client.premium.failed({ project: P });
+      assert.deepEqual([got.ok, got.recorded, got.failed], [true, true, ['scenario 22 trial 2 failed']]);
+      const [record] = await c.events('premium-failed');
+      assert.ok(await as(c.home, () => verify(record, readEnrolled())), 'signed by this computer');
+      const views = await c.views();
+      assert.deepEqual(record.data, { setting: views.premium.setting, model: PREMIUM, failed: ['scenario 22 trial 2 failed'] });
+      assert.equal(views.premium.failed.id, record.id);
+      assert.deepEqual(views.premiumFailures.map((f) => [f.id, f.card]), [[record.id, null]]);
+      // Once per Yes; the eval is told it failed, and no pass can be recorded under this Yes.
+      assert.match((await client.premium.failed({ project: P })).why, /recorded already/);
+      assert.equal((await client.premium.state({ project: P })).failed, true);
+      barRun(c.evals, { level: 'premium', pins: PREMIUM_PINS, yes, at: '2026-10-25T09:00:00.000Z' });
+      const { records } = readiness({ evals: c.evals, level: 'premium', pins: PREMIUM_PINS, yes });
+      assert.match((await client.state.columnReady({ project: P, column: 'premium', pins: PREMIUM_PINS, records })).refused, /stays off/);
+      // Sent in by anyone else, it is refused.
+      assert.match((await client.state.record({ project: P, event: record })).refused, /only the helper records/);
+      // The card offers a new Yes, from off, and that Yes starts afresh: no failure, a check of its own.
+      c.current = 'off';
+      const fresh = await client.premium.card({ project: P });
+      assert.equal(fresh.offered, true, fresh.why);
+      assert.equal((await c.events('premium-card')).at(-1).data.from, 'off');
+      assert.equal((await click(c, client, cardOf(fresh.line), ALLOW_PAID)).ok, true);
+      const after = await c.views();
+      assert.equal(after.premium.failed, null);
+      assert.equal(after.premium.check, null);
+    });
+  } finally { c.cleanup(); }
+});
+
+test('a failure record a run\'s word alone claims, its trial record not showing a failure, is not recorded', async () => {
+  const c = await computer();
+  try {
+    await c.withHelper(async (client) => {
+      await atThorough(c, client);
+      await click(c, client, cardOf((await client.premium.card({ project: P })).line), ALLOW_PAID);
+      await client.premium.check({ project: P });
+      const run = barRun(c.evals, { level: 'premium', pins: PREMIUM_PINS, yes: (await c.views()).premium.setting });
+      // The run record says a trial failed, but the trial's own record says it passed.
+      const kept = JSON.parse(fs.readFileSync(run, 'utf8'));
+      kept.runs[0] = { ...kept.runs[0], pass: false };
+      fs.writeFileSync(run, JSON.stringify(kept));
+      assert.equal((await client.premium.failed({ project: P })).recorded, false);
+      assert.deepEqual(await c.events('premium-failed'), []);
     });
   } finally { c.cleanup(); }
 });

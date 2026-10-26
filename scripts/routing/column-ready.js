@@ -100,7 +100,13 @@ const COMMIT = /^[0-9a-f]{7,40}$/;
 // Every trial of the bar at `level` on `pins` that a run record names, in the order run: { name, scenario, trial,
 // pass, handled, why, sha256, run, commit }. A run record of another level or other pins is passed over, and so is
 // one that names no commit: a counted run is one commit of the plugin, so a trial of no known commit counts for nothing.
-function barTrials(evals, level, pins) {
+// The premium pass's runs count only for the director's Yes they were made under (`yes`, its premium setting's id,
+// which the run record names), so a failure under one Yes never counts against the next, and with `premiumOnly` only
+// the premium pin is matched, so the configuration's other two pins moving can't hide a failure.
+function barTrials(evals, level, pins, { yes = null, premiumOnly = false } = {}) {
+  const premium = level === PREMIUM_LEVEL;
+  if (premium && (typeof yes !== 'string' || yes === '')) return [];
+  const same = (given) => (premium && premiumOnly ? isPlain(given) && given.premium === pins.premium : samePins(given, pins, level));
   const runs = path.join(evals, 'runs');
   let names = [];
   try {
@@ -109,15 +115,16 @@ function barTrials(evals, level, pins) {
   const found = [];
   for (const runName of names) {
     const record = readJson(path.join(runs, runName))?.json;
-    if (!isPlain(record) || record.level !== level || !samePins(record.pins, pins, level) || !Array.isArray(record.runs)) continue;
+    if (!isPlain(record) || record.level !== level || !same(record.pins) || !Array.isArray(record.runs)) continue;
+    if (premium && record.yes !== yes) continue;
     if (typeof record.commit !== 'string' || !COMMIT.test(record.commit)) continue;
     for (const entry of record.runs) {
-      if (!isPlain(entry) || entry.variant !== 'with' || entry.level !== level || !samePins(entry.pins, pins, level)) continue;
+      if (!isPlain(entry) || entry.variant !== 'with' || entry.level !== level || !same(entry.pins)) continue;
       const scenario = entry.leg ? `${entry.id}-${entry.leg}` : String(entry.id);
       if (!BAR.includes(scenario)) continue;
       found.push({
         name: recordName(evals, entry.file), scenario, trial: entry.trial, pass: entry.pass === true, handled: entry.handled !== false,
-        why: typeof entry.why === 'string' ? entry.why : '', sha256: entry.sha256 ?? null, run: runName, commit: record.commit,
+        why: typeof entry.why === 'string' ? entry.why : '', sha256: entry.sha256 ?? null, run: runName, commit: record.commit, pins: entry.pins,
       });
     }
   }
@@ -195,6 +202,29 @@ function judgeCommit({ evals, trials, level, pins, premium, offered }) {
   return { gaps, records };
 }
 
+// The handled failures of the premium model's evaluation under the director's Yes `yes`, on any build, each in plain
+// words ("scenario 22 trial 1 failed"), at most `most`: what a failed evaluation names. Only the premium pin is
+// matched, so a run on other pins for the other two classes still counts. None when there are no runs. Each failure is
+// read from its own record, which must be the one its run saved and say it is that trial and failed, on that premium
+// model: a run record's word alone counts for nothing.
+export function barFailures({ evals, pins, yes, most = 10 }) {
+  if (!isModelName(pins?.premium)) return [];
+  return barTrials(evals, PREMIUM_LEVEL, pins, { yes, premiumOnly: true })
+    .filter((t) => t.handled && !t.pass && failedRecord(evals, t, PREMIUM_LEVEL, pins))
+    .slice(0, most).map((t) => `scenario ${t.scenario} ${trialWord(t)} failed`);
+}
+
+// Whether a trial's record stands as a handled failure of its scenario at `level` on `pins`.
+function failedRecord(evals, t, level, pins) {
+  const match = RECORD_NAME.exec(t.name ?? '');
+  if (!match) return false;
+  const read = readJson(path.join(evals, ...t.name.split('/')));
+  if (read === null || typeof t.sha256 !== 'string' || fileHash(read.text) !== t.sha256 || !isPlain(read.json)) return false;
+  const r = read.json;
+  const own = r.leg ? `${r.id}-${r.leg}` : String(r.id);
+  return own === t.scenario && r.variant === 'with' && r.level === level && isPlain(r.pins) && r.pins.premium === pins.premium && r.pass === false && r.handled !== false;
+}
+
 // Whether `level` is ready on `pins` by the records under `evals`: { ok, commit, records, gaps }. One counted run is
 // one commit of the plugin: the level is ready when, for one commit, every scenario of the bar has BAR_TRIALS passing
 // `with` trials at that level on those pins, and no trial of the bar failed there. Trials of two commits never add
@@ -204,12 +234,13 @@ function judgeCommit({ evals, trials, level, pins, premium, offered }) {
 // neither a pass nor a failure: it may be run again, as the harness's own gate lets it. `given`, when passed, is the
 // list of names a caller says stand: all from one commit, each a passing trial of the bar that stands, and only those
 // count and are recorded.
-export function readiness({ evals, level, pins, premium = null, given = null }) {
+// For the premium pass, `yes` is the director's Yes the runs were made under: only those count.
+export function readiness({ evals, level, pins, premium = null, given = null, yes = null }) {
   const no = (gaps) => ({ ok: false, commit: null, records: [], gaps });
   if (!RUN_LEVELS.includes(level)) return no([`${JSON.stringify(level)} isn't a level a readiness run is made for: Lean, Lightest or the premium model`]);
   if (!pinNamesOf(level).every((n) => isModelName(pins?.[n]))) return no([`the pins are not ${level === PREMIUM_LEVEL ? 'three' : 'two'} model names`]);
   if (given !== null && (!Array.isArray(given) || !given.every((n) => typeof n === 'string'))) return no(['the records are not a list of names']);
-  const trials = barTrials(evals, level, pins);
+  const trials = barTrials(evals, level, pins, { yes });
   // The commits, by their latest run, oldest first.
   const commits = [...new Set([...trials].reverse().map((t) => t.commit))].reverse();
   const judged = (commit, offered) => {

@@ -207,7 +207,15 @@ test('--ready has the helper record the level only on a full set, and says what 
 // The premium model's run (design section 14.6, "What the Yes starts"): stand-ins only, never a real session.
 const PREMIUM_PINS = Object.freeze({ ...PINS, premium: 'model-premium' });
 const premiumEnv = { [PINS_VARIABLE]: JSON.stringify(PREMIUM_PINS) };
-const helperSaying = (answer, seen = []) => () => ({ premium: { state: async (body) => { seen.push(body); return answer; } } });
+const YES = '11111111-2222-4333-8444-555555555555';
+// The helper as the premium run asks it: the premium setting in force (with the Yes's id and the configuration's two
+// pins, unless the answer says otherwise), and whether an earlier run under this Yes failed.
+const helperSaying = (answer, seen = [], earlier = { ok: true, recorded: false }) => () => ({
+  premium: {
+    state: async (body) => { seen.push(body); return answer.ok === true ? { yes: YES, pins: { ...PINS }, ...answer } : answer; },
+    failed: async (body) => { seen.push(['failed', body]); return earlier; },
+  },
+});
 
 test('the premium model\'s run starts nothing unless the director\'s Yes allows paid credits on the pin the shell names', async () => {
   const calls = [];
@@ -218,6 +226,12 @@ test('the premium model\'s run starts nothing unless the director\'s Yes allows 
   await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: 'model-other' })), /is model-other, not model-premium/);
   await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: null })), /not set yet/);
   await assert.rejects(go(helperSaying({ ok: false, refused: 'STOP is on' })), /couldn't say/);
+  // The other two models must be the configuration's, and the Yes must be named.
+  await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium', pins: { ...PINS, midSized: 'model-other' } })), /aren't the ones o__p's configuration pins/);
+  await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium', yes: null })), /didn't name the director's Yes/);
+  // An earlier run under this Yes that failed (one cut short) is recorded first, and nothing more runs.
+  await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium' }, [], { ok: true, recorded: true, failed: ['scenario 20 trial 1 failed'] })), /An earlier run of the premium model failed/);
+  await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium' }, [], { ok: false, refused: 'STOP is on' })), /couldn't say whether an earlier run failed/);
   await assert.rejects(go(() => { throw new Error('no helper'); }), /couldn't say/);
   assert.deepEqual(calls, []);
   // Two pins are not enough for it.
@@ -237,9 +251,52 @@ test('with paid credits allowed, the premium model\'s run starts each feature se
   };
   const code = await main(['20', '--variant', 'with', '--level', 'premium', '--project', 'o__p'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: premiumEnv, helper: helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium' }, asked) });
   assert.equal(code, 0);
-  assert.deepEqual(asked, [{ project: 'o__p' }]);
+  assert.deepEqual(asked, [{ project: 'o__p' }, ['failed', { project: 'o__p' }]]);
   assert.equal(seen[0].level, 'premium');
+  assert.equal(seen[0].yes, YES, 'the run names the Yes it runs under');
   assert.deepEqual(seen[0].pins, PREMIUM_PINS);
   assert.deepEqual(seen[0].routing.roles.feature, { model: 'model-premium', effort: 'high', fallback: 'model-top' });
   assert.equal(seen[0].routing.roles.reviewerCritical.model, 'model-top');
+});
+
+test('the premium model\'s run is refused once its evaluation failed under this Yes, and a failed run or readiness step tells the helper', async () => {
+  const run = async () => ({});
+  await assert.rejects(main(['20', '--variant', 'with', '--level', 'premium', '--project', 'o__p'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: premiumEnv, helper: helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium', failed: true }) }), /failed for o__p/);
+  // A run with a failed trial asks the helper to read it; one that passes doesn't.
+  const asked = [];
+  const said = [];
+  let before = true;
+  let ran = 0;
+  const helper = () => ({
+    premium: {
+      state: async () => ({ ok: true, value: 'paid-too', pin: 'model-premium', failed: false, yes: YES, pins: { ...PINS } }),
+      // Before the run nothing has failed; after it, the helper's read finds the failure.
+      failed: async (body) => { asked.push(body); return before ? { ok: true, recorded: false } : { ok: true, recorded: true, failed: ['scenario 20 trial 1 failed'] }; },
+    },
+  });
+  const trial = (pass) => async ({ scenario, variant, trial: n, home: h, date }) => {
+    const file = path.join(h, '.wheelhouse-evals', date, `${scenario.id}-${variant}-${n}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{}\n');
+    return { pass, handled: true, why: pass ? 'ok' : 'it broke', file, usage: { input: 1, output: 1 } };
+  };
+  const go = (pass, trials = '1') => main(['20', '--variant', 'with', '--trials', trials, '--level', 'premium', '--project', 'o__p'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: (l) => said.push(l), run: (o) => { before = false; ran += 1; return trial(pass)(o); }, env: premiumEnv, helper });
+  await go(true);
+  assert.deepEqual(asked, [{ project: 'o__p' }], 'asked before the run only');
+  asked.length = 0;
+  before = true;
+  ran = 1;
+  // A run of three stops at its first failure: no more is spent.
+  await go(false, '3');
+  assert.deepEqual(asked, [{ project: 'o__p' }, { project: 'o__p' }]);
+  assert.ok(said.includes('  The premium model failed a trial, so its run stops here.'));
+  assert.equal(ran, 2, 'one trial before, then one that failed, and no third');
+  assert.ok(said.includes("The premium model's evaluation failed for o__p, so it stays off; the director gets one card saying so."));
+  // The readiness step on a short set asks too, and says when the helper can't be asked.
+  asked.length = 0;
+  assert.equal(await main(['--ready', 'premium', '--project', 'o__p'], { home: tempFolder('eval-home-'), print: quiet, env: premiumEnv, helper }), 1);
+  assert.deepEqual(asked, [{ project: 'o__p' }]);
+  said.length = 0;
+  await main(['--ready', 'premium', '--project', 'o__p'], { home: tempFolder('eval-home-'), print: (l) => said.push(l), env: premiumEnv, helper: () => ({ premium: { failed: async () => ({ ok: false, refused: 'STOP is on' }) } }) });
+  assert.match(said.join('\n'), /couldn't be asked whether the premium model's evaluation failed for o__p: STOP is on/);
 });

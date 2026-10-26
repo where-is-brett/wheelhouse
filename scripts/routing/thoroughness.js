@@ -48,11 +48,15 @@ const fallbackFor = (role, model, other) => (role === 'reviewerCritical' || othe
 
 // The board's one line while the premium model is in use (design section 14.6).
 export const PREMIUM_IN_USE = 'Premium model in use for design and risky work.';
+// And while it rests after a usage limit or a billing refusal.
+export const PREMIUM_RESTING = 'Premium model not available, so design is on the most capable model.';
 
 // What each role runs on at a level. `config` is a read configuration (readConfig), `ready` the levels (and `premium`)
 // whose models have passed the evaluation, `premium` the premium setting and `billing` what is known of how the
 // premium model is paid for. A level that can't be used runs at Balanced, with a line saying so.
-export function resolveRouting({ config, level, ready = [], premium = 'off', billing = 'unknown' }) {
+// `resting` says the premium model rests after a usage limit or a billing refusal (design section 14.6, "When it can't
+// be used"): it is then not used, and the board says so in one line.
+export function resolveRouting({ config, level, ready = [], premium = 'off', billing = 'unknown', resting = false }) {
   const lines = [];
   const readyList = Array.isArray(ready) ? ready.filter((x) => typeof x === 'string') : [];
   let chosen = LEVELS.includes(level) ? level : 'balanced';
@@ -94,14 +98,19 @@ export function resolveRouting({ config, level, ready = [], premium = 'off', bil
   }
   if (lightFallsBack) lines.push("The lighter model isn't set, so its work runs on the most capable model.");
 
+  let premiumUsed = false;
   const premiumWanted = chosen === 'thorough' && PREMIUM_MODES.includes(premium) && pins?.premium && readyList.includes('premium');
   if (premiumWanted) {
-    if (premium === 'paid-too' || billing === 'within-plan') {
+    if (resting === true) lines.push(PREMIUM_RESTING);
+    else if (premium === 'paid-too' || billing === 'within-plan') {
       for (const role of PREMIUM_ROLES) roles[role] = { model: pins.premium, effort: 'high', fallback: fallbackFor(role, pins.premium, pins.mostCapable) };
       lines.push(PREMIUM_IN_USE);
+      premiumUsed = true;
     } else lines.push('Premium model not used: it might have been paid from credits.');
   }
-  return { level: chosen, roles, extra: EXTRA[chosen], lines };
+  // `premium` says the premium model is in use for design and critical work, so the waker keeps a feature wake's output
+  // to read a usage limit or billing refusal from (scripts/watcher/waker.js).
+  return { level: chosen, roles, extra: EXTRA[chosen], lines, ...(premiumUsed ? { premium: true } : {}) };
 }
 
 // The level and the premium mode a settings view holds ({ <key>: { value } }), or the safe value when it isn't allowed.

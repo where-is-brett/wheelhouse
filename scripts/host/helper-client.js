@@ -105,7 +105,8 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     premium: {
       card: post('/premium/card'), //   { project | cwd } -> { ok, offered, line? | why? }: the premium model's card, composed and its offer recorded signed by the helper, at Thorough only and never where the account is known not to have it; refused under STOP
       check: post('/premium/check'), // { project | cwd } -> { ok, checked, found?, model? | why? }: after the director's Yes, the helper asks Claude Code what its premium alias stands for and records what it found as the premium pin; never within the plan alone, which might be paid from credits; refused under STOP
-      state: post('/premium/state'), // { project | cwd } -> { ok, value, pin }: the premium setting in force and the pin the helper's check found for it
+      state: post('/premium/state'), // { project | cwd } -> { ok, value, pin, failed, yes, pins }: the premium setting in force, the pin the helper's check found for it, whether its evaluation failed under this Yes, the Yes's id, and the configuration's two pins
+      failed: post('/premium/failed'), // { project | cwd } -> { ok, recorded, failed? | why? }: the helper reads the premium evaluation's records itself and, on a handled failure, records it once per Yes, which brings the director one card; refused under STOP
     },
     // The director's profile. Each answers { ok: false, why } while the profile isn't set up.
     profile: {

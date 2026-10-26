@@ -36,7 +36,9 @@ export function balancedRouting(config) {
 // premium model is paid for isn't known yet (check 76), so `billing` is always 'unknown'. The premium mode and pin are
 // the state's (the `premium` view: the setting its own card made, and the model the helper's check found for it),
 // never the configuration's (scripts/routing/premium.js).
-export function routingFrom({ config, views, now = () => new Date() }) {
+// `resting` (the waker's own) says the premium model rests whatever the state says: the waker keeps its own record of a
+// refusal it read, so a rest the helper couldn't take still holds on this computer.
+export function routingFrom({ config, views, now = () => new Date(), resting = false }) {
   try {
     const settings = effectiveSettings({ project: isPlain(views?.settings) ? views.settings : {}, now });
     const pinned = withPremiumPin(config, views?.premium);
@@ -44,8 +46,9 @@ export function routingFrom({ config, views, now = () => new Date() }) {
       config: pinned,
       level: levelOf(settings),
       ready: [...ALWAYS_READY, ...readyColumns(views?.columnsReady, pinned)],
-      premium: typeof views?.premium?.value === 'string' ? views.premium.value : 'off',
+      premium: typeof views?.premium?.value === 'string' && !isPlain(views.premium.failed) ? views.premium.value : 'off',
       billing: 'unknown',
+      resting: resting === true || isPlain(views?.premium?.rest),
     });
   } catch {
     return balancedRouting(config);
@@ -53,14 +56,14 @@ export function routingFrom({ config, views, now = () => new Date() }) {
 }
 
 // The column in force for `project` now, from its local state clone, as the waker reads the settings.
-export function routingInForce(project, config, { now = () => new Date() } = {}) {
+export function routingInForce(project, config, { now = () => new Date(), resting = false } = {}) {
   let views;
   try {
     views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
   } catch {
     return balancedRouting(config);
   }
-  return routingFrom({ config, views, now });
+  return routingFrom({ config, views, now, resting });
 }
 
 // The columns ready for `project`, for the settings pane: the `columnsReady` view the last sync left on disk,

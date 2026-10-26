@@ -10,6 +10,7 @@ import { SAFETY_LINES } from '../agents/safety-lines.js';
 import { HOST_UNREACHABLE } from '../host/company-ca.js';
 import { BUILD_QUESTION_LABELS, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
 import { SEE_BEFORE_MERGE, SEE_IN_BRIEFING } from '../lib/calm-words.js';
+import { REST_LINE, restOf } from '../routing/premium.js';
 
 const LANES = ['quick', 'small', 'feature', 'bug'];
 const WHEN = ['now', 'next', 'later'];
@@ -339,6 +340,16 @@ function updateLines(events, agent, nowMs) {
   return [...tools].sort().map((tool) => ({ level: 'watch', text: cap(SAFETY_LINES[name].updateWaiting(tool)) }));
 }
 
+// The board's one line while the premium model rests after a usage limit or a billing refusal (design section 14.6,
+// "When it can't be used"), from the latest premium-rest record: it stands until the rest ends, then goes.
+function premiumRestLines(events, nowMs) {
+  if (!Number.isFinite(nowMs)) return [];
+  const rest = restOf(events, () => new Date(nowMs));
+  if (rest === null) return [];
+  const why = rest.why === 'billing' ? 'it was refused for billing' : 'it reached its usage limit';
+  return [{ level: 'watch', text: cap(`${REST_LINE.replace(/\.$/, '')}: ${why}. It is tried again from ${dayMonthYear(rest.until) ?? 'when its rest ends'}.`) }];
+}
+
 // Builds one part, or names it in `missing` when its inputs are too damaged to build it.
 function part(missing, name, build, fallback) {
   try {
@@ -446,7 +457,7 @@ export function boardModel({ project, views, profileUnconfirmed, events, usage, 
       ...(oneLine(m.data.forUsers) ? {} : { behind: true }),
     })), []),
     ideas,
-    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
+    health: [...(lines ?? []).map((l) => ({ level: l.level, text: l.text })), ...part(missing, 'agent line', () => (agent === undefined ? [] : agentHealth(agent)), []), ...part(missing, 'update line', () => updateLines(all, agent, nowMs), []), ...part(missing, 'premium line', () => premiumRestLines(all, nowMs), []), ...part(missing, 'health', () => extraHealth(loop?.incidents, report, hostUnreachable), [])],
     budget: {
       week: week ? {
         from: timeOf(week.from), to: timeOf(week.to), tokens: numberOrNull(week.tokens), usd: numberOrNull(week.usd),
