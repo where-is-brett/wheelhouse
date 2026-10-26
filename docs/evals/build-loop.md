@@ -20,6 +20,11 @@ These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-b
 
 **The cause, 26 October 2026.** Both had one cause. Claude Code 2.1.302 runs a subagent in the background when its dispatch leaves out `run_in_background`. On Lean's column the session always passed `false`; on Lightest's the mid-sized model left it out. A background subagent is refused any permission it would have to ask for (34's builder, its shell), and a session can end its turn while one still runs (23's whole-branch reviewer). Every session Wheelhouse starts, and every feature session the evaluation starts, now takes `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` (`FOREGROUND_ONLY`, `scripts/lib/claude.js`), so each subagent is waited for. One uncounted Lightest trial of each then passed, with no subagent in the background.
 
+**Lightest's readiness run of 26 October 2026** (Claude Code on macOS, from branch `feature/lightest-ready` at commit c01459ec; the front desk of 27's route leg on the most capable model; records `~/.wheelhouse-evals/2026-10-26/`):
+
+- **Lightest: ready.** Every scenario of the bar passed three trials of three on Lightest's column (21 trials), and the readiness check over the run records finds the bar met at that commit with no gaps. About 21.5 million tokens in.
+- **27's route leg, which is not in the bar: two of three.** Its third trial's front desk, on the most capable model, read Wheelhouse's own `scripts/frontdesk/cli.js` with `grep` to learn where a bug's written-down report goes, and the leg counts any code read as a failure; it then wrote the report and recorded the bug in the bug lane as the leg wants. The front desk doesn't run on the level's column, so this says nothing about Lightest. On Lean's run it passed three of three.
+
 
 **What a run is.** Each scenario (`tests/eval/build-loop/<id>-*.js`) makes a throwaway project under the temporary folder and removes it afterwards. For scenarios 20 to 23, 33 and 34, and 27's bug session's leg, `scripts/eval/feature-project.js` sets it up as a feature session's worktree, the way the foreman would:
 
