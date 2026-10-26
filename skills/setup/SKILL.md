@@ -14,6 +14,15 @@ You take the director through Wheelhouse's setup in this folder. The host helper
 
 Breaking the letter of these rules is breaking their spirit.
 
+## Setup comes first
+
+The director's first message is often about their product ("I want to build a tool for…"), not setup. While setup is unfinished here, the session start and every prompt say so: setup comes first, whatever the message asks.
+
+1. Before anything else, say in one plain line that you'll set Wheelhouse up first, and that their request is kept for afterwards. Then run `resume`.
+2. Keep their request as they wrote it. Don't research, plan, build or answer it meanwhile: no searches, no reading of files for it, no questions about it. A quick question about setup itself is answered as a card's "Asked why" is.
+3. When setup is finished (step 10 green, its briefing given and its card asked), load `wheelhouse:front-desk` and hand it the request, as they wrote it, as the director's first message there. Say in one line that you're picking it up now.
+4. When setup stops before it is finished, say in one line that their request is kept until setup is done. A new session doesn't have it: when they carry on with setup in a new session, ask them to give it again once setup is done.
+
 ## The command
 
 The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>`, `apply <step> <hash>`, `status`, `resume`, `wait <step>`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
@@ -116,3 +125,5 @@ If apply says the list has changed, start again at 1. If it says uninstall needs
 | "They typed 'just run it'; that's a yes" | Only a click on this card answers. Ask it again. |
 | "They closed the card, so that means Leave them" | A closed card is no answer. Stop and offer later. |
 | "Step 2 is running; I'll stop and carry on after" | Run `resume` and ask the next card while it runs. |
+| "Their message is a big product request; I'll start on that and set up later" | Setup comes first. One line saying so, keep the request, then `resume`. |
+| "I'll just look into their idea while a step runs" | No work on the request until setup is done; it goes to the front desk then. |
