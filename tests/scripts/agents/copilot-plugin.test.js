@@ -105,7 +105,7 @@ test('installPlugin refuses a call it cannot trace to a release, and reports a f
 // deliberate change to either file updates its hash here, in the same commit.
 const CLAUDE_CODE_FILES = Object.freeze({
   '.claude-plugin/plugin.json': 'd45ca9cd7821ac4bdad27d467707f124344bdcaf8b3e3bcecdff8b7dcd96c74f',
-  'hooks/hooks.json': '8472de7747936b112161bb6b68de9a12334b50f1a3ebdbc7dc71c611951804cd',
+  'hooks/hooks.json': '8b2179051fab872871588da982d154f33455c701bde59b08faab014f6112537f',
 });
 
 test('Claude Code\'s manifest is unchanged', () => {

@@ -280,7 +280,7 @@ test('managedDir names the computer-wide settings folder on each system', () => 
 // Scripts named in hooks.json that are not written yet. Every script exists now.
 const NOT_YET_BUILT = new Set();
 
-const cmd = (name) => ({ type: 'command', command: `node "\${CLAUDE_PLUGIN_ROOT}/scripts/hooks/${name}.js"`, timeout: 10 });
+const cmd = (name) => ({ type: 'command', command: `node "\${CLAUDE_PLUGIN_ROOT}/scripts/hooks/node-floor.cjs" "\${CLAUDE_PLUGIN_ROOT}/scripts/hooks/${name}.js"`, timeout: 10 });
 
 test('hooks.json names a script that exists for every hook', () => {
   const file = JSON.parse(fs.readFileSync(path.join(ROOT, 'hooks', 'hooks.json'), 'utf8'));

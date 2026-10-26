@@ -9,6 +9,7 @@ const SURFACES = ['terminal', 'desktop'] as const
 const ROOT = '/Users/someone/projects/shop'
 const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
 const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
+const NODE_MISSING = 'Wheelhouse needs a free program called Node.js, version 22 or later, and this computer doesn\'t have it. Download the version marked LTS from https://nodejs.org and install it, then start a new conversation. Nothing else needs to change, and nothing has been lost.'
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const PRESENTATION = { isFullscreen: false, columns: 80 }
 const CONTEXT = { window: 200000, tokens: 1000, percent: 0.5 }
@@ -279,6 +280,25 @@ test('a measure with rateLimits sends the windows; one with only context sends n
     await $.session.measure({ context: CONTEXT, rateLimits: [{ kind: 'five_hour', percentUsed: 41 }], cost: { usd: 3 }, changed: ['context'] })
     expect(seen.runs).toHaveLength(0)
     expect(seen.toasts).toHaveLength(0)
+  }
+})
+
+test('a session start that finds no Node.js says what to install, and one that finds it says nothing', async ($, on) => {
+  let answer: Answer = 'no-start'
+  const { seen, clear, start } = world(on, () => answer)
+  for (const surface of SURFACES) {
+    answer = 'no-start'
+    clear()
+    await start($, surface)
+    expect(seen.toasts).toEqual([NODE_MISSING])
+
+    // A bridge that starts but fails is not a missing Node.js.
+    for (const failure of [{ exitCode: 1, stdout: '' }, { stdout: '{"ok":true}\n' }] as Answer[]) {
+      answer = failure
+      clear()
+      await start($, surface)
+      expect(seen.toasts).toHaveLength(0)
+    }
   }
 })
 
