@@ -10,7 +10,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
+  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
@@ -718,7 +718,7 @@ test('the session start starts no watcher in a project setup is still finishing'
     markStep(setupRun.id, 10, 'doneAt', { now: () => new Date(T + 10 * 60000) });
     const resumed = await start(f);
     assert.equal(watcherStarts(f).length, 0, 'not before the board is green');
-    assert.ok(text(resumed).split('\n').includes('Setup is part-way through: step 10, Health check, is next. Follow wheelhouse:setup.'), text(resumed));
+    assert.ok(text(resumed).split('\n').includes(partWay(10, 'Health check')), text(resumed));
     addChanges(setupRun.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
     await start(f);
     assert.equal(watcherStarts(f).length, 1, 'a project setup has finished is started as any other');
@@ -1174,7 +1174,8 @@ test('a fresh computer gets a signing key and enrols it once', async () => {
     const keyFile = path.join(keysDir(), 'signing.pem');
     const key = fs.readFileSync(keyFile, 'utf8');
     assert.deepEqual(readEnrolled().map((e) => e.computer), [computerId()]);
-    assert.equal(withoutSheet(out), 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(out), NOT_SET_UP);
+    assert.match(NOT_SET_UP, /^This folder isn't set up for Wheelhouse yet. Setup comes first, whatever the director's message asks/);
     // The first click can be signed and checked.
     const signed = makeEvent({ kind: 'action', data: { action: 'lift-stop', question: 'q', label: 'Lift STOP' } });
     assert.equal(verify(signed, readEnrolled()), true);
@@ -1239,18 +1240,18 @@ test('the next session start resumes at the first unfinished step', async () => 
     const f = fake();
     const out = await setupStart(f, folder);
     assert.equal(f.calls.spawn.length, 1, 'the helper is started as in a project');
-    assert.equal(withoutSheet(out), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(out), partWay(2, 'Tools'));
     // From a folder inside it too, and once step 2 is done the next is step 4: step 3 is not repeated.
     markStep(run.id, 2, 'doneAt', { now: at(6) });
     fs.mkdirSync(path.join(folder, 'web'));
     const later = await setupStart(fake(), path.join(folder, 'web'));
-    assert.equal(withoutSheet(later), 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(later), partWay(4, 'Three questions'));
     // STOP and a helper that could not start are said first.
     const stopped = await setupStart(fake({ startsUp: false }), folder, { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' }) });
     assert.deepEqual(withoutSheet(stopped).split('\n'), [
       'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       NO_HELPER,
-      'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.',
+      partWay(4, 'Three questions'),
     ]);
   });
 });
@@ -1302,7 +1303,7 @@ test('a folder being set up, and one Wheelhouse was removed from, are given the 
     const T = Date.parse('2026-10-20T03:00:00.000Z');
     const run = startRun({ folder, now: () => new Date(T) });
     const part = text(await setupStart(fake(), folder)).split('\n');
-    assert.deepEqual(part, [...sheet, 'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.']);
+    assert.deepEqual(part, [...sheet, partWay(1, 'Install')]);
     for (const n of [1, 2, 3]) markStep(run.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
     closeRun(run.id, { at: () => new Date(T + 3600000), by: 'uninstall' });
     assert.deepEqual(text(await setupStart(fake(), folder)).split('\n'), [REMOVED, ...sheet]);
@@ -1363,7 +1364,7 @@ test('a folder set up again after uninstall reads as being set up by the newer r
     markStep(again.id, 1, 'doneAt', { now: () => new Date(T + 7260000) });
     assert.equal(beingSetUp(folder)?.run?.id, again.id);
     assert.equal(removedFrom(folder), null);
-    assert.equal(withoutSheet(await setupStart(fake(), folder)), 'Setup is part-way through: step 2, Tools, is next. Follow wheelhouse:setup.');
+    assert.equal(withoutSheet(await setupStart(fake(), folder)), partWay(2, 'Tools'));
     // Uninstalled again, it reads as removed again.
     closeRun(again.id, { at: () => new Date(T + 9000000), by: 'uninstall' });
     assert.equal(beingSetUp(folder), null);
@@ -1391,7 +1392,7 @@ test('in a registered folder setup is still finishing, the session start resumes
       pluginRoot: PLUGIN_ROOT, client: f.client, spawn: f.spawn, platform: 'darwin', dir: managed, stopState: () => ({ on: false }),
       pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
     });
-    const STEP_4 = 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.';
+    const STEP_4 = partWay(4, 'Three questions');
     for (const git of [false, true]) {
       const folder = fs.realpathSync.native(tempFolder(`wh-registered${git ? '-git' : ''} zoë `));
       if (git) fs.mkdirSync(path.join(folder, '.git'));
@@ -1465,7 +1466,7 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
     const me = computerId();
     const STOP = { on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' };
     const windows = { platform: 'win32', stopState: () => STOP, guardedSelfTest: async () => null, lowNodeReady: () => false, startLowNodeCopy: () => true };
-    const STEP_4 = 'Setup is part-way through: step 4, Three questions, is next. Follow wheelhouse:setup.';
+    const STEP_4 = partWay(4, 'Three questions');
     // Registered (step 3 done), with its first commit, Unattended on for this computer.
     const folder = fs.realpathSync.native(tempFolder('wh-registered-win zoë '));
     fs.mkdirSync(path.join(folder, '.git'));
@@ -1490,7 +1491,7 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
     });
     assert.deepEqual(withoutSheet(short).split('\n'), [
       'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
-      'Setup is part-way through: step 1, Install, is next. Follow wheelhouse:setup.',
+      partWay(1, 'Install'),
     ]);
   });
 });

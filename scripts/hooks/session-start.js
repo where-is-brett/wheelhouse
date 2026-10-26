@@ -99,9 +99,12 @@ export const NO_USAGE = 'Usage counts couldn\'t start this time';
 // In the project's main folder, for any session that isn't the foreman's: the front desk's playbook.
 export const FRONT_DESK_LINE = 'This is the front desk. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.';
 
-// In a folder being set up: where setup stands.
-export const NOT_SET_UP = 'This folder isn\'t set up for Wheelhouse yet. Follow wheelhouse:setup.';
-export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. Follow wheelhouse:setup.`;
+// In a folder being set up: where setup stands, and that setup comes before whatever the director's
+// message asks, which is kept for the front desk (SETUP_FIRST). board-context.js says it again with
+// each prompt while setup is unfinished, so a long first message can't win over this line.
+export const SETUP_FIRST = 'Setup comes first, whatever the director\'s message asks: if setup isn\'t already under way in this conversation, say in one plain line that you\'ll set Wheelhouse up first and keep their request for afterwards, then follow wheelhouse:setup. Keep their request as they wrote it, and do no work on it until setup is done.';
+export const NOT_SET_UP = `This folder isn't set up for Wheelhouse yet. ${SETUP_FIRST}`;
+export const partWay = (n, title) => `Setup is part-way through: step ${n}, ${title}, is next. ${SETUP_FIRST}`;
 export const JOURNAL_UNREADABLE = 'Setup\'s journal couldn\'t be read, so where setup stands isn\'t known. Follow wheelhouse:setup.';
 // The plugin as setup's step 1 switches it on for the project (its enabledPlugins key), and the line
 // that says how it is removed, which is the director's to do in Claude Desktop.

@@ -22,6 +22,9 @@ import { briefingLine } from '../../../scripts/lineage/release.js';
 import { BRIEFING_WORDS, CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { briefingText } from '../../../scripts/briefing/text.js';
 import { LEADS } from '../../../scripts/lib/mod-numbers.js';
+import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
+import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
+import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -1037,5 +1040,35 @@ test('after Carry on with it, the work in flight is not offered again', async ()
     carryOnAnswered(CARRY_ON, '2026-10-19T12:05:00.000Z');
     assert.doesNotMatch(contextOf(await run(repo, 'Hello', '2026-10-27T13:00:00.000Z')) ?? '', /under way/);
     assert.equal(readSurveyAgainAt(P), null);
+  });
+});
+
+test('while setup is unfinished, every prompt of the director\'s gets the setup-first line instead, whatever it asks', async () => {
+  await withProject(async ({ home, repo }) => {
+    const ask = 'I want to build a tool for tracking tide tables. Research the market first.';
+    // A folder nothing was set up in yet, with the plugin switched on, as after the install.
+    const fresh = path.join(home, 'shop');
+    put(path.join(fresh, '.claude', 'settings.json'), { enabledPlugins: { 'wheelhouse@wheelhouse': true } });
+    const out = await run(fresh, ask, NOW);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+    assert.equal(contextOf(out), SETUP_FIRST);
+    assert.ok(NOT_SET_UP.endsWith(SETUP_FIRST), 'the session start says the same');
+    assert.equal(contextOf(await run(fresh, 'What step is next?', NOW)), SETUP_FIRST);
+    // The mod's own commands and the courier's wake are left alone, as elsewhere.
+    assert.equal(await run(fresh, '/wheelhouse-go', NOW), undefined);
+    assert.equal(await run(fresh, `${LEADS.courier} wake`, NOW), undefined);
+    // A folder Wheelhouse has nothing to do with gets nothing.
+    const other = path.join(home, 'other');
+    fs.mkdirSync(other);
+    assert.equal(await run(other, ask, NOW), undefined);
+    // The registered project, part-way through its setup: the line instead of the briefing; never in a
+    // feature worktree. Once every step is done and the board was green, the briefing again.
+    const T = Date.parse('2026-10-19T09:00:00.000Z');
+    const setupRun = startRun({ folder: repo, now: () => new Date(T) });
+    assert.equal(contextOf(await run(repo, ask, NOW)), SETUP_FIRST);
+    assert.equal(contextOf(await run(featureWorktree(home, repo), ask, NOW)), undefined);
+    for (const { n } of SETUP_STEPS) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    addChanges(setupRun.id, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: new Date(T + 11 * 60000).toISOString() } }]);
+    assert.ok(contextOf(await run(repo, ask, NOW)).startsWith(HEADINGS.briefing));
   });
 });
