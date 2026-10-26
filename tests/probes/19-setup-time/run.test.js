@@ -12,7 +12,9 @@ import {
 import { stepTimes as journalStepTimes } from '../../../scripts/setup/journal.js';
 import { TARGET_MINUTES as DESIGN_TARGET } from '../../../scripts/lib/setup-numbers.js';
 import { SETUP_TITLES } from '../../../scripts/state/card-lines.js';
-import { INSTALL_LINE } from '../../../scripts/setup/tools.js';
+import { INSTALL_COMMANDS } from '../../../scripts/setup/tools.js';
+
+const INSTALL_LINE = INSTALL_COMMANDS[0];
 
 const README = fs.readFileSync(fileURLToPath(new URL('../../../README.md', import.meta.url)), 'utf8');
 const T0 = Date.parse('2026-10-25T01:00:00.000Z');
@@ -138,6 +140,14 @@ test('the note carries the README\'s own install line, with the tag put in that 
   assert.ok(note.includes('## Install'));
   assert.ok(note.includes('wh19-trial'));
   assert.ok(!/^## (?!Install)/m.test(note), 'only the Install section');
+  // A README naming a real release has it replaced the same way.
+  const named = README.replace(/(marketplace add "[^"#]+#)[^"]+"/, '$1v0.1.1"');
+  assert.equal(installLineOf(named), INSTALL_LINE);
+  const namedNote = desktopNote(named, 'v0.0.0-probe19');
+  assert.ok(namedNote.includes(INSTALL_LINE.replace('#<tag>', '#v0.0.0-probe19')));
+  assert.ok(!namedNote.includes('#v0.1.1'));
+  const unnamed = README.replace(/(marketplace add "[^"#]+#)[^"]+"/, '$1<tag>"');
+  assert.equal(installLineOf(unnamed), INSTALL_LINE);
   assert.throws(() => desktopNote(README, 'v1 && rm'), /tag/);
   assert.throws(() => installLineOf('# no line here'), /no install line/);
 });

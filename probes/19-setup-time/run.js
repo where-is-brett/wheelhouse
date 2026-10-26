@@ -52,7 +52,7 @@ export const TITLES = Object.freeze({
 });
 const HEALTH_STEP = 10;
 const INSTALL_STEP = 1;
-const INSTALL_LINE = /^\s*(\/plugin install wheelhouse --marketplace \S+#)<tag>\s*$/m;
+const INSTALL_LINE = /^\s*(claude plugin marketplace add "[^"\s#]+#)(?:<tag>|[A-Za-z0-9._-]+)(" --scope project)\s*$/m;
 
 function option(args, name) {
   const at = args.indexOf(name);
@@ -199,15 +199,16 @@ export function notesSection(s, { at = new Date().toISOString() } = {}) {
 
 // ---- The note on the desktop (pure) ----
 
-// The README's install line, with `<tag>` still in it; throws when the README has none.
+// The README's install line, the one that adds Wheelhouse's marketplace at a release, with `<tag>` in
+// place of the release the README names (or `<tag>` itself); throws when the README has none.
 export function installLineOf(readme) {
   const m = INSTALL_LINE.exec(readme);
-  if (!m) throw new Error('The README holds no install line of the form "/plugin install wheelhouse --marketplace <source>#<tag>"');
-  return `${m[1]}<tag>`;
+  if (!m) throw new Error('The README holds no install line of the form \'claude plugin marketplace add "<source>#<tag>" --scope project\'');
+  return `${m[1]}<tag>${m[2]}`;
 }
 
 // The note: what this is, the folder's name, and the README's Install section as it is, with the
-// tag put into its line only.
+// tag put into its line only, in place of whichever the README names.
 export function desktopNote(readme, tag, { folderName = FOLDER_NAME } = {}) {
   if (typeof tag !== 'string' || !/^[A-Za-z0-9._-]+$/.test(tag)) throw new Error('The tag is letters, digits, dots, dashes and underscores');
   installLineOf(readme);
@@ -216,7 +217,7 @@ export function desktopNote(readme, tag, { folderName = FOLDER_NAME } = {}) {
   const rest = readme.slice(start);
   const next = rest.slice(3).search(/^## /m);
   const section = (next === -1 ? rest : rest.slice(0, next + 3)).trimEnd();
-  const filled = section.replace(INSTALL_LINE, (line) => line.replace('#<tag>', `#${tag}`));
+  const filled = section.replace(INSTALL_LINE, (line) => line.replace(/#[^"\s]+"/, `#${tag}"`));
   return [
     'Wheelhouse: check 19, the timed run',
     '',
