@@ -1291,6 +1291,7 @@ The lines change with what setup finds. "Described as: '…'" is added when the 
 - **Sign-ins:** GitHub's or GitLab's in the browser when its tool isn't signed in yet. For a narrow way, also **Authorise** and **Install** on GitHub's pages. Only the director can sign in.
 - **The system's own windows:** Apple's or Git's installer when git is missing, and the password for Locked if Customise chose it.
 - **Their own unfinished work,** in a project already under way: the switch of the folder to the main line (A10), and their uncommitted changes in a file setup's commit shares. Both are about the director's own work, so setup never decides them alone. Each is one short card, and never appears for a new product.
+- **A project's repository that isn't private:** on GitHub, step 3's plan reads it with the director's sign-in and puts it on a short card of its own, before anything is made: "I've made it private" (setup checks again) or "Stop setup here". Go ahead never covers it. Where it can't be read then (GitLab, or no sign-in yet), step 3's apply still refuses it before anything is made, saying so plainly (section 22, self-hosting).
 - **Trust it,** for another of their computers: a security decision, so it stays a click.
 - **Anything that changes the plan** after the Go ahead, such as a repository of that name already on the account: one short card for that choice alone. Nothing else is asked again.
 
