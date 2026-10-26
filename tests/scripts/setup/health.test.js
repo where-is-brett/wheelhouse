@@ -68,11 +68,11 @@ const OK_BOARD = boardWith([{ level: 'ok', text: 'Protection: Standard' }]);
 
 // ---- The step and its card ----
 
-test('step 10 is filled by health.js: long, after Locked, the project\'s files and the phone', () => {
+test('step 10 is filled by health.js: long, after Locked and the project\'s files; the phone comes after it', () => {
   const step = STEPS.find((s) => s.n === 10);
   assert.equal(step.title, 'Health check');
   assert.equal(step.long, true);
-  assert.deepEqual(step.after, [7, 8, 9]);
+  assert.deepEqual(step.after, [7, 8]);
 });
 
 test('step 10\'s plan waits for the project, then lists the trial branch and its pull request, the same each time', async () => {
