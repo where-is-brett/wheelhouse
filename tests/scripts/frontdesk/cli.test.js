@@ -1805,7 +1805,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const helper = fakeHelper();
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
-    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm\n$/);
+    assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm, premium-card, premium-check\n$/);
     const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
@@ -1865,6 +1865,42 @@ test('through the real helper, the command places the project from its folder an
 test('run as a script, an unknown command is refused with the list of commands', async () => {
   const done = spawnSync(process.execPath, [SCRIPT, 'nonsense'], { encoding: 'utf8' });
   assert.equal(done.status, 1);
-  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm\n');
+  assert.equal(done.stderr, 'Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm, premium-card, premium-check\n');
   assert.equal(done.stdout, '');
+});
+
+test('premium-card prints the helper\'s card line, or why it isn\'t offered; premium-check says in one line what the helper found', async () => {
+  const asked = [];
+  let card = { ok: true, offered: true, line: 'The premium model\'s card for the director: {"question":"…"}.' };
+  let check = { ok: true, checked: true, found: true, model: 'model-premium' };
+  const helper = {
+    client: {
+      premium: {
+        card: async (body) => { asked.push(['card', body]); return card; },
+        check: async (body) => { asked.push(['check', body]); return check; },
+      },
+    },
+  };
+  const offered = await run(helper, ['premium-card']);
+  assert.deepEqual([offered.code, offered.out], [0, `${card.line}\n`]);
+  card = { ok: true, offered: false, why: 'The premium model is offered at Thorough only.' };
+  assert.equal((await run(helper, ['premium-card'])).out, 'The premium model is offered at Thorough only.\n');
+  card = { ok: false, refused: 'STOP is on' };
+  const stopped = await run(helper, ['premium-card']);
+  assert.deepEqual([stopped.code, stopped.err], [1, 'STOP is on\n']);
+  assert.match((await run(helper, ['premium-check'])).out, /^Your account has the premium model\./);
+  check = { ok: true, checked: true, found: false, model: null };
+  assert.match((await run(helper, ['premium-check'])).out, /^Your account doesn't have the premium model/);
+  check = { ok: true, checked: false, why: 'the premium model is not allowed, so nothing is checked' };
+  assert.equal((await run(helper, ['premium-check'])).out, 'Premium model not checked: the premium model is not allowed, so nothing is checked.\n');
+  assert.deepEqual((await run(helper, ['premium-check', 'now'])).err, 'premium-check takes no arguments\n');
+  assert.ok(asked.every(([, body]) => body.cwd === CWD));
+});
+
+test('the premium model\'s card never comes from `card`', async () => {
+  await inHome(async () => {
+    const refused = await run(fakeHelper(), ['card'], JSON.stringify({ kind: 'premium', level: 4 }));
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /comes from `premium-card`/);
+  });
 });

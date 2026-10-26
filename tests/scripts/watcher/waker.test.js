@@ -1069,6 +1069,16 @@ function confirmSetting(key, value) {
   keepEvent(setting);
   keepEvent(makeEvent({ kind: 'confirmation', data: confirmationFor(setting).data, now: () => new Date(T0 - 600 * MIN + (minute + 1) * MIN) }));
 }
+// The director's Yes on the premium model's card with paid credits, and the helper's signed check of the account,
+// which names the premium pin (scripts/routing/premium.js).
+function allowPremium(model = PINS.premium) {
+  minute += 2;
+  const at = new Date(T0 - 600 * MIN + minute * MIN).toISOString();
+  const setting = makeEvent({ kind: 'setting', data: { key: 'premium', value: 'paid-too', premiumCard: at }, now: () => new Date(at) });
+  keepEvent(setting);
+  keepEvent(makeEvent({ kind: 'confirmation', data: confirmationFor(setting).data, now: () => new Date(Date.parse(at) + MIN) }));
+  keepEvent(makeEvent({ kind: 'premium-check', data: { setting: setting.id, model, found: true }, now: () => new Date(Date.parse(at) + MIN) }));
+}
 const columnReady = (column, pins = PINS) => {
   minute += 2;
   keepEvent(makeEvent({ kind: 'column-ready', data: { column, pins, records: [`eval-${column}`] }, now: () => new Date(T0 - 600 * MIN + minute * MIN) }));
@@ -1134,9 +1144,11 @@ test('each wake reads the level in force and gives the foreman and a feature tha
   assert.deepEqual(sessionFlags(feature.args), { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' });
   assert.match(feature.args[1], /\nCritical-area work gets a second fresh reviewer; both must report CLEAN\.$/);
   assert.doesNotMatch(feature.args[1], /build it again/);
+  // A premium setting its own card didn't make, and a pin in the configuration alone, count for nothing.
   confirmSetting('premium', 'paid-too');
-  assert.equal(sessionFlags((await startFeature()).args).model, 'model-top', 'no premium ready record yet');
   columnReady('premium');
+  assert.equal(sessionFlags((await startFeature()).args).model, 'model-top', 'not the director\'s opt-in');
+  allowPremium();
   feature = await startFeature();
   assert.deepEqual(sessionFlags(feature.args), { model: 'model-premium', effort: 'high', fallback: 'model-top' });
   assert.match(feature.args[1], /\nbuilderCritical: model model-premium, effort high\n/);

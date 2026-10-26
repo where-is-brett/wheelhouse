@@ -11,22 +11,31 @@ import path from 'node:path';
 import { isModelName } from '../gate/guardrails.js';
 import { resolveRouting } from './thoroughness.js';
 
-// The levels a readiness run is made for. Thorough runs on Balanced's models and is always ready; the premium model's
-// pass is not made here, so no run names the premium model.
+// The levels a readiness run is made for. Thorough runs on Balanced's models and is always ready. The premium model's
+// pass (PREMIUM_LEVEL) is made here too, on Thorough's column with the premium model for design and critical work at
+// `high` (design section 14.6, "What the Yes starts"), and only a run made for it may name the premium model.
 export const READY_LEVELS = Object.freeze(['lean', 'lightest']);
+export const PREMIUM_LEVEL = 'premium';
+export const RUN_LEVELS = Object.freeze([...READY_LEVELS, PREMIUM_LEVEL]);
 export const PINS_VARIABLE = 'WHEELHOUSE_EVAL_PINS';
 // The feature-session scenarios of the bar, by the name their records carry: 27's is its bug leg, its main one.
 export const BAR = Object.freeze(['20', '21', '22', '23', '27', '33', '34']);
 export const BAR_TRIALS = 3;
-// The pins a level's column runs on.
+// The pins a level's column runs on: the premium pass adds the premium model's.
 const PIN_NAMES = Object.freeze(['mostCapable', 'midSized']);
+const PREMIUM_PINS = Object.freeze([...PIN_NAMES, 'premium']);
+const pinNamesOf = (level) => (level === PREMIUM_LEVEL ? PREMIUM_PINS : PIN_NAMES);
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const levelWord = (level) => level[0].toUpperCase() + level.slice(1);
+const levelWord = (level) => (level === PREMIUM_LEVEL ? 'the premium model' : level[0].toUpperCase() + level.slice(1));
 
-// The pins from the shell: { mostCapable, midSized }, each a model name, and nothing else. Throws in plain words.
-export function pinsFrom(env = process.env) {
-  const usage = `A level's run needs ${PINS_VARIABLE} set in the shell: a JSON object naming the two models, {"mostCapable":"<model>","midSized":"<model>"}.`;
+// The pins from the shell: { mostCapable, midSized }, each a model name, and nothing else; for the premium pass
+// `premium` too. Throws in plain words.
+export function pinsFrom(env = process.env, level = 'lean') {
+  const names = pinNamesOf(level);
+  const usage = level === PREMIUM_LEVEL
+    ? `The premium model's run needs ${PINS_VARIABLE} set in the shell: a JSON object naming the three models, {"mostCapable":"<model>","midSized":"<model>","premium":"<model>"}.`
+    : `A level's run needs ${PINS_VARIABLE} set in the shell: a JSON object naming the two models, {"mostCapable":"<model>","midSized":"<model>"}.`;
   const text = env[PINS_VARIABLE];
   if (typeof text !== 'string' || text.trim() === '') throw new Error(usage);
   let pins;
@@ -35,19 +44,29 @@ export function pinsFrom(env = process.env) {
   } catch {
     throw new Error(`${PINS_VARIABLE} is not JSON. ${usage}`);
   }
-  if (!isPlain(pins) || Object.keys(pins).length !== PIN_NAMES.length || !PIN_NAMES.every((name) => isModelName(pins[name]))) {
-    throw new Error(`${PINS_VARIABLE} must name exactly the most capable and the mid-sized model, each a model name, and nothing else. ${usage}`);
+  if (!isPlain(pins) || Object.keys(pins).length !== names.length || !names.every((name) => isModelName(pins[name]))) {
+    throw new Error(`${PINS_VARIABLE} must name exactly ${level === PREMIUM_LEVEL ? 'the most capable, the mid-sized and the premium model' : 'the most capable and the mid-sized model'}, each a model name, and nothing else. ${usage}`);
   }
-  return { mostCapable: pins.mostCapable, midSized: pins.midSized };
+  if (level === PREMIUM_LEVEL && (pins.premium === pins.mostCapable || pins.premium === pins.midSized)) throw new Error(`${PINS_VARIABLE} names the premium model as another class's. ${usage}`);
+  return Object.fromEntries(names.map((name) => [name, pins[name]]));
 }
 
-export const samePins = (a, b) => isPlain(a) && isPlain(b) && PIN_NAMES.every((name) => typeof a[name] === 'string' && a[name] === b[name]);
+// Whether `a` and `b` name the same pins for `level`'s run (the most capable and mid-sized models; the premium's too
+// for the premium pass).
+export const samePins = (a, b, level = 'lean') => isPlain(a) && isPlain(b) && pinNamesOf(level).every((name) => typeof a[name] === 'string' && a[name] === b[name]);
 
 // The routing a level's run starts each feature session with, as the waker would at that level with the level ready
-// (resolveRouting): its roles' models, efforts and fallbacks. Throws for a level that isn't Lean or Lightest.
+// (resolveRouting): its roles' models, efforts and fallbacks. The premium pass's is Thorough's with the premium model
+// in use, as the waker would give it once ready with paid credits allowed: the only billing under which it runs today.
+// Throws for any other level.
 export function levelRouting({ level, pins }) {
-  if (!READY_LEVELS.includes(level)) throw new Error(`A level's run is made for Lean or Lightest only, not ${JSON.stringify(level)}`);
-  if (!PIN_NAMES.every((name) => isModelName(pins?.[name]))) throw new Error('A level\'s run needs both pins, each a model name');
+  if (!RUN_LEVELS.includes(level)) throw new Error(`A level's run is made for Lean, Lightest or the premium model only, not ${JSON.stringify(level)}`);
+  if (!pinNamesOf(level).every((name) => isModelName(pins?.[name]))) throw new Error(`A level's run needs ${level === PREMIUM_LEVEL ? 'all three' : 'both'} pins, each a model name`);
+  if (level === PREMIUM_LEVEL) {
+    const routing = resolveRouting({ config: { tiers: { pins: { mostCapable: pins.mostCapable, midSized: pins.midSized, premium: pins.premium } } }, level: 'thorough', ready: ['thorough', 'premium'], premium: 'paid-too' });
+    if (routing.roles.feature?.model !== pins.premium) throw new Error('The premium model could not be resolved on those pins');
+    return routing;
+  }
   const routing = resolveRouting({ config: { tiers: { pins: { mostCapable: pins.mostCapable, midSized: pins.midSized } } }, level, ready: [level] });
   if (routing.level !== level) throw new Error(`${levelWord(level)} could not be resolved on those pins`);
   return routing;
@@ -90,10 +109,10 @@ function barTrials(evals, level, pins) {
   const found = [];
   for (const runName of names) {
     const record = readJson(path.join(runs, runName))?.json;
-    if (!isPlain(record) || record.level !== level || !samePins(record.pins, pins) || !Array.isArray(record.runs)) continue;
+    if (!isPlain(record) || record.level !== level || !samePins(record.pins, pins, level) || !Array.isArray(record.runs)) continue;
     if (typeof record.commit !== 'string' || !COMMIT.test(record.commit)) continue;
     for (const entry of record.runs) {
-      if (!isPlain(entry) || entry.variant !== 'with' || entry.level !== level || !samePins(entry.pins, pins)) continue;
+      if (!isPlain(entry) || entry.variant !== 'with' || entry.level !== level || !samePins(entry.pins, pins, level)) continue;
       const scenario = entry.leg ? `${entry.id}-${entry.leg}` : String(entry.id);
       if (!BAR.includes(scenario)) continue;
       found.push({
@@ -126,7 +145,7 @@ export function trialProblem({ evals, name, scenario, trial, sha256, level, pins
     return `its record is not trial ${match[3]} of scenario ${scenario}, with`;
   }
   if (r.level !== level) return `its record ran at ${r.level ?? 'no level'}, not ${level}`;
-  if (!samePins(r.pins, pins)) return 'its record ran on other pins';
+  if (!samePins(r.pins, pins, level)) return 'its record ran on other pins';
   if (r.pass !== true || r.handled !== true || r.exitCode !== 0) return 'its record does not say it passed';
   const events = Array.isArray(r.events) ? r.events : [];
   const result = events.findLast((e) => e?.type === 'result');
@@ -137,7 +156,7 @@ export function trialProblem({ evals, name, scenario, trial, sha256, level, pins
   }
   const init = events.find((e) => e?.type === 'system' && e.subtype === 'init');
   if (!sameModel(init?.model, feature.model)) return `its session ran on ${init?.model ?? 'no model it named'}, not ${feature.model}`;
-  if (typeof premium === 'string' && premium !== '') {
+  if (level !== PREMIUM_LEVEL && typeof premium === 'string' && premium !== '') {
     const named = [r.model, r.fallback, init?.model, ...(Array.isArray(r.models) ? r.models : []), ...(Array.isArray(r.subagents) ? r.subagents.map((s) => s?.model) : []),
       ...Object.keys(result?.modelUsage ?? {})];
     if (named.some((m) => sameModel(m, premium))) return 'it names the premium model';
@@ -187,8 +206,8 @@ function judgeCommit({ evals, trials, level, pins, premium, offered }) {
 // count and are recorded.
 export function readiness({ evals, level, pins, premium = null, given = null }) {
   const no = (gaps) => ({ ok: false, commit: null, records: [], gaps });
-  if (!READY_LEVELS.includes(level)) return no([`${JSON.stringify(level)} isn't a level a readiness run is made for: Lean or Lightest`]);
-  if (!PIN_NAMES.every((n) => isModelName(pins?.[n]))) return no(['the pins are not two model names']);
+  if (!RUN_LEVELS.includes(level)) return no([`${JSON.stringify(level)} isn't a level a readiness run is made for: Lean, Lightest or the premium model`]);
+  if (!pinNamesOf(level).every((n) => isModelName(pins?.[n]))) return no([`the pins are not ${level === PREMIUM_LEVEL ? 'three' : 'two'} model names`]);
   if (given !== null && (!Array.isArray(given) || !given.every((n) => typeof n === 'string'))) return no(['the records are not a list of names']);
   const trials = barTrials(evals, level, pins);
   // The commits, by their latest run, oldest first.

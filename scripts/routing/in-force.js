@@ -13,7 +13,8 @@ import { effectiveSettings } from '../settings/effective.js';
 import { listEvents } from '../state/events.js';
 import { readEnrolled } from '../state/signing.js';
 import { buildViews, readyColumns } from '../state/views.js';
-import { COLUMNS, EXTRA, levelOf, premiumOf, resolveRouting } from './thoroughness.js';
+import { COLUMNS, EXTRA, levelOf, resolveRouting } from './thoroughness.js';
+import { withPremiumPin } from './premium.js';
 
 // The levels ready whatever the state says (the ruling for this plan): Balanced, and Thorough, whose models are
 // the ones Balanced already runs on.
@@ -31,16 +32,19 @@ export function balancedRouting(config) {
   }
 }
 
-// The column in force for `config` and a project's `views` (its `settings` and `columnsReady`). How the premium
-// model is paid for isn't known yet (check 76), so `billing` is always 'unknown'.
+// The column in force for `config` and a project's `views` (its `settings`, `columnsReady` and `premium`). How the
+// premium model is paid for isn't known yet (check 76), so `billing` is always 'unknown'. The premium mode and pin are
+// the state's (the `premium` view: the setting its own card made, and the model the helper's check found for it),
+// never the configuration's (scripts/routing/premium.js).
 export function routingFrom({ config, views, now = () => new Date() }) {
   try {
     const settings = effectiveSettings({ project: isPlain(views?.settings) ? views.settings : {}, now });
+    const pinned = withPremiumPin(config, views?.premium);
     return resolveRouting({
-      config,
+      config: pinned,
       level: levelOf(settings),
-      ready: [...ALWAYS_READY, ...readyColumns(views?.columnsReady, config)],
-      premium: premiumOf(settings),
+      ready: [...ALWAYS_READY, ...readyColumns(views?.columnsReady, pinned)],
+      premium: typeof views?.premium?.value === 'string' ? views.premium.value : 'off',
       billing: 'unknown',
     });
   } catch {
@@ -60,7 +64,8 @@ export function routingInForce(project, config, { now = () => new Date() } = {})
 }
 
 // The columns ready for `project`, for the settings pane: the `columnsReady` view the last sync left on disk,
-// against the pins in the configuration of the project's main folder. Anything that can't be read gives none.
+// against the pins in the configuration of the project's main folder, with the premium pin the `premium` view holds.
+// Anything that can't be read gives none.
 export function columnsReadyOf({ project }) {
   try {
     const folder = readProject(project)?.folder;
@@ -69,9 +74,28 @@ export function columnsReadyOf({ project }) {
     const base = path.join(wheelhouseHome(), 'projects', project, 'views');
     const dir = fs.existsSync(base) ? base : `${base}.old`;
     const view = JSON.parse(fs.readFileSync(path.join(dir, 'columnsReady.json'), 'utf8'));
-    return readyColumns(view, config);
+    return readyColumns(view, withPremiumPin(config, premiumViewIn(dir)));
   } catch {
     return [];
+  }
+}
+
+// The `premium` view the last sync left in `dir`, or null when there is none to read.
+function premiumViewIn(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, 'premium.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// The premium view the last sync left on disk for `project`, for the settings pane, or null.
+export function premiumViewOf({ project }) {
+  try {
+    const base = path.join(wheelhouseHome(), 'projects', project, 'views');
+    return premiumViewIn(fs.existsSync(base) ? base : `${base}.old`);
+  } catch {
+    return null;
   }
 }
 

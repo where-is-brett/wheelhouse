@@ -24,7 +24,11 @@ export const PLAIN_KINDS = [
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
 // confirmation of the change, so only an offer this computer's hook signed counts.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card'];
+// `premium-card` is the helper's offer of the premium model's card (design section 14.6), signed the same way: a click on
+// one of its Allow options is the director's confirmation of the premium setting it names. So is `premium-check`, the
+// helper's own reading of what Claude Code's premium alias stands for after the director's Yes (/premium/check): the
+// premium pin is the model it names, so only a check this computer's helper signed counts.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -267,6 +271,15 @@ const PLAIN_SHAPES = {
   // as composed (`hash`: its text, header and options), so a click counts only on that very card. What a week has
   // offered is read from these, so no card is offered twice in a week and a return card knows the level before.
   'usage-card': { must: ['card', 'at', 'reset', 'from', 'to', 'hash'], may: [] },
+  // The helper offered the premium model's card (design section 14.6): when (`at`, the time its line names), the premium
+  // setting in force then (`from`: off, or within-plan when the card offers paid credits on top), and the full hash of
+  // the card as composed, so a click counts only on that very card.
+  'premium-card': { must: ['at', 'from', 'hash'], may: [] },
+  // The helper asked Claude Code what its premium alias stands for, after the director's Yes (design section 14.6,
+  // "Offered only where the account has it"): the premium setting the Yes made (`setting`, its event's id), the model
+  // the alias named (`model`, or null when it named none), and whether that is a premium model the account has
+  // (`found`: false when the alias named nothing, or named the most capable model, as it does on an account without one).
+  'premium-check': { must: ['setting', 'model', 'found'], may: [] },
 };
 // The columns a column-ready record may name, the pins it may carry, and the most records it lists.
 // The usage cards a usage-card record may name, and the Thoroughness levels it may carry.
@@ -280,6 +293,8 @@ const USAGE_FITS = Object.freeze({
   up: (from, to) => to === 'thorough' && from !== 'thorough',
   return: (from, to) => from !== to,
 });
+// The premium settings a premium card may be offered from: off (its full card) or within the plan (paid credits on top).
+export const PREMIUM_FROM = Object.freeze(['off', 'within-plan']);
 export const READY_COLUMNS = Object.freeze(['lightest', 'lean', 'premium']);
 export const PIN_NAMES = Object.freeze(['mostCapable', 'midSized', 'premium']);
 export const READY_RECORDS = 50;
@@ -475,6 +490,15 @@ function checkPlain(kind, data) {
     for (const k of ['from', 'to']) if (!USAGE_LEVELS.includes(data[k])) bad(`needs ${k} to be a Thoroughness level`);
     if (!USAGE_FITS[data.card]?.(data.from, data.to)) bad(`offers a switch from ${data.from} to ${data.to}, which a ${data.card} card never offers`);
     if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the card as composed');
+  } else if (kind === 'premium-card') {
+    if (typeof data.at !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/.test(data.at)) bad('needs at to be the time its line names');
+    if (!PREMIUM_FROM.includes(data.from)) bad(`needs from to be ${listed([...PREMIUM_FROM])}`);
+    if (typeof data.hash !== 'string' || !/^[0-9a-f]{64}$/.test(data.hash)) bad('needs the full hash of the card as composed');
+  } else if (kind === 'premium-check') {
+    if (typeof data.setting !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(data.setting)) bad('needs setting to be the id of the premium setting it checks for');
+    if (data.model !== null && !isModelName(data.model)) bad('needs model to be a model name or null');
+    if (typeof data.found !== 'boolean') bad('needs found to be true or false');
+    if (data.found === true && data.model === null) bad('can\'t have found a model it doesn\'t name');
   } else if (kind === 'column-ready') {
     if (!READY_COLUMNS.includes(data.column)) bad(`needs column to be ${listed(READY_COLUMNS.map(String))}`);
     const pins = data.pins;
