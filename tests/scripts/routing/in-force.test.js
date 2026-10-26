@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ALWAYS_READY, REWORK_LINE, SECOND_REVIEWER_LINE, balancedRouting, columnLines, columnsReadyOf, routingFrom, routingInForce,
+  ALWAYS_READY, REWORK_LINE, SECOND_REVIEWER_LINE, balancedRouting, columnLines, columnsReadyOf, premiumViewOf, routingFrom, routingInForce,
 } from '../../../scripts/routing/in-force.js';
 import { resolveRouting } from '../../../scripts/routing/thoroughness.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -18,6 +18,8 @@ const settingsAt = (efficiency, premium) => ({
   ...(premium === undefined ? {} : { premium: { key: 'premium', value: premium } }),
 });
 const ready = (...columns) => Object.fromEntries(columns.map((c) => [c, { pins: { ...pins } }]));
+// The premium view as the state gives it: the setting its own card made, and the model the helper's check found.
+const premiumView = (value, model = 'model-premium') => ({ value, setting: 'p-1', at: '2026-10-24T08:00:00.000Z', check: { model, found: true, at: '2026-10-24T08:01:00.000Z' }, absent: false });
 
 test('Balanced and Thorough are always ready', () => {
   assert.deepEqual([...ALWAYS_READY], ['balanced', 'thorough']);
@@ -40,14 +42,18 @@ test('a level runs only once its column is ready on the pins in force', () => {
   assert.equal(moved.level, 'balanced');
 });
 
-test('the premium model needs its own ready record and the director\'s opt-in', () => {
-  const views = { settings: settingsAt('thorough', 'paid-too'), columnsReady: {} };
+test('the premium model needs its own ready record and the director\'s opt-in, its pin from the state alone', () => {
+  const views = { settings: settingsAt('thorough'), columnsReady: {}, premium: premiumView('paid-too') };
   assert.equal(routingFrom({ config, views, now }).roles.feature.model, 'model-top');
   const with_ = routingFrom({ config, views: { ...views, columnsReady: ready('premium') }, now });
   assert.deepEqual(with_.roles.feature, { model: 'model-premium', effort: 'high', fallback: 'model-top' });
-  // Off by default.
-  const off = routingFrom({ config, views: { settings: settingsAt('thorough'), columnsReady: ready('premium') }, now });
+  // Off by default, and a premium setting in the settings view alone, or a pin in the configuration alone, is not the
+  // director's opt-in.
+  const off = routingFrom({ config, views: { settings: settingsAt('thorough', 'paid-too'), columnsReady: ready('premium') }, now });
   assert.equal(off.roles.feature.model, 'model-top');
+  // A check that found another model: its pass on this one doesn't count.
+  const other = routingFrom({ config, views: { ...views, columnsReady: ready('premium'), premium: premiumView('paid-too', 'model-premium-2') }, now });
+  assert.equal(other.roles.feature.model, 'model-top');
 });
 
 test('a setting that isn\'t allowed, or views that can\'t be read, give Balanced', () => {
@@ -104,7 +110,12 @@ test('columnsReadyOf reads the view on disk against the main folder\'s configura
     }));
     assert.deepEqual(columnsReadyOf({ project: 'demo' }), []);
     fs.writeFileSync(path.join(project, 'views', 'columnsReady.json'), JSON.stringify(ready('lean', 'premium')));
+    // The premium pass counts only on the premium pin the state's premium view holds, never the configuration's.
+    assert.deepEqual(columnsReadyOf({ project: 'demo' }), ['lean']);
+    fs.writeFileSync(path.join(project, 'views', 'premium.json'), JSON.stringify(premiumView('paid-too')));
     assert.deepEqual(columnsReadyOf({ project: 'demo' }), ['lean', 'premium']);
+    assert.deepEqual(premiumViewOf({ project: 'demo' }), premiumView('paid-too'));
+    assert.equal(premiumViewOf({ project: 'missing' }), null);
     // A configuration that can't be read gives none.
     fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), '{');
     assert.deepEqual(columnsReadyOf({ project: 'demo' }), []);
@@ -117,7 +128,7 @@ test('columnsReadyOf reads the view on disk against the main folder\'s configura
 });
 
 test('columnLines names each subagent role\'s model and effort, and the level\'s extra lines', () => {
-  const at = (level, extra = {}) => routingFrom({ config, views: { settings: settingsAt(level, extra.premium), columnsReady: ready('lean', 'lightest', 'premium') }, now });
+  const at = (level, extra = {}) => routingFrom({ config, views: { settings: settingsAt(level), columnsReady: ready('lean', 'lightest', 'premium'), ...(extra.premium ? { premium: premiumView(extra.premium) } : {}) }, now });
   const balanced = columnLines(at('balanced'));
   assert.match(balanced[0], /Thoroughness: Balanced/);
   assert.deepEqual(balanced.slice(1), [

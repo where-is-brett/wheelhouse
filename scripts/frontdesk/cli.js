@@ -83,7 +83,7 @@ export const RECORD_KINDS = Object.freeze([
   'work', 'amendment', 'incident', 'note',
 ]);
 export const VIEW_NAMES = Object.freeze(['rulebook', 'waiting', 'ideas', 'glossary', 'settings', 'levels', 'work', 'survey']);
-const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore', 'confirm'];
+const COMMANDS = ['cards', 'card', 'again', 'why', 'suggest', 'record', 'similar', 'views', 'explain', 'review', 'preview', 'carry-on', 'archive', 'restore', 'confirm', 'premium-card', 'premium-check'];
 // How long `confirm` waits for the helper: one window at a time on the computer, so it may wait for another's.
 const CONFIRM_WAIT_MS = 3 * WINDOW_MS;
 export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
@@ -451,6 +451,7 @@ export async function card({ client, cwd, input, now }) {
   if (!isPlain(input)) throw new CliError('Give the card as a JSON object on standard input');
   if (input.kind === 'answer') throw new CliError('An answer card comes from `cards`, made from the question as the build recorded it');
   if (input.kind === 'usage') throw new CliError('A usage card comes from the session start, made from the allowance as it reads it');
+  if (input.kind === 'premium') throw new CliError('The premium model\'s card comes from `premium-card`, made by the helper');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
   const { views } = await viewsOf(client, cwd);
@@ -1111,6 +1112,28 @@ export async function confirm({ client, cwd, card }) {
   return got;
 }
 
+// --- The premium model's opt-in (design section 14.6) ---
+
+// The premium model's card, when the director asks for it or presses Change… on its row: the line that gives the card
+// to ask and what a pick of it does, as the helper composed and recorded it, or, when it isn't offered, why not, in the
+// director's words.
+export async function premiumCard({ client, cwd }) {
+  const got = await client.premium.card({ cwd });
+  if (got?.ok !== true) throw new CliError(said(got, 'The host helper didn\'t make the premium model\'s card'));
+  return got.offered === true && typeof got.line === 'string' ? got.line : got.why;
+}
+
+// After the director's Yes on the premium model's card: the helper checks the account has the model. What it says, in
+// one line for the director.
+export async function premiumCheck({ client, cwd }) {
+  const got = await client.premium.check({ cwd });
+  if (got?.ok !== true) throw new CliError(said(got, 'The host helper didn\'t check the premium model'));
+  if (got.checked !== true) return `Premium model not checked: ${got.why}.`;
+  return got.found === true
+    ? "Your account has the premium model. It's tried on your project's own checks next; nothing changes until it passes."
+    : "Your account doesn't have the premium model, so nothing changes. I'll offer it again after setup runs and finds it.";
+}
+
 // --- Ready-made changes ---
 
 // What the helper made ready, as it answered (scripts/survey/ready.js): the work id it chose, the
@@ -1208,6 +1231,9 @@ export async function main(argv, {
     } else if (command === 'confirm') {
       only(rest, 1, 'Give the card\'s id, or lift-stop: confirm <card>');
       json(await confirm({ client: helper, cwd: here, card: rest[0] }));
+    } else if (command === 'premium-card' || command === 'premium-check') {
+      only(rest, 0, `${command} takes no arguments`);
+      lines([await (command === 'premium-card' ? premiumCard : premiumCheck)({ client: helper, cwd: here })]);
     } else if (command === 'views') {
       only(rest, 1, `Give the view's name: views <name>, one of ${VIEW_NAMES.join(', ')}`);
       lines(await view({ client: helper, cwd: here, name: rest[0], now }));

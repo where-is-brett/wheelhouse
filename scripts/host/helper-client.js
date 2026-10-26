@@ -99,7 +99,13 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       views: post('/state/views'), //   { project, cards?, review?, answers? } -> { ok, views, cards?, review?, answers? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; with answers: true, the card-answer events; `cwd` may stand for `project`
       backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
-      columnReady: post('/state/column-ready'), // { project, column, pins, records } -> { ok, id, pushed }: a Thoroughness level ready (lean or lightest), recorded only when the helper's own read of the evaluation's records finds the whole bar passed on the project's pins now; refused under STOP
+      columnReady: post('/state/column-ready'), // { project, column, pins, records } -> { ok, id, pushed }: a Thoroughness level ready (lean or lightest) or the premium model's pass (premium), recorded only when the helper's own read of the evaluation's records finds the whole bar passed on the project's pins now; refused under STOP
+    },
+    // The premium model's opt-in (design section 14.6, scripts/routing/premium.js); `cwd` may stand for `project`.
+    premium: {
+      card: post('/premium/card'), //   { project | cwd } -> { ok, offered, line? | why? }: the premium model's card, composed and its offer recorded signed by the helper, at Thorough only and never where the account is known not to have it; refused under STOP
+      check: post('/premium/check'), // { project | cwd } -> { ok, checked, found?, model? | why? }: after the director's Yes, the helper asks Claude Code what its premium alias stands for and records what it found as the premium pin; never within the plan alone, which might be paid from credits; refused under STOP
+      state: post('/premium/state'), // { project | cwd } -> { ok, value, pin }: the premium setting in force and the pin the helper's check found for it
     },
     // The director's profile. Each answers { ok: false, why } while the profile isn't set up.
     profile: {

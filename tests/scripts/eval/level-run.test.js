@@ -31,17 +31,21 @@ const scenarioSource = (id) => `export default {
 };
 `;
 
-test('--level takes Lean or Lightest only, never Thorough or premium, and not with --again', () => {
+test('--level takes Lean, Lightest or the premium model with its project, never Thorough, and not with --again', () => {
   assert.equal(parseArgs(['20', '--level', 'lean']).level, 'lean');
   assert.equal(parseArgs(['20', '--level=lightest']).level, 'lightest');
-  for (const level of ['thorough', 'premium', 'balanced', 'x']) assert.throws(() => parseArgs(['20', '--level', level]), /--level takes lean or lightest/);
+  for (const level of ['thorough', 'balanced', 'x']) assert.throws(() => parseArgs(['20', '--level', level]), /--level takes lean, lightest or premium/);
+  assert.deepEqual(parseArgs(['20', '--level', 'premium', '--project', 'o__p']).project, 'o__p');
+  assert.throws(() => parseArgs(['20', '--level', 'premium']), /--level premium needs --project/);
+  assert.throws(() => parseArgs(['20', '--level', 'lean', '--project', 'o__p']), /--project goes only/);
   assert.throws(() => parseArgs(['--again', '--level', 'lean']), /--again/);
   assert.equal(parseArgs(['20']).level, undefined);
 });
 
 test('--ready takes a level and a project, and nothing else', () => {
   assert.deepEqual(parseArgs(['--ready', 'lean', '--project', 'o__p']), { ids: [], variants: ['with', 'without'], trials: 1, ready: 'lean', project: 'o__p' });
-  assert.throws(() => parseArgs(['--ready', 'thorough', '--project', 'o__p']), /--ready takes lean or lightest/);
+  assert.throws(() => parseArgs(['--ready', 'thorough', '--project', 'o__p']), /--ready takes lean, lightest or premium/);
+  assert.equal(parseArgs(['--ready', 'premium', '--project', 'o__p']).ready, 'premium');
   assert.throws(() => parseArgs(['--ready', 'lean']), /--project/);
   assert.throws(() => parseArgs(['20', '--ready', 'lean', '--project', 'o__p']), /--ready/);
   assert.throws(() => parseArgs(['--ready', 'lean', '--project', 'o__p', '--level', 'lean']), /--ready/);
@@ -198,4 +202,44 @@ test('--ready has the helper record the level only on a full set, and says what 
   assert.ok(printed.some((l) => l.includes('those pins are not the project\'s')));
   // No pins in the shell: refused.
   await assert.rejects(main(['--ready', 'lean', '--project', 'o__p'], { home, print, env: {}, helper }), new RegExp(PINS_VARIABLE));
+});
+
+// The premium model's run (design section 14.6, "What the Yes starts"): stand-ins only, never a real session.
+const PREMIUM_PINS = Object.freeze({ ...PINS, premium: 'model-premium' });
+const premiumEnv = { [PINS_VARIABLE]: JSON.stringify(PREMIUM_PINS) };
+const helperSaying = (answer, seen = []) => () => ({ premium: { state: async (body) => { seen.push(body); return answer; } } });
+
+test('the premium model\'s run starts nothing unless the director\'s Yes allows paid credits on the pin the shell names', async () => {
+  const calls = [];
+  const run = async () => { calls.push('ran'); return {}; };
+  const go = (helper) => main(['20', '--variant', 'with', '--level', 'premium', '--project', 'o__p'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: premiumEnv, helper });
+  await assert.rejects(go(helperSaying({ ok: true, value: 'off', pin: null })), /isn't allowed for o__p/);
+  await assert.rejects(go(helperSaying({ ok: true, value: 'within-plan', pin: 'model-premium' })), /within the plan only/);
+  await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: 'model-other' })), /is model-other, not model-premium/);
+  await assert.rejects(go(helperSaying({ ok: true, value: 'paid-too', pin: null })), /not set yet/);
+  await assert.rejects(go(helperSaying({ ok: false, refused: 'STOP is on' })), /couldn't say/);
+  await assert.rejects(go(() => { throw new Error('no helper'); }), /couldn't say/);
+  assert.deepEqual(calls, []);
+  // Two pins are not enough for it.
+  await assert.rejects(main(['20', '--variant', 'with', '--level', 'premium', '--project', 'o__p'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: pinsEnv, helper: helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium' }) }), /three models/);
+  assert.deepEqual(calls, []);
+});
+
+test('with paid credits allowed, the premium model\'s run starts each feature session on it, at high, falling back to the most capable', async () => {
+  const seen = [];
+  const asked = [];
+  const run = async ({ scenario, variant, trial, home: h, date, column }) => {
+    seen.push(column);
+    const file = path.join(h, '.wheelhouse-evals', date, `${scenario.id}-${variant}-${trial}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{}\n');
+    return { pass: true, why: 'ok', file, usage: { input: 1, output: 1 } };
+  };
+  const code = await main(['20', '--variant', 'with', '--level', 'premium', '--project', 'o__p'], { root: suite({ '20-a.js': scenarioSource(20) }), home: tempFolder('eval-home-'), print: quiet, run, env: premiumEnv, helper: helperSaying({ ok: true, value: 'paid-too', pin: 'model-premium' }, asked) });
+  assert.equal(code, 0);
+  assert.deepEqual(asked, [{ project: 'o__p' }]);
+  assert.equal(seen[0].level, 'premium');
+  assert.deepEqual(seen[0].pins, PREMIUM_PINS);
+  assert.deepEqual(seen[0].routing.roles.feature, { model: 'model-premium', effort: 'high', fallback: 'model-top' });
+  assert.equal(seen[0].routing.roles.reviewerCritical.model, 'model-top');
 });

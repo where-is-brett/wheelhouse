@@ -8,6 +8,8 @@
 //        npm run eval -- --again
 //        npm run eval -- <id…> --variant with --trials 3 --level lean|lightest
 //        npm run eval -- --ready lean|lightest --project <project>
+//        npm run eval -- <id…> --variant with --trials 3 --level premium --project <project>
+//        npm run eval -- --ready premium --project <project>
 // A scenario is a file `<number>-<name>.js` in a suite; anything else there is
 // not one. A number names one scenario in one suite. A scenario whose pass has
 // more than one leg has a file per leg in its suite, each named `<number>-…`;
@@ -44,6 +46,12 @@
 // on that commit, asks the helper to record the
 // level ready for the project (`column-ready`); the helper reads and checks the records itself. Anything short says
 // which scenario and trial is missing or failed, and nothing is recorded.
+// `--level premium --project <project>` is the premium model's pass (design section 14.6, "What the Yes starts"): the
+// feature sessions start on Thorough's column with the premium model for design and critical work at `high`, on the
+// three pins WHEELHOUSE_EVAL_PINS gives. It runs nothing unless the helper says the director's Yes for that project
+// allows paid credits and the premium pin its own check found is the one the shell names: within the plan alone it
+// never runs, since Wheelhouse can't tell beforehand whether a run would be paid from credits. `--ready premium` then
+// asks the helper to record the pass, as for a level.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,7 +60,7 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs, runScenario, runSession, scenarioName, sessionSettings, today, totalUsageOf } from './harness.js';
 import { adapterFor } from '../agents/index.js';
 import { callsOf } from './feature-project.js';
-import { fileHash, levelRouting, pinsFrom, readiness } from './ready.js';
+import { fileHash, levelRouting, pinsFrom, readiness, PREMIUM_LEVEL } from './ready.js';
 import { helperClient } from '../host/helper-client.js';
 import { DEFAULT_AGENT, DESIGNED, E2E_DIR, EVAL_ROOT, REPO, SCENARIO_FILE, coveredScenarios, declaredAgents, declaredLeg, runsOnAgent, shownPath, summarise, summaryText } from './summary.js';
 import { run as runProgram } from '../lib/run.js';
@@ -395,15 +403,36 @@ function hashOf(file) {
   }
 }
 
-const LEVEL_WORDS = { lean: 'Lean', lightest: 'Lightest' };
+const LEVEL_WORDS = { lean: 'Lean', lightest: 'Lightest', premium: 'The premium model' };
+const pinWords = (pins) => (pins.premium ? `${pins.premium}, with ${pins.mostCapable} and ${pins.midSized}` : `${pins.mostCapable} and ${pins.midSized}`);
+
+// Whether the director's Yes allows the premium model's run for `project` (design section 14.6, "Two Yeses"): the
+// premium setting in force, as the helper reads it, allows paid credits, and the premium pin its own check found is the
+// one the shell names. Within the plan alone it never runs, since Wheelhouse can't tell beforehand whether a run would
+// be paid from credits. Throws in plain words otherwise, before anything starts.
+async function premiumAllowed({ project, pins, helper }) {
+  let answer;
+  try {
+    answer = await helper().premium.state({ project });
+  } catch {
+    answer = null;
+  }
+  if (answer?.ok !== true) throw new Error(`The helper couldn't say whether the premium model is allowed for ${project}, so nothing was run`);
+  if (answer.value !== 'paid-too') {
+    throw new Error(answer.value === 'within-plan'
+      ? `The premium model is allowed for ${project} within the plan only, and Wheelhouse can't tell beforehand whether a run would be paid from credits, so nothing was run`
+      : `The premium model isn't allowed for ${project}, so nothing was run`);
+  }
+  if (answer.pin !== pins.premium) throw new Error(`The premium pin the director's Yes covers for ${project} is ${answer.pin ?? 'not set yet'}, not ${pins.premium}, so nothing was run`);
+}
 
 // `--ready`: the bar's records for `level` on the pins from the shell (readiness), and, only on a full set, the
 // helper's record of the level ready for `project`. Resolves with 0 when the helper recorded it, else 1.
 async function readyStep({ level, project, home, print, env, helper }) {
-  const pins = pinsFrom(env);
+  const pins = pinsFrom(env, level);
   const found = readiness({ evals: path.join(home, '.wheelhouse-evals'), level, pins });
   if (!found.ok) {
-    print(`${LEVEL_WORDS[level]} is not ready on ${pins.mostCapable} and ${pins.midSized}${found.commit ? ` at build ${found.commit}, the latest run` : ''}, so nothing was recorded:`);
+    print(`${LEVEL_WORDS[level]} is not ready on ${pinWords(pins)}${found.commit ? ` at build ${found.commit}, the latest run` : ''}, so nothing was recorded:`);
     for (const gap of found.gaps) print(`  ${gap}`);
     return 1;
   }
@@ -412,7 +441,7 @@ async function readyStep({ level, project, home, print, env, helper }) {
     print(`The helper did not record ${LEVEL_WORDS[level]} ready: ${answer?.refused ?? 'it gave no answer'}`);
     return 1;
   }
-  print(`${LEVEL_WORDS[level]} is recorded ready for ${project} on ${pins.mostCapable} and ${pins.midSized}, from ${found.records.length} trials of build ${found.commit}.`);
+  print(`${LEVEL_WORDS[level]} is recorded ready for ${project} on ${pinWords(pins)}, from ${found.records.length} trials of build ${found.commit}.`);
   return 0;
 }
 
@@ -448,7 +477,8 @@ export async function main(argv, {
   let column = null;
   if (args.level !== undefined) {
     if (agent !== null && agent !== DEFAULT_AGENT) throw new Error(`A level's run is made on Claude Code, whose sessions take the column, not on ${agent}`);
-    const pins = pinsFrom(env);
+    const pins = pinsFrom(env, args.level);
+    if (args.level === PREMIUM_LEVEL) await premiumAllowed({ project: args.project, pins, helper });
     column = { level: args.level, pins, routing: levelRouting({ level: args.level, pins }) };
   }
   const startedAt = now();
