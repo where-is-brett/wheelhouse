@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import {
   standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow,
 } from '../helpers/setup-e2e.js';
-import { HOST_LABELS, WAYS, REAL_USERS, notPrivate } from '../../scripts/setup/host.js';
+import { HOST_LABELS, WAYS, REAL_USERS, notPrivate, NOT_PRIVATE } from '../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { listEvents } from '../../scripts/state/events.js';
@@ -103,7 +103,24 @@ test('on a public repository setup stops at step 3, before anything of Wheelhous
   try {
     await a.start();
     await a.sessionStart();
-    await assert.rejects(follow(a, { answer: (id) => byId(id) }), (error) => error.message.includes(notPrivate({ host: 'github', repo: REPO })));
+    // The one card's Go ahead, steps 1 and 2; then step 3 puts the public repository to the director
+    // on a card of its own, which the Go ahead never covers (design section 15.1).
+    await follow(a, { answer: (id) => byId(id), through: 2 });
+    const asked = (await a.cli('resume')).plan;
+    assert.equal(asked.step, 3);
+    assert.equal(asked.ask.id, 'not-private-0');
+    assert.match(asked.ask.card.question, new RegExp(`^${REPO} on GitHub is not private, so Wheelhouse can't set it up yet\\.`));
+    // Still public after "I've made it private": asked again. Then Stop setup here: it holds at step 3.
+    await a.click(asked.ask.card, NOT_PRIVATE.again);
+    const again = (await a.cli('resume')).plan;
+    assert.equal(again.ask.id, 'not-private-1');
+    await a.click(again.ask.card, NOT_PRIVATE.stop);
+    const held = (await a.cli('resume')).plan;
+    assert.equal(held.step, 3);
+    assert.equal(held.waitsFor, undefined);
+    assert.ok(held.why.startsWith(notPrivate({ host: 'github', repo: REPO })), held.why);
+    assert.equal((await a.setupRun()).steps[3]?.doneAt, undefined, 'step 3 holds');
+    assert.deepEqual((await a.setupRun()).changes.filter((c) => c.step === 3), [], 'nothing of step 3 made');
     assert.equal(await host.tip(REPO, 'refs/heads/wheelhouse-state'), null, 'no state branch on the public repository');
     assert.equal(await host.tip(REPO, 'refs/heads/wheelhouse-lock'), null, 'and no lock branch');
     assert.equal(await a.act(() => fs.existsSync(path.join(stateDir(SLUG), '.git'))), false);
