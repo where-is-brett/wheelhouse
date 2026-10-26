@@ -1023,7 +1023,7 @@ export async function makeRepos({
     if (found !== null) {
       // A new product's name already taken on the account, by a repository setup didn't make, is not
       // taken over; the profile repository, made on another computer, is used as it is.
-      if (readme && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: rename this folder, or connect it to that repository, then ask again`);
+      if (readme && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: if it is this product from your other computer, say so, and setup brings it into this folder instead; otherwise rename this folder, or connect it to that repository, then ask again`);
       return found;
     }
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });

@@ -127,7 +127,7 @@ import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
 import { loginStartRecord } from '../lib/login-start.js';
 import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
-import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, writeWhole } from '../lib/setup-clicks.js';
+import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, recordsDir, writeWhole } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { trustDir, seenFile } from '../lib/trust-clicks.js';
 import { STATE_BRANCH } from '../state/clone.js';
@@ -933,7 +933,7 @@ export async function uninstallPlan({
     // and clicking it write them, and the list must be the same before and after.
     // The trust clicks and the record of the profile's enrolments last fetched (the session start's)
     // too, Wheelhouse's own (ruling R86).
-    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), trustDir(), seenFile()]) remove(p, 'last');
+    for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
     kept('Wheelhouse\'s helper, telemetry, tools, profile and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }

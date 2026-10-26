@@ -92,8 +92,16 @@ const NEW_ANSWERS = {
   product: 'Tide tables for sailors, used by the harbour\'s skippers.', 'live-data': LIVE_DATA.no,
   'phone-ready': READY.ready, 'push-arrived': ARRIVED.yes,
 };
-// The board at the end of a log `follow` gave.
-const log10 = (log) => log.at(-1).health;
+// The board in a log `follow` gave.
+const log10 = (log) => log.find((e) => e.health).health;
+// Answers that click Customise on the first one card and Go ahead on the next (design section
+// 15.1), and answer each question as `answers` says.
+const customiseOnce = (answers) => {
+  let cards = 0;
+  return (id, plan, ask) => (id.startsWith('plan-') ? (cards++ === 0 ? 'Customise' : 'Go ahead') : byId(answers)(id, plan, ask));
+};
+// A log as [step, what] pairs: a question by its id without its digest, else what happened.
+const shape = (log) => log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10,12}$/, '') ?? (e.covered ? 'covered' : e.goAhead ? 'go ahead' : e.settled ? 'settled' : e.health ? 'health' : 'wait')]);
 const byId = (answers) => (id) => answers[Object.keys(answers).find((k) => id === k || id.startsWith(`${k}-`))];
 
 // The signed setup clicks kept on a computer, each with whether the helper used it.
@@ -261,21 +269,24 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
 
     await a.start();
     await a.sessionStart();
+    const answer = customiseOnce({ ...NEW_ANSWERS, product: PRODUCT.readme });
     const log = await follow(a, {
       through: 5,
-      answer: (id) => {
+      answer: (id, plan, ask) => {
         assert.ok(!id.startsWith('rule'), `step 5 asked ${id}`);
-        return byId({ ...NEW_ANSWERS, product: PRODUCT.readme })(id);
+        return answer(id, plan, ask);
       },
     });
-    // An existing project: no joining question and no repository made; its card says it is kept.
-    // Step 5 settles with no card and no Go ahead.
-    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.goAhead ? 'go ahead' : 'settled')]), [
-      [1, 'settled'], [2, 'go ahead'],
-      [3, 'real-users'], [3, 'connection'], [3, 'go ahead'],
-      [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'],
-      [5, 'settled'],
+    // An existing project: no joining question and no repository made. Customise asks its four
+    // choices together, then the one card again, whose Go ahead covers every step's list; step 5
+    // settles with no card.
+    assert.deepEqual(shape(log), [
+      [0, 'plan'],
+      [3, 'real-users'], [3, 'connection'], [4, 'product-before-launch'], [4, 'live-data'],
+      [0, 'plan'],
+      [1, 'settled'], [2, 'covered'], [3, 'covered'], [4, 'settled'], [5, 'settled'],
     ]);
+    assert.ok(log.filter((e) => e.together).every((e) => e.together === 4), 'asked together');
     assert.match(log.find((e) => e.step === 3 && e.goAhead).card.question, /a-director\/Harbour-Log on GitHub, kept as it is/);
     assert.ok(!a.calls.some((call) => call[1] === 'repo' && call[2] === 'create' && call[3] === repo));
 
@@ -298,40 +309,38 @@ test('an existing project with rules: step 5 asks nothing and follows them as th
   }
 });
 
-test('setup stopped at step 3\'s host card resumes there in the next session, with the answers already given, never repeating a finished step', { skip: SKIP }, async () => {
+test('setup stopped after Customise\'s cards resumes at the one card in the next session, with the answers already given', { skip: SKIP }, async () => {
   const { a } = fresh();
   try {
     await a.start();
     await a.sessionStart();
-    // Steps 1 and 2 done, and two of step 3's questions answered; Desktop is closed while its
-    // host card is asked.
-    const first = await follow(a, { answer: byId(NEW_ANSWERS), through: 2 });
-    assert.deepEqual(first.map((e) => e.step), [1, 2]);
-    const asked = [];
-    for (;;) {
-      const { plan } = await a.cli('resume');
-      if (plan.ask.id === 'host') break;
-      asked.push(plan.ask.id);
-      await a.click(plan.ask.card, byId(NEW_ANSWERS)(plan.ask.id));
-    }
-    assert.deepEqual(asked, ['join', 'real-users']);
+    // The one card, Customise, and its cards answered together; Desktop is closed before the one
+    // card comes back.
+    const one = await a.cli('resume');
+    assert.equal(one.plan.step, 0);
+    await a.click(one.plan.ask.card, 'Customise');
+    const { plan } = await a.cli('resume');
+    assert.deepEqual(plan.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['join', 'real-users', 'host', 'connection']);
+    await a.clickAll(plan.asks.map((x) => x.card), plan.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
     const stopped = await a.setupRun();
     await a.stop();
 
     // The next session: a helper started afresh, and the session start's reload.
     await a.start();
-    assert.deepEqual(await a.sessionStart(), [partWay(3, SETUP_TITLES[3])]);
-    const resumed = await a.cli('resume');
-    assert.equal(resumed.next, 3);
-    assert.equal(resumed.plan.ask.id, 'host', 'the questions already answered are not asked again');
-    for (const n of [1, 2]) assert.match((await a.cliTry('plan', String(n))).refused, /is already done/, `step ${n}`);
+    await a.sessionStart();
+    // The rest of the choices (step 4's), then the one card with the director's choices on it.
+    const next = (await a.cli('resume')).plan;
+    assert.deepEqual(next.asks.map((x) => x.id.replace(/-[0-9a-f]{10}$/, '')), ['product-before-launch', 'live-data'], 'the questions already answered are not asked again');
+    await a.clickAll(next.asks.map((x) => x.card), next.asks.map((x) => byId(NEW_ANSWERS)(x.id)));
+    const card = (await a.cli('resume')).plan;
+    assert.equal(card.step, 0);
+    assert.match(card.ask.card.question, /Here's the plan, with your choices\./);
+    assert.match(card.ask.card.question, /Described as: "Tide tables for sailors, used by the harbour's skippers\."/);
 
     const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 3 });
-    assert.deepEqual(log.map((e) => e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.goAhead ? 'go ahead' : 'other')), ['host', 'connection', 'go ahead']);
+    assert.deepEqual(shape(log), [[0, 'plan'], [1, 'settled'], [2, 'covered'], [3, 'covered']]);
     const now = await a.setupRun();
     assert.equal(now.id, stopped.id, 'the same run, carried on');
-    for (const n of [1, 2]) assert.deepEqual(now.steps[n], stopped.steps[n], `step ${n}`);
-    assert.deepEqual(now.changes.filter((ch) => ch.step <= 2), stopped.changes.filter((ch) => ch.step <= 2), 'nothing of steps 1 and 2 made again');
     assert.equal(typeof now.steps[3].doneAt, 'string');
     assert.equal(await a.act(() => readProject(SLUG)?.folder), a.folder);
     assert.deepEqual(a.refused, []);
@@ -344,16 +353,12 @@ test('setup stopped at step 3\'s host card resumes there in the next session, wi
 // A session started between step 3, which registers the project, and step 7, which installs the
 // pinned kits, holds nothing for kits not yet installed, so the playbook's own command passes the
 // lineage hold's guard (ruling R136; found end to end by Task 17).
-test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SKIP }, async () => {
+test('setup stopped after step 3 carries on at step 4 in the next session, on the same Go ahead', { skip: SKIP }, async () => {
   const { a } = fresh();
   try {
     await a.start();
     await a.sessionStart();
     await follow(a, { answer: byId(NEW_ANSWERS), through: 3 });
-    // Step 4's first card is asked; Desktop is closed before the director answers it.
-    const asked = (await a.cli('resume')).plan;
-    assert.equal(asked.step, 4);
-    assert.match(asked.ask.id, /^product-/);
     const stopped = await a.setupRun();
     const made = a.calls.filter((call) => call[0] === 'gh' && call[1] === 'repo' && call[2] === 'create');
     assert.deepEqual(made.map((call) => call[3]), [REPO, `a-director/${PROFILE_REPO}`]);
@@ -361,15 +366,16 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
     assert.equal(a.helper, null);
 
     // The next session: a helper started afresh, with nothing of the last one's in memory, and the
-    // session start's reload, which says where setup stands.
+    // session start's reload, which says where setup stands, and nothing of a lineage hold: setup
+    // installs the kits at step 7.
     await a.start();
-    // It says where setup stands, and nothing of a lineage hold: setup installs the kits at step 7.
     assert.deepEqual(await a.sessionStart(), [partWay(4, SETUP_TITLES[4])]);
     const resumed = await a.cli('resume');
     assert.equal(resumed.next, 4);
+    // The one card's Go ahead still holds after the break (the director's call, 26 October 2026):
+    // step 4 settles with no card.
     assert.equal(resumed.plan.step, 4);
-    assert.equal(resumed.plan.ask.id, asked.ask.id);
-    assert.equal(resumed.plan.ask.card.question, asked.ask.card.question, 'the same card, asked again');
+    assert.equal(resumed.plan.done, true);
     assert.ok(resumed.lines.includes(`Next: step 4, ${SETUP_TITLES[4]}.`), resumed.lines.join('\n'));
     // A finished step is never planned or applied again.
     for (const n of [1, 2, 3]) {
@@ -378,11 +384,8 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
       assert.match(again.refused, /is already done/, `step ${n}`);
     }
 
-    // The director answers, and setup carries on from step 4, through step 5.
-    const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 5 });
-    assert.deepEqual(log.map((e) => [e.step, e.ask?.replace(/-[0-9a-f]{10}$/, '') ?? (e.settled ? 'settled' : 'other')]), [
-      [4, 'product-before-launch'], [4, 'live-data'], [4, 'settled'], [5, 'settled'],
-    ]);
+    const log = await follow(a, { answer: byId(NEW_ANSWERS), through: 6 });
+    assert.deepEqual(shape(log), [[5, 'settled'], [6, 'covered']]);
     const now = await a.setupRun();
     assert.equal(now.id, stopped.id, 'the same run, carried on');
     // Steps 1 to 3 exactly as they were when setup stopped: their times and every change they made,
@@ -391,11 +394,9 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
     assert.deepEqual(now.changes.filter((ch) => ch.step <= 3), stopped.changes.filter((ch) => ch.step <= 3));
     assert.deepEqual(a.calls.filter((call) => call[0] === 'gh' && call[1] === 'repo' && call[2] === 'create'), made);
     assert.equal(typeof now.steps[4].doneAt, 'string');
-    assert.equal(typeof now.steps[5].doneAt, 'string');
-    assert.equal((await a.cli('resume')).next, 6);
-    // The answer recorded in the project's records once: the product's glossary entry.
+    // The phase the one card's Go ahead recorded reached the project's state once it existed.
     const views = await a.act(() => a.client.state.views({ project: SLUG }));
-    assert.equal(views.views.glossary['Cafe-Menu'].data.plain, NEW_ANSWERS.product);
+    assert.equal(views.views.settings?.phase?.value ?? views.views.settings?.phase, 'before-launch');
     assert.deepEqual(a.refused, []);
     assert.deepEqual(shims.calls(), []);
   } finally {
@@ -403,20 +404,20 @@ test('setup stopped at step 4 resumes at step 4 in the next session', { skip: SK
   }
 });
 
-// On step 4's first card, which records the product's glossary entry and phase from the answer, a
-// refused typed answer records nothing and claims nothing (ruling R137; found end to end by Task 17).
-test('step 4\'s first card refuses a hand-back and a first question, records neither, and takes the question typed again (rulings R125, R132)', { skip: SKIP }, async () => {
+// On Customise's card of the description, which records the product's glossary entry and phase from
+// the answer, a refused typed answer records nothing and claims nothing (ruling R137).
+test('the description\'s card refuses a hand-back and a first question, records neither, and takes the question typed again (rulings R125, R132)', { skip: SKIP }, async () => {
   const { a } = fresh();
   try {
     await a.start();
     await a.sessionStart();
-    await follow(a, { answer: byId(NEW_ANSWERS), through: 3 });
-    // Typed on its first card in turn: the choice handed back, a question, and the question again.
+    // Typed on the description's card in turn: the choice handed back, a question, and the question again.
     const texts = ['you decide', 'Tide tables for sailors?', 'Tide tables for sailors?'];
     const why = [];
+    const answer = customiseOnce(NEW_ANSWERS);
     const log = await follow(a, {
       through: 4,
-      answer: (id, plan) => (id.startsWith('product-') ? texts[why.push(plan.unanswered ?? null) - 1] : byId(NEW_ANSWERS)(id)),
+      answer: (id, plan, ask) => (id.startsWith('product-') ? texts[why.push(ask?.unanswered ?? null) - 1] : answer(id, plan, ask)),
     });
     assert.deepEqual(why, [null, NOT_AN_ANSWER.handedBack, NOT_AN_ANSWER.question], 'each refusal said why, once');
     assert.deepEqual(log.filter((e) => e.ask?.startsWith('product-')).map((e) => e.label), texts);
@@ -452,9 +453,11 @@ test('a second computer joins, and its records count on the first only after Tru
     await b.start();
     assert.deepEqual(await b.sessionStart(), [NOT_SET_UP]);
     const keyB = await b.act(() => ownKey());
-    const joined = await follow(b, { answer: byId({ ...NEW_ANSWERS, join: fromOtherComputer('Cafe-Menu') }) });
-    assert.deepEqual([...new Set(joined.map((e) => e.step))], [1, 2, 3, 6, 7, 8, 9]);
-    assert.deepEqual(joined.filter((e) => e.step === 3 && e.ask).map((e) => e.ask.replace(/-[0-9a-f]{10}$/, '')), ['join', 'host', 'connection']);
+    // On the second computer the director clicks Customise and says the product is from their
+    // other computer; the one card then lists the join, and its Go ahead runs the joining steps.
+    const joined = await follow(b, { answer: customiseOnce({ ...NEW_ANSWERS, join: fromOtherComputer('Cafe-Menu') }), phone: true });
+    assert.deepEqual([...new Set(joined.map((e) => e.step))], [0, 3, 1, 2, 6, 7, 8, 9]);
+    assert.ok(joined.some((e) => e.step === 3 && e.ask === 'join' && e.label === fromOtherComputer('Cafe-Menu')));
     const runB = await b.setupRun();
     assert.equal(joinedRepo(runB), REPO);
     assert.equal(stepsFor(runB), JOINING_STEPS);

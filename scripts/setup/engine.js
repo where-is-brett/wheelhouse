@@ -455,12 +455,14 @@ export function setupRoutes({
   // Whether the one card is what comes next: setup isn't finished and no Go ahead on it holds.
   const oneCardNext = (run) => !finished(run) && (run === null || answersWithConsent(run.id).consent === null);
 
-  // A question card for a choice or a redo card, composed and recorded as asked under its step.
+  // A question card for a choice or a redo card, composed and recorded as asked under its step, with
+  // `unanswered` when what was typed on it was not taken (rulings R125, R132), as a step's ask has.
   function askChoice(run, { step, id, card: input, typed, writes, found }) {
     const card = composeCard({ ...cleanDeep(input, []), kind: 'question', suggest: false }).question;
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step}'s card could not be cleaned as it is sent`);
+    const refused = typedRefused(run.id, step, id);
     noteAsked({ runId: run.id, folder: run.folder, step, id, card, typed: typed === true, writes, found, now });
-    return { step, id, card };
+    return { step, id, card, ...(refused === null ? {} : { unanswered: NOT_AN_ANSWER[refused] }) };
   }
 
   // /setup/plan with step 0: the one card, or, after Customise, the next of its cards (up to four

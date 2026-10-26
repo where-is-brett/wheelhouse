@@ -81,6 +81,8 @@ export async function openChoices({ steps, run, answers, planOf }) {
   const taken = Object.fromEntries(Object.entries(answers).filter(([key]) => !open.some((s) => key.startsWith(`${s.n}.`))));
   const list = [];
   for (const step of open) {
+    // A computer joining a product from another runs no step 4 (ruling R74): its questions don't arise.
+    if (step.n === 4 && joining(taken)) continue;
     for (let i = 0; i < MOST_ASKS; i += 1) {
       let got;
       try {
@@ -101,6 +103,10 @@ export async function openChoices({ steps, run, answers, planOf }) {
   return list;
 }
 
+// Whether the answers taken say this computer joins a product from another (the join question
+// answered with anything but a new product).
+const joining = (taken) => Object.entries(taken).some(([key, a]) => /^3\.join(?:-|$)/.test(key) && a.label !== NEW_PRODUCT);
+
 // The plain line a choice adds to the one card, or null when it adds none. `name` is the product's,
 // `platform` the computer's.
 function lineOf({ id, label, text }, { name, platform, choices }) {
@@ -112,7 +118,10 @@ function lineOf({ id, label, text }, { name, platform, choices }) {
     return 'Launched: it has real users.';
   }
   if (id === 'locked') return label === LEVELS.locked ? 'Locked: you type your computer password once, at its step.' : null;
-  if (id === 'host') return `A new product, in a private repository on your ${host} account.`;
+  if (id === 'host') {
+    const join = choices.find((c) => c.id === 'join' || c.id.startsWith('join-'));
+    return join && join.label !== NEW_PRODUCT ? `Looked for on your ${host} account.` : `A new product, in a private repository on your ${host} account.`;
+  }
   if (id.startsWith('connection')) {
     if (label === WAYS.quick) return platform === 'darwin' ? `Agents use your ordinary ${host} sign-in, which they can't read on this Mac.` : `Agents use your ordinary ${host} sign-in.`;
     if (label === STRICTER) return `A key for this project only, made on ${host} (you'll click Authorise and Install).`;
