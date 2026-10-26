@@ -2166,7 +2166,7 @@ const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl
 
 const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
 
-test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending by profile.json', async () => {
+test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending a new product', async () => {
   await withHome(async () => {
     const w = standIn();
     const step = stepFor(w);
@@ -2175,10 +2175,10 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(first.id, 'join');
     assert.equal(first.typed, true, 'an owner/name may be typed');
     assert.deepEqual(first.card.options.map((o) => o.label), [NEW_PRODUCT, 'Cafe-Menu, from my other computer']);
-    assert.equal(first.card.recommend, fromOtherComputer('Cafe-Menu'), 'no profile.json: the other computer');
+    assert.equal(first.card.recommend, NEW_PRODUCT, 'an empty folder is most often a new product (design section 15.1)');
     assert.match(first.card.what, /owner\/name/);
     composeCard({ ...first.card, kind: 'question' });
-    // With profile.json on this computer, it is still asked, recommending a new product.
+    // With profile.json on this computer, it is still asked, recommending a new product too.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');
     fs.mkdirSync(wheelhouseHome(), { recursive: true });
     fs.writeFileSync(profileJson, '{}\n');

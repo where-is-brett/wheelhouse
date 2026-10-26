@@ -118,6 +118,8 @@ export const NEEDS_CLICK = `this step needs the director's click on its card, fr
 export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
+// What status says once setup is finished and the phone, optional, is still to be offered.
+export const PHONE_NEXT = 'Setup is finished. Phone notifications come next, and are optional.';
 // What the one card's Go ahead never stands for: the director's own decisions, each asked on its card.
 export const NOT_COVERED = Object.freeze(['switch', 'own-app-again']);
 // Said to the director with a card asked again because what they typed on it was not taken, by why
@@ -365,8 +367,11 @@ function statusLines(run, steps, running) {
     }
   }
   const next = firstUnfinished(run, steps);
-  lines.push(next === null ? 'Every step is done.' : `Next: ${title(next)}.`);
-  return { lines, next, ask: toAsk(run, steps, running) };
+  const ask = toAsk(run, steps, running);
+  // The phone is offered once setup is finished, and is optional (design section 15.1).
+  if (next === null) lines.push(ask === PUSH_TEST_STEP ? PHONE_NEXT : 'Every step is done.');
+  else lines.push(`Next: ${title(next)}.`);
+  return { lines, next, ask };
 }
 
 // The routes' handlers, each taking the request's body and giving its answer. A refusal throws
