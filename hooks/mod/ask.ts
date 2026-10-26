@@ -5,13 +5,20 @@
 // sign (check 32). scripts/mod/validate.js checks that this is the mod's only such call and that
 // it runs nothing but the bridge.
 import type { EngineInterface, PluginState } from 'claude-code'
-import { ASK_MS, NOT_RECORDED } from './numbers'
+import { ASK_MS, NOT_RECORDED, NODE_MISSING } from './numbers'
 
 // The pane's model as the bridge sends it (scripts/mod/status.js), declared in types/index.d.ts.
 export type PaneModel = PluginState['wheelhouse']['pane']['model']
 
 // The toast for a press the bridge gave no answer to.
 export const FAILED = NOT_RECORDED
+
+// The toast for a computer with no Node.js, and whether the bridge's last start found none: the
+// engine's process call says "Executable not found" (check 32) when `node` is not on the PATH.
+export { NODE_MISSING }
+let nodeAbsent = false
+export const nodeNotFound = () => nodeAbsent
+const notFound = (error: unknown) => /Executable not found|ENOENT/.test(String(error instanceof Error ? error.message : error))
 
 // The bridge's answer line, as scripts/mod/bridge.js lineOf writes it.
 export type Answer = {
@@ -59,9 +66,11 @@ export async function ask($: EngineInterface, request: Record<string, unknown>, 
       stdin: JSON.stringify(request),
       timeoutMs,
     })
+    nodeAbsent = false
     if (run.exitCode !== 0) return null
     return answerOf(JSON.parse(run.stdout.trim()))
-  } catch {
+  } catch (error) {
+    if (notFound(error)) nodeAbsent = true
     return null
   }
 }

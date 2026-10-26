@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   toolsStatus, startInstaller, fetchHostTool, toolsStep, hostToolsFor, nodeRefusal, openCommand, pickInstaller, notesChecksums,
-  NODE_LINE, INSTALL_LINE, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError,
+  NODE_LINE, INSTALL_COMMANDS, MAC_INSTALLER, GIT_INSTALLER_ARGS, ChecksumError,
 } from '../../../scripts/setup/tools.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { runApply, setupRoutes } from '../../../scripts/setup/engine.js';
@@ -345,10 +345,13 @@ test('Node.js missing or too old stops setup with the README\'s line, and nothin
   assert.match(nodeRefusal({ found: true, version: '20.9.0' }), /20\.9\.0.*22\.0\.0 or later/);
 });
 
-test('the install line is the form check 37 documented, naming Wheelhouse\'s repository and a release tag', () => {
-  assert.equal(INSTALL_LINE, '/plugin install wheelhouse --marketplace where-is-brett/wheelhouse#<tag>');
-  const note = fs.readFileSync(fileURLToPath(new URL('../../../docs/checks/37-install-line.md', import.meta.url)), 'utf8');
-  assert.ok(note.includes(`\`${INSTALL_LINE}\``), 'check 37 gives the line as it is');
+test('the install commands name Wheelhouse\'s own marketplace, at a release tag, at project scope', () => {
+  assert.deepEqual(INSTALL_COMMANDS, [
+    'claude plugin marketplace add "where-is-brett/wheelhouse#<tag>" --scope project',
+    'claude plugin install wheelhouse@wheelhouse --scope project',
+  ]);
+  // Never the bare name, which another publisher's plugin can answer to.
+  for (const command of INSTALL_COMMANDS) assert.doesNotMatch(command, /--marketplace|install wheelhouse(?!@wheelhouse)/);
 });
 
 test('with everything here, the list is only the allow rule, written by key beside the director\'s own, and put back', async () => {

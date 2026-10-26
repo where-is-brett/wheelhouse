@@ -64,13 +64,20 @@ const FLOOR = NODE_FLOOR.join('.');
 // The README's Node.js line (Task 16 puts it in the README as it is). It covers a session whose
 // every tool is refused with a message naming a Wheelhouse script, which is how the hooks fail
 // with no `node` (check 35), as well as a Node.js that is missing or too old.
-export const NODE_LINE = `Wheelhouse needs Node.js ${NODE_FLOOR[0]} or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then ask again in the same conversation; if it still refuses, start a new session.`;
+export const NODE_LINE = `Wheelhouse needs Node.js ${NODE_FLOOR[0]} or later. If this computer has none or an older one, or a Wheelhouse session refuses every tool with a message naming a Wheelhouse script and "node: command not found", install the LTS from nodejs.org, then start a new conversation.`;
 
-// The README's install line (Task 16, ruling R97): the form check 37 documented, pasted into a
-// Desktop session opened on the product's folder, with `<tag>` standing for the release's tag.
-// Check 37's sitting may change it, here only; the README tells the director to pick "this
-// project" at its scope question (whether the user scope must be handled too is ruling R24's).
-export const INSTALL_LINE = `/plugin install wheelhouse --marketplace ${WHEELHOUSE_REPO}#<tag>`;
+// The README's install commands, with `<tag>` standing for the release's tag: first Wheelhouse's own
+// marketplace is added at that tag, then the plugin is installed by its full name, wheelhouse@wheelhouse,
+// both at project scope. Naming the marketplace means no plugin of a similar name from another
+// publisher can be picked. The one-line form check 37 inferred, `/plugin install wheelhouse
+// --marketplace <repository>#<tag>`, took a Desktop session to another publisher's plugin on 26 October
+// 2026; these two ran on the command line the same day. The Desktop page documents the plugin browser,
+// not `/plugin` lines, so the README has the session run these as commands, with the plugin browser as
+// the fall-back.
+export const INSTALL_COMMANDS = Object.freeze([
+  `claude plugin marketplace add "${WHEELHOUSE_REPO}#<tag>" --scope project`,
+  'claude plugin install wheelhouse@wheelhouse --scope project',
+]);
 
 // How often the step looks again while an installer runs, and how long the installer may go unseen,
 // with git still missing, before the step says it closed (ruling R55): its window may take a

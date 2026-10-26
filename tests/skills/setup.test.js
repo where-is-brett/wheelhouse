@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { USAGE } from '../../scripts/setup/cli.js';
-import { NODE_LINE, INSTALL_LINE } from '../../scripts/setup/tools.js';
+import { NODE_LINE, INSTALL_COMMANDS } from '../../scripts/setup/tools.js';
 import { setupCommand, frontDeskCommand, allowRule, localSettings } from '../../scripts/protection/settings.js';
 import { PUSH_TEST_STEP } from '../../scripts/lib/setup-run.js';
 import { PUSH_TEST_TEXT, READY } from '../../scripts/setup/notify.js';
@@ -177,9 +177,11 @@ test('the playbook shows uninstall\'s list when its card points to status, and s
   assert.match(command, /If plan's or status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session\./);
 });
 
-test('the README gives the Node.js line and the install line as they are', () => {
+test('the README gives the Node.js line and the install commands as they are, at the plugin\'s release', () => {
   assert.ok(readme.includes(NODE_LINE), 'NODE_LINE');
-  assert.ok(readme.includes(INSTALL_LINE), 'INSTALL_LINE');
+  const version = JSON.parse(read('.claude-plugin/plugin.json')).version;
+  for (const command of INSTALL_COMMANDS) assert.ok(readme.includes(command.replace('<tag>', `v${version}`)), command);
+  assert.doesNotMatch(readme, /--marketplace/);
   assert.match(readme, /\*\*this project\*\*/);
 });
 

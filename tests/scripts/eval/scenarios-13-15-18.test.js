@@ -76,8 +76,10 @@ function guardSays(plugin, { cwd, home, tool, input }) {
   for (const entry of hooks) {
     if (entry.matcher !== '*' && !new RegExp(`^(?:${entry.matcher})$`).test(tool)) continue;
     for (const hook of entry.hooks) {
-      const file = /node "([^"]+)"/.exec(hook.command)[1];
-      const run = spawnSync(process.execPath, [file], {
+      // node, then the Node.js check and the guard it starts (scripts/hooks/node-floor.cjs).
+      const args = [...hook.command.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+      const file = args.at(-1);
+      const run = spawnSync(process.execPath, args, {
         input: JSON.stringify({ session_id: 's', cwd, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input }),
         env: { ...process.env, WHEELHOUSE_HOME: home }, encoding: 'utf8',
       });
