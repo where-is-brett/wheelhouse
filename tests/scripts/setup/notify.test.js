@@ -29,10 +29,18 @@ import { withProject, T0, SLUG } from '../../helpers/setup-answers.js';
 const ANSWERED = new Date(T0.getTime() - 60 * 1000);
 const after = (ms) => new Date(ANSWERED.getTime() + ms);
 
-// The folder's run with the steps step 9 waits for done (step 6, the push options, and step 8, Locked).
+// The health check done, its board green: setup is finished, and the phone comes after (design section 15.1).
+function greenBoard(runId) {
+  markStep(runId, 10, 'doneAt', { now: () => T0 });
+  addChanges(runId, [{ id: newId('chg'), step: 10, kind: 'answer', target: 'step 10', before: null, after: { green: T0.toISOString() } }]);
+}
+
+// The folder's run with the steps step 9 waits for done (step 6, the push options, step 8, Locked,
+// and the health check).
 function readyFor9(folder) {
   const run = startRun({ folder, now: () => T0 });
   for (const n of [6, 8]) markStep(run.id, n, 'doneAt', { now: () => T0 });
+  greenBoard(run.id);
   return run;
 }
 
@@ -50,8 +58,9 @@ test('step 9 is filled by notify.js, keeping its number and title', () => {
   assert.equal(step.title, notifyStep().title);
   assert.equal(step.long, undefined);
   // Card A says step 6 switched a push option on, and asks for the screen locked, which would
-  // cover the password window step 8 opens for Locked: it waits for both (ruling R70).
-  assert.deepEqual(step.after, [6, 8]);
+  // cover the password window step 8 opens for Locked: it waits for both (ruling R70). The phone
+  // comes last, once the health check's board is green (design section 15.1).
+  assert.deepEqual(step.after, [6, 8, 10]);
   assert.equal(step.asksDuring, undefined);
 });
 
@@ -71,6 +80,10 @@ test('through the helper, card A waits for step 6, then for step 8 while it runs
     assert.equal(during.waitsFor, 8);
     assert.match(during.why, /^step 8 \(.*\) is still running/);
     markStep(run.id, 8, 'doneAt', { now: () => T0 });
+    const health = await plan(9);
+    assert.equal(health.ask, undefined, 'card A is not asked before the board is green');
+    assert.equal(health.waitsFor, 10);
+    greenBoard(run.id);
     assert.equal((await plan(9)).ask?.id, READY_ID);
   });
 });
@@ -79,6 +92,7 @@ test('step 9 does not settle before step 6, even with the answer to whether the 
   await withProject(async ({ folder, user }) => {
     const run = startRun({ folder, now: () => T0 });
     markStep(run.id, 8, 'doneAt', { now: () => T0 });
+    greenBoard(run.id);
     // The answer to card B, kept for the run as the prompt record keeps it.
     const card = { question: 'Did the test notification reach your phone?', header: 'Question', options: [ARRIVED.yes, ARRIVED.no].map((l) => ({ label: l, description: l })) };
     noteAsked({ runId: run.id, folder, step: 9, id: ARRIVED_ID, card, now: () => T0 });
@@ -308,7 +322,7 @@ test('the push test\'s result names whether it arrived, and only for one of the 
 
 // The phone is optional (the director's ruling of 26 October 2026): Skip for now settles step 9 as
 // skipped, the health check and setup's end go on, and the front desk takes the test later.
-test('Skip for now settles step 9 as skipped, not failed, and the steps after it don\'t wait for a phone', async () => {
+test('Skip for now settles step 9 as skipped, not failed, and setup is finished without a phone', async () => {
   await withProject(async ({ folder, plan, answer }) => {
     const run = readyFor9(folder);
     for (const n of [1, 2, 3, 4, 5, 7]) markStep(run.id, n, 'doneAt', { now: () => T0 });
@@ -317,8 +331,8 @@ test('Skip for now settles step 9 as skipped, not failed, and the steps after it
     const mine = readJournal().runs.find((r) => r.id === run.id);
     assert.deepEqual(mine.changes.filter((c) => c.step === 9).map((c) => [c.kind, c.after]), [['answer', SKIPPED]]);
     assert.equal(phonePushResult(), null, 'a skip is no push that didn\'t arrive');
-    // Only the health check is left.
-    assert.equal(firstUnfinished(mine), 10);
+    // Setup is finished: the phone came after the health check, and holds nothing up.
+    assert.equal(firstUnfinished(mine), null);
   });
   // Directly: a skip settles at once, however long ago.
   const skipped = { [`9.${READY_ID}`]: { label: READY.skip, text: null, at: T0.toISOString() } };
@@ -348,7 +362,7 @@ test('a run parked on the earlier card, answered Later, is asked the new card an
     assert.equal(answersFor(run.id)[`9.${READY_ID}`], undefined);
     await answer(asked.ask.card, READY.skip);
     assert.deepEqual(await plan(9), { ok: true, done: true });
-    assert.equal(firstUnfinished(readJournal().runs.find((r) => r.id === run.id)), 10);
+    assert.equal(firstUnfinished(readJournal().runs.find((r) => r.id === run.id)), null);
   });
 });
 

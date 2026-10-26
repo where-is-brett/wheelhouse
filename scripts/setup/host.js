@@ -377,7 +377,7 @@ const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
 
 // ---- The questions ----
 
-const MEANWHILE = 'Setup waits for this answer; anything installing carries on.';
+const MEANWHILE = 'Nothing runs until your Go ahead on the plan.';
 
 function realUsersAsk(name) {
   return {
@@ -437,7 +437,7 @@ function hostAsk(name) {
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
 // when there were several, or 'not-a-name' for typed text that names no repository.
-function joinAsk(id, name, { profile, missed }) {
+function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
   if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
@@ -454,10 +454,10 @@ function joinAsk(id, name, { profile, missed }) {
         { label: NEW_PRODUCT, says: 'Setup makes a private repository for it and connects this folder to it.' },
         { label: other, says: `Setup finds ${name} on your account or organisations, with Wheelhouse's records, and checks it out into this folder.` },
       ],
-      recommend: profile ? NEW_PRODUCT : other,
-      because: profile
-        ? 'this computer is already set up with Wheelhouse, so an empty folder is most likely a new product'
-        : 'this computer is new to Wheelhouse, so an empty folder is most likely a product from your other one',
+      // An empty folder is far more often a new product, whether or not this computer knows
+      // Wheelhouse yet (the director's first setup, design section 15.1).
+      recommend: NEW_PRODUCT,
+      because: 'an empty folder is most often a new product',
       meanwhile: MEANWHILE,
     },
   };
@@ -519,7 +519,7 @@ function joinChoice(ctx) {
   for (;;) {
     const id = tried.length === 0 ? 'join' : `join-${digest(tried)}`;
     const got = ctx.answers?.[`3.${id}`] ?? null;
-    if (got === null) return { ask: joinAsk(id, name, { profile: fs.existsSync(profileFile()), missed: tried.at(-1) }) };
+    if (got === null) return { ask: joinAsk(id, name, { missed: tried.at(-1) }) };
     if (got.label === NEW_PRODUCT) return null;
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
@@ -803,6 +803,28 @@ export const notPrivate = ({ host, repo, profile = false }) => (profile
   ? `${repo} on ${NAME[host]} is not private, and Wheelhouse keeps your settings and backups in it, so setup has stopped: make it private in its settings on ${NAME[host]}, then a fresh Go ahead tries again`
   : `${repo} on ${NAME[host]} is not private, and Wheelhouse keeps its records (your answers, its cards and its plans) on the project's own repository, so setup has stopped before putting anything there: a public project can't use Wheelhouse yet`);
 
+// The card for a project's repository that isn't private: checked again once the director has made
+// it private, or setup stops there. Its id counts the times asked, so each check is a card of its own.
+export const NOT_PRIVATE = Object.freeze({ again: 'I\'ve made it private', stop: 'Stop setup here' });
+export const NOT_PRIVATE_WAIT_MS = 60 * 1000;
+function notPrivateAsk(repo, host, tries) {
+  return {
+    id: `not-private-${tries}`,
+    card: {
+      level: 3,
+      what: `${repo} on ${NAME[host]} is not private, so Wheelhouse can't set it up yet.`,
+      why: 'Wheelhouse keeps its records (your answers, its cards and its plans) on the project\'s own repository, where anyone could read them.',
+      options: [
+        { label: NOT_PRIVATE.again, says: `Setup checks again once you have made it private in its settings on ${NAME[host]}.` },
+        { label: NOT_PRIVATE.stop, says: 'Nothing is made, and setup stops here for now.' },
+      ],
+      recommend: NOT_PRIVATE.stop,
+      because: 'a public project can\'t use Wheelhouse yet',
+      meanwhile: 'Nothing is made on the host.',
+    },
+  };
+}
+
 function mustBePrivate(info, { host, profile = false }) {
   if (info.private !== true) throw new Error(notPrivate({ host, repo: info.repo, profile }));
   return info;
@@ -1045,7 +1067,7 @@ export async function makeRepos({
     if (found !== null) {
       // A new product's name already taken on the account, by a repository setup didn't make, is not
       // taken over; the profile repository, made on another computer, is used as it is.
-      if (readme && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: rename this folder, or connect it to that repository, then ask again`);
+      if (readme && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: if it is this product from your other computer, say so, and setup brings it into this folder instead; otherwise rename this folder, or connect it to that repository, then ask again`);
       return mustBePrivate(found, { host, profile: !readme });
     }
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
@@ -1556,11 +1578,30 @@ export function hostStep({
           }
         }
       }
+      // Every choice is made: a look at the choices alone (scripts/setup/choices.js) stops here, before
+      // anything is read from the host.
+      if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
       const mode = way === WAYS.quick ? 'quick' : 'narrow';
       const base = product.base ?? DEFAULT_GITLAB;
       const { signedIn, user } = await signInStatus({ host, run, base });
       const owner = product.isNew ? user : (product.repo === null ? null : product.repo.split('/').slice(0, -1).join('/'));
       const repo = product.isNew ? (user ? `${user}/${product.name}` : null) : product.repo;
+      // A project's repository the host doesn't say is private is put to the director on a short card
+      // of its own, before the Go ahead and before anything is made (design sections 15.1 and 22): the
+      // one card's Go ahead never covers it. Read on GitHub with the sign-in here; elsewhere, and when
+      // it can't be read here, apply refuses it as before.
+      if (host === 'github' && signedIn && !product.isNew && !product.joining && typeof repo === 'string') {
+        let info = null;
+        try {
+          info = await repoInfo({ host, repo, run });
+        } catch { /* apply asks again, and refuses what it can't read */ }
+        if (info !== null && info.private !== true) {
+          const tries = Object.keys(answers).filter((k) => k.startsWith('3.not-private-')).length;
+          const last = answers[`3.not-private-${tries - 1}`];
+          if (last?.label === NOT_PRIVATE.stop) return { wait: NOT_PRIVATE_WAIT_MS, why: `${notPrivate({ host, repo: info.repo })}; the director chose to stop setup here` };
+          return { ask: notPrivateAsk(info.repo, host, tries) };
+        }
+      }
       let app = null;
       if (mode === 'narrow' && host === 'github') {
         if (way === WAYS.own) {

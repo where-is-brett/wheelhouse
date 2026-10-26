@@ -148,7 +148,8 @@ function checkAction(data) {
     if (data.label !== SETUP_LABEL) bad(`needs the ${SETUP_LABEL} label`);
   } else if (data.action === 'setup-answer') {
     if (typeof data.runId !== 'string' || !/^run-[0-9a-f]{10}$/.test(data.runId)) bad('needs the setup run its card was asked for');
-    if (!Object.hasOwn(SETUP_TITLES, data.step) || !Number.isInteger(data.step)) bad(`needs a setup step from 1 to ${Object.keys(SETUP_TITLES).length}`);
+    // Step 0 is the one card's and the redo cards' (scripts/setup/choices.js, design section 15.1).
+    if (!(data.step === 0 || Object.hasOwn(SETUP_TITLES, data.step)) || !Number.isInteger(data.step)) bad(`needs a setup step from 0 to ${Object.keys(SETUP_TITLES).length}`);
     if (typeof data.questionId !== 'string' || !SETUP_QUESTION_ID.test(data.questionId)) bad('needs the id of the question it answers');
     const given = (x) => typeof x === 'string' && x !== '';
     const one = (given(data.label) && data.text === null) || (data.label === null && given(data.text));

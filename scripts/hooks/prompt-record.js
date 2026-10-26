@@ -19,8 +19,8 @@
 // 5: the product's glossary entry and phase, the rules found; rulings R35, R59) earns those records
 // first, signed and kept pending as every signed record is (scripts/lib/setup-writes.js), and is
 // kept as a setup-answer only once they are, so a step never settles on an answer whose records
-// were not made; in a folder with no project record an answer that records something is kept
-// nowhere. A typed answer the engine won't take (rulings R125, R132) is kept, in any folder, but
+// were not made; in a folder with no project record yet (the one card, asked before step 3), those
+// records are kept in setup's own folder, which the helper sends to the state once it exists. A typed answer the engine won't take (rulings R125, R132) is kept, in any folder, but
 // records and claims nothing (ruling R137), judged by the engine's own rule (scripts/lib/setup-clicks.js).
 // The baseline card reads the private note's figures back (scripts/measures/baseline.js): in any
 // folder, a Record these on it becomes a signed baseline action kept in
@@ -67,7 +67,7 @@ import {
   TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
-  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore,
+  keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords,
 } from '../lib/setup-clicks.js';
 import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
@@ -467,7 +467,6 @@ function keepSetupClicks(cwd, out, now, project = null) {
         keepAnswer(makeEvent({ ...answer.made, now }));
         continue;
       }
-      if (project === null) continue;
       // An answer that records something is taken once, and its records are kept only with it: a
       // second click on the same card records nothing, and records whose answer could not be kept
       // are taken back, so the question asked again can't record them twice.
@@ -475,9 +474,14 @@ function keepSetupClicks(cwd, out, now, project = null) {
       if (claim === null) continue;
       const kept = [];
       try {
-        for (const { route, body } of records) {
-          const full = { project, ...body };
-          kept.push({ file: keep(project, route, full, now), body: full, route });
+        // In a folder with no project yet (the one card, asked before step 3: design section 15.1),
+        // the records are kept in setup's own folder, and the helper sends them once the state exists.
+        if (project === null) kept.push(...keepSetupRecords(answer.made.data.runId, records, now).map((file) => ({ file, later: true })));
+        else {
+          for (const { route, body } of records) {
+            const full = { project, ...body };
+            kept.push({ file: keep(project, route, full, now), body: full, route });
+          }
         }
         keepAnswer(makeEvent({ ...answer.made, now }));
       } catch (error) {
@@ -485,8 +489,8 @@ function keepSetupClicks(cwd, out, now, project = null) {
         releaseAnswer(claim);
         throw error;
       }
-      queued.push(...kept);
-    } catch { /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
+      queued.push(...kept.filter((k) => !k.later));
+    } catch (e) { if (process.env.SETUP_E2E_DEBUG) process.stderr.write(`KEEP ${e.stack}\n`); /* not kept: the helper then refuses the step for want of a click, or asks the question again */ }
   }
   return queued;
 }

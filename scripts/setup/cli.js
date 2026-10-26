@@ -13,9 +13,20 @@
 //                        with `said`, a line for the director, when it said one as it settled
 //   apply <step> <hash>  asks the helper to apply the step, with the full hash `plan` gave; the
 //                        helper goes ahead only after the director's click on the card naming it
+//                        With step 0: the one card (design section 15.1), { step: 0, ask }, a question
+//                        of the plan for this project, Go ahead or Customise; after Customise, its
+//                        cards, { step: 0, asks: [{ step, id, card }] }, up to four questions to ask
+//                        together; { done: true } once its Go ahead holds. A step's Go-ahead plan
+//                        that Go ahead covers says `covered: true`: apply it with no card
 //   status               where setup stands in this folder, as plain lines
-//   resume               where setup stands, and the plan of the first step neither done nor
-//                        running: { lines, next, plan }, with plan null when there is none
+//   resume               where setup stands, and the plan of what comes next: the one card while no
+//                        Go ahead on it holds, else the first step neither done nor running:
+//                        { lines, next, plan }, with plan null when there is none, and
+//                        `setUpAgain: true` once the director asked to set up again on a redo card
+//   choices              every choice of the run: { choices: [{ key, about, chosen, acted }] }
+//   change <key>         the card that changes one choice: { asks: [{ step, id, card }] }, its own
+//                        card while its step hasn't used it, else a card offering what changing it
+//                        takes (scripts/setup/redo.js)
 //   health [<line> ...]  step 10's board (ruling R41): the lines the safety trials printed in this
 //                        session's sandbox (scripts/health/trials.js), each one argument, as it is,
 //                        joined by the helper with step 10's own checks and the board's health:
@@ -57,11 +68,12 @@ import { helperClient } from '../host/helper-client.js';
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
+import { CHOICE_KEY } from '../lib/setup-run.js';
 
 // An error whose message is said to the session as it is.
 export class CliError extends Error {}
 
-export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
+export const USAGE = 'Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health [<trial line> ...], uninstall plan, uninstall apply <hash>, uninstall status';
 // The longest `wait <step>` waits in one call, well within the two minutes a command may run by
 // default; a longer wait is asked again.
 export const WAIT_MOST_MS = 90 * 1000;
@@ -81,19 +93,22 @@ async function ask(route, body) {
   return got;
 }
 
-function stepOf(text) {
+function stepOf(text, { oneCard = false } = {}) {
+  if (oneCard && String(text) === '0') return 0;
   if (!STEP.test(String(text))) throw new CliError(`Give the step as a number from 1 to ${Object.keys(SETUP_TITLES).length}`);
   return Number(text);
 }
 
 async function plan(client, folder, step) {
   const got = await ask(client.setup.plan, { folder, step });
-  const named = { step, title: SETUP_TITLES[step], ...(Array.isArray(got.progress) ? { progress: got.progress } : {}) };
+  const named = { step, title: SETUP_TITLES[step] ?? 'The plan', ...(Array.isArray(got.progress) ? { progress: got.progress } : {}) };
+  // Customise's cards (step 0): up to four questions, asked together.
+  if (Array.isArray(got.asks)) return { ...named, asks: got.asks };
   if (got.ask !== undefined) return { ...named, ask: got.ask, ...(typeof got.unanswered === 'string' ? { unanswered: got.unanswered } : {}) };
   if (got.wait !== undefined) return { ...named, wait: got.wait, why: got.why, ...(Number.isInteger(got.waitsFor) ? { waitsFor: got.waitsFor } : {}) };
   // A settled step's line for the director, said at once (rulings R101, R120), on one line as status's are.
   if (got.done === true) return { ...named, done: true, ...(typeof got.said === 'string' && got.said.trim() !== '' ? { said: got.said.replace(BREAKS, ' ').trim() } : {}) };
-  return { ...named, hash: got.hash, director: got.director, changes: got.changes, card: got.card };
+  return { ...named, hash: got.hash, director: got.director, changes: got.changes, card: got.card, ...(got.covered === true ? { covered: true } : {}) };
 }
 
 // Runs a form and resolves with the exit code. `out` and `err` take text to show.
@@ -106,7 +121,7 @@ export async function main(argv, {
     const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
     const folder = path.resolve(cwd);
     if (form === 'plan' && rest.length === 1) {
-      const step = stepOf(rest[0]);
+      const step = stepOf(rest[0], { oneCard: true });
       json(await plan(client ?? helperClient(), folder, step));
     } else if (form === 'apply' && rest.length === 2) {
       const step = stepOf(rest[0]);
@@ -120,7 +135,20 @@ export async function main(argv, {
       const helper = client ?? helperClient();
       const got = await ask(helper.setup.status, { folder });
       const next = Number.isInteger(got.next) ? got.next : null;
-      json({ lines: Array.isArray(got.lines) ? got.lines : [], next, plan: Number.isInteger(got.ask) ? await plan(helper, folder, got.ask) : null });
+      // The one card first, while no Go ahead on it holds (design section 15.1); then the steps.
+      let planned = null;
+      if (got.oneCard === true) planned = await plan(helper, folder, 0);
+      if ((planned === null || planned.done === true) && Number.isInteger(got.ask)) planned = await plan(helper, folder, got.ask);
+      json({
+        lines: Array.isArray(got.lines) ? got.lines : [], next, plan: planned, ...(got.setUpAgain === true ? { setUpAgain: true } : {}),
+      });
+    } else if (form === 'choices' && rest.length === 0) {
+      const { ok, ...answer } = await ask((client ?? helperClient()).setup.choices, { folder }); // eslint-disable-line no-unused-vars
+      json(answer);
+    } else if (form === 'change' && rest.length === 1) {
+      if (!CHOICE_KEY.test(rest[0])) throw new CliError('Give the choice\'s key, as choices lists it');
+      const got = await ask((client ?? helperClient()).setup.change, { folder, key: rest[0] });
+      json({ asks: got.asks });
     } else if (form === 'wait' && rest.length === 1) {
       // Waits here, for the session, which can't sleep in the foreground: while the step's plan
       // is a wait, up to WAIT_MOST_MS in all. { waited: true } once it is over, else { waiting }.

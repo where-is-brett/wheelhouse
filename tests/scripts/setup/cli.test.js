@@ -138,7 +138,7 @@ test('health hands the trial lines to the helper, as they are, and gives back th
 
 test('a wrong form, a step out of range, a short hash or a refusal is one line on standard error', async () => {
   const c = fakeClient({ apply: { ok: false, refused: 'STOP is on' }, plan: { ok: false, refused: 'step 1, Install is already done' } });
-  for (const argv of [[], ['go'], ['plan'], ['plan', '0'], ['plan', '11'], ['plan', '1', '2'], ['plan', 'x'], ['apply', '1'], ['apply', '1', H.slice(0, 12)],
+  for (const argv of [[], ['go'], ['plan'], ['plan', '11'], ['plan', '1', '2'], ['plan', 'x'], ['apply', '1'], ['apply', '1', H.slice(0, 12)],
     ['apply', '1', H.toUpperCase()], ['apply', '1', H, 'more'], ['status', 'now'], ['resume', '3']]) {
     const got = await run(argv, { client: c });
     assert.equal(got.code, 1, argv.join(' '));
@@ -170,9 +170,13 @@ test('against the helper, a card is planned, refused without its click, applied 
     });
     const client = helperClient({ address: helper.address });
     try {
+      // Resume gives the one card first (design section 15.1); a step's own card is planned by its number.
       const resumed = await run(['resume'], { client, cwd: folder });
       assert.equal(resumed.code, 0, resumed.err);
-      const { plan } = JSON.parse(resumed.out);
+      assert.equal(JSON.parse(resumed.out).plan.step, 0);
+      const planned = await run(['plan', '1'], { client, cwd: folder });
+      assert.equal(planned.code, 0, planned.err);
+      const plan = JSON.parse(planned.out);
       assert.equal(plan.step, 1);
       assert.ok(plan.card.question.includes(setupLine(1, plan.hash)));
       const refused = await run(['apply', '1', plan.hash], { client, cwd: folder });
@@ -202,7 +206,7 @@ test('run as a script, a wrong form says how the command is used', () => {
   const got = spawnSync(process.execPath, [SCRIPT, 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
   assert.equal(got.stdout, '');
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('run as a script through a linked plugin folder, it still runs', () => {
@@ -211,7 +215,7 @@ test('run as a script through a linked plugin folder, it still runs', () => {
   fs.symlinkSync(path.resolve(path.dirname(SCRIPT), '..', '..'), linked, process.platform === 'win32' ? 'junction' : 'dir');
   const got = spawnSync(process.execPath, [path.join(linked, 'scripts', 'setup', 'cli.js'), 'go'], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: shortHome() } });
   assert.equal(got.status, 1);
-  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
+  assert.match(got.stderr, /^Commands: plan <step>, apply <step> <hash>, status, resume, wait <step>, choices, change <key>, health \[<trial line> ...\], uninstall plan, uninstall apply <hash>, uninstall status\n$/);
 });
 
 test('the uninstall forms ask the helper\'s uninstall routes for this folder, apply with the full hash only', async () => {

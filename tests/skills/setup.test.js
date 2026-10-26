@@ -122,11 +122,29 @@ test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one 
   const skip = section.split(`**${READY.skip}:**`)[1].split('\n')[0];
   assert.match(skip, /settles as skipped/);
   assert.match(skip, /front desk sets up phone notifications/);
-  assert.match(skip, /health check doesn't wait for a phone/);
+  assert.match(skip, /Don't ask the card again/);
   assert.doesNotMatch(section, /don't try step 10/);
+  // The phone comes last, once setup is finished, and never holds it up (design section 15.1).
+  assert.match(section, /once setup is finished: after the first briefing/);
+  assert.match(section, /never holds setup up/);
   // The front desk takes the test when the director asks for it later.
   const desk = read('skills/front-desk/SKILL.md');
   assert.match(desk, /"Set up phone notifications"[^\n]*`scripts\/setup\/cli\.js`[^\n]*`plan 9`/);
+});
+
+// The one card (design section 15.1): Go ahead runs every step with no more cards; Customise's cards
+// are asked together; an answer is changed through `choices` and `change`, never refused flat.
+test('the playbook opens with the one card, applies what its Go ahead covers, asks Customise\'s cards together and changes any answer', () => {
+  assert.match(playbook, /## The one card\n/);
+  assert.match(playbook, /\*\*`hash` and `covered: true`:\*\* the one card's Go ahead covers it\.[^\n]*then run `apply <step> <hash>` at once/);
+  assert.match(playbook, /\*\*`asks`:\*\* ask every card in it together, in one call/);
+  assert.match(playbook, /`questions: \[card, card, …\]`/);
+  assert.match(playbook, /run `choices`, pick the key whose `about` matches what they said, then `change <key>`/);
+  assert.match(playbook, /Never say an answer can't be changed/);
+  assert.match(playbook, /\*\*`setUpAgain: true`\*\*, whatever the plan says[^\n]*Follow Uninstall below/);
+  assert.match(playbook, /\*\*Change it after setup\*\*: tell them in one line that the front desk starts that change right after setup/);
+  assert.match(playbook, /first each of `requests` \(changes they asked for after setup\), then the request they came with/);
+  assert.match(USAGE, /choices, change <key>/);
 });
 
 test('the playbook waits for the labels the cards carry', () => {
@@ -150,7 +168,7 @@ test('the playbook closes the gaps its pressure runs found', () => {
 
 // From the rehearsal: Claude Code refuses a foreground `sleep`, so every wait goes through `wait <step>`.
 test('the playbook waits with `wait <step>`, never a sleep of its own', () => {
-  assert.match(playbook, /\*\*`wait` with `waitsFor`:\*\* the step waits for step `waitsFor` to finish\. Run `wait <step>`, saying nothing, then `plan <step>` again\./);
+  assert.match(playbook, /\*\*`wait` with `waitsFor`:\*\* the step waits for step `waitsFor` to finish\. Run `wait <step>`, saying nothing, then `resume`\./);
   const nine = playbook.split('\n## Step 9, phone notifications\n')[1]?.split('\n## ')[0] ?? '';
   assert.match(nine, /Run `wait 9` until it answers `waited: true` \(each call waits up to a minute and a half, then says how long is left\), then send exactly one test notification/);
   assert.doesNotMatch(playbook, /\bsleep\b/);

@@ -14,7 +14,7 @@ import {
   hostStep, cardFor, signIn, makeRepos, connectionCard, stricterCard, stricterWay, STRICTER, appFor, wheelhouseApp, wheelhouseAppOffered, narrowOffered, switchOnAsDirector,
   directorGitlabApi, directorGitEnv, productOf, repoName, slugFor, REAL_USERS, LEVELS, HOST_LABELS, WAYS, NO_APP_LISTED, OWN_APP_WAIT_MS, SIGN_UP,
   PROFILE_REPO, APP_FILE, KEY_NAME, INSTALL_WAIT_MS, STOPPED, NEW_PRODUCT, fromOtherComputer, quickLaunched, repoNamed, ORGS_UNREAD, launchedIn,
-  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, notPrivate,
+  checkOutJoined, findInstallation, CERTIFICATE_GIVEN, notPrivate, NOT_PRIVATE,
 } from '../../../scripts/setup/host.js';
 import { installationCovers } from '../../../scripts/host/connection.js';
 import { caFile, probeCertificate, CERTIFICATE_NOT_IN_STORE } from '../../../scripts/host/company-ca.js';
@@ -1080,12 +1080,16 @@ test('a repository the host does not say is private is refused before anything o
   ]) {
     await withHome(async () => {
       const w = standIn();
-      Object.assign(await w.add(`${USER}/open`), seen);
+      // On GitHub step 3's plan puts it to the director first (the next test); here it turns public
+      // after the plan, and apply still refuses it before anything is made.
+      const repo = await w.add(`${USER}/open`);
+      if (host === HOST_LABELS.gitlab) Object.assign(repo, seen);
       const folder = productFolder('open');
       await withOrigin(folder, origin);
       const step = stepFor(w);
       const way = host === HOST_LABELS.gitlab ? WAYS.narrow : WAYS.quick;
       const planned = await answerAll(step, ctxFor(folder), choose({ host, way }));
+      Object.assign(repo, seen);
       const hostName = host === HOST_LABELS.gitlab ? 'gitlab' : 'github';
       await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers }),
         (error) => error.message === notPrivate({ host: hostName, repo: `${USER}/open` }), label);
@@ -1095,6 +1099,43 @@ test('a repository the host does not say is private is refused before anything o
     });
   }
   assert.match(notPrivate({ host: 'github', repo: `${USER}/open` }), /^a-director\/open on GitHub is not private, .* a public project can't use Wheelhouse yet$/);
+});
+
+// The director is told on a short card of its own, before any Go ahead and before anything is made,
+// which the one card's Go ahead never covers (design section 15.1).
+test('on GitHub, a project\'s repository that is not private is put to the director on a card of its own before anything is made', async () => {
+  await withHome(async () => {
+    const w = standIn();
+    Object.assign(await w.add(`${USER}/open`), { private: false });
+    const folder = productFolder('open');
+    await withOrigin(folder, `https://github.com/${USER}/open.git`);
+    const step = stepFor(w);
+    const answers = {};
+    const pick = choose();
+    let got;
+    for (;;) {
+      got = await step.plan({ ...ctxFor(folder), answers });
+      if (!got.ask || got.ask.id.startsWith('not-private-')) break;
+      answers[`3.${got.ask.id}`] = said(pick(got.ask.id, got.ask.card));
+    }
+    assert.equal(got.ask.id, 'not-private-0');
+    assert.match(got.ask.card.what, /^a-director\/open on GitHub is not private, so Wheelhouse can't set it up yet\.$/);
+    assert.deepEqual(got.ask.card.options.map((o) => o.label), [NOT_PRIVATE.again, NOT_PRIVATE.stop]);
+    composeCard({ ...got.ask.card, kind: 'question', suggest: false });
+    // Still public after "I've made it private": asked again, as a card of its own.
+    answers['3.not-private-0'] = said(NOT_PRIVATE.again);
+    assert.equal((await step.plan({ ...ctxFor(folder), answers })).ask.id, 'not-private-1');
+    // Stop: setup waits, saying why, and nothing is made.
+    answers['3.not-private-1'] = said(NOT_PRIVATE.stop);
+    const stopped = await step.plan({ ...ctxFor(folder), answers });
+    assert.equal(stopped.ask, undefined);
+    assert.match(stopped.why, /is not private.*the director chose to stop setup here$/);
+    assert.deepEqual(readJournal().runs.flatMap((r) => r.changes ?? []), []);
+    // Made private, the step goes on to its list.
+    Object.assign(w.repos[`${USER}/open`], { private: true });
+    answers['3.not-private-2'] = said(NOT_PRIVATE.again);
+    assert.ok(Array.isArray((await step.plan({ ...ctxFor(folder), answers })).changes));
+  });
 });
 
 test('a profile repository that is not private is refused, and nothing is written to it', async () => {
@@ -2209,7 +2250,7 @@ const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl
 
 const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
 
-test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending by profile.json', async () => {
+test('step 3 asks whether this computer is joining only in a folder holding nothing but step 1\'s install, recommending a new product', async () => {
   await withHome(async () => {
     const w = standIn();
     const step = stepFor(w);
@@ -2218,10 +2259,10 @@ test('step 3 asks whether this computer is joining only in a folder holding noth
     assert.equal(first.id, 'join');
     assert.equal(first.typed, true, 'an owner/name may be typed');
     assert.deepEqual(first.card.options.map((o) => o.label), [NEW_PRODUCT, 'Cafe-Menu, from my other computer']);
-    assert.equal(first.card.recommend, fromOtherComputer('Cafe-Menu'), 'no profile.json: the other computer');
+    assert.equal(first.card.recommend, NEW_PRODUCT, 'an empty folder is most often a new product (design section 15.1)');
     assert.match(first.card.what, /owner\/name/);
     composeCard({ ...first.card, kind: 'question' });
-    // With profile.json on this computer, it is still asked, recommending a new product.
+    // With profile.json on this computer, it is still asked, recommending a new product too.
     const profileJson = path.join(wheelhouseHome(), 'profile.json');
     fs.mkdirSync(wheelhouseHome(), { recursive: true });
     fs.writeFileSync(profileJson, '{}\n');

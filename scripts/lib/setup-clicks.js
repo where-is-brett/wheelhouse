@@ -26,6 +26,22 @@ export const shownDir = () => path.join(wheelhouseHome(), 'setup', 'shown');
 export const askedDir = () => path.join(wheelhouseHome(), 'setup', 'asked');
 export const answersDir = () => path.join(wheelhouseHome(), 'setup', 'answers');
 export const answeredDir = () => path.join(wheelhouseHome(), 'setup', 'answered');
+// The records an answer earned before its project had a state to take them (the one card's, design
+// section 15.1), each kept until the helper has sent it there (scripts/setup/clicks.js, copySetupRecords).
+export const recordsDir = () => path.join(wheelhouseHome(), 'setup', 'records');
+
+// Keeps the records one answer earned, for a run whose project has no state yet: one file each,
+// { runId, route, body } with `body` lacking its project, named by the run so only it sends them.
+export function keepSetupRecords(runId, records, now = () => new Date()) {
+  if (!RUN_ID.test(String(runId))) throw new Error('Records kept for later need their run');
+  const at = now().toISOString().replaceAll(':', '-');
+  // Named in the order the answer earned them, which is the order they are sent in.
+  return records.map(({ route, body }, i) => {
+    const file = path.join(recordsDir(), `${runId}_${at}_${String(i).padStart(3, '0')}_${crypto.randomUUID().slice(0, 12)}.json`);
+    writeWhole(file, `${JSON.stringify({ runId, route, body })}\n`, { exclusive: true });
+    return file;
+  });
+}
 
 const keyOf = (p) => {
   const text = p.normalize('NFC');

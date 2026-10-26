@@ -27,7 +27,8 @@ import { stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { scanContent } from '../state/secret-scan.js';
 import { hide } from '../lib/clean.js';
-import { REAL_USERS, LEVELS } from './host.js';
+import { REAL_USERS, LEVELS, productOf, repoName } from './host.js';
+import { readJournal } from './journal.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
@@ -36,7 +37,7 @@ export const PRODUCT = Object.freeze({ readme: 'The README\'s words', shaping: '
 export const PROJECT_WAIT_MS = 30 * 1000;
 // The most of the README's first sentence the first question offers.
 export const DESCRIPTION_CHARS = 200;
-export const MEANWHILE = 'Setup waits for this answer; anything installing carries on.';
+export const MEANWHILE = 'Nothing runs until your Go ahead on the plan.';
 const README_BYTES = 64 * 1024;
 
 export const isFile = (file) => {
@@ -143,6 +144,29 @@ export function connectedProject(folder) {
   return { ...found, name: found.record.repo.split('/').at(-1) };
 }
 
+// Whether the product is new: before step 3, a folder with no repository's address; after it, a
+// repository step 3 made for it in this run.
+function newProduct(ctx, project) {
+  if (project === null) {
+    try {
+      return productOf(ctx.folder).isNew;
+    } catch {
+      return false;
+    }
+  }
+  const run = typeof ctx.runId === 'string' ? readJournal().runs.find((r) => r?.id === ctx.runId) : null;
+  return (run?.changes ?? []).some((c) => c?.step === 3 && c.kind === 'host' && c.after?.made === true);
+}
+
+// The product's name as step 3 names it: its repository's for an existing project, else the folder's.
+export function productName(folder) {
+  try {
+    return productOf(folder).name;
+  } catch {
+    return repoName(folder);
+  }
+}
+
 // What a step whose answers write to the project's records gives until step 3 has set them up.
 export function waitForProject(n) {
   return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not set up the project's records yet; step ${n}'s questions record their answers there, so they come once it has` };
@@ -169,8 +193,8 @@ function productAsk(name, { described, realUsers }) {
     typed: true,
     card: {
       level: 2,
-      what: `Setup step 4: in a sentence, what is ${name}, and who uses it? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer. Setup keeps it as ${name}'s entry in the glossary, and records ${name} as ${realUsers ? 'launched, since it has real users' : 'before launch, since it has no real users yet'}.`,
-      why: 'Wheelhouse explains its work to you in terms of your product, and treats a launched product with more care.',
+      what: `In a sentence, what is ${name}, and who uses it? ${described === null ? 'Type it' : 'Choose the README\'s words, or type your own'} as your answer.`,
+      why: `Wheelhouse explains its work to you in terms of your product; it is recorded as ${realUsers ? 'launched' : 'before launch'}.`,
       options,
       recommend: options[0].label,
       because: described === null ? 'it tells agents the product is new until you describe it' : 'it is how the project already describes itself',
@@ -186,20 +210,21 @@ function productAsk(name, { described, realUsers }) {
   };
 }
 
-// The second question: whether the product has live data.
-function liveDataAsk(name) {
+// The second question: whether the product has live data. A new product has none yet, so no is
+// recommended for it; for a project already under way, yes, which is the safe side (design section 15.1).
+function liveDataAsk(name, { isNew = false } = {}) {
   return {
     id: 'live-data',
     card: {
       level: 3,
-      what: `Setup step 4: does ${name} hold live data, such as real people's accounts, orders or messages, in a database or a service it uses?`,
+      what: `Does ${name} hold live data, such as real people's accounts, orders or messages?`,
       why: 'Agents never work on live data: with it, they are kept to a practice copy or test data.',
       options: [
-        { label: LIVE_DATA.yes, says: 'Agents get test data only for now, since setup can\'t yet make a practice copy for any provider; this card is where you are told.' },
-        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is; tell the front desk if live data comes later.' },
+        { label: LIVE_DATA.yes, says: 'Agents get test data only, since setup can\'t yet make a practice copy.' },
+        { label: LIVE_DATA.no, says: 'Agents work with the product\'s data as it is.' },
       ],
-      recommend: LIVE_DATA.yes,
-      because: 'it keeps live data safe if you are not sure',
+      recommend: isNew ? LIVE_DATA.no : LIVE_DATA.yes,
+      because: isNew ? 'a new product has no live data yet' : 'it keeps live data safe if you are not sure',
       meanwhile: MEANWHILE,
     },
   };
@@ -211,7 +236,7 @@ function appleAppsAsk(name) {
     id: 'apple-apps',
     card: {
       level: 2,
-      what: `Setup step 4: ${name} looks like an iPhone or Mac app. Do its builds sign the app on this computer, for the App Store or TestFlight?`,
+      what: `${name} looks like an iPhone or Mac app. Do its builds sign the app on this computer?`,
       why: 'Signing needs the saved passwords on this Mac, which Wheelhouse otherwise keeps out of every build.',
       options: [
         { label: SIGNS_APPS.no, says: 'Builds can\'t reach your saved passwords. If signing is needed later, it can be changed by a reviewed change you approve.' },
@@ -230,18 +255,24 @@ export function questionsStep() {
     title: SETUP_TITLES[4],
     async plan(ctx) {
       const project = connectedProject(ctx.folder);
-      if (project === null) return waitForProject(4);
+      // The questions are asked up front, before step 3 has set up the project (design section
+      // 15.1): a look at the choices (ctx.choicesOnly, scripts/setup/choices.js) names the product
+      // as step 3 will. The step settles only once the project is set up, since its answers write to
+      // the project's records.
+      if (project === null && ctx.choicesOnly !== true) return waitForProject(4);
+      const name = project?.name ?? productName(ctx.folder);
       const answers = ctx.answers ?? {};
       const real = answers['3.real-users'];
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
-      const asked = productAsk(project.name, { described: readmeDescription(ctx.folder), realUsers });
+      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers });
       const product = answers[`4.${asked.id}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];
-      if (!live) return { ask: liveDataAsk(project.name) };
+      if (!live) return { ask: liveDataAsk(name, { isNew: newProduct(ctx, project) }) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
-      if (apple === undefined) return { ask: appleAppsAsk(project.name) };
+      if (apple === undefined) return { ask: appleAppsAsk(name) };
+      if (project === null) return ctx.choicesOnly === true ? { wait: 0, why: 'every choice of step 4 is made' } : waitForProject(4);
       return {
         settled: {
           record: {

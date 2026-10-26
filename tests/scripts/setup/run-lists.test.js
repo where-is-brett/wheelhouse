@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   stepsFor, stepDone, firstUnfinished, joinedRepo, onRunList, SETUP_STEPS, JOINING_STEPS,
 } from '../../../scripts/lib/setup-run.js';
-import { setupRoutes, notOnList } from '../../../scripts/setup/engine.js';
+import { PHONE_NEXT, setupRoutes, notOnList } from '../../../scripts/setup/engine.js';
 import { startRun, markStep, addChanges, newId, readJournal, closeRun } from '../../../scripts/setup/journal.js';
 import { beingSetUp } from '../../../scripts/hooks/kit.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -42,13 +42,13 @@ test('a run has every step, and a joining computer\'s run steps 1, 2, 3, 6, 7, 8
   }
 });
 
-test('a joining run is finished once its own steps are done, with no green mark; its first unfinished step skips 4, 5 and 10', () => {
+test('a joining run is finished once its own steps are done, with no green mark; its first unfinished step skips 4, 5 and 10, and never waits for the phone', () => {
   const run = { steps: {}, changes: [JOINED] };
   assert.equal(firstUnfinished(run), 1);
   run.steps = doneAll([1, 2, 3]);
   assert.equal(firstUnfinished(run), 6, 'steps 4 and 5 are not this run\'s');
   run.steps = doneAll([1, 2, 3, 6, 7, 8]);
-  assert.equal(firstUnfinished(run), 9);
+  assert.equal(firstUnfinished(run), null, 'finished, with no green mark: the phone comes after (design section 15.1)');
   run.steps = doneAll([1, 2, 3, 6, 7, 8, 9]);
   assert.equal(firstUnfinished(run), null, 'finished, with no green mark');
   // Given every step to look at, the steps the run doesn't have still never hold it up.
@@ -61,8 +61,9 @@ test('a run of a project of its own still needs the green mark to finish (ruling
   assert.equal(firstUnfinished({ steps: all, changes: [] }), 10);
   assert.equal(stepDone({ steps: all, changes: [] }, 10), false);
   assert.equal(firstUnfinished({ steps: all, changes: [GREEN] }), null);
-  // Steps 4, 5 and 10 count for it as for any run.
+  // Steps 4, 5 and 10 count for it as for any run; the phone never does.
   assert.equal(firstUnfinished({ steps: doneAll([1, 2, 3, 6, 7, 8, 9]), changes: [] }), 4);
+  assert.equal(firstUnfinished({ steps: doneAll([1, 2, 3, 4, 5, 6, 7, 8, 10]), changes: [GREEN] }), null);
 });
 
 test('a registered project whose joining run is finished is out of setup mode, so the session start starts its watcher', () => {
@@ -71,9 +72,10 @@ test('a registered project whose joining run is finished is out of setup mode, s
     writeProject('o__Cafe-Menu', { folder, remoteUrl: 'https://github.com/o/Cafe-Menu.git', host: 'github', repo: 'o/Cafe-Menu', connection: {} });
     const run = startRun({ folder, now: () => NOW });
     addChanges(run.id, [{ ...JOINED, id: newId('chg') }]);
-    for (const n of [1, 2, 3, 6, 7, 8]) markStep(run.id, n, 'doneAt', { now: () => NOW });
-    assert.equal(beingSetUp(folder)?.run?.id, run.id, 'step 9 is not done yet');
-    markStep(run.id, 9, 'doneAt', { now: () => NOW });
+    for (const n of [1, 2, 3, 6]) markStep(run.id, n, 'doneAt', { now: () => NOW });
+    assert.equal(beingSetUp(folder)?.run?.id, run.id, 'steps 7 and 8 are not done yet');
+    for (const n of [7, 8]) markStep(run.id, n, 'doneAt', { now: () => NOW });
+    // The phone, step 9, comes after and holds nothing up (design section 15.1).
     assert.equal(beingSetUp(folder), null);
     assert.equal(readJournal().runs[0].changes.some((c) => c.step === 10), false, 'no green mark');
   });
@@ -145,8 +147,10 @@ test('status names only a joining run\'s steps, and says every step is done once
     const { lines, next, ask } = await routes['/setup/status']({ folder });
     const named = lines.filter((l) => /^Step \d+,/.test(l)).map((l) => Number(/^Step (\d+),/.exec(l)[1]));
     assert.deepEqual(named, [1, 2, 3, 6, 7, 8, 9]);
-    assert.equal(next, 9);
+    // Finished: the phone is offered after, and is optional (design section 15.1).
+    assert.equal(next, null);
     assert.equal(ask, 9);
+    assert.equal(lines.at(-1), PHONE_NEXT);
   }, { done: [1, 2, 3, 6, 7, 8] });
   await withJoining(async ({ folder, routes }) => {
     const { lines, next, ask } = await routes['/setup/status']({ folder });

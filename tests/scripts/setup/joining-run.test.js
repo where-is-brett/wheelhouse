@@ -211,9 +211,11 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     // Step 8: not launched, so it settles as not Locked.
     assert.deepEqual(await plan(8), { ok: true, done: true });
     order.push(8);
-    assert.equal(copied.length, 0, 'not finished yet');
+    // Setup is finished: the phone comes after and holds nothing up (design section 15.1), so the
+    // run's records are copied into the state now.
+    assert.deepEqual(copied, [[findRun(folder).id, folder]], 'finished at step 8');
 
-    // Step 9: Ready, the wait while the playbook pushes, then It arrived; the settling finishes the run.
+    // Step 9: Ready, the wait while the playbook pushes, then It arrived; its answers are copied too.
     const ready = await plan(9);
     assert.equal(ready.ask.id, READY_ID);
     say(ready.ask, READY.ready);
@@ -232,7 +234,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
     assert.equal(firstUnfinished(finished), null);
     assert.equal(healthGreen(finished), false);
     assert.ok(!Object.hasOwn(finished.steps, 10) && !Object.hasOwn(finished.steps, 4) && !Object.hasOwn(finished.steps, 5));
-    assert.deepEqual(copied, [[finished.id, folder]]);
+    assert.deepEqual(copied, [[finished.id, folder], [finished.id, folder]]);
     assert.match((await status()).lines.at(-1), /Every step is done/);
     assert.equal(readProject('a-director__Cafe-Menu').folder, folder);
     assert.ok(fs.existsSync(path.join(stateDir('a-director__Cafe-Menu'), '.git')));

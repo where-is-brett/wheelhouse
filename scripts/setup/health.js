@@ -450,8 +450,9 @@ export function healthStep({
     n: HEALTH_STEP,
     title: SETUP_TITLES[HEALTH_STEP],
     long: true,
-    // The project's files, pins and protection, Locked and the phone first: the checks try them.
-    after: [7, 8, 9],
+    // The project's files, pins and protection, and Locked, first: the checks try them. The phone is
+    // optional and comes after (design section 15.1), so it is not waited for.
+    after: [7, 8],
     async plan(ctx) {
       const found = projectHere(ctx.folder);
       if (found === null) return { wait: 30 * 1000, why: `step 3 (${SETUP_TITLES[3]}) has not registered the project yet; the health check comes once it has` };
