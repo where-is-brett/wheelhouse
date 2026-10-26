@@ -3,8 +3,28 @@
   "criticalAreas": [
     {
       "name": "lineage",
-      "paths": ["lineage/**", "scripts/lineage/**", ".claude-plugin/marketplace.json", "templates/brief/override.md"],
-      "checks": ["lineage/**", ".claude-plugin/marketplace.json", "templates/brief/override.md"]
+      "paths": [
+        "lineage/**",
+        "scripts/lineage/**",
+        ".claude-plugin/marketplace.json",
+        "templates/brief/override.md"
+      ],
+      "checks": [
+        "lineage/**",
+        ".claude-plugin/marketplace.json",
+        "templates/brief/override.md"
+      ]
+    },
+    {
+      "name": "safety checks",
+      "paths": [
+        "scripts/**",
+        "adapters/**"
+      ],
+      "checks": [
+        "scripts/**",
+        "adapters/**"
+      ]
     }
   ],
   "ciFiles": [],

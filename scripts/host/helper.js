@@ -24,7 +24,7 @@ import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { gateDecision } from '../gate/conditions.js';
-import { classifyChange, readConfig, isModelName, CI_FILES } from '../gate/guardrails.js';
+import { classifyChange, readConfig, isModelName, CI_FILES, PLUGIN_MANIFEST } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
@@ -232,7 +232,7 @@ export async function changedPaths({ mirror, host, number, headSha, defaultBranc
       const [before, after] = [await blobAt(must, base, file), await blobAt(must, prRef, file)];
       files[file] = { base: before.text, head: after.text, headMode: after.mode };
     }
-    return { paths, config: await baseConfig(must), files };
+    return { paths, config: await changeConfig(must), files };
   } finally {
     await inMirror(['update-ref', '-d', prRef]);
   }
@@ -251,6 +251,14 @@ async function blobAt(must, commit, file) {
 async function baseConfig(must) {
   const present = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', CONFIG_FILE], 'looking for the configuration');
   return readConfig(present === '' ? null : await must(['show', `${BASE_REF}:${CONFIG_FILE}`], 'reading the configuration'));
+}
+
+// The configuration a change is judged by: baseConfig, with `plugin` saying whether the default
+// branch's commit is a Claude Code plugin's, whose parts are then guardrails (guardrails.js).
+async function changeConfig(must) {
+  const config = await baseConfig(must);
+  const manifest = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', PLUGIN_MANIFEST], 'looking for a plugin manifest');
+  return { ...config, plugin: manifest !== '' };
 }
 
 // The pages an approval's screenshots are compared on, from a configuration: none unless it lists some.
@@ -290,7 +298,7 @@ async function branchChanges({ mirror, sha, defaultBranch, run: git }) {
     // With no common history the whole branch counts as changed: it is compared with nothing.
     const common = await git('git', ['merge-base', BASE_REF, sha], { cwd: mirror });
     from = common.code === 0 ? common.stdout.trim() : null;
-    config = await baseConfig(must);
+    config = await changeConfig(must);
   } else {
     // A host with no default branch yet has nothing to compare with; any other failure is not read.
     const listed = await must(['ls-remote', '--heads', REMOTE, `refs/heads/${defaultBranch}`], 'looking for the default branch');

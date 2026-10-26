@@ -4,7 +4,7 @@
 
 Guidance for Claude Code sessions in the Wheelhouse repository.
 
-**Start every session by reading `HANDOVER.md`.** It says where the work stands, who the director is and what comes next.
+**A session started by hand starts by reading `HANDOVER.md`.** It says where the work stands, who the director is and what comes next. A session Wheelhouse starts on this repository (the front desk, the foreman or a feature session) works from its own brief and records instead, and opens `HANDOVER.md` only when its work needs it.
 
 ## What this is
 
@@ -12,7 +12,9 @@ Wheelhouse is a Claude Code plugin: skills, agents, hooks, scripts and a mod. It
 
 ## Where the work stands
 
-- **Design stage.** No product code is written until the director approves the design. After approval, the next step is a build plan (`superpowers:writing-plans`).
+- **Built, and released by tag.** The design is approved; its rulings are in section 22 of the design. New work follows a build plan (`superpowers:writing-plans`) or comes through Wheelhouse's own intake.
+- **The repository is public.** Wheelhouse's records (its state, cards, briefs, the board and transcripts) never go into it, and nor does anything about the director's other projects.
+- **Testing.** Run the test files a change touches. The whole suite (`npm test`) takes about 40 minutes on the Mac and runs under two git setups, so leave it to CI unless a change touches many parts.
 - **Each project stays separate.** The first project Wheelhouse will be used on keeps its own rules in its own repository, not here.
 
 ## Conventions

@@ -275,7 +275,13 @@ test('changedPaths reads GitLab\'s merge request ref, and finds the paths from t
     const git = (file, args, options = {}) => run(file, args, { ...options, env: { GIT_TERMINAL_PROMPT: '0' } });
     const found = await changedPaths({ mirror, host: 'gitlab', number: 7, headSha: pr.head, defaultBranch: 'main', run: git });
     assert.deepEqual([...found.paths].sort(), ['dir with space/é.txt', 'docs/a.md']);
-    assert.deepEqual(found.config, readConfig(null));
+    assert.deepEqual(found.config, { ...readConfig(null), plugin: false });
+    // Once the default branch holds a plugin manifest, the project is a plugin, whose parts are guardrails.
+    write(pr.work, { '.claude-plugin/plugin.json': '{"name":"p"}\n' });
+    await g(pr.work, 'add', '-A');
+    await g(pr.work, 'commit', '-q', '-m', 'A plugin');
+    await g(pr.work, 'push', '-q', 'origin', 'main');
+    assert.equal((await changedPaths({ mirror, host: 'gitlab', number: 7, headSha: pr.head, defaultBranch: 'main', run: git })).config.plugin, true);
     await assert.rejects(changedPaths({ mirror, host: 'github', number: 7, headSha: pr.head, defaultBranch: 'main', run: git }), /fetching the pull request failed/);
     await assert.rejects(changedPaths({ mirror, host: 'gitlab', number: 7, headSha: 'a'.repeat(40), defaultBranch: 'main', run: git }), /fetched head is not the head the host reported/);
   } finally { pr.cleanup(); fs.rmSync(home, { recursive: true, force: true }); }
