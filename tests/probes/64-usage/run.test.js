@@ -74,7 +74,9 @@ t('--dry-run makes both runs, the help read and the REST call, records shapes on
   const raw = fs.readFileSync(file, 'utf8');
   assert.ok(!raw.includes('standin-login'));
   assert.ok(!raw.includes('standin-model'));
-  assert.ok(!raw.includes('12.5'));
+  // The stand-in usage figure, as a value anywhere in the record: a timing could hold the same digits.
+  const values = (v) => (v !== null && typeof v === 'object' ? Object.values(v).flatMap(values) : [v]);
+  assert.ok(!values(JSON.parse(raw)).some((v) => v === 12.5 || v === '12.5'));
   assert.match(printed[0], /2 model run/);
   assert.equal(printed.at(-1), `Raw results: ${file}`);
   assert.match(summarise(results), /rest \/users/);
