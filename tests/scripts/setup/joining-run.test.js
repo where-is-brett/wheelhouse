@@ -108,7 +108,7 @@ test('a second computer runs steps 1, 2, 3, 6, 7 (this computer\'s files only), 
         if (args[0] === 'api' && args[1].startsWith('user/memberships/orgs')) return answer('[]');
         if (args[0] === 'api' && args[1].startsWith('repos/')) {
           const repo = args[1].slice('repos/'.length);
-          return repos[repo] ? answer(JSON.stringify({ full_name: repo, id: repos[repo], default_branch: 'main' })) : answer('', 1, 'gh: Not Found (HTTP 404)');
+          return repos[repo] ? answer(JSON.stringify({ full_name: repo, id: repos[repo], default_branch: 'main', private: true })) : answer('', 1, 'gh: Not Found (HTTP 404)');
         }
         return answer('', 1, 'unknown command');
       }

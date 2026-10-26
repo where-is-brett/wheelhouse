@@ -35,7 +35,8 @@ const REDO = /^redo-([a-z-]+)-[0-9]+$/;
 function answeredOutside(open, answers) {
   const kinds = new Map();
   for (const [key, a] of Object.entries(answers)) {
-    if (!/^[34]\./.test(key) || open.some((c) => c.key === key)) continue;
+    // The privacy card of step 3 is a check, not a choice of the director's.
+    if (!/^[34]\./.test(key) || key.startsWith('3.not-private-') || open.some((c) => c.key === key)) continue;
     const about = aboutOf(key);
     const was = kinds.get(about);
     if (!was || Date.parse(a.at) > Date.parse(was.at)) kinds.set(about, { key, ...a });

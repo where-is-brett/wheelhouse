@@ -405,3 +405,8 @@ test('a Windows brief at watcher Shape 2 says to ask the director once to click 
   assert.ok(windows({ level: 'ask', guardedCommand: null, shape: 1 }).includes(ASK_WORDS));
   assert.ok(!windows({ level: 'ask', guardedCommand: null, shape: 1 }).includes(SESSION_WORDS));
 });
+
+test('every brief says how to test when the whole suite runs longer than one command may', () => {
+  const text = fs.readFileSync(new URL('../../../templates/brief/brief.md', import.meta.url), 'utf8');
+  assert.match(text, /\*\*Long test runs\.\*\* One command runs for at most ten minutes, .* the pull request's checks run all of it/);
+});

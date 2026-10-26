@@ -92,6 +92,14 @@ export function isClaudeSignIn(name) {
   return CLAUDE_SIGN_IN_NAMES.includes(name) || CLAUDE_SIGN_IN_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
+// What every session Wheelhouse starts with `claude` takes beside its environment: subagents run in the
+// foreground. Claude Code 2.1.302 runs a subagent in the background when its dispatch leaves out
+// run_in_background, and then a background subagent is refused any permission it would have to ask for, and the
+// session can end its turn while one still runs. With the switch, the dispatch has no such choice, every subagent
+// is waited for, and a subagent resumed with SendMessage runs in the foreground too. Background shell commands go
+// with it: a session's command waits as long as its own time limit allows.
+export const FOREGROUND_ONLY = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+
 // `env` without the host session's variables.
 export function withoutHostVariables(env) {
   const drop = new Set(hostVariableNames(env));

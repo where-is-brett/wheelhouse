@@ -181,7 +181,8 @@ async function seedBare(dir, { readme }) {
 // requests opened on it; and the branches whose protection is on.
 export function standInHost({ shims = null } = {}) {
   const root = tempFolder('wh-host ');
-  const host = { root, ids: {}, next: 40, prs: new Map(), nextPr: 12, protected: new Set(), shims };
+  // `public` names the repositories the host shows to everyone.
+  const host = { root, ids: {}, next: 40, prs: new Map(), nextPr: 12, protected: new Set(), public: new Set(), shims };
   // A pull request closed by the stand-in `gh` on the PATH (shimTools) is closed here too.
   const closedByName = (number, repo) => shims !== null && shims.calls().includes(`gh pr close ${number} --repo ${repo}`);
   host.url = ({ repo }) => path.join(root, `${repo}.git`);
@@ -309,7 +310,7 @@ export function makeComputer(host, clock, { name = 'Café Menu' } = {}) {
     if (args[0] === 'api' && args[1].startsWith('repos/')) {
       const repo = args[1].slice('repos/'.length);
       return host.has(repo)
-        ? answer(JSON.stringify({ full_name: repo, id: host.idOf(repo), default_branch: 'main', private: true }))
+        ? answer(JSON.stringify({ full_name: repo, id: host.idOf(repo), default_branch: 'main', private: !host.public.has(repo) }))
         : answer('', 1, 'gh: Not Found (HTTP 404)');
     }
     if (args[0] === 'repo' && args[1] === 'create') {
