@@ -18,6 +18,8 @@ These are the build loop's evaluation scenarios (design `docs/specs/2026-10-18-b
   - **34:** the builder subagent was refused Bash, so nothing was built and no review followed; the session put the refusal to the director as a level-3 question and paused.
   Since a handled failure keeps a level not ready at that commit, the other trials weren't run. About 6.4 million tokens in. Neither failure shows the lighter model designing badly; both are worth finding the cause of before a run at a later commit.
 
+**The cause, 26 October 2026.** Both had one cause. Claude Code 2.1.302 runs a subagent in the background when its dispatch leaves out `run_in_background`. On Lean's column the session always passed `false`; on Lightest's the mid-sized model left it out. A background subagent is refused any permission it would have to ask for (34's builder, its shell), and a session can end its turn while one still runs (23's whole-branch reviewer). Every session Wheelhouse starts, and every feature session the evaluation starts, now takes `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` (`FOREGROUND_ONLY`, `scripts/lib/claude.js`), so each subagent is waited for. One uncounted Lightest trial of each then passed, with no subagent in the background.
+
 
 **What a run is.** Each scenario (`tests/eval/build-loop/<id>-*.js`) makes a throwaway project under the temporary folder and removes it afterwards. For scenarios 20 to 23, 33 and 34, and 27's bug session's leg, `scripts/eval/feature-project.js` sets it up as a feature session's worktree, the way the foreman would:
 
