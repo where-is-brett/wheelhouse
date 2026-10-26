@@ -716,7 +716,10 @@ export function setupRoutes({
     } finally {
       inHelper.delete(key);
     }
-    return done.ok ? { ok: true, started: true, done: true } : { ok: false, refused: `${title(step.n)} did not finish: ${done.reason}` };
+    if (!done.ok) return { ok: false, refused: `${title(step.n)} did not finish: ${done.reason}` };
+    // What the step said as it finished, for the director (step 6's settings of theirs that weaken Standard).
+    const said = runById(run.id)?.steps?.[step.n]?.say?.line;
+    return { ok: true, started: true, done: true, ...(typeof said === 'string' ? { said: hide(said, []) } : {}) };
   }
 
   // The long step's own process, detached and hidden, started in Wheelhouse's folder, so it runs

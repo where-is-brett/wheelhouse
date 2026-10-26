@@ -257,6 +257,10 @@ export function computerStep({ run = realRun, env = process.env, route = TELEMET
       const platform = ctx.platform ?? process.platform;
       await telemetryOn({ changes: changes.filter((c) => c.what === 'telemetry'), platform, run, applyJsonKey: ctx.applyJsonKey, record: ctx.record });
       for (const c of changes.filter((x) => x.what !== 'telemetry')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
+      // The director's own settings that weaken Standard, said in one line as the step finishes,
+      // since a Go ahead on the one card shows no step 6 card (design section 15.1).
+      const weak = weakeningSentence(weakening((await world(ctx)).userSettings), (line) => line.length <= SAY_CHARS);
+      if (weak !== '') ctx.say?.(weak);
       return [];
     },
   };
