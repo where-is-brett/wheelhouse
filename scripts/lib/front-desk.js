@@ -3,7 +3,7 @@
 
 // AskUserQuestion's limits: questions per call, options per question, the header's length, and
 // the most characters a card's question may have.
-export const CARD = Object.freeze({ questions: 4, options: 4, header: 12, chars: 1200 });
+export const CARD = Object.freeze({ questions: 4, options: 4, fewestOptions: 2, header: 12, chars: 1200 });
 // How many cards on different days, answered without Explain more, before a concept is proposed as known.
 export const KNOWN_AFTER = 3;
 // How many times a level 3 topic is approved unchanged before it is proposed for level 2.

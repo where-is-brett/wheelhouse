@@ -18,7 +18,7 @@ import { runStep } from '../../../scripts/setup/run-step.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
 import * as setupRun from '../../../scripts/lib/setup-run.js';
-import { SETUP_DONE, PHONE_TESTED_EARLIER, PHONE_TEST_MISSED } from '../../../scripts/lib/calm-words.js';
+import { SETUP_DONE, PHONE_TESTED_EARLIER, PHONE_TEST_MISSED, PHONE_SKIPPED } from '../../../scripts/lib/calm-words.js';
 import * as setupClicks from '../../../scripts/lib/setup-clicks.js';
 import * as journal from '../../../scripts/setup/journal.js';
 import * as clicks from '../../../scripts/setup/clicks.js';
@@ -451,6 +451,8 @@ test('what has happened after step 9 says what the phone test settled on, and a 
   assert.equal(stepProgress({ n: 10, run: settled({ pushArrived: true }) })[2], SETUP_DONE[9]);
   assert.equal(stepProgress({ n: 10, run: settled({ pushArrived: true, from: 'run-earlier' }) })[2], PHONE_TESTED_EARLIER);
   assert.equal(stepProgress({ n: 10, run: settled({ pushArrived: false }) })[2], PHONE_TEST_MISSED);
+  // Skipped (the phone is optional): said as skipped, with where to set it up, never as a failure.
+  assert.equal(stepProgress({ n: 10, run: settled({ pushSkipped: true }) })[2], PHONE_SKIPPED);
   // Later settles nothing: step 9 has no done mark, so what has happened is still step 8's.
   const later = { steps: { 8: { doneAt: at(1) }, 9: { clickedAt: at(2) } }, changes: [] };
   assert.equal(stepProgress({ n: 10, run: later })[2], SETUP_DONE[8]);

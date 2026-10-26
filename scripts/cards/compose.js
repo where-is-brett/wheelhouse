@@ -328,7 +328,10 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
     const own = (kind === 'answer' && build && buildOptions(list)) || kind === 'premium';
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
-    return [...list, ...(list.length < CARD.options && suggest ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
+    const buttons = [...list, ...(list.length < CARD.options && suggest ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
+    // AskUserQuestion shows no card with fewer than two options, and the question would stall.
+    if (buttons.length < CARD.fewestOptions) fail(kind, 'options', `must offer at least ${CARD.fewestOptions}: a card with one option is never shown`);
+    return buttons;
   }
   const deciding = DECIDING[kind];
   const proposal = kind === 'confirm' && isProposal(target?.event);

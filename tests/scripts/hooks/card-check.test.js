@@ -290,7 +290,18 @@ test('a card offering Explain more is refused', async () => {
   assert.deepEqual(cardProblems(offering), ["offers Explain more, which is not one of a card's options"]);
   assert.match(reason(await decide(call(offering), inProject)), /offers Explain more/);
   // Options given as plain labels are read too.
-  assert.deepEqual(cardProblems({ question: card.question, options: ['Explain more'] }), ['names no recommended option', "offers Explain more, which is not one of a card's options"]);
+  assert.deepEqual(cardProblems({ question: card.question, options: ['Explain more'] }), ['names no recommended option', "offers Explain more, which is not one of a card's options", 'offers 1 option, and a card offers 2 to 4']);
+});
+
+test('a card offering fewer than two options or more than four is refused', async () => {
+  // AskUserQuestion shows such a question to no one, and whatever waits on it stalls.
+  const card = cardOf('approval');
+  const one = { ...card, options: card.options.filter((o) => o.description.startsWith('Recommended:')) };
+  assert.deepEqual(cardProblems(one), ['offers 1 option, and a card offers 2 to 4']);
+  assert.match(reason(await decide(call(one), inProject)), /offers 1 option, and a card offers 2 to 4/);
+  assert.equal(card.options.length, 4);
+  const five = { ...card, options: [...card.options, { label: 'Another', description: 'Something else.' }] };
+  assert.deepEqual(cardProblems(five), ['offers 5 options, and a card offers 2 to 4']);
 });
 
 test('the reply-code rules hold as before', () => {

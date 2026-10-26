@@ -31,7 +31,7 @@ import { REAL_USERS, LEVELS } from './host.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
-export const PRODUCT = Object.freeze({ readme: 'The README\'s words', later: 'Describe it later' });
+export const PRODUCT = Object.freeze({ readme: 'The README\'s words', shaping: 'Still taking shape', later: 'Describe it later' });
 // How long a step whose answers write to the project's records waits for step 3 to set them up.
 export const PROJECT_WAIT_MS = 30 * 1000;
 // The most of the README's first sentence the first question offers.
@@ -152,13 +152,16 @@ const PHASE = { launched: 'launched', before: 'before-launch' };
 
 // The first question: what the product is and who uses it. Its answer records the product's
 // glossary entry and its phase. Its id names the phase, so a real-users answer given again asks
-// it again, and the phase recorded follows the answer (Task 9's review).
+// it again, and the phase recorded follows the answer (Task 9's review). With no README words to
+// offer, Still taking shape takes their place, so the card always has two options of its own, as
+// AskUserQuestion needs: it records a plain entry saying the product is new.
 function productAsk(name, { described, realUsers }) {
   const phase = realUsers ? PHASE.launched : PHASE.before;
   const phaseWrite = { kind: 'setting', data: { key: 'phase', value: phase } };
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
+  const shaping = 'A new product, still taking shape.';
   const options = [
-    ...(described === null ? [] : [{ label: PRODUCT.readme, says: `"${described}"` }]),
+    described === null ? { label: PRODUCT.shaping, says: `"${shaping}" You can describe it to the front desk once it is clearer.` } : { label: PRODUCT.readme, says: `"${described}"` },
     { label: PRODUCT.later, says: 'Setup records no description of it yet; you can give one to the front desk later.' },
   ];
   return {
@@ -170,12 +173,12 @@ function productAsk(name, { described, realUsers }) {
       why: 'Wheelhouse explains its work to you in terms of your product, and treats a launched product with more care.',
       options,
       recommend: options[0].label,
-      because: described === null ? 'you can describe it later' : 'it is how the project already describes itself',
+      because: described === null ? 'it tells agents the product is new until you describe it' : 'it is how the project already describes itself',
       meanwhile: MEANWHILE,
     },
     writes: {
       labels: {
-        ...(described === null ? {} : { [PRODUCT.readme]: [entry(described), phaseWrite] }),
+        ...(described === null ? { [PRODUCT.shaping]: [entry(shaping), phaseWrite] } : { [PRODUCT.readme]: [entry(described), phaseWrite] }),
         [PRODUCT.later]: [phaseWrite],
       },
       typed: [{ ...entry(''), typedInto: 'plain' }, phaseWrite],
@@ -242,7 +245,7 @@ export function questionsStep() {
       return {
         settled: {
           record: {
-            described: typeof product.text === 'string' || product.label === PRODUCT.readme,
+            described: typeof product.text === 'string' || product.label === PRODUCT.readme || product.label === PRODUCT.shaping,
             phase: realUsers ? PHASE.launched : PHASE.before,
             locked: answers['3.locked']?.label === LEVELS.locked,
             liveData: live.label === LIVE_DATA.yes,
