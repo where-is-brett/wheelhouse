@@ -15,6 +15,7 @@ import { computerId } from '../../../scripts/lib/paths.js';
 import { writeBaseline } from '../../../scripts/watcher/control-files.js';
 import { makeWaker, writeWake } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
+import { FOREGROUND_ONLY } from '../../../scripts/lib/claude.js';
 import { withHome } from '../../helpers/homes.js';
 import { standInTools } from '../../helpers/host-stand-ins.js';
 import { P, config as projectConfig, project } from '../../helpers/foreman.js';
@@ -55,7 +56,9 @@ test('each call builds the recorded argv on darwin and win32', () => {
   for (const c of RECORDED) {
     const call = build(c);
     const got = { file: call.file, args: call.args, input: call.input, verbatim: call.verbatim, env: call.env };
-    const want = c.kind === 'foreman-long' ? { ...c.argv, input: '' } : c.argv;
+    // Since the recording, every session also starts with its subagents in the foreground (FOREGROUND_ONLY).
+    const recorded = c.kind === 'foreman-long' ? { ...c.argv, input: '' } : c.argv;
+    const want = { ...recorded, env: { ...recorded.env, ...FOREGROUND_ONLY } };
     assert.deepEqual(got, want, c.case);
   }
 });
@@ -133,8 +136,24 @@ test('an effort that isn\'t one of the levels, or a model or fallback that is no
 test('the foreman gets its role in its environment and a feature does not, whatever spelling the host used', () => {
   const env = { PATH: '/bin', wheelhouse_role: 'front-desk', CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/c' };
   const claude = { kind: 'direct', file: 'claude' };
-  assert.deepEqual(sessions.foremanCall({ config: {}, prompt: 'p', env, claude }).env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', WHEELHOUSE_ROLE: 'foreman' });
-  assert.deepEqual(sessions.featureResumeCall({ config: {}, prompt: 'p', sessionId: 's', env, claude }).env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c' });
+  assert.deepEqual(sessions.foremanCall({ config: {}, prompt: 'p', env, claude }).env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
+  assert.deepEqual(sessions.featureResumeCall({ config: {}, prompt: 'p', sessionId: 's', env, claude }).env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ...FOREGROUND_ONLY });
+});
+
+test('every session runs its subagents in the foreground, whatever the host set', () => {
+  // Claude Code 2.1.302 runs a subagent in the background when its dispatch leaves out run_in_background: a
+  // background subagent is refused any permission it would have to ask for, and a session can end its turn while
+  // one still runs. Lightest's trials of scenarios 34 and 23 failed on exactly those (25 October 2026).
+  assert.deepEqual(FOREGROUND_ONLY, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+  const env = { PATH: '/bin', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0' };
+  const claude = { kind: 'direct', file: 'claude' };
+  const calls = [
+    sessions.foremanCall({ config: {}, prompt: 'p', env, claude }),
+    sessions.foremanCall({ config: {}, prompt: 'p', env, claude, long: true, pluginRoot: MAC_ROOT, platform: 'darwin', settings: '/s.json' }),
+    sessions.featureStartCall({ config: {}, prompt: 'p', sessionId: 's', env, claude }),
+    sessions.featureResumeCall({ config: {}, prompt: 'p', sessionId: 's', env, claude }),
+  ];
+  for (const call of calls) assert.equal(call.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, '1');
 });
 
 // --- The waker asks the project's adapter ---

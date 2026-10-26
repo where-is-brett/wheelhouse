@@ -2,6 +2,7 @@
 // Waking the foreman or a feature session (build-loop design, section 11;
 // check 27). Every `claude` here is a stand-in: `run` records the call. The
 // one real process started is `node -e`, to try spawnDetached and pidAlive.
+import { FOREGROUND_ONLY } from '../../../scripts/lib/claude.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -824,10 +825,10 @@ test('every session the waker starts keeps Claude Code\'s sign-in, spelt exactly
   assert.deepEqual(sessionEnv(host), { PATH: '/bin', ...signIn });
   const fake = fakeRun();
   await waker(fake, { baseEnv: host }).wakeForeman(writeWake(P, bundle('e1')));
-  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', ...signIn, WHEELHOUSE_ROLE: 'foreman' });
+  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', ...signIn, WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
   const features = fakeRun();
   await waker(features, { baseEnv: host }).startFeature({ work: 'search-box', worktree: worktree() });
-  assert.deepEqual(features.calls[0].env, { PATH: '/bin', ...signIn });
+  assert.deepEqual(features.calls[0].env, { PATH: '/bin', ...signIn, ...FOREGROUND_ONLY });
 }));
 
 test('the foreman, and only the foreman, is told it is the foreman; no session gets the host session\'s variables', () => withHome(async () => {
@@ -838,7 +839,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   const fake = fakeRun();
   const record = writeWake(P, bundle('e1'));
   await waker(fake, { baseEnv: host }).wakeForeman(record);
-  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', WHEELHOUSE_ROLE: 'foreman' });
+  assert.deepEqual(fake.calls[0].env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', WHEELHOUSE_ROLE: 'foreman', ...FOREGROUND_ONLY });
   assert.ok(fake.calls[0].args[1].startsWith('Wheelhouse foreman: '));
 
   const dir = worktree();
@@ -848,7 +849,7 @@ test('the foreman, and only the foreman, is told it is the foreman; no session g
   await w.startFeature({ work: 'search-box', worktree: worktree() });
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
   assert.equal(features.calls.length, 2);
-  for (const call of features.calls) assert.deepEqual(call.env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept' });
+  for (const call of features.calls) assert.deepEqual(call.env, { PATH: '/bin', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_API_KEY_HELPER: 'kept', ...FOREGROUND_ONLY });
 
   // Shape 2 names the same copy the Shape 1 prompt names.
   const lines = [];
