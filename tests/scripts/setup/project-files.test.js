@@ -277,6 +277,7 @@ test('the project settings keep the director\'s own keys and add Wheelhouse\'s',
       `Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`, `Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin' })}:*)`,
       `Bash(${frontDeskCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
       'Edit(/.wheelhouse/front-desk.json)',
+      'Edit(/.wheelhouse/work/*.md)',
       `Bash(${setupCommand(PLUGIN_ROOT, { platform: 'darwin', noSystemCa: true })}:*)`,
     ]);
     assert.deepEqual(local.sandbox.network.allowUnixSockets, [ADDRESS]);

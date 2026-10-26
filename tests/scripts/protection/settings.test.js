@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { FRONT_DESK_INPUT } from '../../../scripts/lib/front-desk.js';
+import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
 import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
@@ -225,14 +225,17 @@ test('the local settings allow the command by its full path', () => {
   // F85), by the project-relative form: `/path` is from the settings file's project.
   const input = `Edit(/${FRONT_DESK_INPUT})`;
   assert.equal(input, 'Edit(/.wheelhouse/front-desk.json)');
-  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule, flagged, input, setupRule, setupFlagged] });
+  // And the work's reports it writes for `record work`: Markdown files directly in .wheelhouse/work/, nothing below or beside.
+  const reports = WORK_REPORTS_RULE;
+  assert.equal(reports, 'Edit(/.wheelhouse/work/*.md)');
+  assert.deepEqual(localSettings({ address, pluginRoot: root, platform: 'darwin' }).permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged] });
   // With the status line or without it, and beside the socket.
   const full = localSettings({ address, node: '/usr/local/bin/node', pluginRoot: root, ownStatusLine: { type: 'command', command: 'x' }, platform: 'linux' });
-  assert.deepEqual(full.permissions, { allow: [rule, flagged, input, setupRule, setupFlagged] });
+  assert.deepEqual(full.permissions, { allow: [rule, flagged, input, reports, setupRule, setupFlagged] });
   assert.deepEqual(full.sandbox, { network: { allowUnixSockets: [address] } });
   // On Windows the path is written with forward slashes after its drive letter, as node and Git Bash take it.
   assert.deepEqual(localSettings({ address, pluginRoot: 'C:\\Users\\Zoë\\wheelhouse', platform: 'win32' }).permissions,
-    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Edit(/.wheelhouse/front-desk.json)', 'Bash(node "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)'] });
+    { allow: ['Bash(node "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/frontdesk/cli.js":*)', 'Edit(/.wheelhouse/front-desk.json)', 'Edit(/.wheelhouse/work/*.md)', 'Bash(node "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)', 'Bash(node --no-use-system-ca "C:/Users/Zoë/wheelhouse/scripts/setup/cli.js":*)'] });
   // A folder a rule can't hold as it is gets no rule: the command is then asked about each time.
   for (const bad of ['/x"y', '/x*y', '/x(y', '/x)y', '/x\ny', 'relative/root', '/x`y', '/x$y']) {
     assert.equal(localSettings({ address, pluginRoot: bad, platform: 'linux' }).permissions, undefined, bad);
@@ -241,7 +244,7 @@ test('the local settings allow the command by its full path', () => {
   }
   // Merged into settings the director already has, their own rules stay first.
   const merged = mergeSettings({ permissions: { allow: ['Bash(ls:*)'] } }, localSettings({ address, pluginRoot: root, platform: 'darwin' }));
-  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule, flagged, input, setupRule, setupFlagged]);
+  assert.deepEqual(merged.permissions.allow, ['Bash(ls:*)', rule, flagged, input, reports, setupRule, setupFlagged]);
   // The shared project settings never name it: the path is this computer's.
   assert.ok(!strings(projectSettings(config)).some((x) => x.includes('frontdesk') || x.includes('setup/cli.js')));
 });

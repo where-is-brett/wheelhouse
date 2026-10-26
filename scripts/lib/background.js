@@ -58,13 +58,13 @@ function recordPart({ session, project, cwd, env, now }) {
   } catch { /* a session that can't be recorded is still a session */ }
 }
 
-// Starts `node <script>` detached in Wheelhouse's home, with no window and no output kept; true
+// Starts `node <script> [args]` detached in Wheelhouse's home, with no window and no output kept; true
 // when it started.
-export function startDetached(spawn, script) {
+export function startDetached(spawn, script, args = []) {
   try {
     const home = wheelhouseHome();
     fs.mkdirSync(home, { recursive: true });
-    const child = spawn(process.execPath, [script], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore' });
+    const child = spawn(process.execPath, [script, ...args], { cwd: jobFolder(), detached: true, windowsHide: true, stdio: 'ignore' });
     child?.unref?.();
     child?.on?.('error', () => {});
     return true;
