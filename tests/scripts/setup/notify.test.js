@@ -1,7 +1,7 @@
 // tests/scripts/setup/notify.test.js
 // Step 9, Phone notifications (design section 15, check 4, ruling R39): a card of plain steps
 // ending with the screen locked until the phone buzzes, or for three minutes (ruling R65),
-// answered Ready or Later; after Ready, a wait of PUSH_TEST_WAIT_MS, while the session sends one
+// answered Ready or Skip for now (the phone is optional); after Ready, a wait of PUSH_TEST_WAIT_MS, while the session sends one
 // test push inside the lock; then a card asking whether it arrived; with that answered, the step
 // settles with the result in the journal, which the board reads. A Ready too old for its push to
 // have been sent asks the first card again (ruling R66).
@@ -9,8 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { notifyStep, pushTestResult, READY, ARRIVED, READY_ID, ARRIVED_ID } from '../../../scripts/setup/notify.js';
-import { STEPS } from '../../../scripts/setup/steps.js';
+import { notifyStep, pushTestResult, READY, ARRIVED, READY_ID, ARRIVED_ID, SKIPPED } from '../../../scripts/setup/notify.js';
+import { STEPS, firstUnfinished } from '../../../scripts/setup/steps.js';
 import { setupRoutes } from '../../../scripts/setup/engine.js';
 import { answersFor } from '../../../scripts/setup/clicks.js';
 import { findRun, readJournal, startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -101,8 +101,11 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   const got = await notifyStep().plan({ answers: {}, now: () => T0 });
   assert.equal(got.ask.id, READY_ID);
   const { card } = got.ask;
-  assert.deepEqual(card.options.map((o) => o.label), [READY.ready, READY.later]);
+  assert.deepEqual(card.options.map((o) => o.label), [READY.ready, READY.skip]);
   assert.equal(card.recommend, READY.ready);
+  // The phone is optional: skipping says setup carries on, and where to set it up later.
+  assert.match(card.options[1].says, /carries on without your phone/);
+  assert.match(card.options[1].says, /front desk to set up phone notifications/);
   // The plain steps: Remote Control in Desktop, both push options (step 6), the phone's own
   // permission for Claude's notifications, then the locked screen.
   assert.match(card.what, /Remote Control/);
@@ -120,9 +123,9 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.match(card.what, /Lock your screen, and leave it locked until your phone buzzes, or for three minutes if it doesn't\.$/);
   assert.doesNotMatch(card.what, /for two minutes/);
   assert.match(card.options[0].says, /two minutes/);
-  // Nor is Later a put-off button the composer would refuse on a question: it is a kept answer.
+  // Nor is Skip for now a put-off button the composer would refuse on a question: it is a kept answer.
   const composed = composeCard({ ...card, kind: 'question', suggest: false }).question;
-  assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.later]);
+  assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.skip]);
 });
 
 test('through the helper, the card is a question with no set line, and Ready waits out the two minutes', async () => {
@@ -232,8 +235,9 @@ test('after the wait, step 9 asks whether the test arrived, and either answer se
       assert.equal(fs.existsSync(path.join(home, 'setup', 'shown')), false, 'no Go-ahead card');
       // What the board reads from the journal.
       assert.deepEqual(phonePushResult(), { arrived, at: run.steps[9].doneAt, run: run.id });
-      // Done: not planned again.
-      await assert.rejects(planLater(), /already done/);
+      // Done: not planned again once it arrived; a push that didn't arrive can be tested again later.
+      if (arrived) await assert.rejects(planLater(), /already done/);
+      else assert.equal((await planLater()).ask.id, `${READY_ID}-2`);
     });
   }
 });
@@ -302,28 +306,85 @@ test('the push test\'s result names whether it arrived, and only for one of the 
   for (const other of [READY.ready, 'Explain more', '', null, undefined]) assert.throws(() => pushTestResult(other), /It arrived/);
 });
 
-test('Later asks the card of plain steps again; Ready on it then starts the wait', async () => {
+// The phone is optional (the director's ruling of 26 October 2026): Skip for now settles step 9 as
+// skipped, the health check and setup's end go on, and the front desk takes the test later.
+test('Skip for now settles step 9 as skipped, not failed, and the steps after it don\'t wait for a phone', async () => {
   await withProject(async ({ folder, plan, answer }) => {
-    readyFor9(folder);
-    const first = await plan(9);
-    await answer(first.ask.card, READY.later);
-    // Later is kept as the director's answer (not a put-off), and the step asks the same card again.
-    const runId = findRun(folder).id;
-    assert.equal(answersFor(runId)[`9.${READY_ID}`].label, READY.later);
-    const again = await plan(9);
-    assert.equal(again.ask.id, READY_ID);
-    assert.equal(again.ask.card.question, first.ask.card.question);
-    assert.equal(readJournal().runs[0].steps?.[9]?.doneAt, undefined);
-
-    // Ready, clicked later on the card asked again: the newest answer counts.
-    await answerAt(folder, again.ask.card, READY.ready, T0);
-    assert.equal(answersFor(runId)[`9.${READY_ID}`].label, READY.ready);
-    assert.equal((await plan(9)).wait, PUSH_TEST_WAIT_MS);
+    const run = readyFor9(folder);
+    for (const n of [1, 2, 3, 4, 5, 7]) markStep(run.id, n, 'doneAt', { now: () => T0 });
+    await answer((await plan(9)).ask.card, READY.skip);
+    assert.deepEqual(await plan(9), { ok: true, done: true });
+    const mine = readJournal().runs.find((r) => r.id === run.id);
+    assert.deepEqual(mine.changes.filter((c) => c.step === 9).map((c) => [c.kind, c.after]), [['answer', SKIPPED]]);
+    assert.equal(phonePushResult(), null, 'a skip is no push that didn\'t arrive');
+    // Only the health check is left.
+    assert.equal(firstUnfinished(mine), 10);
   });
-  // Directly: Later, however long ago, is no Ready.
-  const later = { [`9.${READY_ID}`]: { label: READY.later, text: null, at: T0.toISOString() } };
-  const got = await notifyStep().plan({ answers: later, now: () => new Date(T0.getTime() + 60 * 60 * 1000) });
-  assert.equal(got.ask.id, READY_ID);
+  // Directly: a skip settles at once, however long ago.
+  const skipped = { [`9.${READY_ID}`]: { label: READY.skip, text: null, at: T0.toISOString() } };
+  assert.deepEqual(await notifyStep({ settledBefore: () => 0 }).plan({ answers: skipped, now: () => new Date(T0.getTime() + 60 * 60 * 1000) }), { settled: { record: SKIPPED } });
+});
+
+// A run parked at step 9 before this release: card A answered Later, which then asked it again
+// for ever. After the update, its plan asks the new card, and Skip for now settles it.
+test('a run parked on the earlier card, answered Later, is asked the new card and carries on with Skip for now', async () => {
+  await withProject(async ({ folder, plan, answer }) => {
+    const run = readyFor9(folder);
+    for (const n of [1, 2, 3, 4, 5, 7]) markStep(run.id, n, 'doneAt', { now: () => T0 });
+    // The earlier release's card A, asked and answered Later, kept signed.
+    const old = {
+      question: 'Setup step 9, phone notifications, so agents can reach you when they need you. Then click Ready for one test notification.',
+      header: 'Question',
+      options: [{ label: 'Ready', description: 'Recommended: setup sends one test notification.' }, { label: 'Later', description: 'Setup asks this again later; no test is sent.' }],
+    };
+    noteAsked({ runId: run.id, folder, step: 9, id: READY_ID, card: old, now: () => T0 });
+    keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId: run.id, step: 9, questionId: READY_ID, question: old.question, label: 'Later', text: null }, now: () => ANSWERED }));
+    assert.equal(answersFor(run.id)[`9.${READY_ID}`].label, 'Later');
+    const asked = await plan(9);
+    assert.equal(asked.ok, true, asked.refused);
+    assert.equal(asked.ask.id, READY_ID);
+    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [READY.ready, READY.skip]);
+    // The old Later no longer counts: the card asked now has other words.
+    assert.equal(answersFor(run.id)[`9.${READY_ID}`], undefined);
+    await answer(asked.ask.card, READY.skip);
+    assert.deepEqual(await plan(9), { ok: true, done: true });
+    assert.equal(firstUnfinished(readJournal().runs.find((r) => r.id === run.id)), 10);
+  });
+});
+
+test('a skipped phone test, or one that didn\'t arrive, is taken again later with the same test, and one that arrived is not', async () => {
+  for (const first of [READY.skip, ARRIVED.no]) {
+    await withProject(async ({ folder, plan, answer, user }) => {
+      const run = readyFor9(folder);
+      if (first === READY.skip) await answer((await plan(9)).ask.card, READY.skip);
+      else {
+        await answer((await plan(9)).ask.card, READY.ready);
+        const b = setupRoutes({ now: () => after(PUSH_TEST_WAIT_MS), userHome: user });
+        await answer((await b['/setup/plan']({ folder, step: 9 })).ask.card, ARRIVED.no);
+      }
+      const routes = setupRoutes({ now: () => after(PUSH_TEST_WAIT_MS), userHome: user });
+      const planAt = (ms) => setupRoutes({ now: () => after(ms), userHome: user })['/setup/plan']({ folder, step: 9 });
+      assert.deepEqual(await routes['/setup/plan']({ folder, step: 9 }), { ok: true, done: true });
+      // Asked from the front desk later, the step is planned again: card A, under the round's own id.
+      const day = 24 * 60 * 60 * 1000;
+      const a = await planAt(day);
+      assert.equal(a.ok, true, a.refused);
+      assert.equal(a.ask.id, `${READY_ID}-2`);
+      assert.deepEqual(a.ask.card.options.map((o) => o.label), [READY.ready, READY.skip]);
+      await answerAt(folder, a.ask.card, READY.ready, after(day));
+      assert.equal((await planAt(day)).wait, PUSH_TEST_WAIT_MS);
+      const b = await planAt(day + PUSH_TEST_WAIT_MS);
+      assert.equal(b.ask.id, `${ARRIVED_ID}-2`);
+      await answerAt(folder, b.ask.card, ARRIVED.yes, after(day + PUSH_TEST_WAIT_MS));
+      assert.deepEqual(await planAt(day + PUSH_TEST_WAIT_MS), { ok: true, done: true });
+      const mine = readJournal().runs.find((r) => r.id === run.id);
+      assert.deepEqual(mine.changes.filter((c) => c.step === 9).map((c) => c.after), [first === READY.skip ? SKIPPED : { pushArrived: false }, { pushArrived: true }]);
+      // The board reads the new result, dated when it settled.
+      assert.deepEqual(phonePushResult(), { arrived: true, at: after(day + PUSH_TEST_WAIT_MS).toISOString(), run: run.id });
+      // Arrived: not taken again.
+      await assert.rejects(planAt(2 * day), /already done/);
+    });
+  }
 });
 
 test('the board reads the latest settled push test of this computer\'s journal, and nothing before step 9 settles', async () => {

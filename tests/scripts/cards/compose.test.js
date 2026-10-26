@@ -486,6 +486,15 @@ test('suggest: false leaves Suggest a change… off a question card, and the car
   refused({ suggest: false }, /suggest/, 'approval');
 });
 
+test('a question or answer card that would offer one option is refused, since AskUserQuestion never shows it', () => {
+  const one = [{ label: 'Option 1', says: 'Means 1.' }];
+  for (const kind of ['question', 'answer']) {
+    assert.throws(() => composeCard(input(kind, { options: one, recommend: 'Option 1', suggest: false })), /options must offer at least 2/, kind);
+    // With Suggest a change… beside it, the card has two.
+    assert.equal(composeCard(input(kind, { options: one, recommend: 'Option 1' })).question.options.length, 2, kind);
+  }
+});
+
 test('an answer card refuses an own option called Why? or Suggest a change…', () => {
   for (const label of [WHY, SUGGEST]) {
     refused({ options: [{ label, says: 'x' }, { label: 'Tab', says: 'y' }], recommend: 'Tab' }, new RegExp(`options.*${label.replace(/[?…]/g, '.')}`), 'answer');

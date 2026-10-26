@@ -99,7 +99,7 @@ import {
   noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedRefused,
 } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
+import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, phoneRetakeable, HEALTH_STEP, PUSH_TEST_STEP } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -455,10 +455,13 @@ export function setupRoutes({
   }
 
   // A step done or running is not planned again: its card's shown time and record stay as they are.
-  // Nor is a step the run doesn't have (ruling R74).
+  // Nor is a step the run doesn't have (ruling R74). Phone notifications skipped, or tested without
+  // the push arriving, are the exception: the front desk plans step 9 again when the director asks
+  // to set them up (the director's ruling of 26 October 2026).
+  const retake = (run, n) => n === PUSH_TEST_STEP && phoneRetakeable(run);
   const showable = (run, n) => {
     if (!onRunList(run, n)) refuse(notOnList(run, n));
-    if (isDone(run, n)) refuse(`${title(n)} is already done`);
+    if (isDone(run, n) && !retake(run, n)) refuse(`${title(n)} is already done`);
     if (runningIn(run, n)) refuse(`${title(n)} is already running`);
   };
 
@@ -510,8 +513,10 @@ export function setupRoutes({
       // `answer` change, which uninstall has nothing to put back for.
       // What the step said as it settled is kept with it, for status to show (ruling R101).
       const { record, said } = got.settled;
+      // Step 9 taken again keeps its new result's time, which the board reads.
+      const again = isDone(runById(run.id), step.n);
       addChanges(run.id, [{ id: newId('chg'), step: step.n, kind: 'answer', target: `step ${step.n}`, before: null, after: record, ...(said === null ? {} : { said }) }]);
-      mark(run.id, step.n, 'doneAt', { now, when: (entry) => !entry.doneAt });
+      mark(run.id, step.n, 'doneAt', { now, when: (entry) => again || !entry.doneAt });
       // A settling that finishes the run (a joining computer's, which has no health check to end
       // it, ruling R74) copies the run's last clicks and answers into the project's state, as an
       // apply does after each step (ruling R45); a copy that fails never fails the step.

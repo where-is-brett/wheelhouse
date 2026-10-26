@@ -117,6 +117,7 @@ Never put the figures anywhere else: not in `record`, a note, a ruling, a card o
 | "How's it going?" | `views work` gives what is running and what waits; one line from it. The full board is `/wheelhouse:board`. Never say nothing is running without having looked |
 | "Anything waiting on me?" | `views waiting`: name each waiting card in one line, as it lists it (its number on the board, its question and its choice) but without its id, and offer to ask one again (`again <n>`). Never put a card already asked to them again unless they ask for that card |
 | The first version's figures from their private note | The baseline command above, and nothing else |
+| "Set up phone notifications" (skipped at setup, or the test didn't arrive) | Setup's command: the Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js`, then `plan 9`. Ask the card it gives exactly as given, then follow `wheelhouse:setup` under "Step 9, phone notifications" until `plan 9` answers `done`. "already done" means the test has already reached their phone: say so in one line |
 
 **STOP:** say in one or two lines what was in progress (`views work`), then run `cards` and ask what it gives: the Lift STOP card alone.
 

@@ -546,8 +546,8 @@ const quickOnMac = (host) => `Your ordinary ${NAME[host]} sign-in. Agents work t
 // (check 73). With real users STRICTER is the recommendation. Elsewhere (Windows has no sandbox), on
 // GitHub: the Wheelhouse app (only while it is registered), their own app (always), and Quick; on
 // GitLab, Narrow or Quick; a narrow way is the recommendation, with one plain line on why. A Locked
-// project is never offered Quick, and on GitHub still gets the card, since their own app means
-// making a GitHub App, which the person agrees to here. `where` names the repository as
+// project is never offered Quick, so with no Wheelhouse app its card has one way, which step 3
+// takes without asking (a card needs two options), listing it on its Go-ahead card. `where` names the repository as
 // `owner/name on GitHub`. A launched project a computer joins is never offered Quick either
 // (`launched`, design section 11), once its state says so.
 export function connectionCard({ host, locked = false, launched = false, realUsers = false, platform = null, where, appFile } = {}) {
@@ -1511,12 +1511,14 @@ export function hostStep({
         host = answer('host').label === HOST_LABELS.gitlab ? 'gitlab' : 'github';
       }
       const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo ?? product.name} on ${NAME[host]}`;
-      let way = WAYS.narrow;
-      if (!(host === 'gitlab' && (locked || launched))) {
-        // On a Mac, Quick first and the narrow ways behind Make it stricter; elsewhere a narrow way
-        // recommended. A joining computer can't know the phase before its state is cloned, so its
-        // card counts as one with real users.
-        const card = connectionCard({ host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where, appFile });
+      // On a Mac, Quick first and the narrow ways behind Make it stricter; elsewhere a narrow way
+      // recommended. A joining computer can't know the phase before its state is cloned, so its
+      // card counts as one with real users. A card with one way (Locked or launched, on GitLab, or
+      // on GitHub with no Wheelhouse app) is no choice, and AskUserQuestion can't show it: that way
+      // is taken, and step 3's Go-ahead card lists it.
+      const card = connectionCard({ host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where, appFile });
+      let way = card.options[0].label;
+      if (card.options.length > 1) {
         const id = `connection-${digest(card)}`;
         const got = answer(id);
         if (got === null || !card.options.some((o) => o.label === got.label)) return { ask: { id, card } };

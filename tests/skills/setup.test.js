@@ -2,7 +2,7 @@
 // Setup's playbook and its command, pinned against the code (ruling R94): the playbook's front
 // matter and the session-start lines that send a session to it, its command exactly as the allow
 // rule matches it, only the forms cli.js takes, step 9's rule (the push step's number, `waitsFor`
-// and the test's words) and Later, the labels it waits for, and the README's two install lines.
+// and the test's words) and Skip for now, the labels it waits for, and the README's two install lines.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -112,14 +112,21 @@ test('the playbook lists exactly cli.js\'s forms, and names no other', () => {
   assert.ok(command.includes(`${COMMAND.replace('/plugin', ROOT_VARIABLE)} resume`));
 });
 
-test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one push with the test\'s words; Later stops', () => {
+test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one push with the test\'s words; Skip for now carries on', () => {
   const section = playbook.split(`## Step ${PUSH_TEST_STEP}, `)[1]?.split('\n## ')[0] ?? '';
   assert.ok(section, `a section for step ${PUSH_TEST_STEP}`);
   assert.match(section, /wait \*\*with\*\* `waitsFor`[^\n]*no push/);
   assert.match(section, /wait \*\*without\*\* `waitsFor`[^\n]*exactly one test notification/);
   assert.ok(section.includes(`"${PUSH_TEST_TEXT}"`), 'the push says the test\'s words');
-  assert.ok(section.includes(`**${READY.later}:**`), 'Later is named');
-  assert.match(section.split(`**${READY.later}:**`)[1], /offer to carry on later/);
+  assert.ok(section.includes(`**${READY.skip}:**`), 'Skip for now is named');
+  const skip = section.split(`**${READY.skip}:**`)[1].split('\n')[0];
+  assert.match(skip, /settles as skipped/);
+  assert.match(skip, /front desk sets up phone notifications/);
+  assert.match(skip, /health check doesn't wait for a phone/);
+  assert.doesNotMatch(section, /don't try step 10/);
+  // The front desk takes the test when the director asks for it later.
+  const desk = read('skills/front-desk/SKILL.md');
+  assert.match(desk, /"Set up phone notifications"[^\n]*`scripts\/setup\/cli\.js`[^\n]*`plan 9`/);
 });
 
 test('the playbook waits for the labels the cards carry', () => {

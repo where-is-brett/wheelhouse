@@ -59,7 +59,8 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 
 - A step 9 wait **with** `waitsFor` is the wait for another step: no push.
 - A step 9 wait **without** `waitsFor` means the director's screen is locked for the test. Run `wait 9` until it answers `waited: true` (each call waits up to a minute and a half, then says how long is left), then send exactly one test notification with the session's push tool, saying "Wheelhouse test: phone notifications reach you.", then `plan 9` again. One push, even when the director asks for more; no push at any other time, not even to try the tool.
-- **Later:** setup stops here for now. Say in one line that the phone test and the health check wait, and offer to carry on later. Don't ask the card again this session, and don't try step 10.
+- **Skip for now:** the phone is optional. Run `plan 9` again: it settles as skipped, never as a test that failed. Say in one line that the front desk sets up phone notifications whenever they ask, then carry on with `resume`: the health check doesn't wait for a phone.
+- **A run parked on the earlier card** (answered Later before this release): `plan 9` asks the card again, now with **Skip for now**. Ask it as given.
 
 ## Step 10, the health check
 
