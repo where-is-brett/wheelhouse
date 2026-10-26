@@ -1305,6 +1305,15 @@ It is never a flat "not possible".
 
 **A run already part-way through.** Nothing done is undone or asked again. On the next `resume` the helper builds the one card from the choices still open and the steps still to run. Choices already answered show as plain lines, marked "chosen earlier". With nothing left to choose, the card is just the list and **Go ahead**. A per-step Go-ahead card shown and not yet clicked is replaced by the one card. A run waiting at step 9 goes straight on to the health check, and the phone is offered at the end. The journal stays at version 1: the one card's answer and its consent are new records, which an older Wheelhouse doesn't read.
 
+**Calls made while building it** (*designer's calls*, `scripts/setup/choices.js` and `scripts/setup/redo.js`):
+
+- The choices are found by a dry run of steps 3 and 4: each plan runs with its questions taken as answered and stops before it reads the host. Each choice keeps its step's own question id and card, so Customise's answer is the step's answer, and no step has a second list of its questions.
+- The one card is built outside the card composer, since its lines are a list, and passes the card check like any card. Its id names its choices and how many answers the run holds, so a card shown again after a change is a new card.
+- Records a click makes before the project's state exists (the one card's phase and description, Customise's description) are signed at the click and kept in `~/.wheelhouse/setup/records/`. The helper sends them into the state with the run's clicks once step 3 has cloned it, and uninstall removes the folder.
+- A later Go ahead lists only the choices still open. Each earlier Go ahead's choices still stand for the steps that ran on them, and only the newest one's holding decides whether lists are covered.
+- A redo card is a question of step 0, named by what it changes and how many answers the run holds. Real users and the description change their records at once; live data and Apple signing after step 7 become a request the front desk starts after the first briefing; the host, the connection and joining after step 3 offer Set up again through uninstall's own card.
+- Status says "Setup is finished. Phone notifications come next, and are optional." while the phone is still to be offered.
+
 **The target.** From opening the session to the front desk's first briefing: 6 minutes on a computer that already has git and a signed-in host tool, and 10 minutes with a sign-in and git's installer. The director's own time (reading and clicking) is under 2 minutes. It is measured from the journal (the session's first message to the green board), on the timed run (check 19).
 
 ## 16. Open source
