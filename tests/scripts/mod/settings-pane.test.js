@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { settingsRows, settingsGroups, choiceOf, pressSetting, changesFor, premiumPinIn, ADVANCED } from '../../../scripts/mod/settings-pane.js';
+import { settingsRows, settingsGroups, choiceOf, pressSetting, changesFor, premiumRowShown, ADVANCED } from '../../../scripts/mod/settings-pane.js';
 import { handle, lineOf } from '../../../scripts/mod/bridge.js';
 import { effectiveSettings } from '../../../scripts/settings/effective.js';
 import { SETTINGS } from '../../../scripts/settings/catalogue.js';
@@ -687,29 +687,27 @@ test('a pick of a level that is not ready records nothing and says so', () => wi
   assert.equal((await pressSetting({ project: P, key: 'efficiency', choice: 'lean', client: fake(), now: at('2026-10-19T05:00:00.000Z'), timeZone: SYDNEY, ready: ['lean'] })).made, true);
 }));
 
-test('Premium model shows, as a Change… row, only when the configuration has a premium pin', () => {
+test('Premium model shows, as a Change… row, at Thorough or while allowed, and never on an account found without it', () => {
+  const now = at('2026-10-19T05:00:00.000Z');
+  const project = (efficiency, premium) => ({
+    efficiency: { key: 'efficiency', value: efficiency, id: 'e', at: '2026-10-19T04:00:00.000Z' },
+    ...(premium === undefined ? {} : { premium: { key: 'premium', value: premium, id: 'p', at: '2026-10-19T04:00:00.000Z' } }),
+  });
+  const groups = (efficiency, premiumSetting, premium) => settingsGroups({ effective: effectiveSettings({ project: project(efficiency, premiumSetting), now }), now, timeZone: SYDNEY, premium });
+  // Below Thorough and off: no row; a pin in the configuration never makes one.
   assert.equal(groupRow(groupsAt('2026-10-19T05:00:00.000Z'), 'premium'), undefined);
-  const groups = groupsAt('2026-10-19T05:00:00.000Z', { premiumPin: true });
-  assert.deepEqual(groupRow(groups, 'premium'), { key: 'premium', label: 'Premium model', value: 'off', kind: 'change' });
-  assert.deepEqual(groupRows(groups, 'project').map((r) => r.key).slice(4, 7), ['efficiency', 'premium', 'phase']);
-});
-
-test('the premium pin is read from the project configuration', () => {
-  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'pin-'));
-  try {
-    assert.equal(premiumPinIn(folder), false);
-    fs.mkdirSync(path.join(folder, '.claude'));
-    const write = (config) => fs.writeFileSync(path.join(folder, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], ...config }));
-    write({ tiers: { pins: { premium: 'model-premium' } } });
-    assert.equal(premiumPinIn(folder), true);
-    write({ tiers: { pins: { premium: null } } });
-    assert.equal(premiumPinIn(folder), false);
-    write({ tiers: { pins: { premium: 'model-premium' }, other: 1 } });
-    assert.equal(premiumPinIn(folder), false);
-    assert.equal(premiumPinIn(undefined), false);
-  } finally {
-    fs.rmSync(folder, { recursive: true, force: true });
-  }
+  assert.equal(groupRow(groups('balanced', undefined, { value: 'off', absent: false }), 'premium'), undefined);
+  // At Thorough, where its card is offered: the row, with Change…, which asks the front desk.
+  const thorough = groups('thorough', undefined, { value: 'off', absent: false });
+  assert.deepEqual(groupRow(thorough, 'premium'), { key: 'premium', label: 'Premium model', value: 'off', kind: 'change' });
+  assert.deepEqual(groupRows(thorough, 'project').map((r) => r.key).slice(4, 7), ['efficiency', 'premium', 'phase']);
+  assert.ok(groupRow(groups('thorough', undefined, null), 'premium'));
+  // Allowed below Thorough: it says it isn't in use there.
+  assert.equal(groupRow(groups('balanced', 'within-plan', { value: 'within-plan', absent: false }), 'premium').value, 'on, within your plan (not in use at Balanced)');
+  assert.equal(groupRow(groups('thorough', 'paid-too', { value: 'paid-too', absent: false }), 'premium').value, 'on, paid credits too');
+  // An account the helper's check found without it: never the row.
+  assert.equal(groupRow(groups('thorough', undefined, { value: 'off', absent: true }), 'premium'), undefined);
+  assert.equal(premiumRowShown({ absent: true, value: 'paid-too' }, 'thorough'), false);
 });
 
 test('Usage nudge is a pop-up in the group for every project, at 75% by default', () => {

@@ -23,6 +23,7 @@ import { beforeTimer } from '../../helpers/until.js';
 import { nudgeCard } from '../../../scripts/routing/nudge.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
+import { premiumInput, ALLOW_WITHIN, ALLOW_PAID, ALLOW_PAID_ON_TOP } from '../../../scripts/routing/premium.js';
 
 const P = 'owner__name';
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -1553,5 +1554,101 @@ test('a usage card\'s switch still waiting to be sent counts as taken: a second 
     const again = fake();
     await decide(usageClick(q, got.switchLabel), usageDeps(again));
     assert.deepEqual(again.calls.record, []);
+  });
+});
+
+// --- the premium model's card (design section 14.6): each Allow option is the director's confirmation itself ---
+
+const PREMIUM_AT = NOW.toISOString();
+const premiumQuestion = (from = 'off', at = PREMIUM_AT) => composeCard(premiumInput({ from, at })).question;
+// The offer as the helper keeps it: signed by this computer, with the hash of the card it composed.
+const keepPremiumOffer = (from = 'off', at = PREMIUM_AT) => keepEvent(makeEvent({ kind: 'premium-card', data: { at, from, hash: cardHash(premiumQuestion(from, at)) }, now: () => new Date(Date.parse(at)) }));
+const premiumDeps = (client, { current = 'off', ...more } = {}) => ({ ...deps(client), premiumIn: () => current, ...more });
+
+test('each Allow option on the premium model\'s card records its own setting with a signed confirmation', async () => {
+  await withHome(async () => {
+    keepPremiumOffer();
+    const q = premiumQuestion();
+    assert.equal(cardProblems(q).length, 0);
+    assert.doesNotMatch(q.question, /Reply code:/);
+    for (const [label, value, words] of [[ALLOW_WITHIN, 'within-plan', 'Premium model: on, within your plan'], [ALLOW_PAID, 'paid-too', 'Premium model: on, paid credits too']]) {
+      const c = fake();
+      await decide(usageClick(q, label), { ...premiumDeps(c), now: () => new Date(NOW.getTime() + 60000) });
+      assert.equal(c.calls.record.length, 1, label);
+      const [{ event, target }] = c.calls.record;
+      assert.deepEqual(target.data, { key: 'premium', value, premiumCard: PREMIUM_AT, words });
+      assert.deepEqual(event.data, confirmationFor(target).data);
+      assert.ok(verify(event, readEnrolled()));
+    }
+    // In force once taken, with the card it came from.
+    const c = fake();
+    await decide(usageClick(q, ALLOW_PAID), premiumDeps(c));
+    keepEvent(c.calls.record[0].target);
+    keepEvent(c.calls.record[0].event);
+    const views = buildViews(listEvents(stateDir(P)), readEnrolled());
+    assert.equal(views.premium.value, 'paid-too');
+    assert.equal(views.settings.premium.premiumCard, PREMIUM_AT);
+  });
+});
+
+test('paid credits on top of the plan are a Yes of their own, on their own card, never read from the first', async () => {
+  await withHome(async () => {
+    keepPremiumOffer('within-plan');
+    const q = premiumQuestion('within-plan');
+    const c = fake();
+    await decide(usageClick(q, ALLOW_PAID_ON_TOP), premiumDeps(c, { current: 'within-plan' }));
+    assert.equal(c.calls.record[0].target.data.value, 'paid-too');
+    // Its Not now, or the first card's labels on it, record nothing.
+    for (const label of ['Not now', ALLOW_WITHIN, ALLOW_PAID]) {
+      const none = fake();
+      await decide(usageClick(q, label, { options: [...q.options, { label }] }), premiumDeps(none, { current: 'within-plan' }));
+      assert.deepEqual(none.calls.record, [], label);
+    }
+  });
+});
+
+test('the premium model\'s card counts only as the director\'s own click on the very card the helper offered, within a day', async () => {
+  await withHome(async () => {
+    const q = premiumQuestion();
+    const nothing = async (inputs, more = {}) => {
+      const c = fake();
+      await decide(inputs, premiumDeps(c, more));
+      assert.deepEqual(c.calls.record, []);
+    };
+    // No offer in the state: a card an agent wrote itself allows nothing.
+    await nothing(usageClick(q, ALLOW_PAID));
+    // An offer this computer didn't sign counts for nothing either.
+    keepEvent({ ...makeEvent({ kind: 'premium-card', data: { at: PREMIUM_AT, from: 'off', hash: cardHash(q) }, now: () => NOW }), sig: { computer: computerId(), value: 'AAAA' } });
+    await nothing(usageClick(q, ALLOW_PAID));
+    keepPremiumOffer();
+    // A card reworded, its cost left out, is not the card offered.
+    await nothing(usageClick({ ...q, question: q.question.replace(', which is real money', '') }, ALLOW_PAID));
+    // Not now, Suggest a change…, typed text and a multiple choice allow nothing.
+    await nothing(usageClick(q, 'Not now'));
+    await nothing(usageClick(q, 'Suggest a change…'));
+    await nothing(usageClick(q, ALLOW_PAID, { options: [{ label: 'Not now' }] }));
+    await nothing(usageClick(q, ALLOW_PAID, { multi: true }));
+    // A day later the offer is over.
+    await nothing(usageClick(q, ALLOW_PAID), { now: () => new Date(NOW.getTime() + 24 * 60 * 60 * 1000) });
+    // The setting in force moved since the card was offered, or can't be read.
+    await nothing(usageClick(q, ALLOW_PAID), { current: 'within-plan' });
+    await nothing(usageClick(q, ALLOW_PAID), { current: null });
+    // Taken once.
+    const c = fake();
+    await decide(usageClick(q, ALLOW_WITHIN), premiumDeps(c));
+    keepEvent(c.calls.record[0].target);
+    await nothing(usageClick(q, ALLOW_PAID));
+  });
+});
+
+test('a premium setting that allows the model counts only when its own card made it, however it was confirmed', async () => {
+  await withHome(async () => {
+    const forged = makeEvent({ kind: 'setting', data: { key: 'premium', value: 'paid-too', words: 'Premium model: on, paid credits too' }, now: () => NOW });
+    keepEvent(forged);
+    keepEvent(makeEvent({ ...confirmationFor(forged), now: () => NOW }));
+    const views = buildViews(listEvents(stateDir(P)), readEnrolled());
+    assert.equal(views.settings.premium, undefined);
+    assert.equal(views.premium.value, 'off');
+    assert.ok(!views.unconfirmed.some((u) => u.id === forged.id), 'and it is never put to the director as a confirm card');
   });
 });

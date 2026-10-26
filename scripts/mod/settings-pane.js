@@ -31,9 +31,7 @@ import { localViews } from '../hooks/session-start.js';
 import { readProfileViews } from '../profile/store.js';
 import { helperClient } from '../host/helper-client.js';
 import { stateDir, profileDir } from '../lib/paths.js';
-import { readSmallText } from '../hooks/kit.js';
-import { readConfig, isModelName } from '../gate/guardrails.js';
-import path from 'node:path';
+import { PREMIUM_ON } from '../routing/premium.js';
 
 export const ADVANCED = 'Advanced settings: ask the front desk';
 const ASK = 'Changed by asking the front desk';
@@ -102,15 +100,12 @@ const isReady = (level, ready) => ALWAYS_READY.includes(level) || (Array.isArray
 const NOT_READY = 'not ready yet';
 const LIGHTEST_NOTE = 'Lightest: the lighter model also designs and checks risky work, so mistakes are likelier to slip through. Every check still runs.';
 
-// Whether the project's configuration (in its main `folder`) holds a premium model pin. A
-// configuration that can't be read holds none.
-export function premiumPinIn(folder) {
-  try {
-    const text = typeof folder === 'string' && folder !== '' ? readSmallText(path.join(folder, '.claude', 'wheelhouse.json')) : null;
-    return text !== null && isModelName(readConfig(text).tiers?.pins?.premium);
-  } catch {
-    return false;
-  }
+// Whether the Premium model row shows (design section 14.6): never on an account the helper's check found without the
+// model, and otherwise at Thorough, where its card is offered, or while it is allowed. `view` is the project's
+// `premium` view (premiumViewOf), null when there is none to read.
+export function premiumRowShown(view, level) {
+  if (isRecord(view) && view.absent === true) return false;
+  return level === 'thorough' || PREMIUM_ON.includes(view?.value);
 }
 
 // How a level reads: the design's word for it, else the value as said.
@@ -320,8 +315,16 @@ function groupRow(row) {
 // The Settings view's groups, each { id, title, note, rows }, in the order of design section
 // 23.6. `stop` is stopState's answer (Halted since the time it was set, else Working); `windows`
 // is the level this computer runs build commands at. Every row is plain data. Never throws.
-export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows, ready, premiumPin } = {}) {
+// `premium` is the project's premium view: its row shows as premiumRowShown says, with "(not in use at <level>)" after
+// its value while it is allowed below Thorough.
+export function settingsGroups({ effective, changes, now = () => new Date(), timeZone, locked, stop, windows, ready, premium } = {}) {
   const byKey = new Map(settingsRows({ effective, changes, now, timeZone, locked, ready }).map((row) => [row.key, groupRow(row)]));
+  const level = heldOf(effective, 'efficiency').value ?? 'balanced';
+  const premiumShown = premiumRowShown(premium, level);
+  const premiumRow = byKey.get('premium');
+  if (premiumShown && premiumRow && PREMIUM_ON.includes(heldOf(effective, 'premium').value) && level !== 'thorough') {
+    byKey.set('premium', { ...premiumRow, value: `${premiumRow.value} (not in use at ${wordOf('efficiency', level)})` });
+  }
   const pick = (...keys) => keys.map((key) => byKey.get(key));
   const halted = isRecord(stop) && stop.on === true;
   const sinceMs = halted && typeof stop.at === 'string' ? Date.parse(stop.at) : NaN;
@@ -333,7 +336,7 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
       id: 'project',
       title: 'This project',
       note: heldOf(effective, 'efficiency').value === 'lightest' ? `${PROJECT_NOTE} ${LIGHTEST_NOTE}` : PROJECT_NOTE,
-      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumPin === true ? ['premium'] : []), 'phase'), build, ...pick('budget', 'protection')],
+      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumShown ? ['premium'] : []), 'phase'), build, ...pick('budget', 'protection')],
     },
     {
       id: 'you',

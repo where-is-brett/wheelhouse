@@ -41,7 +41,7 @@ import { settingKey } from '../protection/windows-builds.js';
 import { computerId } from '../lib/paths.js';
 import { replyRecord as defaultReply } from './reply.js';
 import { pressCard as defaultPress, whyCard as defaultWhy, suggestCard as defaultSuggest } from './press.js';
-import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, premiumPinIn, ADVANCED } from './settings-pane.js';
+import { settingsRows as defaultRows, settingsGroups as defaultGroups, pressSetting as defaultSetting, effectiveFor as defaultEffective, changesFor as defaultChanges, ADVANCED } from './settings-pane.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -58,7 +58,7 @@ import { isOwnStatusLine } from '../protection/settings.js';
 import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
-import { columnsReadyOf } from '../routing/in-force.js';
+import { columnsReadyOf, premiumViewOf } from '../routing/in-force.js';
 import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
 import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
 import { watchTick as defaultWatchTick } from './watch.js';
@@ -127,6 +127,8 @@ const DEFAULTS = {
   readChanges: defaultChanges,
   // The Thoroughness columns ready on the pins in force, for the pane's levels (scripts/routing/in-force.js).
   columnsReady: columnsReadyOf,
+  // The project's premium view, for whether the pane shows the Premium model row (scripts/routing/in-force.js).
+  premiumView: premiumViewOf,
   // The bridge's own time zone, which the pane's times are worked out in.
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   loadInputs: loadBoardInputs,
@@ -277,7 +279,7 @@ async function settings(req, d) {
   const inputs = { effective, changes: d.readChanges({ project: found.project }), now: d.now, timeZone: d.timeZone, locked: typeof found.locked === 'boolean' ? found.locked : undefined, ready: readyOf(found.project, d) };
   // The level build commands run at on Windows is kept per computer: this computer's is shown.
   const builds = effective?.[settingKey(d.computer())];
-  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premiumPin: premiumPinIn(found.record?.folder), stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
+  return { ok: true, rows: d.settingsRows(inputs), groups: d.settingsGroups({ ...inputs, premium: d.premiumView({ project: found.project }), stop: await d.stopState(), windows: builds?.value }), text: ADVANCED };
 }
 
 // A choice in the settings pane, from the pane alone, Undo included: the setting is written and the
