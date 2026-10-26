@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   makeWaker, writeWake, readWake, wakesDir, sessionModeOf, featureModeOf, sessionEnv, spawnDetached, pidAlive, processStartTime, makeStartTimes,
-  outboxFile, runningFile, sessionFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf,
+  outboxFile, runningFile, sessionFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
 } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
 import { featurePaths } from '../../../scripts/feature/files.js';
@@ -1259,4 +1259,115 @@ test('at Shape 2 the column goes in each wake\'s copy as `column`, and in a wake
   const again = writeWake(P, featureBundle('login-page', 'y'));
   await other.wakeFeature('login-page', again);
   assert.equal(fs.readFileSync(plain[0].split(' ').at(-1), 'utf8'), fs.readFileSync(again, 'utf8'));
+}));
+
+// ---- When the premium model can't be used (design section 14.6): a usage limit or a billing refusal ----
+
+// A project at Thorough with the premium model allowed, paid credits too, checked and passed.
+function premiumReady() {
+  checkout();
+  const { computer, publicKey } = makeSigningKey();
+  enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+  confirmSetting('efficiency', 'thorough');
+  allowPremium();
+  columnReady('premium');
+}
+
+test('a premium wake refused for its usage limit rests the premium model and runs again at once on the most capable model, saying so once', () => withHome(async () => {
+  premiumReady();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  const fake = fakeRun({ exits: true });
+  const raised = [];
+  const errors = [];
+  const w = waker(fake, { config: tiered(), locate: () => dir, platform: 'darwin', raise: async (r) => { raised.push(r); }, onError: (e) => errors.push(e) });
+  await w.startFeature({ work: 'login-page', worktree: dir, briefFile: featurePaths(dir).brief });
+  const first = fake.calls[0];
+  assert.deepEqual(sessionFlags(first.args), { model: 'model-premium', effort: 'high', fallback: 'model-top' });
+  assert.equal(typeof first.output, 'string', 'a premium wake keeps its output to read');
+  fs.appendFileSync(first.output, 'Claude AI usage limit reached|1793000000\n');
+  fake.end(first.pid, 1);
+  await flush();
+
+  // Resting until the limit's own end, said once through one record, and nothing reported as a failure.
+  const rest = JSON.parse(fs.readFileSync(premiumRestFile(P), 'utf8'));
+  assert.equal(rest.until, new Date(1793000000 * 1000).toISOString());
+  assert.deepEqual(raised.map((r) => [r.kind, r.data.why, r.data.until, r.data.work]), [['premium-rest', 'limit', rest.until, 'login-page']]);
+  assert.deepEqual(errors, []);
+  // Its session runs again at once, on the most capable model at the cell's own effort.
+  assert.equal(fake.calls.length, 2);
+  const again = fake.calls[1];
+  assert.ok(again.args.includes('--resume'));
+  assert.deepEqual(sessionFlags(again.args), { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' });
+  assert.equal(again.output, undefined, 'no premium output kept for it');
+  fake.end(again.pid, 0);
+  await flush();
+
+  // Every wake while it rests stays off the premium model: it is never tried again in silence.
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'r1')));
+  assert.equal(sessionFlags(fake.calls[2].args).model, 'model-top');
+  fake.end(fake.calls[2].pid, 0);
+  await flush();
+  assert.equal(raised.length, 1);
+  // Once the rest is over, the premium model is tried at the next wake.
+  w.clock.move(Date.parse(rest.until) - T0 + MIN);
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'r2')));
+  assert.equal(sessionFlags(fake.calls.at(-1).args).model, 'model-premium');
+}));
+
+test('a premium wake refused for billing rests for a day, and a premium wake that fails for anything else is a plain failure', () => withHome(async () => {
+  premiumReady();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  const fake = fakeRun({ exits: true });
+  const raised = [];
+  const w = waker(fake, { config: tiered(), locate: () => dir, platform: 'darwin', raise: async (r) => { raised.push(r); }, onError: () => {} });
+  await w.startFeature({ work: 'login-page', worktree: dir, briefFile: featurePaths(dir).brief });
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'b1')));
+  fake.end(fake.calls[0].pid, 0);
+  await flush();
+  const wake = fake.calls[1];
+  assert.equal(sessionFlags(wake.args).model, 'model-premium');
+  // A failure that is no refusal: the wake waits and counts a failure, and the premium model doesn't rest.
+  fs.appendFileSync(wake.output, 'Error: the tests failed\n');
+  fake.end(wake.pid, 1);
+  await flush();
+  assert.equal(fs.existsSync(premiumRestFile(P)), false);
+  assert.deepEqual(raised, []);
+  const [entry] = JSON.parse(fs.readFileSync(outboxFile(P), 'utf8')).entries;
+  assert.equal(entry.failures, 1);
+  // Its retry is refused for billing: a day's rest, and the wake goes again on the most capable model.
+  w.clock.move(2 * MIN);
+  await w.pump();
+  const retry = fake.calls.at(-1);
+  assert.equal(sessionFlags(retry.args).model, 'model-premium');
+  fs.appendFileSync(retry.output, 'Credit balance is too low\n');
+  fake.end(retry.pid, 1);
+  await flush();
+  const rest = JSON.parse(fs.readFileSync(premiumRestFile(P), 'utf8'));
+  assert.equal(rest.why, 'billing');
+  assert.equal(Date.parse(rest.until) - Date.parse(rest.at), 24 * 60 * MIN);
+  assert.equal(raised.at(-1).data.why, 'billing');
+  assert.equal(sessionFlags(fake.calls.at(-1).args).model, 'model-top');
+}));
+
+test('the rest holds on this computer when its record can\'t be raised, and a wake not on the premium model keeps no output', () => withHome(async () => {
+  premiumReady();
+  const dir = worktree();
+  writeBaseline(P, 'login-page', dir);
+  const fake = fakeRun({ exits: true });
+  const errors = [];
+  const w = waker(fake, { config: tiered(), locate: () => dir, platform: 'darwin', raise: async () => { throw new Error('the helper could not be reached'); }, onError: (e) => errors.push(e) });
+  await w.startFeature({ work: 'login-page', worktree: dir, briefFile: featurePaths(dir).brief });
+  fs.appendFileSync(fake.calls[0].output, "You've hit your limit · resets 5pm\n");
+  fake.end(fake.calls[0].pid, 1);
+  await flush();
+  assert.match(errors.join('\n'), /at its usage limit, and its line for the board couldn't be recorded/);
+  assert.equal(sessionFlags(fake.calls[1].args).model, 'model-top');
+  // At Balanced the premium model isn't used, so nothing is kept.
+  confirmSetting('efficiency', 'balanced');
+  fake.end(fake.calls[1].pid, 0);
+  await flush();
+  await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page', 'n1')));
+  assert.equal(fake.calls.at(-1).output, undefined);
 }));

@@ -74,7 +74,7 @@ An approval already waiting is asked with `cards` or `again <n>`, never composed
 - **A chat pick of Suggest a change…:** Ask "What would you change?" in one line, then do as for the pane's suggestion.
 - **Show me:** `preview <n>` gives the address of pull request n's preview: give it as a link. When there is none, say so in one line and offer a short visual page of the change instead; then ask again.
 - **Talk it through:** one question at a time.
-- **The premium model** (Claude's largest model, for design and risky work at Thorough only): when the director asks for it, or presses Change… on its row, run `premium-card`. When it prints a card, ask it exactly as given, as a question of its own; when it prints a sentence instead, say it. Never offer the premium model any other way, never at another level, and never `record setting` for it, except to set it back to off. After a click on one of its Allow options, run `premium-check` and say its one line. You never run on it yourself.
+- **The premium model** (Claude's largest model, for design and risky work at Thorough only): when the director asks for it, or presses Change… on its row, run `premium-card`. When it prints a card, ask it exactly as given, as a question of its own; when it prints a sentence instead, say it. Never offer the premium model any other way, never at another level, and never `record setting` for it, except to set it back to off. After a click on one of its Allow options, run `premium-check` and say its one line. When its trial failed, `cards` gives a card saying so: a pick of Try it again there is the director asking for it, so run `premium-card`. You never run on it yourself.
 
 ## Carrying work on, and archiving another setup's instructions
 

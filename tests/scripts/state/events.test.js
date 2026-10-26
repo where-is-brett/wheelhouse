@@ -491,6 +491,34 @@ test('a premium-check record names the Yes it checks for, the model the alias na
   });
 });
 
+test('a premium-failed record names the Yes, the model and the trials that failed, signed by the helper', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    assert.equal(PROTECTED_KINDS.includes('premium-failed'), true);
+    const data = { setting: '11111111-2222-4333-8444-555555555555', model: 'model-premium', failed: ['scenario 22 trial 1 failed'] };
+    const made = makeEvent({ kind: 'premium-failed', data });
+    assert.deepEqual(made.data, data);
+    assert.ok(verify(made, readEnrolled()));
+    for (const bad of [null, { ...data, setting: 'x' }, { ...data, model: '--x' }, { ...data, failed: [] }, { ...data, failed: Array.from({ length: 11 }, (_, i) => `t${i}`) }, { ...data, failed: [''] }, { ...data, extra: 1 }]) {
+      assert.throws(() => makeEvent({ kind: 'premium-failed', data: bad }), /premium-failed event/, JSON.stringify(bad));
+    }
+  });
+});
+
+test('a premium-rest record says why, when, until when, and whose wake', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('premium-rest'), true);
+    const data = { why: 'limit', at: '2026-10-26T01:00:00.000Z', until: '2026-10-27T01:00:00.000Z', work: 'login-page' };
+    assert.deepEqual(makeEvent({ kind: 'premium-rest', data }).data, data);
+    const { work, ...plain } = data;
+    assert.doesNotThrow(() => makeEvent({ kind: 'premium-rest', data: { ...plain, why: 'billing' } }));
+    for (const bad of [null, { ...data, why: 'other' }, { ...data, until: 'tomorrow' }, { ...data, at: undefined }, { ...data, work: 'Login Page' }, { ...data, extra: 1 }]) {
+      assert.throws(() => makeEvent({ kind: 'premium-rest', data: bad }), /premium-rest event/, JSON.stringify(bad));
+    }
+  });
+});
+
 test('a lineage-lift record says when, and which holds it lifts', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);

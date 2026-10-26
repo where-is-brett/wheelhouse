@@ -166,6 +166,7 @@ import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { balancedRouting, columnLines, promptWithColumn, roleOf, routingInForce } from '../routing/in-force.js';
+import { refusalOf, restUntil } from '../routing/premium.js';
 import { hostApprovalReady } from '../host/approval-ready.js';
 import { guardedCommand, guardedReady, labelWorktree, readSelfTest } from '../windows/low.js';
 
@@ -260,6 +261,10 @@ export const sessionFile = (project, work) => path.join(watcherDir(project), 'se
 export const grantsUsedFile = (project) => path.join(watcherDir(project), 'grants-used.json');
 // The level the project's builders last ran at on this computer, as the last `level` record named it (ruling P8-5).
 export const levelFile = (project) => path.join(watcherDir(project), 'level.json');
+// The premium model's rest on this computer after a usage limit or a billing refusal the waker read (design section
+// 14.6, "When it can't be used"), and the file a premium wake's output is kept in, one per feature.
+export const premiumRestFile = (project) => path.join(watcherDir(project), 'premium-rest.json');
+export const premiumOutputFile = (project, work) => path.join(watcherDir(project), 'premium', `${work}.log`);
 
 // Makes `sub` under the watcher's folder, refusing any part of it that is there
 // but is not a real folder (a link above all). Returns the folder.
@@ -761,10 +766,20 @@ export function makeWaker({
   // The column in force now, read at each session start; Balanced when it can't be read. Its lines are noted once
   // each time they change.
   let noted = null;
+  // Whether the premium model rests on this computer now: the waker's own record of a refusal it read, which holds
+  // whether or not the helper took its record.
+  // A rest kept in memory too, so one that couldn't be written anywhere still holds for this waker.
+  let restInMemory = null;
+  const restingHere = () => {
+    if (restInMemory !== null && Date.parse(restInMemory) > now().getTime()) return true;
+    const kept = readJson(premiumRestFile(project));
+    return isPlain(kept) && typeof kept.until === 'string' && Date.parse(kept.until) > now().getTime();
+  };
   const columnNow = () => {
     let found;
     try {
-      found = routing === null ? routingInForce(project, config, { now }) : routing();
+      const resting = restingHere();
+      found = routing === null ? routingInForce(project, config, { now, resting }) : routing({ resting });
     } catch {
       found = null;
     }
@@ -797,6 +812,15 @@ export function makeWaker({
   const startTimes = makeStartTimes({ now });
   const timeOf = startTimeOf ?? ((pid, others, options) => startTimes.get(pid, others, options));
   const copyInto = (file, place, add = null) => copyWake(project, file, place, { beforeCopy, add });
+
+  // A feature's call on the premium model, with its output kept in the watcher's own folder, so a usage limit or a
+  // billing refusal can be read once it ends (premiumRefused). Only for an adapter that reads no output of its own
+  // (Claude Code's): another's kept output is its afterRun's.
+  const withPremiumOutput = (adapter, work, column, call) => {
+    if (column?.premium !== true || typeof adapter?.afterRun === 'function' || typeof call?.output === 'string') return call;
+    watcherFolder(project, 'premium');
+    return { ...call, output: premiumOutputFile(project, work), premium: true };
+  };
 
   // --- The outbox ---
   const outboxFail = () => { throw new Error("The watcher's outbox can't be read or written"); };
@@ -977,6 +1001,9 @@ export function makeWaker({
     const same = (r) => r.at === state.ended.at && r.pid === state.ended.pid && r.state === state.ended.state;
     if (claimRecord(target, same) === null) return;
     const kept = isPlain(state.ended.run) && typeof state.ended.run.output === 'string' ? state.ended.run : null;
+    if (kept?.premium === true && state.ended.state !== 'starting' && await premiumRefused(target, kept, null, ids)) {
+      return;
+    }
     if (state.why === 'overran') {
       const minutes = Math.round(maxRunOf(target) / MINUTE);
       onError(`The ${nameOf(target)} session ran past its ${minutes} minutes`);
@@ -986,6 +1013,47 @@ export function makeWaker({
     } else {
       settle(ids, 'again');
     }
+  }
+
+  // A premium wake refused for a usage limit or billing (design section 14.6, "When it can't be used"), read from its
+  // kept output (refusalOf; `code` null when its exit wasn't seen): the premium model rests on this computer until the
+  // limit's end when the output gives it, else for a day, and its wake goes again, with no failure counted, on the most
+  // capable model at the cell's own effort, since every start reads the rest (columnNow). The director is told once,
+  // in one line on the board, by the premium-rest record raised for it; one that can't be raised is reported, and the
+  // rest holds here regardless, so the premium model is never tried again in silence. Says whether it was refused.
+  async function premiumRefused(target, kept, code, entries) {
+    let refusal = null;
+    try {
+      refusal = refusalOf(readOutput(kept.output, kept.from), code);
+    } catch {
+      refusal = null;
+    }
+    if (refusal === null) return false;
+    const at = now().toISOString();
+    const until = restUntil(refusal, at);
+    restInMemory = until;
+    try {
+      watcherFolder(project);
+      writeJsonFile(premiumRestFile(project), { why: refusal.why, at, until });
+    } catch (error) {
+      onError(`The premium model's rest couldn't be kept: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+    try {
+      await raise({ kind: 'premium-rest', data: { why: refusal.why, at, until, ...(target === 'foreman' ? {} : { work: nameOf(target) }) } });
+    } catch (error) {
+      onError(`The premium model was ${refusal.why === 'billing' ? 'refused for billing' : 'at its usage limit'}, and its line for the board couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+    // A wake goes again as it was; a start, which has no wake of its own, gets one, so its session is woken again.
+    if (entries.length > 0) settle(entries, 'again');
+    else if (target !== 'foreman') {
+      try {
+        const file = writeWake(project, { to: 'feature', work: nameOf(target), events: [], digest: [], dropped: 0 }, { now });
+        save([...load(), newEntry({ to: 'feature', work: nameOf(target), file })]);
+      } catch (error) {
+        onError(`The ${nameOf(target)} session's start was refused on the premium model, and couldn't be woken again: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    return true;
   }
 
   // Raises a `level` record when the level a feature's call runs at differs from the one last recorded on this
@@ -1046,7 +1114,10 @@ export function makeWaker({
     if (target !== 'foreman') await noteLevel(call.level, nameOf(target));
     const { env } = call;
     const kept = typeof call.output === 'string'
-      ? { output: call.output, from: outputSize(call.output), ...(typeof call.usageFile === 'string' ? { usageFile: call.usageFile } : {}), idFromRun: call.idFromRun === true }
+      ? {
+        output: call.output, from: outputSize(call.output), ...(typeof call.usageFile === 'string' ? { usageFile: call.usageFile } : {}), idFromRun: call.idFromRun === true,
+        ...(call.premium === true ? { premium: true } : {}),
+      }
       : null;
     watcherFolder(project, 'running');
     const file0 = runningFile(project, target);
@@ -1068,7 +1139,9 @@ export function makeWaker({
     if (started.exited && typeof started.exited.then === 'function') {
       started.exited.then((code) => serial(async () => {
         const mine = forget(target, started.pid);
-        if (kept !== null && typeof adapter.afterRun === 'function') {
+        if (kept?.premium === true && mine && await premiumRefused(target, kept, code, entries)) {
+          // Rests the premium model, and its wake goes again on the most capable model.
+        } else if (kept !== null && typeof adapter.afterRun === 'function') {
           // A record already ended elsewhere (endRecord) has been read there.
           if (mine) await finishRun(adapter, target, kept, code, entries);
         } else if (code === 0) settle(entries, 'done');
@@ -1441,10 +1514,10 @@ export function makeWaker({
             target,
             cwd,
             check: (adapter) => adapter.checkFeature(config),
-            build: (adapter) => adapter.featureResumeCall({
+            build: (adapter) => withPremiumOutput(adapter, work, column, adapter.featureResumeCall({
               config, project, work, sessionId: session, prompt: withColumn(adapter, PROMPTS.feature(copy), column), allowed: feature.allowed, env: baseEnv, claude, platform,
               ...feature.inputs, ...roleOf(column, 'feature'),
-            }),
+            })),
             file: gathered.entry.file,
             entries: [gathered.entry.id],
             // Built before the grants are recorded as used, so a call that can't be built uses none up.
@@ -1518,10 +1591,10 @@ export function makeWaker({
           target,
           cwd: worktree,
           check: (adapter) => adapter.checkFeature(config),
-          build: (adapter) => adapter.featureStartCall({
+          build: (adapter) => withPremiumOutput(adapter, work, column, adapter.featureStartCall({
             config, project, work, sessionId, prompt: withColumn(adapter, PROMPTS.start, column), allowed: feature.allowed, env: baseEnv, claude, platform,
             ...feature.inputs, ...roleOf(column, 'feature'),
-          }),
+          })),
           file: brief,
           beforeRun: (call) => {
             if (stopped()) throw new Error('STOP is on: no session is started');

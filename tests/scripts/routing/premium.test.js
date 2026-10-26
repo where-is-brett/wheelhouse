@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   premiumValueOf, premiumInput, premiumState, premiumPinOf, withPremiumPin, premiumRefusal, checkRefusal, foundPremium,
-  ALLOW_WITHIN, ALLOW_PAID, ALLOW_PAID_ON_TOP,
+  ALLOW_WITHIN, ALLOW_PAID, ALLOW_PAID_ON_TOP, refusalOf, restUntil, restOf, failedInput, offeredFrom, REST_LINE,
 } from '../../../scripts/routing/premium.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { premiumLine, setLinesOf } from '../../../scripts/state/card-lines.js';
@@ -50,7 +50,7 @@ test('the card is offered at Thorough only, never once paid credits are allowed,
 });
 
 test('the premium view takes the setting only from its own card, and the pin only from the helper\'s check for that Yes', () => {
-  assert.deepEqual(premiumState({ signed: () => true, setting: undefined, events: [] }), { value: 'off', setting: null, at: null, check: null, absent: false });
+  assert.deepEqual(premiumState({ signed: () => true, setting: undefined, events: [] }), { value: 'off', setting: null, at: null, check: null, absent: false, failed: null, rest: null });
   // A setting that allows it but names no card counts as off.
   assert.equal(premiumState({ signed: () => true, setting: allowed('paid-too', { premiumCard: undefined }), events: [] }).value, 'off');
   const found = premiumState({ signed: () => true, setting: allowed('paid-too'), events: [check('model-premium', true)] });
@@ -112,4 +112,76 @@ test('the column in force uses the premium model only at Thorough, on the state\
   const r = at('thorough', { premium: plan });
   assert.equal(r.roles.feature.model, 'model-top');
   assert.ok(r.lines.includes('Premium model not used: it might have been paid from credits.'));
+});
+
+// --- When it can't be used, and when its evaluation fails ---
+
+test('a usage limit or a billing refusal is read only from a premium wake that failed', () => {
+  assert.equal(refusalOf('You hit your limit. Claude AI usage limit reached', 0), null, 'a wake that ended well is never one');
+  assert.equal(refusalOf('Everything went fine.', 1), null);
+  assert.deepEqual(refusalOf('Claude AI usage limit reached|1793000000', 1), { why: 'limit', until: new Date(1793000000 * 1000).toISOString() });
+  for (const text of ["You've hit your limit · resets 5pm", 'API Error: 429 Too Many Requests', 'Weekly limit reached']) assert.deepEqual(refusalOf(text, 1), { why: 'limit', until: null }, text);
+  for (const text of ['Credit balance is too low', 'Insufficient credits to run this model', 'Extra usage is off']) assert.deepEqual(refusalOf(text, 1), { why: 'billing', until: null }, text);
+  // An exit the watcher didn't see is read as well.
+  assert.equal(refusalOf('Credit balance is too low', null).why, 'billing');
+});
+
+test('the rest lasts until the limit\'s own end when it is given and to come, else a day', () => {
+  const at = '2026-10-26T01:00:00.000Z';
+  assert.equal(restUntil({ until: '2026-10-26T05:00:00.000Z' }, at), '2026-10-26T05:00:00.000Z');
+  assert.equal(restUntil({ until: '2026-10-25T05:00:00.000Z' }, at), '2026-10-27T01:00:00.000Z');
+  assert.equal(restUntil({ until: null }, at), '2026-10-27T01:00:00.000Z');
+  const rest = (until, when = at) => ({ kind: 'premium-rest', id: `r-${when}`, at: when, data: { why: 'limit', at: when, until } });
+  assert.deepEqual(restOf([rest('2026-10-27T01:00:00.000Z')], () => new Date('2026-10-26T12:00:00.000Z')), { until: '2026-10-27T01:00:00.000Z', why: 'limit' });
+  assert.equal(restOf([rest('2026-10-27T01:00:00.000Z')], () => new Date('2026-10-27T01:00:00.000Z')), null, 'over at its end');
+});
+
+test('while it rests, or once its evaluation failed under this Yes, the premium model isn\'t used', () => {
+  const config = readConfig(JSON.stringify({ v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], tiers: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } } }));
+  const settings = { efficiency: { key: 'efficiency', value: 'thorough', id: 'e', at: AT } };
+  const ready = { premium: { pins: { mostCapable: 'model-top', midSized: 'model-mid', premium: 'model-premium' } } };
+  const events = [check('model-premium', true)];
+  const view = (more = []) => premiumState({ signed: () => true, setting: allowed('paid-too'), events: [...events, ...more], now: () => new Date('2026-10-26T12:00:00.000Z') });
+  const at = (premium, resting) => routingFrom({ config, views: { settings, columnsReady: ready, premium }, now: () => new Date(AT), resting });
+  assert.equal(at(view()).roles.feature.model, 'model-premium');
+  assert.equal(at(view()).premium, true);
+  // Resting, by the state's record or the waker's own.
+  const rest = { kind: 'premium-rest', id: 'r', at: AT, data: { why: 'billing', at: AT, until: '2026-10-27T01:00:00.000Z' } };
+  for (const r of [at(view([rest])), at(view(), true)]) {
+    assert.deepEqual(r.roles.feature, { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' }, 'the most capable model at the cell\'s own effort');
+    assert.ok(r.lines.includes(REST_LINE));
+    assert.equal(r.premium, undefined);
+  }
+  // Failed under this Yes: off, and its card offers a new Yes.
+  const failed = view([{ kind: 'premium-failed', id: 'f', at: AT, data: { setting: ID, model: 'model-premium', failed: ['scenario 22 trial 1 failed'] } }]);
+  assert.deepEqual(failed.failed, { id: 'f', at: AT, model: 'model-premium' });
+  assert.equal(at(failed).roles.feature.model, 'model-top');
+  assert.equal(premiumRefusal({ level: 'thorough', view: failed }), null);
+  assert.equal(offeredFrom(failed), 'off');
+  assert.equal(offeredFrom({ value: 'within-plan', failed: null }), 'within-plan');
+  // A failure no enrolled computer signed counts for nothing.
+  assert.equal(premiumState({ setting: allowed('paid-too'), events: [{ kind: 'premium-failed', id: 'f', at: AT, data: { setting: ID, model: 'model-premium', failed: ['x'] } }] }).failed, null);
+});
+
+test('the failed evaluation\'s card is plain, offers OK or Try it again, and says what happens next', () => {
+  const { question } = composeCard(failedInput({ id: 'f-1' }));
+  assert.deepEqual(question.options.map((o) => o.label), ['OK', 'Try it again']);
+  assert.match(question.options[1].description, /Nothing is spent unless you allow it there/);
+  assert.match(question.question, /stay on the most capable standard model/);
+  assert.match(question.question, /nothing more is charged/);
+  assert.equal(setLinesOf(question.question).length, 0, 'nothing to sign');
+});
+
+test('a later rest record can only make a rest longer, never cut it short', () => {
+  const rest = (until, at) => ({ kind: 'premium-rest', id: `r-${at}`, at, data: { why: 'limit', at, until } });
+  const now = () => new Date('2026-10-26T12:00:00.000Z');
+  assert.equal(restOf([rest('2026-10-27T01:00:00.000Z', '2026-10-26T01:00:00.000Z'), rest('2026-10-26T02:00:00.000Z', '2026-10-26T03:00:00.000Z')], now).until, '2026-10-27T01:00:00.000Z');
+});
+
+test('more wordings of a limit or a refusal are read, and a run whose exit wasn\'t seen is read from its last lines only', () => {
+  assert.equal(refusalOf("You've reached your weekly limit for this model", 1).why, 'limit');
+  assert.equal(refusalOf('You are out of extra usage', 1).why, 'billing');
+  // A finished wake that wrote about rate limits in its work, early in its output, isn't one.
+  assert.equal(refusalOf(`Added a rate limit to the login form, returning 429 when hit.\n${'Done with the next step.\n'.repeat(200)}`, null), null);
+  assert.equal(refusalOf(`${'Working.\n'.repeat(400)}Claude AI usage limit reached|1793000000`, null).why, 'limit');
 });

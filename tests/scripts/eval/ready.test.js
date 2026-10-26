@@ -45,14 +45,17 @@ test('the premium pass takes three pins from the shell, the premium model never 
 
 test('the premium pass is ready on a full set of its own trials, on all three pins, and a level\'s trials never count for it', () => {
   const evals = tempFolder('eval-ready-');
-  barRun(evals, { level: 'premium', pins: PREMIUM_PINS });
-  const ready = readiness({ evals, level: 'premium', pins: PREMIUM_PINS });
+  barRun(evals, { level: 'premium', pins: PREMIUM_PINS, yes: 'yes-1' });
+  // Only the runs made under the director's Yes count.
+  assert.equal(readiness({ evals, level: 'premium', pins: PREMIUM_PINS }).ok, false);
+  assert.equal(readiness({ evals, level: 'premium', pins: PREMIUM_PINS, yes: 'yes-2' }).ok, false);
+  const ready = readiness({ evals, level: 'premium', pins: PREMIUM_PINS, yes: 'yes-1' });
   assert.equal(ready.ok, true, ready.gaps.join('; '));
-  assert.equal(readiness({ evals, level: 'premium', pins: { ...PREMIUM_PINS, premium: 'model-other' } }).ok, false);
+  assert.equal(readiness({ evals, level: 'premium', pins: { ...PREMIUM_PINS, premium: 'model-other' }, yes: 'yes-1' }).ok, false);
   assert.equal(readiness({ evals, level: 'lean', pins: PINS }).ok, false);
   const leanOnly = tempFolder('eval-ready-');
   barRun(leanOnly, { level: 'lean' });
-  assert.equal(readiness({ evals: leanOnly, level: 'premium', pins: PREMIUM_PINS }).ok, false);
+  assert.equal(readiness({ evals: leanOnly, level: 'premium', pins: PREMIUM_PINS, yes: 'yes-1' }).ok, false);
   // A Lean trial naming the premium model still fails Lean's bar.
   const named = tempFolder('eval-ready-');
   barRun(named, { level: 'lean', record: (r) => ({ ...r, models: [...r.models, 'model-premium'] }) });

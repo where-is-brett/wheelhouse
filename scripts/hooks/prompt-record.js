@@ -73,7 +73,7 @@ import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
 import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
-import { premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
+import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -282,16 +282,23 @@ function premiumClickOf(project, question, label, shown, now, current) {
   if (value === null) return null;
   const age = now().getTime() - Date.parse(at);
   if (!(age >= 0 && age < PREMIUM_CARD_MS)) return null;
-  if (current({ project }) !== from) return null;
+  // `current` is the setting the card must be offered from now, and, once a Yes's evaluation failed, the time of that
+  // failure, which an offer must come after: a card offered before it stands for the Yes that failed.
+  const standing = current({ project });
+  const { from: wanted, after = null } = typeof standing === 'string' || standing === null ? { from: standing } : standing;
+  if (wanted !== from) return null;
+  if (typeof after === 'string' && !(at > after)) return null;
   if ([...held(project, 'setting'), ...pendingSettings(project)].some((e) => e.data?.premiumCard === at)) return null;
   const target = makeEvent({ kind: 'setting', data: { key: 'premium', value, premiumCard: at, words: settingWords('premium', value) }, now });
   return { made: confirmationFor(target), target };
 }
 
-// The premium setting in force for `project` as the last sync's views hold it, or null when they can't be read.
+// The setting a premium card for `project` is offered from now, as the last sync's views hold it (a Yes whose
+// evaluation failed counts as off), or null when they can't be read.
 function premiumNow({ project }) {
-  const value = localViews(project, ['premium'])?.premium?.value;
-  return typeof value === 'string' ? value : null;
+  const view = localViews(project, ['premium'])?.premium;
+  if (typeof view?.value !== 'string') return null;
+  return { from: offeredFrom(view), after: typeof view.failed?.at === 'string' ? view.failed.at : null };
 }
 
 // Works out the signed record a click earns, if any. May ask the helper for a

@@ -553,3 +553,14 @@ test('a waiting card with parts is named by its ask and carries its own words', 
     { n: 3, id: 'c3', what: 'Same', since: at(3), line: 'because' },
   ]);
 });
+
+test('while the premium model rests, the board says so in one line, until its rest ends', () => {
+  const rest = { kind: 'premium-rest', id: 'r1', at: at(10), data: { why: 'limit', at: at(10), until: '2026-10-27T01:00:00.000Z' } };
+  const lines = (now, events = [rest]) => model({ events, now: () => new Date(now) }).director.health.filter((l) => /Premium model/.test(l.text));
+  const [line] = lines(NOW);
+  assert.equal(line.level, 'watch');
+  assert.equal(line.text, 'Premium model not available, so design is on the most capable model: it reached its usage limit. It is tried again from 27 October 2026.');
+  assert.match(lines(NOW, [{ ...rest, data: { ...rest.data, why: 'billing' } }])[0].text, /it was refused for billing/);
+  assert.deepEqual(lines('2026-10-27T02:00:00.000Z'), []);
+  assert.deepEqual(lines(NOW, []), []);
+});

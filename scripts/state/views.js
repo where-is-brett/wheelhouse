@@ -614,7 +614,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   // The premium model's opt-in (design section 14.6): the setting in force, the helper's check for it, and whether the
   // account is known not to have it (scripts/routing/premium.js).
-  const premium = premiumState({ setting: settings.premium, events: sorted, signed: (e) => verify(e, enrolled) });
+  const premium = premiumState({ setting: settings.premium, events: sorted, signed: (e) => verify(e, enrolled), now });
+  // The premium model's failed evaluations (design section 14.6), each with the card made for it (its id, or null): the
+  // card names the record it was made from by its `event`. Only a record an enrolled computer signed (the helper's).
+  const premiumFailures = sorted.filter((e) => e.kind === 'premium-failed' && isPlainObject(e.data) && verify(e, enrolled))
+    .map((e) => ({ id: e.id, at: e.at, data: e.data, card: sorted.find((c) => c.kind === 'card' && c.data?.event === e.id)?.id ?? null }));
 
   const merges = sorted.filter((e) => e.kind === 'merge');
   const lastMerge = merges.length > 0 ? { at: merges.at(-1).at, data: merges.at(-1).data } : null;
@@ -644,6 +648,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     columnsReady,
     usageCards,
     premium,
+    premiumFailures,
     damaged: [...damaged, ...repeated, ...clashes],
     // The clash lines again, on their own: a clash only means a code can't be used for a reply.
     codeClashes: clashes,
