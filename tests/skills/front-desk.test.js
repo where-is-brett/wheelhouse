@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, RECORD_KINDS, VIEW_NAMES } from '../../scripts/frontdesk/cli.js';
@@ -140,6 +141,37 @@ test('each example input in the playbook is accepted as written, the approval wi
     if (args === 'record ruling') assert.equal(answered.card.question.question.split('\n')[0], 'Confirm this?');
   }
   assert.deepEqual(seen.sort(), ['card', 'record ruling']);
+});
+
+// Scenario 27's route leg: a front desk once looked in Wheelhouse's own code to learn where a bug's report goes and what
+// `record work` takes. The intake's bug route says both, and its example is accepted as written.
+test('the intake\'s bug route names where the report goes and records it with its example as written', async () => {
+  const route = intake.split('\n4. **Bug.**')[1]?.split('\n5. **Question.**')[0] ?? '';
+  assert.ok(route, 'the bug route');
+  assert.match(route, /`\.wheelhouse\/work\/<id>\.md`/);
+  assert.match(route, /never look in Wheelhouse's own files/);
+  const [, input] = /```\n\s*(\{[^\n]*\})\n\s*```/.exec(route) ?? [];
+  assert.ok(input, 'the route shows the record\'s input');
+  assert.match(route, /`cli\.js record work < "<your scratchpad>\/front-desk\.json"`/);
+  const data = JSON.parse(input);
+  assert.equal(data.lane, 'bug');
+  assert.equal(data.doc, `.wheelhouse/work/${data.id}.md`);
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-bug-route-'));
+  try {
+    fs.mkdirSync(path.join(project, '.wheelhouse', 'work'), { recursive: true });
+    fs.writeFileSync(path.join(project, data.doc), '# A 65-second clip shows as 1:5\n\nAs reported: "the length on a video\'s card is wrong".\n');
+    const h = helper();
+    let out = '';
+    let err = '';
+    const code = await main(['record', 'work'], { cwd: project, client: h.client, input, out: (t) => { out += t; }, err: (t) => { err += t; } });
+    assert.equal(code, 0, err);
+    const [work] = h.writes.filter((w) => w.kind === 'work');
+    assert.equal(work.data.lane, 'bug');
+    assert.equal(work.data.doc.path, data.doc);
+    assert.equal(JSON.parse(out).hash, work.data.doc.hash);
+  } finally { fs.rmSync(project, { recursive: true, force: true }); }
+  // The approve-work card's target names what the composer takes.
+  assert.match(route, /`target` `\{"work": "<id>", "lane": "bug", "hash": "<the hash record printed>", "shownFirst": true\}`/);
 });
 
 test('the playbook gives JSON input from a file in the scratchpad, written with the Write tool, never a heredoc or a pipe (F81)', () => {

@@ -7,8 +7,10 @@
 // home folder: writes only), the host tools (gh, glab, git push), a plain read of the keychain and
 // connectors the project has not listed (the Claude Desktop app's own drawing tools
 // pass unlisted in a session it started), and a coding agent started from the shell (the agents'
-// own programs, scripts/agents/programs.js). It backs up the deny rules and the
-// sandbox; it does not replace them. Any other tool passes untouched.
+// own programs, scripts/agents/programs.js), and a read of Wheelhouse's own files: an agent runs
+// the plugin's scripts with node, as its playbook names them, and reads none of them, so a gap in a
+// playbook is reported rather than worked round from the code (scenario 27's route leg). It backs
+// up the deny rules and the sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,6 +40,8 @@ function foldFor(platform) {
 
 const UNREADABLE = 'Wheelhouse could not read this command with certainty. Write it more simply (no comments that hold quotes, backticks or backslashes, no CRLF line endings, no unclosed quotes), or put it in a file: ' + HELPER;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
+const PLUGIN_READ = 'Wheelhouse does not let an agent read its own scripts and files: your playbook names each command and what it takes. '
+  + 'Run the command as the playbook gives it; where the playbook doesn\'t say how, tell the director what is missing instead of looking in Wheelhouse\'s code';
 
 const MAX_LINKS = 40;
 const TOO_MANY = 'Too many links';
@@ -184,6 +188,11 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots }) {
   for (const candidate of [absolute, real]) {
     if (envName(path.basename(candidate), fold)) return refuse('read a .env file');
   }
+  // Wheelhouse's own files, by the path given or a Glob pattern's fixed start; a write is refused below in other words.
+  const plugin = [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)];
+  const fixedStart = tool === 'Glob' && typeof args.pattern === 'string' && absolutePath(args.pattern) ? args.pattern.split(/[*?[{]/)[0] : null;
+  const reading = [absolute, real, ...(fixedStart === null ? [] : [path.resolve(fixedStart)])];
+  if (!WRITING.includes(tool) && reading.some((candidate) => plugin.some((g) => inside(fold, g, candidate)))) return answer.deny(PLUGIN_READ);
   const homeReal = resolveReal(home, home);
   const secrets = secretFolders(home, platform);
   for (const candidate of [absolute, real]) {
@@ -414,6 +423,28 @@ function movedDirs(dirs, to, ctx) {
     }
   }
   return moved;
+}
+
+// Whether a command line reads Wheelhouse's own files: a word naming a path inside the plugin
+// (a whole word, or an option's value after `=`), other than the script a `node` in the same
+// command runs, which is how every playbook runs the plugin's commands. A `cd` into the plugin is
+// such a word too. Like the keychain's, this holds only the plain command line: code that a script
+// or `node -e` runs is not followed.
+function readsPlugin(command, { windows, fold, home, pluginRoots }) {
+  const split = segmentsWithOperators(command, windows);
+  if (split === null) return false;
+  const nameOf = (w) => fold(lastPart(w)).replace(/\.exe$/, '');
+  const inPlugin = (word) => {
+    const name = expandHome(word, home, windows);
+    if (!absolutePath(name)) return false;
+    const full = path.resolve(windows && /^\/[A-Za-z]\//.test(name) ? `${name[1]}:${name.slice(2)}` : name);
+    return pluginRoots.some((r) => inside(fold, r, full));
+  };
+  return split.segments.some((seg) => {
+    const node = seg.findIndex((w) => nameOf(w) === 'node');
+    const script = node < 0 ? -1 : seg.findIndex((w, j) => j > node && !OPTION.test(w));
+    return seg.some((w, j) => j !== script && (inPlugin(w) || (w.includes('=') && inPlugin(w.slice(w.indexOf('=') + 1)))));
+  });
 }
 
 // Whether a command line should be refused: a host tool, git push, a .env file,
@@ -822,6 +853,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     // In PowerShell a backtick before a new line continues the command, as a space does.
     const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
     const state = { unreadable: false, keychain: false, nested: false };
+    if (readsPlugin(text, { windows, fold, home, pluginRoots: [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)] })) return answer.deny(PLUGIN_READ);
     if (!bashRefused(text, { windows, fold, cwd, home, root, state })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
     if (state.nested) return answer.deny(NESTED);
