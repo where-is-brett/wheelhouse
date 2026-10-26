@@ -11,9 +11,13 @@
 //
 // 1. With no Ready yet, it asks the card of plain steps, ending with the screen locked until the
 //    phone buzzes, or for PUSH_TEST_LOCK_MS if it doesn't (ruling R65): longer than the wait, so the
-//    push goes out while the screen is still locked. It is answered Ready or Later. Later is a kept
-//    answer, not a put-off button (the question kind refuses Not now as its own option, ruling
-//    R50), and asks the same card again when the step is next planned.
+//    push goes out while the screen is still locked. It is answered Ready or Skip for now. The phone
+//    is optional (the director's ruling of 26 October 2026, design section 22): Skip for now settles
+//    the step at once on { pushSkipped: true }, recorded as skipped, never as a push that didn't
+//    arrive, so the health check and setup's end never wait for a phone. Skip for now is a kept
+//    answer, not a put-off button (the question kind refuses Not now as its own option, ruling R50).
+//    A run parked on the earlier card, answered Later, is asked this card again, since its words
+//    and options changed, and goes on from the director's answer.
 // 2. With Ready answered less than PUSH_TEST_WAIT_MS ago, it waits for what is left; the playbook
 //    waits, then sends one test push with the session's push tool. The playbook (Task 16) knows
 //    this wait by its step, PUSH_TEST_STEP: a wait from step 9's plan that names no step it waits
@@ -23,6 +27,11 @@
 // 4. With that answered, it settles on pushTestResult(label), kept in the journal as the step's
 //    `answer` change, however long ago Ready was; the board's health reads it
 //    (scripts/lib/setup-run.js, phonePushResult) and, when it didn't arrive, says so with what to do.
+//
+// A step 9 done on a skip, or on a push that didn't arrive, can be taken again (phoneRetakeable):
+// the front desk plans it again when the director asks to set up phone notifications, and the same
+// test runs, under ids of its own for that round, so the answers that settled it before don't
+// settle it again.
 //
 // Phone notifications belong to the computer: when an earlier run on it recorded that the test push
 // arrived (phonePushResult), the step settles at once with { pushArrived: true, from: <that run> },
@@ -36,11 +45,13 @@
 import { SETUP_TITLES } from '../state/card-lines.js';
 import { PHONE_REACHES } from '../lib/calm-words.js';
 import { PUSH_TEST_WAIT_MS, PUSH_TEST_LOCK_MS, CLICK_FRESH_MS } from '../lib/setup-numbers.js';
-import { PUSH_TEST_STEP, phonePushResult } from '../lib/setup-run.js';
+import { PUSH_TEST_STEP, phonePushResult, phoneResults, readJournal } from '../lib/setup-run.js';
 
 export const READY_ID = 'phone-ready';
 export const ARRIVED_ID = 'push-arrived';
-export const READY = Object.freeze({ ready: 'Ready', later: 'Later' });
+export const READY = Object.freeze({ ready: 'Ready', skip: 'Skip for now' });
+// What a skip settles on.
+export const SKIPPED = Object.freeze({ pushSkipped: true });
 export const ARRIVED = Object.freeze({ yes: 'It arrived', no: 'It didn\'t' });
 // What the playbook's one test push says.
 export const PUSH_TEST_TEXT = 'Wheelhouse test: phone notifications reach you.';
@@ -56,10 +67,14 @@ const LOCK = `Lock your screen, and leave it locked until your phone buzzes, or 
 // How old a Ready may be before card B is asked rather than card A again (ruling R66).
 const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 
-// The card of plain steps, asked until the director clicks Ready.
-function readyAsk() {
+// The ids of the round's two cards: the first round's as they always were, a later round's (the
+// test taken again from the front desk) with its number.
+const idsFor = (round) => (round === 0 ? { ready: READY_ID, arrived: ARRIVED_ID } : { ready: `${READY_ID}-${round + 1}`, arrived: `${ARRIVED_ID}-${round + 1}` });
+
+// The card of plain steps, asked until the director clicks Ready or Skip for now.
+function readyAsk(id) {
   return {
-    id: READY_ID,
+    id,
     card: {
       level: 2,
       what: `Setup step ${PUSH_TEST_STEP}, phone notifications, so agents can reach you when they need you. ${PHONE_REACHES} `
@@ -70,7 +85,7 @@ function readyAsk() {
       why: 'Remote Control alone isn\'t enough: the push options and your phone\'s own permission are needed too.',
       options: [
         { label: READY.ready, says: `Setup sends one test notification ${MINUTES} after your click, while your screen is locked, and then asks whether it arrived.` },
-        { label: READY.later, says: 'Setup asks this again later; no test is sent.' },
+        { label: READY.skip, says: 'No test is sent, and setup carries on without your phone. Ask the front desk to set up phone notifications whenever you like.' },
       ],
       recommend: READY.ready,
       because: 'it takes a couple of minutes, and tells you now whether your phone hears from agents',
@@ -80,9 +95,9 @@ function readyAsk() {
 }
 
 // The card asking whether the test arrived, once the wait is over and the push is sent.
-function arrivedAsk() {
+function arrivedAsk(id) {
   return {
-    id: ARRIVED_ID,
+    id,
     card: {
       level: 2,
       what: `Setup step ${PUSH_TEST_STEP}: did the test notification reach your phone while your screen was locked?`,
@@ -108,26 +123,30 @@ export function pushTestResult(label) {
   throw new Error(`The push test's answer must be ${ARRIVED.yes} or ${ARRIVED.no}`);
 }
 
-// Step 9. `pushResult` reads what this computer's journal last recorded of the test push (for tests).
-export function notifyStep({ pushResult = () => phonePushResult() } = {}) {
+// Step 9. `pushResult` reads what this computer's journal last recorded of the test push, and
+// `settledBefore(runId)` how many times this run's step 9 has settled (for tests).
+const settledIn = (runId) => phoneResults(readJournal().runs.find((r) => r?.id === runId)).length;
+export function notifyStep({ pushResult = () => phonePushResult(), settledBefore = settledIn } = {}) {
   return {
     n: PUSH_TEST_STEP,
     title: SETUP_TITLES[PUSH_TEST_STEP],
     after: [6, 8],
     async plan(ctx) {
       const answers = ctx.answers ?? {};
+      const ids = idsFor(typeof ctx.runId === 'string' ? settledBefore(ctx.runId) : 0);
       // An answer to card B settles, however old the Ready before it (ruling R66).
-      const arrived = answers[`${PUSH_TEST_STEP}.${ARRIVED_ID}`];
+      const arrived = answers[`${PUSH_TEST_STEP}.${ids.arrived}`];
       if (arrived) return { settled: { record: pushTestResult(arrived.label) } };
       // The push already reached the phone in an earlier run on this computer (ruling R75).
       const earlier = pushResult();
       if (earlier?.arrived === true && earlier.run !== ctx.runId) return { settled: { record: { pushArrived: true, from: earlier.run } } };
-      const ready = answers[`${PUSH_TEST_STEP}.${READY_ID}`];
-      if (ready?.label !== READY.ready) return { ask: readyAsk() };
+      const ready = answers[`${PUSH_TEST_STEP}.${ids.ready}`];
+      if (ready?.label === READY.skip) return { settled: { record: { ...SKIPPED } } };
+      if (ready?.label !== READY.ready) return { ask: readyAsk(ids.ready) };
       // From the Ready answer's own time; one that reads as later than now waits the whole time.
       const readyAt = Date.parse(ready.at);
       const since = Number.isFinite(readyAt) ? ctx.now().getTime() - readyAt : 0;
-      if (since > READY_STALE_MS) return { ask: readyAsk() };
+      if (since > READY_STALE_MS) return { ask: readyAsk(ids.ready) };
       const left = Math.min(PUSH_TEST_WAIT_MS, PUSH_TEST_WAIT_MS - since);
       if (left > 0) {
         return {
@@ -135,7 +154,7 @@ export function notifyStep({ pushResult = () => phonePushResult() } = {}) {
           why: `the director's screen is locked until their phone buzzes; once this wait is over, send one test notification with the session's push tool ("${PUSH_TEST_TEXT}"), then ask for step ${PUSH_TEST_STEP}'s plan again`,
         };
       }
-      return { ask: arrivedAsk() };
+      return { ask: arrivedAsk(ids.arrived) };
     },
     async apply() {
       return [];

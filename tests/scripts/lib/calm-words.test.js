@@ -44,7 +44,7 @@ test('every set word is one line of British English with no exclamation mark', (
     ...Object.entries(words.SETUP_DONE).map(([key, value]) => [`SETUP_DONE.${key}`, value]),
     ...Object.entries(words.SETUP_GOING).map(([key, value]) => [`SETUP_GOING.${key}`, value]),
   );
-  assert.equal(lines.length, 102, 'every word is held');
+  assert.equal(lines.length, 103, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);

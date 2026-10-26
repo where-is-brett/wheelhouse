@@ -18,6 +18,7 @@ import { eventHash, makeEvent } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { setLineOf } from '../../../scripts/state/card-lines.js';
+import { composeCard } from '../../../scripts/cards/compose.js';
 import { withProject, T0, lay } from '../../helpers/setup-answers.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -129,7 +130,7 @@ test('each answer writes its setting or configuration key, checked by the catalo
 });
 
 
-test('the README\'s words, or a description left for later, record what the card says', async () => {
+test('the README\'s words, still taking shape, or a description left for later, record what the card says', async () => {
   await withProject(async ({ folder, plan, answer }) => {
     answerStep3(folder, { realUsers: REAL_USERS.yes, locked: LEVELS.locked });
     const asked = await plan(4);
@@ -138,16 +139,24 @@ test('the README\'s words, or a description left for later, record what the card
     assert.equal(readme[1].body.target.data.value, 'launched');
   }, { files: { 'README.md': README } });
 
-  // No README: the director types it, or leaves it for later, which records the phase alone.
+  // No README: the director types it, says it is still taking shape, which records a plain entry
+  // saying so, or leaves it for later, which records the phase alone.
   await withProject(async ({ folder, plan, answer }) => {
     answerStep3(folder, { realUsers: REAL_USERS.no });
     const asked = await plan(4);
-    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [PRODUCT.later]);
+    assert.deepEqual(asked.ask.card.options.map((o) => o.label), [PRODUCT.shaping, PRODUCT.later]);
     const later = await answer(asked.ask.card, PRODUCT.later);
     assert.deepEqual(later.map((s) => [s.route, s.body.target?.data.value]), [['record', 'before-launch']]);
     // Suggest a change… records nothing and is no answer.
     assert.deepEqual(await answer(asked.ask.card, 'Suggest a change…'), []);
   });
+  await withProject(async ({ folder, plan, answer }) => {
+    answerStep3(folder, { realUsers: REAL_USERS.yes });
+    const asked = await plan(4);
+    const shaping = await answer(asked.ask.card, PRODUCT.shaping);
+    assert.deepEqual(shaping[0].body.data, { term: 'Cafe-Menu', plain: 'A new product, still taking shape.' });
+    assert.equal(shaping[1].body.target.data.value, 'launched');
+  }, { files: { 'README.md': '# Cafe-Menu\n' } });
 });
 
 test('a typed description holding a key records nothing, and the question is asked again', async () => {
@@ -263,4 +272,34 @@ test('a project that doesn\'t look like it signs Apple apps is never asked', asy
     await answer((await plan(4)).ask.card, LIVE_DATA.no);
     assert.deepEqual(await plan(4), { ok: true, done: true });
   }, { files: { 'README.md': README } });
+});
+
+test('every card step 4 can ask, in every state it is built in, offers two to four options as the engine composes it', async () => {
+  // AskUserQuestion shows no question with fewer than two options or more than four: a README that is
+  // only a heading once left the product card with Describe it later alone, and setup stalled.
+  const readmes = [{ 'README.md': README }, { 'README.md': '# Cafe-Menu\n' }, {}];
+  for (const files of readmes) {
+    for (const realUsers of [REAL_USERS.yes, REAL_USERS.no]) {
+      for (const apple of [false, true]) {
+        await withProject(async ({ folder }) => {
+          const step = questionsStep();
+          const answers = answerStep3(folder, { realUsers });
+          const cards = [];
+          for (let i = 0; i < 4; i += 1) {
+            const got = await step.plan({ folder, answers });
+            if (!got.ask) break;
+            cards.push(got.ask);
+            answers[`4.${got.ask.id}`] = { label: got.ask.card.options[0].label, text: null };
+          }
+          assert.deepEqual(cards.map((a) => a.id.replace(/^product-.*/, 'product')), ['product', 'live-data', ...(apple ? ['apple-apps'] : [])]);
+          for (const a of cards) {
+            const { question } = composeCard({ ...a.card, kind: 'question', suggest: false });
+            assert.ok(question.options.length >= 2 && question.options.length <= 4, `${a.id} offers ${question.options.map((o) => o.label).join(', ')}`);
+            // Every option on a card whose answers write records writes what it says.
+            if (a.writes) for (const o of a.card.options) assert.ok(Object.hasOwn(a.writes.labels, o.label), `${o.label} records nothing`);
+          }
+        }, { files: { ...files, ...(apple ? { 'Fastfile': 'lane :beta do\nend\n' } : {}) } });
+      }
+    }
+  }
 });

@@ -126,6 +126,23 @@ export function runClosed(run) {
 // The step that tests a push to the director's phone (Phone notifications, ruling R39).
 export const PUSH_TEST_STEP = 9;
 
+// Step 9's results in a run, oldest first: each `answer` change it settled on, { pushArrived } or
+// { pushSkipped: true } (ruling R39, as the director ruled on 26 October 2026: the phone is optional).
+export function phoneResults(run) {
+  return (Array.isArray(run?.changes) ? run.changes : [])
+    .filter((c) => c?.step === PUSH_TEST_STEP && c.kind === 'answer' && c.after !== null && typeof c.after === 'object')
+    .map((c) => c.after);
+}
+
+// Whether the run's step 9 is done but can be taken again: its last result is skipped, or a push
+// that didn't arrive. The front desk takes it again when the director asks to set up phone
+// notifications, with the same test.
+export function phoneRetakeable(run) {
+  if (typeof run?.steps?.[PUSH_TEST_STEP]?.doneAt !== 'string') return false;
+  const last = phoneResults(run).at(-1);
+  return last?.pushSkipped === true || last?.pushArrived === false;
+}
+
 // Whether the test push reached the director's phone, as this computer's journal last recorded it:
 // { arrived, at, run } from the run whose step 9 settled last on the director's answer, or on an
 // earlier run's (its `answer` change, { pushArrived }), `at` when it settled and `run` its id; null
@@ -139,9 +156,9 @@ export function phonePushResult(journal = readJournal()) {
     if (runClosed(run)) continue;
     const at = run?.steps?.[PUSH_TEST_STEP]?.doneAt;
     if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) continue;
-    const answer = (Array.isArray(run.changes) ? run.changes : [])
-      .filter((c) => c?.step === PUSH_TEST_STEP && c.kind === 'answer' && typeof c.after?.pushArrived === 'boolean').at(-1);
-    if (answer && (found === null || Date.parse(at) > Date.parse(found.at))) found = { arrived: answer.after.pushArrived, at, run: run.id };
+    // A skip says nothing of whether a push reaches the phone, so an earlier test's result stands.
+    const answer = phoneResults(run).filter((r) => typeof r.pushArrived === 'boolean').at(-1);
+    if (answer && (found === null || Date.parse(at) > Date.parse(found.at))) found = { arrived: answer.pushArrived, at, run: run.id };
   }
   return found;
 }
