@@ -143,7 +143,7 @@ test('the playbook opens with the one card, applies what its Go ahead covers, as
   assert.match(playbook, /Never say an answer can't be changed/);
   assert.match(playbook, /\*\*`setUpAgain: true`\*\*, whatever the plan says[^\n]*Follow Uninstall below/);
   assert.match(playbook, /\*\*Change it after setup\*\*: tell them in one line that the front desk starts that change right after setup/);
-  assert.match(playbook, /When `health` gave `requests`/);
+  assert.match(playbook, /first each of `requests` \(changes they asked for after setup\), then the request they came with/);
   assert.match(USAGE, /choices, change <key>/);
 });
 
