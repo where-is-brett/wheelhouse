@@ -790,7 +790,7 @@ test('the request line\'s tag is the plugin\'s version', () => {
 
 test('the README keeps its Claude Code install, unchanged in what it says', () => {
   assert.ok(readme.includes('## Install\n'));
-  assert.ok(readme.includes('/plugin install wheelhouse --marketplace where-is-brett/wheelhouse#<tag>'));
+  assert.ok(readme.includes('claude plugin install wheelhouse@wheelhouse --scope project'));
   assert.ok(readme.startsWith('<!-- README.md -->\n'));
   assert.doesNotMatch(readme, /\b(enhanced|improved|fixed)\b/i);
 });

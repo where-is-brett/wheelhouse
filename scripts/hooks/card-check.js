@@ -6,8 +6,8 @@
 // line has that one line, its own reply code line (none for a kind the composer gives no code, such
 // as setup's, a trust card's or uninstall's) and nothing after it, and plain lines that between them name what the set
 // line names (for a trust card, the computer it trusts; for uninstall's, the project) and no other
-// pull request or commit. Given the question object, its options are checked too: one is
-// recommended, and none is Explain more. The prompt record is what refuses a wrong click, so this
+// pull request or commit. Given the question object, its options are checked too: two to four, one
+// recommended, and none Explain more. The prompt record is what refuses a wrong click, so this
 // only informs: it refuses nothing it can't read, and a failure of its own lets the card through.
 // A card that doesn't come from scripts/cards/compose.js can fail it; one that does cannot.
 // In any folder, a card that reads as the baseline card (any of its fixed words however written, or
@@ -22,6 +22,7 @@ import { runAndExit, answer, projectOf, beingSetUp } from './kit.js';
 import { looksLikeBaseline, holdsFigures, cardHash, readShown, cardText, sweepStale } from '../lib/measures-clicks.js';
 import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
+import { CARD } from '../lib/front-desk.js';
 import {
   setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
@@ -90,6 +91,8 @@ export function cardProblems(question) {
     if (recommended === 0) problems.push('names no recommended option');
     else if (recommended > 1) problems.push(recommended === 2 ? 'names two recommended options' : `names ${recommended} recommended options`);
     if (labels.includes(EXPLAIN_MORE)) problems.push(`offers ${EXPLAIN_MORE}, which is not one of a card's options`);
+    // AskUserQuestion shows a question with two to four options only; any other count never reaches the director.
+    if (labels.length < CARD.fewestOptions || labels.length > CARD.options) problems.push(`offers ${labels.length} ${labels.length === 1 ? 'option' : 'options'}, and a card offers ${CARD.fewestOptions} to ${CARD.options}`);
   }
 
   if (set.length === 0) return problems;

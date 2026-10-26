@@ -124,7 +124,7 @@ test('a question card is recorded as asked and an exact answer is kept, signed, 
 
 test('an answer on a reworded card, another run\'s card, or Suggest a change… is not kept', async () => {
   await withSetup(async ({ client, home, folder, other }) => {
-    setWorld(home, { ask: { 3: [HOST], 4: [{ id: 'name', options: ['Keep it'], typed: true }] } });
+    setWorld(home, { ask: { 3: [HOST], 4: [{ id: 'name', options: ['Keep it', 'Name it later'], typed: true }] } });
     const { card } = (await client.setup.plan({ folder, step: 3 })).ask;
     const { card: typed } = (await client.setup.plan({ folder, step: 4 })).ask;
     const reworded = [
@@ -166,7 +166,7 @@ test('an answer on a reworded card, another run\'s card, or Suggest a change… 
 
 test('a typed answer counts only where the card allows it, and one holding a password is not kept', async () => {
   await withSetup(async ({ client, home, folder }) => {
-    setWorld(home, { ask: { 3: [HOST], 4: [{ id: 'name', options: ['Keep it'], typed: true }] } });
+    setWorld(home, { ask: { 3: [HOST], 4: [{ id: 'name', options: ['Keep it', 'Name it later'], typed: true }] } });
     const { card } = (await client.setup.plan({ folder, step: 3 })).ask;
     const { card: typed } = (await client.setup.plan({ folder, step: 4 })).ask;
     // Typed where the card takes only its own options.
@@ -370,7 +370,7 @@ test('only a question or the choice handed back, alone, is no answer at first si
 test('a typed question or "you decide" on a setup card is not taken as the answer: the card is asked again, saying why once, and a real answer then counts (ruling R125)', async () => {
   let clock = T0;
   await withSetup(async ({ client, home, folder }) => {
-    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true }] }, settle: [4] });
+    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it', 'Name it later'], typed: true }] }, settle: [4] });
     const asked = await client.setup.plan({ folder, step: 4 });
     assert.equal(asked.unanswered, undefined);
     const run = findRun(folder);
@@ -413,7 +413,7 @@ test('a typed question or "you decide" on a setup card is not taken as the answe
 test('a typed answer ending in "?" is refused once with why, and the next typed answer to that question is taken, the same or another (ruling R132)', async () => {
   let clock = T0;
   await withSetup(async ({ client, home, folder, other }) => {
-    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true }] }, settle: [4] });
+    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it', 'Name it later'], typed: true }] }, settle: [4] });
     for (const [where, second] of [[folder, 'Tide tables for sailors?'], [other, 'A tide table, with a map?']]) {
       clock = new Date(clock.getTime() + MINUTE);
       const asked = await client.setup.plan({ folder: where, step: 4 });
@@ -439,7 +439,7 @@ test('a typed answer ending in "?" is refused once with why, and the next typed 
 test('a hand-back is refused every time with why, even after a "?" was refused on the same card, so the description is never "you decide" (ruling R132)', async () => {
   let clock = T0;
   await withSetup(async ({ client, home, folder }) => {
-    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true }] }, settle: [4] });
+    setWorld(home, { ask: { 4: [{ id: 'name', options: ['Keep it', 'Name it later'], typed: true }] }, settle: [4] });
     const asked = await client.setup.plan({ folder, step: 4 });
     const run = findRun(folder);
     const texts = [['you decide', NOT_AN_ANSWER.handedBack], ['you decide', NOT_AN_ANSWER.handedBack], ['What would you pick?', NOT_AN_ANSWER.question],
@@ -459,7 +459,7 @@ test('a "?" refused on one question lets no other question\'s "?" through (rulin
   let clock = T0;
   await withSetup(async ({ client, home, folder }) => {
     setWorld(home, {
-      ask: { 4: [{ id: 'name', options: ['Keep it'], typed: true, what: 'What is the product called?' }, { id: 'about', options: ['A menu'], typed: true, what: 'What is the product for?' }] },
+      ask: { 4: [{ id: 'name', options: ['Keep it', 'Name it later'], typed: true, what: 'What is the product called?' }, { id: 'about', options: ['A menu', 'Describe it later'], typed: true, what: 'What is the product for?' }] },
       settle: [4],
     });
     const run = () => findRun(folder);

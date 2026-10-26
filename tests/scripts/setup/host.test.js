@@ -296,15 +296,16 @@ test('the plan asks about real users, then Locked on a Mac only, then the host, 
     const w = standIn();
     const step = stepFor(w);
     const mac = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
-    assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['real-users', 'locked', 'host', 'connection']);
+    // Locked takes Quick away, and with no Wheelhouse app their own app is the one way left, so
+    // the connection is not asked.
+    assert.deepEqual(mac.asked.map((a) => a.id.replace(/-[0-9a-f]{10}$/, '')), ['real-users', 'locked', 'host']);
     assert.match(mac.asked[0].card.what, /Does Zoe-app have real users/);
-    const connection = mac.asked[3].card;
-    assert.deepEqual(connection.options.map((o) => o.label), [WAYS.own], 'Locked: no Quick');
+    assert.deepEqual(mac.changes.find((c) => c.action === 'connection'), { kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true, app: { account: USER, name: `Wheelhouse ${USER}`, own: true } });
     assert.equal(mac.answers['3.real-users'].label, REAL_USERS.yes, 'step 4 reads this answer');
     assert.equal(mac.answers['3.locked'].label, LEVELS.locked, 'step 4 reads this answer');
-    // Each question composes as a question card, with no set line.
+    // Each question composes as a question card, as the engine composes it, with no set line.
     for (const a of mac.asked) {
-      const { question } = composeCard({ ...a.card, kind: 'question' });
+      const { question } = composeCard({ ...a.card, kind: 'question', suggest: false });
       assert.equal(setLineOf(question.question), null);
     }
     // On Windows, Locked is not offered: the connection comes after the host.
@@ -344,7 +345,7 @@ test('on a Mac Quick is the default and the narrow ways sit behind Make it stric
     assert.equal(connectionCard({ host, where, platform: 'darwin', realUsers: true }).recommend, STRICTER);
     composeCard({ ...card, kind: 'question' });
   }
-  // Locked and launched projects keep the narrow card on the Mac too.
+  // Locked and launched projects keep the narrow ways on the Mac too; with one way, step 3 asks nothing.
   assert.deepEqual(connectionCard({ host: 'github', where, platform: 'darwin', locked: true }).options.map((o) => o.label), [WAYS.own]);
   assert.ok(!connectionCard({ host: 'gitlab', where, platform: 'darwin', launched: true }).options.some((o) => o.label === STRICTER));
   // Where Make it stricter leads: GitLab's key, their own app, or a card while the Wheelhouse app is registered.
@@ -398,7 +399,7 @@ test('on GitHub the card offers the Wheelhouse app, their own app and Quick, and
   });
 });
 
-test('a Locked project with only their own app on offer still gets the card', async () => {
+test('a Locked project with only their own app on offer is not asked, and its Go-ahead card lists the app', async () => {
   await withHome(async () => {
     const folder = productFolder();
     await withOrigin(folder, `https://github.com/${USER}/shop.git`);
@@ -406,18 +407,62 @@ test('a Locked project with only their own app on offer still gets the card', as
     await w.add(`${USER}/shop`);
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose({ realUsers: REAL_USERS.yes, locked: LEVELS.locked, way: WAYS.own }));
-    const card = planned.asked.at(-1).card;
-    // Their own app is made at apply, from the card's Go ahead.
+    // One way is no choice, and AskUserQuestion shows no card with one option: step 3 takes it.
+    assert.deepEqual(planned.asked.map((a) => a.id), ['real-users', 'locked']);
+    assert.deepEqual(connectionCard({ host: 'github', where: `${USER}/shop on GitHub`, locked: true }).options.map((o) => o.label), [WAYS.own]);
+    // Their own app is made at apply, from the Go ahead on the card that lists it, never unannounced.
     assert.deepEqual(planned.changes.find((c) => c.action === 'own-app'), { kind: 'host', target: 'github', action: 'own-app', account: USER, name: `Wheelhouse ${USER}` });
-    assert.deepEqual(card.options.map((o) => o.label), [WAYS.own], 'their own app, agreed to on the card, never by default');
-    assert.match(card.what, /Quick is not offered/);
-    const { question } = composeCard({ ...card, kind: 'question', suggest: false });
-    assert.deepEqual(question.options.map((o) => o.label), [WAYS.own]);
+    assert.match(planned.card.what, /your own GitHub App/);
+    assert.match(planned.card.what, /click Create/);
     // A list naming no app is refused by apply too, before it makes anything.
     const list = [{ kind: 'host', target: 'github', action: 'connection', mode: 'narrow', locked: true }, { kind: 'file', target: 'x', action: 'project', repo: `${USER}/shop` }];
     await assert.rejects(applyStep(step, folder, list, { answers: planned.answers }), { message: NO_APP_LISTED });
     assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), []);
     assert.ok(!w.calls.some((c) => c.args?.[0] === 'auth' && c.args[1] === 'login'));
+  });
+});
+
+test('every card step 3 can ask, in every state it is built in, offers two to four options as the engine composes it', async () => {
+  // AskUserQuestion shows no question with fewer than two options or more than four: such a card
+  // never reaches the director, and setup stalls on it.
+  await withHome(async () => {
+    const registered = appFile(tempFolder('wh-app-'));
+    const seen = new Set();
+    // Where the product is: a new one on either host, or a folder already connected to one.
+    const places = [[null, HOST_LABELS.github], [null, HOST_LABELS.gitlab], [`https://github.com/${USER}/shop.git`], [`https://gitlab.com/${USER}/shop.git`]];
+    for (const app of [NO_APP, registered]) {
+      for (const platform of ['darwin', 'win32']) {
+        for (const [origin, host] of places) {
+          for (const realUsers of [REAL_USERS.yes, REAL_USERS.no]) {
+            // Locked is offered on a Mac with real users only.
+            for (const locked of platform === 'darwin' && realUsers === REAL_USERS.yes ? [LEVELS.locked, LEVELS.standard] : [LEVELS.standard]) {
+              // The connection answered with its first option, or with Make it stricter where offered.
+              for (const stricter of [false, true]) {
+                const folder = productFolder();
+                if (origin !== null) await withOrigin(folder, origin);
+                const w = standIn();
+                if (origin !== null) await w.add(`${USER}/shop`);
+                const pick = (id, card) => {
+                  if (!id.startsWith('connection-')) return choose({ realUsers, locked, host })(id, card);
+                  const labels = card.options.map((o) => o.label);
+                  return stricter && labels.includes(STRICTER) ? STRICTER : labels[0];
+                };
+                const planned = await answerAll(stepFor(w, { appFile: app }), ctxFor(folder, { platform }), pick);
+                for (const a of planned.asked) {
+                  const labels = JSON.stringify(a.card.options.map((o) => o.label));
+                  seen.add(labels);
+                  const { question } = composeCard({ ...a.card, kind: 'question', suggest: false });
+                  assert.ok(question.options.length >= 2 && question.options.length <= 4, `${a.id} offers ${labels}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    // The connection's cards were reached: Quick with Make it stricter, the narrow ways, and the stricter choice.
+    assert.ok([...seen].some((k) => k.includes(STRICTER)));
+    assert.ok([...seen].some((k) => k.includes(WAYS.wheelhouse) && !k.includes(WAYS.quick)));
   });
 });
 
@@ -2368,12 +2413,15 @@ test('a launched project refuses Quick at apply, before anything is connected or
     const slug = slugFor(`${USER}/Cafe-Menu`);
     assert.equal(readProject(slug), null, 'nothing registered');
     assert.ok(fs.existsSync(path.join(stateDir(slug), '.git')), 'the state cloned, which said so');
-    // Planned again: the connection question again, with no Quick, saying why.
+    // Planned again: no Quick. With no Wheelhouse app their own app is the one way left, so it is
+    // not asked (a card needs two options) and the Go-ahead card lists it.
+    const card = connectionCard({ host: 'github', launched: true, realUsers: true, where: `${USER}/Cafe-Menu on GitHub` });
+    assert.deepEqual(card.options.map((o) => o.label), [WAYS.own]);
+    assert.match(card.what, /It is launched, and a launched product needs a narrow connection, so Quick is not offered/);
     const again = await step.plan({ ...ctx, answers: planned.answers });
-    assert.match(again.ask.id, /^connection-/);
-    assert.notEqual(again.ask.id, planned.asked.at(-1).id);
-    assert.deepEqual(again.ask.card.options.map((o) => o.label), [WAYS.own]);
-    assert.match(again.ask.card.what, /It is launched, and a launched product needs a narrow connection, so Quick is not offered/);
+    assert.equal(again.ask, undefined);
+    assert.equal(again.changes.find((c) => c.action === 'connection').mode, 'narrow');
+    assert.match(again.card.what, /your own GitHub App/);
   });
   // On GitLab a launched project is not asked at all: Narrow is all there is.
   await withHome(async () => {
