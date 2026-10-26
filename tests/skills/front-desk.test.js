@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, RECORD_KINDS, VIEW_NAMES } from '../../scripts/frontdesk/cli.js';
 import { frontDeskCommand, localSettings } from '../../scripts/protection/settings.js';
-import { FRONT_DESK_INPUT } from '../../scripts/lib/front-desk.js';
+import { FRONT_DESK_INPUT, WORK_REPORTS, WORK_REPORTS_RULE } from '../../scripts/lib/front-desk.js';
 import { FRONT_DESK_LINE } from '../../scripts/hooks/session-start.js';
 import { FOREMAN_PROMPT_LEAD } from '../../scripts/foreman/start.js';
 import { CARD_KINDS } from '../../scripts/lib/front-desk.js';
@@ -93,8 +93,9 @@ test('the playbook is named front-desk, is used where the session start points, 
 test('every command is cli.js exactly as its allow rule matches it', () => {
   const allow = localSettings({ address: '/h/helper.sock', pluginRoot: '/plugin', platform: 'linux' }).permissions.allow;
   assert.ok(allow.includes(`Bash(${COMMAND}:*)`), allow.join(', '));
-  // Beside it, the one file the front desk writes its input to without a scratchpad, and no other.
-  assert.deepEqual(allow.filter((rule) => rule.startsWith('Edit(')), [`Edit(/${FRONT_DESK_INPUT})`]);
+  // Beside it, the one file the front desk writes its input to without a scratchpad, and the reports it writes for
+  // `record work` (Markdown files directly in .wheelhouse/work/), and nothing else.
+  assert.deepEqual(allow.filter((rule) => rule.startsWith('Edit(')), [`Edit(/${FRONT_DESK_INPUT})`, WORK_REPORTS_RULE]);
   // The playbooks name it in general words, and the session start's command line gives it as the allow rule matches it.
   for (const [file, text] of [[PLAYBOOK, playbook], [INTAKE, intake]]) {
     assert.ok(text.includes('the Wheelhouse command the session start named'), `${file} names the command`);
@@ -149,6 +150,8 @@ test('the intake\'s bug route names where the report goes and records it with it
   const route = intake.split('\n4. **Bug.**')[1]?.split('\n5. **Question.**')[0] ?? '';
   assert.ok(route, 'the bug route');
   assert.match(route, /`\.wheelhouse\/work\/<id>\.md`/);
+  // The place the local settings let it write without asking.
+  assert.ok(route.includes(`\`${WORK_REPORTS}<id>.md\``));
   assert.match(route, /never look in Wheelhouse's own files/);
   const [, input] = /```\n\s*(\{[^\n]*\})\n\s*```/.exec(route) ?? [];
   assert.ok(input, 'the route shows the record\'s input');

@@ -54,7 +54,7 @@ import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { AGENT_CONTROL, controlWritePaths, homeControlPaths } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
-import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
+import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
@@ -348,8 +348,9 @@ export function allowRule(command) {
 // setup's are allowed by their full paths, so the director's session isn't asked each time it
 // composes a card, records a decision or asks setup for a step; the paths name this computer's
 // folders too. Beside the front desk's, writing the one file the front desk gives that command its
-// input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), by the
-// project-relative form, and nothing else in the project.
+// input from when its session has no scratchpad (FRONT_DESK_INPUT, ruling F85), and the work's
+// reports it writes for `record work` (WORK_REPORTS_RULE: Markdown files directly in .wheelhouse/work/),
+// by the project-relative form, and nothing else in the project.
 export function localSettings({ address, node, pluginRoot, ownStatusLine = null, platform = process.platform, model = null }) {
   const settings = { sandbox: { network: { allowUnixSockets: [address] } } };
   // The front desk's model, pinned in the routing table (design section 8). This file is never
@@ -368,7 +369,7 @@ export function localSettings({ address, node, pluginRoot, ownStatusLine = null,
   const frontDeskFlagged = pluginRoot ? allowRule(frontDeskCommand(pluginRoot, { platform, noSystemCa: true })) : null;
   const setupFlagged = pluginRoot ? allowRule(setupCommand(pluginRoot, { platform, noSystemCa: true })) : null;
   const allow = [
-    ...(frontDesk === null ? [] : [frontDesk, frontDeskFlagged, `Edit(/${FRONT_DESK_INPUT})`]),
+    ...(frontDesk === null ? [] : [frontDesk, frontDeskFlagged, `Edit(/${FRONT_DESK_INPUT})`, WORK_REPORTS_RULE]),
     ...(setup === null ? [] : [setup, setupFlagged]),
   ];
   if (allow.length > 0) settings.permissions = { allow };

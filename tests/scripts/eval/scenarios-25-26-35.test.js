@@ -152,6 +152,7 @@ test('with Wheelhouse, the scratch plugin holds the real front desk, its command
     const allow = JSON.parse(fs.readFileSync(path.join(project.dir, '.claude', 'settings.local.json'), 'utf8')).permissions.allow;
     assert.ok(allow.includes(`Bash(node "${plugin.replaceAll('\\', '/')}/scripts/frontdesk/cli.js":*)`), 'the front desk\'s own rule, the path with "/" as the command has it');
     assert.ok(allow.includes('Edit(/.wheelhouse/front-desk.json)'), 'and the one file it writes its input to without a scratchpad');
+    assert.ok(allow.includes('Edit(/.wheelhouse/work/*.md)'), 'and the reports it writes for record work');
 
     // The plugin's copy of the command, run as the session runs it, reaches the stand-in.
     const cli = (args, input) => runNode([path.join(plugin, 'scripts', 'frontdesk', 'cli.js'), ...args], { cwd: project.dir, env: context.env, input });
