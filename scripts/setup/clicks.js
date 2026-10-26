@@ -12,7 +12,7 @@
 //                  description }] }
 //   asked/         each question a run's step last asked (ruling R30), as
 //                  <run id>-<step>-<question id>.json: { runId, folder, step, id, card, typed,
-//                  rules?, writes?, found?, choices?, at }, written by the helper when a step's plan asks
+//                  rules?, writes?, found?, choices?, facts?, at }, written by the helper when a step's plan asks
 //                  it; `typed` says whether a typed answer counts, `rules` is the list on step 5's
 //                  card of the rules found, `writes` what each answer records in the project's
 //                  state (scripts/lib/setup-writes.js), `found` what the step found, kept for the
@@ -80,14 +80,14 @@ export function shownFor(runId, step) {
 // shown it, whether a typed answer counts, and anything the step keeps with it (`rules`, `writes`,
 // `found`, and for the one card, step 0, the `choices` its Go ahead stands for: scripts/setup/choices.js).
 // Asking it again replaces the record, so only an answer on the card as last asked counts.
-export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, found, choices, now = () => new Date() }) {
+export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, found, choices, facts, now = () => new Date() }) {
   const asked = shownCard(card);
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id)) || typeof folder !== 'string' || asked === null) {
     throw new Error('An asked question needs its run, folder, step, id and card');
   }
   const record = {
     runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), ...(writes === undefined ? {} : { writes }),
-    ...(found === undefined ? {} : { found }), ...(choices === undefined ? {} : { choices }), at: now().toISOString(),
+    ...(found === undefined ? {} : { found }), ...(choices === undefined ? {} : { choices }), ...(facts === undefined ? {} : { facts }), at: now().toISOString(),
   };
   writeWhole(path.join(askedDir(), `${runId}-${step}-${id}.json`), `${JSON.stringify(record)}\n`);
 }

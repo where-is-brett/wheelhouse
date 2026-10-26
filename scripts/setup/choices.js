@@ -17,8 +17,10 @@
 // The one card is a question of step 0, which no step has: the engine asks it (scripts/setup/
 // engine.js) and the prompt record keeps a click on it as any setup answer, on the card's exact
 // words, with the records the choices it stands for make (the phase, the glossary entry). Its id
-// names the choices and how many answers the run held when it was asked, so it is never the same
-// card twice. Its asked record keeps `choices`, [{ key, label, text }], what Go ahead stands for.
+// names the choices, the folder's facts it rests on and how many answers the run held when it was
+// asked, so it is never the same card twice. Its asked record keeps `choices`, [{ key, label, text }],
+// what Go ahead stands for, and `facts`, the folder's as the card read them (whether the product is
+// new, its host and repository), which the engine reads again before step 3 runs.
 //
 // The consent: the newest Go ahead on a one card of the run. It holds through a break (the
 // director's call, 26 October 2026) and lapses only when one of its choices has a newer answer of
@@ -154,7 +156,7 @@ function describedBy(choice) {
 // how many answers the run holds. `card` is AskUserQuestion's question, ready; `writes` what Go
 // ahead records, as a setup question's writes are kept (scripts/lib/setup-writes.js): the records
 // the choices it stands for make, for those the director hasn't answered themselves.
-export function oneCard({ folder, list, product, platform, toRun, count }) {
+export function oneCard({ folder, list, product, platform, toRun, count, facts = null }) {
   const name = product?.name ?? productName(folder);
   const lines = [];
   if (toRun.includes(3) && product && product.isNew === false) lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
@@ -182,7 +184,7 @@ export function oneCard({ folder, list, product, platform, toRun, count }) {
     const labels = c.writes?.labels;
     return labels && Object.hasOwn(labels, c.label) ? labels[c.label] : [];
   });
-  const id = `plan-${hash({ choices, count }).slice(0, 12)}`;
+  const id = `plan-${hash({ choices, count, facts }).slice(0, 12)}`;
   const card = {
     question,
     header: 'Setup',
@@ -206,7 +208,7 @@ function stepZero(answers) {
 function consentsIn(runId, answers) {
   return stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id) && a.label === GO_AHEAD).flatMap((a) => {
     const asked = askedRecord(runId, ONE_CARD_STEP, a.id);
-    return Array.isArray(asked?.choices) ? [{ at: a.at, id: a.id, choices: asked.choices }] : [];
+    return Array.isArray(asked?.choices) ? [{ at: a.at, id: a.id, choices: asked.choices, facts: asked.facts ?? null }] : [];
   });
 }
 

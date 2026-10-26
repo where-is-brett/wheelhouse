@@ -489,6 +489,32 @@ test('an answer changed before its step runs comes back on the one card; one cha
   }
 });
 
+// A Go ahead stands for the project the card described: a git address added to the folder after it,
+// before step 3 has run, lapses it, and the one card is asked again (found by the review of 26
+// October 2026: an agent can write in the folder).
+test('a git address added to the folder after the Go ahead lapses it before step 3 runs', { skip: SKIP }, async () => {
+  const { a } = fresh();
+  try {
+    await a.start();
+    await a.sessionStart();
+    await follow(a, { answer: byId(NEW_ANSWERS), through: 2 });
+    await g(a.folder, 'init', '-q', '-b', 'main');
+    await g(a.folder, 'remote', 'add', 'origin', 'https://github.com/someone/elsewhere.git');
+    // Step 3 now asks its own question for the project the folder names, which the Go ahead never
+    // answered, and nothing of step 3 is covered.
+    const planned = await a.cli('plan', '3');
+    assert.equal(planned.covered, undefined, 'not covered: the folder is not the one the card described');
+    assert.equal(planned.hash, undefined);
+    assert.match(planned.ask.id, /^connection-/);
+    const again = (await a.cli('resume')).plan;
+    assert.equal(again.step, 0);
+    assert.match(again.ask.card.question, /- elsewhere on GitHub, as it is\./);
+    assert.equal(typeof (await a.setupRun()).steps[3]?.doneAt, 'undefined');
+  } finally {
+    await a.cleanup();
+  }
+});
+
 test('a second computer joins, and its records count on the first only after Trust it', { skip: SKIP }, async () => {
   const { clock, host, a } = fresh();
   const b = makeComputer(host, clock, { name: 'Cafe Menu' });

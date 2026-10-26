@@ -108,6 +108,7 @@ import {
 } from './choices.js';
 import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
 import { productOf } from './host.js';
+import { readGitlabHosts } from '../host/gitlab-base.js';
 import { readmeDescription, productName } from './questions.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
@@ -441,8 +442,28 @@ export function setupRoutes({
   // Whether the one card's Go ahead holds for this run and covers a step's list: every list but a
   // switch of the folder off a line of the director's unfinished work (A10) and a proposal of their
   // own GitHub App again, which are the director's own to decide, each on its card.
-  const coveredByConsent = (run, changes) => run !== null && answersWithConsent(run.id).consent !== null
-    && !changes.some((c) => NOT_COVERED.includes(c?.action));
+  // The folder's facts the one card rests on before step 3 has run: whether the product is new, and
+  // its host and repository as the folder's own git address names them. Read again, they must be the
+  // ones the card was shown with, so a remote added to the folder after the Go ahead (by anyone,
+  // an agent included) can't redirect step 3 under it: the one card is asked again showing it.
+  const folderFacts = (folder) => {
+    try {
+      const p = productOf(folder, { config: readGitlabHosts(folder) });
+      return { isNew: p.isNew, host: p.host, repo: p.repo, base: p.base ?? null };
+    } catch (error) {
+      return { refused: error instanceof Error ? error.message : 'unread' };
+    }
+  };
+  // The one card's Go ahead while it holds: its choices unchanged and, while step 3 hasn't run, the
+  // folder's facts as the card showed them; else null.
+  const consentNow = (run) => {
+    if (run === null) return null;
+    const { consent } = answersWithConsent(run.id);
+    if (consent === null) return null;
+    if (stepDone(run, 3) || runningIn(run, 3) !== null) return consent;
+    return JSON.stringify(consent.facts ?? null) === JSON.stringify(folderFacts(run.folder)) ? consent : null;
+  };
+  const coveredByConsent = (run, changes) => consentNow(run) !== null && !changes.some((c) => NOT_COVERED.includes(c?.action));
 
   // A step's plan with a look at the choices only: its questions, taken as answered by `answers`.
   const choicePlan = (run, folder) => (step, answers) => step.plan({
@@ -458,7 +479,7 @@ export function setupRoutes({
   const finished = (run) => run !== null && firstUnfinished(run) === null;
 
   // Whether the one card is what comes next: setup isn't finished and no Go ahead on it holds.
-  const oneCardNext = (run) => !finished(run) && (run === null || answersWithConsent(run.id).consent === null);
+  const oneCardNext = (run) => !finished(run) && consentNow(run) === null;
 
   // A question card for a choice or a redo card, composed and recorded as asked under its step, with
   // `unanswered` when what was typed on it was not taken (rulings R125, R132), as a step's ask has.
@@ -486,14 +507,12 @@ export function setupRoutes({
       const batch = customiseBatch(list, since);
       if (batch.length > 0) return { ok: true, asks: batch.map((c) => askChoice(run, c)), progress: ['Setup · your choices', 'Change any of these; nothing runs until you say Go ahead.'] };
     }
-    let product = null;
-    try {
-      product = productOf(run.folder);
-    } catch { /* a folder with history but no address: step 3 says so */ }
+    const facts = folderFacts(run.folder);
+    const product = facts.refused === undefined ? { ...facts, name: facts.repo?.split('/').at(-1) ?? productName(run.folder) } : null;
     const toRun = [3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
-    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length });
+    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
-    noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, now });
+    noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: ['Setup · about 5 minutes', 'One card: the plan for this project.'] };
   }
 
