@@ -2,9 +2,9 @@
 
 # Wheelhouse
 
-**Build your product with AI agents, without managing engineers.**
+**Direct AI agents building your product, in plain words, with checks they can't skip.**
 
-Wheelhouse is for a product owner who isn't a developer. You say what you want in plain words. A front desk asks you a few short questions, each with buttons to click. Behind it, agents build the work and other agents review it, and nothing reaches your product until it has passed checks the agents can't skip. You make the product decisions; Wheelhouse handles the engineering.
+Wheelhouse is for a product owner who isn't a developer. You say what you want in plain words. A front desk asks you short questions about what is yours to decide, each with buttons to click. Behind it, agents build the work and other agents review it, and nothing reaches the main version of your product until it has passed checks the agents can't skip. You make the product decisions; the agents do the building.
 
 `v0.1.1` is an early release for trying Wheelhouse out. It hasn't yet been used from start to finish on a real product.
 
