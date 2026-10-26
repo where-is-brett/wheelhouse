@@ -205,7 +205,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     }
     // Once setup is finished, the folder is a project like any other: the session start says no
     // more about setup.
-    assert.ok(!(await a.sessionStart()).some((l) => /setup/i.test(l) && /Follow wheelhouse:setup/.test(l)));
+    assert.ok(!(await a.sessionStart()).some((l) => /setup/i.test(l) && /wheelhouse:setup/.test(l)));
     // Setup followed again there finds every step done and opens no run of its own (ruling R140).
     assert.equal((await a.cli('resume')).plan, null);
     for (const { n } of SETUP_STEPS) assert.match((await a.cliTry('plan', String(n))).refused, /is already done/, `step ${n}`);
