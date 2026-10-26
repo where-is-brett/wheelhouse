@@ -149,7 +149,7 @@ test('every session runs its subagents in the foreground, whatever the host set'
   const claude = { kind: 'direct', file: 'claude' };
   const calls = [
     sessions.foremanCall({ config: {}, prompt: 'p', env, claude }),
-    sessions.foremanCall({ config: {}, prompt: 'p', env, claude, long: true, pluginRoot: '/plugin', settings: '/s.json' }),
+    sessions.foremanCall({ config: {}, prompt: 'p', env, claude, long: true, pluginRoot: MAC_ROOT, platform: 'darwin', settings: '/s.json' }),
     sessions.featureStartCall({ config: {}, prompt: 'p', sessionId: 's', env, claude }),
     sessions.featureResumeCall({ config: {}, prompt: 'p', sessionId: 's', env, claude }),
   ];
