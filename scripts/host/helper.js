@@ -66,8 +66,8 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
-import { READY_LEVELS, PREMIUM_LEVEL, readiness, samePins } from '../routing/column-ready.js';
-import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
+import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
+import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
 import { levelOf } from '../routing/thoroughness.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { cardHash } from '../lib/measures-clicks.js';
@@ -751,7 +751,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
-  '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state',
+  '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -1643,7 +1643,7 @@ export async function startHelper({
     const why = premiumRefusal({ level: levelIn(views), view: views.premium });
     if (why !== null) return { ok: true, offered: false, why };
     const at = now().toISOString();
-    const from = views.premium?.value === 'within-plan' ? 'within-plan' : 'off';
+    const from = offeredFrom(views.premium);
     const { question } = composeCard(premiumInput({ from, at }));
     const event = makeEvent({ kind: 'premium-card', data: { at, from, hash: cardHash(question) }, now });
     const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
@@ -1703,12 +1703,14 @@ export async function startHelper({
     } catch {
       refuse('the project\'s configuration can\'t be read, so its pins aren\'t known');
     }
-    const pin = premiumPinOf(viewsNow(project).premium);
+    const view = viewsNow(project).premium;
+    const pin = premiumPinOf(view);
     if (pin === null) refuse('the premium model has no pin: it is allowed and checked only through its own card');
+    if (view.failed !== null && view.failed !== undefined) refuse('the premium model\'s evaluation failed under this Yes, so it stays off until the director allows it again');
     const held = { mostCapable: config?.tiers?.pins?.mostCapable, midSized: config?.tiers?.pins?.midSized, premium: pin };
     if (!samePins(pins, held, PREMIUM_LEVEL) || Object.keys(pins).length !== 3) refuse('those pins are not the configuration\'s two and the premium pin the state holds now');
     if (!Array.isArray(records) || records.length === 0) refuse('the evaluation\'s records are not named');
-    const found = readiness({ evals: evalsFolder, level: PREMIUM_LEVEL, pins: held, given: records });
+    const found = readiness({ evals: evalsFolder, level: PREMIUM_LEVEL, pins: held, given: records, yes: view.setting });
     if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
     const event = makeEvent({ kind: 'column-ready', data: { column: PREMIUM_LEVEL, pins: held, records: found.records, commit: found.commit }, now });
     const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
@@ -1716,12 +1718,41 @@ export async function startHelper({
     return written({ event, result });
   }
 
+  // The premium model's evaluation failed (design section 14.6, "What the Yes starts"): the helper reads the
+  // evaluation's records itself, those of runs made under the Yes in force on the premium pin the state holds for it,
+  // and records a premium-failed record, signed here, only when the newest commit's run has a handled failure
+  // whose own record says so. It brings the director one card, the premium model then stays off under this Yes, and no
+  // more of its evaluation runs. Once per Yes. Called in the state's queue, refused under STOP.
+  async function doPremiumFailed({ project }, ctx) {
+    const view = viewsNow(project).premium;
+    const pin = premiumPinOf(view);
+    if (pin === null) return { ok: true, recorded: false, why: 'the premium model has no pin, so it has no evaluation to fail' };
+    if (view.failed !== null && view.failed !== undefined) return { ok: true, recorded: false, why: 'its failure under this Yes is recorded already' };
+    // Only this Yes's runs, on its premium pin, whatever the other two classes ran on.
+    const failed = barFailures({ evals: evalsFolder, pins: { premium: pin }, yes: view.setting });
+    if (failed.length === 0) return { ok: true, recorded: false, why: 'no trial of its evaluation failed' };
+    const event = makeEvent({ kind: 'premium-failed', data: { setting: view.setting, model: pin, failed }, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await freshViews(() => writeViews(project, { now }));
+    return { ...written({ event, result }), recorded: true, failed };
+  }
+
   // What the evaluation's premium run may run on (design section 14.6, "Two Yeses"): the premium setting in force and
   // the premium pin the helper's check found for it. The run itself refuses anything but a Yes with paid credits, since
   // Wheelhouse can't tell beforehand whether a run within the plan would be paid from them.
+  // With the Yes in force (`yes`, its premium setting's id), which the run names in its record, and the configuration's
+  // two pins now, which the run must run on.
   async function doPremiumState({ project }) {
     const view = viewsNow(project).premium;
-    return { ok: true, value: typeof view?.value === 'string' ? view.value : 'off', pin: premiumPinOf(view) };
+    let pins = null;
+    try {
+      const config = readConfig(fs.readFileSync(path.join(recordOf(project).folder, ...CONFIG_FILE.split('/')), 'utf8'));
+      pins = { mostCapable: config?.tiers?.pins?.mostCapable ?? null, midSized: config?.tiers?.pins?.midSized ?? null };
+    } catch { /* no pins to run on */ }
+    return {
+      ok: true, value: typeof view?.value === 'string' ? view.value : 'off', pin: premiumPinOf(view), failed: view?.failed !== null && view?.failed !== undefined,
+      yes: typeof view?.setting === 'string' ? view.setting : null, pins,
+    };
   }
 
   // finishSetup's writer: the project's own context, in the state's queue, refused under STOP.
@@ -2163,6 +2194,7 @@ export async function startHelper({
     // The premium card's offer is the helper's own (/premium/card), never a caller's.
     if (event.kind === 'premium-card') refuse('only the helper offers the premium model\'s card');
     if (event.kind === 'premium-check') refuse('only the helper checks the premium model');
+    if (event.kind === 'premium-failed') refuse('only the helper records the premium model\'s evaluation failing');
     if (target !== undefined) checkTarget(target, event);
     const events = listEvents(stateDir(project), { report: () => {} });
     // A premium setting that allows the model comes only from a click on a card the helper offered: its offer, signed by
@@ -3765,6 +3797,7 @@ export async function startHelper({
     '/premium/card': stateRoute(doPremiumCard, { write: true }),
     '/premium/check': doPremiumCheck,
     '/premium/state': stateRoute(doPremiumState),
+    '/premium/failed': stateRoute(doPremiumFailed, { write: true }),
     // A Lean project's state has no remote, so there is nothing to pull or push.
     '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),

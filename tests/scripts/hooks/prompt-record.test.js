@@ -1652,3 +1652,20 @@ test('a premium setting that allows the model counts only when its own card made
     assert.ok(!views.unconfirmed.some((u) => u.id === forged.id), 'and it is never put to the director as a confirm card');
   });
 });
+
+test('once a Yes\'s evaluation failed, only a card offered after the failure can make a new Yes', async () => {
+  await withHome(async () => {
+    const before = '2026-10-18T04:00:00.000Z';
+    keepPremiumOffer('off', before);
+    keepPremiumOffer();
+    const failedAt = '2026-10-18T04:30:00.000Z';
+    const current = () => ({ from: 'off', after: failedAt });
+    // The card offered before the failure stands for the Yes that failed.
+    const old = fake();
+    await decide(usageClick(premiumQuestion('off', before), ALLOW_PAID), { ...deps(old), premiumIn: current });
+    assert.deepEqual(old.calls.record, []);
+    const fresh = fake();
+    await decide(usageClick(premiumQuestion(), ALLOW_PAID), { ...deps(fresh), premiumIn: current });
+    assert.equal(fresh.calls.record[0].target.data.value, 'paid-too');
+  });
+});

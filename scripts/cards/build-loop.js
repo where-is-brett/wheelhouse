@@ -3,7 +3,8 @@
 // which makes and asks them, and the board-context hook, which counts them, agree: the click the
 // merge gate waits for (a `gate-asks` record, rulings R117 and F72), a lineage hold (rulings
 // R146 and F71) and a feature whose wakes the files that steer agents hold (a `control-file`
-// record, ruling P7-13). Also the composer's input for each.
+// record, ruling P7-13), and the premium model's failed evaluation (design section 14.6). Also the composer's input
+// for each.
 import { CLICK_MS } from '../lib/core-numbers.js';
 import { namedPaths } from '../lineage/check.js';
 import { prFinished } from '../state/views.js';
@@ -58,6 +59,13 @@ export function holdsDue(views) {
 export function controlFilesDue(views) {
   return (Array.isArray(views?.controlFiles) ? views.controlFiles : [])
     .filter((r) => isRecord(r) && typeof r.id === 'string' && r.card === null && typeof r.data?.work === 'string' && Array.isArray(r.data?.paths));
+}
+
+// The premium model's failed evaluations no card has been made for yet, from the views' `premiumFailures` (design
+// section 14.6): each brings the director one card.
+export function premiumFailuresDue(views) {
+  return (Array.isArray(views?.premiumFailures) ? views.premiumFailures : [])
+    .filter((r) => isRecord(r) && typeof r.id === 'string' && r.card === null && isRecord(r.data));
 }
 
 // Whether the pull request, as the host gives it ({ headSha, state }), still waits for the click: it

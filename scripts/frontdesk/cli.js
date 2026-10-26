@@ -56,7 +56,8 @@ import { WINDOW_MS } from '../confirm/window.js';
 import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
-import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { failedInput } from '../routing/premium.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
 import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OWN_GITHUB_APP_KEY } from '../settings/catalogue.js';
@@ -338,7 +339,7 @@ async function gateStillWaits(client, cwd, entry, again) {
 // waits for, its approval or CI push card, made once, unless the host says the pull request has
 // moved on, and a CI push card asked again when its click lapsed before the push (gateAsksDue,
 // R121); and a question card for each lineage
-// hold, made once, and for each control-file record, made once. Resolves with { made, again }: how many cards were recorded, and the ids of the
+// hold, made once, for each control-file record, made once, and for the premium model's failed evaluation, made once. Resolves with { made, again }: how many cards were recorded, and the ids of the
 // cards to put back on this visit. What couldn't be made goes into `problems`.
 async function buildLoopCards({ client, cwd, views, words, now, problems }) {
   let made = 0;
@@ -378,6 +379,14 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
       made += 1;
     } catch (error) {
       problems.push(`The card for the ${record.data.work} feature's agent files wasn't made: ${error.message}`);
+    }
+  }
+  for (const record of premiumFailuresDue(views)) {
+    try {
+      await write(client, cwd, 'card', composePlain(failedInput(record), words).card);
+      made += 1;
+    } catch (error) {
+      problems.push(`The card for the premium model's failed trial wasn't made: ${error.message}`);
     }
   }
   return { made, again };

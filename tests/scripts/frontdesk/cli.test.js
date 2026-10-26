@@ -1904,3 +1904,26 @@ test('the premium model\'s card never comes from `card`', async () => {
     assert.match(refused.err, /comes from `premium-card`/);
   });
 });
+
+test('cards makes the premium model\'s failed evaluation one plain card, once, with OK or Try it again', async () => {
+  await inHome(async () => {
+    const failed = makeEvent({ kind: 'premium-failed', data: { setting: '11111111-2222-4333-8444-555555555555', model: 'model-premium', failed: ['scenario 22 trial 1 failed'] }, now: () => T(5) });
+    const helper = fakeHelper({ events: [failed] });
+    const first = await run(helper, ['cards']);
+    assert.equal(first.code, 0, first.err);
+    const cards = helper.writes().filter((w) => w.kind === 'card');
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].data.event, failed.id);
+    const [asked] = first.json.questions;
+    assert.deepEqual(asked.options.map((o) => o.label), ['OK', 'Try it again']);
+    assert.match(asked.question, /didn't pass your project's own checks/);
+    assert.match(asked.question, /nothing more is charged/);
+    assert.doesNotMatch(asked.question, /model-premium/, 'no model is named');
+    await run(helper, ['cards']);
+    assert.equal(helper.writes().filter((w) => w.kind === 'card').length, 1, 'made once');
+    // One no enrolled computer signed brings no card.
+    const forged = fakeHelper({ events: [{ ...failed, id: 'f-2', sig: { computer: failed.computer, value: 'AAAA' } }] });
+    await run(forged, ['cards']);
+    assert.equal(forged.writes().filter((w) => w.kind === 'card').length, 0);
+  });
+});
