@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -41,6 +41,7 @@ export const HEADERS = Object.freeze({
   question: 'Question',
   'keep-control-files': 'Agent files',
   usage: 'Thoroughness',
+  premium: 'Premium',
 });
 
 // The label whose click decides a kind, as the prompt record accepts it. An answer card's
@@ -71,7 +72,8 @@ export const DECIDING = Object.freeze({
 // A keep-control-files card (ruling P7-31) is one too: the files are kept only on the click on the card itself.
 // So is a usage card (design section 14.6): its switch is the setting change and the director's confirmation of it at
 // once, so only the click on the card the session start offered counts.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage']);
+// So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage', 'premium']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). STOP is lifted or it
@@ -240,6 +242,10 @@ function lineFor(kind, target) {
     if (!USAGE_LEVELS.includes(t.to) || typeof t.at !== 'string' || !ISO_MS.test(t.at)) bad('needs the Thoroughness level its switch sets and the time the card was offered');
     return usageLine(t.to, t.at);
   }
+  if (kind === 'premium') {
+    if (typeof t.at !== 'string' || !ISO_MS.test(t.at)) bad('needs the time the card was offered');
+    return premiumLine(t.at);
+  }
   // incident-fix
   if (!slug(t.incident) || !isCount(t.pr)) bad('needs an incident id and a pull request number');
   return incidentFixLine(t.incident, t.pr);
@@ -250,14 +256,15 @@ function lineFor(kind, target) {
 // the ruling's words, setup's step, the computer a trust card trusts, the project uninstall removes
 // Wheelhouse from. It names no other pull request or commit than the set line's (the project's own
 // name aside, which may look like one).
-// An answer card, a lift-STOP card, a baseline card, a usage card and a product question name nothing more:
+// An answer card, a lift-STOP card, a baseline card, a usage card, the premium model's card and a product question
+// name nothing more:
 // a baseline card's first part is the figures themselves, which may hold any words or numbers.
 // Returns what is wrong with `what` as a clause that follows "the first part", or null when it is
 // right. The card check judges a card by this too, from the set line alone: with `abbreviated`,
 // the target's commit is the twelve characters the set line holds, so a longer name for the same
 // commit still counts as it.
 export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
-  if (kind === 'question' || kind === 'usage' || kind === 'baseline' || !isPlain(target)) return null;
+  if (kind === 'question' || kind === 'usage' || kind === 'premium' || kind === 'baseline' || !isPlain(target)) return null;
   const lower = what.replace(/\s+/g, ' ').toLowerCase();
   const names = (text) => lower.includes(String(text).replace(/\s+/g, ' ').toLowerCase());
   // An id or a branch is a whole word: "ci-fix" is not named by "ci-fix-2", but is by "ci-fix.".
@@ -308,14 +315,18 @@ function offered(kind, given, { build = false, target, suggest = true } = {}) {
     if (seen.has(label)) fail(kind, 'options', `names ${label} twice`);
     seen.add(label);
     // A put-off button may leave out what it says: the card then uses the usual words.
-    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question' && kind !== 'usage';
+    const optional = (PUT_OFF.includes(label) || label === KEEP_AS_IS) && kind !== 'answer' && kind !== 'question' && kind !== 'usage' && kind !== 'premium';
     return { label, says: optional && o.says === undefined ? undefined : words(kind, 'options', o.says) };
   });
   // A usage card offers its own two options, the switch first (design section 14.6).
   if (kind === 'usage' && list.length !== 2) fail(kind, 'options', 'must be its switch and its stay option');
-  if (kind === 'answer' || kind === 'question' || kind === 'usage') {
+  // The premium model's card offers its own Allow options and Not now, which earns nothing (design section 14.6).
+  if (kind === 'premium' && (list.length < 2 || list.length > 3 || list.at(-1).label !== NOT_NOW || list.slice(0, -1).some((o) => PUT_OFF.includes(o.label)))) {
+    fail(kind, 'options', `must be its Allow options, then ${NOT_NOW}`);
+  }
+  if (kind === 'answer' || kind === 'question' || kind === 'usage' || kind === 'premium') {
     if (list.length > CARD.options) fail(kind, 'options', `must be at most ${CARD.options}: a question's own options are never dropped`);
-    const own = kind === 'answer' && build && buildOptions(list);
+    const own = (kind === 'answer' && build && buildOptions(list)) || kind === 'premium';
     for (const o of list) if (PUT_OFF.includes(o.label) && !own) fail(kind, 'options', `must not use ${o.label}, a button that puts a card off`);
     const buttons = [...list, ...(list.length < CARD.options && suggest ? [{ label: SUGGEST, says: PUT_OFF_SAYS[SUGGEST] }] : [])];
     // AskUserQuestion shows no card with fewer than two options, and the question would stall.
@@ -380,6 +391,8 @@ export function composeCard(input) {
   if (![1, 2, 3, 4].includes(level)) fail(kind, 'level', 'must be 1, 2, 3 or 4');
   // Removing Wheelhouse removes the gate, so uninstall's card is level 4 (ruling R90).
   if (kind === 'uninstall' && level !== 4) fail(kind, 'level', 'must be 4: it removes the checks that guard the project');
+  // The premium model's Yes writes its pin into the routing, a guardrail change (design section 14.6), so its card is level 4.
+  if (kind === 'premium' && level !== 4) fail(kind, 'level', 'must be 4: its Yes changes the routing table');
   const what = words(kind, 'what', input.what);
   const why = words(kind, 'why', input.why);
   const because = words(kind, 'because', input.because);

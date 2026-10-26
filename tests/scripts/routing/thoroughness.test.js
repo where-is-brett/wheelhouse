@@ -135,7 +135,8 @@ test('the premium model: thorough, feature and builderCritical only, when paid f
   for (const role of ['feature', 'builderCritical']) assert.deepEqual(r.roles[role], { model: 'model-premium', effort: 'high', fallback: 'model-top' });
   assert.deepEqual(r.roles.builder, { model: 'model-top', effort: 'high', fallback: 'model-mid' });
   assert.deepEqual(r.roles.reviewerCritical, { model: 'model-top', effort: 'xhigh', fallback: null });
-  assert.deepEqual(r.lines, []);
+  // The board says it is in use, in one line.
+  assert.deepEqual(r.lines, ['Premium model in use for design and risky work.']);
   const plan = withPremium({ premium: 'within-plan', billing: 'within-plan' });
   assert.equal(plan.roles.feature.model, 'model-premium');
 });

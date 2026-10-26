@@ -24,7 +24,7 @@ import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
 import { gateDecision } from '../gate/conditions.js';
-import { classifyChange, readConfig, CI_FILES } from '../gate/guardrails.js';
+import { classifyChange, readConfig, isModelName, CI_FILES } from '../gate/guardrails.js';
 import { scrub } from './adapter.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { readKey } from './keys.js';
@@ -66,7 +66,12 @@ import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
-import { READY_LEVELS, readiness, samePins } from '../routing/column-ready.js';
+import { READY_LEVELS, PREMIUM_LEVEL, readiness, samePins } from '../routing/column-ready.js';
+import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
+import { levelOf } from '../routing/thoroughness.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { cardHash } from '../lib/measures-clicks.js';
+import { aliasModel, FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../setup/best-model.js';
 import { BUNDLE_PATH, PROFILE_BRANCH, PROFILE_HOLDS_KEYS, holdsKeys, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
@@ -692,6 +697,9 @@ function placeFolder(cwd) {
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
 const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config', '/push', '/pull'];
 
+// Why a premium setting that allows the model is refused anywhere but from its own card's click.
+const PREMIUM_OWN_CARD = 'the premium model is allowed only by a click on its own card; anything else can only set it back to off';
+
 const NOT_MAIN_CHECKOUT = 'the foreman\'s commands run only in the project\'s main checkout';
 
 // The project whose main checkout `folder` is, for /foreman/run (ruling R156): placed from this
@@ -735,7 +743,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
-  '/survey/carry-on', '/survey/archive', '/survey/restore',
+  '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state',
 ];
 
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
@@ -873,6 +881,11 @@ export async function startHelper({
   // Each agent's review module, for the signed review in a clean session (scripts/agents/reviews.js): given an
   // agent's name, its module, or null where its reviews aren't the helper's. A test may give its own.
   reviewModules = reviewsFor,
+  // What Claude Code's premium alias stands for on this computer (scripts/setup/best-model.js), asked only after the
+  // director's Yes on the premium model's card allows it (/premium/check): a model name, or null. A test gives its own.
+  premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
+  // What its most capable alias stands for, asked in the same check to tell the premium model from it.
+  mostCapableAlias = () => aliasModel(FRONT_DESK_ALIAS, { run }),
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -1492,6 +1505,10 @@ export async function startHelper({
     }
     if (kind === 'setting') {
       try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
+      // The premium model is allowed only by a click on its own card (design section 14.6), whose setting comes with
+      // its confirmation through /state/record; here it can only be set back to off.
+      if (data.key === 'premium' && data.value !== 'off') refuse(PREMIUM_OWN_CARD);
+      if (Object.hasOwn(data, 'premiumCard')) refuse(PREMIUM_OWN_CARD);
     }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
@@ -1568,8 +1585,11 @@ export async function startHelper({
   // the sandbox's: outside the project they ask). But the repository's sandbox settings don't name the folder in their
   // denyWrite (scripts/protection/settings.js), and a process running as the director outside the sandbox could
   // rewrite both files.
+  // The premium model's pass is recorded the same way, on the configuration's two pins and the premium pin the state
+  // holds for the director's Yes (the helper's own check), with the premium model in use on Thorough's column.
   async function doColumnReady({ project, column, pins, records }, ctx) {
-    if (!READY_LEVELS.includes(column)) refuse('only Lean or Lightest is recorded ready this way');
+    if (column === PREMIUM_LEVEL) return premiumReady({ project, pins, records }, ctx);
+    if (!READY_LEVELS.includes(column)) refuse('only Lean, Lightest or the premium model is recorded ready this way');
     const record = recordOf(project);
     let config;
     try {
@@ -1580,12 +1600,120 @@ export async function startHelper({
     const held = config?.tiers?.pins;
     if (!samePins(pins, held) || Object.keys(pins).length !== 2) refuse('those pins are not the most capable and mid-sized models the project\'s configuration holds now');
     if (!Array.isArray(records) || records.length === 0) refuse('the evaluation\'s records are not named');
-    const found = readiness({ evals: evalsFolder, level: column, pins, premium: typeof held.premium === 'string' ? held.premium : null, given: records });
+    // The premium model a level's trials must never name: the pin the state holds for the director's Yes, else any the
+    // configuration names.
+    const premium = premiumPinOf(viewsNow(project).premium) ?? (typeof held.premium === 'string' ? held.premium : null);
+    const found = readiness({ evals: evalsFolder, level: column, pins, premium, given: records });
     if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
     const event = makeEvent({ kind: 'column-ready', data: { column, pins: { mostCapable: pins.mostCapable, midSized: pins.midSized }, records: found.records, commit: found.commit }, now });
     const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
+  }
+
+  // --- The premium model's opt-in (design section 14.6, "The premium model") ---
+
+  // The project's views built from its state clone now.
+  const viewsNow = (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { now });
+  // The level in force in `views`, as the waker reads it.
+  const levelIn = (views) => levelOf(effectiveSettings({ project: views?.settings ?? {}, now }));
+
+  // The premium model's card, when the front desk asks for it (the director asked, or pressed Change… on its row): at
+  // Thorough only, never on an account the helper's check found without the model (until setup runs again), and never
+  // once it is allowed with paid credits. The card is composed here and its offer recorded signed by this computer, so
+  // the prompt record counts a click only on this very card; the front desk is handed the card to ask, as it is.
+  // Called in the state's queue, refused under STOP.
+  async function doPremiumCard({ project }, ctx) {
+    if (ctx.lean) refuse('a Lean project runs on the session\'s own model');
+    // Only Claude Code's hooks sign a click on the card; on another agent it could never count, so it isn't offered.
+    let agent = 'claude-code';
+    try {
+      agent = agentOfConfig(readConfig(fs.readFileSync(path.join(recordOf(project).folder, ...CONFIG_FILE.split('/')), 'utf8')), { computerId: computerId() });
+    } catch { /* an unreadable configuration names no other agent */ }
+    if (agent !== 'claude-code') return { ok: true, offered: false, why: 'The premium model can be allowed only from Claude Code, where your click on its card can be recorded.' };
+    const views = viewsNow(project);
+    const why = premiumRefusal({ level: levelIn(views), view: views.premium });
+    if (why !== null) return { ok: true, offered: false, why };
+    const at = now().toISOString();
+    const from = views.premium?.value === 'within-plan' ? 'within-plan' : 'off';
+    const { question } = composeCard(premiumInput({ from, at }));
+    const event = makeEvent({ kind: 'premium-card', data: { at, from, hash: cardHash(question) }, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await freshViews(() => writeViews(project, { now }));
+    return { ...written({ event, result }), offered: true, line: `${PREMIUM_ASK}${JSON.stringify(question)}.${PREMIUM_DO}` };
+  }
+
+  // The model a stand-in alias call names, or null when it names none that could be passed to Claude Code.
+  const aliasOf = async (ask) => {
+    try {
+      const model = await ask();
+      return isModelName(model) ? model : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // The helper's own check that the account has the premium model, after the director's Yes (design section 14.6,
+  // "Offered only where the account has it"): only for a Yes in force with no check made for it, and only where the
+  // one-reply run can't bill credits the director hasn't allowed (checkRefusal). It asks Claude Code what its premium
+  // alias and its most capable alias stand for, outside the state's queue since that takes a while, and compares the
+  // two, never a pin in the project's configuration, which an agent could edit. Where either names nothing (Claude Code
+  // signed out, say), nothing is recorded and the Yes stands, to be checked again. Otherwise it records what it found as
+  // the Yes's premium-check, signed here, which no caller can write: the model it found is the premium pin, and the
+  // premium alias naming the most capable model means the account doesn't have it. Refused under STOP.
+  async function doPremiumCheck({ project }, ctx) {
+    if (ctx.lean) refuse('a Lean project runs on the session\'s own model');
+    if (stopped()) return STOP_REFUSAL;
+    const before = await oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, ctx);
+      return viewsNow(project).premium;
+    });
+    const why = checkRefusal(before);
+    if (why !== null) return { ok: true, checked: false, why };
+    const named = await aliasOf(premiumAlias);
+    const top = named === null ? null : await aliasOf(mostCapableAlias);
+    if (named === null || top === null) return { ok: true, checked: false, why: 'Claude Code couldn\'t say which models your account has just now, so try again in a while' };
+    return oneAtATime(`state:${project}`, async () => {
+      if (stopped()) return STOP_REFUSAL;
+      await ensureStateClone(project, ctx);
+      const view = viewsNow(project).premium;
+      if (view?.setting !== before.setting || checkRefusal(view) !== null) return { ok: true, checked: false, why: 'the premium setting changed meanwhile, so nothing was recorded' };
+      const found = foundPremium(named, top);
+      const event = makeEvent({ kind: 'premium-check', data: { setting: view.setting, model: named, found }, now });
+      const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+      await freshViews(() => writeViews(project, { now }));
+      return { ...written({ event, result }), checked: true, found, model: found ? named : null };
+    });
+  }
+
+  // The premium model's pass (doColumnReady): only for the premium pin the helper's own check found for the Yes in
+  // force, beside the configuration's two pins now, on the evaluation's records, read and checked here.
+  async function premiumReady({ project, pins, records }, ctx) {
+    let config;
+    try {
+      config = readConfig(fs.readFileSync(path.join(recordOf(project).folder, ...CONFIG_FILE.split('/')), 'utf8'));
+    } catch {
+      refuse('the project\'s configuration can\'t be read, so its pins aren\'t known');
+    }
+    const pin = premiumPinOf(viewsNow(project).premium);
+    if (pin === null) refuse('the premium model has no pin: it is allowed and checked only through its own card');
+    const held = { mostCapable: config?.tiers?.pins?.mostCapable, midSized: config?.tiers?.pins?.midSized, premium: pin };
+    if (!samePins(pins, held, PREMIUM_LEVEL) || Object.keys(pins).length !== 3) refuse('those pins are not the configuration\'s two and the premium pin the state holds now');
+    if (!Array.isArray(records) || records.length === 0) refuse('the evaluation\'s records are not named');
+    const found = readiness({ evals: evalsFolder, level: PREMIUM_LEVEL, pins: held, given: records });
+    if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
+    const event = makeEvent({ kind: 'column-ready', data: { column: PREMIUM_LEVEL, pins: held, records: found.records, commit: found.commit }, now });
+    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await freshViews(() => writeViews(project, { now }));
+    return written({ event, result });
+  }
+
+  // What the evaluation's premium run may run on (design section 14.6, "Two Yeses"): the premium setting in force and
+  // the premium pin the helper's check found for it. The run itself refuses anything but a Yes with paid credits, since
+  // Wheelhouse can't tell beforehand whether a run within the plan would be paid from them.
+  async function doPremiumState({ project }) {
+    const view = viewsNow(project).premium;
+    return { ok: true, value: typeof view?.value === 'string' ? view.value : 'off', pin: premiumPinOf(view) };
   }
 
   // finishSetup's writer: the project's own context, in the state's queue, refused under STOP.
@@ -2024,8 +2152,19 @@ export async function startHelper({
     if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
+    // The premium card's offer is the helper's own (/premium/card), never a caller's.
+    if (event.kind === 'premium-card') refuse('only the helper offers the premium model\'s card');
+    if (event.kind === 'premium-check') refuse('only the helper checks the premium model');
     if (target !== undefined) checkTarget(target, event);
     const events = listEvents(stateDir(project), { report: () => {} });
+    // A premium setting that allows the model comes only from a click on a card the helper offered: its offer, signed by
+    // this computer, must be in the state (the prompt record checked the card itself).
+    if (target?.kind === 'setting' && target.data.key === 'premium' && target.data.value !== 'off') {
+      const at = target.data.premiumCard;
+      if (typeof at !== 'string' || !events.some((e) => e.kind === 'premium-card' && e.data?.at === at && e.computer === computerId() && verify(e, readEnrolled()))) {
+        refuse(PREMIUM_OWN_CARD);
+      }
+    }
     const held = events.filter((e) => e.id === event.id);
     if (held.length > 0 && !held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('another event in the state carries this record\'s id, so it was not recorded');
     // The confirmed event goes first, once, even when its confirmation is there already: a kept
@@ -3615,6 +3754,9 @@ export async function startHelper({
     '/lean/copy': doLeanCopy,
     '/state/record': signedIn(stateRoute(doRecord)),
     '/state/column-ready': stateRoute(doColumnReady, { write: true }),
+    '/premium/card': stateRoute(doPremiumCard, { write: true }),
+    '/premium/check': doPremiumCheck,
+    '/premium/state': stateRoute(doPremiumState),
     // A Lean project's state has no remote, so there is nothing to pull or push.
     '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
       ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),

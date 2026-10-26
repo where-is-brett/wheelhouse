@@ -184,6 +184,14 @@ export function usageLine(level, at) {
 }
 export const USAGE_LINE = /^Switch Thoroughness to (lightest|lean|balanced|thorough), as the usage card of ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z) offers$/;
 
+// The line on the premium model's card (design section 14.6): the time the helper offered it, which its signed
+// premium-card record keeps, so a click on one of its Allow options stands for that offer and no other. The option
+// clicked says which: within the plan, or paid credits too. The click is the director's confirmation itself.
+export function premiumLine(at) {
+  return `Set the premium model as the premium card of ${at} offers`;
+}
+export const PREMIUM_LINE = /^Set the premium model as the premium card of ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z) offers$/;
+
 // A reply code: four characters of CODE_ALPHABET, the first eight bytes of the SHA-256 of a set
 // line read as one number and written in base 30, so one line always has one code and the codes
 // come out evenly. A card shows it as replyCodeLine(code).
@@ -206,7 +214,8 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
 // setup's line for a step, its line for the rules found, the baseline card's line, the trust
-// card's line, uninstall's line, the line keeping a feature's files that steer agents and a usage card's line.
+// card's line, uninstall's line, the line keeping a feature's files that steer agents, a usage card's line and the
+// premium model card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
@@ -225,6 +234,7 @@ export const SET_LINES = [
   new RegExp(UNINSTALL_LINE.source, 'm'),
   new RegExp(KEEP_CONTROL_LINE.source, 'm'),
   new RegExp(USAGE_LINE.source, 'm'),
+  new RegExp(PREMIUM_LINE.source, 'm'),
 ];
 
 // Every set line a question carries, in the order the patterns are listed.

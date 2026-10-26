@@ -9,6 +9,8 @@ import { BAR, BAR_TRIALS, PINS_VARIABLE, fileHash, levelRouting, pinsFrom, readi
 import { tempFolder } from '../../helpers/homes.js';
 import { barRun, PINS, trialRecord } from '../../helpers/ready-records.js';
 
+const PREMIUM_PINS = Object.freeze({ ...PINS, premium: 'model-premium' });
+
 test('the pins come from the shell, as two model names and nothing else, and are refused in plain words otherwise', () => {
   assert.deepEqual(pinsFrom({ [PINS_VARIABLE]: JSON.stringify(PINS) }), PINS);
   for (const env of [{}, { [PINS_VARIABLE]: '' }, { [PINS_VARIABLE]: 'not json' }, { [PINS_VARIABLE]: '{"mostCapable":"model-top"}' },
@@ -24,7 +26,37 @@ test('a level\'s routing is the waker\'s column at that level, ready, for Lean a
   assert.equal(lean.roles.builder.model, 'model-mid');
   const lightest = levelRouting({ level: 'lightest', pins: PINS });
   assert.deepEqual(lightest.roles.feature, { model: 'model-mid', effort: 'high', fallback: 'model-top' });
-  for (const level of ['balanced', 'thorough', 'premium', undefined]) assert.throws(() => levelRouting({ level, pins: PINS }), /Lean or Lightest/);
+  for (const level of ['balanced', 'thorough', undefined]) assert.throws(() => levelRouting({ level, pins: PINS }), /Lean, Lightest or the premium model/);
+  // The premium pass: Thorough's column with the premium model for design and critical work, at high.
+  assert.throws(() => levelRouting({ level: 'premium', pins: PINS }), /all three/);
+  const premium = levelRouting({ level: 'premium', pins: PREMIUM_PINS });
+  assert.deepEqual(premium.roles.feature, { model: 'model-premium', effort: 'high', fallback: 'model-top' });
+  assert.deepEqual(premium.roles.builderCritical, { model: 'model-premium', effort: 'high', fallback: 'model-top' });
+  assert.equal(premium.roles.reviewerCritical.model, 'model-top');
+  assert.equal(premium.extra.secondReviewer, true);
+});
+
+test('the premium pass takes three pins from the shell, the premium model never another class\'s', () => {
+  assert.deepEqual(pinsFrom({ [PINS_VARIABLE]: JSON.stringify(PREMIUM_PINS) }, 'premium'), PREMIUM_PINS);
+  for (const pins of [PINS, { ...PINS, premium: 'model-top' }, { ...PREMIUM_PINS, more: 'x' }]) {
+    assert.throws(() => pinsFrom({ [PINS_VARIABLE]: JSON.stringify(pins) }, 'premium'), new RegExp(PINS_VARIABLE));
+  }
+});
+
+test('the premium pass is ready on a full set of its own trials, on all three pins, and a level\'s trials never count for it', () => {
+  const evals = tempFolder('eval-ready-');
+  barRun(evals, { level: 'premium', pins: PREMIUM_PINS });
+  const ready = readiness({ evals, level: 'premium', pins: PREMIUM_PINS });
+  assert.equal(ready.ok, true, ready.gaps.join('; '));
+  assert.equal(readiness({ evals, level: 'premium', pins: { ...PREMIUM_PINS, premium: 'model-other' } }).ok, false);
+  assert.equal(readiness({ evals, level: 'lean', pins: PINS }).ok, false);
+  const leanOnly = tempFolder('eval-ready-');
+  barRun(leanOnly, { level: 'lean' });
+  assert.equal(readiness({ evals: leanOnly, level: 'premium', pins: PREMIUM_PINS }).ok, false);
+  // A Lean trial naming the premium model still fails Lean's bar.
+  const named = tempFolder('eval-ready-');
+  barRun(named, { level: 'lean', record: (r) => ({ ...r, models: [...r.models, 'model-premium'] }) });
+  assert.match(readiness({ evals: named, level: 'lean', pins: PINS, premium: 'model-premium' }).gaps.join('; '), /names the premium model/);
 });
 
 test('the bar is the feature-session scenarios, three trials each', () => {

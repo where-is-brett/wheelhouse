@@ -27,11 +27,13 @@ export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
 // its click is kept on this computer, as a setup click is. A keep-control-files card asks to keep a
 // feature's files that steer agents as they are now (ruling P7-31), so the watcher wakes it again. A
 // usage card offers a Thoroughness switch (design section 14.6); the session start composes it, and
-// the click on its switch is the setting change and the director's confirmation of it at once.
+// the click on its switch is the setting change and the director's confirmation of it at once. The
+// premium model's card offers its separate opt-in (design section 14.6); the helper composes it, and
+// the click on one of its Allow options is the premium setting and the director's confirmation of it.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
   'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall', 'question',
-  'keep-control-files', 'usage',
+  'keep-control-files', 'usage', 'premium',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 // Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.

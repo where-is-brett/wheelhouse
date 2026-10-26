@@ -14,7 +14,7 @@ import { AGENTS } from '../agents/names.js';
 import { isModelName } from '../gate/guardrails.js';
 import { EFFORTS } from '../routing/thoroughness.js';
 import { promptWithColumn, roleOf } from '../routing/in-force.js';
-import { READY_LEVELS } from './ready.js';
+import { RUN_LEVELS, PREMIUM_LEVEL } from './ready.js';
 
 const VARIANTS = ['with', 'without'];
 
@@ -503,8 +503,9 @@ export function describeRun({ id, variant, pass, why, usage }) {
 // The command line of `npm run eval`: scenario ids (24, or one leg, 27-route), or one of --all
 // (every suite), --suite <name> or --again (what the last run marked); --variant and --trials
 // with ids, --all or --suite; --agent <name>, one of AGENTS, the agent whose sessions run them; --level <lean|lightest>,
-// the Thoroughness level whose column the feature sessions start on (never Thorough or premium). Or --ready
-// <lean|lightest> --project <name> alone: the readiness step after a level's run (scripts/eval/ready.js).
+// the Thoroughness level whose column the feature sessions start on (never Thorough), or --level premium --project
+// <name>, the premium model's pass, which only the director's Yes for that project allows. Or --ready
+// <lean|lightest|premium> --project <name> alone: the readiness step after a level's run (scripts/eval/ready.js).
 // `all`, `suite`, `again`, `agent`, `level`, `ready` and `project` are in the answer only when given.
 export function parseArgs(argv) {
   const ids = [];
@@ -550,11 +551,11 @@ export function parseArgs(argv) {
       agent = value;
     } else if (arg === '--level') {
       value ??= argv[++i];
-      if (!READY_LEVELS.includes(value)) throw new Error(`--level takes lean or lightest, not ${value}`);
+      if (!RUN_LEVELS.includes(value)) throw new Error(`--level takes lean, lightest or premium, not ${value}`);
       level = value;
     } else if (arg === '--ready') {
       value ??= argv[++i];
-      if (!READY_LEVELS.includes(value)) throw new Error(`--ready takes lean or lightest, not ${value}`);
+      if (!RUN_LEVELS.includes(value)) throw new Error(`--ready takes lean, lightest or premium, not ${value}`);
       ready = value;
     } else if (arg === '--project') {
       value ??= argv[++i];
@@ -578,13 +579,14 @@ export function parseArgs(argv) {
     if (project === null) throw new Error('--ready needs --project <name>: the project whose state records the level ready');
     return { ids: [], variants, trials, ready, project };
   }
-  if (project !== null) throw new Error('--project goes only with --ready');
+  if (level === PREMIUM_LEVEL && project === null) throw new Error('--level premium needs --project <name>: the project whose director allowed the premium model');
+  if (project !== null && level !== PREMIUM_LEVEL) throw new Error('--project goes only with --ready or --level premium');
   if (again && level !== null) throw new Error('--again runs what the last run marked, at its own level: give it no --level');
   const ways = [ids.length > 0 && 'scenario numbers', all && '--all', suite !== null && '--suite', again && '--again'].filter(Boolean);
   if (ways.length > 1) throw new Error(`Give one of scenario numbers, --all, --suite or --again, not ${ways.join(' and ')}`);
   if (again && chose) throw new Error('--again chooses its own variants and trials: give it no --variant or --trials');
   if (!ways.length) throw new Error('Name at least one scenario number, or --all, --suite <name> or --again, for example: npm run eval -- 24 --variant with');
-  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}), ...(level !== null ? { level } : {}) };
+  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}), ...(level !== null ? { level } : {}), ...(project !== null ? { project } : {}) };
 }
 
 // The local date, as the evaluations folder names a day's folder.

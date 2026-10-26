@@ -81,8 +81,9 @@ test('the helper refuses anything short of the bar, says why, and writes nothing
         // A failed trial, though the caller leaves it out and names a later pass in its place.
         [{}, /scenario 22 trial 1 failed/],
         // Not Lean or Lightest.
-        [{ column: 'thorough' }, /only Lean or Lightest/],
-        [{ column: 'premium' }, /only Lean or Lightest/],
+        [{ column: 'thorough' }, /only Lean, Lightest or the premium model/],
+        // The premium model's pass needs the premium pin the state holds, never the configuration's.
+        [{ column: 'premium' }, /the premium model has no pin/],
         // Pins that aren't the configuration's now.
         [{ pins: { ...PINS, midSized: 'model-other' } }, /pins are not/],
         [{ pins: { ...PINS, premium: 'model-best' } }, /pins are not/],

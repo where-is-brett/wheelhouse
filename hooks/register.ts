@@ -26,7 +26,7 @@
 // phone (`bridge`); every other origin never reaches the bridge. A press counts as the
 // director's under the origin `pane`, which only a button's press handler sends.
 import type { Register, EngineInterface, PromptSubmitInput, SessionRateLimit, SessionCost } from 'claude-code'
-import { ask, send, FAILED, type Answer } from './mod/ask'
+import { ask, send, FAILED, NODE_MISSING, nodeNotFound, type Answer } from './mod/ask'
 import { drawPane, openPane, startPane, turnEnded, turnStarted } from './mod/pane'
 import { keepOut, KEPT_OUT, ownWords } from './mod/messages'
 
@@ -120,6 +120,9 @@ export const register: Register = on => {
       } catch {
         // The next measure sends it again.
       }
+      // With no Node.js no hook runs, so every tool call is refused with a shell's error; this is
+      // the one place Wheelhouse can say why in plain words.
+      if (nodeNotFound()) $.ui.toast(NODE_MISSING)
     })()
     try {
       await startPane($, e)

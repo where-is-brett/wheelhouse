@@ -454,6 +454,43 @@ test('a usage-card record says which card, when, the allowance week, the levels 
   });
 });
 
+test('a premium-card record says when, from which setting, and the hash of the card shown, signed', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    // Signed by the helper, so no session can write an offer a click would count against.
+    assert.equal(PLAIN_KINDS.includes('premium-card'), false);
+    assert.equal(PROTECTED_KINDS.includes('premium-card'), true);
+    const data = { at: '2026-10-26T01:00:00.000Z', from: 'off', hash: 'ab'.repeat(32) };
+    const made = makeEvent({ kind: 'premium-card', data });
+    assert.deepEqual(made.data, data);
+    assert.ok(verify(made, readEnrolled()));
+    assert.doesNotThrow(() => makeEvent({ kind: 'premium-card', data: { ...data, from: 'within-plan' } }));
+    for (const bad of [null, { ...data, at: '26 October' }, { ...data, at: '2026-10-26T01:00:00Z' }, { ...data, from: 'paid-too' }, { ...data, from: undefined }, { ...data, hash: 'ab' }, { ...data, extra: 1 }]) {
+      assert.throws(() => makeEvent({ kind: 'premium-card', data: bad }), /premium-card event/, JSON.stringify(bad));
+    }
+  });
+});
+
+test('a premium-check record names the Yes it checks for, the model the alias named and whether it is a premium model, signed', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    // Signed by the helper, from its own reading, so no session can name the premium pin.
+    assert.equal(PLAIN_KINDS.includes('premium-check'), false);
+    assert.equal(PROTECTED_KINDS.includes('premium-check'), true);
+    const data = { setting: '11111111-2222-4333-8444-555555555555', model: 'model-premium', found: true };
+    const made = makeEvent({ kind: 'premium-check', data });
+    assert.deepEqual(made.data, data);
+    assert.ok(verify(made, readEnrolled()));
+    assert.doesNotThrow(() => makeEvent({ kind: 'premium-check', data: { ...data, model: null, found: false } }));
+    assert.doesNotThrow(() => makeEvent({ kind: 'premium-check', data: { ...data, model: 'model-top', found: false } }));
+    for (const bad of [null, { ...data, setting: 'p-1' }, { ...data, model: '--flag' }, { ...data, found: 'yes' }, { ...data, model: null }, { ...data, extra: 1 }, { setting: data.setting, model: null }]) {
+      assert.throws(() => makeEvent({ kind: 'premium-check', data: bad }), /premium-check event/, JSON.stringify(bad));
+    }
+  });
+});
+
 test('a lineage-lift record says when, and which holds it lifts', async () => {
   await withHome(() => {
     assert.equal(PLAIN_KINDS.includes('lineage-lift'), true);

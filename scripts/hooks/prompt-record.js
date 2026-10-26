@@ -42,6 +42,9 @@
 // start offered, whose line names an offer the state holds, it earns the setting, made here, and its signed
 // confirmation, which carries it, as a Confirm click on the setting's confirm card would confirm it. Its other
 // option earns nothing. It has no reply code.
+// The premium model's card offers its separate opt-in (design section 14.6): on the card the helper offered, whose line
+// names a signed offer the state holds, a click on one of its Allow options earns the premium setting that option names,
+// made here, and its signed confirmation, in the same way. Not now and its other buttons earn nothing. No reply code.
 import fs from 'node:fs';
 import path from 'node:path';
 import tools from '../../adapters/claude-code/tools.js';
@@ -61,7 +64,7 @@ import {
 } from '../state/card-lines.js';
 import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE,
+  TRUST_LABEL, TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords,
@@ -70,6 +73,7 @@ import { setupRecordsOf } from '../lib/setup-writes.js';
 import { settingWords } from '../settings/effective.js';
 import { switchLabelOf } from '../routing/nudge.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
+import { premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -252,13 +256,51 @@ function usageOf(project, question, label, shown, now, ready) {
   return { made: confirmationFor(target), target };
 }
 
+// The records a click on the premium model's card earns (design section 14.6; the director's rulings of 24 October
+// 2026): the card carries one set line, the premium card's, naming the time of an offer the state holds, signed by this
+// computer's own enrolled key (the helper's); the card is the very card that offer names by its hash, so a card
+// reworded, its cost left out, earns nothing; the label is one of that offer's Allow options, which says the setting
+// (within the plan, or paid credits too: a Yes of its own, never read from the other); the offer is under a day old;
+// the premium setting in force is still the one the offer was made from (`current`, from the views); and no setting in
+// the state, or waiting in pending/, came from that offer yet. The setting is made here, naming the offer, and goes
+// with its confirmation. Null for anything else, Not now among them.
+function premiumClickOf(project, question, label, shown, now, current) {
+  const lines = setLinesOf(question);
+  const m = lines.length === 1 ? PREMIUM_LINE.exec(lines[0]) : null;
+  if (!m) return null;
+  const at = m[1];
+  const hash = cardHash(shown);
+  if (hash === null || shown.question !== question) return null;
+  const enrolled = readEnrolled();
+  const own = computerId();
+  const offers = new Set(held(project, 'premium-card')
+    .filter((e) => e.data?.at === at && e.data?.hash === hash && e.computer === own && e.sig?.computer === own && verify(e, enrolled))
+    .map((e) => e.data.from));
+  if (offers.size !== 1) return null;
+  const [from] = [...offers];
+  const value = premiumValueOf(from, label);
+  if (value === null) return null;
+  const age = now().getTime() - Date.parse(at);
+  if (!(age >= 0 && age < PREMIUM_CARD_MS)) return null;
+  if (current({ project }) !== from) return null;
+  if ([...held(project, 'setting'), ...pendingSettings(project)].some((e) => e.data?.premiumCard === at)) return null;
+  const target = makeEvent({ kind: 'setting', data: { key: 'premium', value, premiumCard: at, words: settingWords('premium', value) }, now });
+  return { made: confirmationFor(target), target };
+}
+
+// The premium setting in force for `project` as the last sync's views hold it, or null when they can't be read.
+function premiumNow({ project }) {
+  const value = localViews(project, ['premium'])?.premium?.value;
+  return typeof value === 'string' ? value : null;
+}
+
 // Works out the signed record a click earns, if any. May ask the helper for a
 // pull request's head. Returns { made, profile?, lift? }, or null. A Lift STOP earns nothing
 // while STOP is off, so an old card's click or reply code can't stand for a later STOP. A reply
 // passes `shownAt`, when its card was shown: its Lift STOP earns a record only when the card was
 // shown after this STOP began, so a code from a card about an earlier STOP can't lift a later one. A usage card's
 // switch gives `target` too, the setting its confirmation carries.
-export async function earned({ project, question, label, card, client, now, left, stopState = defaultStopState, shownAt, ready = columnsReadyOf }) {
+export async function earned({ project, question, label, card, client, now, left, stopState = defaultStopState, shownAt, ready = columnsReadyOf, premiumIn = premiumNow }) {
   const action = (data) => ({ made: { kind: 'action', data: { ...data, question, label } } });
   // A card with an answer line is a question card: its buttons are answers, whatever else it says.
   if (question.includes('Answer question q-')) {
@@ -267,6 +309,7 @@ export async function earned({ project, question, label, card, client, now, left
   }
   // `card` is the question as AskUserQuestion was given it; a reply or a pane press has none, so earns nothing here.
   if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, card, now, ready);
+  if (setLinesOf(question).some((line) => PREMIUM_LINE.test(line))) return premiumClickOf(project, question, label, card, now, premiumIn);
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];
@@ -592,9 +635,10 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     if (typeof q?.question !== 'string' || q.multiSelect === true || !Array.isArray(q.options)) continue;
     if (carrying.has(q.question)) continue;
     const line = setLineOf(q.question);
-    // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card and a usage card
-    // have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line)) continue;
+    // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card, a usage card and the
+    // premium model's card have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on
+    // the card itself counts.
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -610,7 +654,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
 // On an agent whose hooks only read (`writeVia: 'helper'`), nothing here runs: no click is signed, kept or sent,
 // and `earned` is never asked. Such an agent's chat click is recorded by the helper (/cards/chat-click), unsigned
 // and naming its proof (rulings P5-12, P5-17).
-export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, writeVia = 'self' } = {}) {
+export async function decide(input, { client, now = () => new Date(), projectOf: find = projectOf, dir, budget = BUDGET_MS + helperGrace(), liftStop = defaultLift, stopState, ready, premiumIn, writeVia = 'self' } = {}) {
   if (writeVia !== 'self') return undefined;
   if (input.tool_name !== tools.ask) return undefined;
   const answered = clicks(input);
@@ -665,7 +709,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   for (const click of out) {
     if (!click.signable || setupAsked.has(click.question)) continue;
     try {
-      const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }) });
+      const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }), ...(premiumIn === undefined ? {} : { premiumIn }) });
       if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.

@@ -24,7 +24,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE,
+  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -60,6 +60,7 @@ function targetOf(line) {
   if ((m = UNINSTALL_LINE.exec(line))) return { kind: 'uninstall', target: { project: m[1], hash: m[2] } };
   if ((m = KEEP_CONTROL_LINE.exec(line))) return { kind: 'keep-control-files', target: { work: m[1], hash: m[2] } };
   if ((m = USAGE_LINE.exec(line))) return { kind: 'usage', target: { to: m[1], at: m[2] } };
+  if ((m = PREMIUM_LINE.exec(line))) return { kind: 'premium', target: { at: m[1] } };
   return null;
 }
 
