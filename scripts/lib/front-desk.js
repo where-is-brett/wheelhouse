@@ -18,6 +18,11 @@ export const SCREEN_SETTLE_MS = 5000;
 // session has no scratchpad (ruling F85): git ignores `.wheelhouse/`, and the local settings let
 // the front desk write this file without asking. Relative to the project's folder.
 export const FRONT_DESK_INPUT = '.wheelhouse/front-desk.json';
+// Where the front desk writes a work's report or brief, `<id>.md` (the intake's bug route), and the
+// local settings' rule that lets it write those files without asking: Markdown files directly in the
+// folder, nothing below it or beside it. Relative to the project's folder.
+export const WORK_REPORTS = '.wheelhouse/work/';
+export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 
 // What a card is about: the cards with a set line, and the one without. A baseline card reads
 // the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it

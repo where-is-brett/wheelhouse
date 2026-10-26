@@ -85,6 +85,8 @@ import { MAIN_MOVED } from '../lean/store.js';
 import { keepRunningModel, modelOfInput } from '../lib/front-desk-model.js';
 
 const SELF = fileURLToPath(import.meta.url);
+// The script that brings this computer's settings for a project up to date, run detached.
+const LOCAL_REFRESH_SCRIPT = path.join('scripts', 'setup', 'local-refresh.js');
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const TOTAL_MS = 8000;
@@ -603,6 +605,8 @@ export async function decide(input, deps = {}) {
     background = startBackground, lineage: check = checkLineage, lineageRoot, claudeHome, env = process.env,
     guardedSelfTest = selfTest, run = runProgram, lowNodeReady: copyReady = lowNodeReady,
   } = deps;
+  // Brings this computer's settings for the project up to date, as a process of its own.
+  const refreshLocal = deps.refreshLocal ?? ((folder) => startDetached(spawn, path.join(pluginRoot, LOCAL_REFRESH_SCRIPT), [folder]));
   // Makes the copy of Node.js the Guarded runner starts from, detached, outside this budget.
   const startLowNodeCopy = deps.startLowNodeCopy ?? (() => startDetached(spawn, path.join(pluginRoot, LOW_NODE_SCRIPT)));
   const found = find(input.cwd, { dir });
@@ -626,6 +630,16 @@ export async function decide(input, deps = {}) {
   // Each call may take no longer than the budget that is left.
   const clientNow = () => given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
 
+  // This computer's settings for the project, once setup's step 7 has written them, as step 7 would write them now:
+  // after an update, the allow rules for the Wheelhouse command name the new version's folder, and those for the
+  // old one go (scripts/setup/local-refresh.js), in a process of its own: the mod's bridge imports this file, and
+  // nothing it imports may reach what writes Claude Code's settings. Not while setup's journal can't be read, nor
+  // in a Lean project, which setup's step 7 never wrote. It informs: a failure leaves the file as it was.
+  if (trouble === null && found.lean !== true && (setup === null || stepDone(setup.run, 7)) && typeof found.record?.folder === 'string') {
+    try {
+      refreshLocal(found.record.folder);
+    } catch { /* left as it was */ }
+  }
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) notes.push(OLD_CLAUDE_CODE);
   // While this folder's setup run is open and has not yet installed the kits (step 7), kits not

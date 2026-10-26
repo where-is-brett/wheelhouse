@@ -29,7 +29,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { ATTRIBUTION_OFF, frontDeskCommand } from '../protection/settings.js';
 import { helperAddress } from '../lib/paths.js';
-import { FRONT_DESK_INPUT } from '../lib/front-desk.js';
+import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../lib/front-desk.js';
 import { briefHash } from '../feature/files.js';
 import { reload, toolSheetLines } from '../hooks/session-start.js';
 import { HEADINGS, briefingIn, cardsDue, cardsLine } from '../hooks/board-context.js';
@@ -74,7 +74,7 @@ function allowRules(plugin) {
       allow.push(`Read(/${at.split(path.sep).join('/')}/**)`);
       const command = frontDeskCommand(at);
       const flagged = frontDeskCommand(at, { noSystemCa: true });
-      if (command !== null) allow.push(`Bash(${command}:*)`, `Bash(${flagged}:*)`, `Edit(/${FRONT_DESK_INPUT})`);
+      if (command !== null) allow.push(`Bash(${command}:*)`, `Bash(${flagged}:*)`, `Edit(/${FRONT_DESK_INPUT})`, WORK_REPORTS_RULE);
     }
   }
   try {
