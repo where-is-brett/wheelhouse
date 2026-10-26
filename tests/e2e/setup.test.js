@@ -434,6 +434,61 @@ test('the description\'s card refuses a hand-back and a first question, records 
   }
 });
 
+// Any answer can be changed (the director's ruling of 26 October 2026, design section 15.1): before
+// its step runs, by its own card again, after which the one card comes back with the change; once a
+// step has acted on it, a card offering what changing it takes, never a flat no.
+test('an answer changed before its step runs comes back on the one card; one changed after offers what it takes', { skip: SKIP }, async () => {
+  const { a } = fresh();
+  try {
+    await a.start();
+    await a.sessionStart();
+    // Go ahead on the one card, then setup stops after step 4 has settled on no live data.
+    await follow(a, { answer: byId(NEW_ANSWERS), through: 4 });
+    // The director meant live data after all: step 7 hasn't saved it, so its own card is asked again,
+    // and step 4 settles again on the new answer.
+    const { choices } = await a.cli('choices');
+    const live = choices.find((c) => c.about === 'live data');
+    assert.deepEqual([live.key, live.chosen, live.acted], ['4.live-data', LIVE_DATA.no, false]);
+    const host = choices.find((c) => c.about === 'GitHub or GitLab');
+    assert.equal(host.acted, true, 'step 3 has made the repository');
+    const { asks } = await a.cli('change', '4.live-data');
+    assert.deepEqual(asks.map((x) => x.id), ['live-data']);
+    await a.click(asks[0].card, LIVE_DATA.yes);
+    // The Go ahead's choice no longer holds, so the one card comes back, with the change on it.
+    const again = (await a.cli('resume')).plan;
+    assert.equal(again.step, 0);
+    assert.match(again.ask.card.question, /Agents use test data only, to be safe\./);
+    await a.click(again.ask.card, 'Go ahead');
+    const redone = await follow(a, { answer: byId(NEW_ANSWERS), through: 7 });
+    assert.deepEqual(shape(redone), [[4, 'settled'], [5, 'settled'], [6, 'covered'], [7, 'covered']]);
+    assert.equal((await a.setupRun()).changes.filter((c) => c.step === 4 && c.kind === 'answer').at(-1).after.liveData, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(a.folder, '.claude', 'wheelhouse.json'), 'utf8')).liveData, true);
+
+    // Once step 7 has saved it, changing it is offered as a reviewed change after setup.
+    const after = await a.cli('change', '4.live-data');
+    assert.match(after.asks[0].id, /^redo-live-data-/);
+    assert.match(after.asks[0].card.question, /saved in the project's settings now/);
+    await a.click(after.asks[0].card, 'Change it after setup');
+    // The host, once step 3 has made the repository: Set up again, or Keep it.
+    const moved = await a.cli('change', '3.host');
+    assert.deepEqual(moved.asks[0].card.options.map((o) => o.label), ['Set up again', 'Keep it']);
+    await a.click(moved.asks[0].card, 'Keep it');
+    assert.equal((await a.cli('resume')).setUpAgain, undefined);
+    // Real users, after step 3: the phase changes at once with the click.
+    const real = await a.cli('change', '3.real-users');
+    await a.click(real.asks[0].card, REAL_USERS.yes);
+    const views = await a.act(() => a.client.state.views({ project: SLUG }));
+    assert.equal(views.views.settings?.phase?.value ?? views.views.settings?.phase, 'launched');
+
+    // At the end, the change asked for after setup goes to the front desk, in the director's words.
+    const log = await follow(a, { answer: byId(NEW_ANSWERS) });
+    assert.deepEqual(log10(log).requests, ['Change the project\'s settings to say it has no live data.']);
+    assert.deepEqual(a.refused, []);
+  } finally {
+    await a.cleanup();
+  }
+});
+
 test('a second computer joins, and its records count on the first only after Trust it', { skip: SKIP }, async () => {
   const { clock, host, a } = fresh();
   const b = makeComputer(host, clock, { name: 'Cafe Menu' });

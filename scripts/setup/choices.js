@@ -158,7 +158,11 @@ export function oneCard({ folder, list, product, platform, toRun, count }) {
   const name = product?.name ?? productName(folder);
   const lines = [];
   if (toRun.includes(3) && product && product.isNew === false) lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
-  for (const c of list) {
+  // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
+  // description, then Apple signing.
+  const rank = ({ id }) => ['join', 'host', 'connection', 'real-users', 'live-data', 'locked', 'product-', 'apple-apps']
+    .findIndex((p) => id === p || id.startsWith(p.endsWith('-') ? p : `${p}-`));
+  for (const c of [...list].sort((x, y) => rank(x) - rank(y))) {
     const readme = describedBy(c);
     const line = readme === null ? lineOf(c, { name, platform, choices: list }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
@@ -197,13 +201,18 @@ function stepZero(answers) {
     .map(([key, a]) => ({ id: key.slice(2), ...a })).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
-// The newest Go ahead on a one card of the run, with the choices it stands for: { at, choices },
-// or null. Read from the director's signed answers and the card's asked record alone.
+// Every Go ahead on a one card of the run, oldest first, each with the choices it stands for:
+// [{ at, id, choices }]. Read from the director's signed answers and the cards' asked records alone.
+function consentsIn(runId, answers) {
+  return stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id) && a.label === GO_AHEAD).flatMap((a) => {
+    const asked = askedRecord(runId, ONE_CARD_STEP, a.id);
+    return Array.isArray(asked?.choices) ? [{ at: a.at, id: a.id, choices: asked.choices }] : [];
+  });
+}
+
+// The newest Go ahead on a one card of the run, with the choices it stands for, or null.
 export function consentIn(runId, answers) {
-  const goAhead = stepZero(answers).filter((a) => ONE_CARD_ID.test(a.id) && a.label === GO_AHEAD).at(-1);
-  if (!goAhead) return null;
-  const asked = askedRecord(runId, ONE_CARD_STEP, goAhead.id);
-  return Array.isArray(asked?.choices) ? { at: goAhead.at, id: goAhead.id, choices: asked.choices } : null;
+  return consentsIn(runId, answers).at(-1) ?? null;
 }
 
 // When Customise was last clicked on a one card of the run, or null.
@@ -224,19 +233,25 @@ export function consentHolds(consent, answers) {
   });
 }
 
-// The answers each step's plan reads: the director's own, with a holding consent's choices for the
-// questions they haven't answered since it: { answers, consent }, `consent` null when there is none
-// or it has lapsed.
+// The answers each step's plan reads: the director's own, with the newest Go ahead's choices for
+// the questions they haven't answered since it, whether or not it still holds, since steps may have
+// run on them: { answers, consent }, `consent` the Go ahead while it holds (it stands for each step's
+// Go ahead), else null.
+// A later Go ahead lists only the choices still open when it was asked, so each earlier one's stand
+// for those it alone listed.
 export function answersWithConsent(runId, { read = answersFor } = {}) {
   const own = read(runId);
-  const found = consentIn(runId, own);
-  if (!consentHolds(found, own)) return { answers: own, consent: null };
+  const all = consentsIn(runId, own);
+  if (all.length === 0) return { answers: own, consent: null };
   const answers = { ...own };
-  for (const c of found.choices) {
-    const mine = own[c.key];
-    if (!mine || !newer(mine.at, found.at)) answers[c.key] = { label: c.label, text: c.text, at: found.at };
+  for (const found of all) {
+    for (const c of found.choices) {
+      const mine = own[c.key];
+      if (!mine || !newer(mine.at, found.at)) answers[c.key] = { label: c.label, text: c.text, at: found.at };
+    }
   }
-  return { answers, consent: found };
+  const newest = all.at(-1);
+  return { answers, consent: consentHolds(newest, own) ? newest : null };
 }
 
 // The choices Customise asks now: those open and not answered since Customise was clicked, the first

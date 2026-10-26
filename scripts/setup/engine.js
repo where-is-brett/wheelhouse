@@ -92,7 +92,7 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { hide, cleanDeep } from '../lib/clean.js';
 import { pluginOnIn } from '../lib/plugin-on.js';
-import { SETUP_QUESTION_ID } from '../lib/setup-clicks.js';
+import { SETUP_QUESTION_ID, keptAnswers } from '../lib/setup-clicks.js';
 import { readJournal, startRun, markStep, addChanges, newId, applyJsonKey as journalKey, SAY_CHARS } from './journal.js';
 import { planHash, firstUnfinished, stepProgress } from './steps.js';
 import {
@@ -444,9 +444,9 @@ export function setupRoutes({
     ...ctxFor(run?.folder ?? folder, step.n, run?.id, run?.startedAt ?? now().toISOString()), answers, choicesOnly: true, say: () => {},
   });
 
-  // The choices still open in the run, read from the director's own answers.
+  // The choices still open in the run, read from the answers as the steps read them.
   async function openNow(run, folder) {
-    return openChoices({ steps: await steps(), run, answers: run ? answersFor(run.id) : {}, planOf: choicePlan(run, folder) });
+    return openChoices({ steps: await steps(), run, answers: run ? answersWithConsent(run.id).answers : {}, planOf: choicePlan(run, folder) });
   }
 
   // Whether setup is finished: the run's first unfinished step is none (the phone never counts).
@@ -486,7 +486,7 @@ export function setupRoutes({
       product = productOf(run.folder);
     } catch { /* a folder with history but no address: step 3 says so */ }
     const toRun = [3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
-    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: Object.keys(own).length });
+    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, now });
     return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: ['Setup · about 5 minutes', 'One card: the plan for this project.'] };
@@ -500,7 +500,7 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const run = runFor(folder, userHome);
     const open = await openNow(run, folder);
-    return { ok: true, choices: choiceList({ open, answers: run ? answersFor(run.id) : {}, doneOrRunning: (n) => ranOrRunning(run, n) }) };
+    return { ok: true, choices: choiceList({ open, answers: run ? answersWithConsent(run.id).answers : {}, doneOrRunning: (n) => ranOrRunning(run, n) }) };
   }
 
   // /setup/change { folder, key }: the card that changes one choice: its own card while its step
@@ -512,15 +512,15 @@ export function setupRoutes({
     if (run === null) refuse('setup has not started in this folder: ask for the one card first');
     if (finished(run)) refuse('setup is finished: the front desk changes settings from here');
     const key = String(body.key ?? '');
-    const own = answersFor(run.id);
+    const own = answersWithConsent(run.id).answers;
     const open = (await openNow(run, folder)).find((c) => c.key === key);
     // An answered description is changed by a redo card, which records its words afresh.
     if (open && !(key.startsWith('4.product-') && own[key])) return { ok: true, asks: [askChoice(run, open)] };
-    if (!Object.hasOwn(own, key) && !(key in answersWithConsent(run.id).answers)) refuse(`there is no choice ${key} in this run: run choices to see them`);
+    if (!Object.hasOwn(own, key)) refuse(`there is no choice ${key} in this run: run choices to see them`);
     const record = projectForFolder(run.folder)?.record ?? null;
     const redo = redoCard({
       key, answers: answersWithConsent(run.id).answers, name: record?.repo?.split('/').at(-1) ?? productName(run.folder), record,
-      described: readmeDescription(run.folder), count: Object.keys(own).length, stepRan: (n) => ranOrRunning(run, n),
+      described: readmeDescription(run.folder), count: keptAnswers(run.id).length, stepRan: (n) => ranOrRunning(run, n),
     });
     if (redo === null) {
       const step = Number(key.slice(0, key.indexOf('.')));

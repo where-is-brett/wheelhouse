@@ -377,7 +377,7 @@ const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
 
 // ---- The questions ----
 
-const MEANWHILE = 'Setup waits for this answer; anything installing carries on.';
+const MEANWHILE = 'Nothing runs until your Go ahead on the plan.';
 
 function realUsersAsk(name) {
   return {
