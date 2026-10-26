@@ -1239,6 +1239,63 @@ The step order is the build's: the setup commit goes up before protection is swi
 
 **The target is tested,** not assumed: a timed run on a fresh account on the Mac, and on Windows the steps that need neither administrator rights nor the host (2, 4, 6 and 9), timed by replaying the Mac run's cards for those steps to the director in their own account and timing each from the session's transcript, since a stand-in host can't run on Windows (ruling R148); the note names the two biases (the cards seen before, and steps 2 and 6 worded differently on Windows). A full Windows run waits for a Windows account that allows both. Both are held for the director's sitting (check 19, run sheet `probes/19-setup-time/run.md`).
 
+### 15.1 One recommended card (addendum, 26 October 2026; proposed, waiting for the director's yes)
+
+**Why.** The director's first real setup, on a new product on the Mac, took 36 minutes from `/wheelhouse:setup` to where it stopped, and never reached the front desk. It showed 13 cards (one twice, after the director asked "What is this?"), plus one the chat couldn't draw because it had only one button, which cost 15 minutes. The cards averaged about 140 words and the longest was 203. Two recommendations were wrong for a new product: "from my other computer" on a brand-new folder, and "Yes, live data" on a product with no users. A wrong answer couldn't be taken back, and setup then stopped at the phone test because there was no phone to hand.
+
+**The ruling** (the director, 26 October 2026). Setup opens with one short card listing the recommended choices for this project, one plain line each. **Go ahead** does all of them with no more questions, apart from what only the director can do: a sign-in, or the system's own password prompt. **Customise** goes through the choices one at a time, each on a card of a few short lines with a recommended option. The phone is an optional extra offered at the end, and never holds setup up. This is the quiet-defaults ruling (section 22) carried through to the whole of setup.
+
+**The card.** For a new product on a Mac, with GitHub's tool already signed in:
+
+> **Set up Wheelhouse for tide-tables?**
+> Here's what I recommend. It takes about 5 minutes.
+> - A new product, in a private repository on your GitHub account.
+> - Agents use your ordinary GitHub sign-in, which they can't read on this Mac.
+> - Before launch: no real users and no live data yet.
+> - On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).
+> - Wheelhouse's settings saved to the project, then its main line protected.
+>
+> - **Go ahead** (recommended): I do all of this now. You'll only be asked to sign in, or for your password.
+> - **Customise:** go through these one at a time.
+>
+> Set up Wheelhouse as recommended, 3f9c2a7b81d0
+
+The lines change with what setup finds. "Described as: '…'" is added when the README already describes the product. On Windows the connection line reads "A key for this project only, made on GitHub (you'll click Authorise and Install)". For a project already under way, the first line reads "tide-tables on GitHub, as it is" and the live-data line reads "Agents use test data only, to be safe." A line appears only when setup has a choice to make.
+
+**The recommended defaults, and why.**
+
+| Choice | Default | Why |
+|---|---|---|
+| New, or from another computer | New. "From my other computer" is recommended only when setup finds a repository of that name on the signed-in account that holds Wheelhouse's records | An empty folder is far more often a new product. Guessing from this computer being new to Wheelhouse was wrong in the director's run |
+| Real users | Not yet (so no Locked) | Most products start before launch. Customise offers Locked |
+| Host | The folder's own remote. Otherwise whichever of `gh` and `glab` is signed in. Otherwise GitHub | Use what is already there |
+| Connection | Quick on the Mac, a narrow way elsewhere | The quiet-defaults ruling (section 22, 24 October 2026) |
+| Description | The README's words when there are any. Otherwise none, with no question | The front desk can take a description later |
+| Live data | None, for a new product. Test data only, for a project already under way | A new, empty product has nothing live. For an existing one, the safe side is the default |
+| Builds that sign Apple apps | Only for a project that looks like one: the keychain stays closed | The quiet-defaults ruling. Customise can open it |
+| This computer, the project's files, protection, the health check | As section 15 lists them | Mechanisms unchanged. Only their cards go |
+| Phone | Not part of setup | Offered once after the first briefing, as optional (below) |
+
+**What still comes to the director, and why.**
+
+- **Sign-ins:** GitHub's or GitLab's in the browser when its tool isn't signed in yet. For a narrow way, also **Authorise** and **Install** on GitHub's pages. Only the director can sign in.
+- **The system's own windows:** Apple's or Git's installer when git is missing, and the password for Locked if Customise chose it.
+- **Their own unfinished work,** in a project already under way: the switch of the folder to the main line (A10), and their uncommitted changes in a file setup's commit shares. Both are about the director's own work, so setup never decides them alone. Each is one short card, and never appears for a new product.
+- **Trust it,** for another of their computers: a security decision, so it stays a click.
+- **Anything that changes the plan** after the Go ahead, such as a repository of that name already on the account: one short card for that choice alone. Nothing else is asked again.
+
+**How Go ahead works.** The card is a question card for the run as a whole. Its click is signed like any setup answer, and records every pre-empted question's answer, along with the records they make (phase, glossary entry), on the card's exact words. Its line names the hash of the choices. While those choices still hold, the helper then takes the click as the Go ahead for each step's list in turn. The playbook runs each step's plan and applies it without a card, and says one line per step. Each step still works out its own list, and each change is still recorded in the journal. A step whose list goes outside what the card covered asks its own short card. So does a step whose choices have changed (the hash no longer matches). The ten-minute limit on a click applies to the one card's click; once a step has started on it, the run carries on with that consent. *Designer's call; it goes to the review.*
+
+**Customise.** The same choices, one card each, in this order: new or from another computer (only when it could be either), real users (then Locked, on a Mac), host, connection, live data, description (typed or the README's), and Apple signing (only where it applies). Each card is a question of one line, at most two short lines under it, and two to four options with one recommended. After the last choice, the one card comes back showing the director's choices, and its Go ahead does them.
+
+**Shorter cards everywhere in setup.** A question is one sentence. Under it go at most two short lines: what it changes, and what happens meanwhile only when that isn't "nothing". "To know more, just ask." stays as the chat's standard last line (section 23.4). A card holds no versions, file paths, plugin lists or hashes beyond the checking line. Step 6's "settings of yours that weaken Standard" becomes one line on the board's health after setup, not a card.
+
+**The phone.** Step 9 leaves setup's order: the health check no longer waits for it, and setup finishes on a green board. After the first briefing comes one optional card: "Want a buzz on your phone when agents need you? About 3 minutes." with **Set it up** and **Not now**. Not now is final: it is asked again only if the director asks. It builds on the fix that makes the phone step skippable (branch `fix/one-button-cards`).
+
+**A run already part-way through.** Nothing done is undone or asked again. On the next `resume` the helper builds the one card from the choices still open and the steps still to run. Choices already answered show as plain lines, marked "chosen earlier". With nothing left to choose, the card is just the list and **Go ahead**. A per-step Go-ahead card shown and not yet clicked is replaced by the one card. A run waiting at step 9 goes straight on to the health check, and the phone is offered at the end. The journal stays at version 1: the one card's answer and its consent are new records, which an older Wheelhouse doesn't read.
+
+**The target.** From opening the session to the front desk's first briefing: 6 minutes on a computer that already has git and a signed-in host tool, and 10 minutes with a sign-in and git's installer. The director's own time (reading and clicking) is under 2 minutes. It is measured from the journal (the session's first message to the green board), on the timed run (check 19).
+
 ## 16. Open source
 
 Wheelhouse is private until its first release and open source from then (the director's decision, section 22).
