@@ -27,7 +27,7 @@ import { stateDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { scanContent } from '../state/secret-scan.js';
 import { hide } from '../lib/clean.js';
-import { REAL_USERS, LEVELS } from './host.js';
+import { REAL_USERS, LEVELS, productOf, repoName } from './host.js';
 
 export const LIVE_DATA = Object.freeze({ yes: 'Yes, live data', no: 'No live data' });
 export const SIGNS_APPS = Object.freeze({ no: 'No', yes: 'Yes, it signs apps' });
@@ -143,6 +143,15 @@ export function connectedProject(folder) {
   return { ...found, name: found.record.repo.split('/').at(-1) };
 }
 
+// The product's name as step 3 names it: its repository's for an existing project, else the folder's.
+export function productName(folder) {
+  try {
+    return productOf(folder).name;
+  } catch {
+    return repoName(folder);
+  }
+}
+
 // What a step whose answers write to the project's records gives until step 3 has set them up.
 export function waitForProject(n) {
   return { wait: PROJECT_WAIT_MS, why: `step 3 (${SETUP_TITLES[3]}) has not set up the project's records yet; step ${n}'s questions record their answers there, so they come once it has` };
@@ -230,18 +239,24 @@ export function questionsStep() {
     title: SETUP_TITLES[4],
     async plan(ctx) {
       const project = connectedProject(ctx.folder);
-      if (project === null) return waitForProject(4);
+      // The questions are asked up front, before step 3 has set up the project (design section
+      // 15.1): a look at the choices (ctx.choicesOnly, scripts/setup/choices.js) names the product
+      // as step 3 will. The step settles only once the project is set up, since its answers write to
+      // the project's records.
+      if (project === null && ctx.choicesOnly !== true) return waitForProject(4);
+      const name = project?.name ?? productName(ctx.folder);
       const answers = ctx.answers ?? {};
       const real = answers['3.real-users'];
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
-      const asked = productAsk(project.name, { described: readmeDescription(ctx.folder), realUsers });
+      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers });
       const product = answers[`4.${asked.id}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];
-      if (!live) return { ask: liveDataAsk(project.name) };
+      if (!live) return { ask: liveDataAsk(name) };
       const apple = signsAppleApps(ctx.folder) ? answers['4.apple-apps'] : null;
-      if (apple === undefined) return { ask: appleAppsAsk(project.name) };
+      if (apple === undefined) return { ask: appleAppsAsk(name) };
+      if (project === null) return ctx.choicesOnly === true ? { wait: 0, why: 'every choice of step 4 is made' } : waitForProject(4);
       return {
         settled: {
           record: {

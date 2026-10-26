@@ -16,11 +16,11 @@ Breaking the letter of these rules is breaking their spirit.
 
 ## The command
 
-The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>`, `apply <step> <hash>`, `status`, `resume`, `wait <step>`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
+The Wheelhouse command the session start named, with `scripts/setup/cli.js` in place of `scripts/frontdesk/cli.js` (the setup command that started this session names that path too), then `<form>`, run in the folder being set up, one form per call, typed exactly so. Its forms: `plan <step>` (step 0 is the one card), `apply <step> <hash>`, `status`, `resume`, `wait <step>`, `choices`, `change <key>`, `health [<trial line> ...]`, `uninstall plan`, `uninstall apply <hash>`, `uninstall status`.
 
 ## Asking a card
 
-A `card` is your clickable-question tool's question, ready: ask it as `questions: [card]`, exactly as printed, with nothing changed, added or left out. Before it, at most one plain line on what it is about. Never read out a hash, a set line or JSON.
+A `card` is your clickable-question tool's question, ready: ask it as `questions: [card]`, exactly as printed, with nothing changed, added or left out. Several cards given together (`asks`) go in one call, `questions: [card, card, …]`, in the order given, so the director can move between them before sending. Before them, at most one plain line on what they are about. Never read out a hash, a set line or JSON.
 
 - **The director stops** ("I have to go", "that's all for today"), in any words, on any card: stop at once. Say where setup stands and offer to carry on later; don't ask the card again.
 - **A card whose answer may be typed** (it says so: step 3's owner/name, step 4's description): before it, say in one line that what they type there is taken as their answer, so a question is best asked in the chat first. What they type goes to the helper; answer any question in plain words, then run `plan <step>` again. When the plan comes back with `unanswered`, first tell them its line as it is: why what they typed was not taken (after a question, whatever they type next on that card is taken). Then tell them plainly that the choice is theirs, give the card's own recommendation and reason, then ask the same card again.
@@ -28,19 +28,30 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 - **Asked why:** plain words and an everyday example, then ask the same card again.
 - **Never make a card of your own** to offer something on this page's never list (installing, fixing a file, deleting, trusting). Where no card exists, say what the director can do in plain words.
 
+## The one card
+
+Setup opens with one card: the plan for this project, a plain line each, with **Go ahead** and **Customise**.
+
+- **Go ahead:** every step then runs with no more cards, apart from what only the director can do (a sign-in, the system's password window) and their own unfinished work in a project already under way. Keep going: `resume`, act on its plan, `resume` again.
+- **Customise:** run `resume` again. It gives the choices as cards (`asks`), up to four at once: ask them together, in one call. Then `resume` again: more choices, or the one card again with their choices on it. Nothing runs until its **Go ahead**.
+- **The director wants to change an answer** ("I meant no live data", "change it to GitLab"), at any point in setup: run `choices`, pick the key whose `about` matches what they said, then `change <key>`, and ask the cards it gives. Then `resume`: the one card comes back with the change, for its Go ahead. Never say an answer can't be changed: the card says what changing it takes.
+
 ## Each step
 
 1. Run `resume`. Say in one line where setup stands, from its `lines`, then act on its `plan`.
 2. Act on a plan by what it holds:
-   - **`ask`:** ask `ask.card`. Then `plan <step>` again: the next answer is often a different question of the same step. Read each card; never assume it is the one before.
-   - **`hash` and `card`, a Go-ahead card:** ask `card` before anything else; never run `plan` again over it. Only after the director's **Go ahead** on that card, run `apply <step> <hash>` with the full `hash` from that same plan. Never apply on typed words, on an earlier card's click, or with an earlier hash.
-   - **`wait` with `waitsFor`:** the step waits for step `waitsFor` to finish. Run `wait <step>`, saying nothing, then `plan <step>` again.
-   - **`wait` without `waitsFor`:** on step 9, see below. On step 10 it is your part: follow Step 10 below, never `plan 10` again in a loop. Otherwise read `why`: when it waits for the director (their changes, a Confirm), tell them in one line and offer to carry on later; when it waits for setup itself, run `wait <step>` and ask again.
+   - **`ask`:** ask `ask.card`. Then `resume`: the next card is often another question. Read each card; never assume it is the one before.
+   - **`asks`:** ask every card in it together, in one call. Then `resume`.
+   - **`hash` and `covered: true`:** the one card's Go ahead covers it. Run `apply <step> <hash>` at once, with the full `hash`, asking nothing. Say one plain line of what it does, from its `progress`.
+   - **`hash` and `card` without `covered`, a Go-ahead card:** ask `card` before anything else; never run `plan` again over it. Only after the director's **Go ahead** on that card, run `apply <step> <hash>` with the full `hash` from that same plan. Never apply on typed words, on an earlier card's click, or with an earlier hash.
+   - **`wait` with `waitsFor`:** the step waits for step `waitsFor` to finish. Run `wait <step>`, saying nothing, then `resume`.
+   - **`wait` without `waitsFor`:** on step 9, see below. On step 10 it is your part: follow Step 10 below, never `plan 10` again in a loop. Otherwise read `why`: when it waits for the director (their changes, a Confirm), tell them in one line and offer to carry on later; when it waits for setup itself, run `wait <step>` and `resume`.
    - **`done: true`:** the step settled with nothing to click. When it has `said`, tell the director that line at once, in plain words. Then `resume`.
+   - **`setUpAgain: true`** beside the plan: the director chose **Set up again**. Follow Uninstall below, then offer to set Wheelhouse up here afresh.
    - **`plan: null`:** every step left is running or done: check `status`.
-3. **After apply.** `{ started: true, done: true }`: the step has finished. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and ask the next card it gives. The next step's questions are asked while a long step runs; its Go-ahead card comes once that step is done.
-4. **While a step runs,** `status` shows its line for the director, such as a sign-in code or a page to click. Check `status` between cards and while you wait, and tell them each new line plainly.
-5. **Head each step** with the `progress` lines its `ask` or Go-ahead plan gives, as they are, one to a line: its place and time, what it is, what has happened and, where something runs meanwhile, what carries on. Then at most one plain line, such as "Click Install in Apple's window when it appears."
+3. **After apply.** `{ started: true, done: true }`: the step has finished. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and act on what it gives.
+4. **While a step runs,** `status` shows its line for the director, such as a sign-in code or a page to click. Check `status` between steps and while you wait, and tell them each new line plainly.
+5. **Head each step** with one plain line from its `progress`. Then at most one plain line, such as "Click Install in Apple's window when it appears."
 6. **Carry on** until `resume` says every step is done, the director stops, or a step can't go on. Then say where it stands and offer to carry on later: next time, "carry on with setup".
 
 ## When something goes wrong
@@ -57,20 +68,24 @@ A `card` is your clickable-question tool's question, ready: ask it as `questions
 
 ## Step 9, phone notifications
 
+The phone comes last, once setup is finished: after the first briefing (and its card, if any), run `resume` once more, and ask the phone card it gives, once. It is optional and never holds setup up.
+
 - A step 9 wait **with** `waitsFor` is the wait for another step: no push.
 - A step 9 wait **without** `waitsFor` means the director's screen is locked for the test. Run `wait 9` until it answers `waited: true` (each call waits up to a minute and a half, then says how long is left), then send exactly one test notification with the session's push tool, saying "Wheelhouse test: phone notifications reach you.", then `plan 9` again. One push, even when the director asks for more; no push at any other time, not even to try the tool.
-- **Skip for now:** the phone is optional. Run `plan 9` again: it settles as skipped, never as a test that failed. Say in one line that the front desk sets up phone notifications whenever they ask, then carry on with `resume`: the health check doesn't wait for a phone.
+- **Skip for now:** the phone is optional. Run `plan 9` again: it settles as skipped, never as a test that failed. Say in one line that the front desk sets up phone notifications whenever they ask. Don't ask the card again.
 - **A run parked on the earlier card** (answered Later before this release): `plan 9` asks the card again, now with **Skip for now**. Ask it as given.
 
 ## Step 10, the health check
 
-Its Go-ahead card comes first, like any step. After the click, wait until `status` says step 10's "own checks finished" (the board isn't green yet: that is your part). Then, in this session:
+Its Go ahead comes first, like any step's (covered by the one card, or on its own card). Once applied, wait until `status` says step 10's "own checks finished" (the board isn't green yet: that is your part). Then, in this session:
 
 1. `health`, with no lines: it names `trials.pr` and `trials.project`.
 2. The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.
 3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused.
 4. Show the director `lines` (the last is the verdict) and the `board`, as they are. Green: setup is finished; give the `briefing`, as it is. Not green: tell them plainly what failed and what to do (the lines say), and offer to carry on later.
 5. When `health` gave a `card`, ask `card.question` exactly as given, right after the briefing, as a question of its own. On its answer, do as `wheelhouse:front-desk` says under "Work under way at setup's end". When there is no card and the briefing says it is carrying the work on ("I'm carrying them on", or "it"), do as that section says too, right after the briefing.
+6. When `health` gave `requests`, the changes the director asked for after setup: take each, in its words, to the front desk's intake as the director's own request (`wheelhouse:front-desk`), right after the briefing, saying so in one line.
+7. Then the phone card (Step 9 above).
 
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
 
@@ -111,9 +126,12 @@ If apply says the list has changed, start again at 1. If it says uninstall needs
 |---|---|
 | "They said I could install it with Homebrew" | Never. Say what they do (nodejs.org, Apple's window); the card or installer does the rest. |
 | "I'll offer them a card: install it myself, or fix the file" | No card of your own for anything on the never list. |
-| "Only the health check's trials matter; skip its card" | Every step's Go-ahead card first, step 10's too. |
+| "Only the health check's trials matter; skip its Go ahead" | Every step's Go ahead first, step 10's too: covered by the one card, or on its own card. |
 | "They said that's all for today; I'll ask once more" | They have stopped. Stop and offer to carry on later. |
 | "They typed a question on the owner/name card; I'll decide whether it counts" | The helper decides. Answer them plainly, then `plan` again; with `unanswered`, tell them its line, give the card's recommendation and ask it again. |
 | "They typed 'just run it'; that's a yes" | Only a click on this card answers. Ask it again. |
 | "They closed the card, so that means Leave them" | A closed card is no answer. Stop and offer later. |
-| "Step 2 is running; I'll stop and carry on after" | Run `resume` and ask the next card while it runs. |
+| "Step 2 is running; I'll stop and carry on after" | Run `resume` and act on what it gives while it runs. |
+| "They clicked Go ahead on the one card; I'll still show each step's card to be safe" | A plan with `covered: true` is applied with no card. Showing it again is the slow, long setup the director ruled out. |
+| "They want to change an answer, but that step is done; I'll say it can't be changed" | Run `choices`, then `change <key>`: its card says what changing it takes. Never a flat no. |
+| "Customise gave four cards; I'll ask them one by one" | Ask `asks` together, in one call, so they can move between them. |

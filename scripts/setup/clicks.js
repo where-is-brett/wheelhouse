@@ -12,7 +12,7 @@
 //                  description }] }
 //   asked/         each question a run's step last asked (ruling R30), as
 //                  <run id>-<step>-<question id>.json: { runId, folder, step, id, card, typed,
-//                  rules?, writes?, found?, at }, written by the helper when a step's plan asks
+//                  rules?, writes?, found?, choices?, at }, written by the helper when a step's plan asks
 //                  it; `typed` says whether a typed answer counts, `rules` is the list on step 5's
 //                  card of the rules found, `writes` what each answer records in the project's
 //                  state (scripts/lib/setup-writes.js), `found` what the step found, kept for the
@@ -47,8 +47,9 @@ import { eventPath } from '../state/events.js';
 import { helperClient } from '../host/helper-client.js';
 import { CLICK_FRESH_MS } from '../lib/setup-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
+import { taken } from '../hooks/pending.js';
 import {
-  HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, writeWhole, shownCard, readShown,
+  HASH, RUN_ID, EVENT_ID, SETUP_QUESTION_ID, clicksDir, usedDir, shownDir, askedDir, answersDir, recordsDir, writeWhole, shownCard, readShown,
   readAsked, uninstallShownFile, readUninstallShown, keptIn, ownSigned, keptAnswers, typedVerdict,
 } from '../lib/setup-clicks.js';
 import { isLineName } from '../state/card-lines.js';
@@ -77,16 +78,16 @@ export function shownFor(runId, step) {
 
 // Records the question a run's step asked: its id within the step, the card as the director is
 // shown it, whether a typed answer counts, and anything the step keeps with it (`rules`, `writes`,
-// `found`).
+// `found`, and for the one card, step 0, the `choices` its Go ahead stands for: scripts/setup/choices.js).
 // Asking it again replaces the record, so only an answer on the card as last asked counts.
-export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, found, now = () => new Date() }) {
+export function noteAsked({ runId, folder, step, id, card, typed = false, rules, writes, found, choices, now = () => new Date() }) {
   const asked = shownCard(card);
   if (!RUN_ID.test(String(runId)) || !Number.isInteger(step) || !SETUP_QUESTION_ID.test(String(id)) || typeof folder !== 'string' || asked === null) {
     throw new Error('An asked question needs its run, folder, step, id and card');
   }
   const record = {
     runId, folder, step, id, card: asked, typed: typed === true, ...(rules === undefined ? {} : { rules }), ...(writes === undefined ? {} : { writes }),
-    ...(found === undefined ? {} : { found }), at: now().toISOString(),
+    ...(found === undefined ? {} : { found }), ...(choices === undefined ? {} : { choices }), at: now().toISOString(),
   };
   writeWhole(path.join(askedDir(), `${runId}-${step}-${id}.json`), `${JSON.stringify(record)}\n`);
 }
@@ -229,9 +230,10 @@ const RECORD_WAIT_MS = 60 * 1000;
 // pushes the state branch (writeEvent). One whose event file is in the state clone already is
 // skipped, so it reaches the state branch once however often this runs; it runs at the end of
 // every successful apply once the project has its state, since clicks keep coming after step 7.
-// `record({ project, event })` is the helper's route, for tests. Never throws: a click the helper
+// The records the run's answers earned before the state existed go first (sendLaterRecords).
+// `record({ project, event })` and `write(body)` are the helper's routes, for tests. Never throws: a click the helper
 // could not take is counted, and sent by a later run of this.
-export async function copySetupRecords(runId, project, { record } = {}) {
+export async function copySetupRecords(runId, project, { record, write } = {}) {
   const counts = { copied: 0, skipped: 0, failed: 0 };
   if (!RUN_ID.test(String(runId))) return counts;
   const send = record ?? ((body) => helperClient({ timeout: RECORD_WAIT_MS }).state.record(body));
@@ -241,6 +243,7 @@ export async function copySetupRecords(runId, project, { record } = {}) {
   const ours = [...keptClicks(), ...keptIn(answersDir())].filter((e) => e.kind === 'action' && ['setup', 'setup-answer'].includes(e.data?.action)
     && e.data.runId === runId && typeof e.at === 'string' && Number.isFinite(Date.parse(e.at)) && ownSigned(e, me, enrolled))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  await sendLaterRecords(runId, project, { record, write });
   for (const event of ours) {
     let there = false;
     try {
@@ -258,6 +261,30 @@ export async function copySetupRecords(runId, project, { record } = {}) {
     else counts.failed += 1;
   }
   return counts;
+}
+
+// Sends the records a run's answers earned before its project had a state (the one card's, design
+// section 15.1), oldest first, removing each the helper takes or already holds. One the helper
+// refuses otherwise stays, and a later run of this tries again. `record` and `write` stand in for
+// the helper's routes in tests. Never throws.
+async function sendLaterRecords(runId, project, { record, write } = {}) {
+  let names;
+  try {
+    names = fs.readdirSync(recordsDir()).filter((n) => n.startsWith(`${runId}_`) && n.endsWith('.json')).sort();
+  } catch {
+    return;
+  }
+  const client = () => helperClient({ timeout: RECORD_WAIT_MS });
+  for (const name of names) {
+    const file = path.join(recordsDir(), name);
+    try {
+      const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (kept?.runId !== runId || !kept.body || typeof kept.body !== 'object') continue;
+      const body = { project, ...kept.body };
+      const got = kept.route === 'write' ? await (write ?? ((b) => client().state.write(b)))(body) : await (record ?? ((b) => client().state.record(b)))(body);
+      if (taken(got)) fs.rmSync(file, { force: true });
+    } catch { /* tried again by a later run of this */ }
+  }
 }
 
 // Gives a used click back, when the step it was used for could not be started.

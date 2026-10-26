@@ -437,7 +437,7 @@ function hostAsk(name) {
 // The join question (ruling R77), asked first in a folder holding only step 1's install. `missed`
 // is why it is asked again: { name, missed }, where `missed` is 'none', the repositories found
 // when there were several, or 'not-a-name' for typed text that names no repository.
-function joinAsk(id, name, { profile, missed }) {
+function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
   if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
@@ -454,10 +454,10 @@ function joinAsk(id, name, { profile, missed }) {
         { label: NEW_PRODUCT, says: 'Setup makes a private repository for it and connects this folder to it.' },
         { label: other, says: `Setup finds ${name} on your account or organisations, with Wheelhouse's records, and checks it out into this folder.` },
       ],
-      recommend: profile ? NEW_PRODUCT : other,
-      because: profile
-        ? 'this computer is already set up with Wheelhouse, so an empty folder is most likely a new product'
-        : 'this computer is new to Wheelhouse, so an empty folder is most likely a product from your other one',
+      // An empty folder is far more often a new product, whether or not this computer knows
+      // Wheelhouse yet (the director's first setup, design section 15.1).
+      recommend: NEW_PRODUCT,
+      because: 'an empty folder is most often a new product',
       meanwhile: MEANWHILE,
     },
   };
@@ -519,7 +519,7 @@ function joinChoice(ctx) {
   for (;;) {
     const id = tried.length === 0 ? 'join' : `join-${digest(tried)}`;
     const got = ctx.answers?.[`3.${id}`] ?? null;
-    if (got === null) return { ask: joinAsk(id, name, { profile: fs.existsSync(profileFile()), missed: tried.at(-1) }) };
+    if (got === null) return { ask: joinAsk(id, name, { missed: tried.at(-1) }) };
     if (got.label === NEW_PRODUCT) return null;
     if (typeof got.text === 'string') {
       const wanted = repoNamed(got.text);
@@ -1534,6 +1534,9 @@ export function hostStep({
           }
         }
       }
+      // Every choice is made: a look at the choices alone (scripts/setup/choices.js) stops here, before
+      // anything is read from the host.
+      if (ctx.choicesOnly === true) return { wait: 0, why: 'every choice of step 3 is made' };
       const mode = way === WAYS.quick ? 'quick' : 'narrow';
       const base = product.base ?? DEFAULT_GITLAB;
       const { signedIn, user } = await signInStatus({ host, run, base });

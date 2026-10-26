@@ -5,8 +5,10 @@
 // notifications, and Claude skips a push while the director is at the computer, so the test is
 // sent with the screen locked. Only a session can push, so the playbook sends it; the engine sees
 // only the answers and the wait. The step has no Go ahead (ruling R32). It waits for step 6, which
-// switches that push option on, and for step 8, whose password window card A's locked screen would
-// cover (`after: [6, 8]`, ruling R70): until both are done, nothing is asked or settled.
+// switches that push option on, for step 8, whose password window card A's locked screen would
+// cover (ruling R70), and for the health check: the phone is offered once setup is finished, after
+// the first briefing (`after: [6, 8, 10]`, design section 15.1). Until all three are done, nothing
+// is asked or settled. A joining computer has no health check, so it waits for steps 6 and 8 only.
 //
 //
 // 1. With no Ready yet, it asks the card of plain steps, ending with the screen locked until the
@@ -130,7 +132,7 @@ export function notifyStep({ pushResult = () => phonePushResult(), settledBefore
   return {
     n: PUSH_TEST_STEP,
     title: SETUP_TITLES[PUSH_TEST_STEP],
-    after: [6, 8],
+    after: [6, 8, 10],
     async plan(ctx) {
       const answers = ctx.answers ?? {};
       const ids = idsFor(typeof ctx.runId === 'string' ? settledBefore(ctx.runId) : 0);

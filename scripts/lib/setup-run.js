@@ -112,9 +112,17 @@ export function stepDone(run, n) {
 // `steps` narrows the steps looked at; a step not on the run's own list is never unfinished.
 // A step that ran after it (a long step's next cards are asked while it runs) doesn't count.
 // Setup of a project of its own is finished only once the health check's board has been green
-// (ruling R67); a joining computer's once its own steps are done (R74).
+// (ruling R67); a joining computer's once its own steps are done (R74). Phone notifications never
+// hold setup up (design section 15.1): step 9 is offered once setup is finished, so it is never
+// the step setup waits on.
 export function firstUnfinished(run, steps = stepsFor(run)) {
-  return steps.map((s) => s.n).sort((a, b) => a - b).find((n) => !stepDone(run, n)) ?? null;
+  return steps.map((s) => s.n).filter((n) => n !== PUSH_TEST_STEP).sort((a, b) => a - b).find((n) => !stepDone(run, n)) ?? null;
+}
+
+// The order in which a run's steps are asked (the engine's next card): by number, but phone
+// notifications last, after the health check (design section 15.1).
+export function askingOrder(numbers) {
+  return [...numbers].sort((a, b) => (a === PUSH_TEST_STEP) - (b === PUSH_TEST_STEP) || a - b);
 }
 
 // Whether uninstall has closed the run (its `closedAt`, ruling R89): it is over, and what it set
@@ -122,6 +130,10 @@ export function firstUnfinished(run, steps = stepsFor(run)) {
 export function runClosed(run) {
   return typeof run?.closedAt === 'string';
 }
+
+// A setup choice's key, as `cli.js choices` lists it (design section 15.1): its step (0 for a redo
+// card's, 3 or 4 for a question's) and its question id.
+export const CHOICE_KEY = /^[034]\.[a-z0-9-]{1,40}$/;
 
 // The step that tests a push to the director's phone (Phone notifications, ruling R39).
 export const PUSH_TEST_STEP = 9;

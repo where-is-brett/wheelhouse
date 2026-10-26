@@ -99,8 +99,16 @@ import {
   noteShown, noteAsked, shownFor, freshClicks, useClick, releaseClick, answersFor, copySetupRecords, typedRefused,
 } from './clicks.js';
 import { healthCheck, finishSetup, removeTrialLeftover, closeOpenTrial } from './health.js';
-import { stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, phoneRetakeable, HEALTH_STEP, PUSH_TEST_STEP } from '../lib/setup-run.js';
+import {
+  stepDone, healthGreen, stepsFor, onRunList, joinedRepo, runClosed, phoneRetakeable, askingOrder, HEALTH_STEP, PUSH_TEST_STEP,
+} from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
+import {
+  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, answersWithConsent, customisingSince, customiseBatch, consentIn, consentHolds,
+} from './choices.js';
+import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
+import { productOf } from './host.js';
+import { readmeDescription, productName } from './questions.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -110,6 +118,8 @@ export const NEEDS_CLICK = `this step needs the director's click on its card, fr
 export const CHANGED = 'the list has changed since the card: ask for the plan again and show the new card';
 export const HOME_FOLDER = 'the folder is your home folder, or holds it, so setup does not act on it';
 export const OWN_LIST = 'the helper works out the list itself: a request names only the folder, the step and the hash on the card';
+// What the one card's Go ahead never stands for: the director's own decisions, each asked on its card.
+export const NOT_COVERED = Object.freeze(['switch', 'own-app-again']);
 // Said to the director with a card asked again because what they typed on it was not taken, by why
 // (rulings R125, R132); after a question, that whatever they type there next is taken (R135).
 export const NOT_AN_ANSWER = Object.freeze({
@@ -322,7 +332,7 @@ export async function copyRunRecords(runId, folder) {
 
 // The first step neither done nor running (`running(n)`), or null.
 function toAsk(run, steps, running) {
-  return [...steps].map((s) => s.n).sort((a, b) => a - b).find((n) => !isDone(run, n) && !running(n)) ?? null;
+  return askingOrder(steps.map((s) => s.n)).find((n) => !isDone(run, n) && !running(n)) ?? null;
 }
 
 // One line for each step of a run, then its changes, and what is next: `next`, the first step not
@@ -418,7 +428,114 @@ export function setupRoutes({
 
   // A step's ctx: with every answer the director has given to its run's questions (ruling R31),
   // and when the run started (step 1 reads the session's first message from then, ruling R76).
-  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, answers: answersFor(runId) });
+  // With a one card's Go ahead that still holds, its choices count as answered (design section 15.1).
+  const ctxFor = (folder, n, runId, startedAt) => ({ folder, step: n, runId, startedAt, now, userHome, platform, answers: answersWithConsent(runId).answers });
+
+  // ---- The one card, Customise and changing an answer (design section 15.1) ----
+
+  // Whether the one card's Go ahead holds for this run and covers a step's list: every list but a
+  // switch of the folder off a line of the director's unfinished work (A10) and a proposal of their
+  // own GitHub App again, which are the director's own to decide, each on its card.
+  const coveredByConsent = (run, changes) => run !== null && answersWithConsent(run.id).consent !== null
+    && !changes.some((c) => NOT_COVERED.includes(c?.action));
+
+  // A step's plan with a look at the choices only: its questions, taken as answered by `answers`.
+  const choicePlan = (run, folder) => (step, answers) => step.plan({
+    ...ctxFor(run?.folder ?? folder, step.n, run?.id, run?.startedAt ?? now().toISOString()), answers, choicesOnly: true, say: () => {},
+  });
+
+  // The choices still open in the run, read from the director's own answers.
+  async function openNow(run, folder) {
+    return openChoices({ steps: await steps(), run, answers: run ? answersFor(run.id) : {}, planOf: choicePlan(run, folder) });
+  }
+
+  // Whether setup is finished: the run's first unfinished step is none (the phone never counts).
+  const finished = (run) => run !== null && firstUnfinished(run) === null;
+
+  // Whether the one card is what comes next: setup isn't finished and no Go ahead on it holds.
+  const oneCardNext = (run) => !finished(run) && (run === null || answersWithConsent(run.id).consent === null);
+
+  // A question card for a choice or a redo card, composed and recorded as asked under its step.
+  function askChoice(run, { step, id, card: input, typed, writes, found }) {
+    const card = composeCard({ ...cleanDeep(input, []), kind: 'question', suggest: false }).question;
+    if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error(`Step ${step}'s card could not be cleaned as it is sent`);
+    noteAsked({ runId: run.id, folder: run.folder, step, id, card, typed: typed === true, writes, found, now });
+    return { step, id, card };
+  }
+
+  // /setup/plan with step 0: the one card, or, after Customise, the next of its cards (up to four
+  // questions at once, which the playbook asks together); { done: true } when the one card's Go
+  // ahead holds or setup is finished.
+  async function planOneCard(body) {
+    const folder = admitFolder(body.folder, { userHome });
+    let run = runFor(folder, userHome);
+    if (!oneCardNext(run)) return { ok: true, done: true };
+    const own = run ? answersFor(run.id) : {};
+    const list = await openNow(run, folder);
+    run ??= startRun({ folder, now });
+    const since = customisingSince(own);
+    const consent = consentIn(run.id, own);
+    if (since !== null && !(consent !== null && Date.parse(consent.at) > Date.parse(since))) {
+      const batch = customiseBatch(list, since);
+      if (batch.length > 0) return { ok: true, asks: batch.map((c) => askChoice(run, c)), progress: ['Setup · your choices', 'Change any of these; nothing runs until you say Go ahead.'] };
+    }
+    let product = null;
+    try {
+      product = productOf(run.folder);
+    } catch { /* a folder with history but no address: step 3 says so */ }
+    const toRun = [3, 6, 7, HEALTH_STEP].filter((n) => onRunList(run, n) && !stepDone(run, n));
+    const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: Object.keys(own).length });
+    if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
+    noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, now });
+    return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: ['Setup · about 5 minutes', 'One card: the plan for this project.'] };
+  }
+
+  // Whether step n of a run has run or is running.
+  const ranOrRunning = (run, n) => run !== null && (stepDone(run, n) || runningIn(run, n) !== null);
+
+  // /setup/choices: every choice of the run, for the director to name one to change.
+  async function choicesRoute(body) {
+    const folder = admitFolder(body.folder, { userHome });
+    const run = runFor(folder, userHome);
+    const open = await openNow(run, folder);
+    return { ok: true, choices: choiceList({ open, answers: run ? answersFor(run.id) : {}, doneOrRunning: (n) => ranOrRunning(run, n) }) };
+  }
+
+  // /setup/change { folder, key }: the card that changes one choice: its own card while its step
+  // hasn't used it, else a redo card offering what changing it takes (scripts/setup/redo.js).
+  async function changeRoute(body) {
+    if (Object.keys(body).some((k) => !['folder', 'key'].includes(k))) refuse('a change names the folder and the choice\'s key, nothing else');
+    const folder = admitFolder(body.folder, { userHome });
+    const run = runFor(folder, userHome);
+    if (run === null) refuse('setup has not started in this folder: ask for the one card first');
+    if (finished(run)) refuse('setup is finished: the front desk changes settings from here');
+    const key = String(body.key ?? '');
+    const own = answersFor(run.id);
+    const open = (await openNow(run, folder)).find((c) => c.key === key);
+    // An answered description is changed by a redo card, which records its words afresh.
+    if (open && !(key.startsWith('4.product-') && own[key])) return { ok: true, asks: [askChoice(run, open)] };
+    if (!Object.hasOwn(own, key) && !(key in answersWithConsent(run.id).answers)) refuse(`there is no choice ${key} in this run: run choices to see them`);
+    const record = projectForFolder(run.folder)?.record ?? null;
+    const redo = redoCard({
+      key, answers: answersWithConsent(run.id).answers, name: record?.repo?.split('/').at(-1) ?? productName(run.folder), record,
+      described: readmeDescription(run.folder), count: Object.keys(own).length, stepRan: (n) => ranOrRunning(run, n),
+    });
+    if (redo === null) {
+      const step = Number(key.slice(0, key.indexOf('.')));
+      const asked = (await openNow({ ...run, steps: { ...run.steps, [step]: {} } }, folder)).find((c) => c.key === key);
+      if (!asked) refuse(`${key} can't be asked again now`);
+      return { ok: true, asks: [askChoice(run, asked)] };
+    }
+    return { ok: true, asks: [askChoice(run, { step: ONE_CARD_STEP, ...redo })] };
+  }
+
+  // Step 4 settled on live data or Apple signing that the answers now say differently, and step 7
+  // hasn't used them yet: step 4 is to settle again (design section 15.1).
+  function settleStepFourAgain(run) {
+    if (run === null || !stepDone(run, 4) || ranOrRunning(run, 7)) return;
+    const settled = (run.changes ?? []).filter((c) => c?.step === 4 && c.kind === 'answer').at(-1)?.after;
+    if (stepFourDrift(settled, answersWithConsent(run.id).answers)) mark(run.id, 4, 'reset', { now });
+  }
 
   // A step's plan, checked: its list with the list's hash, or a question, a wait or a settling. A
   // plan may say a line for the director (ctx.say), kept only with a settling, as `said` (R101).
@@ -470,6 +587,7 @@ export function setupRoutes({
   // answer and done mark), never anything a step lists. A step may settle under STOP (ruling R52):
   // its done mark records answers the director already gave, and changes nothing a step lists.
   async function plan(body) {
+    if (body.step === ONE_CARD_STEP) return planOneCard(body);
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     let run = runFor(folder, userHome);
@@ -529,7 +647,12 @@ export function setupRoutes({
     }
     noteShown({ runId: run.id, folder: run.folder, step: step.n, hash: got.hash, card, now });
     mark(run.id, step.n, 'shownAt', { now });
-    return { ok: true, changes: got.changes, hash: got.hash, card, progress: progressOf(run, step.n, folder), director: hide(typeof got.director === 'string' ? got.director : '', []) };
+    // Covered by the one card's Go ahead (design section 15.1): the playbook applies it with no card.
+    const covered = coveredByConsent(run, got.changes);
+    return {
+      ok: true, changes: got.changes, hash: got.hash, card, progress: progressOf(run, step.n, folder), director: hide(typeof got.director === 'string' ? got.director : '', []),
+      ...(covered ? { covered: true } : {}),
+    };
   }
 
   async function apply(body) {
@@ -563,13 +686,16 @@ export function setupRoutes({
     if (fresh.hash !== body.hash || shownFor(run.id, step.n)?.hash !== fresh.hash) refuse(CHANGED);
     // STOP is read again at the last moment, before the click is used.
     if (stopped()) return stopRefusal;
-    const click = freshClicks({ runId: run.id, step: step.n, hash: fresh.hash, now }).find((e) => useClick(e, now));
+    // A click on this step's card, or else the one card's Go ahead while it holds and covers the list
+    // (design section 15.1), which is not used up: it stands for each step's Go ahead in turn.
+    const click = freshClicks({ runId: run.id, step: step.n, hash: fresh.hash, now }).find((e) => useClick(e, now))
+      ?? (coveredByConsent(run, fresh.changes) ? { consent: true, at: now().toISOString() } : null);
     if (!click) refuse(NEEDS_CLICK);
     const clickedAt = new Date(click.at).toISOString();
     try {
       mark(run.id, step.n, 'clickedAt', { now: () => new Date(clickedAt) });
     } catch (error) {
-      releaseClick(click);
+      if (!click.consent) releaseClick(click);
       refuse(`${title(step.n)} could not be recorded as started, so it did not start and the click can be used again: ${error instanceof Error ? error.message : 'the journal could not be written'}`);
     }
     // This attempt: its click still the step's, and not finished.
@@ -612,14 +738,19 @@ export function setupRoutes({
     }
   }
 
+  // `oneCard` says the one card comes next (design section 15.1); `setUpAgain` that the director
+  // asked to set up again, on a redo card, so the playbook takes them through uninstall first.
   async function status(body) {
     const folder = admitFolder(body.folder, { userHome });
-    const run = runFor(folder, userHome);
+    const found = runFor(folder, userHome);
+    settleStepFourAgain(found);
+    const run = found === null ? null : runById(found.id);
     // Only the steps the run has (ruling R74).
     const all = runSteps(run, await steps());
     const running = (n) => runningIn(run, n);
-    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running) };
-    return { ok: true, ...statusLines(run, all, running) };
+    if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true };
+    const again = setUpAgainAsked(answersFor(run.id)) && stepDone(run, 3);
+    return { ok: true, ...statusLines(run, all, running), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
   }
 
   // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,
@@ -633,8 +764,8 @@ export function setupRoutes({
   // at step 10's apply has no later step to retry it), and does the last thing setup does,
   // starting the foreman and giving the first briefing (`finish`). After that mark it only reads,
   // so no caller can run setup's ending again, or move what it wrote. Setup's ending is the last
-  // thing it does (ruling R70): while any other step of the run is not done (a step 10 card asked
-  // out of order waits only for steps 7 to 9), the board is not green, nothing is marked or
+  // thing it does (ruling R70): while any other step of the run but the phone is not done (a step 10
+  // card asked out of order waits only for steps 7 and 8), the board is not green, nothing is marked or
   // finished, and the trial pull request is left open, so the same lines can be handed in again
   // once that step is done. One run's requests are taken one at a time, so two can't both finish it.
   const healthQueue = new Map();
@@ -656,7 +787,7 @@ export function setupRoutes({
       let run = runById(found.id);
       if (healthGreen(run) || stopped()) return answerOf(await read(run));
       removeTrialLeftover(run.folder);
-      const before = stepsFor(run).find((s) => s.n !== HEALTH_STEP && !stepDone(run, s.n));
+      const before = stepsFor(run).find((s) => s.n !== HEALTH_STEP && s.n !== PUSH_TEST_STEP && !stepDone(run, s.n));
       if (before !== undefined) {
         const got = await read(run);
         return {
@@ -675,7 +806,9 @@ export function setupRoutes({
       try {
         await copy(run.id, run.folder);
       } catch { /* the records stay in setup's own folder; the ending goes on */ }
-      return { ...answerOf(got), ...(await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) })) };
+      // Changes the director asked for after setup (design section 15.1), for the front desk to start.
+      const requests = changeRequests(run.id, answersFor(run.id));
+      return { ...answerOf(got), ...(await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) })), ...(requests.length > 0 ? { requests } : {}) };
     });
     healthQueue.set(found.id, turn);
     try {
@@ -685,5 +818,7 @@ export function setupRoutes({
     }
   }
 
-  return { '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute };
+  return {
+    '/setup/plan': plan, '/setup/apply': apply, '/setup/status': status, '/setup/health': healthRoute, '/setup/choices': choicesRoute, '/setup/change': changeRoute,
+  };
 }

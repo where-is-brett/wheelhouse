@@ -131,7 +131,9 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       plan: post('/setup/plan'), //     { folder, step } -> { ok, changes, hash, card, director }: read-only, answered under STOP
       apply: post('/setup/apply'), //   { folder, step, hash } -> { ok, started }: only after the director's click on the card naming that hash; refused under STOP
       status: post('/setup/status'), // { folder } -> { ok, lines, next, ask }: the folder's run as plain lines, answered under STOP
-      health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing? }: step 10's board, answered under STOP
+      health: post('/setup/health'), // { folder, lines } -> { ok, green, lines, board, trials, started?, briefing?, requests? }: step 10's board, answered under STOP
+      choices: post('/setup/choices'), // { folder } -> { ok, choices }: every choice of the run (design section 15.1), answered under STOP
+      change: post('/setup/change'), //   { folder, key } -> { ok, asks }: the card that changes one choice, answered under STOP
       // Uninstall (scripts/setup/uninstall.js), naming the folder, a full path.
       uninstall: {
         plan: post('/setup/uninstall/plan'), //     { folder } -> { ok, hash, card, asks, last } | { ok, lines }: the lines, with no card, once an uninstall cut short past the trusted-keys list's removal needs a new session first (ruling R146); answered under STOP

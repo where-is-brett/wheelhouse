@@ -19,6 +19,7 @@ import { SETUP_TITLES } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import tools from '../../adapters/claude-code/tools.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
+import { CHOICE_KEY } from '../lib/setup-run.js';
 
 // ToolSearch only loads tools' schemas, so the notification tool can be loaded under STOP; it runs
 // nothing, and every tool it loads still meets this guard and the lineage hold.
@@ -116,7 +117,9 @@ export function isFrontDeskRead(command, pluginRoots, platform) {
 // director already gave (ruling R52). `health`, followed by up to MOST_TRIAL_LINES lines each as
 // the safety trials print them (scripts/lib/trial-lines.js), reads step 10's board (ruling R41); under
 // STOP the helper neither starts anything nor removes anything for it. `uninstall plan` and
-// `uninstall status` read what uninstall would put back and where it stands (ruling R90). `apply`
+// `uninstall status` read what uninstall would put back and where it stands (ruling R90). `plan 0`,
+// `choices` and `change <key>` read the one card, the choices and a choice's card (design section
+// 15.1), writing only setup's own records as `plan` does. `apply`
 // and `uninstall apply` change what their cards list, so they stay refused (ruling R91: uninstall
 // has no exception of its own, and its card says to lift STOP first), as does every other form.
 const SETUP_STEP = new RegExp(`^(?:${Object.keys(SETUP_TITLES).join('|')})$`);
@@ -125,7 +128,9 @@ function isSetupRead(command, pluginRoots, platform) {
   if (args === null) return false;
   if (args[0] === 'health') return args.length - 1 <= MOST_TRIAL_LINES && args.slice(1).every((l) => parseTrialLine(l) !== null);
   if (args[0] === 'uninstall') return args.length === 2 && ['plan', 'status'].includes(args[1]);
-  return (args.length === 1 && ['status', 'resume'].includes(args[0])) || (args.length === 2 && ['plan', 'wait'].includes(args[0]) && SETUP_STEP.test(args[1]));
+  if (args.length === 2 && args[0] === 'plan' && args[1] === '0') return true;
+  if (args.length === 2 && args[0] === 'change') return CHOICE_KEY.test(args[1]);
+  return (args.length === 1 && ['status', 'resume', 'choices'].includes(args[0])) || (args.length === 2 && ['plan', 'wait'].includes(args[0]) && SETUP_STEP.test(args[1]));
 }
 
 // A wake file as the foreman is told it: one word naming a .json file, never a flag.
