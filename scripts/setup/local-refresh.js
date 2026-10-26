@@ -21,11 +21,26 @@
 // It writes only when a key differs, so a start with nothing to do reads a few small files; a file
 // missing, unreadable or not an object, or a folder with no open run whose step 7 is done, is left
 // alone. It informs: a failure changes nothing more.
+//
+// The session start runs it as its own process, detached (`node local-refresh.js <folder>`): the mod's
+// bridge imports the session start, and nothing it imports may reach what writes Claude Code's
+// settings. Run so, it refreshes only a registered project's own main folder, and names the plugin's
+// folder itself, as the session start names the Wheelhouse command (the managed copy's recorded one
+// in a Locked project), so no argument can make it allow another folder's scripts.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { localSettings, mergeSettings, directorStatusLine, NO_SYSTEM_CA } from '../protection/settings.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { readJournal, addChanges, applyJsonKey } from './journal.js';
+import { helperAddress } from '../lib/paths.js';
+import { projectForFolder } from '../lib/projects.js';
+import { claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { pluginRoots } from '../hooks/kit.js';
+import { startedAsScript } from '../lib/started-as-script.js';
+
+const SELF = fileURLToPath(import.meta.url);
+const PLUGIN_ROOT = path.resolve(path.dirname(SELF), '..', '..');
 
 const LOCAL = path.join('.claude', 'settings.local.json');
 const COMMANDS = ['scripts/frontdesk/cli.js', 'scripts/setup/cli.js'];
@@ -97,4 +112,26 @@ export function refreshLocalSettings({ folder, address, node, pluginRoot, platfo
   if (run === null) return 0;
   for (const { key, value } of edits) applyJsonKey({ file, key, value, step: STEP, record: (c) => addChanges(run.id, [c]) });
   return edits.length;
+}
+
+// The script's own form: `folder`, a registered project's main folder. Returns the keys it wrote, or
+// null when the folder is not one.
+export function main([folder] = [], { platform = process.platform, self = SELF, pluginRoot = PLUGIN_ROOT, dir } = {}) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) return null;
+  let found;
+  try {
+    found = projectForFolder(fs.realpathSync.native(folder));
+  } catch {
+    return null;
+  }
+  if (found?.record?.folder !== folder || found.lean === true) return null;
+  return refreshLocalSettings({
+    folder, address: helperAddress({ platform }), node: process.execPath, pluginRoot: pluginRoots(dir, self, pluginRoot).at(-1), platform, claudeHome: defaultClaudeHome(),
+  });
+}
+
+if (startedAsScript(import.meta.url)) {
+  try {
+    main(process.argv.slice(2));
+  } catch { /* it informs: the file stays as it was */ }
 }

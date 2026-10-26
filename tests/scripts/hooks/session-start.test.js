@@ -36,6 +36,7 @@ import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/ev
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { startRun, markStep, addChanges, newId, closeRun } from '../../../scripts/setup/journal.js';
+import { main as refreshMain } from '../../../scripts/setup/local-refresh.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
 import { decide as toolGuard } from '../../../scripts/hooks/tool-guard.js';
 import { decide as stopGuard } from '../../../scripts/hooks/stop-guard.js';
@@ -738,31 +739,38 @@ test('the session start refreshes this computer\'s settings in a project past st
     for (let n = 1; n <= 6; n += 1) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
     const cache = '/Users/a-director/.claude/plugins/cache/wheelhouse/wheelhouse';
     const calls = [];
+    const f = fake();
     const start = (extra = {}) => decide({ cwd: folder, session_id: 's1' }, {
-      pluginRoot: `${cache}/0.1.2`, client: fake().client, spawn: fake().spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
+      pluginRoot: `${cache}/0.1.2`, client: f.client, spawn: f.spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
       pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
-      guardedSelfTest: async () => null, startLowNodeCopy: () => true, claudeHome: path.join(home, 'claude'), node: '/usr/local/bin/node',
-      refreshLocal: (args) => { calls.push(args); return false; }, ...extra,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true, refreshLocal: (given) => { calls.push(given); }, ...extra,
     });
     await start();
     assert.deepEqual(calls, [], 'not before step 7 has written them');
     markStep(setupRun.id, 7, 'doneAt', { now: () => new Date(T + 7 * 60000) });
     await start();
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].folder, folder);
-    assert.equal(calls[0].pluginRoot, `${cache}/0.1.2`);
-    assert.equal(calls[0].node, '/usr/local/bin/node');
-    // For real: 0.1.1's rules, as step 7 wrote them, give way to 0.1.2's, and the director's own stay.
+    assert.deepEqual(calls, [folder]);
+    // As the hook starts it: this copy's script, detached, given the project's folder alone (the mod's bridge
+    // imports this file, so the script that writes settings is never imported here).
+    await start({ refreshLocal: undefined });
+    const started = f.calls.spawn.find((c) => c.args[0] === path.join(`${cache}/0.1.2`, 'scripts', 'setup', 'local-refresh.js'));
+    assert.ok(started, JSON.stringify(f.calls.spawn));
+    assert.deepEqual(started.args.slice(1), [folder]);
+    assert.equal(started.opts.detached, true);
+    // The script itself, for real: 0.1.1's rules, as step 7 wrote them, give way to this copy's, and the director's own stay.
     const file = path.join(folder, '.claude', 'settings.local.json');
     const old = (script) => `Bash(node "${cache}/0.1.1/scripts/${script}/cli.js":*)`;
     fs.writeFileSync(file, `${JSON.stringify({ permissions: { allow: ['Bash(ls:*)', old('frontdesk'), old('setup')] } }, null, 2)}\n`);
-    await start({ refreshLocal: undefined });
+    const root = `${cache}/0.1.2`;
+    assert.ok(refreshMain([folder], { platform: 'darwin', pluginRoot: root, self: path.join(root, 'scripts', 'setup', 'local-refresh.js'), dir: path.join(home, 'managed') }) > 0);
     const allow = JSON.parse(fs.readFileSync(file, 'utf8')).permissions.allow;
     assert.equal(allow[0], 'Bash(ls:*)');
-    assert.ok(allow.includes(`Bash(node "${cache}/0.1.2/scripts/frontdesk/cli.js":*)`), allow.join('\n'));
+    assert.ok(allow.includes(`Bash(node "${root}/scripts/frontdesk/cli.js":*)`), allow.join('\n'));
     assert.ok(allow.includes('Edit(/.wheelhouse/work/*.md)'));
     assert.ok(!allow.some((r) => r.includes('/0.1.1/')), allow.join('\n'));
-    // A refresh that throws changes nothing else: the session start goes on.
+    // The script refreshes a registered project's own folder only.
+    for (const other of [path.join(folder, 'sub'), home, 'relative', undefined]) assert.equal(refreshMain([other], { platform: 'darwin', pluginRoot: root }), null, String(other));
+    // A refresh that throws: the session start goes on.
     assert.ok(text(await start({ refreshLocal: () => { throw new Error('disk full'); } })).length > 0);
   });
 });
