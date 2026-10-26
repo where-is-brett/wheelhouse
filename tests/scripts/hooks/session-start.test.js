@@ -725,6 +725,48 @@ test('the session start starts no watcher in a project setup is still finishing'
   });
 });
 
+// After an update, the allow rules setup's step 7 wrote name the old version's folder: the session start brings
+// this computer's settings up to what step 7 would write now, once step 7 is done here, and not before.
+test('the session start refreshes this computer\'s settings in a project past step 7, and not before', async () => {
+  await withHome(async (home) => {
+    const folder = fs.realpathSync.native(tempFolder('wh-refresh '));
+    fs.mkdirSync(path.join(folder, '.git'));
+    fs.mkdirSync(path.join(folder, '.claude'));
+    writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
+    const T = Date.parse('2026-10-19T03:00:00.000Z');
+    const setupRun = startRun({ folder, now: () => new Date(T) });
+    for (let n = 1; n <= 6; n += 1) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(T + n * 60000) });
+    const cache = '/Users/a-director/.claude/plugins/cache/wheelhouse/wheelhouse';
+    const calls = [];
+    const start = (extra = {}) => decide({ cwd: folder, session_id: 's1' }, {
+      pluginRoot: `${cache}/0.1.2`, client: fake().client, spawn: fake().spawn, platform: 'darwin', dir: path.join(home, 'managed'), stopState: () => ({ on: false }),
+      pause: async () => {}, startWaitMs: 200, background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED,
+      guardedSelfTest: async () => null, startLowNodeCopy: () => true, claudeHome: path.join(home, 'claude'), node: '/usr/local/bin/node',
+      refreshLocal: (args) => { calls.push(args); return false; }, ...extra,
+    });
+    await start();
+    assert.deepEqual(calls, [], 'not before step 7 has written them');
+    markStep(setupRun.id, 7, 'doneAt', { now: () => new Date(T + 7 * 60000) });
+    await start();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].folder, folder);
+    assert.equal(calls[0].pluginRoot, `${cache}/0.1.2`);
+    assert.equal(calls[0].node, '/usr/local/bin/node');
+    // For real: 0.1.1's rules, as step 7 wrote them, give way to 0.1.2's, and the director's own stay.
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    const old = (script) => `Bash(node "${cache}/0.1.1/scripts/${script}/cli.js":*)`;
+    fs.writeFileSync(file, `${JSON.stringify({ permissions: { allow: ['Bash(ls:*)', old('frontdesk'), old('setup')] } }, null, 2)}\n`);
+    await start({ refreshLocal: undefined });
+    const allow = JSON.parse(fs.readFileSync(file, 'utf8')).permissions.allow;
+    assert.equal(allow[0], 'Bash(ls:*)');
+    assert.ok(allow.includes(`Bash(node "${cache}/0.1.2/scripts/frontdesk/cli.js":*)`), allow.join('\n'));
+    assert.ok(allow.includes('Edit(/.wheelhouse/work/*.md)'));
+    assert.ok(!allow.some((r) => r.includes('/0.1.1/')), allow.join('\n'));
+    // A refresh that throws changes nothing else: the session start goes on.
+    assert.ok(text(await start({ refreshLocal: () => { throw new Error('disk full'); } })).length > 0);
+  });
+});
+
 // Whether setup has finished here isn't known while its journal can't be read, so the foreman,
 // the last thing setup starts, is held back (rulings R44, R67); the rest of the session start
 // goes on as in any project, and the front desk's reload says why, naming what to tell the

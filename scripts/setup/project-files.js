@@ -115,6 +115,7 @@ import { toolPath } from '../lib/host-tools.js';
 import { helperAddress, projectsDir } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { canonicalJson } from '../lib/canonical.js';
+import { keyEdits } from './local-refresh.js';
 import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
@@ -319,19 +320,6 @@ const withSection = (text) => {
   return `${text}${text.endsWith('\n') ? '' : '\n'}\n${COMPACT_SECTION}`;
 };
 const hasSection = (text) => text !== null && /^##?\s*Compact instructions\s*$/im.test(text);
-
-// The key edits that make `existing` hold `target`: each key whose value differs, as deep as both
-// sides are objects, so a list or a value is one edit and every other key stays as it was.
-function keyEdits(existing, target, prefix = []) {
-  const edits = [];
-  for (const key of Object.keys(target)) {
-    const here = [...prefix, key];
-    const has = Object.hasOwn(existing, key);
-    if (has && isObject(existing[key]) && isObject(target[key])) edits.push(...keyEdits(existing[key], target[key], here));
-    else if (!has || canonicalJson(existing[key]) !== canonicalJson(target[key])) edits.push({ key: here, value: target[key] });
-  }
-  return edits;
-}
 
 // A JSON file's changes: the whole file when it isn't there, else each key that differs.
 function jsonChanges(file, existing, target) {
