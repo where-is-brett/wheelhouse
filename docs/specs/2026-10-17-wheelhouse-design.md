@@ -397,6 +397,8 @@ The build loop is designed in `docs/specs/2026-10-18-build-loop-design.md`: one 
 
 ## 9. State: the files
 
+*Revised by section 24 (27 October 2026): records move off the state branch and the profile repository, into product documents on the normal branch and a private record on the computer. This section describes what runs until section 24 is built.*
+
 **State is written at milestones**, before acting on them: a request captured, a ruling, a dispatch, a merge, a question asked or answered. That is about 10 to 30 writes a day.
 
 **Where state lives, and how it reaches every computer.** *Designer's call.*
@@ -824,7 +826,7 @@ A short data note (`docs/data.md`, shipped with Wheelhouse since the setup plan,
 - **Transcripts** are stored on the computer, kept for 30 days (`cleanupPeriodDays`). *Designer's call.* Setup sets 30 days even over a longer period of the director's, and its card says that older transcripts are then removed for good and that uninstall can't bring them back. *Designer's call.*
 - **Remote Control:** while it's connected, the transcript is also kept on Anthropic's servers.
 - **Telemetry** stays on the computer and records counts, not content. Claude Code sends the director's email and account IDs with every figure; the receiver keeps only the session, model, kind, count and time, and one short word for where in the session the tokens went (`source`, telemetry's `query_source`, such as `main`), and the data note says nothing else is stored (check 7). The mod adds only each session's running cost and the allowance's share used. Summaries are kept for 90 days. *Designer's call.*
-- **State** lives on the project's host, on its state branch, for as long as the project does. If the repository is ever made public, the state branch's history goes public with it. That fact is on the level-4 card for changing visibility.
+- **State** (until section 24 is built) lives on the project's host, on its state branch, for as long as the project does. If the repository is ever made public, the state branch's history goes public with it. That fact is on the level-4 card for changing visibility.
 - **Optional channels** (section 13) carry links only, never content.
 
 ### 12.9 What the safety build leaves for later
@@ -1998,11 +2000,13 @@ Answered on 17 October 2026:
 | A company's certificate on Windows (HANDOVER item 16's card) | Decided 24 October 2026 by the foreman, on the director's steer that it must work for anyone and for companies alike: git uses Windows' own certificate store first, and the certificate file setup makes only when git reports that the network blocked the store's revocation check, with no question to anyone (`revocationFallback` in `scripts/host/company-ca.js`, used by every fenced git call in `scripts/lib/safe-git.js`). Still to confirm at the first Windows sitting on a company GitLab: one fetch and one push |
 | Records on a public repository (the self-hosting study, `docs/research/self-hosting-2026-10.md`) | Decided 27 October 2026 in the self-hosting work, on the director's rule that records, the board and transcripts are never pushed publicly: setup refuses, with no card, a product or profile repository the host doesn't say is private (an `internal` repository on GitHub or GitLab counts as not private, and an answer that says nothing counts as not private), before anything is made or pushed. Where a public project's records could live instead is still the director's (below) |
 | A plugin's own parts as guardrails (the same study) | Decided 27 October 2026 in the self-hosting work, from section 16's rule on safety changes: in a project whose default branch holds `.claude-plugin/plugin.json`, the plugin's manifest and marketplace, `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/` and `.lsp.json` are guardrails at the gate, read from the default branch's tree, never from the configuration. Builders may still write them. Wheelhouse's own configuration marks all of its `scripts/` and `adapters/` as a critical area, since its hooks import from nearly every folder there (section 12.4) |
+| Where records live (after the self-hosting study) | Decided 27 October 2026: the Superpowers way. Product documents (designs, plans, the board and the rulings agents follow) are ordinary files on the product's normal branch, reviewed like code; the director's private record (their words, cards, clicks, signed answers, usage, keys and feature state) stays on the computer in `~/.wheelhouse`. No state branch, no profile repository, no separate records repository; public projects must work, Wheelhouse's own included. The design is section 24; it is not built yet |
 
 **Still the director's to decide, later:**
 
 - when the first release happens (section 17.2), proposed once the pilot meets its measures;
-- where a public project's records live, so Wheelhouse can manage its own repository, and whether pull request bodies keep naming models (`docs/research/self-hosting-2026-10.md`, its questions).
+- whether pull request bodies keep naming models (`docs/research/self-hosting-2026-10.md`, its questions);
+- section 24's open questions (24.7): the board on main, the lock, a ruling's words, moving the private record, and evaluation readiness on a second computer.
 
 **In the backlog:** budget allocation (section 9.1), by the director's decision of 18 October 2026.
 
@@ -2291,3 +2295,121 @@ The run sheet, with each check's fallback and numbered steps for the Mac, about 
   - one button and a "More choices" list (it hides choices behind a press);
   - small text links under two buttons (still five things on every card);
   - choices that appear when you point at the card (a phone can't point, and nobody can see that they exist).
+
+## 24. Where records live: product documents and a private record (the October 2026 revision)
+
+*The director's ruling of 27 October 2026 (section 22), after the self-hosting study (`docs/research/self-hosting-2026-10.md`). This section is design only: nothing in it is built yet. Where it differs from sections 9, 11, 12, 15 and 21, this section wins once it is built; until then those sections describe what runs.*
+
+**The ruling.** Records go the Superpowers way:
+
+- **Product documents** are ordinary files in the product's repository, on its normal branch, reviewed like code: designs, plans, the board, and the rulings agents must follow.
+- **The director's private record** stays on the computer, in `~/.wheelhouse`, as Claude Code's transcripts do: the director's words, cards and clicks, signed answers, usage, keys and feature state.
+- **There is no `wheelhouse-state` branch and no `wheelhouse-profile` repository,** nor any separate records repository.
+- **Public projects work,** Wheelhouse's own repository included. The refusal of a repository that isn't private (section 22, built after the self-hosting study) is lifted once the parts below that remove the state branch and the profile have shipped.
+
+### 24.1 The shape
+
+- **The private record** is a local git repository per project at `~/.wheelhouse/projects/<project>/record/`. It has the same one-file-per-event layout, the same signed kinds and the same views as today's state clone, but no remote: events are committed and never pushed. Lean projects already work this way (`scripts/lean/project.js`, "kept here"), so this generalises a path that exists rather than making a new one. The sandbox keeps denying `~/.wheelhouse` to every agent, so the record is as far from agents as the state clone is today.
+- **Product documents** live under `docs/wheelhouse/` in the product's repository, in the Superpowers style (`docs/superpowers/specs/`, `docs/superpowers/plans/`):
+  - `docs/wheelhouse/designs/<work>.md`: a feature's pitch and design, the document the director approves. Its approval names its git blob hash, as the `work` record's `doc` does today.
+  - `docs/wheelhouse/plans/<work>.md`: a feature session's plan, committed on its feature branch and merged with it.
+  - `docs/wheelhouse/rulings.md`: the rulings in force, one entry each, with its id, scope and the words agents follow. It is a guardrail (section 12.4).
+  - `docs/wheelhouse/board.md`: the product's board: what is in flight, what shipped, what comes next. It holds nothing about the director's cards, clicks or usage.
+  - `docs/wheelhouse/glossary.md`: the product's own terms, for agents and readers. The director's personal glossary, the concepts they already know, stays private.
+- **Why a local git repository, not plain files:** it keeps today's guarantees for free: one file per event, never edited, ordered by time; an audit history git can show; and the views, the gate's signature checks and the watcher's reads, which all expect that layout, unchanged.
+
+### 24.2 What goes where
+
+Every kind of record Wheelhouse keeps today, and where it goes. **Borderline** marks a record that sounds private but that agents, or the gate, need.
+
+| Record today | Where it is today | Where it goes | Note |
+|---|---|---|---|
+| `request`, `idea`, `rejection` (the director's words) | state branch | private record | |
+| `ruling` (the director's words, reason, scope) | state branch | **both**: the director's words, the card and the confirming click stay private; the rule as agents follow it goes into `docs/wheelhouse/rulings.md` by a reviewed pull request | **Borderline.** Agents need the rule; the director's exact words need not go public. The card shows the wording that will be committed before the director confirms it |
+| `confirmation` (signed) | state branch | private record | It authorises the rulings pull request; the gate checks it locally |
+| `level` (decision levels, delegations) | state branch | private record | |
+| `glossary` | state branch | split: the product's terms in `docs/wheelhouse/glossary.md`; the director's known concepts private | **Borderline** |
+| `card`, `card-answer`, `asked`, `question`, `answer` actions | state branch | private record | |
+| `setting`, project settings (autonomy, efficiency, build commands on Windows, sources) | state branch | private record | |
+| `setting` `phase` (launched or not) | state branch | `.claude/wheelhouse.json` on main, as `launched: true`, by a reviewed pull request | **Borderline.** A second computer and the gate need it: it refuses Quick and decides how approvals count |
+| Personal settings (presence, briefing, hours, notifications, usage mark, board tab, known concepts) | profile repository | private record of the computer, `~/.wheelhouse/settings/` | Each computer keeps its own |
+| The own GitHub App (`own-github-app`) | profile repository | `~/.wheelhouse/settings/`, on each computer | A second computer asks once (24.3, item 3) |
+| `work` (title, lane, `doc` path and hash) | state branch | private record, with `doc` pointing at `docs/wheelhouse/designs/<work>.md` | The document itself goes on main |
+| The pitch and design | `.wheelhouse/work/` (git-ignored) or a path the front desk chose | `docs/wheelhouse/designs/` on main | Committed by its own small pull request before approval, so the approval names a commit anyone can read |
+| `approval`, `approve-work` and other signed `action` records | state branch | private record | The gate reads them locally (24.3, item 1) |
+| `review` (signed) | state branch | private record | The review's findings already go to the pull request as the reviewer's comment |
+| `feature`, `report`, `amendment`, `gate-asks`, `merge`, `dispatch` | state branch | private record | The report's prose is the pull request's body, as today |
+| `incident`, `lift-incident`, `incident-fix` | state branch | private record | |
+| `survey` (local branch names, rules quoted from transcripts) | state branch | private record | It quotes the director's own sentences, so it never goes public |
+| `activity`, `premium-*`, `usage-card`, `column-ready` | state branch | private record | `column-ready` becomes per computer (24.3, item 8) |
+| `lineage-hold`, `lineage-lift`, `control-file`, `control-file-lift` | state branch | private record | |
+| `note`, `blocker`, `risk`, `decision` | state branch | private record | |
+| Enrolments (other computers' public keys) | profile repository | gone | Records never cross computers, so no key needs trusting (24.3, item 3) |
+| Weekly backups of state | profile repository | gone | 24.3, item 4 |
+| The lock and its fencing counter | `wheelhouse-lock` branch | an open question (24.7, question 2) | It holds a computer id and a counter, nothing of the director's |
+| Keys, trusted keys, usage counts, the baseline, setup's journal and clicks, pending records, STOP | `~/.wheelhouse` | unchanged | Already private |
+| Feature files (`.wheelhouse/feature/`: brief, status, questions, report) | each worktree, git-ignored | unchanged | The brief's rulings now come from `docs/wheelhouse/rulings.md` |
+| Lean's record (`.wheelhouse/record/*.jsonl` on main) | the product's main | ideas, card lines and clicks into the private record; rulings and designs into `docs/wheelhouse/` | Today it puts the director's words on main; that ends (24.3, item 7) |
+
+### 24.3 What breaks, and what replaces it
+
+Ranked by how much depends on it.
+
+1. **Signed clicks and the merge gate's trust in them.** Today the gate counts a signed approval, review or confirmation from any enrolled computer, because records from every computer meet on the state branch. With a private record, the gate reads only this computer's record. **Replacement:** the gate is unchanged in what it checks, but it checks the local record only. A project is driven from one computer at a time (item 2), so every click the gate needs is on that computer. The phone keeps working, since Remote Control talks to a session on that computer. What goes is a click made in another computer's session counting here; that computer's foreman can't merge for this one. The planted-record defence holds: a file committed to main that looks like an approval counts for nothing, because the gate reads approvals only from the private record and verifies their signatures against this computer's own key.
+2. **The helper's and watcher's state.** The helper clones, syncs and pushes the state branch; the watcher syncs it every 30 seconds; every merge pulls it first (`stateFresh`). **Replacement:** the record is opened, never cloned; `state.sync` becomes a no-op as it already is for Lean; the push rules for the state branch, its secret scan on push, its server-side protection and `productBranchOn`'s guard (ruling R34) go. Writing an event still runs the secret scan, since a secret in the private record could still be copied out by mistake. Views, the watcher's event wakes and the foreman's reads are unchanged, because they read the local layout already.
+3. **A second computer joining (rulings R77, R80, R81).** R77 finds the project by its state branch and clones state; R80 and R81 publish and trust other computers' keys through the profile. **Replacement:**
+   - *Finding the project:* the repository whose default branch holds `.claude/wheelhouse.json`, Wheelhouse's own committed file, on the director's account or organisations. The folder is checked out in place as today.
+   - *What it brings:* the product documents, which are on main, so agents on the second computer follow the same rulings, designs and board. The director's private record stays on the first computer: the second computer starts its own, empty, and its first briefing says so in one line.
+   - *Keys:* each computer signs and checks only its own records, so R80's **Trust it** card and R81's hourly fetch of enrolments are retired, with the profile's `enrolments/`.
+   - *The own app:* the second computer finds it on GitHub by its name ("Wheelhouse <account>") and the director confirms it once there.
+   - *Handing over:* moving a project to another computer is "set up there, then let it drive"; whether the lock still guards two computers at once is question 2.
+4. **A lost computer.** Today the state survives on the host and weekly bundles survive in the profile. **Replacement:** the product documents survive on the host, so the project carries on from any other computer, set up as a joining one. The director's private record is lost with the computer, as its transcripts are; a computer backup (Time Machine, or Windows' File History) brings it back. The runbook's step 2, cutting the connection's access, is unchanged. Its step 4, restoring state from the profile's backup, is retired. The design says this plainly in the data note.
+5. **Uninstall.** Today it offers cards to delete the state branch and the profile repository. **Replacement:** those cards go. The product documents stay, since they are the product's own files, and uninstall's pull request leaves `docs/wheelhouse/` in place. The private record gets one level-4 card, **Keep it** recommended, as a deleted transcript can't come back. The lock branch (if kept) gets a card like the state branch's today.
+6. **Locked.** Locked reads registered projects' folders and denies `~/.wheelhouse` to agents; neither changes. The private record sits under the same denial. Nothing breaks; a joining Mac that asks the Locked question reads `launched` from `.claude/wheelhouse.json` instead of the state's `phase`.
+7. **Copilot's Lean and Middle.** Helper Lean already keeps state locally, but its copy folder fetches the state branch, and the git-alone playbook commits the director's ideas and rulings, verbatim, to main. **Replacement:** the copy folder keeps `main` only; the git-alone playbook writes ideas and card lines to a git-ignored `.wheelhouse/record/` and rulings and designs to `docs/wheelhouse/`, the same files as every other project, and Lean's "the record never goes to the host" becomes "the private record never goes to the host" with product documents on main like code. Middle drops its state branch like any host project. Moving Lean to Middle no longer pushes a record branch.
+8. **The evaluation's assumptions.** The stand-in helper already keeps events in memory, and judges read them there, so most scenarios are untouched. What changes: the end-to-end tests that seed or read a `wheelhouse-state` branch on a stand-in host (state-and-host, safety's check 11, Copilot Lean's copy); safety's check 11 becomes "an approval or ruling committed to main by hand changes nothing"; `column-ready` is recorded per computer, so a second computer runs `--ready` for itself, or trusts the first computer's result only by a reviewed line in `.claude/wheelhouse.json` (question 5). Scenarios that write designs use `docs/wheelhouse/designs/`.
+9. **Lineage.** Holds and lifts are local files and private events already; provenance is on the pull request; release and undo are pull requests. Nothing breaks.
+10. **Everything else that reads the state branch.** The survey's list of Wheelhouse's own lines, setup's list of Wheelhouse branches, the board's "no state yet" line, the audit report (reads the record, unchanged), and the data note. Each loses the state branch's name, no more.
+11. **Rulings agents follow.** Today a brief's rulings come from the rulebook view, at `act start`. **Replacement:** they come from `docs/wheelhouse/rulings.md` on the default branch's commit, read by the helper as it reads `.claude/wheelhouse.json`, so an agent can't write its own. A ruling takes effect when its pull request merges; the director's confirmation authorises that pull request, and the gate needs it, since the file is a guardrail.
+
+### 24.4 The director's experience after the change
+
+**What they keep:** every card, briefing, click and approval works as it does now, on the computer they use; nothing about their words, clicks or usage is ever on the host, even for a public project; their product's designs, plans, rulings and board are in the repository, readable on the host's website and by anyone they share it with, and they survive a lost computer.
+
+**What they lose:** their history (past cards, answers, briefings) doesn't follow them to another computer, as Claude Code's transcripts don't; a second computer starts fresh, though the product documents are there; there is no Wheelhouse backup off the computer, so a computer backup is what keeps the private record; a ruling takes effect when its small pull request merges, a few minutes after the click rather than at once; and the **Trust it** card, which they would have seen once per computer, goes.
+
+**In plain words for the briefing:** "Your product's plans and rules are kept with its code, where anyone working on it can read them. What you say to me and what you click stays on this computer, like your chats with Claude."
+
+### 24.5 Migration for projects already set up
+
+For a project set up on v0.1.x (the director's own included, part-way through setup or finished):
+
+1. **Nothing is deleted without a card.** The state branch, the lock branch and the profile repository stay where they are until the director clicks.
+2. **On the first session start after the update,** the helper imports the state branch's events into the new private record, keeping each event's id, verifying each signed one against this computer's trusted keys as the backup restore does today, and skipping any it already holds. The profile's settings and own-app record are imported into `~/.wheelhouse/settings/`. Nothing is pushed.
+3. **One "Move Wheelhouse's records" pull request** puts the product documents on main: the rulings in force (from the confirmed rulings) into `docs/wheelhouse/rulings.md`, approved designs into `docs/wheelhouse/designs/`, and a first `board.md`. It is a guardrail change, so it needs the director's approval like any other; its card says in plain words what will become readable in the repository, and that the director's own words are not in it.
+4. **Then two cards,** each at level 4 with **Keep it** recommended for now: delete the `wheelhouse-state` branch (its history stays in git's own copies on each computer until they're tidied), and delete the profile repository (opened on the host's settings page for the director's own click). A project shared with another computer offers neither until every computer has imported.
+5. **A setup part-way through** carries on with the new steps: no state branch is made and no profile repository is created; any made already are handled by steps 2 to 4.
+6. **A second computer of an old project** imports the same way; ids that are already there are skipped, so the two imports never double anything.
+
+### 24.6 Rough size, and what ships first
+
+| Part | What | Size |
+|---|---|---|
+| 1 | The private record: every project kept here; the state branch's clone, sync, push rules and protection removed; setup stops making it; the gate reads locally | Large: the helper, setup and many tests |
+| 2 | The profile gone: personal settings and the own app on the computer; enrolments, **Trust it** and the weekly backup retired; setup's step 3 and uninstall trimmed | Medium |
+| 3 | Product documents: `docs/wheelhouse/` with designs, plans, rulings (a guardrail, read by the helper from the default branch) and the board; the front desk writes there; briefs read rulings from the file | Medium to large: the intake, the front desk, the foreman |
+| 4 | Joining by `.claude/wheelhouse.json`, a lost computer, uninstall's cards, the runbook, `launched` in the configuration | Medium |
+| 5 | Migration from v0.1.x | Medium |
+| 6 | Copilot's Lean and Middle, the evaluation's end-to-end tests, the data note and the design | Medium |
+
+**What can ship first:** parts 1 and 2 together end every push of a record, so with them the refusal of a public repository is lifted, and Wheelhouse can be set up on its own repository. Part 5 must ship in the same release as parts 1 and 2 for anyone already set up. Part 3 can follow: until it ships, rulings and designs stay in the private record, so agents still get them in their briefs, only not as files on main. Parts 4 and 6 can follow in any order.
+
+### 24.7 Open questions
+
+Each is for the director, with a recommendation; meanwhile nothing is built.
+
+1. **The board on main.** *Recommended:* each feature's pull request adds its own line to `board.md` (shipped, or in flight), so the board moves with the code and needs no pull requests of its own. *Or:* the foreman opens a small board pull request at milestones. *Or:* keep the board private, and put only designs, plans and rulings on main.
+2. **The lock.** It guards against two computers driving one project at once, and holds only a computer id and a counter. *Recommended:* keep the `wheelhouse-lock` branch, which holds nothing of the director's, and say so in the data note. *Or:* drop it, and rely on the director driving each project from one computer at a time. (Mapping the code for this section found no path that takes the lock in real use today, so merges outside the tests may be refused until it is mended: worth a look whichever way this goes.)
+3. **A ruling's words on main.** *Recommended:* the rule as agents follow it, worded by the front desk and shown on the card before it is committed; the director's exact words stay private. *Or:* commit the director's own words, quoted.
+4. **Moving the private record to another computer.** *Recommended:* not now; a computer backup covers a lost computer, and product documents cover a second one. *Or:* an export and import command, done by the director, in a later part.
+5. **Evaluation readiness on a second computer.** *Recommended:* each computer runs its own readiness check, since models and Claude Code versions can differ by computer. *Or:* the first computer's result is written into `.claude/wheelhouse.json` by a reviewed pull request and trusted everywhere.
