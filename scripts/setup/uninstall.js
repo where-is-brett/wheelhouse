@@ -1165,9 +1165,13 @@ export function uninstallRoutes({
   const planFor = (folder) => uninstallPlan({ folder, userHome, platform, run });
   const openRunOf = (folder) => readJournal().runs.filter((r) => typeof r?.folder === 'string' && !runClosed(r) && keyOf(realOr(r.folder)) === keyOf(folder)).at(-1) ?? null;
   // Marks a finished last uninstall's record as having stopped the helper; true when this call did.
-  const claimStop = (folder) => {
+  // `seen` is the record an answer was made from: the stop is claimed only when that record gave
+  // the end, so an answer saying it still runs never stops the helper, even when the process
+  // finished while that answer was being made.
+  const claimStop = (folder, seen) => {
     const record = readProgress(folder);
-    if (record?.state !== 'done' || record.helperStops !== true || record.helperStoppedAt !== undefined) return false;
+    const ends = (r) => r?.state === 'done' && r.helperStops === true && r.helperStoppedAt === undefined;
+    if (!ends(record) || (seen !== undefined && (!ends(seen) || seen.clickedAt !== record.clickedAt))) return false;
     writeProgress(folder, { ...record, helperStoppedAt: now().toISOString() });
     clearTimeout(lingering);
     return true;
@@ -1284,7 +1288,7 @@ export function uninstallRoutes({
       const { state, refused, pages = [] } = record;
       const answer = { ok: true, lines, uninstall: { state: runningNow(record, now) || state !== 'running' ? state : 'stuck', lines: record.lines ?? [], pages, ...(refused ? { refused } : {}) } };
       // The answer that gives a finished last uninstall stops the helper once it is sent.
-      return claimStop(folder) ? { ...answer, helperStops: true } : answer;
+      return claimStop(folder, record) ? { ...answer, helperStops: true } : answer;
     }
     return { ok: true, lines: planLines(await planFor(folder), folder, userHome) };
   }
