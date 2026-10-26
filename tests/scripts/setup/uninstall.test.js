@@ -1695,6 +1695,37 @@ test('a finished last uninstall nobody asks about stops the helper a while after
   });
 });
 
+test('a last uninstall that finishes while its status is being answered stops the helper only after an answer giving its end', async () => {
+  await withHome(async () => {
+    const user = fs.realpathSync.native(tempFolder('wh-user '));
+    const folder = path.join(user, 'Projects', 'Shop');
+    fs.mkdirSync(folder, { recursive: true });
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+    // The process is started but never runs here: the test writes how it ends, at the moment
+    // status has read the record as running and is still working out its answer.
+    let finishing = false;
+    const now = () => {
+      if (finishing) {
+        finishing = false;
+        writeProgress(folder, { ...readProgress(folder), state: 'done', helperStops: true, finishedAt: READY().toISOString() });
+      }
+      return READY();
+    };
+    const routes = uninstallRoutes({ now, userHome: user, platform: 'darwin', run: launchEnv({}), spawn: () => ({ on() {}, unref() {} }) });
+    const shown = await routes['/setup/uninstall/plan']({ folder });
+    removeIt('Shop', shown.hash);
+    await routes['/setup/uninstall/apply']({ folder, hash: shown.hash });
+    finishing = true;
+    const during = await routes['/setup/uninstall/status']({ folder });
+    assert.equal(during.uninstall.state, 'running');
+    assert.equal(during.helperStops, undefined, 'an answer saying it still runs does not stop the helper');
+    const after = await routes['/setup/uninstall/status']({ folder });
+    assert.equal(after.uninstall.state, 'done');
+    assert.equal(after.helperStops, true);
+  });
+});
+
 test('a folder set up again after uninstall starts clean: setup\'s readers across runs pass over a closed run', async () => {
   await withHome(async () => {
     const world = makeWorld();

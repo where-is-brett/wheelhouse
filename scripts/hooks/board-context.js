@@ -5,7 +5,11 @@
 // and the briefing on the first prompt after a gap of `briefingGapHours`. The briefing says when the
 // delegation review is due, worked out here from the project's events, since the front desk can't.
 //
-// In a project's main folder only: never in a feature worktree, never for the foreman, never
+// In a folder whose setup isn't finished (beingSetUp), outside a feature worktree, each of the
+// director's prompts gets one line instead of anything else, SETUP_FIRST: setup comes first,
+// whatever the prompt asks, and the request is kept for the front desk.
+//
+// Otherwise in a project's main folder only: never in a feature worktree, never for the foreman, never
 // outside a Wheelhouse project. It records each session's role from its first prompt (sessionRole),
 // which is how a foreman started without WHEELHOUSE_ROLE is known; that first prompt gets one line
 // saying so (FOREMAN_LINE), and nothing else. On each prompt it reads when the
@@ -38,8 +42,8 @@
 // A command is matched as typed, in any case, with white space around it ignored:
 // /wheelhouse:board (optionally "build" or "director"), /wheelhouse:briefing,
 // /wheelhouse:settings and /wheelhouse:sources. The short forms (/board) are left to whoever owns them.
-import { answer, runAndExit, projectOf } from './kit.js';
-import { featureSlug, localViews } from './session-start.js';
+import { answer, runAndExit, projectOf, beingSetUp } from './kit.js';
+import { featureSlug, localViews, SETUP_FIRST } from './session-start.js';
 import { loadBoardInputs } from '../board/inputs.js';
 import { renderBoard, unlinked } from '../board/render.js';
 import { briefingModel as realBriefingModel } from '../briefing/model.js';
@@ -442,12 +446,15 @@ export async function decide(input, deps = {}) {
     const markSeenHere = writes ? markSeen : () => {};
     const markRaised = writes ? raiseMarked : () => {};
     if (!isRecord(input) || typeof input.cwd !== 'string' || typeof input.prompt !== 'string') return undefined;
+    // While setup is unfinished here, setup comes first, whatever the prompt asks.
+    const setup = featureSlug(input.cwd) === null && !isOwnPrompt(input.prompt) ? attempt(() => beingSetUp(input.cwd), null) : null;
     const found = projectOf(input.cwd, { dir });
-    if (!found) return undefined;
+    if (!found) return setup === null ? undefined : answer.context('UserPromptSubmit', SETUP_FIRST);
     const role = sessionRole({ sessionId: input.session_id, env, prompt: input.prompt, cwd: input.cwd });
     const first = writes ? attempt(() => recordRole(input.session_id, role), false) : false;
     // A foreman known only from its first prompt was pointed at the front desk by the session start.
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
+    if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);
     if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
     if (isOwnPrompt(input.prompt)) return undefined;
     const { project } = found;
