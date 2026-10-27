@@ -203,6 +203,21 @@ test('a project with no record is refused, no private record is made for it, and
   } finally { await c.close(); await repo.cleanup(); }
 });
 
+test('a state route for a project not set up here makes no record, even where the connection lets it through', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo, { envFor: async () => ({ mode: 'narrow', env: hostKeyEnv(repo.host.url, TOKEN) }) });
+  try {
+    await c.as(async () => {
+      for (const ask of [() => c.client.state.clone({ project: 'someone__else' }), () => c.client.state.write({ project: 'someone__else', kind: 'note', data: { text: 'x' } })]) {
+        const answer = await ask();
+        assert.equal(answer.ok, false, JSON.stringify(answer));
+        assert.match(answer.refused, /has not been set up on this computer/);
+      }
+      assert.equal(fs.existsSync(stateDir('someone__else')), false);
+    });
+  } finally { await c.close(); await repo.cleanup(); }
+});
+
 test('/state/write refuses a protected kind, an unknown kind and a missing kind', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);

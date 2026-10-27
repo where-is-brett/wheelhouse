@@ -1444,6 +1444,7 @@ export async function startHelper({
   async function ensureStateClone(project, ctx) {
     // A Lean project's record is looked at by its own opener, which words a refusal for Lean.
     if (ctx.lean) return leanState(project, { run });
+    recordOf(project); // a project not set up here gets no record made for it
     await lookAtState(ctx, project);
     return openProjectRecord(project, { run });
   }
