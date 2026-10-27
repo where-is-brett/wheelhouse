@@ -7,7 +7,7 @@ import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, takeOverLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -46,12 +46,17 @@ async function withHome(fn) {
 function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, refuse = false } = {}) {
   const calls = { write: [], record: [], profileRecord: [], prState: [] };
   const no = { ok: false, refused: 'no' };
+  const takeOverCalls = [];
   return {
     calls,
     prState: async (b) => { calls.prState.push(b); return pr; },
     state: {
       write: async (b) => { calls.write.push(b); return refuse ? no : { ok: true }; },
       record: async (b) => { calls.record.push(b); return refuse ? no : { ok: true }; },
+    },
+    takeOverCalls,
+    lock: {
+      takeOver: async (b) => { takeOverCalls.push(b); return { ok: true, result: { taken: true, counter: 5 } }; },
     },
     profile: {
       record: async (b) => { calls.profileRecord.push(b); return refuse ? no : { ok: true }; },
@@ -1667,5 +1672,55 @@ test('once a Yes\'s evaluation failed, only a card offered after the failure can
     const fresh = fake();
     await decide(usageClick(premiumQuestion(), ALLOW_PAID), { ...deps(fresh), premiumIn: current });
     assert.equal(fresh.calls.record[0].target.data.value, 'paid-too');
+  });
+});
+
+const takeOverCard = (holder = '0a1b2c3d', counter = 4, what = `Your computer ${holder} has the front desk, last written 20 minutes ago.`) => composeCard({
+  kind: 'take-over', level: 3, what, why: 'Only one computer runs the front desk at a time, so two never merge over each other.',
+  options: [{ label: 'Take over here', says: 'This computer runs the work and the other can no longer merge or push.' }, { label: 'Leave it there', says: 'This computer only shows the board.' }],
+  recommend: 'Leave it there', because: 'the other computer was in use a few minutes ago',
+  meanwhile: 'This computer shows the board and changes nothing.', target: { holder, counter },
+}).question;
+const takeOverAnswer = (card, label) => ({
+  cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
+  tool_input: { questions: [card], answers: { [card.question]: label } },
+  tool_response: { answers: { [card.question]: label } },
+});
+
+test('Take over here on the take-over card is signed, kept, and then the helper is asked to take the lock', async () => {
+  await withHome(async () => {
+    const c = fake();
+    const card = takeOverCard();
+    await decide(takeOverAnswer(card, 'Take over here'), deps(c));
+    const [rec] = c.calls.record;
+    assert.equal(rec.event.kind, 'action');
+    assert.deepEqual(rec.event.data, { action: 'take-over', holder: '0a1b2c3d', counter: 4, question: takeOverLine('0a1b2c3d', 4), label: 'Take over here' });
+    assert.ok(rec.event.sig && verify(rec.event, readEnrolled()));
+    assert.deepEqual(c.takeOverCalls, [{ project: P }]);
+  });
+});
+
+test('Leave it there, a card reworded around the set line, or a click that is not on the card\'s buttons earns no take-over', async () => {
+  await withHome(async () => {
+    const c = fake();
+    await decide(takeOverAnswer(takeOverCard(), 'Leave it there'), deps(c));
+    assert.deepEqual([c.calls.record.length, c.takeOverCalls.length], [0, 0]);
+    // The label typed in rather than clicked.
+    const card = takeOverCard();
+    const typed = takeOverAnswer({ ...card, options: card.options.filter((o) => o.label !== 'Take over here') }, 'Take over here');
+    await decide(typed, deps(c));
+    assert.deepEqual([c.calls.record.length, c.takeOverCalls.length], [0, 0]);
+    // Two set lines on one card.
+    const two = { ...card, question: `${card.question}\n${takeOverLine('1b2c3d4e', 9)}` };
+    await decide(takeOverAnswer(two, 'Take over here'), deps(c));
+    assert.deepEqual([c.calls.record.length, c.takeOverCalls.length], [0, 0]);
+  });
+});
+
+test('a take-over whose record the helper refused does not ask it to take the lock', async () => {
+  await withHome(async () => {
+    const c = fake({ refuse: true });
+    await decide(takeOverAnswer(takeOverCard(), 'Take over here'), deps(c));
+    assert.equal(c.takeOverCalls.length, 0);
   });
 });

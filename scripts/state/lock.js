@@ -146,7 +146,9 @@ export async function readLock({ project, env }) {
   return readRemoteLock(dir, await fetchRemote(dir, env), env);
 }
 
-export async function takeLock({ project, push, now = () => new Date(), env }) {
+// With `over` ({ holder, counter }, the lock as the director's Take over here card showed it), a lock
+// another computer holds live is taken too, but only while it is still that holder's at that counter.
+export async function takeLock({ project, push, now = () => new Date(), env, over }) {
   const me = computerId();
   const dir = await ensureClone(project, env);
   const present = await fetchRemote(dir, env);
@@ -154,7 +156,9 @@ export async function takeLock({ project, push, now = () => new Date(), env }) {
   const at = now();
   if (current && current.computer !== me) {
     const last = Date.parse(current.lastWriteAt);
-    if (Number.isFinite(last) && at.getTime() - last < STALE_AFTER_MS) {
+    const live = Number.isFinite(last) && at.getTime() - last < STALE_AFTER_MS;
+    const shown = over !== undefined && current.computer === over.holder && current.counter === over.counter;
+    if (live && !shown) {
       return { taken: false, holder: current.computer, since: current.lastWriteAt };
     }
   }

@@ -6,7 +6,7 @@ import { composeCard, DECIDING, textOf } from '../../../scripts/cards/compose.js
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { TO_KNOW_MORE } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine, uninstallLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, replyCodeLine, setLineOf, trustLine, takeOverLine, uninstallLine } from '../../../scripts/state/card-lines.js';
 import { unattendedCardData } from '../../../scripts/foreman/act.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { withHome } from '../../helpers/homes.js';
@@ -50,6 +50,10 @@ const INPUTS = {
     ...common, kind: 'trust', recommend: 'Trust it', what: 'Your computer 0a1b2c3d put its key in your profile.',
     options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T22:30:00.000Z', fingerprint: 'abcdef012345' },
   },
+  'take-over': {
+    ...common, kind: 'take-over', recommend: 'Take over here', what: 'Your computer 0a1b2c3d has the front desk.',
+    options: [says('Take over here'), { label: 'Leave it there', says: 'This computer only shows the board.' }], target: { holder: '0a1b2c3d', counter: 4 },
+  },
   uninstall: {
     ...common, kind: 'uninstall', recommend: 'Remove it', level: 4, checks: 'The checks no longer guard this project.',
     what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.', options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
@@ -70,11 +74,11 @@ const SET_LINE_KINDS = Object.keys(DECIDING);
 // only by the click on the card itself, in the chat where it was asked. Nor does uninstall's card
 // (ruling R90), for the same reason.
 const SETUP_KINDS = ['setup', 'confirm-all'];
-const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'uninstall'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'uninstall'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
 const noButtonsFor = (kind) => {
   if (SETUP_KINDS.includes(kind)) return NO_BUTTONS;
-  return { buttons: [], note: { trust: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
+  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
 };
 
 const FILLED = (label) => ({ label, does: 'record', shape: 'filled' });
@@ -212,7 +216,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
       // R80, R90, P7-31).
-      ...([...SETUP_KINDS, 'trust', 'uninstall', 'keep-control-files'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      ...([...SETUP_KINDS, 'trust', 'take-over', 'uninstall', 'keep-control-files'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.
