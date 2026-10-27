@@ -12,7 +12,7 @@
 // the option is used. A record or an answer the helper doesn't take is kept in pending/, as the
 // prompt record keeps them.
 //
-// A code is good once. The shown view is built here from the state clone, which the helper
+// A code is good once. The shown view is built here from the private record, which the helper
 // writes each record into, so a record taken a moment ago spends its card at once; a signed
 // record still kept in pending/ that answers the card spends it too. And before anything is
 // signed the card is claimed with a marker of its own, projects/<project>/replied/<shown id>,
@@ -81,7 +81,7 @@ export const CLICK_ONLY_LABELS = Object.freeze(['Turn on (dangerous)', USE_GUARD
 // Why an Allow on a build-command question asked on another computer records nothing.
 export const ALLOWED_ELSEWHERE = 'Build commands are allowed only on the Windows computer that asked: answer the card there';
 
-// The views and the events they were built from, from the state clone as writeViews builds them.
+// The views and the events they were built from, from the private record as writeViews builds them.
 // A reply reads its card in the shown view, and a press on the pane in the waiting view.
 export function viewsNow(project, now) {
   const damaged = [];
@@ -173,7 +173,7 @@ export function claim(project, id) {
 }
 
 // replyRecord({ project, text, client, now, liftStop, stopState, budget }) -> { made, says }
-// Finds the code in the shown view built from the state clone, refuses it when it is unknown,
+// Finds the code in the shown view built from the private record, refuses it when it is unknown,
 // used, out of date, held by two cards or answered with an option its card didn't offer, claims
 // the card, then signs, keeps and sends what a click on that option would have earned, and the
 // plain answer the click would have written.

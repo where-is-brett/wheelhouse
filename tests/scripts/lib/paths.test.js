@@ -60,8 +60,8 @@ test('computerId replaces a corrupt computer.json', () => {
 test('paths work under a home folder named "with space é"', () => {
   withHome('with space é', (home) => {
     assert.equal(keysDir(), path.join(home, 'keys'));
-    assert.equal(profileDir(), path.join(home, 'profile'));
-    assert.equal(stateDir('o__n'), path.join(home, 'projects', 'o__n', 'state'));
+    assert.equal(profileDir(), path.join(home, 'settings'));
+    assert.equal(stateDir('o__n'), path.join(home, 'projects', 'o__n', 'record'));
     assert.match(computerId(), /^[0-9a-f]{8}$/);
     assert.equal(helperAddress({ platform: 'darwin', user: 'jo' }), path.join(home, 'helper.sock'));
   });

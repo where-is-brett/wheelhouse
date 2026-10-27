@@ -12,15 +12,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startHelper, incidentFor, shownFirstNeeded } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { stateDir, oldStateDir } from '../../../scripts/lib/paths.js';
+import { openRecord } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { cloneState } from '../../../scripts/state/clone.js';
-import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
+import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { setStop } from '../../../scripts/lib/stop.js';
 import { makeBareRemote, push as plainPush, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
+import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 import { prOnHost } from '../../helpers/pr-on-host.js';
 import { matchingBody } from '../../helpers/provenance.js';
 
@@ -63,7 +64,7 @@ async function project(remote) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return home;
@@ -142,6 +143,28 @@ test('an incident is declared while two PRs are ready: neither merges; the fix d
       assert.deepEqual(await merge(client, 8), { ok: true, merged: true, sha: b.headSha, ...NONE_FOUND });
       assert.deepEqual((await merge(client, 7)).reasons, [frozen('bad-total')]);
       assert.deepEqual(adapter.merges, [{ number: 8, sha: b.headSha }]);
+    });
+  } finally { remote.cleanup(); }
+});
+
+// An incident kept only in the v0.1.x state clone still freezes the first merge after the upgrade:
+// the gate imports the old clone before it reads the record (design section 24.5), with no
+// /state/import call from the session start.
+test('an incident in the old v0.1.x clone freezes a merge before any import is asked for', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const adapter = fakeAdapter({ 7: a });
+    await as(home, async () => {
+      const from = oldStateDir('o__p');
+      await openRecord(from, { what: 'a test clone' });
+      await writeEvent({ event: makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) }), dir: from, now: at(500) });
+    });
+    await withHelper(home, adapter, async (client) => {
+      const answer = await merge(client);
+      assert.deepEqual([answer.ok, answer.reasons], [false, [frozen('bad-total')]]);
+      assert.deepEqual(adapter.merges, []);
     });
   } finally { remote.cleanup(); }
 });
@@ -292,63 +315,62 @@ test('a reply-code clash is not damage: it doesn\'t refuse an ordinary merge, wh
   } finally { remote.cleanup(); }
 });
 
-test('an incident declared on another computer freezes the merge before this clone has pulled it', async () => {
+// Records don't cross computers (design section 24.3 items 1 and 3): an incident another computer
+// declared stays in its own record, and nothing of it reaches the host for this computer to read.
+test('an incident recorded on another computer counts for nothing here', async () => {
   const remote = await hostWith();
+  const otherHome = shortHome();
   try {
     const home = await project(remote);
     const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
     const adapter = fakeAdapter({ 7: a });
-    // Another computer, with a home of its own, declares the incident in its clone of the state branch and pushes it.
-    const other = tempFolder('wh-other-');
-    await g(other, 'clone', '-q', '--branch', 'wheelhouse-state', remote.url, '.');
-    const event = withHome(() => makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) }), { prefix: 'wh-other-home-' });
-    const file = path.join(other, eventPath(event));
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
-    await g(other, 'add', '-A');
-    await g(other, 'commit', '-q', '-m', 'An incident');
-    await g(other, 'push', '-q', 'origin', 'wheelhouse-state');
-    await as(home, () => assert.equal(fs.existsSync(path.join(stateDir('o__p'), eventPath(event))), false));
-    await withHelper(home, adapter, async (client) => {
-      assert.deepEqual((await merge(client)).reasons, [frozen('bad-total')]);
-      assert.deepEqual(adapter.merges, []);
+    await as(otherHome, async () => {
+      writeProject('o__p', {
+        folder: path.join(otherHome, 'work'), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+      });
+      makeSigningKey();
+      await openTestRecord({ project: 'o__p' });
+      await writeEvent({ project: 'o__p', event: makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) }) });
     });
-  } finally { remote.cleanup(); }
+    assert.notEqual((await realRun('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/wheelhouse-state'], { cwd: remote.url })).code, 0, 'nothing of it reached the host');
+    await withHelper(home, adapter, async (client) => {
+      assert.deepEqual(await merge(client), { ok: true, merged: true, sha: a.headSha, ...NONE_FOUND });
+      assert.deepEqual(adapter.merges, [{ number: 7, sha: a.headSha }]);
+    });
+  } finally { fs.rmSync(otherHome, { recursive: true, force: true }); remote.cleanup(); }
 });
 
-test('a state that can\'t be brought up to date refuses the merge', async () => {
+// The gate counts only signatures by this computer's own key (design section 24.3 item 1): a fix click
+// another enrolled computer signed, even one in this record, does not let the pull request through.
+test('a fix click signed by another enrolled computer does not let a PR through; this computer\'s own does', async () => {
   const remote = await hostWith();
+  const otherHome = shortHome();
   try {
     const home = await project(remote);
     const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
-    await as(home, () => g(stateDir('o__p'), 'remote', 'set-url', 'origin', path.join(home, 'nowhere.git')));
-    await withHelper(home, fakeAdapter({ 7: a }), async (client) => {
-      const refused = await merge(client);
-      assert.equal(refused.ok, false);
-      assert.ok(refused.reasons.includes('the state could not be brought up to date'), JSON.stringify(refused.reasons));
+    const adapter = fakeAdapter({ 7: a });
+    const other = await as(otherHome, () => {
+      const key = makeSigningKey();
+      const event = makeEvent({ kind: 'action', data: { question: 'the card as shown', label: 'Merge the fix', action: 'incident-fix', incident: 'bad-total', pr: 7 }, now: at(900) });
+      return { key, event };
     });
-  } finally { remote.cleanup(); }
-});
-
-test('a restore is not refused because the state can\'t be brought up to date', async () => {
-  const remote = await hostWith({ 'app.js': 'release\n' });
-  try {
-    const home = await project(remote);
-    const restore = await restorePr(remote, home);
-    const other = await readyPr(home, remote, 8, 'feature/totals', { 'a.txt': 'a\n' });
-    // A tracked file changed in the state clone: the pull is refused, whatever the host holds. (The mirror
-    // finds the host through the clone's origin, so an unreachable origin would stop a restore's own checks.)
-    await as(home, () => fs.appendFileSync(path.join(stateDir('o__p'), 'README.md'), 'changed here\n'));
-    const adapter = fakeAdapter({ 7: restore, 8: other });
+    await as(home, () => {
+      enrol({ computer: other.key.computer, publicKey: other.key.publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+      declare('bad-total');
+      const file = path.join(stateDir('o__p'), eventPath(other.event));
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify(other.event, null, 2)}\n`);
+    });
     await withHelper(home, adapter, async (client) => {
-      const refused = await merge(client, 8);
-      assert.ok(refused.reasons.includes('the state could not be brought up to date'), JSON.stringify(refused.reasons));
-      assert.deepEqual(await merge(client, 7), { ok: true, merged: true, sha: restore.headSha, ...NONE_FOUND });
-    }, { now: at(60 * 1000) });
-  } finally { remote.cleanup(); }
+      assert.deepEqual((await merge(client)).reasons, [frozen('bad-total')]);
+      assert.deepEqual(adapter.merges, []);
+      await as(home, () => fixFor('bad-total', 7));
+      assert.deepEqual(await merge(client), { ok: true, merged: true, sha: a.headSha, ...NONE_FOUND });
+    });
+  } finally { fs.rmSync(otherHome, { recursive: true, force: true }); remote.cleanup(); }
 });
 
-test('a restore merges under STOP, through the state sync whose push is refused', async () => {
+test('a restore merges under STOP', async () => {
   const remote = await hostWith({ 'app.js': 'release\n' });
   try {
     const home = await project(remote);

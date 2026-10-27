@@ -7,7 +7,6 @@ import { sign } from './signing.js';
 import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { STATE_BRANCH } from './clone.js';
 import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
@@ -37,7 +36,6 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 // itself), so no session can mark a Thoroughness column ready.
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
-const MAX_RETRIES = 3;
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
@@ -639,26 +637,6 @@ export function eventPath(event) {
   return path.join('events', year, month, name);
 }
 
-// Pushes, pulling and retrying when the remote moved on. Never throws.
-async function pushWithRetry(dir, push, env, branch = STATE_BRANCH) {
-  let result = { ok: false };
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      result = await push(dir, branch);
-    } catch {
-      return { ok: false };
-    }
-    if (result.ok) return { ok: true };
-    if (result.rejected !== 'non-fast-forward' || attempt === MAX_RETRIES) break;
-    const pulled = await git(dir, ['pull', '--rebase', 'origin', branch], env);
-    if (pulled.code !== 0) {
-      await git(dir, ['rebase', '--abort'], env);
-      break;
-    }
-  }
-  return result.refused ? { ok: false, refused: result.refused } : { ok: false };
-}
-
 // Makes the folder and returns the ones it had to make, deepest first.
 function madeFolders(folder) {
   const made = [];
@@ -706,9 +684,10 @@ export function carriesBaseline(event, { now = () => new Date() } = {}) {
 // The words the state refuses a trust click with: it is kept on the computer it trusts on.
 export const TRUST_KEPT_HERE = 'A trust click is kept on the computer it was made on, never in the state';
 
-// `dir` and `branch` name another clone of events, such as the profile's; by default
-// the project's state clone and its state branch. An event carrying the baseline card is refused.
-export async function writeEvent({ project, event, push, env, dir = stateDir(project), branch = STATE_BRANCH, now = () => new Date() }) {
+// Writes the event into a private record and commits it there; nothing is pushed (design section
+// 24.1). `dir` names another record of events, such as the settings'; by default the project's.
+// Every event is put through the secret scan first. An event carrying the baseline card is refused.
+export async function writeEvent({ project, event, env, dir = stateDir(project), now = () => new Date() }) {
   if (!KINDS.has(event.kind)) throw new Error('Unknown event kind');
   if (carriesBaseline(event, { now })) throw new Error(CARRIES_BASELINE);
   if (event.kind === 'action' && event.data?.action === 'trust') throw new Error(TRUST_KEPT_HERE);
@@ -747,23 +726,7 @@ export async function writeEvent({ project, event, push, env, dir = stateDir(pro
     removeEmpty(made);
     throw new Error(`The event file ${path.basename(file)} could not be committed`);
   }
-  const pushed = await pushWithRetry(dir, push, env, branch);
-  return pushed.refused
-    ? { path: file, pushed: false, refused: pushed.refused }
-    : { path: file, pushed: pushed.ok };
-}
-
-// Pulls, then pushes anything not yet pushed. Resolves with whether the pull
-// went through and how many commits the remote still lacks. `dir` and `branch`
-// as for writeEvent; `pull`, when given, is a clone's own pull ({ code }), as the profile's is.
-export async function syncState({ project, push, pull, env, dir = stateDir(project), branch = STATE_BRANCH }) {
-  const pulled = pull ? await pull() : await git(dir, ['pull', '--rebase', 'origin', branch], env);
-  if (pulled.code !== 0) await git(dir, ['rebase', '--abort'], env);
-  await pushWithRetry(dir, push, env, branch);
-  const ahead = await git(dir, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`], env);
-  const count = Number.parseInt(ahead.stdout.trim(), 10);
-  // A count that cannot be read is taken as "something is still unpushed".
-  return { pulled: pulled.code === 0, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };
+  return { path: file, pushed: false };
 }
 
 const reported = new Set();

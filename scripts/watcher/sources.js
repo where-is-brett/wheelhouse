@@ -1,37 +1,36 @@
 // scripts/watcher/sources.js
-// What the watcher reads to make an observation (design section 11): state,
-// from the helper's clone with fs; each running feature's files, from the
-// worktree the features view names; and the host, through the helper. It
-// holds no keys and runs nothing: every git call happens in the helper.
+// What the watcher reads to make an observation (design section 11): the
+// project's record, a local repository on this computer with no remote, read
+// with fs as it is; each running feature's files, from the worktree the
+// features view names; and the host, through the helper. It holds no keys and
+// runs nothing: every git call happens in the helper.
 //
 // One observation, in this order:
-//   1. When its interval has passed, state is synced through /state/sync, so
-//      a record another computer pushed is in the clone before any feature
-//      file is read.
-//   2. The clone is read for the features view: the running features (every
+//   1. The record is read for the features view: the running features (every
 //      one whose latest step is not `closed`) and their worktrees.
-//   3. Each running feature's files are read.
-//   4. The clone is read again, after the files, for the recorded briefs and
-//      the events to send. The foreman records a brief in state on this
-//      computer, so state read after the brief file is never older than it.
-//   5. Pull requests, and test merges between building features' branches,
+//   2. Each running feature's files are read.
+//   3. The record is read again, after the files, for the recorded briefs and
+//      the events to send. The foreman records a brief in the record on this
+//      computer, so the record read after the brief file is never older than it.
+//   4. Pull requests, and test merges between building features' branches,
 //      when their intervals have passed.
-// While git is part-way through changing the clone (a rebase, or a held
-// index lock, seen before or after a read), the clone is not read: the last
-// read this process made stands in for it.
+// While git is part-way through changing the record (a rebase, or a held
+// index lock, seen before or after a read), it is not read: the last read
+// this process made stands in for it.
 //
 // Between observe and the cursor. observe takes `prev`, the observation as
 // core's `settle` left it in the cursor, and adds two things to the one it
 // makes, which `settle` keeps for the next:
-//   - `polled`: when state, the pull requests and the test merges were last
-//     asked for, so each waits for its own interval, across restarts too; and
+//   - `polled`: when the pull requests and the test merges were last asked
+//     for, so each waits for its own interval, across restarts too; and
 //     in `polled.prAsked`, when each pull request number not known to be open
 //     (closed, not answered, or not the claiming feature's) was last asked;
-//   - `stateIds`: the ids of the state events in the clone written within
+//   - `stateIds`: the ids of the events in the record written within
 //     LOOKBACK_MS of the observation. An event is sent once: when it is in the
-//     clone, within the look-back and not among the last observation's ids. A
-//     record pushed late by another computer is still sent if it was written
-//     within the look-back; one older than that is taken as seen. With no
+//     record, within the look-back and not among the last observation's ids. A
+//     record kept late (an import, or one a hook kept while the helper was
+//     down) is still sent if it was written within the look-back; one older
+//     than that is taken as seen. With no
 //     `prev`, or a `prev` with no `stateIds`, no state event is sent: what is
 //     already in state is where things stand, not news.
 // `awake`, the milliseconds the watcher ran since its last observation, is
@@ -50,9 +49,9 @@ import { buildViews } from '../state/views.js';
 
 // How often each source is read, in milliseconds. The feature files are read
 // at every observation, so `features` is how often the caller observes.
-export const INTERVALS = Object.freeze({ state: 30000, features: 15000, prs: 60000, testMerge: 600000 });
+export const INTERVALS = Object.freeze({ features: 15000, prs: 60000, testMerge: 600000 });
 
-// How far back a state event pushed late is still sent.
+// How far back an event kept late is still sent.
 export const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // The most pull request numbers whose last asking is kept; the oldest go first.
@@ -77,18 +76,18 @@ function lstatOf(p) {
   }
 }
 
-// --- State, from the clone ---
+// --- State, from the record ---
 
-// What git leaves in the clone while it is part-way through changing it.
+// What git leaves in the record while it is part-way through changing it.
 const BUSY = ['rebase-merge', 'rebase-apply', 'index.lock'];
 const cloneBusy = (project) => BUSY.some((name) => !(lstatOf(path.join(stateDir(project), '.git', name)) instanceof Error));
 
-// The last state each project's clone gave this process, by the clone's folder.
+// The last state each project's record gave this process, by its folder.
 const lastRead = new Map();
 
-// The state events in the clone, in order, leaving out every copy of an id
+// The state events in the record, in order, leaving out every copy of an id
 // carried by more than one event, as the views do. While git is changing the
-// clone, the last read stands in; with none yet, the clone is read as it is.
+// record, the last read stands in; with none yet, the record is read as it is.
 function readEvents(project) {
   const dir = stateDir(project);
   const unique = () => {
@@ -308,26 +307,18 @@ export async function observe({ project, client, now = () => new Date(), interva
   };
   const due = (kind) => dueSince(before[kind], every[kind]);
 
-  // 1. State from the host.
-  if (due('state')) {
-    try {
-      await client.state.sync({ project });
-    } catch { /* the clone is read as it is */ }
-    polled.state = iso;
-  }
-
-  // 2. The running features and their worktrees.
+  // 1. The running features and their worktrees.
   const enrolled = readEnrolled();
   const views = buildViews(readEvents(project), enrolled, { now });
   const viewed = isPlain(views.features) ? views.features : {};
   const running = Object.entries(viewed).filter(([work, f]) => SLUG.test(work) && isPlain(f?.data) && f.data.step !== 'closed');
   const branchOf = (work) => (isText(viewed[work]?.data?.branch) ? viewed[work].data.branch : null);
 
-  // 3. Their files.
+  // 2. Their files.
   const checkout = readProject(project)?.folder ?? null;
   const read = new Map(running.map(([work, f]) => [work, readFeature(work, f.data.worktree, checkout)]));
 
-  // 4. State again, no older than the files.
+  // 3. The record again, no older than the files.
   const events = readEvents(project);
   const recorded = recordedBriefs(events);
   const features = {};
@@ -351,7 +342,7 @@ export async function observe({ project, client, now = () => new Date(), interva
     verified: PROTECTED_KINDS.includes(e.kind) && verify(e, enrolled),
   }));
 
-  // 5. The pull requests: those known before, until they close, then those a
+  // 4. The pull requests: those known before, until they close, then those a
   // running feature's status names. Each number's claimants are in that
   // order, and the first whose branch is the pull request's head branch has
   // it, so a later claim never takes a binding from an earlier one. A known

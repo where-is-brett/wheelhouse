@@ -9,7 +9,7 @@
 // Pushing: git with a key in its environment runs only in repositories the
 // helper owns. Each project has a bare mirror at
 // ~/.wheelhouse/projects/<project>/mirror.git, whose origin the helper sets from
-// its own state clone. A push first copies the branch's objects from the
+// its record of the project (project.json). A push first copies the branch's objects from the
 // agent's folder into the mirror, with no key, reading nothing but objects
 // from that folder (its config, remote, replace refs and hooks count for
 // nothing). The checks and the push then run in the mirror, with the key.
@@ -19,7 +19,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { computerId, helperAddress, profileDir, stateDir, wheelhouseHome } from '../lib/paths.js';
+import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -34,11 +34,12 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, syncState, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
-import { cloneState } from '../state/clone.js';
+import { openProjectRecord, openSettings } from '../state/record.js';
+import { importEvents } from '../state/import.js';
 import { takeStartLock } from '../lib/start-lock.js';
 import { scanContent, scanText } from '../state/secret-scan.js';
 import { buildViews, latestFor, writeViews } from '../state/views.js';
@@ -48,7 +49,7 @@ import { readyRecordFile, writeReadyRecord } from '../survey/ready-record.js';
 import { reaching } from '../setup/git.js';
 import { directorGitEnv } from '../setup/host.js';
 import { commitAuthor } from '../setup/project-files.js';
-import { readEnrolled, verify, sign } from '../state/signing.js';
+import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
@@ -65,14 +66,13 @@ import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
 import { ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
-import { writeBackup, KEEP as BUNDLES_KEPT } from '../state/backup.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
 import { levelOf } from '../routing/thoroughness.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { cardHash } from '../lib/measures-clicks.js';
 import { aliasModel, FRONT_DESK_ALIAS, STRONGEST_ALIAS } from '../setup/best-model.js';
-import { BUNDLE_PATH, PROFILE_BRANCH, PROFILE_HOLDS_KEYS, holdsKeys, profileRemote, ensureProfileClone, writeProfileViews } from '../profile/store.js';
+import { writeProfileViews } from '../profile/store.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
@@ -89,7 +89,6 @@ import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, forem
 import { setupRoutes, SetupRefusal, STEPS_MODULE } from '../setup/engine.js';
 import { uninstallRoutes } from '../setup/uninstall.js';
 import { baselineRoutes } from '../measures/baseline.js';
-import { ENROLMENT_FILE, MAX_ENROLMENTS, MAX_ENROLMENT_BYTES, enrolmentOf } from '../lib/trust-clicks.js';
 import { NO_CLEAN_REVIEW } from '../gate/conditions.js';
 import { runReview } from '../review/clean-session.js';
 import { reviewsFor } from '../agents/reviews.js';
@@ -125,8 +124,22 @@ const RESTORE_BRANCH = /^wheelhouse-restore-([0-9a-f]{12})$/;
 const NEEDS_CLICK = 'this step needs the director\'s click on its card';
 const NOT_EARLIER = 'that is not an earlier commit of the default branch, so the product is not put back to it';
 const NO_HARM = 'This project has defined no live harm to contain';
-const BACKUP_FILE = /^\d{4}-\d{2}-\d{2}\.bundle$/;
-const BACKUP_REF = 'refs/wheelhouse/backup';
+// What a request for step 4 is told: there is no backup to put the records back from.
+export const RESTORE_RETIRED = 'Wheelhouse keeps no backup of the records any more: they stay on this computer, so a backup of the computer (Time Machine, or File History on Windows) is what brings them back';
+// The marks the import keeps once it has run: beside the project's record, and in the home for the settings.
+export const IMPORT_MARK = 'imported.json';
+export const SETTINGS_IMPORT_MARK = 'settings-imported.json';
+
+// The mark the import kept, or null when there is none or it can't be read (the import then runs,
+// and skips what it already holds).
+function readMark(file) {
+  try {
+    const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return kept && typeof kept === 'object' && !Array.isArray(kept) && typeof kept.at === 'string' ? kept : null;
+  } catch {
+    return null;
+  }
+}
 const EVENT_FILE = /^events\/\d{4}\/\d{2}\/[A-Za-z0-9._-]+\.json$/;
 // A version 4 UUID as crypto.randomUUID writes it.
 const RANDOM_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -374,7 +387,12 @@ export function incidentFor(views, number) {
   return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
 }
 
-const STATE_BEHIND = 'the state could not be brought up to date';
+// The keys the merge gate counts: this computer's own alone (design section 24.3 item 1).
+function ownKeyOnly() {
+  const own = ownKey();
+  return own === null ? [] : [{ computer: own.computer, publicKey: own.publicKey }];
+}
+
 const STATE_DAMAGED = 'the state has damaged events, so an open incident or a shown-first change can\'t be ruled out';
 
 // The work a pull request's head branch names: `feature/<work>` or `feature/<work>/<slice>`.
@@ -423,6 +441,68 @@ function folderGitConfigs(dir) {
   return dirs.flatMap((d) => [readIf(path.join(d, 'config')), readIf(path.join(d, 'config.worktree'))]);
 }
 
+// The git directory of `dir` to read from, found by real path, or why it may not be read (design
+// section 24.7): { gitdir } or { refused }. It and its common directory must lie inside `root`, and
+// outside Wheelhouse's own repositories (each project's record, lock and mirror, the settings) unless
+// `own` (the lock clone or the mirror); it must be a git directory by git's own test (HEAD, with
+// objects/ and refs/ in it or in its common directory), so a decoy .git that git would pass over is
+// refused rather than looked past; and neither may borrow objects through an alternates file, nor hold
+// a symlink among its objects or refs. A .git file, a .git symlink and a commondir file can each point
+// anywhere, so a folder in the project could otherwise hand over the private record. Read with fs only,
+// as folderGitConfigs is. The caller reads from the gitdir given, strictly, never from `dir`.
+export function checkedGitDir(dir, { root, own = false }) {
+  const refused = { refused: PUSH_REFUSALS.gitOutside };
+  const real = (p) => { try { return fs.realpathSync.native(p); } catch { return null; } };
+  const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+  const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+  let gitdir = null;
+  try {
+    const dot = path.join(dir, '.git');
+    let stat = null;
+    try { stat = fs.lstatSync(dot); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (stat?.isDirectory() || stat?.isSymbolicLink()) {
+      gitdir = real(dot);
+    } else if (stat) {
+      const match = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dot, 'utf8'));
+      if (match) gitdir = real(path.resolve(dir, match[1]));
+    } else {
+      gitdir = real(dir);
+    }
+    if (gitdir === null) return refused;
+    const dirs = [gitdir];
+    let common = '';
+    try { common = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (common !== '') {
+      const commonDir = real(path.resolve(gitdir, common));
+      if (commonDir === null) return refused;
+      dirs.push(commonDir);
+    }
+    const base = dirs.at(-1);
+    if (!isFile(path.join(gitdir, 'HEAD')) || !isDir(path.join(base, 'objects')) || !isDir(path.join(base, 'refs'))) return refused;
+    const ownRepos = [path.join(wheelhouseHome(), 'projects'), profileDir(), oldProfileDir(), path.join(wheelhouseHome(), 'lineage')];
+    for (const d of dirs) {
+      if (!isInsideFolder(root, d)) return refused;
+      if (!own && ownRepos.some((repo) => isInsideFolder(repo, d))) return refused;
+      for (const name of ['alternates', 'http-alternates']) {
+        if (fs.existsSync(path.join(d, 'objects', 'info', name))) return refused;
+      }
+      if (hasSymlink(path.join(d, 'objects'), 2) || hasSymlink(path.join(d, 'refs'), Infinity) || hasSymlink(path.join(d, 'packed-refs'), 0)) return refused;
+    }
+    return { gitdir };
+  } catch {
+    return refused;
+  }
+}
+
+// Whether `p`, or anything below it to `depth` levels, is a symlink. A missing `p` holds none.
+function hasSymlink(p, depth) {
+  let stat;
+  try { stat = fs.lstatSync(p); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  if (stat.isSymbolicLink()) return true;
+  if (!stat.isDirectory() || depth <= 0) return false;
+  return fs.readdirSync(p).some((name) => hasSymlink(path.join(p, name), depth - 1));
+}
+
 function isPartialClone(dir) {
   const configs = folderGitConfigs(dir);
   // No repository in the folder itself: git would also try <dir>.git, which is not read here.
@@ -443,21 +523,19 @@ export const PUSH_REFUSALS = {
   unknownDefault: 'the default branch is not known, so nothing is pushed',
   missing: 'that branch does not exist in the folder',
   shallow: 'a shallow repository cannot be checked, so nothing is pushed',
-  state: 'a state push may only add new plain files under events/',
   lock: 'a lock push may only change lock.json',
-  merges: 'a state or lock push may not carry a merge commit',
+  merges: 'a lock push may not carry a merge commit',
   ownRequests: 'state and the lock are written through their own requests',
   unchecked: 'the commits being pushed could not be checked',
   ciFile: 'the branch changes a CI file, so it needs the director\'s click on its card',
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
   outsideProject: 'the folder to push from is not inside the project',
+  ownHistory: 'the branch holds the history of Wheelhouse\'s own records, so nothing is sent',
+  gitOutside: 'the folder\'s git directory is not inside the project, or links outside it, so nothing is read from it',
   notOwn: 'that is not the branch this folder is on: a push sends only the folder\'s own branch',
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   movedOn: 'the host\'s branch has moved on since this one was taken from it',
-  notJson: 'a file in the state push is not JSON, so nothing is pushed',
   prBase: 'a pull request may only be opened against the default branch',
-  profile: 'a profile push may only add new event files under events/, and add or remove bundles under backups/',
-  profileNotJson: 'a file in the profile push is not JSON, so nothing is pushed',
 };
 
 // Why /pr/update-branch leaves a pull request alone: only the loop's own feature branches, in
@@ -495,23 +573,16 @@ function plainBranch(name) {
     && !name.endsWith('.lock');
 }
 
-// What a state or lock push may carry, by status letter, new mode and path.
-// 100644 is a plain file: no symlinks, gitlinks or executables.
+// What a lock push may carry, by status letter, new mode and path. 100644 is a plain file: no
+// symlinks, gitlinks or executables. The records are never pushed (design section 24.1).
 const ALLOWED_CHANGE = {
-  [STATE_BRANCH]: (status, mode, file) => status === 'A' && mode === '100644'
-    && file.startsWith('events/') && file.length > 'events/'.length,
   [LOCK_BRANCH]: (status, mode, file) => (status === 'A' || status === 'M') && mode === '100644' && file === 'lock.json',
 };
-
-// What a profile push may carry: new plain event files, and bundles added to or removed
-// from backups/<project>/. Nothing under keys/, nothing changed in place.
-const PROFILE_CHANGE = (status, mode, file) => (ALLOWED_CHANGE[STATE_BRANCH](status, mode, file))
-  || (BUNDLE_PATH.test(file) && ((status === 'A' && mode === '100644') || (status === 'D' && mode === '000000')));
 
 // Checks every commit up to `sha` that the remote's copy of `branch` lacks.
 // The remote's copy is fetched first; with none, every commit is checked, the
 // root commit included.
-async function checkCommits({ dir, branch, sha, gitRun, allowed, refused, scan = false, push = 'state' }) {
+async function checkCommits({ dir, branch, sha, gitRun, allowed, refused }) {
   const git = (args) => gitRun('git', args, { cwd: dir, env: { GIT_NO_REPLACE_OBJECTS: '1' } });
   const tracking = `refs/remotes/${REMOTE}/${branch}`;
   let range = [sha];
@@ -539,30 +610,12 @@ async function checkCommits({ dir, branch, sha, gitRun, allowed, refused, scan =
     for (let i = 0; i < parts.length; i += 2) {
       const meta = parts[i];
       if (meta === '') break;
-      const [, newMode, , newId, status] = meta.replace(/^:/, '').split(' ');
+      const [, newMode, , , status] = meta.replace(/^:/, '').split(' ');
       const file = parts[i + 1];
       if (typeof file !== 'string' || !allowed(status, newMode, file)) return { allowed: false, refused };
-      // `scan` is true for every file, or picks the files to scan.
-      if (scan === true || (typeof scan === 'function' && scan(file))) {
-        const found = await scanAdded(git, newId, file, push);
-        if (found) return { allowed: false, refused: found };
-      }
     }
   }
   return { allowed: true };
-}
-
-// The secret scan on one file a state or profile push adds (design section 9): its text
-// and every decoded string in it. A refusal names the patterns and the file,
-// never the value; a file name that itself matches is not repeated.
-async function scanAdded(git, blob, file, push = 'state') {
-  if (scanText(file).length > 0) return `a file in the ${push} push has a name that looks like a secret, so nothing is pushed`;
-  const read = await git(['cat-file', 'blob', blob]);
-  if (read.code !== 0) return PUSH_REFUSALS.unchecked;
-  const found = scanContent(read.stdout);
-  if (found.length > 0) return `the ${push} push was refused because ${file} matched: ${found.join(', ')}`;
-  try { JSON.parse(read.stdout); } catch { return push === 'profile' ? PUSH_REFUSALS.profileNotJson : PUSH_REFUSALS.notJson; }
-  return null;
 }
 
 // The spelling rules alone: `<branch>` or `<branch>:<branch>`, no `+`, a plain
@@ -583,11 +636,10 @@ export function checkRefspec(refspec, defaultBranch) {
 
 // Whether a push may go ahead: the spelling rules, then, in `dir`, the commit
 // being pushed (`sha`, or the branch's own commit when not given). A shallow
-// repository is refused. A state push may only add plain files under events/,
-// a lock push may only change lock.json. Resolves with the commit checked,
+// repository is refused. A lock push may only change lock.json. Resolves with the commit checked,
 // which is the one to push.
 export async function checkPush({
-  refspec, dir, defaultBranch, stateBranch = STATE_BRANCH, lockBranch = LOCK_BRANCH, gitRun, sha,
+  refspec, dir, defaultBranch, lockBranch = LOCK_BRANCH, gitRun, sha,
 }) {
   // The runner is the caller's fenced one; there is no unfenced default.
   if (typeof gitRun !== 'function') throw new Error('checkPush needs a fenced git runner');
@@ -604,12 +656,8 @@ export async function checkPush({
   const commit = resolved.stdout.trim();
   if (resolved.code !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) return { allowed: false, refused: PUSH_REFUSALS.missing };
 
-  const rules = { [stateBranch]: ALLOWED_CHANGE[STATE_BRANCH], [lockBranch]: ALLOWED_CHANGE[LOCK_BRANCH] };
-  if (rules[branch]) {
-    const refusal = branch === stateBranch ? PUSH_REFUSALS.state : PUSH_REFUSALS.lock;
-    const checked = await checkCommits({
-      dir, branch, sha: commit, gitRun, allowed: rules[branch], refused: refusal, scan: branch === stateBranch,
-    });
+  if (branch === lockBranch) {
+    const checked = await checkCommits({ dir, branch, sha: commit, gitRun, allowed: ALLOWED_CHANGE[LOCK_BRANCH], refused: PUSH_REFUSALS.lock });
     if (!checked.allowed) return checked;
   }
   return { allowed: true, branch, sha: commit };
@@ -757,7 +805,7 @@ const PLACED_ROUTES = [
 // A Lean project (ruling P5-9) has no code host and no connection: only these routes serve it, on
 // its local state repository, before any connection is made. Every other route refuses it.
 const LEAN_ROUTES = [
-  '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/session/mark', '/cards/chat-click', '/confirm',
+  '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/state/import', '/session/mark', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
 ];
 // The Lean project's own routes (scripts/lean/store.js), served for a Lean project only.
@@ -782,8 +830,6 @@ const RULING_CARD = /^ruling-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 // The fields of a card-answer that only the helper's click routes write.
 const CLICK_FIELDS = ['proof', 'commit', 'hash', 'text'];
 
-const NEEDS_PROFILE = ['/profile/clone', '/profile/write', '/profile/record', '/profile/sync', '/profile/views', '/profile/enrolments', '/state/backup'];
-const PROFILE_NOT_SET_UP = { ok: false, why: 'The profile isn\'t set up on this computer yet' };
 
 function checkProject(project) {
   try {
@@ -864,8 +910,6 @@ export async function startHelper({
   // (null for none), or `findBrowser` to look for one (shoot.js's by default) when pictures are
   // needed.
   screens = {},
-  // The profile's connection, as setup wrote it to profile.json, the way envFor gives a project's.
-  profileEnvFor = envForConnection(() => profileRemote()?.connection, { fetch, now }),
   // The installed Wheelhouse, whose lineage/manifest.json the gate checks a pull request's provenance against.
   pluginRoot = OWN_ROOT,
   // Wheelhouse's own repository, whose release tags the gate reads (ruling R132).
@@ -1036,8 +1080,8 @@ export async function startHelper({
   // The connection's git over the project's (or profile's) recorded remote.
   const keyedFor = (ctx) => gitIn(ctx.gitEnv, HOST_MS, ctx.reach);
 
-  // Each request looks once at each repository of its own it uses (the mirror, the lock, state and
-  // profile clones, the lineage mirror) and at the folder it copies from, before its first git call
+  // Each request looks once at each repository of its own it uses (the mirror, the lock clone, the
+  // private record and the settings, the lineage mirror) and at the folder it copies from, before its first git call
   // there: the repository's config may hold nothing setup's allowed list leaves out. The answer, or
   // the refusal, is kept in the request's context, so later calls there neither look again nor skip
   // the refusal. `marker` is the file whose presence says a repository is there to look at (a
@@ -1063,7 +1107,7 @@ export async function startHelper({
     }
     await looked.get(key).done;
   }
-  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git', "the project's state repository");
+  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git', "the project's private record");
   const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD', "the project's mirror repository");
   // Whether the mirror's look refused in this request: then nothing more runs git there.
   async function mirrorRefused(ctx, project) {
@@ -1079,23 +1123,20 @@ export async function startHelper({
   // The lock clone is used by pushes and merges alike: one git call at a time.
   function lockHeld(project, ctx) {
     return oneAtATime(`lock:${project}`, async () => {
-      // The lock clone reads the state clone's remote first; a refusal ends the request here.
-      await lookAtState(ctx, project);
+      // A refusal of the lock clone's look ends the request here.
       await lookAtLock(ctx, project);
       const counter = heldCounter({ project });
       return counter !== null && (await holdsLock({ project, counter, env: ctx.gitEnv })) === true;
     });
   }
 
-  // The project's mirror, made if missing, with origin set from the helper's
-  // own state clone.
+  // The project's mirror, made if missing, with origin set from Wheelhouse's record of the project:
+  // the private record has no remote to find it from (design section 24.1).
   async function mirrorFor(project, ctx) {
-    await lookAtState(ctx, project);
     await lookAtMirror(ctx, project);
     const plain = unkeyed;
-    const origin = await plain('git', ['config', '--get', `remote.${REMOTE}.url`], { cwd: stateDir(project) });
-    const url = origin.stdout.trim();
-    if (origin.code !== 0 || url === '') refuse('the project has no state clone to find its repository from');
+    const url = String(readProject(project)?.remoteUrl ?? '').trim();
+    if (url === '') refuse('the project has no repository recorded to find it from');
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s]*:[^/@\s]*@/.test(url)) {
       refuse('the project\'s repository address carries credentials, so nothing is pushed: keys travel only in the environment');
     }
@@ -1184,7 +1225,9 @@ export async function startHelper({
 
   // Copies `branch` in from `source` into the mirror's INCOMING ref, as described in pushToHost.
   // The refusal, or null once it has arrived.
-  async function copyIn(mirror, source, branch, ctx) {
+  async function copyIn(mirror, source, branch, ctx, { root, own = false }) {
+    const checked = checkedGitDir(source, { root, own });
+    if (checked.refused) return checked.refused;
     // The folder's own config can name a program for git to run (core.fsmonitor and the like), so
     // git is not run there until its settings have been looked at.
     try {
@@ -1197,15 +1240,57 @@ export async function startHelper({
     await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
     const fetched = await gitIn({ GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS, 'local')('git', [
       '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
-      'fetch', '-q', '--no-tags', '--no-recurse-submodules', source, `+refs/heads/${branch}:${INCOMING}`,
+      // From the git directory that was checked, read strictly: git takes that path as it is, and does
+      // not go on to try <path>/.git, <path>.git and the like, as it otherwise would.
+      'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--upload-pack=git upload-pack --strict', checked.gitdir, `+refs/heads/${branch}:${INCOMING}`,
     ], { cwd: mirror });
     if (fetched.timedOut) return 'reading the folder took too long';
     const arrived = await unkeyed('git', ['rev-parse', '--verify', '-q', INCOMING], { cwd: mirror });
     if (fetched.code !== 0 || arrived.code !== 0) return PUSH_REFUSALS.missing;
+    // Whatever the folder did between the check and the fetch, what arrived is refused when its history
+    // holds the root commit of one of Wheelhouse's own records.
+    const held = await holdsOwnRoot(mirror);
+    if (held !== null) {
+      await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
+      return held;
+    }
     return null;
   }
 
-  async function pushToHost({ project, branch, source, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
+  // The root commits of Wheelhouse's own records (each project's record and old state clone, the
+  // settings and the old profile clone), kept once read: a record's first commit never changes. Null
+  // when one of them is there but its roots can't be read.
+  const ownRoots = new Map();
+  async function ownRootsNow() {
+    const projects = path.join(wheelhouseHome(), 'projects');
+    let names = [];
+    try { names = fs.readdirSync(projects); } catch { /* no projects yet */ }
+    const repos = [...names.flatMap((name) => [path.join(projects, name, 'record'), path.join(projects, name, 'state')]), profileDir(), oldProfileDir()];
+    const roots = new Set();
+    for (const repo of repos) {
+      if (!ownRoots.has(repo) && fs.existsSync(path.join(repo, '.git'))) {
+        const listed = await unkeyed('git', ['rev-list', '--max-parents=0', '--all'], { cwd: repo });
+        const found = listed.code === 0 ? listed.stdout.split('\n').map((l) => l.trim()).filter((l) => FULL_SHA.test(l)) : [];
+        // A record there whose roots can't be read: what arrives can't be checked against it.
+        if (found.length === 0) return null;
+        ownRoots.set(repo, found);
+      }
+      for (const sha of ownRoots.get(repo) ?? []) roots.add(sha);
+    }
+    return roots;
+  }
+
+  // Why the branch at INCOMING in `mirror` may not go on, or null: its history holds one of
+  // ownRootsNow's root commits, or could not be read.
+  async function holdsOwnRoot(mirror) {
+    const roots = await ownRootsNow();
+    if (roots === null) return PUSH_REFUSALS.unchecked;
+    const listed = await unkeyed('git', ['rev-list', '--max-parents=0', INCOMING], { cwd: mirror });
+    if (listed.code !== 0) return PUSH_REFUSALS.unchecked;
+    return listed.stdout.split('\n').some((l) => roots.has(l.trim())) ? PUSH_REFUSALS.ownHistory : null;
+  }
+
+  async function pushToHost({ project, branch, source, root, own = false, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
     return (async () => {
       const mirror = await mirrorFor(project, ctx);
       // Copy the branch's objects in from the folder, with no key, and nothing
@@ -1217,7 +1302,7 @@ export async function startHelper({
       // core.hooksPath set to the null file stops the hooks folder; a hook
       // named in the mirror's configuration (hook.<name>.command) would not
       // be stopped by it, so a mirror whose configuration sets one is refused.
-      const copied = await copyIn(mirror, source, branch, ctx);
+      const copied = await copyIn(mirror, source, branch, ctx, { root, own });
       if (copied !== null) return { ok: false, refused: copied };
 
       const keyed = keyedFor(ctx);
@@ -1278,23 +1363,19 @@ export async function startHelper({
     })();
   }
 
-  // The state and lock branches are fixed names, never the host's default
-  // branch, so a push of either does not ask the host which that is.
+  // The lock branch is a fixed name, never the host's default branch, so a push of it does not ask
+  // the host which that is.
   const NOT_THE_DEFAULT = '(a branch that is not the default)';
-  const ownFolder = (project, branch) => (branch === STATE_BRANCH ? stateDir(project) : path.join(stateDir(project), '..', 'lock'));
 
-  // Pushes the state or the lock branch from the helper's own clone of it. The
-  // objects are read from the clone's resolved path.
+  // Pushes the lock branch from the helper's own clone of it, the one branch of Wheelhouse's that is
+  // pushed (design section 24.7, answer 2): the records never are. The objects are read from the
+  // clone's resolved path.
   async function pushOwn(project, branch, ctx, { allowStop = false } = {}) {
-    if (branch !== STATE_BRANCH && branch !== LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.plain };
+    if (branch !== LOCK_BRANCH) return { ok: false, refused: PUSH_REFUSALS.plain };
     let source = null;
-    try { source = fs.realpathSync.native(ownFolder(project, branch)); } catch { /* no clone */ }
+    try { source = fs.realpathSync.native(path.join(stateDir(project), '..', 'lock')); } catch { /* no clone */ }
     if (source === null) return { ok: false, refused: PUSH_REFUSALS.missing };
-    const answer = await pushFrom({ project, branch, source, refspec: branch, defaultBranch: NOT_THE_DEFAULT, allowStop }, ctx);
-    if (answer.ok && branch === STATE_BRANCH) {
-      // The push went through the mirror, so the clone is told what the host now holds.
-      await unkeyed('git', ['update-ref', `refs/remotes/${REMOTE}/${branch}`, answer.sha], { cwd: source });
-    }
+    const answer = await pushFrom({ project, branch, source, root: source, own: true, refspec: branch, defaultBranch: NOT_THE_DEFAULT, allowStop }, ctx);
     return answer.ok ? { ok: true } : answer;
   }
 
@@ -1312,6 +1393,8 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to push from was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PUSH_REFUSALS.outsideProject };
+    const outside = checkedGitDir(dir, { root: recordOf(project).folder });
+    if (outside.refused) return { ok: false, refused: outside.refused };
     // A feature session's push (placed by its folder, `byFolder`): the worktrees of one repository
     // share its branches, so the folder's own branch is the only one it sends, as /pull brings in
     // only that one. Like /pull's, this reads the folder's HEAD, which a session can rewrite, so it
@@ -1323,7 +1406,7 @@ export async function startHelper({
       return { ok: false, refused: PUSH_REFUSALS.unchecked };
     }
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
-    const answer = await pushFrom({ project, branch, source: dir, refspec, defaultBranch, ciGuard: true }, ctx);
+    const answer = await pushFrom({ project, branch, source: dir, root: recordOf(project).folder, refspec, defaultBranch, ciGuard: true }, ctx);
     if (answer.rejected === 'non-fast-forward') return { ...answer, refused: PUSH_REFUSALS.movedOn };
     return answer.ok ? { ok: true } : answer;
   }
@@ -1346,6 +1429,8 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to bring the branch into was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PULL_REFUSALS.outsideProject };
+    const outside = checkedGitDir(dir, { root: recordOf(project).folder });
+    if (outside.refused) return { ok: false, refused: outside.refused };
     if (!plainBranch(branch)) return { ok: false, refused: PULL_REFUSALS.plain };
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
@@ -1396,7 +1481,7 @@ export async function startHelper({
     const git = local(mirror);
     const refusal = await mirrorRefusal(mirror, keyed);
     if (refusal) return { ok: false, refused: refusal };
-    const copied = await copyIn(mirror, dir, branch, ctx);
+    const copied = await copyIn(mirror, dir, branch, ctx, { root: recordOf(project).folder });
     if (copied !== null) return { ok: false, refused: copied };
     const shallow = await git([...NO_HOOKS, 'rev-parse', '--is-shallow-repository']);
     if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
@@ -1465,29 +1550,34 @@ export async function startHelper({
   // An unknown host maps to null: quick then has no credential helper at all and fails closed.
   const hostOf = (host) => (host === 'github' || host === 'gitlab' ? host : null);
   const gitEnvOf = (mode, env, host, remoteUrl) => ({ ...(mode === 'narrow' ? env : directorSignIn(hostOf(host))), ...reachEnv(remoteUrl) });
-  const profileGit = (dir, args, env = {}) => stateGit(dir, args, { ...env, ...reachEnv(profileRemote()?.remoteUrl) });
 
+  // The project's private record (design section 24.1), opened, never cloned: its events are
+  // committed and never pushed, for every project as for a Lean one.
   async function ensureStateClone(project, ctx) {
-    await lookAtState(ctx, project);
-    await cloneState({ project, remoteUrl: recordOf(project).remoteUrl, env: ctx.gitEnv });
+    // A Lean project's record is looked at by its own opener, which words a refusal for Lean.
+    if (ctx.lean) await leanState(project, { run });
+    else {
+      recordOf(project); // a project not set up here gets no record made for it
+      await lookAtState(ctx, project);
+      await openProjectRecord(project, { run });
+    }
+    // v0.1.x's records come in before anything reads this one (design section 24.5 step 2).
+    await stateImport(project, ctx);
+    return stateDir(project);
   }
 
+  // The lock's push: the one branch of Wheelhouse's that goes to the host.
   const pushFor = (project, ctx) => (_dir, branch) => pushOwn(project, branch, ctx);
-  // A Lean project's state stays on this computer: its events are committed and never pushed.
-  const keptHere = async () => ({ ok: false });
-  const statePush = (project, ctx) => (ctx.lean ? keptHere : pushFor(project, ctx));
 
   const stateRoute = (fn, { clone = true, write = false } = {}) => (body, ctx) => oneAtATime(`state:${body.project}`, async () => {
     if (write && stopped()) return STOP_REFUSAL;
-    if (clone && ctx.lean) await leanState(body.project, { run });
-    else if (clone) await ensureStateClone(body.project, ctx);
+    if (clone) await ensureStateClone(body.project, ctx);
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
   });
   // The lock clone is shared with the merge gate's lock check: the same queue.
   const lockRoute = (fn, { write = false } = {}) => (body, ctx) => oneAtATime(`lock:${body.project}`, async () => {
     if (write && stopped()) return STOP_REFUSAL;
-    await oneAtATime(`state:${body.project}`, () => ensureStateClone(body.project, ctx));
     await lookAtLock(ctx, body.project);
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
@@ -1534,7 +1624,7 @@ export async function startHelper({
     }
     const made = makeEvent({ kind, data, now });
     const event = id === undefined ? made : { ...made, id };
-    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
@@ -1585,7 +1675,7 @@ export async function startHelper({
   async function writeSurvey(project, data, ctx) {
     try {
       const event = makeEvent({ kind: 'survey', data, now });
-      const result = await writeEvent({ project, event, push: pushFor(project, ctx), env: ctx.gitEnv, now });
+      const result = await writeEvent({ project, event, now });
       await freshViews(() => writeViews(project, { now }));
       return written({ event, result });
     } catch (error) {
@@ -1628,14 +1718,14 @@ export async function startHelper({
     const found = readiness({ evals: evalsFolder, level: column, pins, premium, given: records });
     if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
     const event = makeEvent({ kind: 'column-ready', data: { column, pins: { mostCapable: pins.mostCapable, midSized: pins.midSized }, records: found.records, commit: found.commit }, now });
-    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
 
   // --- The premium model's opt-in (design section 14.6, "The premium model") ---
 
-  // The project's views built from its state clone now.
+  // The project's views built from its private record now.
   const viewsNow = (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { now });
   // The level in force in `views`, as the waker reads it.
   const levelIn = (views) => levelOf(effectiveSettings({ project: views?.settings ?? {}, now }));
@@ -1660,7 +1750,7 @@ export async function startHelper({
     const from = offeredFrom(views.premium);
     const { question } = composeCard(premiumInput({ from, at }));
     const event = makeEvent({ kind: 'premium-card', data: { at, from, hash: cardHash(question) }, now });
-    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     return { ...written({ event, result }), offered: true, line: `${PREMIUM_ASK}${JSON.stringify(question)}.${PREMIUM_DO}` };
   }
@@ -1702,7 +1792,7 @@ export async function startHelper({
       if (view?.setting !== before.setting || checkRefusal(view) !== null) return { ok: true, checked: false, why: 'the premium setting changed meanwhile, so nothing was recorded' };
       const found = foundPremium(named, top);
       const event = makeEvent({ kind: 'premium-check', data: { setting: view.setting, model: named, found }, now });
-      const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+      const result = await writeEvent({ project, event, now });
       await freshViews(() => writeViews(project, { now }));
       return { ...written({ event, result }), checked: true, found, model: found ? named : null };
     });
@@ -1727,7 +1817,7 @@ export async function startHelper({
     const found = readiness({ evals: evalsFolder, level: PREMIUM_LEVEL, pins: held, given: records, yes: view.setting });
     if (!found.ok) refuse(`the evaluation's records don't show the bar passed: ${found.gaps.join('; ')}`);
     const event = makeEvent({ kind: 'column-ready', data: { column: PREMIUM_LEVEL, pins: held, records: found.records, commit: found.commit }, now });
-    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     return written({ event, result });
   }
@@ -1746,7 +1836,7 @@ export async function startHelper({
     const failed = barFailures({ evals: evalsFolder, pins: { premium: pin }, yes: view.setting });
     if (failed.length === 0) return { ok: true, recorded: false, why: 'no trial of its evaluation failed' };
     const event = makeEvent({ kind: 'premium-failed', data: { setting: view.setting, model: pin, failed }, now });
-    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     return { ...written({ event, result }), recorded: true, failed };
   }
@@ -2121,7 +2211,7 @@ export async function startHelper({
       if (!still) refuse(CHANGED);
       if (card !== LIFT_STOP_NAME && stopped() && servedUnderStop([still]).length === 0) return STOP_REFUSAL;
       const event = makeEvent({ kind: still.made.kind, data: { ...still.made.data, proof: 'window' }, now });
-      const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+      const result = await writeEvent({ project, event, now });
       await freshViews(() => writeViews(project, { now }));
       if (card !== LIFT_STOP_NAME) await doWrite({ project, kind: 'card-answer', data: { card, question: again.event.data.question, label: still.label } }, ctx);
       if (still.lift) liftStop();
@@ -2150,7 +2240,7 @@ export async function startHelper({
     if (!signed) return (await doWrite({ project, kind, data }, ctx)).id;
     if (!PLAIN_KINDS.includes(kind) || !data || typeof data !== 'object' || Array.isArray(data)) refuse('only a plain record is signed this way');
     const event = sign(makeEvent({ kind, data, now }));
-    await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     return event.id;
   });
@@ -2227,270 +2317,78 @@ export async function startHelper({
       const there = events.filter((e) => e.id === target.id);
       if (there.some((e) => canonicalJson(e) !== canonicalJson(target))) refuse('another event in the state carries the confirmed event\'s id, so neither was recorded');
       if (there.length === 0) {
-        await writeEvent({ project, event: target, push: statePush(project, ctx), env: ctx.gitEnv, now });
+        await writeEvent({ project, event: target, now });
         if (held.length > 0) await freshViews(() => writeViews(project, { now }));
       }
     }
     // The same record again has been taken (a hook sending its kept copy); another
     // event under its id has not, and says so in words a hook does not count as taken.
     if (held.length > 0) refuse('the state already holds an event with that id');
-    const result = await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+    const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
     // A Lean project has no preview to photograph.
     if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
   }
 
-  // --- the director's profile (design section 5.5) ---
+  // --- the director's settings on this computer (design section 24.2) ---
+  // Kept in their own private record at profileDir(), with no remote, as a project's record is: each
+  // computer keeps its own, and nothing is pushed or fetched.
 
-  // What git gets for the profile's own connection; the profile has no host requests.
+  // The settings make no requests of the host and need no connection.
   async function profileContext() {
-    const { mode, env } = connectionOf(await profileEnvFor());
     const looked = new Map();
-    // Before the request's first git call in the profile clone (every profile route's first step).
-    await lookOnce({ looked }, profileDir(), '.git', "the director's profile repository");
+    // Before the request's first git call in the settings record (every settings route's first step).
+    await lookOnce({ looked }, profileDir(), '.git', 'your settings on this computer');
     return {
-      mode,
-      env,
+      mode: 'settings',
+      env: {},
       signedOut: false,
       looked,
-      gitEnv: companyGit(gitEnvOf(mode, env, profileRemote()?.connection?.host, profileRemote()?.remoteUrl), profileRemote()),
-      reach: reachFor(profileRemote()?.remoteUrl),
-      secrets: secretsOf(env),
-      adapter: async () => refuse('the profile makes no requests of the host'),
+      gitEnv: {},
+      reach: 'https',
+      secrets: [],
+      adapter: async () => refuse('your settings make no requests of the host'),
     };
   }
 
-  const PROFILE_TRACKING = `refs/remotes/${REMOTE}/${PROFILE_BRANCH}`;
-  const inRebase = (dir) => ['rebase-merge', 'rebase-apply'].some((d) => fs.existsSync(path.join(dir, '.git', d)));
-
-  // Brings the profile clone up to date: the branch fetched into its tracking ref, then this
-  // computer's commits rebased onto it. A fetched tip holding anything under keys/ is never taken
-  // in (ruling R105): it fails closed, saying so. Two computers that back up the same
-  // project on the same day each add backups/<project>/<date>.bundle: the same state, so
-  // where the rebase stops only on bundles, the remote's copy is taken and this computer's
-  // commit of it is dropped. A stop on anything else is abandoned and said.
-  async function pullProfile(ctx) {
-    const dir = profileDir();
-    const env = ctx.gitEnv;
-    const fetched = await profileGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], env);
-    if (fetched.code !== 0) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
-    const keys = await holdsKeys(dir, PROFILE_TRACKING);
-    if (keys !== false) return { ok: false, keys: true, why: keys === null ? 'the profile\'s branch could not be read, so nothing was taken from it' : PROFILE_HOLDS_KEYS };
-    const pulled = await profileGit(dir, ['rebase', PROFILE_TRACKING], env);
-    if (pulled.code === 0) return { ok: true };
-    if (!inRebase(dir)) return { ok: false, why: 'the profile could not be brought up to date from its repository' };
-    for (let round = 0; round < 100 && inRebase(dir); round++) {
-      const listed = await profileGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z']);
-      const paths = listed.stdout.split('\0').filter(Boolean);
-      if (listed.code !== 0 || paths.length === 0 || !paths.every((p) => BUNDLE_PATH.test(p))) break;
-      // During a rebase "ours" is the remote's side.
-      for (const p of paths) {
-        const taken = await profileGit(dir, ['checkout', '--ours', '--', p]);
-        await profileGit(dir, taken.code === 0 ? ['add', '--', p] : ['rm', '-q', '--', p]);
-      }
-      const nothingLeft = (await profileGit(dir, ['diff', '--cached', '--quiet'])).code === 0;
-      await profileGit(dir, nothingLeft ? ['rebase', '--skip'] : ['-c', 'core.editor=true', 'rebase', '--continue'], env);
-    }
-    if (!inRebase(dir)) return { ok: true };
-    await profileGit(dir, ['rebase', '--abort'], env);
-    return { ok: false, why: 'the profile here and in its repository differ in a way that needs looking at, so nothing more was pushed' };
-  }
-
-  // Pushes the profile, bringing the clone up to date and trying again when the remote
-  // has moved on. Never answers that the push was declined without saying why.
-  async function pushProfile(ctx) {
-    for (let attempt = 0; ; attempt++) {
-      const answer = await pushProfileOnce(ctx);
-      if (answer.rejected !== 'non-fast-forward') return answer;
-      if (attempt === 3) return { ok: false, refused: 'the profile\'s repository kept moving on, so the push did not go through; the next sync tries again' };
-      const pulled = await pullProfile(ctx);
-      if (!pulled.ok) return { ok: false, refused: pulled.why };
-    }
-  }
-
-  // Pushes the profile branch straight from the helper's own clone, once every commit the
-  // remote lacks has passed the profile's push rules. Never a force-push.
-  async function pushProfileOnce(ctx) {
-    if (stopped()) return STOP_REFUSAL;
-    const dir = profileDir();
-    const keyed = keyedFor(ctx);
-    const inClone = (args) => keyed('git', args, { cwd: dir });
-    const shallow = await inClone(['rev-parse', '--is-shallow-repository']);
-    if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
-    if (shallow.stdout.trim() === 'true') return { ok: false, refused: PUSH_REFUSALS.shallow };
-    const resolved = await inClone(['rev-parse', '--verify', '-q', `refs/heads/${PROFILE_BRANCH}^{commit}`]);
-    const sha = resolved.stdout.trim();
-    if (resolved.code !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return { ok: false, refused: PUSH_REFUSALS.missing };
-    const checked = await checkCommits({
-      dir, branch: PROFILE_BRANCH, sha, gitRun: keyed, allowed: PROFILE_CHANGE, refused: PUSH_REFUSALS.profile, scan: (file) => file.startsWith('events/'), push: 'profile',
-    });
-    if (!checked.allowed) return { ok: false, refused: checked.refused };
-    if (stopped()) return STOP_REFUSAL;
-    const pushed = await inClone(['push', '--no-verify', '--porcelain', REMOTE, `${sha}:refs/heads/${PROFILE_BRANCH}`]);
-    if (pushed.code === 0) {
-      await unkeyed('git', ['update-ref', PROFILE_TRACKING, sha], { cwd: dir });
-      return { ok: true };
-    }
-    if (pushed.timedOut) return { ok: false, refused: 'the host did not answer the push in time' };
-    const line = pushed.stdout.split('\n').find((l) => l.startsWith('!') && l.includes(`refs/heads/${PROFILE_BRANCH}`));
-    if (line && /\((?:non-fast-forward|fetch first|failed to update ref|incorrect old value provided)\)/.test(line)) return { ok: false, rejected: 'non-fast-forward' };
-    const detail = clean(pushed.stderr, ctx.secrets);
-    return { ok: false, refused: `git could not push the profile${detail ? `: ${detail}` : ''}` };
-  }
-  const profilePush = (ctx) => () => pushProfile(ctx);
-  const inProfile = () => ({ dir: profileDir(), branch: PROFILE_BRANCH });
-
-  // Whether the keep rule removed this bundle: the backup keeps the newest BUNDLES_KEPT of
-  // a project, so a bundle with that many newer ones beside it is one it pruned.
-  function prunedByKeepRule(file) {
-    const name = file.split('/').at(-1);
-    let names = [];
-    try { names = fs.readdirSync(path.join(profileDir(), ...file.split('/').slice(0, -1))); } catch { /* none */ }
-    return names.filter((n) => BACKUP_FILE.test(n) && n > name).length >= BUNDLES_KEPT;
-  }
-
-  // Commits the new bundles under backups/, and the removal of those the keep rule pruned,
-  // so the folder is clean for a pull. A bundle missing for any other reason (a start cut
-  // short, a slip) or changed in place is put back from the branch; any other file is left alone.
-  async function commitBackups() {
-    const dir = profileDir();
-    const listed = await profileGit(dir, ['status', '--porcelain=v1', '-z', '-uall', '--', 'backups/']);
-    if (listed.code !== 0) refuse('the profile\'s backups could not be read');
-    const entries = listed.stdout.split('\0').filter((entry) => BUNDLE_PATH.test(entry.slice(3)));
-    const having = (code) => entries.filter((entry) => entry.startsWith(code)).map((entry) => entry.slice(3));
-    const deleted = having(' D ');
-    const pruned = deleted.filter(prunedByKeepRule);
-    const putBack = [...having(' M '), ...deleted.filter((f) => !pruned.includes(f))];
-    if (putBack.length > 0 && (await profileGit(dir, ['checkout', '-q', '--', ...putBack])).code !== 0) {
-      refuse('the profile\'s backups could not be put back');
-    }
-    const changed = [...having('?? '), ...pruned];
-    if (changed.length === 0) return;
-    const committed = (await profileGit(dir, ['add', '-A', '--', ...changed])).code === 0
-      && (await profileGit(dir, ['commit', '-q', '-m', 'Back up the state', '--', ...changed])).code === 0;
-    if (!committed) {
-      await profileGit(dir, ['reset', '-q', '--', ...changed]);
-      refuse('the profile\'s backups could not be committed');
-    }
-  }
-
-  // One at a time: the profile clone is shared by every profile route and the backup.
-  const profileRoute = (fn, { clone = true, write = false } = {}) => (body, ctx) => oneAtATime('profile', async () => {
+  // One at a time: the settings record is shared by every settings route.
+  const profileRoute = (fn, { open = true, write = false } = {}) => (body, ctx) => oneAtATime('profile', async () => {
     if (write && stopped()) return STOP_REFUSAL;
-    if (clone) await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv });
+    if (open) {
+      await openSettings({ run });
+      await settingsImport(ctx);
+    }
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
   });
 
-  async function doProfileWrite({ kind, data }, ctx) {
-    if (kind !== 'setting') refuse('only a setting is written to the profile');
+  async function doProfileWrite({ kind, data }) {
+    if (kind !== 'setting') refuse('only a setting is written to your settings');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');
     try { checkSetting(data.key, data.value, data.until); } catch (error) { refuse(error.message); }
-    if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in the profile`);
-    await commitBackups();
+    if (definitionOf(data.key)?.home !== 'profile') refuse(`${data.key} is kept in each project, not in your settings`);
     const event = makeEvent({ kind, data, now });
-    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
+    const result = await writeEvent({ event, dir: profileDir(), now });
     await freshViews(() => writeProfileViews({ now }));
-    return profileWritten({ event, result });
+    return written({ event, result });
   }
 
-  // As `written`, and when the event did not reach the profile's repository, how many
-  // commits there still lack, so work that is stuck is said plainly.
-  async function profileWritten(made) {
-    const answer = written(made);
-    if (answer.pushed) return answer;
-    const ahead = await profileGit(profileDir(), ['rev-list', '--count', `${PROFILE_TRACKING}..HEAD`]);
-    const count = Number.parseInt(ahead.stdout.trim(), 10);
-    return { ...answer, unpushed: ahead.code === 0 && Number.isInteger(count) ? count : 1 };
-  }
-
-  async function doProfileRecord({ event }, ctx) {
+  async function doProfileRecord({ event }) {
     if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
-    if (event.kind !== 'confirmation') refuse('only a confirmation is recorded in the profile');
+    if (event.kind !== 'confirmation') refuse('only a confirmation is recorded in your settings');
     if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
     if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
     if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
     const events = listEvents(profileDir(), { report: () => {} });
-    if (events.some((e) => e.id === event.id)) refuse('the profile already holds an event with that id');
+    if (events.some((e) => e.id === event.id)) refuse('your settings already hold an event with that id');
     const target = events.find((e) => e.id === event.data?.confirms);
     if (target?.kind !== 'setting' || eventHash(target) !== event.data?.confirmsHash) {
-      refuse('the confirmation names something that is not a profile event');
+      refuse('the confirmation names something that is not one of your settings');
     }
-    await commitBackups();
-    const result = await writeEvent({ event, push: profilePush(ctx), env: ctx.gitEnv, ...inProfile(), now });
+    const result = await writeEvent({ event, dir: profileDir(), now });
     await freshViews(() => writeProfileViews({ now }));
-    return profileWritten({ event, result });
-  }
-
-  // The computers' keys the profile holds (ruling R81): the profile's branch fetched into its
-  // tracking ref, then each enrolments/<computer>.json read from that fetched tree, never from the
-  // working tree, and neither the working tree nor the helper's own branch changed. A file that
-  // isn't an enrolment of the computer it is named for is left out. When the fetch fails, what an
-  // earlier fetch brought is read, and `fetched` says so. Nothing here is trusted: the session start
-  // offers each on a card, and only the director's click there trusts it.
-  async function doProfileEnrolments(_body, ctx) {
-    const dir = profileDir();
-    const fetched = (await profileGit(dir, ['fetch', '-q', '--no-tags', REMOTE, `+refs/heads/${PROFILE_BRANCH}:${PROFILE_TRACKING}`], ctx.gitEnv)).code === 0;
-    const listed = await profileGit(dir, ['ls-tree', '-z', '--full-tree', PROFILE_TRACKING, '--', 'enrolments/']);
-    if (listed.code !== 0) return { ok: true, fetched, enrolments: [] };
-    const enrolments = [];
-    for (const entry of listed.stdout.split('\0').filter(Boolean)) {
-      if (enrolments.length >= MAX_ENROLMENTS) break;
-      const m = /^100644 blob ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/s.exec(entry);
-      const file = m === null ? null : ENROLMENT_FILE.exec(m[2]);
-      if (file === null) continue;
-      const size = await profileGit(dir, ['cat-file', '-s', m[1]]);
-      if (size.code !== 0 || Number(size.stdout.trim()) > MAX_ENROLMENT_BYTES) continue;
-      const blob = await profileGit(dir, ['cat-file', 'blob', m[1]]);
-      const found = blob.code === 0 ? enrolmentOf(blob.stdout, file[1]) : null;
-      if (found !== null) enrolments.push(found);
-    }
-    return { ok: true, fetched, enrolments };
-  }
-
-  // The answer carries the last push's refusal, when the push rules refused it.
-  async function doProfileSync(_body, ctx) {
-    await commitBackups();
-    // What it can't settle, the push below says; a tip holding keys/ stops the sync here.
-    const first = await pullProfile(ctx);
-    if (first.keys) return { ok: false, refused: first.why };
-    let refused;
-    const push = async () => {
-      const pushed = await pushProfile(ctx);
-      refused = pushed.refused;
-      return pushed;
-    };
-    // Its pull is the profile's own, fenced as above.
-    const pull = async () => ({ code: (await pullProfile(ctx)).ok ? 0 : 1 });
-    const synced = await syncState({ push, pull, env: ctx.gitEnv, ...inProfile() });
-    await freshViews(() => writeProfileViews({ now }));
-    return refused === undefined ? { ok: true, ...synced } : { ok: false, ...synced, refused };
-  }
-
-  // This week's bundle of the project's state branch, into the profile's backups/. The
-  // profile is brought up to date first, so a bundle another computer made today is found
-  // and not made again. When the profile's repository can't be reached the bundle is still
-  // made here.
-  async function doBackup({ project }) {
-    const profileCtx = await profileContext();
-    await ensureProfileClone({ remote: profileRemote(), env: profileCtx.gitEnv });
-    await commitBackups();
-    await pullProfile(profileCtx);
-    const today = `backups/${project}/${now().toISOString().slice(0, 10)}.bundle`;
-    if ((await profileGit(profileDir(), ['cat-file', '-e', `HEAD:${today}`])).code === 0) {
-      return { ok: true, file: today, made: false, why: 'The profile already holds today\'s backup of this project' };
-    }
-    let before = [];
-    try { before = fs.readdirSync(path.join(profileDir(), 'backups', project)); } catch { /* none yet */ }
-    const file = await writeBackup({ project, now });
-    const made = !before.includes(path.basename(file));
-    return {
-      ok: true,
-      file: path.relative(profileDir(), file).replaceAll('\\', '/'),
-      made,
-      ...(made ? {} : { why: 'A backup of this project from the last seven days is already kept' }),
-    };
+    return written({ event, result });
   }
 
   // The changed files and the configuration, in the mirror. One at a time per
@@ -2819,7 +2717,8 @@ export async function startHelper({
     const pr = await adapter.prState(number);
     if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
     const skipped = [];
-    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
+    // As the merge gate counts them: this computer's own signatures alone.
+    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), ownKeyOnly(), { damaged: skipped, now });
     const reviews = views.reviews?.[String(number)] ?? {};
     const cleanEarlier = Object.values(reviews).filter((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
@@ -3008,7 +2907,7 @@ export async function startHelper({
         await ensureStateClone(project, ctx);
         if (stopped()) return;
         const event = makeEvent({ kind: 'review', data: outcome.data, now });
-        await writeEvent({ project, event, push: statePush(project, ctx), env: ctx.gitEnv, now });
+        await writeEvent({ project, event, now });
         await freshViews(() => writeViews(project, { now }));
       });
     } catch {
@@ -3058,7 +2957,8 @@ export async function startHelper({
   // own count (refused too when that count can't be read). So a commit is reviewed once, and a run that fails is
   // tried again only up to the limit: a fix needs a new commit.
   function reviewSpent(project, number, headSha) {
-    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { damaged: [], now });
+    // Only a review the gate would count spends the head: one signed by this computer's own key.
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { damaged: [], now });
     const short = headSha.slice(0, 7);
     if (views.reviews?.[String(number)]?.[headSha] !== undefined) return `${short} has a signed review already`;
     const failed = readFailedReviews(project);
@@ -3158,7 +3058,7 @@ export async function startHelper({
     if (made.conflicts) return { ok: false, refused: 'the branch conflicts with the default branch', conflicts: made.conflicts };
     if (made.current) return { ok: true, updated: false, head: pr.headSha };
     try {
-      const pushed = await pushFrom({ project, branch, source: made.mirror, refspec: branch, defaultBranch, ciGuard: true }, ctx);
+      const pushed = await pushFrom({ project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch, ciGuard: true }, ctx);
       if (pushed.rejected) return { ok: false, refused: 'the branch moved on the host while it was being brought up to date' };
       if (!pushed.ok && pushed.refused === PUSH_REFUSALS.ciFile) {
         // The card for this exact commit, which the next call builds again.
@@ -3198,23 +3098,10 @@ export async function startHelper({
     }
   }
 
-  // Pulls the project's state clone, and pushes what it holds that the host lacks, as /state/sync
-  // does. Whether the pull went through.
-  async function stateFresh(project, ctx) {
-    await lookAtState(ctx, project); // a refusal ends the request, never a quiet "not fresh"
-    try {
-      return await oneAtATime(`state:${project}`, async () => (
-        (await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })).pulled === true
-      ));
-    } catch {
-      return false;
-    }
-  }
-
   async function mergeAnswer(body, ctx) {
     const { project, number } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
-    // The state clone and the mirror are looked at before any git runs in either; a refusal answers here.
+    // The private record and the mirror are looked at before any git runs in either; a refusal answers here.
     await lookAtState(ctx, project);
     await lookAtMirror(ctx, project);
     const adapter = await ctx.adapter();
@@ -3265,13 +3152,14 @@ export async function startHelper({
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
     const release = pinsOnly ? { release: { kind: 'pins-only', ref: releaseCheck.ref, sha: releaseCheck.sha } } : {};
     const ci = await adapter.ciState(headSha);
-    // The state clone is brought up to date first, so an incident declared on another computer is
-    // seen (Ruling 115); when it can't be, the merge waits, a restore excepted, since the runbook
-    // restores the product (step 3) before the state (step 4) (Ruling 116).
+    // The private record is read here, as it stands: it has no remote to bring it up to date from
+    // (design section 24.3 item 1). Only this computer's own signed clicks count, checked against its
+    // own key, so a record another computer signed, or one committed to main, counts for nothing.
     const stateReasons = [];
-    if (!(await stateFresh(project, ctx)) && !restore) stateReasons.push(STATE_BEHIND);
+    // Opened first, so v0.1.x's records are in it before the gate reads it (design section 24.5).
+    await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
     const skipped = [];
-    const enrolled = readEnrolled();
+    const enrolled = ownKeyOnly();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
     // A damaged event is dropped from the views, and a dropped incident or approval of work reads as
     // nothing to do, so with any damage only a restore goes on (Ruling 114). A reply-code clash is
@@ -3520,7 +3408,7 @@ export async function startHelper({
     if (made.refused) return { ok: false, refused: made.refused };
     try {
       const pushed = await pushFrom({
-        project, branch, source: made.mirror, refspec: branch, defaultBranch, allowStop: true, asDirector: onGithub && made.ci,
+        project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch, allowStop: true, asDirector: onGithub && made.ci,
       }, ctx);
       if (!pushed.ok) {
         return { ok: false, refused: pushed.rejected ? `the branch ${branch} is already on the host with other contents: open its pull request, or ask the director to remove the branch` : pushed.refused };
@@ -3583,69 +3471,62 @@ export async function startHelper({
     }
   }
 
-  // Step 4: the newest backup's events that the state branch lacks, added back and pushed.
-  async function doRestoreState({ project }, ctx) {
-    const folder = path.join(profileDir(), 'backups', project);
-    let names = [];
-    try { names = fs.readdirSync(folder).filter((f) => BACKUP_FILE.test(f)).sort(); } catch { /* none */ }
-    if (names.length === 0) return { ok: false, refused: 'there is no backup of this project\'s records on this computer' };
-    const bundle = path.join(folder, names.at(-1));
-    return oneAtATime(`state:${project}`, async () => {
-      await ensureStateClone(project, ctx);
-      const dir = stateDir(project);
-      // A bundle is a file on this computer, so these steps allow a local path whatever the remote is.
-      const plain = (args) => stateGit(dir, args, LOCAL_PATHS);
-      if ((await plain(['bundle', 'verify', bundle])).code !== 0) return { ok: false, refused: 'the newest backup could not be verified, so nothing was put back' };
-      let fetched = await plain(['fetch', '-q', '--no-tags', bundle, `+refs/heads/${STATE_BRANCH}:${BACKUP_REF}`]);
-      if (fetched.code !== 0) fetched = await plain(['fetch', '-q', '--no-tags', bundle, `+refs/remotes/${REMOTE}/${STATE_BRANCH}:${BACKUP_REF}`]);
-      if (fetched.code !== 0) return { ok: false, refused: 'the newest backup could not be read, so nothing was put back' };
-      try {
-        const reached = { ...ctx.gitEnv, ...reachEnv(recordOf(project).remoteUrl) };
-        const pulled = await stateGit(dir, ['pull', '--rebase', REMOTE, STATE_BRANCH], reached);
-        if (pulled.code !== 0) await stateGit(dir, ['rebase', '--abort'], reached);
-        const listedAt = async (rev) => {
-          const listed = await plain(['ls-tree', '-r', '-z', '--name-only', rev, '--', 'events/']);
-          if (listed.code !== 0) throw new Error('listing the events failed');
-          return listed.stdout.split('\0').filter(Boolean);
-        };
-        const have = new Set(await listedAt('HEAD'));
-        const enrolled = readEnrolled();
-        const added = [];
-        let skipped = 0;
-        for (const file of (await listedAt(BACKUP_REF)).filter((f) => !have.has(f))) {
-          const read = await plain(['show', `${BACKUP_REF}:${file}`]);
-          let event = null;
-          try { event = JSON.parse(read.stdout); } catch { /* skipped below */ }
-          const sound = read.code === 0 && EVENT_FILE.test(file) && event && typeof event === 'object' && !Array.isArray(event)
-            && typeof event.id === 'string' && typeof event.at === 'string' && typeof event.kind === 'string' && typeof event.computer === 'string'
-            && (PLAIN_KINDS.includes(event.kind) || PROTECTED_KINDS.includes(event.kind))
-            && eventPath(event).replaceAll('\\', '/') === file
-            && scanContent(read.stdout).length === 0
-            && (!PROTECTED_KINDS.includes(event.kind) || verify(event, enrolled));
-          if (!sound) { skipped += 1; continue; }
-          const target = path.join(dir, file);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          try { fs.writeFileSync(target, read.stdout, { flag: 'wx' }); } catch { skipped += 1; continue; }
-          added.push(file);
-        }
-        if (added.length === 0) {
-          return plainAnswer(`Nothing needed putting back: every event in the newest backup is already on the state branch${skipped ? ` (${skipped} could not be checked and were left out)` : ''}.`, { added: 0, skipped });
-        }
-        const committed = (await plain(['add', '--', ...added])).code === 0 && (await plain(['commit', '-q', '-m', `Put back ${added.length} events from the backup`])).code === 0;
-        if (!committed) {
-          await plain(['reset', '-q', '--', ...added]);
-          for (const f of added) fs.rmSync(path.join(dir, f), { force: true });
-          return { ok: false, refused: 'the events could not be committed, so nothing was put back' };
-        }
-        const pushed = await pushOwn(project, STATE_BRANCH, ctx, { allowStop: true });
-        if (!pushed.ok) {
-          return { ok: false, refused: `${added.length} events were put back on this computer, but pushing them failed (${pushed.refused ?? 'the host did not take them'}); the next sync will push them`, added: added.length, skipped };
-        }
-        return plainAnswer(`Put back ${added.length} events from the newest backup, and pushed them${skipped ? `; ${skipped} could not be checked and were left out` : ''}. Nothing already on the branch was changed.`, { added: added.length, skipped });
-      } finally {
-        await plain(['update-ref', '-d', BACKUP_REF]);
-      }
-    });
+  // Step 4, putting the records back from a backup, is retired: the records stay on this computer and
+  // Wheelhouse keeps no backup of them (design section 24.3 item 4).
+  const doRestoreState = () => ({ ok: false, refused: RESTORE_RETIRED });
+
+  // The import from Wheelhouse v0.1.x (design section 24.5 step 2): the old folder's events into the
+  // record, once, with a mark beside the record saying what was done. A folder that isn't there, or a
+  // mark already kept, imports nothing. The old folder is looked at first, as every repository the
+  // helper runs git in is, and is never changed.
+  // Runs whenever the record or the settings are opened, so nothing reads them before the import
+  // has run (an open incident, say, would otherwise be missed by the merge gate). Gives the mark.
+  async function importOnce({ from, to, mark, what }, ctx) {
+    const kept = readMark(mark);
+    if (kept !== null) return kept;
+    if (!fs.existsSync(path.join(from, '.git'))) return null;
+    // An import that fails (an old clone that is damaged, or whose settings the look refuses) is
+    // marked as failed, with why, rather than tried on every request: else every route and the gate
+    // would throw with nothing saying why. The old folder stays as it was, for the director to choose.
+    let counts;
+    try {
+      await lookOnce(ctx, from, '.git', what);
+      counts = await importEvents({ from, to, enrolled: readEnrolled() });
+    } catch (error) {
+      const why = error instanceof Error ? error.message : `${what} could not be read`;
+      counts = { imported: 0, held: 0, unsigned: 0, unreadable: 0, failed: clean(why, ctx.secrets) || `${what} could not be read` };
+    }
+    const record = { at: now().toISOString(), ...counts, said: false };
+    fs.writeFileSync(mark, `${JSON.stringify(record, null, 2)}\n`);
+    return record;
+  }
+  const stateImport = (project, ctx) => importOnce({
+    from: oldStateDir(project), to: stateDir(project), mark: path.join(stateDir(project), '..', IMPORT_MARK), what: 'the project\'s v0.1.x state clone',
+  }, ctx);
+  const settingsImport = (ctx) => importOnce({
+    from: oldProfileDir(), to: profileDir(), mark: path.join(wheelhouseHome(), SETTINGS_IMPORT_MARK), what: 'your v0.1.x profile clone',
+  }, ctx);
+
+  // What the session start says of the import: `done: false` the first time it is asked after the
+  // import ran, with the counts, so it is said once; `done: true` after that.
+  function importAnswer(kept, mark) {
+    if (kept === null) return { ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 };
+    const { said, ...counts } = kept;
+    if (said !== false) return { ok: true, done: true, ...counts };
+    fs.writeFileSync(mark, `${JSON.stringify({ ...counts, said: true }, null, 2)}\n`);
+    return { ok: true, done: false, ...counts };
+  }
+
+  async function doStateImport({ project }, ctx) {
+    const answer = importAnswer(await stateImport(project, ctx), path.join(stateDir(project), '..', IMPORT_MARK));
+    if (!answer.done && answer.imported > 0) await freshViews(() => writeViews(project, { now }));
+    return answer;
+  }
+
+  async function doProfileImport(_body, ctx) {
+    const answer = importAnswer(await settingsImport(ctx), path.join(wheelhouseHome(), SETTINGS_IMPORT_MARK));
+    if (!answer.done && answer.imported > 0) await freshViews(() => writeProfileViews({ now }));
+    return answer;
   }
 
   // The end of a command's output, with any line that matched the secret scan hidden. The end is
@@ -3792,10 +3673,8 @@ export async function startHelper({
         tidyAfterAnswer(body.project, ctx);
       }
     },
-    '/state/clone': stateRoute(async ({ project }, ctx) => {
-      await ensureStateClone(project, ctx);
-      return { ok: true };
-    }, { clone: false }),
+    // Opens the project's private record, making it the first time.
+    '/state/clone': stateRoute(async () => ({ ok: true })),
     '/state/write': stateRoute(doWrite, { write: true }),
     '/session/mark': stateRoute(doSessionMark, { write: true }),
     '/cards/chat-click': stateRoute(doChatClick, { write: true }),
@@ -3812,10 +3691,9 @@ export async function startHelper({
     '/premium/check': doPremiumCheck,
     '/premium/state': stateRoute(doPremiumState),
     '/premium/failed': stateRoute(doPremiumFailed, { write: true }),
-    // A Lean project's state has no remote, so there is nothing to pull or push.
-    '/state/sync': stateRoute(async ({ project }, ctx) => (ctx.lean ? { ok: true, pulled: 0, unpushed: 0 } : {
-      ok: true, ...(await syncState({ project, push: pushFor(project, ctx), env: ctx.gitEnv })),
-    })),
+    // The private record has no remote, so there is nothing to pull or push (design section 24.3 item 2).
+    '/state/sync': stateRoute(async () => ({ ok: true, pulled: 0, unpushed: 0 })),
+    '/state/import': stateRoute(doStateImport, { write: true }),
     // With `cards`, the card events too, every one the state holds: the board numbers its list
     // from them, and the front desk's `again <n>` must find the board's card n. `stop` says STOP is
     // on, for the front desk in the sandbox, which can't read it, to offer the Lift STOP card. With
@@ -3842,15 +3720,14 @@ export async function startHelper({
       const label = Object.hasOwn(questions ?? {}, questionId) ? questions[questionId]?.answer?.label : undefined;
       return { ok: true, answer: typeof label === 'string' ? label : null };
     }),
-    '/state/backup': (body, ctx) => oneAtATime('profile', () => stateRoute(doBackup)(body, ctx)),
-    '/profile/clone': profileRoute(async (_body, ctx) => ({
-      ok: true, ...(await ensureProfileClone({ remote: profileRemote(), env: ctx.gitEnv })),
-    }), { clone: false }),
+    // Opens the settings record, making it the first time.
+    '/profile/clone': profileRoute(async () => ({ ok: true })),
     '/profile/write': profileRoute(doProfileWrite, { write: true }),
     '/profile/record': profileRoute(doProfileRecord),
-    '/profile/sync': profileRoute(doProfileSync),
+    // The settings have no remote, so there is nothing to pull or push.
+    '/profile/sync': profileRoute(async () => ({ ok: true, pulled: 0, unpushed: 0 })),
     '/profile/views': profileRoute(async () => ({ ok: true, views: await writeProfileViews({ now }) })),
-    '/profile/enrolments': profileRoute(doProfileEnrolments),
+    '/profile/import': profileRoute(doProfileImport, { write: true }),
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),
@@ -4062,8 +3939,6 @@ export async function startHelper({
       if (url.pathname === '/push') body = { ...body, byFolder: body.cwd !== undefined };
       // The foreman's commands send their folder, which must be the main checkout (ruling R156).
       if (url.pathname === '/foreman/run') body = { ...body, project: placeMainCheckout(body.folder) };
-      // The profile's routes, and the backup into it, wait for setup to name the profile's repository.
-      if (NEEDS_PROFILE.includes(url.pathname) && profileRemote() === null) return send(res, 200, PROFILE_NOT_SET_UP);
       if (url.pathname.startsWith('/profile/')) {
         ctx = await profileContext();
       } else {

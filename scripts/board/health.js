@@ -2,7 +2,7 @@
 // How a project stands, in lines the board and the briefing show: STOP, the
 // protection level, the connection, the build-commands level on Windows, CI, the
 // approvals that ask again without Chrome, the lock, the helper, the key's renewal,
-// setup's push test when it didn't reach the phone, the front desk's model, and the profile. What only the
+// setup's push test when it didn't reach the phone, and the front desk's model. What only the
 // host knows (protection, CI) comes from a cache kept for a day, so reading never
 // waits on the host.
 import fs from 'node:fs';
@@ -184,7 +184,7 @@ export function readScreens({ folder, findBrowser = realFindBrowser } = {}) {
 // `screens` is readScreens'; only pages listed and Chrome not found bring its line. `phonePush`
 // is setup's push test as this computer's journal last recorded it, { arrived, at }
 // (scripts/lib/setup-run.js, phonePushResult); only `arrived: false` adds a line.
-export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, profile, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel } = {}) {
+export function healthLines({ record, locked, stop, lock, helperUp, facts, renewal, platform = process.platform, realUsers, builds, screens, phonePush, frontDeskModel } = {}) {
   const lines = [];
   const add = (level, text) => lines.push({ level, text });
 
@@ -220,6 +220,5 @@ export function healthLines({ record, locked, stop, lock, helperUp, facts, renew
   // The front desk on another model than setup pinned for it (design section 8).
   const model = frontDeskModelLine(frontDeskModel ?? {});
   if (model) add('watch', model);
-  if (!profile) add('watch', 'Your profile isn\'t backed up off this computer yet');
   return lines;
 }

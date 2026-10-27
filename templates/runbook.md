@@ -27,11 +27,9 @@ The answer says plainly what was done and what is left for the director.
 
 **What happens:** Wheelhouse opens a pull request, from a branch called `wheelhouse-restore-` and the first twelve characters of the commit. Its files are exactly that release's files, laid on top of the current default branch. The director approves that pull request on its card, and once CI has passed the merge follows. This is the one merge STOP lets through, and only for 24 hours after the director's click. It needs no review, because the files are a release that passed one. It does need the director's approval and passing CI. If the release changes CI files on GitHub, the push and the merge need the director's own sign-in, and the answer says so.
 
-## 4. Put the project's records back from the backup
+## 4. The project's records
 
-**What the director clicks:** "Put the project's records back from the backup".
-
-**What happens:** Wheelhouse takes the newest weekly backup, checks it, and adds back any record that the state branch has lost. It only ever adds. It leaves out any record whose signature does not check, and it never changes one that is already there.
+**Nothing to click.** Wheelhouse keeps the project's records on this computer only, and pushes none of them, so an incident on the host leaves them as they were. Wheelhouse keeps no backup of them: if the computer itself is lost, a backup of the computer (Time Machine, or File History on Windows) is what brings them back. The product's own files are on the host, so the project can carry on from another computer.
 
 ## 5. Contain live harm
 

@@ -17,28 +17,26 @@ import path from 'node:path';
 import {
   standInHost, makeClock, makeComputer, shimTools, shutOutGitConfig, follow, listing, differences,
 } from '../helpers/setup-e2e.js';
-import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, PROFILE_REPO, fromOtherComputer } from '../../scripts/setup/host.js';
+import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS } from '../../scripts/setup/host.js';
 import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
 import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { SETUP_FILES, COMMIT_MESSAGE } from '../../scripts/setup/project-files.js';
 import { HEALTH_BRANCH } from '../../scripts/setup/health.js';
-import { setupLine, setLineOf, trustLine, SETUP_TITLES, UNINSTALL_LABEL, TRUST_LABEL } from '../../scripts/state/card-lines.js';
-import { NOT_SET_UP, partWay, REMOVED, TRUST_ASK } from '../../scripts/hooks/session-start.js';
-import { fingerprint } from '../../scripts/lib/trust-clicks.js';
-import { composeCard } from '../../scripts/cards/compose.js';
+import { setupLine, SETUP_TITLES, UNINSTALL_LABEL } from '../../scripts/state/card-lines.js';
+import { NOT_SET_UP, partWay, REMOVED } from '../../scripts/hooks/session-start.js';
 import { UNINSTALL_BRANCH } from '../../scripts/setup/uninstall-run.js';
 import { PLUGIN_LINE } from '../../scripts/setup/uninstall.js';
 import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
 import { listEvents } from '../../scripts/state/events.js';
 import { readJournal } from '../../scripts/setup/journal.js';
-import { healthGreen, firstUnfinished, runClosed, stepsFor, joinedRepo, SETUP_STEPS, JOINING_STEPS } from '../../scripts/lib/setup-run.js';
+import { healthGreen, firstUnfinished, runClosed, SETUP_STEPS } from '../../scripts/lib/setup-run.js';
 import { clicksDir, usedDir, keptAnswers } from '../../scripts/lib/setup-clicks.js';
 import { readEnrolled, ownKey, verify } from '../../scripts/state/signing.js';
 import { readProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { toolPath } from '../../scripts/lib/host-tools.js';
-import { STATE_BRANCH } from '../../scripts/state/clone.js';
+import { STATE_BRANCH } from '../../scripts/state/record.js';
 import { run as realRun, withoutGitVars } from '../../scripts/lib/run.js';
 import { g } from '../helpers/git-fixture.js';
 import { transcript, typed } from '../helpers/setup-answers.js';
@@ -220,21 +218,19 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     assert.deepEqual(await a.act(() => readJournal().runs.map((r) => r.id)), [run.id]);
 
     // On the host: the product's private repository, setup's one commit of its three files and the
-    // .gitignore (which had no .env lines) on main,
-    // the state branch, the profile with this computer's key, protection on, and the trial pull
-    // request closed with its branch gone.
+    // .gitignore (which had no .env lines) on main, protection on, and the trial pull request closed
+    // with its branch gone. No state branch and no profile repository: the records stay here.
     const product = host.url({ repo: REPO });
     const tip = await g(product, 'rev-parse', 'main');
     assert.equal(await g(product, 'log', '-1', '--format=%s', tip), COMMIT_MESSAGE);
     assert.deepEqual((await g(product, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip)).split('\n').sort(), [...SETUP_FILES, '.gitignore'].sort());
-    assert.notEqual(await lsRemote(product, `refs/heads/${STATE_BRANCH}`), '');
+    assert.equal(await lsRemote(product, `refs/heads/${STATE_BRANCH}`), '');
     assert.equal(await lsRemote(product, `refs/heads/${HEALTH_BRANCH}`), '');
     assert.ok(host.protected.has(REPO));
-    assert.equal(await a.act(() => JSON.parse(fs.readFileSync(path.join(a.home, 'profile.json'), 'utf8')).repo), `a-director/${PROFILE_REPO}`);
-    const enrolment = JSON.parse(await g(host.url({ repo: `a-director/${PROFILE_REPO}` }), 'show', `wheelhouse-profile:enrolments/${own.computer}.json`));
-    assert.equal(enrolment.publicKey, own.publicKey);
+    assert.equal(host.has('a-director/wheelhouse-profile'), false, 'no profile repository');
+    assert.equal(fs.existsSync(path.join(a.home, 'profile.json')), false);
     assert.deepEqual(host.pulls().map(([, pr]) => [pr.head, pr.state]), [[HEALTH_BRANCH, 'closed']]);
-    // The folder is the project's checkout, registered, its state cloned, its pins installed.
+    // The folder is the project's checkout, registered, its record opened, its pins installed.
     assert.equal(await g(a.folder, 'rev-parse', 'HEAD'), tip);
     assert.equal(await a.act(() => readProject(SLUG)?.folder), a.folder);
     assert.ok(fs.existsSync(await a.act(() => path.join(stateDir(SLUG), '.git'))));
@@ -369,7 +365,7 @@ test('setup stopped after step 3 carries on at step 4 in the next session, on th
     await follow(a, { answer: byId(NEW_ANSWERS), through: 3 });
     const stopped = await a.setupRun();
     const made = a.calls.filter((call) => call[0] === 'gh' && call[1] === 'repo' && call[2] === 'create');
-    assert.deepEqual(made.map((call) => call[3]), [REPO, `a-director/${PROFILE_REPO}`]);
+    assert.deepEqual(made.map((call) => call[3]), [REPO]);
     await a.stop();
     assert.equal(a.helper, null);
 
@@ -523,90 +519,6 @@ test('a git address added to the folder after the Go ahead lapses it before step
   }
 });
 
-test('a second computer joins, and its records count on the first only after Trust it', { skip: SKIP }, async () => {
-  const { clock, host, a } = fresh();
-  const b = makeComputer(host, clock, { name: 'Cafe Menu' });
-  try {
-    // The first computer sets up the product, and a ruling is written to the project's state, as
-    // the front desk writes one, for the director to confirm. Then Desktop is closed there.
-    await a.start();
-    await a.sessionStart();
-    assert.equal(log10(await follow(a, { answer: byId(NEW_ANSWERS) })).green, true);
-    const words = 'Prices are shown in pounds and pence.';
-    const written = await a.act(() => a.client.state.write({ project: SLUG, kind: 'ruling', data: { words } }));
-    assert.equal(written.ok, true, JSON.stringify(written));
-    await a.stop();
-
-    // The second computer: its own key at its first session start, then setup joins the product
-    // from an empty folder and runs only the joining steps (ruling R74).
-    await b.start();
-    assert.deepEqual(await b.sessionStart(), [NOT_SET_UP]);
-    const keyB = await b.act(() => ownKey());
-    // On the second computer the director clicks Customise and says the product is from their
-    // other computer; the one card then lists the join, and its Go ahead runs the joining steps.
-    const joined = await follow(b, { answer: customiseOnce({ ...NEW_ANSWERS, join: fromOtherComputer('Cafe-Menu') }), phone: true });
-    assert.deepEqual([...new Set(joined.map((e) => e.step))], [0, 3, 1, 2, 6, 7, 8, 9]);
-    assert.ok(joined.some((e) => e.step === 3 && e.ask === 'join' && e.label === fromOtherComputer('Cafe-Menu')));
-    const runB = await b.setupRun();
-    assert.equal(joinedRepo(runB), REPO);
-    assert.equal(stepsFor(runB), JOINING_STEPS);
-    assert.equal(firstUnfinished(runB), null, 'finished');
-    assert.equal(healthGreen(runB), false, 'with no green mark: no step 10 on a joining computer');
-    assert.match((await b.cliTry('plan', '10')).refused, /a computer joining a project set up on another runs only steps 1, 2, 3, 6, 7, 8, 9/);
-    assert.equal(await g(b.folder, 'rev-parse', 'HEAD'), await g(host.url({ repo: REPO }), 'rev-parse', 'main'));
-    // Its key went into the profile, published by step 3.
-    const published = JSON.parse(await g(host.url({ repo: `a-director/${PROFILE_REPO}` }), 'show', `wheelhouse-profile:enrolments/${keyB.computer}.json`));
-    assert.equal(published.publicKey, keyB.publicKey);
-
-    // On the second computer the director confirms the ruling, signed there and pushed to the host.
-    const ruling = await b.act(() => listEvents(stateDir(SLUG), { report: () => {} }).find((e) => e.kind === 'ruling' && e.data.words === words));
-    assert.ok(ruling, 'the ruling reached the second computer\'s state');
-    const confirm = composeCard({
-      kind: 'confirm', level: 3, what: `A rule for the product: ${words}`, why: 'It holds only once you confirm it.',
-      options: [{ label: 'Confirm', says: 'It goes into the rulebook.' }], recommend: 'Confirm', because: 'you asked for it', meanwhile: 'Nothing changes.',
-      target: { event: ruling },
-    }).question;
-    await b.click(confirm, 'Confirm');
-    const confirmation = await b.act(() => listEvents(stateDir(SLUG), { report: () => {} }).find((e) => e.kind === 'confirmation' && e.data.confirms === ruling.id));
-    assert.equal(confirmation.computer, keyB.computer);
-    await b.stop();
-
-    // Back on the first computer: the session start syncs the state and fetches the profile's
-    // enrolments. The second computer's confirmation is there, but it doesn't count: its key is
-    // found in the profile, not trusted.
-    await a.start();
-    const lines = await a.sessionStart();
-    const events = await a.act(() => listEvents(stateDir(SLUG), { report: () => {} }));
-    assert.ok(events.some((e) => e.id === confirmation.id), 'the confirmation reached the first computer');
-    assert.equal(await a.act(() => verify(confirmation, readEnrolled())), false);
-    const unconfirmed = async () => (await a.act(() => a.client.state.views({ project: SLUG }))).views.unconfirmed.map((u) => u.id);
-    assert.ok((await unconfirmed()).includes(ruling.id), 'still unconfirmed here');
-    // The trust card names the second computer, the day its key was added and the key's
-    // fingerprint; Not now trusts nothing.
-    const offered = lines.filter((l) => l.startsWith(TRUST_ASK));
-    assert.equal(offered.length, 1, lines.join('\n'));
-    const card = JSON.parse(offered[0].slice(TRUST_ASK.length));
-    assert.equal(setLineOf(card.question), trustLine(keyB.computer, published.at, fingerprint(keyB.publicKey)));
-    await a.click(card, 'Not now');
-    assert.equal(await a.act(() => readEnrolled().some((e) => e.computer === keyB.computer)), false);
-    assert.ok((await unconfirmed()).includes(ruling.id));
-    // Trust it: the second computer's key is enrolled here, and its confirmation counts.
-    await a.click(card, TRUST_LABEL);
-    assert.deepEqual(await a.act(() => readEnrolled().find((e) => e.computer === keyB.computer)?.publicKey), keyB.publicKey);
-    assert.equal(await a.act(() => verify(confirmation, readEnrolled())), true);
-    assert.ok(!(await unconfirmed()).includes(ruling.id), 'confirmed by the second computer\'s click');
-    const rulebook = (await a.act(() => a.client.state.views({ project: SLUG }))).views.rulebook;
-    assert.deepEqual(rulebook.filter((r) => r.words === words).map((r) => r.status), ['accepted']);
-    // Trusted, it is offered no more.
-    assert.ok(!(await a.sessionStart()).some((l) => l.startsWith(TRUST_ASK)));
-    assert.deepEqual([...a.refused, ...b.refused], []);
-    assert.deepEqual(shims.calls(), [`gh pr close 12 --repo ${REPO}`, ...SURVEY_CALLS]);
-  } finally {
-    await b.cleanup();
-    await a.cleanup();
-  }
-});
-
 test('uninstall after setup leaves the home folder as it was, but for what the director keeps', { skip: SKIP }, async () => {
   const { host, a } = fresh();
   try {
@@ -619,16 +531,15 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     await follow(a, { answer: byId(NEW_ANSWERS) });
     const product = host.url({ repo: REPO });
     const main = await g(product, 'rev-parse', 'main');
-    const own = await a.act(() => ownKey());
     // After setup, the director sets their own transcript retention (Review Focus 2).
     const set = JSON.parse(fs.readFileSync(userSettings, 'utf8'));
     assert.equal(set.cleanupPeriodDays, 30, 'setup\'s');
     fs.writeFileSync(userSettings, `${JSON.stringify({ ...set, cleanupPeriodDays: 90 }, null, 2)}\n`);
 
-    // Uninstall's plan: its card and the level 4 cards for what setup made on the host.
+    // Uninstall's plan: its card and the level 4 cards for the product's repository and the record.
     const plan = await a.cli('uninstall', 'plan');
     assert.equal(plan.last, true, 'the last project on this computer');
-    assert.deepEqual(plan.asks.map((x) => x.about), ['product', 'state', 'profile']);
+    assert.deepEqual(plan.asks.map((x) => x.about), ['product', 'record']);
     assert.match(plan.card.question, /Left as you changed them: cleanupPeriodDays\./, 'the director\'s own setting named as kept');
     // The director keeps each, then clicks Remove it; apply is refused until then.
     for (const ask of plan.asks) {
@@ -640,7 +551,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     assert.deepEqual(await a.cli('uninstall', 'apply', plan.hash), { started: true });
     const status = await a.cli('uninstall', 'status');
     assert.equal(status[0], 'Uninstall is done.', status.join('\n'));
-    assert.ok(status.includes(`Kept: ${REPO}.`) && status.includes(`Kept: ${REPO}:${STATE_BRANCH}.`) && status.includes(`Kept: a-director/${PROFILE_REPO}.`), status.join('\n'));
+    assert.ok(status.includes(`Kept: ${REPO}.`) && status.includes('Kept: this project\'s private record on this computer.'), status.join('\n'));
     assert.ok(status.includes(`${PLUGIN_LINE}.`), status.join('\n'));
     // The last uninstall on this computer stops the helper once that answer has gone, and its
     // jobs were stopped first: the watcher among them.
@@ -648,18 +559,13 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     assert.deepEqual(a.uninstallOps.stops, ['foreman', 'watcher', 'receiver']);
     assert.equal(a.watcher, null);
 
-    // On the host: setup's files go out by a pull request the director merges; the product, its
-    // state branch and the profile are kept, as the director chose; this computer's key has left the
-    // profile; protection stays on.
+    // On the host: setup's files go out by a pull request the director merges; the product is kept,
+    // as the director chose; protection stays on.
     const [[, pr]] = host.pulls().filter(([, p]) => p.head === UNINSTALL_BRANCH);
     assert.equal(pr.state, 'open');
     assert.equal(await g(product, 'rev-parse', 'main'), main, 'main as setup left it, until the director merges');
     const taken = (await g(product, 'diff', '--name-only', `main...${UNINSTALL_BRANCH}`)).split('\n').sort();
     assert.deepEqual(taken, [...SETUP_FILES].sort());
-    assert.notEqual(await lsRemote(product, `refs/heads/${STATE_BRANCH}`), '');
-    const profile = host.url({ repo: `a-director/${PROFILE_REPO}` });
-    assert.ok(host.has(`a-director/${PROFILE_REPO}`));
-    assert.notEqual((await realRun('git', ['cat-file', '-e', `wheelhouse-profile:enrolments/${own.computer}.json`], { cwd: profile })).code, 0, 'this computer\'s key withdrawn');
     assert.ok(host.protected.has(REPO));
 
     // On this computer: the run closed, and the folder's session start says Wheelhouse was removed.
@@ -670,10 +576,13 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     const now = { home: listing(a.home), user: listing(a.user) };
     const home = differences(before.home, now.home);
     const user = differences(before.user, now.user);
-    // Kept in Wheelhouse's home, as docs/data.md says: setup's journal and uninstall's record.
-    const kept = (p) => p === 'setup' || p === 'setup/journal.json' || p === 'setup/uninstalls' || /^setup\/uninstalls\/[0-9a-f]+\.json$/.test(p);
+    // Kept in Wheelhouse's home, as docs/data.md says: setup's journal and uninstall's record, the
+    // project's private record (its own card's Keep it) and the director's settings on this computer.
+    const under = (p, dir) => p === dir || p.startsWith(`${dir}/`);
+    const kept = (p) => p === 'setup' || p === 'setup/journal.json' || p === 'setup/uninstalls' || /^setup\/uninstalls\/[0-9a-f]+\.json$/.test(p)
+      || p === 'projects' || p === `projects/${SLUG}` || under(p, `projects/${SLUG}/record`) || under(p, 'settings');
     // Nothing else of Wheelhouse's is left (ruling R138): the signing key, the trusted-keys list and
-    // this computer's id, the project's records and the gh setup fetched, and their folders, all gone.
+    // this computer's id, the project's other files and the gh setup fetched, and their folders, all gone.
     assert.deepEqual(home.added.filter((p) => !kept(p)), [], 'nothing else of Wheelhouse\'s is left');
     assert.deepEqual([...home.removed, ...home.changed], []);
     // In the user's home: the product's checkout of the repository the director kept, exactly as

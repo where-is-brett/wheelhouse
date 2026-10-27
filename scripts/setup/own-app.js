@@ -17,9 +17,10 @@
 // A first code sign-in that GitHub refuses as "device flow disabled" is said as "Tick Enable Device
 // Flow on your app's page", with that page opened, and the code asked for again.
 //
-// The app is recorded in the director's profile as the setting `own-github-app` { clientId, slug,
-// owner } (ruling R56), so each of their computers uses it. It is written through the helper's
-// profile route, with its words, and takes effect once the director confirms it by the profile's
+// The app is recorded in the director's settings on this computer (the settings record, design
+// section 24.1) as the setting `own-github-app` { clientId, slug, owner } (ruling R56). Each
+// computer keeps its own settings, so another computer records the app at its own setup. It is
+// written through the helper's profile route, with its words, and takes effect once the director confirms it by the profile's
 // own route: board-context.js's learn() puts the setting's confirm card (settingCard) in the
 // project, the director clicks Confirm, and the prompt record signs a confirmation of that event,
 // which the helper's /profile/record keeps. Until then appFor() ignores it. The keys file's
@@ -292,7 +293,7 @@ export function helperProfile(client = helperClient()) {
     write: (event) => client.profile.write(event),
     async views() {
       const got = await client.profile.views({});
-      if (got?.ok !== true) throw new Error(`Your profile could not be read: ${got?.why ?? got?.refused ?? 'the helper did not say why'}`);
+      if (got?.ok !== true) throw new Error(`Your settings on this computer could not be read: ${got?.why ?? got?.refused ?? 'the helper did not say why'}`);
       return got.views;
     },
   };
@@ -358,7 +359,7 @@ export async function recordOwnApp({ clientId, slug, owner }, { record = () => {
   const change = { id: newId('chg'), kind: 'host', target: PROFILE_TARGET, before, after: value };
   record(change);
   const got = await writeValue(profile, value);
-  if (got?.ok !== true) throw new Error(`Your GitHub App ${slug} could not be recorded in your profile: ${got?.why ?? got?.refused ?? 'the helper did not say why'}`);
+  if (got?.ok !== true) throw new Error(`Your GitHub App ${slug} could not be recorded in your settings on this computer: ${got?.why ?? got?.refused ?? 'the helper did not say why'}`);
   return change;
 }
 
@@ -371,10 +372,10 @@ export async function recordOwnApp({ clientId, slug, owner }, { record = () => {
 // setup's app into effect. The keys file's `github-app` entry is not touched: its own change puts it
 // back.
 export async function putBackOwnApp(change, { profile = helperProfile() } = {}) {
-  if (change?.kind !== 'host' || change.target !== PROFILE_TARGET) throw new Error('That change is not the profile\'s own GitHub App');
+  if (change?.kind !== 'host' || change.target !== PROFILE_TARGET) throw new Error('That change is not your settings\' own GitHub App');
   const current = accepted(await profile.views());
   if (!same(current, change.after) && !same(current, change.before)) return { put: false, why: 'changed since setup' };
   const got = await writeValue(profile, change.before ?? null);
-  if (got?.ok !== true) return { put: false, why: `the profile could not take it: ${got?.why ?? got?.refused ?? 'the helper did not say why'}` };
+  if (got?.ok !== true) return { put: false, why: `your settings on this computer could not take it: ${got?.why ?? got?.refused ?? 'the helper did not say why'}` };
   return { put: true, id: got.id };
 }

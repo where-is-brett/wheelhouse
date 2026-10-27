@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readStart, isFile } from '../setup/questions.js';
-import { STATE_BRANCH } from '../state/clone.js';
+import { STATE_BRANCH } from '../state/record.js';
 import { LOCK_BRANCH } from '../state/lock.js';
 import { OTHER_SETUP_PATHS } from '../lib/agent-control.js';
 

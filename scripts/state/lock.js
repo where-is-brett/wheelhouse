@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
 import { git, sameRemote } from './git.js';
+import { readProject } from '../lib/projects.js';
 
 export const LOCK_BRANCH = 'wheelhouse-lock';
 export const STALE_AFTER_MS = 2 * 60 * 60 * 1000;
@@ -34,9 +35,10 @@ function clearHeld(project) {
 // (a free lock) when the remote has none. An existing folder is never cleared.
 async function ensureClone(project, env) {
   const dir = lockDir(project);
-  const origin = await git(stateDir(project), ['remote', 'get-url', 'origin'], env);
-  if (origin.code !== 0 || !origin.stdout.trim()) throw new Error('The project has no state clone to find the repository from');
-  const remoteUrl = origin.stdout.trim();
+  // The repository as Wheelhouse's record of the project names it: the private record has no remote
+  // to find it from (design section 24.1).
+  const remoteUrl = readProject(project)?.remoteUrl;
+  if (typeof remoteUrl !== 'string' || remoteUrl.trim() === '') throw new Error('The project has no repository recorded to find the lock on');
   if (fs.existsSync(path.join(dir, '.git'))) {
     const gitDir = path.join(dir, '.git');
     if (fs.existsSync(path.join(gitDir, 'rebase-merge')) || fs.existsSync(path.join(gitDir, 'rebase-apply'))) {
@@ -46,9 +48,11 @@ async function ensureClone(project, env) {
     if (branch.code !== 0 || branch.stdout.trim() !== LOCK_BRANCH) {
       throw new Error(`The folder ${dir} holds a clone that is not this project's lock branch, so it was left alone`);
     }
-    const lockOrigin = await git(dir, ['remote', 'get-url', 'origin'], env); // as the state clone's is read, so both see the same rewrites
+    // The address as written in the clone, never as a rewrite in the connection's environment turns
+    // it, since the recorded address it is compared with is never rewritten either.
+    const lockOrigin = await git(dir, ['config', '--get', 'remote.origin.url'], env);
     if (lockOrigin.code !== 0 || !sameRemote(lockOrigin.stdout.trim(), remoteUrl)) {
-      throw new Error(`The folder ${dir} holds a lock clone whose remote is not the state clone's remote, so it was left alone`);
+      throw new Error(`The folder ${dir} holds a lock clone whose remote is not the project's repository, so it was left alone`);
     }
     return dir;
   }

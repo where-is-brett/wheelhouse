@@ -362,11 +362,10 @@ test('the copy holds the merge after it', async () => {
     const got = await mergeApproved(c.ask({ branch: 'feature/login', commit: head }));
     assert.deepEqual(got.copy, { pushed: true, commit: got.merge });
     assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), got.merge);
-    // The copy carries the record: the state's branch, with the merge's event in it.
-    const stateHead = await git(c.copy, ['rev-parse', 'refs/heads/wheelhouse-state']);
-    const files = (await git(c.copy, ['ls-tree', '-r', '--name-only', stateHead])).split('\n');
-    const merge = c.events().find((e) => e.kind === 'merge');
-    assert.ok(files.includes(eventPath(merge).split(path.sep).join('/')), 'the merge\'s event is in the copy');
+    // The private record never goes to the copy (design section 24.3 item 7): only main does.
+    for (const ref of ['refs/heads/record', 'refs/heads/wheelhouse-state']) {
+      assert.equal((await git(c.copy, ['rev-parse', '--verify', '-q', ref], { ok: true })).code, 1, `${ref} is not in the copy`);
+    }
     // A feature's own copy never goes there.
     assert.equal((await git(c.copy, ['rev-parse', '--verify', '-q', 'refs/heads/feature/login'], { ok: true })).code, 1);
     // The copy on its own, and a copy folder that isn't there: recorded as failed, and the work carries on.
@@ -506,7 +505,6 @@ test('the copy is updated by a fetch run in the copy, so no hook of the copy\'s 
     const got = await mergeApproved(c.ask({ branch: 'feature/login', commit: head }));
     assert.deepEqual(got.copy, { pushed: true, commit: got.merge });
     assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), got.merge);
-    assert.ok(FULL.test(await git(c.copy, ['rev-parse', 'refs/heads/wheelhouse-state'])));
     assert.deepEqual(await copyNow(c.ask()), { pushed: true, commit: got.merge });
     assert.equal(fs.existsSync(marks), false, fs.existsSync(marks) ? fs.readFileSync(marks, 'utf8') : 'no hook ran');
   } finally {
@@ -714,7 +712,7 @@ test('a copy folder that isn\'t a repository is not updated, and nothing lands i
     const got = await mergeApproved(c.ask({ branch: 'feature/login', commit: head }));
     assert.equal(got.copy.pushed, false);
     assert.equal(c.events().filter((e) => e.kind === 'note' && e.data?.lean === 'copy').at(-1).data.choice, 'failed');
-    for (const ref of ['refs/heads/main', 'refs/heads/wheelhouse-state']) {
+    for (const ref of ['refs/heads/main', 'refs/heads/record']) {
       assert.equal((await git(outer, ['rev-parse', '--verify', '-q', ref], { ok: true })).code, 1, `${ref} stays out of the repository above`);
     }
   } finally {

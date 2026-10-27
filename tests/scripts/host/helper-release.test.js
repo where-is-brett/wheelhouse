@@ -14,7 +14,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
@@ -109,7 +109,7 @@ async function mergeRelease({ pr, headRef, repo, before = () => {}, ci = 'succes
       });
       const { computer, publicKey } = makeSigningKey();
       enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
-      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: pr.remote.url });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: pr.remote.url });
       assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
       before(pr.head);
       const adapter = {

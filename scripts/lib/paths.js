@@ -59,18 +59,37 @@ export function projectsDir() {
   return path.join(wheelhouseHome(), 'projects');
 }
 
-export function stateDir(project) {
+function projectFolder(project) {
   if (typeof project !== 'string' || !SAFE_PART.test(project) || /^\.+$/.test(project)) {
     throw new Error('A project folder name may use only letters, digits, dots, hyphens and underscores');
   }
-  return path.join(projectsDir(), project, 'state');
+  return path.join(projectsDir(), project);
+}
+
+// The project's private record (design section 24.1): a git repository on this computer with no
+// remote, whose events are committed and never pushed.
+export function stateDir(project) {
+  return path.join(projectFolder(project), 'record');
+}
+
+// Where Wheelhouse v0.1.x kept the project's state: a clone of the state branch, or a Lean project's
+// own repository. Read only by the import (scripts/state/import.js), never written or removed.
+export function oldStateDir(project) {
+  return path.join(projectFolder(project), 'state');
 }
 
 export function keysDir() {
   return path.join(wheelhouseHome(), 'keys');
 }
 
+// The director's personal settings on this computer (design section 24.2): a git repository with no
+// remote, laid out as a project's record is.
 export function profileDir() {
+  return path.join(wheelhouseHome(), 'settings');
+}
+
+// Where Wheelhouse v0.1.x kept its clone of the profile repository. Read only by the import.
+export function oldProfileDir() {
   return path.join(wheelhouseHome(), 'profile');
 }
 

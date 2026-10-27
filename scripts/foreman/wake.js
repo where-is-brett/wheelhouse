@@ -43,7 +43,7 @@
 // helper runs `main` outside the sandbox, in the main checkout.
 //
 // Where it reads from. The views are the helper's: asked for afresh, which
-// rebuilds them from the state clone, or when the helper does not answer, the
+// rebuilds them from the private record, or when the helper does not answer, the
 // last ones it wrote (as scripts/feature/status.js reads a view), and the
 // output says so. The configuration is the default branch's, through the
 // helper (ruling R50), never the working copy. A feature's plan is read only
@@ -213,7 +213,7 @@ export function queuedAgain(views, work) {
 // The feature as the queue counts it: none when the work was queued again after it closed.
 export const currentFeatureOf = (views, work) => (queuedAgain(views, work) ? null : featureOf(views, work));
 
-// The state clone's events, leaving out every copy of an id carried twice, as the views do.
+// The private record's events, leaving out every copy of an id carried twice, as the views do.
 export function stateEvents(project) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const counts = new Map();
@@ -221,7 +221,7 @@ export function stateEvents(project) {
   return events.filter((e) => counts.get(e.id) === 1);
 }
 
-// The brief hash the foreman last recorded for `work`, from the state clone (as the watcher
+// The brief hash the foreman last recorded for `work`, from the private record (as the watcher
 // judges a brief), or null when none is recorded.
 export function recordedBriefOf(project, work, events = stateEvents(project)) {
   return recordedBriefs(events).get(work)?.recorded ?? null;

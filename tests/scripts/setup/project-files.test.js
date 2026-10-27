@@ -34,7 +34,7 @@ import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { copyTree } from '../../../scripts/lib/copy-tree.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { directorGitlabApi, REAL_USERS } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -1075,7 +1075,7 @@ test('the pins are installed and the lineage check passes', async () => {
   });
 });
 
-test('the setup clicks reach the state branch once', async () => {
+test('the setup clicks reach the project\'s record once', async () => {
   await withHome(async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-20T00:00:00.000Z' });
@@ -1085,7 +1085,7 @@ test('the setup clicks reach the state branch once', async () => {
     await realRun('git', ['init', '--bare', '-q', bare]);
     const folder = fs.realpathSync.native(tempFolder('wh-proj-'));
     writeProject(SLUG, { folder, remoteUrl: bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
-    await cloneState({ project: SLUG, remoteUrl: bare, env: LOCAL_PATHS });
+    await openTestRecord({ project: SLUG, remoteUrl: bare, env: LOCAL_PATHS });
 
     const run = startRun({ folder, now: () => T0 });
     const other = startRun({ folder: tempFolder('wh-other-'), now: () => T0 });
@@ -1108,13 +1108,13 @@ test('the setup clicks reach the state branch once', async () => {
     const second = await copySetupRecords(run.id, SLUG, { record });
     assert.deepEqual({ copied: second.copied, skipped: second.skipped }, { copied: 0, skipped: 3 });
     assert.equal(sent.length, 3);
-    const onBranch = (await g(bare, 'ls-tree', '-r', '--name-only', 'wheelhouse-state', 'events')).split('\n').filter(Boolean);
-    assert.equal(onBranch.length, 3, 'each of the run\'s clicks and answers once, and not another run\'s');
-    assert.equal(new Set(sent).size, 3);
-    assert.ok(onBranch.every((f) => /_action_/.test(f)));
-    // Each is in the state clone under its own event path, which is how the second run knew it.
+    // Each is in the record under its own event path, which is how the second run knew it.
     const kept = fs.readdirSync(path.join(stateDir(SLUG), 'events'), { recursive: true }).filter((f) => f.endsWith('.json'));
-    assert.deepEqual(kept.map((f) => path.join('events', f)).sort(), onBranch.map((f) => path.join(...f.split('/'))).sort());
+    assert.equal(kept.length, 3, 'each of the run\'s clicks and answers once, and not another run\'s');
+    assert.equal(new Set(sent).size, 3);
+    assert.ok(kept.every((f) => /_action_/.test(f)));
+    // Nothing goes to the product's repository: the record has no remote.
+    assert.equal((await g(bare, 'branch', '--list')).trim(), '');
 
     // The engine copies them at the end of each successful apply, and not after a failed one.
     const copied = [];

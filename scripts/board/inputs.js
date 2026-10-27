@@ -1,7 +1,7 @@
 // scripts/board/inputs.js
 // Everything the board, the briefing and the glance need, gathered for the folder a session
 // works in. It reads files only and never runs git: the views as the last sync left them, the
-// raw events in the state clone, the settings views, the usage store, the sources report, STOP,
+// raw events in the private record, the settings views, the usage store, the sources report, STOP,
 // the project's record, the host facts' cache and setup's journal (whether its push test reached
 // the phone). The helper is asked only for whether it is up, who holds the project's lock and,
 // once a day, the host facts, each within HELPER_WAIT_MS
@@ -11,7 +11,7 @@
 // With `offline` (the status line, which has half a second and whose reads can't be interrupted)
 // only what the glance needs is read, each a file of known size or a view by name: the waiting,
 // questions, work, features and blockers views, STOP, the weekly share from the allowance file alone, and
-// the small files health reads (the host facts' cache, the profile's address). No raw events,
+// the small files health reads (the host facts' cache). No raw events,
 // other views, settings, usage days, sources, key files, setup journal or the project's
 // configuration are read, no browser is looked for, and nothing is asked of the helper, so the
 // model is the glance's, not the board's.
@@ -27,7 +27,7 @@ import { listEvents } from '../state/events.js';
 import { usageFigures, weeklyShare } from '../usage/figures.js';
 import { agentInFolder } from '../agents/names.js';
 import { effectiveSettings } from '../settings/effective.js';
-import { readProfileViews, profileRemote } from '../profile/store.js';
+import { readProfileViews } from '../profile/store.js';
 import { stopState } from '../lib/stop.js';
 import { computerId, sourcesDir, stateDir, wheelhouseHome } from '../lib/paths.js';
 import { buildsShown } from '../protection/windows-builds.js';
@@ -168,7 +168,6 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     facts: known.facts ?? null,
     // Offline, no key file is opened: the glance has no renewal to show.
     renewal: offline ? null : attempt(() => renewalDue(record.connection, clock)),
-    profile: attempt(() => profileRemote()),
     platform: process.platform,
     realUsers: settings?.phase?.value === 'launched',
     builds,

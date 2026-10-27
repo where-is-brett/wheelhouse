@@ -15,9 +15,8 @@ import { PUSH_TEST_STEP } from '../../scripts/lib/setup-run.js';
 import { PUSH_TEST_TEXT, READY } from '../../scripts/setup/notify.js';
 import { LEAVE_YOURS } from '../../scripts/setup/project-files.js';
 import { SETUP_LABEL, TRUST_LABEL, UNINSTALL_LABEL } from '../../scripts/state/card-lines.js';
-import { differentKeyLine } from '../../scripts/lib/trust-clicks.js';
 import {
-  NOT_SET_UP, partWay, JOURNAL_UNREADABLE, REMOVED, FOREMAN_HELD_UNREADABLE, FOREMAN_HELD_NEWER, TRUST_ASK,
+  NOT_SET_UP, partWay, JOURNAL_UNREADABLE, REMOVED, FOREMAN_HELD_UNREADABLE, FOREMAN_HELD_NEWER, importedLine,
 } from '../../scripts/hooks/session-start.js';
 import { decide as stopGuard } from '../../scripts/hooks/stop-guard.js';
 import { NOT_AN_ANSWER } from '../../scripts/setup/engine.js';
@@ -70,8 +69,7 @@ test('the playbook is named setup and is used where the session start points to 
 
 test('the playbook knows each session-start line it acts on, as the session start words it', () => {
   for (const words of [
-    TRUST_ASK.split(':')[0],
-    differentKeyLine('<id>'),
+    importedLine({ imported: 1, what: 'your settings' }).split(':')[0],
     REMOVED.split('. ')[0],
     FOREMAN_HELD_UNREADABLE.split('. ')[0],
     JOURNAL_UNREADABLE.split(',')[0],
@@ -148,7 +146,9 @@ test('the playbook opens with the one card, applies what its Go ahead covers, as
 });
 
 test('the playbook waits for the labels the cards carry', () => {
-  for (const label of [SETUP_LABEL, UNINSTALL_LABEL, TRUST_LABEL, LEAVE_YOURS]) assert.ok(playbook.includes(`**${label}**`), label);
+  for (const label of [SETUP_LABEL, UNINSTALL_LABEL, LEAVE_YOURS]) assert.ok(playbook.includes(`**${label}**`), label);
+  // No trust card is handed out now (rulings R80, R81 retired), so the playbook waits for no Trust it.
+  assert.equal(playbook.includes(`**${TRUST_LABEL}**`), false);
   // Apply only after the click, with the hash from that same plan.
   assert.match(playbook, /Only after the director's \*\*Go ahead\*\* on that card, run `apply <step> <hash>`/);
   assert.match(playbook, /Only after \*\*Remove it\*\*, run `uninstall apply <hash>`/);

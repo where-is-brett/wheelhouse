@@ -8,7 +8,7 @@
 // prompt naming the card. Why? and Suggest a change… have their own commands, whyCard and
 // suggestCard below, and a press naming either is refused.
 //
-// The card is found in the waiting view built from the state clone, as the reply code finds its
+// The card is found in the waiting view built from the private record, as the reply code finds its
 // card, so a record the helper took a moment ago has already closed it. A press names its card
 // by id and by the hash of the text the pane drew, so a card that changed since records nothing.
 // Before anything is signed the card is claimed with the reply code's own marker, and with its

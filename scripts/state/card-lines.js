@@ -97,7 +97,8 @@ export function baselineLine(hash) {
   return `${BASELINE_WORDS}, ${sha12(hash)}`;
 }
 
-// The label whose click on a trust card trusts another of the director's computers here.
+// The label whose click on a trust card trusted another of the director's computers (rulings R80, R81,
+// retired: no trust card is handed out now). Kept so an old trust action in a record still reads.
 export const TRUST_LABEL = 'Trust it';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -107,9 +108,10 @@ export function dayOf(at) {
   return Number.isNaN(d.getTime()) ? null : `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
-// The line on a trust card (ruling R80): the other computer by its id, the day its key was added to
-// the profile, and the key's fingerprint (the first twelve hex characters of the SHA-256 of the
-// public key), so a click stands for that computer's key as added that day and no other.
+// The line on a trust card (ruling R80, retired; kept so an old trust action still reads): the other
+// computer by its id, the day its key was added to the profile, and the key's fingerprint (the first
+// twelve hex characters of the SHA-256 of the public key), so a click stood for that computer's key
+// as added that day and no other.
 export function trustLine(computer, at, fingerprint) {
   return `Trust your computer ${computer}, added ${dayOf(at)}, key ${String(fingerprint).slice(0, 12)}`;
 }

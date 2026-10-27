@@ -6,7 +6,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readLock, takeLock, touchLock, holdsLock, heldCounter } from '../../../scripts/state/lock.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { registerTestProject } from '../../helpers/record-fixture.js';
 import { run } from '../../../scripts/lib/run.js';
 import { makeBareRemote, push, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -27,7 +27,7 @@ async function as(home, fn) {
 }
 async function setup(remote) {
   const homes = [makeHome(), makeHome()];
-  for (const h of homes) await as(h, () => cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url }));
+  for (const h of homes) await as(h, () => registerTestProject({ project: 'o__p', remote }));
   return homes;
 }
 const idOf = (h) => JSON.parse(fs.readFileSync(path.join(h, 'computer.json'), 'utf8')).id;
@@ -203,7 +203,7 @@ test('readLock checks the shape it returns', async () => {
   } finally { remote.cleanup(); }
 });
 
-test('the lock clone\'s remote must be the state clone\'s', async () => {
+test('the lock clone\'s remote must be the project\'s repository', async () => {
   const remote = await makeBareRemote();
   const other = await makeBareRemote();
   try {
@@ -212,8 +212,8 @@ test('the lock clone\'s remote must be the state clone\'s', async () => {
       assert.equal(await readLock({ env: LOCAL_PATHS, project: 'o__p' }), null);
       const lockClone = path.join(a, 'projects', 'o__p', 'lock');
       await run('git', ['remote', 'set-url', 'origin', other.url], { cwd: lockClone });
-      await assert.rejects(readLock({ env: LOCAL_PATHS, project: 'o__p' }), /state clone/);
-      await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }), /state clone/);
+      await assert.rejects(readLock({ env: LOCAL_PATHS, project: 'o__p' }), /project's repository/);
+      await assert.rejects(takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }), /project's repository/);
       assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), false);
       // the same repository spelled another way is the same remote
       await run('git', ['remote', 'set-url', 'origin', `file://${remote.url}`], { cwd: lockClone });

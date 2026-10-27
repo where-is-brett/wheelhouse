@@ -10,7 +10,7 @@
 //     connection: Connection,   see scripts/host/connection.js; holds no secret
 //   }
 //
-// Setup writes it. The helper reads it: the state clone's remote comes from
+// Setup writes it. The helper reads it: the lock's and the mirror's repository comes from
 // here, never from a request.
 //
 // A Lean project has no host, so no project.json: its record is lean.json beside where project.json

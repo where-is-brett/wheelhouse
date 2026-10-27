@@ -10,7 +10,7 @@
 //   node runbook.js 2                  cut the agents' access to the host
 //   node runbook.js 3 <commit>         open the pull request that puts the product back to that release
 //   node runbook.js 3 merge <number>   merge that pull request (STOP lets only this one through)
-//   node runbook.js 4                  put the project's records back from the newest backup
+//   node runbook.js 4                  retired: says that no backup of the records is kept
 //   node runbook.js 5                  run the project's own containment command
 //
 // What the host's documentation says about step 2 (read 18 October 2026), and

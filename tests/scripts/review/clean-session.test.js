@@ -23,7 +23,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
@@ -318,7 +318,7 @@ async function reviewProject({ base = {}, change, agent = 'copilot' }) {
     writeProject('o__p', {
       folder: path.join(home, 'work'), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
     return sha;
   });

@@ -1,9 +1,9 @@
 // tests/scripts/setup/own-app.test.js
 // The person's own GitHub App: the new-app link filled in from Wheelhouse's manifest, the app read
 // back and refused when it asks for more, read again at each code sign-in, the device flow's tick,
-// its record in the profile (which a second computer gets once the director confirms it), and its
-// undo. Nothing real is registered or signed in: `gh` and GitHub's sign-in pages are fakes, the
-// profile is a bare repository in a temporary folder, and every home is a scratch folder.
+// its record in the director's settings on this computer (in force once the director confirms it),
+// and its undo. Nothing real is registered or signed in: `gh` and GitHub's sign-in pages are fakes,
+// and every home is a scratch folder.
 import { test, after } from 'node:test';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -25,7 +25,7 @@ import { writeSetting } from '../../../scripts/frontdesk/cli.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { profileDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { listEvents } from '../../../scripts/state/events.js';
-import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
+import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
 import { makeBareRemote } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress, withHome } from '../../helpers/homes.js';
@@ -276,12 +276,10 @@ function appFile() {
   return file;
 }
 
-test('their own app\'s client ID wins over Wheelhouse\'s, and reaches a second computer through the profile', async () => {
+test('their own app\'s client ID wins over Wheelhouse\'s, and stays in the settings on this computer', async () => {
   const first = await computer();
-  const second = await computer({ shared: first });
   const registered = appFile();
   try {
-    let trusted;
     await first.as(async () => {
       assert.equal((await first.client.profile.clone({})).ok, true);
       const recorded = [];
@@ -305,18 +303,17 @@ test('their own app\'s client ID wins over Wheelhouse\'s, and reaches a second c
       }, { client: first.client, now: first.now, projectOf: () => ({ project: 'o__p' }) });
       assert.deepEqual(appFor({ appFile: registered }), { ...OWN, own: true }, 'their own app wins over Wheelhouse\'s');
       assert.equal(await recordOwnApp(OWN, { profile: helperProfile(first.client) }), null, 'already recorded');
-      trusted = readEnrolled();
     });
-    await second.as(async () => {
-      // The second computer trusts the first's signature (its enrolment, Task 14) and fetches the profile.
-      for (const entry of trusted) enrol(entry);
-      assert.deepEqual(appFor({ appFile: registered }), { ...WHEELHOUSE, own: false }, 'nothing of the profile here yet');
-      assert.equal((await second.client.profile.clone({})).ok, true);
-      assert.equal((await second.client.profile.sync({})).ok, true);
-      assert.deepEqual(appFor({ appFile: registered }), { ...OWN, own: true });
-    });
+    // Another computer keeps its own settings: nothing of this one's reaches it.
+    const second = await computer();
+    try {
+      await second.as(async () => {
+        assert.deepEqual(appFor({ appFile: registered }), { ...WHEELHOUSE, own: false });
+      });
+    } finally {
+      await second.close();
+    }
   } finally {
-    await second.close();
     await first.close();
   }
 });
@@ -434,7 +431,7 @@ test('the change is recorded before the profile is written', async () => {
   // A write that fails leaves the change recorded, so the journal shows what was tried.
   const failing = { ...memoryProfile(), write: async () => ({ ok: false, why: 'the helper could not be reached' }) };
   const recorded = [];
-  await assert.rejects(recordOwnApp(OWN, { profile: failing, record: (c) => recorded.push(c) }), /could not be recorded in your profile: the helper could not be reached/);
+  await assert.rejects(recordOwnApp(OWN, { profile: failing, record: (c) => recorded.push(c) }), /could not be recorded in your settings on this computer: the helper could not be reached/);
   assert.equal(recorded.length, 1);
 });
 

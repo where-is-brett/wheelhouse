@@ -1,7 +1,7 @@
 // scripts/hooks/session-start.js
 // At the start of every session in a Wheelhouse project: starts the host helper
-// when it is not answering, sends any records a hook kept, syncs the state,
-// starts the watcher when the project's shape is 1 and it isn't running
+// when it is not answering, sends any records a hook kept, imports v0.1.x's
+// records once, starts the watcher when the project's shape is 1 and it isn't running
 // (ruling R62), checks the installed upstream skills against Wheelhouse's
 // manifest (holding edits and commands on a mismatch, and recording the hold
 // in the state once) and records the session's provenance (all but when the session
@@ -12,12 +12,11 @@
 //
 // Limits. The hook has ten seconds (hooks.json); it keeps to eight: at most
 // five of them waiting for the helper to start, the rest for the records, the
-// sync, the views and the watcher, which is last and gets what is left. On Windows the Guarded
+// import, the views and the watcher, which is last and gets what is left. On Windows the Guarded
 // self-test (scripts/windows/low.js) runs after them, within its own 3 seconds or what is left,
 // when the level would be Guarded or the last result is missing or over a day old, and only once
 // the copy of Node.js it needs is whole; the copy itself is made in the background, never here.
-// The ask for the profile's enrolments (below) comes after all of that, with what is left. Context
-// added by a hook is capped at 10,000 characters
+// Context added by a hook is capped at 10,000 characters
 // (https://code.claude.com/docs/en/hooks, read 18 October 2026), so the reload
 // stays under 9,000 and each list shows at most 20 entries.
 //
@@ -30,13 +29,13 @@
 // registered it and step 7 made its first commit), the project's reload says where setup stands in
 // place of the front desk's line, so the session carries on with setup.
 //
-// Another of the director's computers (rulings R80, R81): in the front desk's session, and in a
-// folder being set up once step 3 is done, it asks the helper for the enrolments the profile holds
-// (/profile/enrolments) at most once an hour, keeping when it asked and what it found beside
-// weekly.json; between asks it reads what the last fetch found. Each computer this one doesn't trust
-// yet gets a trust card, composed here, for the session to ask as it is; a computer it trusts whose
-// enrolment holds another key gets a line saying nothing was trusted, never a card. It informs, so a
-// failure is passed over, within the budget.
+// The import from v0.1.x (design section 24.5): in a project, before the views are read, it asks the
+// helper to import the project's old state clone (/state/import) and the old profile clone
+// (/profile/import); in a folder being set up, once step 3 is done, the profile's alone, as no
+// project is known yet. The helper imports each once and keeps a mark, so later answers say done. An
+// import that brought anything in gets one line (importedLine). It informs, so a failure, or an
+// answer later than the budget, gives no line. Each record is a local repository with no remote, so
+// there is nothing to sync.
 //
 // On an agent whose hooks only read (`writeVia: 'helper'`) it does none of the writing above: readOnlyStart.
 import fs from 'node:fs';
@@ -72,7 +71,6 @@ import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
 import { composeCard } from '../cards/compose.js';
 import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
-import { differentKeyLine, keepSeen, keepShownTrust, readSeen, seenDue, trustCardInput, trustOffers } from '../lib/trust-clicks.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { readAllowance } from '../usage/figures.js';
 import { weeklyOf } from '../routing/nudge.js';
@@ -97,7 +95,6 @@ export const MAX_ENTRIES = 20;
 const LINE_CHARS = 200;
 
 export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
-export const NOT_SYNCED = 'State was not synced with the host this time';
 export const NO_LOCK = 'The lock couldn\'t be taken this time, so pushes and merges are refused until a later session start takes it';
 export const heldElsewhere = (holder, since) => `Another computer (${oneLine(holder)}) holds this project's lock, last written ${oneLine(since)}, so pushes and merges from this computer are refused`;
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
@@ -229,7 +226,7 @@ export function featureSlug(cwd) {
   return match && !/^\.+$/.test(match[1]) ? match[1] : null;
 }
 
-// The views as the last sync left them on disk, when the helper cannot give them.
+// The views as the helper last wrote them on disk, when it cannot give them.
 // While views are being replaced the old ones sit in `views.old` for a moment (or for good
 // after a crash), so that folder is read when `views` is not there. `names` null reads
 // every view there (the board's inputs).
@@ -251,7 +248,7 @@ export function localViews(project, names = ['rulebook', 'levels', 'waiting', 'u
   return Object.keys(out).length > 0 ? out : null;
 }
 
-// The views the session start reads when the helper can't give them: those the last sync left on
+// The views the session start reads when the helper can't give them: those the helper last left on
 // disk, with the settings and the unconfirmed changes built from the local events, as the waker
 // reads them, so the level shown is the one the waker acts on. Events that can't be read leave
 // the views on disk as they are.
@@ -481,41 +478,39 @@ export function reload({ views, stop, lineage = [], notes, feature, stateRoot, w
   return text;
 }
 
-// The most trust cards one session start hands over; the rest come at a later one.
-export const MAX_TRUST_CARDS = 2;
-// The words before a trust card's AskUserQuestion input, as JSON on the same line.
-export const TRUST_ASK = 'Another of the director\'s computers asks to be trusted here: ask the director this card with AskUserQuestion, exactly as given, as a question of its own: ';
-export const moreTrust = (n) => `${n} more of the director's computers ask to be trusted here; their cards come at a later session start.`;
+// The line for an import that brought records in: how many events, that nothing was deleted, and how
+// many signed records were left out because their signature couldn't be checked against this
+// computer's trusted keys.
+export function importedLine({ imported, unsigned = 0, what = 'this project\'s records' }) {
+  const events = `${imported} event${imported === 1 ? '' : 's'}`;
+  const line = `Wheelhouse moved ${what} to this computer: ${events}. Nothing was deleted; the old copies stay until you choose.`;
+  if (!(unsigned > 0)) return line;
+  return `${line} ${unsigned} signed record${unsigned === 1 ? '' : 's'} couldn't be checked and ${unsigned === 1 ? 'was' : 'were'} left out.`;
+}
 
-// The trust cards and lines for the enrolments the profile holds (rulings R80, R81). The helper is
-// asked at most once an hour, and only when it is up (`up`); the time is kept only when its answer
-// arrived (ruling R107), so a fetch slower than the budget is asked again at the next start, while
-// one whose fetch failed in the helper (an answer, `fetched: false`) waits the hour. Between asks,
-// what the last fetch found is read. Each card handed over has its key's full hash kept, which a
-// click must match (keepShownTrust). It informs, so anything that fails gives no lines.
-async function trustNotes({ client, left, up, now }) {
-  try {
-    if (up && seenDue(now)) {
-      const got = typeof client?.profile?.enrolments === 'function' ? await left(client.profile.enrolments({})) : null;
-      if (got?.ok === true && Array.isArray(got.enrolments)) keepSeen({ at: now().toISOString(), enrolments: got.enrolments });
-    }
-    const seen = readSeen();
-    if (seen === null) return [];
-    const { offers, clashes } = trustOffers({ enrolments: seen.enrolments, enrolled: readEnrolled(), own: ownKey() });
-    const lines = clashes.map(differentKeyLine);
-    const handed = [];
-    for (const enrolment of offers.slice(0, MAX_TRUST_CARDS)) {
-      try {
-        lines.push(`${TRUST_ASK}${JSON.stringify(composeCard(trustCardInput(enrolment)).question)}`);
-        handed.push(enrolment);
-      } catch { /* no card for an enrolment the composer refuses */ }
-    }
-    if (handed.length > 0) keepShownTrust(handed);
-    if (offers.length > MAX_TRUST_CARDS) lines.push(moreTrust(offers.length - MAX_TRUST_CARDS));
-    return lines;
-  } catch {
-    return [];
+// Said once when the import from v0.1.x failed: why, and that nothing old was lost.
+export function importFailedLine({ why, what = 'this project\'s records' }) {
+  return `Wheelhouse couldn't move ${what} to this computer: ${oneLine(why)}. Nothing was deleted; the old copy stays as it was, and Wheelhouse carries on without it.`;
+}
+
+// Asks the helper for each import (`asks`, each a function returning the helper's answer) within the
+// budget, and gives the line for what this start imported: an answer counts only when it says the
+// import ran now (`done: false`) and brought something in. It informs, so anything that fails
+// gives no line.
+async function importNotes(asks, { left, what }) {
+  let imported = 0;
+  let unsigned = 0;
+  const failed = [];
+  for (const ask of asks) {
+    try {
+      const got = await left(Promise.resolve().then(ask));
+      if (got?.ok === true && got.done === false && typeof got.failed === 'string') failed.push(importFailedLine({ why: got.failed, ...(what ? { what } : {}) }));
+      if (got?.ok !== true || got.done !== false || !(got.imported > 0)) continue;
+      imported += got.imported;
+      if (got.unsigned > 0) unsigned += got.unsigned;
+    } catch { /* it informs */ }
   }
+  return [...(imported > 0 ? [importedLine({ imported, unsigned, ...(what ? { what } : {}) })] : []), ...failed];
 }
 
 // The usage card for this week's allowance, if one is due (design section 14.6): its line for the front desk, and
@@ -535,7 +530,7 @@ async function usageNotes({ client, left, up, project, views, now, allowance = (
     }
     const offer = usageOffer({ views, profile, allowance: reading, ready: ready({ project }), now, timeZone });
     if (offer === null) return [];
-    // Written at once, so a second session start before the next sync doesn't offer it again.
+    // Written at once, so a second session start doesn't offer it again.
     const body = { project, event: makeEvent({ kind: 'usage-card', data: offer.record, now }) };
     const wrote = up && typeof client?.state?.record === 'function' ? await left(client.state.record(body)) : null;
     return wrote?.ok === true ? [offer.line] : [];
@@ -589,10 +584,11 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, root, platfo
   lines.push(...toolSheetLines(agentOfInput(input) ?? 'claude-code', { pluginRoot: root, platform }));
   const note = setupNote(setup);
   if (note !== null) lines.push(note);
-  // Once step 3 is done, another computer's key may be trusted here, so its records count.
-  if (setup.run !== null && setup.run !== undefined && stepDone(setup.run, 3)) {
+  // Once step 3 is done, v0.1.x's profile clone, when there is one, is imported into the settings.
+  if (up && setup.run !== null && setup.run !== undefined && stepDone(setup.run, 3)) {
     const client = given ?? helperClient({ timeout: Math.max(1, end - Date.now()) });
-    lines.push(...await trustNotes({ client, left: withinBudget(end), up: Boolean(up), now }));
+    const asks = typeof client?.profile?.import === 'function' ? [() => client.profile.import({})] : [];
+    lines.push(...await importNotes(asks, { left: withinBudget(end), what: 'your settings' }));
   }
   return lines.length === 0 ? undefined : answer.context('SessionStart', lines.join('\n'));
 }
@@ -716,7 +712,7 @@ export async function decide(input, deps = {}) {
   // whose file is gone), no provenance rewritten, and a hold already standing stands.
   const lineage = input.source === 'compact' ? [] : lineageCheck(found, input, version, { check, root: lineageRoot, claudeHome, now, pinsPending });
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
-  // Records what this session is for and starts the usage receiver, alongside the sync below.
+  // Records what this session is for and starts the usage receiver, alongside the import below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;
   const lockSeen = {};
@@ -727,8 +723,15 @@ export async function decide(input, deps = {}) {
       notes.push(`The helper running is version ${oneLine(up.version)}; this copy is version ${mine}`);
     }
     await left(sendPending(project, clientNow(), { until: end }));
-    const synced = await left(clientNow().state.sync({ project }));
-    if (synced?.ok !== true) notes.push(NOT_SYNCED);
+    // v0.1.x's records, imported once, before the views are read so the briefing holds them.
+    if (setup === null || stepDone(setup.run, 3)) {
+      const api = clientNow();
+      const asks = [
+        ...(typeof api?.state?.import === 'function' ? [() => clientNow().state.import({ project })] : []),
+        ...(typeof api?.profile?.import === 'function' ? [() => clientNow().profile.import({})] : []),
+      ];
+      notes.push(...await importNotes(asks, { left }));
+    }
     const lockLine = await keepLock(project, clientNow(), left, lockSeen);
     if (lockLine !== null) notes.push(lockLine);
     const got = await left(clientNow().state.views({ project }));
@@ -752,8 +755,7 @@ export async function decide(input, deps = {}) {
   const setupLine = setup === null ? null : setupNote(setup);
   if (setupLine !== null) notes.push(setupLine);
   // The front desk's session: not a feature's, nor the foreman's own. Only it is told why the
-  // foreman is held back, as it is the session that speaks to the director, and only it is handed
-  // the trust cards, once step 3 is done here.
+  // foreman is held back, as it is the session that speaks to the director.
   const deskSession = featureSlug(input.cwd) === null && sessionRole({ sessionId: input.session_id, env, cwd: input.cwd }) === 'front-desk';
   if (trouble !== null && deskSession) notes.push(trouble === 'newer' ? FOREMAN_HELD_NEWER : FOREMAN_HELD_UNREADABLE);
 
@@ -780,10 +782,7 @@ export async function decide(input, deps = {}) {
   }
   // The card that offers the lock, when another computer holds it, goes to the front desk only.
   if (deskSession && lockSeen.holder !== undefined) notes.push(...await takeOverNotes({ client: clientNow(), left, project, now }));
-  // The trust cards come last, with whatever time is left: they inform, and a card missed now
-  // comes at a later session start.
-  if (deskSession && (setup === null || stepDone(setup.run, 3))) notes.push(...await trustNotes({ client: clientNow(), left, up: Boolean(up), now }));
-  // Then the usage card, with the same left-over time; also only the front desk's.
+  // The usage card comes last, with whatever time is left; only the front desk's.
   if (deskSession && setupLine === null) notes.push(...await usageNotes({ client: clientNow(), left, up: Boolean(up), project, views, now, allowance: deps.allowance, timeZone: deps.timeZone, ...(deps.columnsReady ? { ready: deps.columnsReady } : {}) }));
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);
   // Anything that fails here, the computer's id included, shows Ask and leaves the rest of the

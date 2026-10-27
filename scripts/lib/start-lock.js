@@ -1,6 +1,6 @@
 // scripts/lib/start-lock.js
 // An exclusive file made with `wx`, held while something starts. Used where two starts at
-// once must take turns: the state clone, and the helper's socket.
+// once must take turns: the record, and the helper's socket.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';

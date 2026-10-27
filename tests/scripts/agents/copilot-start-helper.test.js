@@ -337,10 +337,10 @@ test('uninstall gives the project\'s git back to its folder and removes its Lean
     assert.equal(readLean('shop-front'), null);
     assert.equal(projectForFolder(c.folder), null);
     assert.deepEqual(registeredLeanProjects(), []);
-    // The hook file and the sign-in start are gone; the state and the record files stay.
+    // The hook file and the sign-in start are gone; the project's private record and the record files stay.
     assert.equal(fs.existsSync(path.join(c.userHome, '.copilot', 'hooks', 'wheelhouse.json')), false);
     assert.equal(loginStartRecord(), null);
-    assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front', 'state')), true);
+    assert.equal(fs.existsSync(path.join(c.home, 'projects', 'shop-front', 'record')), true);
     assert.equal(fs.readFileSync(path.join(record, '2026-10-22.jsonl'), 'utf8'), '{"kind":"stop"}\n');
     // Installing again works from here.
     await installed(c, c.folder);
