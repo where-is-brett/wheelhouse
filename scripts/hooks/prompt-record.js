@@ -55,7 +55,7 @@ import { readEnrolled, verify } from '../state/signing.js';
 import { makeEvent, listEvents, confirmationFor, dataHash, CONFIRMABLE_KINDS } from '../state/events.js';
 import { scanContent } from '../state/secret-scan.js';
 import {
-  approvalLine, confirmLine, LIFT_STOP, runbookLine, RUNBOOK_TITLES, ciPushLine,
+  approvalLine, confirmLine, LIFT_STOP_LINES, isLiftStopLine, runbookLine, RUNBOOK_TITLES, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import {
@@ -142,7 +142,7 @@ function only(pattern, text) {
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix'];
+export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix'];
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
@@ -383,9 +383,10 @@ export async function earned({ project, question, label, card, client, now, left
       && e.data?.value === 'guarded' && confirmLine(e) === confirms[0]);
     return found.length === 1 ? { made: confirmationFor(found[0]) } : null;
   }
-  if (label === 'Lift STOP') {
+  // Lift All stop, or Lift STOP on a card made before the switch was called All stop, which carries the earlier line.
+  if (label === 'Lift All stop' || label === 'Lift STOP') {
     const stop = stopState();
-    if (!question.includes(LIFT_STOP) || !stop.on) return null;
+    if (!LIFT_STOP_LINES.some((line) => question.includes(line)) || !stop.on) return null;
     if (shownAt !== undefined && !(Date.parse(shownAt) > Date.parse(stop.at))) return null;
     return { ...action({ action: 'lift-stop' }), lift: true };
   }
@@ -636,7 +637,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
     const was = held && Object.hasOwn(held, code) ? held[code] : null;
-    const stop = line === LIFT_STOP ? stopState() : null;
+    const stop = isLiftStopLine(line) ? stopState() : null;
     const beforeStop = stop?.on === true && !(Date.parse(was?.at) > Date.parse(stop.at));
     if (was?.question === q.question && was.spent === false && at.getTime() - Date.parse(was.at) < REPLY_CODE_DAYS * DAY && !beforeStop) continue;
     out.push({ kind: 'shown', data: { code, question: q.question, options: q.options.map((o) => o?.label) } });

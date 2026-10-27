@@ -36,7 +36,8 @@ import { PREMIUM_ON } from '../routing/premium.js';
 export const ADVANCED = 'Advanced settings: ask the First Mate';
 const ASK = 'Changed by asking the First Mate';
 const BUDGET_WHY = 'The other budget levels come with the budget design';
-const STOP_REFUSED = 'STOP is on';
+// The helper's refusal under All stop, in its words before and after the ship's-crew names.
+const STOP_REFUSED = new Set(['All stop is on', 'STOP is on']);
 // What the helper client answers when the helper doesn't answer in time.
 const HELPER_LATE = 'the host helper did not answer in time';
 const HOUR_MS = 60 * 60 * 1000;
@@ -500,7 +501,7 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
   if (wrote?.ok !== true) {
     // A write that timed out (or whose answer never came) may still land, so it isn't said to be refused.
     if (wrote === null || wrote.refused === HELPER_LATE) return no(SAYS.late);
-    return no(wrote.refused === STOP_REFUSED ? SAYS.stopOn : SAYS.notTaken);
+    return no(STOP_REFUSED.has(wrote.refused) ? SAYS.stopOn : SAYS.notTaken);
   }
 
   const label = PANE[key].label;

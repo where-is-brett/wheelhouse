@@ -110,7 +110,7 @@ const prompt = (folder, text) => ({ sessionId: 's1', timestamp: 0, cwd: folder, 
 const tool = (folder, toolName, toolArgs) => ({ sessionId: 's1', timestamp: 0, cwd: folder, toolName, toolArgs });
 
 // The window's stand-in: the first deciding option of these the card offers, as the director's click.
-const CLICKS = ['Lift STOP', 'Undo', 'Keep it', 'Approve'];
+const CLICKS = ['Lift All stop', 'Undo', 'Keep it', 'Approve'];
 const click = (card) => CLICKS.find((label) => card.options.includes(label)) ?? null;
 
 // A computer with a Lean project adopted into its store, a copy folder, an enrolled key, and a real helper on the
@@ -197,14 +197,14 @@ test('a Lean project with the helper, from the session start to the helper stopp
     // STOP by the word: set through the helper as the director's, then a write refused and reading carrying on.
     const word = await entry('userPromptSubmitted', prompt(c.folder, 'stop'));
     assert.ok(word.body.additionalContext.startsWith(STOP_CONTEXT), word.text);
-    // In Copilot's words (ruling P5-54): Lift STOP is the Lean command's window step, never Claude Code's tool.
+    // In Copilot's words (ruling P5-54): Lift All stop is the Lean command's window step, never Claude Code's tool.
     assert.doesNotMatch(word.body.additionalContext, /AskUserQuestion|cli\.js cards/);
     assert.match(word.body.additionalContext, /the Lean command's `confirm lift-stop`/);
     assert.deepEqual([stopState().on, stopState().by], [true, 'prompt']);
     const stopped = await entry('preToolUse', patch);
     assert.deepEqual([stopped.body, stopped.code], [deny(DENIED), 2]);
     assertLetThrough(await entry('preToolUse', read));
-    // The chat can't decide anything under STOP; Lift STOP is the window's.
+    // The chat can't decide anything under STOP; Lift All stop is the window's.
     const head0 = await c.main();
     assert.match((await c.lean(['click', 'merge-x', 'Approve', head0], { question: 'x' })).refused, /All stop is on/);
     const lifted = await c.lean(['confirm', 'lift-stop']);

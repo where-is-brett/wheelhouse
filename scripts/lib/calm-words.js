@@ -150,7 +150,7 @@ export function foldedParts(keys) {
 }
 
 // What each deciding button is said to have done, in the past.
-const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift STOP': 'All stop lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
+const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift All stop': 'All stop lifted', 'Lift STOP': 'All stop lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
 const decidedWord = (label) => DECIDED[label];
 // A meanwhile that says when something happens ("It goes live within the hour"), as opposed to
 // one that says only what waits.

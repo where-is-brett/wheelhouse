@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeEvent, PROTECTED_KINDS } from './events.js';
 import { LEAN_RECORD_DIR, PROOFS, REVIEW_KINDS } from '../lib/copilot-numbers.js';
+import { LIFT_LABELS } from './card-lines.js';
 
 // The kinds a Lean line can name, and the eight keys every line has, in the order they are written.
 // Intake at Lean (ruling P5-37) adds `idea`, `ruling` and `design`, which carry a ninth key, `text`, after them:
@@ -84,7 +85,8 @@ function whyBad(line, file) {
     case 'copy': return need(['pushed', 'failed'].includes(line.choice) && line.commit !== null, 'a copy line names pushed or failed and the 12-character commit');
     // "Nothing else is in the line" for stop; the click on Lift STOP, or no click at all.
     case 'stop': return need(line.choice === null, 'a stop line has no choice');
-    case 'lift-stop': return need(line.choice === null || line.choice === 'Lift STOP', 'a lift-stop line names Lift STOP, or nothing');
+    // Lift STOP is the button's earlier name, which lines written before it was called Lift All stop carry.
+    case 'lift-stop': return need(line.choice === null || LIFT_LABELS.includes(line.choice), 'a lift-stop line names Lift All stop, or nothing');
     // An idea is written at once, with no card; a ruling only after the click on Confirm; a design after Build it.
     case 'idea': return need(line.card !== null && line.choice === null && line.commit === null, 'an idea names its short name, and no choice or commit');
     case 'ruling': return need(line.card !== null && line.choice === 'Confirm' && line.commit === null, 'a ruling names its short name and Confirm, and no commit');

@@ -93,7 +93,7 @@ export const KNOWN_PREFIXES = [
 ];
 
 // A message that is only a reply code and one of the signed options (design, section 17.1).
-export const REPLY_CODE = /^[A-Z0-9]{4} (Approve|Confirm|Lift STOP|Do it|Push it)$/;
+export const REPLY_CODE = /^[A-Z0-9]{4} (Approve|Confirm|Lift All stop|Lift STOP|Do it|Push it)$/;
 
 // ------------------------------------------------------------ the guard
 //

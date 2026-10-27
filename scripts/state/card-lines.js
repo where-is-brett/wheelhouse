@@ -30,7 +30,17 @@ export function unattendedBuildsLine(eventId, computer) {
 // The letters and digits a reply code is made from: none that are easy to mistake for another.
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
 
-export const LIFT_STOP = 'Lift STOP and let the agents carry on';
+// The Lift All stop card's set line, and the button whose click on it lifts All stop. A card made before the halt
+// switch was called All stop carries the earlier words, which every reader still takes: a waiting card, a reply code
+// made from it, a lean record line and a signed click from then stay valid.
+export const LIFT_STOP = 'Lift All stop and let the agents carry on';
+export const LIFT_STOP_EARLIER = 'Lift STOP and let the agents carry on';
+export const LIFT_STOP_LINES = Object.freeze([LIFT_STOP, LIFT_STOP_EARLIER]);
+export const LIFT_LABEL = 'Lift All stop';
+export const LIFT_LABEL_EARLIER = 'Lift STOP';
+export const LIFT_LABELS = Object.freeze([LIFT_LABEL, LIFT_LABEL_EARLIER]);
+// Whether `line` is the Lift All stop card's set line, in its words now or its earlier ones.
+export const isLiftStopLine = (line) => LIFT_STOP_LINES.includes(line);
 
 export const RUNBOOK_TITLES = {
   1: 'Turn STOP on',
@@ -232,7 +242,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
   /^Confirm [a-z-]+ \S+: ".*"$/m,
-  new RegExp(`^${literal(LIFT_STOP)}$`, 'm'),
+  new RegExp(`^(?:${LIFT_STOP_LINES.map(literal).join('|')})$`, 'm'),
   /^Push the CI change on \S+ at commit [0-9a-f]{12} with your own sign-in$/m,
   new RegExp(`^Runbook step (?:${Object.entries(RUNBOOK_TITLES).map(([step, title]) => `${step}: ${literal(title)}`).join('|')})(?:, to commit [0-9a-f]{12})?$`, 'm'),
   new RegExp(`^Approve ${ID} \\((?:${LANES}) lane\\) as written, [0-9a-f]{12}(?:, and show it to me before it merges)?$`, 'm'),

@@ -109,6 +109,7 @@ test('a deciding toast is the label in the past, then what happens where the car
   assert.equal(words.decidedToast('Confirm', 'The change is in force; it applies by 18:00.'), 'Confirmed. It applies by 18:00.');
   assert.equal(words.decidedToast('Do it', undefined), 'Done.');
   assert.equal(words.decidedToast('Lift STOP', 'Builders start again within the hour.'), 'All stop lifted. Builders start again within the hour.');
+  assert.equal(words.decidedToast('Lift All stop', 'Builders start again within the hour.'), 'All stop lifted. Builders start again within the hour.');
   assert.equal(words.awayToast('Away until 18:00', true), 'Away until 18:00. Undo in the pane for a minute.');
   assert.equal(words.awayToast('Here', false), 'Here.');
 });

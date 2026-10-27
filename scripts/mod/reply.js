@@ -28,7 +28,7 @@ import { computerId, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents } from '../state/events.js';
 import { buildViews } from '../state/views.js';
 import { readEnrolled } from '../state/signing.js';
-import { CODE_ALPHABET, RUNBOOK_TITLES, confirmLine, setLineOf, replyCode } from '../state/card-lines.js';
+import { CODE_ALPHABET, RUNBOOK_TITLES, LIFT_LABELS, confirmLine, setLineOf, replyCode } from '../state/card-lines.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { BUILD_QUESTION_LABELS, USE_GUARDED, isBuildQuestion, settingKey } from '../protection/windows-builds.js';
@@ -208,7 +208,10 @@ export async function replyRecord({ project, text, client, now = () => new Date(
   if (!Number.isFinite(age) || age < 0) return no('That code\'s card can\'t be dated, so it can\'t be used');
   if (age >= REPLY_CODE_DAYS * DAY) return no(`That code has run out: a code lasts ${REPLY_CODE_DAYS} days`);
 
-  const offered = card.options.filter((o) => typeof o === 'string' && fold(o) === fold(reply.label));
+  // Lift All stop and Lift STOP, its earlier name, are one button: either answers a card offering the other.
+  const lifts = LIFT_LABELS.map(fold);
+  const same = (o) => fold(o) === fold(reply.label) || (lifts.includes(fold(o)) && lifts.includes(fold(reply.label)));
+  const offered = card.options.filter((o) => typeof o === 'string' && same(o));
   if (offered.length !== 1) return no(`That card doesn't offer ${reply.label}`);
   const [label] = offered;
   // On an answer card the question's own options answer it; earned checks the label is one of them

@@ -85,7 +85,7 @@ const COMMAND_SKILLS = Object.freeze({
   briefing: `Give the director the briefing now, as ${LEAN} gives it (its section "The briefing"), with nothing added. If you can't build it, say only that the briefing couldn't be read.`,
   settings: `Show the director the settings in force, and where each comes from, as ${LEAN} gives them (its section "Settings"), with nothing added: at Lean they are the tier and its lines at the top of the Logbook, and the folder the copy goes to. If they can't be read, say only that the settings couldn't be read.`,
   sources: `Lean has no weekly check of the sources: it is a Wheelhouse program, and none runs here. Say so in one line, as ${LEAN} does (its section "Sources"), and show nothing else.`,
-  stop: `Turn All stop on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "All stop" of ${LEAN}: tell the director once that nothing enforces All stop here, and ask the Lift STOP card alone.`,
+  stop: `Turn All stop on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "All stop" of ${LEAN}: tell the director once that nothing enforces All stop here, and ask the Lift All stop card alone.`,
 });
 
 // The one line the kit's front desk holds that Claude Code's doesn't: Claude Code has no `wheelhouse-lean` skill, so the
@@ -96,7 +96,7 @@ const FRONT_DESK_LEAN_ANCHOR = '\n## The command\n';
 // binds nothing, so a card a confirmed click decides goes to the helper's window through the Wheelhouse command's
 // `confirm <card>`. Claude Code's front desk keeps its own words; the kit adds this at the end of its Cards section.
 const FRONT_DESK_CONFIRM_LINE = '- **A card a confirmed click decides, at Middle and Full:** on Copilot a click in the chat doesn\'t count, because no hook can sign it. '
-  + 'For a build question\'s Allow this time or Allow for this feature, and for Lift STOP, a guardrail change, Unattended, a runbook step or a CI push, '
+  + 'For a build question\'s Allow this time or Allow for this feature, and for Lift All stop, a guardrail change, Unattended, a runbook step or a CI push, '
   + 'tell the director in one plain line that a click in the chat doesn\'t count here and that the helper\'s own window will show the card. '
   + 'Then run `confirm <card>` with the card\'s id from `views waiting` (or `confirm lift-stop`): it shows the card in that window, where their click is the one that counts, and waits for it. '
   + 'Say only what it prints: `"recorded":true` means the click was recorded; anything else, say in one plain line that nothing was decided.';

@@ -73,9 +73,9 @@ const POLL_MS = 200;
 export const RUNNING = 'Wheelhouse\'s helper is running';
 export const NOT_STARTED = `Wheelhouse's helper didn't start within ${START_WAIT_MS / 1000} seconds. Run the start command again; if it still doesn't start, restart the computer and try once more`;
 export const CHANGED = 'The changes are no longer the ones the card showed, so nothing was installed. Ask for the plan again, and the card with it';
-export const STOP_ON = 'All stop is on, so nothing was changed. Lift STOP first, then try again';
+export const STOP_ON = 'All stop is on, so nothing was changed. Lift All stop first, then try again';
 // The plan's line, and install's, when the folder's own record leaves STOP on (ruling P5-58).
-export const STOP_CARRIED = 'This folder\'s record says All stop is on, so All stop stays on with the helper: only Lift STOP in Wheelhouse\'s own window lifts it';
+export const STOP_CARRIED = 'This folder\'s record says All stop is on, so All stop stays on with the helper: only Lift All stop in Wheelhouse\'s own window lifts it';
 const NOT_LEAN = 'This folder isn\'t a Lean project on this computer, so there is nothing to remove';
 const USAGE = 'Usage: start-helper.js plan|install --work-computer yes|no --real-users yes|no [--test <command>] [--hash <hash>] | start | uninstall-plan --remove-state yes|no | uninstall --hash <hash> --remove-state yes|no';
 

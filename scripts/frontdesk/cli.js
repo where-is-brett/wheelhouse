@@ -98,7 +98,7 @@ export const LIFT_STOP_CARD = Object.freeze({
   what: 'All stop is on: every agent has halted, and nothing is written, pushed or merged.',
   why: 'Only you can lift All stop, so it comes to you.',
   options: [
-    { label: 'Lift STOP', says: 'The agents carry on from where they halted.' },
+    { label: 'Lift All stop', says: 'The agents carry on from where they halted.' },
     { label: 'Not now', says: 'All stop stays on, and nothing moves until you lift it.' },
   ],
   recommend: 'Not now',

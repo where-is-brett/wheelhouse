@@ -80,7 +80,7 @@
           "text": "invoke superpowers:writing-plans and no other skill"
         }
       ],
-      "rule": "A quick change goes to the quick lane, and an approved design or brief goes to the foreman's queue.",
+      "rule": "A quick change goes to the quick lane, and an approved design or brief goes to the Bosun's queue.",
       "why": "The front desk talks to the director; building and planning belong to the lanes and the foreman.",
       "scenario": 35
     },
@@ -116,7 +116,7 @@
           "text": "Dispatch a `general-purpose` subagent"
         }
       ],
-      "rule": "A per-task or whole-branch review uses Wheelhouse's reviewer agent, which can read but cannot write.",
+      "rule": "A per-task or whole-branch review uses Wheelhouse's Lookout agent, which can read but cannot write.",
       "why": "A reviewer that cannot write cannot quietly change the work it is judging.",
       "scenario": 34
     }

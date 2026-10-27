@@ -418,7 +418,7 @@ test('the kit\'s front desk sends a card a confirmed click decides to the helper
     assert.ok(at > text.indexOf('## Cards') && at < text.indexOf('## Carrying work on'), `${dir}: in the Cards section`);
     assert.equal(text.split(line).length, 2, `${dir}: once`);
     const said = text.slice(at, text.indexOf('\n', at));
-    for (const words of ['Allow this time', 'Allow for this feature', 'Lift STOP', '`confirm <card>`', 'a click in the chat doesn\'t count']) assert.ok(said.includes(words), `${dir}: ${words}`);
+    for (const words of ['Allow this time', 'Allow for this feature', 'Lift All stop', '`confirm <card>`', 'a click in the chat doesn\'t count']) assert.ok(said.includes(words), `${dir}: ${words}`);
   }
   assert.ok(!fs.readFileSync(path.join(ROOT, 'skills', 'front-desk', 'SKILL.md'), 'utf8').includes('confirm <card>'));
   // The window's step for an allowance is one of the confirmed steps the line sends there.

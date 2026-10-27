@@ -20,7 +20,7 @@ const LINES = {
   copy: { at: '2026-10-23T01:21:19Z', kind: 'copy', card: null, choice: 'pushed', commit: 'e5d70b3a96c1', proof: 'chat-click', by: 'chat', tier: 'lean' },
   undo: { at: '2026-10-23T03:02:48Z', kind: 'undo', card: 'undo-export-orders', choice: 'Undo', commit: '7ac20e5d19f4', proof: 'chat-click', by: 'chat', tier: 'lean' },
   stop: { at: '2026-10-23T03:05:12Z', kind: 'stop', card: null, choice: null, commit: null, proof: 'chat-click', by: 'chat', tier: 'lean' },
-  'lift-stop': { at: '2026-10-23T03:09:50Z', kind: 'lift-stop', card: 'lift-stop', choice: 'Lift STOP', commit: null, proof: 'chat-click', by: 'chat', tier: 'lean' },
+  'lift-stop': { at: '2026-10-23T03:09:50Z', kind: 'lift-stop', card: 'lift-stop', choice: 'Lift All stop', commit: null, proof: 'chat-click', by: 'chat', tier: 'lean' },
 };
 const text = (...lines) => `${lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n')}\n`;
 const FILE = '.wheelhouse/record/2026-10-23.jsonl';
@@ -115,6 +115,22 @@ test('a lift-stop with no choice is not a click, and its event says so', () => {
   });
 });
 
+test('a lift-stop line written before the button was called Lift All stop still counts as the click', () => {
+  withStandIns(() => {
+    const earlier = { ...LINES['lift-stop'], choice: 'Lift STOP' };
+    const parsed = parseLeanRecord(text(earlier, LINES['lift-stop']), { file: FILE });
+    assert.deepEqual(parsed.problems ?? [], []);
+    assert.deepEqual(parsed.entries.map((e) => e.choice), ['Lift STOP', 'Lift All stop']);
+    const [before, now] = leanToEvents(parsed.entries, { project: 'owner-name' });
+    for (const event of [before, now]) {
+      assert.equal(event.data.clicked, true);
+      assert.match(event.data.text, /lifted All stop, by a click in the chat/);
+    }
+    // A stop then an earlier-worded lift leaves All stop off.
+    assert.equal(leanStopOpen(entriesOf(LINES.stop, earlier)), false);
+  });
+});
+
 test('a broken line is a problem, not lost', () => {
   const good = LINES.approval;
   const broken = [
@@ -142,7 +158,7 @@ test('a broken line is a problem, not lost', () => {
     [{ ...LINES.card, choice: null }, /card line names/],
     [{ ...LINES.undo, choice: 'Redo' }, /undo names/],
     [{ ...LINES.stop, choice: 'Stop' }, /a stop line has no choice/],
-    [{ ...LINES['lift-stop'], choice: 'Not now' }, /lift-stop line names Lift STOP, or nothing/],
+    [{ ...LINES['lift-stop'], choice: 'Not now' }, /lift-stop line names Lift All stop, or nothing/],
     [{ ...LINES['lift-stop'], choice: 'Approve' }, /lift-stop line names/],
     [{ ...LINES.card, at: '2026-10-22T23:59:59Z' }, /not on the day of the file/],
   ];

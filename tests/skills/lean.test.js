@@ -582,12 +582,12 @@ test('the playbook\'s own commits, merges, reverts, switches and pushes run with
   assert.ok(!fs.existsSync(mark), fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '');
 });
 
-test('with the helper, Lift STOP is the Lean command\'s confirm lift-stop, decided in the helper\'s window', () => {
+test('with the helper, Lift All stop is the Lean command\'s confirm lift-stop, decided in the helper\'s window', () => {
   const helper = section(playbook, 'With Wheelhouse\'s helper');
   const line = helper.split('\n').find((l) => l.startsWith('- **Lifting All stop**'));
   assert.ok(line, 'the helper\'s section says how All stop is lifted');
   assert.ok(line.includes('`<lean> confirm lift-stop`'));
-  assert.match(line, /the director's click on \*\*Lift STOP\*\* in the helper's own window, never by a click in the chat/);
+  assert.match(line, /the director's click on \*\*Lift All stop\*\* in the helper's own window, never by a click in the chat/);
   assert.match(line, /`"recorded":true`/);
   assert.match(line, /lifts nothing while the helper answers/);
   assert.ok(leanKit.includes('`<lean> confirm lift-stop`'), 'the kit holds it');
@@ -772,7 +772,7 @@ test('All stop is said to be unenforced', () => {
   assert.match(stop, /VS Code's stop button/);
   assert.match(stop, /`stop`/);
   assert.match(stop, /`lift-stop`/);
-  assert.match(stop, /Lift STOP/);
+  assert.match(stop, /Lift All stop/);
 });
 
 // ---- The project key ----

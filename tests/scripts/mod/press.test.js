@@ -33,7 +33,7 @@ const common = {
 };
 const says = (label) => ({ label, says: `It ${label.toLowerCase()} and goes ahead.` });
 const approvalCard = (pr = 13) => composeCard({ ...common, kind: 'approval', recommend: 'Approve', what: `Pull request #${pr} changes the wording on the sign-in page.`, options: [says('Approve')], target: { pr, sha: FULL } }).card;
-const liftStopCard = () => composeCard({ ...common, kind: 'lift-stop', recommend: 'Lift STOP', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift STOP')], target: {} }).card;
+const liftStopCard = () => composeCard({ ...common, kind: 'lift-stop', recommend: 'Lift All stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift All stop')], target: {} }).card;
 const OWN = [{ label: 'Comma', says: 'Commas between values.' }, { label: 'Tab', says: 'Tabs between values.' }];
 const answerCard = () => composeCard({ ...common, kind: 'answer', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN, target: { questionId: 'q-export-csv-1' } }).card;
 const questionCard = (what = 'Which separator should the export use?') => composeCard({ ...common, kind: 'question', recommend: 'Comma', what, options: OWN }).card;
@@ -299,11 +299,11 @@ test('an approval whose pull request moved records nothing and says why', () => 
   // The card was let go, so it can be pressed again once it matches.
   assert.equal((await press(card, fake(), 'Approve')).made, true);
 
-  // A Lift STOP while STOP is off.
+  // A Lift All stop while STOP is off.
   const lift = putCard(liftStopCard(), 1);
   let lifted = 0;
   const off = fake();
-  assert.deepEqual(await press(lift, off, 'Lift STOP', { liftStop: () => { lifted += 1; } }), { made: false, says });
+  assert.deepEqual(await press(lift, off, 'Lift All stop', { liftStop: () => { lifted += 1; } }), { made: false, says });
   assert.equal(off.calls.record.length + off.calls.write.length, 0);
   assert.equal(lifted, 0);
 }));
@@ -358,10 +358,10 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   assert.equal(untouched(explain), 0);
   assert.equal(stopState().on, true);
 
-  // A Lift STOP press lifts it, and its answer is then written.
+  // A Lift All stop press lifts it, and its answer is then written.
   const lift = putCard(liftStopCard(), 2);
   const lifting = fake();
-  assert.deepEqual(await press(lift, lifting, 'Lift STOP', { liftStop }), { made: true, says: 'All stop lifted.' });
+  assert.deepEqual(await press(lift, lifting, 'Lift All stop', { liftStop }), { made: true, says: 'All stop lifted.' });
   assert.equal(stopState().on, false);
   assert.deepEqual(lifting.calls.order, ['record', 'write']);
 }));
@@ -405,13 +405,13 @@ test('a choice on a question card is claimed, so two presses at once record it o
   assert.equal((await press(open, fake(), 'Comma')).made, true);
 }));
 
-test('a Lift STOP card drawn before this STOP began records nothing', () => withKey(async () => {
+test('a Lift All stop card drawn before this STOP began records nothing', () => withKey(async () => {
   const old = putCard(liftStopCard());
   // STOP went on half an hour after the card was drawn.
   setStop({ by: 'prompt', now: () => new Date(NOW.getTime() + 30 * 60 * 1000) });
   let lifted = 0;
   const client = fake();
-  assert.deepEqual(await press(old, client, 'Lift STOP', { liftStop: () => { lifted += 1; } }), {
+  assert.deepEqual(await press(old, client, 'Lift All stop', { liftStop: () => { lifted += 1; } }), {
     made: false, says: 'That couldn\'t be recorded: the card no longer matches what it decides',
   });
   assert.equal(untouched(client), 0);
@@ -421,7 +421,7 @@ test('a Lift STOP card drawn before this STOP began records nothing', () => with
 
   // A card drawn after it began lifts it.
   const fresh = putCard(liftStopCard(), 31);
-  assert.equal((await press(fresh, fake(), 'Lift STOP', { liftStop })).made, true);
+  assert.equal((await press(fresh, fake(), 'Lift All stop', { liftStop })).made, true);
   assert.equal(stopState().on, false);
 }));
 

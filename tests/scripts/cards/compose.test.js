@@ -44,7 +44,7 @@ const says = (what) => ({ label: what, says: `It ${what.toLowerCase()} and goes 
 const INPUTS = {
   approval: { ...common, kind: 'approval', what: 'Pull request #7 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 7, sha: FULL } },
   confirm: { ...common, recommend: 'Confirm', kind: 'confirm', what: 'A rule you gave: money is shown in dollars.', options: [says('Confirm')], target: { event: RULING } },
-  'lift-stop': { ...common, recommend: 'Lift STOP', kind: 'lift-stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift STOP')], target: {} },
+  'lift-stop': { ...common, recommend: 'Lift All stop', kind: 'lift-stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift All stop')], target: {} },
   'ci-push': { ...common, recommend: 'Push it', kind: 'ci-push', what: 'A change to the automatic checks, on the ci-fix branch, is ready to go out under your sign-in.', options: [says('Push it')], target: { branch: 'ci-fix', sha: FULL } },
   runbook: { ...common, recommend: 'Do it', kind: 'runbook', what: 'The emergency steps say: put the product back to an earlier release.', options: [says('Do it')], target: { step: 3, sha: FULL } },
   'approve-work': { ...common, kind: 'approve-work', what: 'The plan for exporting a report as a spreadsheet file (export-csv).', options: [says('Approve')], target: { work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true } },
@@ -352,7 +352,7 @@ test('an approval card offers Approve, Suggest a change…, Show me and Not now,
 
 test('decision cards offer the deciding label, Suggest a change…, Show me and Not now; the kinds answered in setup\'s own chat and lift-stop offer no Suggest a change…', () => {
   const expected = {
-    approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift STOP', 'ci-push': 'Push it', runbook: 'Do it',
+    approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift All stop', 'ci-push': 'Push it', runbook: 'Do it',
     'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix', setup: 'Go ahead',
   };
   const lists = {
@@ -392,7 +392,7 @@ test('decision cards offer the deciding label, Suggest a change…, Show me and 
   refused({ options: [says('Approve'), { label: 'Why?' }] }, /options.*Why\?/);
   refused({ recommend: 'Delete everything' }, /recommend/);
   refused({ options: [says('Approve'), says('Approve')] }, /options.*twice|options.*Approve/);
-  refused({ options: [says('Lift STOP'), { label: SUGGEST }] }, /options.*Suggest a change/, 'lift-stop');
+  refused({ options: [says('Lift All stop'), { label: SUGGEST }] }, /options.*Suggest a change/, 'lift-stop');
   refused({ options: [says('Go ahead'), { label: 'Explain more' }] }, /options.*Explain more/, 'setup');
   refused({ options: [says('Trust it'), { label: SUGGEST }] }, /options.*Suggest a change/, 'trust');
   refused({ options: [says('Take over here'), { label: SUGGEST }] }, /options.*Suggest a change/, 'take-over');

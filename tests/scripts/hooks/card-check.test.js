@@ -13,7 +13,7 @@ import { baselineCard } from '../../../scripts/measures/baseline.js';
 import { BASELINE_PHRASES } from '../../../scripts/lib/measures-clicks.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../../../scripts/lib/calm-words.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { approvalLine, replyCode, replyCodeLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, replyCode, replyCodeLine, setLineOf, LIFT_STOP, LIFT_STOP_EARLIER } from '../../../scripts/state/card-lines.js';
 import { withHome } from '../../helpers/homes.js';
 
 const HOOK = fileURLToPath(new URL('../../../scripts/hooks/card-check.js', import.meta.url));
@@ -40,7 +40,7 @@ const OWN = [
 const INPUTS = {
   approval: { ...common, kind: 'approval', recommend: 'Approve', what: 'Pull request #13 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 13, sha: FULL } },
   confirm: { ...common, kind: 'confirm', recommend: 'Confirm', what: 'A rule you gave: money is shown in dollars.', options: [says('Confirm')], target: { event: RULING } },
-  'lift-stop': { ...common, kind: 'lift-stop', recommend: 'Lift STOP', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift STOP')], target: {} },
+  'lift-stop': { ...common, kind: 'lift-stop', recommend: 'Lift All stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift All stop')], target: {} },
   'ci-push': { ...common, kind: 'ci-push', recommend: 'Push it', what: 'A change to the automatic checks, on the ci-fix branch, is ready to go out.', options: [says('Push it')], target: { branch: 'ci-fix', sha: FULL } },
   runbook: { ...common, kind: 'runbook', recommend: 'Do it', what: 'The emergency steps say: put the product back to an earlier release.', options: [says('Do it')], target: { step: 3, sha: FULL } },
   'approve-work': { ...common, kind: 'approve-work', recommend: 'Approve', what: 'The plan for exporting a report as a spreadsheet file (export-csv).', options: [says('Approve')], target: { work: 'export-csv', lane: 'feature', hash: DOC } },
@@ -87,6 +87,21 @@ test('a composed card of every kind passes, as its text and as its question', as
   const typed = composeCard({ ...INPUTS.answer, options: four, recommend: 'A' }).question;
   assert.ok(typed.question.includes(TO_CHANGE_IT) && !typed.question.includes(TO_KNOW_MORE));
   assert.deepEqual(cardProblems(typed), []);
+});
+
+test('the Lift All stop card is in the new words, and one made before in the STOP words still passes', () => {
+  const { question } = composeCard(INPUTS['lift-stop']);
+  assert.equal(setLineOf(question.question), LIFT_STOP);
+  assert.equal(question.options[0].label, 'Lift All stop');
+  // The same card as it was asked before the halt switch was called All stop: its set line, reply code and button.
+  const earlier = {
+    ...question,
+    question: question.question.replace(`${LIFT_STOP}\n${replyCodeLine(replyCode(LIFT_STOP))}`, `${LIFT_STOP_EARLIER}\n${replyCodeLine(replyCode(LIFT_STOP_EARLIER))}`),
+    options: question.options.map((o) => (o.label === 'Lift All stop' ? { ...o, label: 'Lift STOP' } : o)),
+  };
+  assert.equal(setLineOf(earlier.question), LIFT_STOP_EARLIER);
+  assert.deepEqual(cardProblems(earlier.question), []);
+  assert.deepEqual(cardProblems(earlier), []);
 });
 
 test('a level 4 card, with its checks line, passes', () => {
