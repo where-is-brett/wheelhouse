@@ -655,7 +655,41 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
   return text === '' ? undefined : answer.context('SessionStart', text);
 }
 
+// The session's title, by its role (the director's call, 27 October 2026): shown in Claude Code's session
+// lists in place of a generic one, so the director can tell the sessions on a project apart. Given only
+// when the session starts afresh (`source` "startup"), so a name the director gives a session survives
+// its resumes; null outside a Wheelhouse project, and for an agent whose hooks only read.
+export const TITLES = Object.freeze({
+  firstMate: 'Wheelhouse · First Mate',
+  setup: 'Wheelhouse · Setup',
+  bosun: 'Wheelhouse · Bosun',
+});
+export const crewTitle = (feature) => `Wheelhouse · Crew: ${oneLine(feature)}`;
+export function sessionTitle(input, { dir, projectOf: find = projectOf, env = process.env } = {}) {
+  if (input?.source !== 'startup') return null;
+  const found = find(input.cwd, { dir });
+  const setup = beingSetUp(input.cwd);
+  if (!found) return setup === null ? null : TITLES.setup;
+  const role = sessionRole({ sessionId: input.session_id, env, cwd: input.cwd });
+  if (role === 'foreman') return TITLES.bosun;
+  const feature = featureSlug(input.cwd);
+  if (feature !== null) return crewTitle(feature);
+  return setup === null ? TITLES.firstMate : TITLES.setup;
+}
+
 export async function decide(input, deps = {}) {
+  const out = await started(input, deps);
+  if (deps.writeVia !== undefined && deps.writeVia !== 'self') return out;
+  let title = null;
+  try {
+    title = sessionTitle(input, deps);
+  } catch { /* the session keeps Claude Code's own title */ }
+  if (title === null) return out;
+  const output = out?.hookSpecificOutput ?? { hookEventName: 'SessionStart' };
+  return { ...out, hookSpecificOutput: { ...output, sessionTitle: title } };
+}
+
+async function started(input, deps) {
   if (deps.writeVia !== undefined && deps.writeVia !== 'self') {
     const { dir, projectOf: find = projectOf, client, helperUp, agent, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform, stopState: stopOf = stopState, totalMs = TOTAL_MS + helperGrace() } = deps;
     return readOnlyStart(input, { dir, find, client, helperUp, agent: agent ?? agentOfInput(input) ?? 'claude-code', pluginRoot, self, platform, stopOf, totalMs });

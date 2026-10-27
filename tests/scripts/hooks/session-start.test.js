@@ -9,7 +9,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  importedLine, importFailedLine, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
+  importedLine, importFailedLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -1855,5 +1855,34 @@ test('a usage card is handed out only once the helper has taken its offer, since
     const out = await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
     assert.equal(usageLines(out).length, 0);
     assert.deepEqual(kept(P).filter((r) => r.body?.event?.kind === 'usage-card' || r.body?.kind === 'usage-card'), [], 'not kept, so the card is offered at a later start');
+  });
+});
+
+test('a session is titled by its role when it starts afresh, and keeps its own title on a resume', async () => {
+  await withHome(async (home) => {
+    const f = fake();
+    const titleOf = async (extra = {}, input = {}) => (await run(f, extra, { source: 'startup', ...input }))?.hookSpecificOutput?.sessionTitle;
+    assert.equal(await titleOf(), TITLES.firstMate);
+    assert.equal(await titleOf({ env: { WHEELHOUSE_ROLE: 'foreman' } }), TITLES.bosun);
+    const tree = path.join(home, 'tree');
+    const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
+    fs.mkdirSync(tree, { recursive: true });
+    fs.mkdirSync(gitdir, { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+    fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    assert.equal(await titleOf({}, { cwd: tree }), 'Wheelhouse · Crew: gift-cards');
+    assert.equal(await titleOf({}, { source: 'resume' }), undefined);
+    assert.equal(await titleOf({}, { source: 'compact' }), undefined);
+    assert.equal(await decide({ cwd: '/x', source: 'startup' }, { client: f.client, spawn: f.spawn, projectOf: () => null }), undefined, 'nothing outside a project');
+    assert.equal(await titleOf({ writeVia: 'helper', helperUp: false }), undefined, 'none for an agent whose hooks only read');
+  });
+});
+
+test('a folder being set up is titled Setup', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-setup-');
+    startRun({ folder });
+    assert.equal(sessionTitle({ cwd: folder, source: 'startup' }, { projectOf: () => null }), TITLES.setup);
+    assert.equal(sessionTitle({ cwd: folder, source: 'startup' }, { projectOf: () => ({ project: P }) }), TITLES.setup, 'a project setup is still finishing');
   });
 });
