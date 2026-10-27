@@ -1442,9 +1442,10 @@ export async function startHelper({
   // The project's private record (design section 24.1), opened, never cloned: its events are
   // committed and never pushed, for every project as for a Lean one.
   async function ensureStateClone(project, ctx) {
+    // A Lean project's record is looked at by its own opener, which words a refusal for Lean.
+    if (ctx.lean) return leanState(project, { run });
     await lookAtState(ctx, project);
-    if (ctx.lean) await leanState(project, { run });
-    else await openProjectRecord(project, { run });
+    return openProjectRecord(project, { run });
   }
 
   // The lock's push: the one branch of Wheelhouse's that goes to the host.
