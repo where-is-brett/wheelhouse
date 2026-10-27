@@ -15,6 +15,7 @@ import {
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
+import { questionIdOf } from '../lib/build-loop.js';
 import { SUGGEST, SHOW_ME, NOT_NOW, TO_KNOW_MORE, TO_CHANGE_IT, WHAT_CHANGED, SUGGEST_SAYS } from '../lib/calm-words.js';
 import { CONFIRMABLE_KINDS } from '../state/events.js';
 import { glossaryOf, termsIn } from '../frontdesk/glossary.js';
@@ -98,7 +99,7 @@ const OFFERED_AFTER = Object.freeze({
 const USUAL_AFTER = Object.freeze([SUGGEST, SHOW_ME, NOT_NOW]);
 
 // What an answer card says happens while the director decides.
-export const MEANWHILE = 'that feature waits; the others carry on';
+export const MEANWHILE = 'Meanwhile that work waits, and the rest carries on.';
 // The checks line of a level 4 question's card when the build didn't say what answering does to the checks (ruling F18).
 export const CHECKS_UNSAID = 'The build didn\'t say. Ask me why and I\'ll find out before you answer.';
 
@@ -498,20 +499,29 @@ export function composeCard(input) {
   return { question, card };
 }
 
+// What one of the foreman's own options says on its card. The foreman's option holds the command it runs on that
+// answer (`act start …`), or `waiting`, which mean nothing to the director: the card gives the option's label instead.
+function foremanSays(option) {
+  const says = flat(option?.says);
+  if (says === 'waiting') return 'Nothing more happens until you choose again';
+  return flat(option?.label) || says;
+}
+
 // The input for the answer card to a question the build recorded, `data` as its question event
 // holds it: its words, its own options with what each says, and its own recommendation (ruling
 // F10). `work` names the work, by its title or its id. A level 4 question's card says what
 // answering does to the checks, in the question's own words, or that the build didn't say (ruling F18).
 export function answerInput(data, work) {
   if (!isPlain(data) || !Array.isArray(data.options)) throw new Error('its record can\'t be read');
+  const foreman = questionIdOf(data.id)?.foreman === true;
   return {
     kind: 'answer',
     level: data.level,
     what: flat(data.what),
     why: flat(data.why),
-    options: data.options.map((o) => ({ label: o?.label, says: flat(o?.says) || o?.label })),
+    options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
     recommend: data.recommendation,
-    because: `the session building ${work} recommends it`,
+    because: foreman ? `the foreman recommends it for ${work}` : `the session building ${work} recommends it`,
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },

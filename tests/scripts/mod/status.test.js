@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { NO_HELPER } from '../../../scripts/hooks/session-start.js';
-import { paneModel, paneStatusFile, writePaneStatus, readPaneStatus, QUESTION_WAITS, cardTextOf } from '../../../scripts/mod/status.js';
+import { paneModel, paneStatusFile, writePaneStatus, readPaneStatus, QUESTION_WAITS, CARD_TO_MAKE, cardTextOf } from '../../../scripts/mod/status.js';
 import { needsYou, courierWake } from '../../../scripts/mod/courier.js';
 import { makeEvent } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
@@ -149,6 +149,33 @@ const courierOn = (model, over = {}) => courierWake({
 });
 // Session s-1 opened a day ago, finding nothing, so its ticks are ordinary.
 const openCourier = () => courierWake({ project: P, session: 's-1', items: [], presence: { value: 'here' }, idle: true, now: () => new Date(NOW.getTime() - 24 * 3600 * 1000) });
+
+test('a click the gate waits for, and a hold, with no card yet are lines the courier wakes the front desk for', () => withHome(async (home) => {
+  const repo = register(home);
+  await openCourier();
+  view('waiting', [{ id: 'card-approval', at: at(9), data: approval, asked: null }]);
+  view('work', {});
+  view('features', {});
+  view('questions', {});
+  view('reports', {});
+  view('gateAsks', {
+    // The gate waits for the director's approval of pull request #1, and no card asks for it yet.
+    1: { id: 'ev-gate-1', at: at(10), data: { pr: 1, sha: 'ac6417b51c6d', ask: 'approval', work: 'readme' }, line: 'Approve pull request #1 at commit ac6417b51c6d', card: null, askedAt: null, clickedAt: null },
+    // A pull request whose approval was clicked waits for nothing from the director.
+    2: { id: 'ev-gate-2', at: at(10), data: { pr: 2, sha: 'bbbbbbbbbbbb', ask: 'approval', work: 'other' }, line: 'Approve pull request #2 at commit bbbbbbbbbbbb', card: null, askedAt: null, clickedAt: at(11) },
+  });
+  view('lineageHolds', [{ id: 'ev-hold', at: at(11), computer: null, data: { mismatches: [{ name: 'superpowers' }] }, card: null }]);
+  const model = await paneModel({ project: P, cwd: repo, now: () => NOW });
+  assert.deepEqual(model.cards.map((c) => [c.n, c.id, c.kind, c.text, c.blocking, c.asked]), [
+    [1, 'card-approval', 'approval', approval.question, false, false],
+    [2, 'make:ev-gate-1', 'approval', CARD_TO_MAKE, false, false],
+    [3, 'make:ev-hold', 'question', CARD_TO_MAKE, true, false],
+  ]);
+  assert.deepEqual(model.cards[1].buttons, []);
+  const wake = await courierOn(model);
+  assert.ok(wake.submit.startsWith(LEADS.courier));
+  assert.deepEqual(wake.sent.filter((id) => id.startsWith('card:make:')), ['card:make:ev-gate-1', 'card:make:ev-hold']);
+}));
 
 test('each card says whether the front desk has asked it, and an asked card never wakes the front desk', () => withHome(async (home) => {
   const repo = register(home);

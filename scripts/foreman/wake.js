@@ -76,7 +76,7 @@ import {
 } from '../feature/status.js';
 import { forward } from './forward.js';
 import { helperClient } from '../host/helper-client.js';
-import { HASH, PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
+import { HASH, LANE_APPETITE, PACE, SLUG, questionIdOf } from '../lib/build-loop.js';
 import { stateDir, wheelhouseHome } from '../lib/paths.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { stopState } from '../lib/stop.js';
@@ -564,6 +564,12 @@ function queueLines(ctx) {
     if (typeof data.parent === 'string') {
       return `It is an extra plan of ${data.parent}, titled "${oneLine(data.title, 120)}". Next: act start ${id} --goal '<its title>' ${flags} `
         + `(from the part of ${data.parent}'s approved document, ${doc.path}, that its title names)`;
+    }
+    // Quick, bug and small work: the lane's appetite, where the document sets none (LANE_APPETITE).
+    const own = LANE_APPETITE[data.lane];
+    if (own) {
+      return `Next: act start ${id} --goal … --done … --appetite-sessions ${own.sessions} --appetite-tokens ${own.tokens} `
+        + `(from its approved document, ${doc.path}; the ${data.lane} lane's appetite)`;
     }
     return `Next: act start ${id} --goal … ${flags} (from its approved document, ${doc.path})`;
   };
