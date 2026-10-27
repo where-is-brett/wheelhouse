@@ -9,6 +9,7 @@ import path from 'node:path';
 import { main, measures, measuresFile, readWakeLines, recordDone } from '../../../scripts/foreman/wake.js';
 import { foremanCommands } from '../../../scripts/foreman/tools.js';
 import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
+import { LANE_APPETITE } from '../../../scripts/lib/build-loop.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
 import { writeCursor } from '../../../scripts/watcher/core.js';
 import { tempFolder, withHome } from '../../helpers/homes.js';
@@ -135,6 +136,25 @@ test('wake read: a next plan waits while the feature\'s own pull request is open
   assert.match(text, /^- build t: waits: its pull request #9 is still open; the next plan is checked once it merges\.$/m);
 }));
 
+test('quick, bug and small work, whose documents set no appetite, start on their lane\'s; a feature\'s comes from its pitch', () => withHome(async () => {
+  const checkout = await project();
+  const views = emptyViews();
+  for (const [id, lane] of [['q', 'quick'], ['b', 'bug'], ['s', 'small'], ['f', 'feature']]) {
+    views.work[id] = approvedDoc(checkout, workView(id, { lane, since: '2026-10-19T07:00:00.000Z' }), id);
+  }
+  const { client } = fakeClient({ views });
+  const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'q', 'x', { lane: 'quick' })] });
+  const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
+  for (const [id, lane] of [['q', 'quick'], ['b', 'bug'], ['s', 'small']]) {
+    const own = LANE_APPETITE[lane];
+    assert.ok(own.sessions >= 1 && own.tokens >= 1, lane);
+    assert.ok(text.includes(`Next: act start ${id} --goal … --done … --appetite-sessions ${own.sessions} --appetite-tokens ${own.tokens} (from its approved document, `), `${lane}: ${text}`);
+    assert.ok(text.includes(`; the ${lane} lane's appetite)`), lane);
+  }
+  assert.equal(LANE_APPETITE.feature, undefined, 'a feature has no lane appetite: its pitch proposes one');
+  if (text.includes('start f ')) assert.ok(text.includes('Next: act start f --goal … --done … --appetite-sessions … --appetite-tokens … (from its approved document, '), text);
+}));
+
 test('wake read names the approved document each start reads from, and lists the rulings in force by id (R84)', () => withHome(async () => {
   const checkout = await project();
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -156,7 +176,9 @@ test('wake read names the approved document each start reads from, and lists the
   const file = wakeFile(path.join(checkout, 'w'), 'one', { events: [ev('work-ready', 'a', 'x', { lane: 'small' })] });
   const text = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
   const a = esc(path.join(checkout, 'docs', 'specs', 'a.md'));
-  assert.match(text, new RegExp(`^- start a \\(small\\): approved\\. Next: act start a --goal … --done … --appetite-sessions … --appetite-tokens … \\(from its approved document, ${a}\\)$`, 'm'));
+  // Small work's document sets no appetite (only a feature's pitch does, design section 7.4): the wake gives the lane's.
+  const small = LANE_APPETITE.small;
+  assert.match(text, new RegExp(`^- start a \\(small\\): approved\\. Next: act start a --goal … --done … --appetite-sessions ${small.sessions} --appetite-tokens ${small.tokens} \\(from its approved document, ${a}; the small lane's appetite\\)$`, 'm'));
   assert.match(text, new RegExp(`^- start b \\(small\\): approved\\. Its document ${esc(elsewhere)} is not the one approved: it has changed since\\. Ask the director: act ask$`, 'm'));
   assert.match(text, /^- start c \(small\): approved\. It names no document to read its goal from\. Ask the director: act ask$/m);
   assert.match(text, /^Rulings in force: 1; give each that applies with --ruling <id>\.$/m);

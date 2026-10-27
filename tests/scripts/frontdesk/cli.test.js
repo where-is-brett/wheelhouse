@@ -176,6 +176,28 @@ test('cards gives at most four questions and says how many are left', async () =
   });
 });
 
+test('the foreman\'s own question shows its options by their labels, never the commands they run, and names the foreman', async () => {
+  await inHome(async () => {
+    const own = {
+      id: 'q-export-csv-1000001', work: 'export-csv', what: 'The work couldn\'t start: the host didn\'t answer.', why: 'Starting again is your call.',
+      options: [
+        { label: 'Try again', says: "act start export-csv --goal 'Export the report' --done 'A CSV downloads' --appetite-sessions 1 --appetite-tokens 1500000" },
+        { label: 'Wait', says: 'waiting' },
+      ],
+      recommendation: 'Try again', level: 3,
+    };
+    const helper = fakeHelper({ events: [questionEvent(own)] });
+    const got = await run(helper, ['cards']);
+    assert.equal(got.code, 0, got.err);
+    const [asked] = got.json.questions;
+    assert.deepEqual(asked.options.slice(0, 2).map((o) => o.description), [
+      'Recommended: Try again, because the agent that runs the building recommends it for export-csv.',
+      'Nothing more happens until you choose again',
+    ]);
+    assert.doesNotMatch(JSON.stringify(asked), /act start|--goal|appetite-tokens|session building/);
+  });
+});
+
 test('cards turns an open feature question into one answer card, once', async () => {
   await inHome(async () => {
     const answered = { ...QUESTION, id: 'q-login-1', work: 'login' };
@@ -205,7 +227,7 @@ test('cards turns an open feature question into one answer card, once', async ()
     assert.equal(rows[3], 'To know more, just ask.');
     assert.equal(card.parts.what, 'The export needs to know which separator to use.');
     assert.equal(card.parts.recommendation.startsWith('Tab, because '), true);
-    assert.equal(MEANWHILE, 'that feature waits; the others carry on');
+    assert.equal(MEANWHILE, 'Meanwhile that work waits, and the rest carries on.');
     assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
     // The next visit makes no second card for it: one is waiting, and it was asked.
     const again = await run(helper, ['cards']);
@@ -1645,7 +1667,7 @@ test('a card\'s words are in the glossary\'s plain words; what must be recognise
     assert.match(card.question, /^Without it `npm run build` stays red, and "pull request" is the word the host shows\.$/m);
     // A term used again is kept, with its meaning at the end of the card's last part.
     const glossary = glossaryOf({});
-    assert.match(card.question, /^that feature waits; the others carry on\. Terms: (?:slice|review) means .+\.$/m);
+    assert.match(card.question, /^Meanwhile that work waits, and the rest carries on\. Terms: (?:slice|review) means .+\.$/m);
     assert.ok(card.question.includes(`slice means ${glossary.slice.plain}`) && card.question.includes(`review means ${glossary.review.plain}`), card.question);
     // The labels the director clicks stay as the build wrote them.
     assert.deepEqual(card.options.slice(0, 2), ['Wait', 'Skip']);
