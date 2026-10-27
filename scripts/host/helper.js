@@ -3435,8 +3435,17 @@ export async function startHelper({
     const kept = readMark(mark);
     if (kept !== null) return kept;
     if (!fs.existsSync(path.join(from, '.git'))) return null;
-    await lookOnce(ctx, from, '.git', what);
-    const counts = await importEvents({ from, to, enrolled: readEnrolled() });
+    // An import that fails (an old clone that is damaged, or whose settings the look refuses) is
+    // marked as failed, with why, rather than tried on every request: else every route and the gate
+    // would throw with nothing saying why. The old folder stays as it was, for the director to choose.
+    let counts;
+    try {
+      await lookOnce(ctx, from, '.git', what);
+      counts = await importEvents({ from, to, enrolled: readEnrolled() });
+    } catch (error) {
+      const why = error instanceof Error ? error.message : `${what} could not be read`;
+      counts = { imported: 0, held: 0, unsigned: 0, unreadable: 0, failed: clean(why, ctx.secrets) || `${what} could not be read` };
+    }
     const record = { at: now().toISOString(), ...counts, said: false };
     fs.writeFileSync(mark, `${JSON.stringify(record, null, 2)}\n`);
     return record;

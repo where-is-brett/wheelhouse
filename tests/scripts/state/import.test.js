@@ -96,3 +96,13 @@ test('a Lean record at state/ is imported like any other', () => withHome(async 
   assert.equal((await importEvents({ from, to, enrolled: [ownKey()] })).imported, 1);
   assert.deepEqual(listEvents(stateDir('shop'), { report: () => {} }).map((e) => e.id), [lean.id]);
 }));
+
+test('many events, some written in other scripts, are all imported whole in one batch read', () => withHome(async () => {
+  makeSigningKey();
+  const from = await oldClone('shop');
+  const texts = ['café crème', '東京の注文', 'emoji 🍰 cake', ...Array.from({ length: 120 }, (_, i) => `order ${i}`)];
+  for (const text of texts) await writeEvent({ event: note(text), dir: from, now: () => T0 });
+  const to = await openProjectRecord('shop');
+  assert.deepEqual(await importEvents({ from, to, enrolled: [ownKey()] }), { imported: texts.length, held: 0, unsigned: 0, unreadable: 0 });
+  assert.deepEqual(listEvents(to, { report: () => {} }).map((e) => e.data.text).sort(), [...texts].sort());
+}));

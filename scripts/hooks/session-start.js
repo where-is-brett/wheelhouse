@@ -488,6 +488,11 @@ export function importedLine({ imported, unsigned = 0, what = 'this project\'s r
   return `${line} ${unsigned} signed record${unsigned === 1 ? '' : 's'} couldn't be checked and ${unsigned === 1 ? 'was' : 'were'} left out.`;
 }
 
+// Said once when the import from v0.1.x failed: why, and that nothing old was lost.
+export function importFailedLine({ why, what = 'this project\'s records' }) {
+  return `Wheelhouse couldn't move ${what} to this computer: ${oneLine(why)}. Nothing was deleted; the old copy stays as it was, and Wheelhouse carries on without it.`;
+}
+
 // Asks the helper for each import (`asks`, each a function returning the helper's answer) within the
 // budget, and gives the line for what this start imported: an answer counts only when it says the
 // import ran now (`done: false`) and brought something in. It informs, so anything that fails
@@ -495,15 +500,17 @@ export function importedLine({ imported, unsigned = 0, what = 'this project\'s r
 async function importNotes(asks, { left, what }) {
   let imported = 0;
   let unsigned = 0;
+  const failed = [];
   for (const ask of asks) {
     try {
       const got = await left(Promise.resolve().then(ask));
+      if (got?.ok === true && got.done === false && typeof got.failed === 'string') failed.push(importFailedLine({ why: got.failed, ...(what ? { what } : {}) }));
       if (got?.ok !== true || got.done !== false || !(got.imported > 0)) continue;
       imported += got.imported;
       if (got.unsigned > 0) unsigned += got.unsigned;
     } catch { /* it informs */ }
   }
-  return imported > 0 ? [importedLine({ imported, unsigned, ...(what ? { what } : {}) })] : [];
+  return [...(imported > 0 ? [importedLine({ imported, unsigned, ...(what ? { what } : {}) })] : []), ...failed];
 }
 
 // The usage card for this week's allowance, if one is due (design section 14.6): its line for the front desk, and

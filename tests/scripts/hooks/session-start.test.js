@@ -9,7 +9,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  importedLine, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
+  importedLine, importFailedLine, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -1695,6 +1695,12 @@ test('the session start imports once and says so', async () => {
     f.client.state.import = async () => { throw new Error('boom'); };
     f.client.profile.import = async () => { throw new Error('boom'); };
     assert.doesNotMatch(text(await run(f)), /moved/);
+    // An import that failed is said once, with why.
+    f.client.state.import = async () => ({ ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0, failed: 'The events in the old clone could not be listed, so nothing was imported' });
+    f.client.profile.import = async () => ({ ok: true, done: true, imported: 0, held: 0, unsigned: 0, unreadable: 0 });
+    const failed = importFailedLine({ why: 'The events in the old clone could not be listed, so nothing was imported' });
+    assert.equal(failed, 'Wheelhouse couldn\'t move this project\'s records to this computer: The events in the old clone could not be listed, so nothing was imported. Nothing was deleted; the old copy stays as it was, and Wheelhouse carries on without it.');
+    assert.ok(text(await run(f)).split('\n').includes(failed));
   });
 });
 

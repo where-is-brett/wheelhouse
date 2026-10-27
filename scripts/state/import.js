@@ -34,6 +34,27 @@ function soundEvent(text, file, enrolled) {
   return event;
 }
 
+// The text of each blob `shas` names in the repository at `from`, read with one `git cat-file --batch`:
+// a Map from sha to text, without the blobs git says are missing. Throws when git fails.
+async function blobs(from, shas) {
+  const read = await git(from, ['cat-file', '--batch'], {}, { input: `${shas.join('\n')}\n`, encoding: 'buffer' });
+  if (read.code !== 0) throw new Error(`The events in ${from} could not be read, so nothing was imported`);
+  const out = read.stdout;
+  const texts = new Map();
+  let at = 0;
+  while (at < out.length) {
+    const end = out.indexOf(0x0a, at);
+    if (end < 0) break;
+    const [sha, type, size] = out.subarray(at, end).toString('utf8').split(' ');
+    at = end + 1;
+    if (type === 'missing' || size === undefined) continue;
+    const length = Number(size);
+    if (type === 'blob') texts.set(sha, out.subarray(at, at + length).toString('utf8'));
+    at += length + 1;
+  }
+  return texts;
+}
+
 // Copies the events committed at `from`'s HEAD into the record at `to` (a repository openRecord
 // opened) and commits them there in one commit. `enrolled` is the list of trusted keys signed
 // events are checked against. Gives { imported, held, unsigned, unreadable }: `held` the events whose
@@ -44,23 +65,29 @@ export async function importEvents({ from, to, enrolled }) {
   const counts = { imported: 0, held: 0, unsigned: 0, unreadable: 0 };
   const head = await git(from, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
   if (head.code !== 0) return counts; // nothing committed there yet
-  const listed = await git(from, ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', 'events/']);
+  // Each entry with its size, read in one listing; the files then in one `cat-file --batch`, so a
+  // large first import starts two git processes, not two per event.
+  const listed = await git(from, ['ls-tree', '-r', '-z', '-l', 'HEAD', '--', 'events/']);
   if (listed.code !== 0) throw new Error(`The events in ${from} could not be listed, so nothing was imported`);
   const ids = new Set(listEvents(to, { report: () => {} }).map((e) => e.id));
+  const wanted = [];
+  for (const entry of listed.stdout.split('\0').filter(Boolean)) {
+    const match = /^\d+ blob ([0-9a-f]{40,64}) +(\d+)\t(.+)$/s.exec(entry);
+    if (!match || !EVENT_FILE.test(match[3]) || Number(match[2]) > MOST_BYTES) { counts.unreadable += 1; continue; }
+    wanted.push({ sha: match[1], file: match[3] });
+  }
+  const texts = wanted.length === 0 ? new Map() : await blobs(from, wanted.map((w) => w.sha));
   const added = [];
-  for (const file of listed.stdout.split('\0').filter(Boolean)) {
-    if (!EVENT_FILE.test(file)) { counts.unreadable += 1; continue; }
-    const size = await git(from, ['cat-file', '-s', `HEAD:${file}`]);
-    if (size.code !== 0 || Number(size.stdout.trim()) > MOST_BYTES) { counts.unreadable += 1; continue; }
-    const read = await git(from, ['show', `HEAD:${file}`]);
-    const event = read.code === 0 ? soundEvent(read.stdout, file, enrolled) : null;
+  for (const { sha, file } of wanted) {
+    const text = texts.get(sha);
+    const event = text === undefined ? null : soundEvent(text, file, enrolled);
     if (event === null) { counts.unreadable += 1; continue; }
     if (event === 'unsigned') { counts.unsigned += 1; continue; }
     if (ids.has(event.id)) { counts.held += 1; continue; }
     const target = path.join(to, ...file.split('/'));
     fs.mkdirSync(path.dirname(target), { recursive: true });
     try {
-      fs.writeFileSync(target, read.stdout, { flag: 'wx' });
+      fs.writeFileSync(target, text, { flag: 'wx' });
     } catch {
       counts.held += 1; // a file of that name is there already
       continue;

@@ -253,3 +253,27 @@ test('/state/import takes the v0.1.x state clone\'s events into the record once'
     });
   } finally { await c.close(); }
 });
+
+// A damaged v0.1.x clone (its tree's object gone) can't be imported: the import is marked as failed,
+// with why, once, and the state routes go on working rather than throwing on every request.
+test('a damaged v0.1.x state clone is marked as failed once, saying why, and the state routes still work', async () => {
+  const c = await computer();
+  try {
+    await c.as(async () => {
+      const old = path.join(stateDir(PROJECT), '..', 'state');
+      await openRecord(old, { what: 'a v0.1.x state clone' });
+      await writeEvent({ event: makeEvent({ kind: 'note', data: { text: 'from v0.1.x' }, now: c.now }), dir: old, now: c.now });
+      const tree = (await run('git', ['rev-parse', 'HEAD^{tree}'], { cwd: old })).stdout.trim();
+      fs.rmSync(path.join(old, '.git', 'objects', tree.slice(0, 2), tree.slice(2)));
+      const first = await c.client.state.import({ project: PROJECT });
+      assert.equal(first.ok, true, JSON.stringify(first));
+      assert.equal(first.done, false);
+      assert.equal(first.imported, 0);
+      assert.match(first.failed, /could not be listed/);
+      assert.equal((await c.client.state.import({ project: PROJECT })).done, true, 'said once');
+      const wrote = await c.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'after the failed import' } });
+      assert.equal(wrote.ok, true, JSON.stringify(wrote));
+      assert.equal((await c.client.state.views({ project: PROJECT })).ok, true);
+    });
+  } finally { await c.close(); }
+});

@@ -10,8 +10,9 @@ import { safeGit } from '../lib/safe-git.js';
 // ~/.wheelhouse/, so a key may travel there. The whole is fenced through
 // safeGitEnv: git's global and system config shut out, hooks off, and one
 // transport allowed: https, with a local path as well where the caller's
-// GIT_ALLOW_PROTOCOL already allows `file` (a local stand-in host).
-export function git(dir, args, env = {}) {
+// GIT_ALLOW_PROTOCOL already allows `file` (a local stand-in host). `options` go to the run (`input`,
+// `encoding`).
+export function git(dir, args, env = {}, options = {}) {
   const allowed = String(env?.GIT_ALLOW_PROTOCOL ?? '').split(':');
   const reach = allowed.includes('http') ? 'loopback' : allowed.includes('file') ? 'local' : 'https';
   // look 'never': these are Wheelhouse's own clones under ~/.wheelhouse/, which no agent or project
@@ -23,7 +24,7 @@ export function git(dir, args, env = {}) {
     reach,
     look: 'never',
     timeoutMs: 5 * 60 * 1000, // a hung remote reads as a failure, not a wait without end
-  })(['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args]);
+  })(['-c', 'user.name=Wheelhouse', '-c', 'user.email=wheelhouse@invalid', ...args], options);
 }
 
 const DEFAULT_PORT = { https: '443', http: '80', ssh: '22', git: '9418' };
