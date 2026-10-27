@@ -7,7 +7,7 @@
 // director's Leave it for now on setup's carry-on card (ruling A9), and `boardAsks`, the last
 // BOARD_ASKS board commands as { at, tab, visit } (`tab` the command's word or null, `visit` the
 // visitAt it was asked in), which learning reads.
-// Kept in projects/<project>/seen.json, beside the state clone, and written whole (a temporary file
+// Kept in projects/<project>/seen.json, beside the private record, and written whole (a temporary file
 // in the same folder, then a rename).
 //
 // Reading never throws. A damaged file reads as no times, and so does a field that isn't a time

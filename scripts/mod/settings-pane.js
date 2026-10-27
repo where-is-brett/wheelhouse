@@ -4,7 +4,7 @@
 // it (design sections 9 and 14.4): the setting goes through the helper, by the setting's home, and
 // the confirmation a Confirm click on its card would earn is signed, kept and sent as the prompt
 // record signs it. The helper's write routes answer the new event's id, so the event is read back
-// from the state or profile clone for the confirmation to name.
+// from the private record or the settings for the confirmation to name.
 //
 // A choice carries no time. "Away until 18:00" and "until 09:00 tomorrow" are worked out at the
 // press, in the bridge's own time zone, so a row drawn before 18:00, or before midnight, can't

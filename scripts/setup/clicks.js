@@ -226,9 +226,9 @@ const RECORD_WAIT_MS = 60 * 1000;
 
 // Copies the director's setup clicks and answers of a run into the project's state (ruling R45):
 // each kept here, naming this run, made on this computer and signed by its enrolled key, sent as
-// it is, oldest first, to the helper's /state/record, which writes it into the state clone and
-// pushes the state branch (writeEvent). One whose event file is in the state clone already is
-// skipped, so it reaches the state branch once however often this runs; it runs at the end of
+// it is, oldest first, to the helper's /state/record, which writes it into the project's private
+// record (writeEvent). One whose event file is in the record already is skipped, so it reaches the
+// record once however often this runs; it runs at the end of
 // every successful apply once the project has its state, since clicks keep coming after step 7.
 // The records the run's answers earned before the state existed go first (sendLaterRecords).
 // `record({ project, event })` and `write(body)` are the helper's routes, for tests. Never throws: a click the helper

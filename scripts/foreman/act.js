@@ -1032,7 +1032,7 @@ async function ask(ctx, work, rest) {
 // --- amend ---
 
 // The amendment of `work` whose hash is `hash`, as the director approved it
-// with a signed click: `{ change, at }`, or null. Read from the state clone,
+// with a signed click: `{ change, at }`, or null. Read from the private record,
 // as the views read it. Each wake names its amendment by hash, so one landing
 // while another waits is never lost: each is applied in turn.
 function approvedAmendment(unique, work, hash) {

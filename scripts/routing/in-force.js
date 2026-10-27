@@ -55,7 +55,7 @@ export function routingFrom({ config, views, now = () => new Date(), resting = f
   }
 }
 
-// The column in force for `project` now, from its local state clone, as the waker reads the settings.
+// The column in force for `project` now, from its private record, as the waker reads the settings.
 export function routingInForce(project, config, { now = () => new Date(), resting = false } = {}) {
   let views;
   try {

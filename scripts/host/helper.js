@@ -9,7 +9,7 @@
 // Pushing: git with a key in its environment runs only in repositories the
 // helper owns. Each project has a bare mirror at
 // ~/.wheelhouse/projects/<project>/mirror.git, whose origin the helper sets from
-// its own state clone. A push first copies the branch's objects from the
+// its record of the project (project.json). A push first copies the branch's objects from the
 // agent's folder into the mirror, with no key, reading nothing but objects
 // from that folder (its config, remote, replace refs and hooks count for
 // nothing). The checks and the push then run in the mirror, with the key.
@@ -1016,8 +1016,8 @@ export async function startHelper({
   // The connection's git over the project's (or profile's) recorded remote.
   const keyedFor = (ctx) => gitIn(ctx.gitEnv, HOST_MS, ctx.reach);
 
-  // Each request looks once at each repository of its own it uses (the mirror, the lock, state and
-  // profile clones, the lineage mirror) and at the folder it copies from, before its first git call
+  // Each request looks once at each repository of its own it uses (the mirror, the lock clone, the
+  // private record and the settings, the lineage mirror) and at the folder it copies from, before its first git call
   // there: the repository's config may hold nothing setup's allowed list leaves out. The answer, or
   // the refusal, is kept in the request's context, so later calls there neither look again nor skip
   // the refusal. `marker` is the file whose presence says a repository is there to look at (a
@@ -1043,7 +1043,7 @@ export async function startHelper({
     }
     await looked.get(key).done;
   }
-  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git', "the project's state repository");
+  const lookAtState = (ctx, project) => lookOnce(ctx, stateDir(project), '.git', "the project's private record");
   const lookAtMirror = (ctx, project) => lookOnce(ctx, path.join(stateDir(project), '..', 'mirror.git'), 'HEAD', "the project's mirror repository");
   // Whether the mirror's look refused in this request: then nothing more runs git there.
   async function mirrorRefused(ctx, project) {
@@ -1059,8 +1059,7 @@ export async function startHelper({
   // The lock clone is used by pushes and merges alike: one git call at a time.
   function lockHeld(project, ctx) {
     return oneAtATime(`lock:${project}`, async () => {
-      // The lock clone reads the state clone's remote first; a refusal ends the request here.
-      await lookAtState(ctx, project);
+      // A refusal of the lock clone's look ends the request here.
       await lookAtLock(ctx, project);
       const counter = heldCounter({ project });
       return counter !== null && (await holdsLock({ project, counter, env: ctx.gitEnv })) === true;
@@ -1593,7 +1592,7 @@ export async function startHelper({
 
   // --- The premium model's opt-in (design section 14.6, "The premium model") ---
 
-  // The project's views built from its state clone now.
+  // The project's views built from its private record now.
   const viewsNow = (project) => buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { now });
   // The level in force in `views`, as the waker reads it.
   const levelIn = (views) => levelOf(effectiveSettings({ project: views?.settings ?? {}, now }));
@@ -2964,7 +2963,7 @@ export async function startHelper({
   async function mergeAnswer(body, ctx) {
     const { project, number } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
-    // The state clone and the mirror are looked at before any git runs in either; a refusal answers here.
+    // The private record and the mirror are looked at before any git runs in either; a refusal answers here.
     await lookAtState(ctx, project);
     await lookAtMirror(ctx, project);
     const adapter = await ctx.adapter();

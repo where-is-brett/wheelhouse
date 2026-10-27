@@ -1,7 +1,7 @@
 // scripts/board/inputs.js
 // Everything the board, the briefing and the glance need, gathered for the folder a session
 // works in. It reads files only and never runs git: the views as the last sync left them, the
-// raw events in the state clone, the settings views, the usage store, the sources report, STOP,
+// raw events in the private record, the settings views, the usage store, the sources report, STOP,
 // the project's record, the host facts' cache and setup's journal (whether its push test reached
 // the phone). The helper is asked only for whether it is up, who holds the project's lock and,
 // once a day, the host facts, each within HELPER_WAIT_MS
