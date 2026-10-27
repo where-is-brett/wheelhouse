@@ -373,6 +373,21 @@ test('a folder that points its git directory at the record after the check is re
   } finally { p.cleanup(); }
 });
 
+// The check of what arrived fails closed: a record whose root commits can't be read refuses the push.
+test('a push is refused when a Wheelhouse record\'s root commits can\'t be read', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      fs.writeFileSync(path.join(stateDir('o__p'), '.git', 'refs', 'heads', 'record'), 'not a commit\n');
+      const dir = await folderWith();
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: PUSH_REFUSALS.unchecked });
+      });
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /refs\/heads\/feature /);
+    });
+  } finally { p.cleanup(); }
+});
+
 test('a code push is refused when this computer does not hold the lock', async () => {
   const p = await project({ lock: false });
   try {

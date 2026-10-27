@@ -1258,7 +1258,8 @@ export async function startHelper({
   }
 
   // The root commits of Wheelhouse's own records (each project's record and old state clone, the
-  // settings and the old profile clone), kept once read: a record's first commit never changes.
+  // settings and the old profile clone), kept once read: a record's first commit never changes. Null
+  // when one of them is there but its roots can't be read.
   const ownRoots = new Map();
   async function ownRootsNow() {
     const projects = path.join(wheelhouseHome(), 'projects');
@@ -1270,7 +1271,9 @@ export async function startHelper({
       if (!ownRoots.has(repo) && fs.existsSync(path.join(repo, '.git'))) {
         const listed = await unkeyed('git', ['rev-list', '--max-parents=0', '--all'], { cwd: repo });
         const found = listed.code === 0 ? listed.stdout.split('\n').map((l) => l.trim()).filter((l) => FULL_SHA.test(l)) : [];
-        if (found.length > 0) ownRoots.set(repo, found);
+        // A record there whose roots can't be read: what arrives can't be checked against it.
+        if (found.length === 0) return null;
+        ownRoots.set(repo, found);
       }
       for (const sha of ownRoots.get(repo) ?? []) roots.add(sha);
     }
@@ -1281,6 +1284,7 @@ export async function startHelper({
   // ownRootsNow's root commits, or could not be read.
   async function holdsOwnRoot(mirror) {
     const roots = await ownRootsNow();
+    if (roots === null) return PUSH_REFUSALS.unchecked;
     const listed = await unkeyed('git', ['rev-list', '--max-parents=0', INCOMING], { cwd: mirror });
     if (listed.code !== 0) return PUSH_REFUSALS.unchecked;
     return listed.stdout.split('\n').some((l) => roots.has(l.trim())) ? PUSH_REFUSALS.ownHistory : null;
