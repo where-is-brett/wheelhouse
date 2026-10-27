@@ -184,7 +184,7 @@ test('with nothing to change, step 6 settles, naming the director\'s settings th
     const named = await plan();
     assert.deepEqual(named.got, { settled: { record: { nothing: true } } });
     assert.equal(named.said.length, 1);
-    assert.ok(named.said[0].startsWith(`${SETTLED_LEAD} Your own settings that weaken Standard, left as they are for you to decide:`), named.said[0]);
+    assert.ok(named.said[0].startsWith(`${SETTLED_LEAD} Some of your own settings sit outside Wheelhouse's Standard safeguards; Wheelhouse leaves them as they are, and nothing needs doing:`), named.said[0]);
     assert.match(named.said[0], /docker runs outside the sandbox/);
     assert.match(named.said[0], /the plugin theirs@market is on/);
     assert.doesNotMatch(named.said[0], /signing/);
@@ -243,8 +243,8 @@ test('each weakening setting is named with what it does, and left as it is', asy
     const planned = await step.plan(ctx);
     const text = composed(planned, 6);
     for (const w of named) assert.ok(text.includes(w.says), `${w.says}\n${text}`);
-    assert.match(text, /weaken Standard/);
-    assert.match(text, /left as they are for you to decide/);
+    assert.match(text, /outside Wheelhouse's Standard safeguards/);
+    assert.match(text, /nothing needs doing/);
     // No change touches them.
     for (const c of planned.changes) assert.ok(!['sandbox', 'enabledPlugins', 'extraKnownMarketplaces'].includes(c.key[0]), c.key.join('.'));
     const run = startRun({ folder, now: () => T0 });

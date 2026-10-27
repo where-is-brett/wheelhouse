@@ -129,7 +129,7 @@ import { projectSettings, localSettings, mergeSettings, directorStatusLine, with
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
-import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
@@ -168,8 +168,36 @@ const EXAMPLE_KEPT = '!.env.example';
 // The only lines setup ever writes to an ignore list for this.
 const OUR_LINES = Object.freeze([...ENV_LINES, EXAMPLE_KEPT]);
 // What step 1's project-scope install writes into the project's shared settings (check 37): the
-// plugin switched on. Setup's commit takes it up with its own keys.
+// plugin switched on, and Wheelhouse's marketplace as the install line added it (installedMarketplace).
+// Setup's commit takes them up with its own keys.
 const STEP_ONE_SETTINGS = Object.freeze({ enabledPlugins: Object.freeze({ [`wheelhouse@${MARKETPLACE}`]: true }) });
+// Wheelhouse's own repository, as the install line's marketplace source names it: by GitHub name, or
+// by git address.
+const WHEELHOUSE_URL = new RegExp(`^(?:https://|git@)github\\.com[/:]${WHEELHOUSE_REPO.replace('/', '\\/')}(?:\\.git)?/?$`, 'i');
+const SOURCE_KEYS = new Set(['source', 'repo', 'url', 'ref']);
+// The entry for Wheelhouse's marketplace in a settings object when it is what `claude plugin
+// marketplace add` wrote for Wheelhouse's own repository, at any release (a new product's setup on
+// 27 October 2026 asked about it as the director's own change); else null.
+export function installedMarketplace(settings) {
+  const entry = settings?.extraKnownMarketplaces?.[MARKETPLACE];
+  if (!isObject(entry) || !isObject(entry.source) || Object.keys(entry).some((k) => k !== 'source' && k !== 'autoUpdate')) return null;
+  const { source } = entry;
+  if (Object.keys(source).some((k) => !SOURCE_KEYS.has(k))) return null;
+  if (source.ref !== undefined && (typeof source.ref !== 'string' || source.ref === '')) return null;
+  const ours = (source.source === 'github' && source.repo === WHEELHOUSE_REPO && source.url === undefined)
+    || (source.source === 'git' && typeof source.url === 'string' && WHEELHOUSE_URL.test(source.url) && source.repo === undefined);
+  return ours ? entry : null;
+}
+
+// The shared settings as committed (`before`, null when there are none) with only what step 1's
+// install wrote in the folder's copy (`work`): the plugin switched on, and the install's own
+// marketplace entry, as it is in the folder.
+function withInstall(before, work) {
+  const out = mergeSettings(before ?? {}, STEP_ONE_SETTINGS);
+  const entry = installedMarketplace(work);
+  if (entry !== null) out.extraKnownMarketplaces = { ...(isObject(out.extraKnownMarketplaces) ? out.extraKnownMarketplaces : {}), [MARKETPLACE]: structuredClone(entry) };
+  return out;
+}
 export const COMPACT_HEADING = '## Compact instructions';
 // What the summary of a compaction keeps (design section 10). The session start after a
 // compaction reloads Wheelhouse's own records, so these are what only the conversation holds.
@@ -528,12 +556,14 @@ const headText = (git, rel, rev = 'HEAD') => git.raw(['show', `${rev}:${rel}`]);
 
 // Whether HEAD is a setup commit made on `tip` and not yet pushed: one commit on it, with setup's
 // message, changing only the setup files (and the .gitignore).
-async function setupCommitOn(git, head, tip, { strict = false, own = new Set() } = {}) {
+// `extra`: a new product's own files the commit takes up too (folderOwnFiles); a commit the journal
+// recorded as setup's own may hold them as well.
+async function setupCommitOn(git, head, tip, { strict = false, own = new Set(), extra = [] } = {}) {
   if (head === null || tip === null) return false;
   if ((await git.out(['rev-parse', '-q', '--verify', `${head}^1`])) !== tip) return false;
   if ((await git.out(['log', '-1', '--format=%s', head])) !== COMMIT_MESSAGE) return false;
   const files = ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean);
-  if (!files.every((f) => SETUP_FILES.includes(f) || f === GITIGNORE)) return false;
+  if (!files.every((f) => SETUP_FILES.includes(f) || f === GITIGNORE || extra.includes(f) || own.has(head))) return false;
   // Found again in a later plan (`strict`), the .gitignore the commit holds must be changed by
   // nothing but setup's own lines; a commit setup has just made may hold the director's, as they chose.
   // A commit whose sha the journal recorded as setup's own (it was recorded just before the push)
@@ -785,6 +815,48 @@ async function uncommitted(git) {
   return [...new Set(paths)];
 }
 
+// A new product's own files (a new product's setup on 27 October 2026 left the folder's README,
+// with the product's description, uncommitted after setup's commit). While the folder is still at
+// the first commit setup's repository was made with, the files the folder held before (new to git,
+// not ignored, or changed from that commit) are the product's own start, and setup's first commit
+// takes them up with its own, named on step 7's card and in its hash. Never .env files, which hold
+// secrets (only .env.example), this computer's settings or .wheelhouse/; and when there are more
+// than OWN_MOST files, or more than OWN_BYTES in all, none: they stay as they are, for the
+// director to commit (`left`). Each is named by the hash of its bytes.
+export const OWN_MOST = 200;
+export const OWN_BYTES = 20 * 1024 * 1024;
+// How many of them step 7's card names.
+const OWN_NAMED = 5;
+const SECRET_ENV = /(^|\/)\.env(\.(?!example$)[^/]*)?$/;
+const bytesHash = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+async function folderOwnFiles(git, folder) {
+  if ((await git.out(['rev-list', '--count', 'HEAD'])) !== '1') return { own: [], left: false };
+  const split = (text) => (text ?? '').split('\0').filter(Boolean);
+  const named = [
+    ...split(await git.raw(['ls-files', '--others', '--exclude-standard', '-z'])),
+    ...split(await git.raw(['diff', '--name-only', '--diff-filter=M', '-z', 'HEAD'])),
+  ];
+  const skip = new Set([...SETUP_FILES, GITIGNORE, LOCAL]);
+  const files = [...new Set(named)].filter((f) => !skip.has(f) && !f.startsWith('.wheelhouse/') && !SECRET_ENV.test(f)).sort();
+  if (files.length > OWN_MOST) return { own: [], left: true };
+  const own = [];
+  let bytes = 0;
+  for (const file of files) {
+    const at = path.join(folder, ...file.split('/'));
+    let data;
+    try {
+      if (!fs.lstatSync(at).isFile()) continue;
+      data = fs.readFileSync(at);
+    } catch {
+      continue;
+    }
+    bytes += data.length;
+    if (bytes > OWN_BYTES) return { own: [], left: true };
+    own.push({ file, sha256: bytesHash(data) });
+  }
+  return { own, left: false };
+}
+
 // The switch of a folder on line `from` to `branch`, as a change for step 7's card, or null when
 // there is nothing here to switch to, or when the project's settings themselves would be at risk
 // (they hold the install's lines, which must stay in the folder).
@@ -883,8 +955,13 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
   // The director's own changes setup's commit takes up, as they chose (ruling R95).
   const yours = up?.action === 'commit' && Array.isArray(up.yours) && up.yours.length > 0 ? `, with your own changes to ${listed(up.yours.map((y) => y.file))}` : '';
+  // A new product's own files, named up to OWN_NAMED of them.
+  const ownFiles = up?.action === 'commit' && Array.isArray(up.own) ? up.own.map((o) => o.file) : [];
+  const ownNamed = ownFiles.length > OWN_NAMED ? [...ownFiles.slice(0, OWN_NAMED), `${ownFiles.length - OWN_NAMED} more`] : ownFiles;
+  const ownPart = ownFiles.length > 0 ? `, with your product's own ${ownFiles.length === 1 ? 'file' : 'files'}, ${listed(ownNamed)}` : '';
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
-  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''} go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"${yours}`);
+  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''} go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
+  if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes up to ${branch} on ${NAME[host]}`);
   const where = host === 'gitlab' ? ' ("pipelines must succeed" once there is a pipeline)' : ', where your plan allows';
   if (joining) parts.push('the project\'s own files stay as your other computer committed them: nothing is committed and protection stays as it is');
@@ -921,7 +998,7 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   }
   const short = [
     ...(shared.length > 0 ? ['the project\'s own files'] : []), ...(files.length > shared.length || excluded || ours ? ['this computer\'s settings'] : []),
-    ...(secrets ? ['.env files kept out of git'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit up to ${cut(branch)} on ${NAME[host]}${yours === '' ? '' : ', with your changes'}`] : []),
+    ...(secrets ? ['.env files kept out of git'] : []), ...(pins.length > 0 ? ['the pinned kits'] : []), ...(up ? [`the setup commit up to ${cut(branch)} on ${NAME[host]}${yours === '' ? '' : ', with your changes'}${ownPart === '' ? '' : ', with your product\'s own files'}`] : []),
     `${up ? 'then ' : ''}protection on ${up ? 'it' : cut(branch)}`,
   ];
   return card(`Setup step 7, ${SETUP_TITLES[7]}: ${short.join(', ')}, all with your sign-in. Wheelhouse never updates itself.`);
@@ -1113,7 +1190,7 @@ export function projectFilesStep({
           const value = targets[rel](text);
           return typeof value === 'string' ? value : jsonText(value);
         };
-        const installed = rel === SETTINGS ? [jsonText(mergeSettings(objectIn(SETTINGS, before) ?? {}, STEP_ONE_SETTINGS))] : [];
+        const installed = rel === SETTINGS ? [jsonText(withInstall(objectIn(SETTINGS, before), objectIn(SETTINGS, work)))] : [];
         const ours = sameContent(rel, work, before) || [before, ...installed].some((from) => sameContent(rel, made(work), made(from)));
         if (!ours) {
           const asked = yoursAsk({ rel, text: work, isNew });
@@ -1155,6 +1232,9 @@ export function projectFilesStep({
       const ignoreCommit = ignoreInvolved && !sameContent(GITIGNORE, ignoreMade, ignoreBefore);
       if (ignoreCommit) commit = true;
       const commitFiles = [...SETUP_FILES, ...(ignoreCommit ? [GITIGNORE] : [])];
+      // A new product's own files go up with setup's first commit (folderOwnFiles).
+      const { own, left } = isNew ? await folderOwnFiles(git, folder) : { own: [], left: false };
+      if (own.length > 0) commit = true;
 
       const changes = projectFilesChange({ folder, config, release, local: { address: address(), node, pluginRoot, platform, claudeHome: home } });
       // This computer's settings are kept out of git by a line of the folder's own, unless the
@@ -1167,7 +1247,7 @@ export function projectFilesStep({
       const target = `${repo} ${branch}`;
       // The commit goes on the tip the plan read, and the push sends that exact commit (I1). The
       // director's own changes it takes up, as they chose, are named by their text's hash (R95).
-      if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}) });
+      if (commit) changes.push({ kind: 'host', target, action: 'commit', branch, base: tip, message: COMMIT_MESSAGE, files: commitFiles, ...(yours.length > 0 ? { yours } : {}), ...(own.length > 0 ? { own } : {}), ...(left ? { ownLeft: true } : {}) });
       else if (unpushed) changes.push({ kind: 'host', target, action: 'push', branch, base: tip, commit: head, files: ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean) });
       changes.push({ kind: 'host', target: `${repo} protection`, action: 'protect', branch });
       return { changes, card: projectFilesCard({ changes, host, branch, release, frontDesk: pin === null ? NO_PIN : frontDeskOf(changes, pin), midSized: held !== null ? null : mid === null ? NO_PIN : mid }), director: 'One click' };
@@ -1279,18 +1359,28 @@ export function projectFilesStep({
           if ((await git.out(['symbolic-ref', '--short', '-q', 'HEAD'])) !== up.branch) throw moved('This folder\'s branch');
           if ((await git.out(['rev-parse', '-q', '--verify', 'HEAD^{commit}'])) !== up.base) throw moved('This folder\'s latest commit');
           for (const rel of up.files) if (!sameContent(rel, readText(at(rel)), wrote[rel])) throw moved(rel);
+          // A new product's own files go up only as the card named them.
+          const own = Array.isArray(up.own) ? up.own : [];
+          for (const { file, sha256 } of own) {
+            let now = null;
+            try {
+              now = bytesHash(fs.readFileSync(at(file)));
+            } catch { /* named below */ }
+            if (now !== sha256) throw moved(file);
+          }
+          const paths = [...up.files, ...own.map((o) => o.file)];
           if (tipNow !== up.base) throw moved(`${up.branch} on ${NAME[host]}`);
           const author = await commitAuthor({ host, run, base: record.connection?.baseUrl });
           // A file new to git is added with intent only, so the commit takes it and nothing is staged;
           // a commit that fails takes those entries out again.
           const added = [];
-          for (const rel of up.files) {
+          for (const rel of paths) {
             if (!(await git.ok(['ls-files', '--error-unmatch', '--', rel])) && fs.existsSync(at(rel))) {
               await git.must(['add', '-f', '--intent-to-add', '--', rel], `add ${rel} for the setup commit`);
               added.push(rel);
             }
           }
-          if ((await git.must(['status', '--porcelain', '--', ...up.files], 'read the folder')) !== '') {
+          if ((await git.must(['status', '--porcelain', '--', ...paths], 'read the folder')) !== '') {
             // Recorded just before it is made: the commit in the folder, on the tip the plan read.
             ctx.record({
               id: newId('chg'), kind: 'host', target: up.target, before: { branch: up.branch, sha: up.base },
@@ -1298,7 +1388,7 @@ export function projectFilesStep({
             });
             const made = await git.ok([
               '-c', `user.name=${author.name}`, '-c', `user.email=${author.email}`, '-c', 'commit.gpgsign=false',
-              'commit', '-q', '--no-verify', '--only', '-m', COMMIT_MESSAGE, '--', ...up.files,
+              'commit', '-q', '--no-verify', '--only', '-m', COMMIT_MESSAGE, '--', ...paths,
             ]);
             if (!made) {
               if (added.length > 0) await git.ok(['reset', '-q', '--', ...added]);
@@ -1308,7 +1398,7 @@ export function projectFilesStep({
           }
         }
         if (sha !== null && tipNow !== sha) {
-          if (!(await setupCommitOn(git, sha, up.base)) || tipNow !== up.base) throw moved(`${up.branch}'s setup commit`);
+          if (!(await setupCommitOn(git, sha, up.base, { extra: (Array.isArray(up.own) ? up.own : []).map((o) => o.file) })) || tipNow !== up.base) throw moved(`${up.branch}'s setup commit`);
           // The files the commit actually held, read from it.
           const heldBy = ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', sha])) ?? '').split('\n').filter(Boolean);
           ctx.record({

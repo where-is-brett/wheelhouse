@@ -13,7 +13,7 @@
 //                                            { ok, done: true } (the step settled on its answers),
 //                                            with `said`, a line it said as it settled (R101)
 //   /setup/apply  { folder, step, hash }  -> { ok, started: true } (a short step: done: true too)
-//   /setup/status { folder }              -> { ok, lines, next, ask }; a running step's latest
+//   /setup/status { folder }              -> { ok, lines, next, ask, running? }; a running step's latest
 //                                            line for the director (ctx.say, ruling R40) among them
 //   /setup/health { folder, lines? }      -> { ok, green, lines, board, trials }, and once green
 //                                            { started, briefing } too: step 10's checks joined
@@ -823,7 +823,9 @@ export function setupRoutes({
     // A green board's briefing not yet given, and no card left to open with it (the phone's, see
     // plan): step 10 is planned once more, to give it as its `said`.
     const briefing = listed.ask === null && healthGreen(run) && pendingBriefing(run, answersFor(run.id)) !== null;
-    return { ok: true, ...listed, ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
+    // The steps running now, for `cli.js wait`: a running step's plan is refused, so the wait reads them here.
+    const runningNow = all.map((s) => s.n).filter((n) => running(n) !== null);
+    return { ok: true, ...listed, ...(runningNow.length > 0 ? { running: runningNow } : {}), ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
   }
 
   // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,

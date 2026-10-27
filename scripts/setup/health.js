@@ -50,7 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { projectForFolder, readProject } from '../lib/projects.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
-import { healthVerdict } from '../lib/calm-words.js';
+import { healthVerdict, NEW_SESSION } from '../lib/calm-words.js';
 import { parseTrialLine } from '../lib/trial-lines.js';
 import { makeAdapter } from '../host/adapter.js';
 import { protectionStatus } from '../host/protection.js';
@@ -171,6 +171,10 @@ export const SESSION_CHECKS = Object.freeze({
     passed: 'An agent couldn\'t reach the host directly',
     failed: 'An agent could reach the host directly',
     todo: 'The sandbox\'s network limit isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again',
+    // The network limit setup wrote takes effect only in a new session, so in the session that
+    // wrote it this check can't pass yet: that is expected, and not a failure (a new product's
+    // setup on 27 October 2026).
+    newSession: true,
     what: 'reaching the host',
   },
   'run gh': {
@@ -218,9 +222,14 @@ const passes = (check, result, host) => (check.okOn?.[host] ?? check.ok ?? [chec
 // One check's line for the director: passed, or failed with what to do. A check that couldn't be
 // tried says so, with what to do. Each failure's what to do can be done: a red board leaves step 10
 // to be run again by a fresh card (ruling R67), which runs the session's trials again too.
+const needsNewSession = (check, result, host) => !passes(check, result, host) && check.newSession === true && result !== 'could not run';
+
 function checkLine(check, result, { session = false, host } = {}) {
   const by = session ? ' (reported by the session)' : '';
   if (passes(check, result, host)) return `Passed: ${check.passed}.${by}`;
+  if (needsNewSession(check, result, host)) {
+    return `Not yet: the sandbox's limit on ${check.what} starts only in a new session, so this check passes there, as setup expects. ${NEW_SESSION}.${by}`;
+  }
   if (result === 'could not run') {
     return `Failed: setup couldn't try ${check.what}. ${RERUN}; if it can't again, check this computer is online and Claude Desktop is open.${by}`;
   }
@@ -582,6 +591,8 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   // says so, so its figures match the lines shown.
   let total = 0;
   let passed = 0;
+  // Checks that only need a new session (SESSION_CHECKS' `newSession`).
+  let waiting = 0;
   const count = (ok) => { total += 1; if (ok) passed += 1; };
   const entry = here?.steps?.[HEALTH_STEP] ?? {};
   const record = helperRecord(here);
@@ -644,6 +655,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     }
     const result = given.get(name);
     count(passes(check, result, host));
+    if (needsNewSession(check, result, host)) waiting += 1;
     if (!passes(check, result, host)) green = false;
     lines.push(checkLine(check, result, { session: true, host }));
   }
@@ -665,7 +677,7 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
     }
   }
   // One verdict ends the lines.
-  const verdict = healthVerdict(passed, total);
+  const verdict = healthVerdict(passed, total, waiting);
   lines.push(verdict);
   const board = inputs?.model ? renderBoard(inputs.model) : null;
   const trials = Number.isInteger(record?.pr) ? { pr: record.pr, project: record.project } : null;

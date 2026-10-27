@@ -212,10 +212,16 @@ export const SETUP_GOING = Object.freeze({
 export const toolsInstalling = (tools) => `${tools.join(' and ')} ${tools.length === 1 ? 'is' : 'are'} still installing`;
 // What reaches the director's phone, said on the phone step's card.
 export const PHONE_REACHES = 'Only things that need you, finished features and breakages reach your phone.';
-// Setup's closing verdict: how many of the health check's checks passed.
-export const healthVerdict = (passed, total) => (passed === total
-  ? `All ${total} checks passed. Wheelhouse is ready.`
-  : `${passed} of ${total} checks passed. Here is what to do.`);
+// How the director carries setup on in a new session: the sandbox's network limit takes effect
+// only in a session started after setup wrote it (step 7).
+export const NEW_SESSION = 'Start a new session on this folder, then say "carry on with setup"';
+// Setup's closing verdict: how many of the health check's checks passed. `waiting`, how many of
+// those that didn't pass only need a new session: when they are all that is left, it says so.
+export const healthVerdict = (passed, total, waiting = 0) => {
+  if (passed === total) return `All ${total} checks passed. Wheelhouse is ready.`;
+  if (waiting > 0 && passed + waiting === total) return `${passed} of ${total} checks passed; the rest need one new session, as setup expects. ${NEW_SESSION}: the last checks run there.`;
+  return `${passed} of ${total} checks passed. Here is what to do.`;
+};
 
 // The notification's title, and what it says when STOP is on (design section 23.8). A notification
 // carries counts and card numbers only, never a card's words.

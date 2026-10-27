@@ -504,6 +504,26 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
   });
 });
 
+// From a new product's setup on v0.1.2: the sandbox's network limit takes effect only in a session
+// started after setup wrote it, so in the setup session the trial reaches the host. That is
+// expected: the line says a new session is needed, and how, and never "Failed".
+test('the host reached in the session that wrote the network limit needs one new session, not a failure', async () => {
+  await withProject(async ({ folder }) => {
+    const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
+    const reported = GREEN_LINES.map((l) => (l.startsWith('reach github.com') ? 'reach github.com: not reached / reached' : l));
+    const got = await healthCheck({ folder, run, reported, load: OK_BOARD });
+    assert.equal(got.green, false, 'the board is green only once the limit holds');
+    const line = got.lines.find((l) => l.includes('reaching the host'));
+    assert.match(line, /^Not yet: .*new session.*Start a new session on this folder, then say "carry on with setup"\./);
+    assert.ok(!got.lines.some((l) => l.startsWith('Failed:')), got.lines.join('\n'));
+    const every = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
+    assert.equal(got.verdict, `${every - 1} of ${every} checks passed; the rest need one new session, as setup expects. Start a new session on this folder, then say "carry on with setup": the last checks run there.`);
+    // Another failure alongside it is still a failure, with the usual verdict.
+    const worse = await healthCheck({ folder, run, reported: reported.map((l) => (l.startsWith('read .env.local') ? 'read .env.local: refused / allowed' : l)), load: OK_BOARD });
+    assert.equal(worse.verdict, `${every - 2} of ${every} checks passed. Here is what to do.`);
+  });
+});
+
 // The trial looks where setup finds gh; on GitHub, where setup uses gh, "not installed" means the
 // trial missed it, so it fails rather than reading green untried. On GitLab there is none to run.
 test('on a GitHub project, a gh the trial couldn\'t find is a failure; on GitLab it passes', async () => {

@@ -175,7 +175,9 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
 // each with what it does; else each by name; else as many names as fit, and how many more.
 function weakeningSentence(found, fit) {
   if (found.length === 0) return '';
-  const lead = 'Your own settings that weaken Standard, left as they are for you to decide:';
+  // One plain line, not a card (design section 15's shorter cards): what it means, and that nothing
+  // needs doing (a new product's setup on 27 October 2026 read "for you to decide" as a question).
+  const lead = 'Some of your own settings sit outside Wheelhouse\'s Standard safeguards; Wheelhouse leaves them as they are, and nothing needs doing:';
   const full = `${lead} ${found.map((w) => w.says).join('; ')}.`;
   if (fit(full)) return full;
   const names = `${lead} ${found.map((w) => w.value).join(', ')}.`;

@@ -51,7 +51,7 @@ Setup opens with one card: the plan for this project, a plain line each, with **
 
 ## Each step
 
-1. Run `resume`. Say in one line where setup stands, from its `lines`, then act on its `plan`.
+1. Run `resume`. Say in one line where setup stands, from its `lines`, then act on its `plan`. When setup hasn't started, say nothing before the one card: it speaks for itself, and the app may show the whole of setup as one message, where a line about the start would still head it at the end.
 2. Act on a plan by what it holds:
    - **`ask`:** ask `ask.card`. Then `resume`: the next card is often another question. Read each card; never assume it is the one before.
    - **`asks`:** ask every card in it together, in one call. Then `resume`.
@@ -59,10 +59,10 @@ Setup opens with one card: the plan for this project, a plain line each, with **
    - **`hash` and `card` without `covered`, a Go-ahead card:** ask `card` before anything else; never run `plan` again over it. Only after the director's **Go ahead** on that card, run `apply <step> <hash>` with the full `hash` from that same plan. Never apply on typed words, on an earlier card's click, or with an earlier hash.
    - **`wait` with `waitsFor`:** the step waits for step `waitsFor` to finish. Run `wait <step>`, saying nothing, then `resume`.
    - **`wait` without `waitsFor`:** on step 9, see below. On step 10 it is your part: follow Step 10 below, never `plan 10` again in a loop. Otherwise read `why`: when it waits for the director (their changes, a Confirm), tell them in one line and offer to carry on later; when it waits for setup itself, run `wait <step>` and `resume`.
-   - **`done: true`:** the step settled with nothing to click. When it has `said`, tell the director it at once: a line in plain words, or step 10's verdict and first briefing as they are, in a message of their own. Then `resume`.
+   - **`done: true`:** the step settled with nothing to click. When it has `said`, tell the director it at once, and once only (never again in a summary): a line in plain words, or step 10's verdict and first briefing as they are, in a message of their own. Then `resume`.
    - **`setUpAgain: true`**, whatever the plan says: the director chose **Set up again**. Say in one line that the old setup is removed first. Follow Uninstall below: its own **Remove it** card is still asked, since removing is a decision of its own. Once uninstall is done, offer to set Wheelhouse up here afresh.
    - **`plan: null`:** every step left is running or done: check `status`.
-3. **After apply.** `{ started: true, done: true }`: the step has finished; when it has `said`, tell the director that line in plain words. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and act on what it gives.
+3. **After apply.** `{ started: true, done: true }`: the step has finished; when it has `said`, tell the director that line in plain words. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and act on what it gives. Step 10 is the exception: `wait 10` (Step 10 below).
 4. **While a step runs,** `status` shows its line for the director, such as a sign-in code or a page to click. Check `status` between steps and while you wait, and tell them each new line plainly.
 5. **Head each step** with the second line of its `progress`. Then at most one plain line, such as "Click Install in Apple's window when it appears."
 6. **Carry on** until `resume` says every step is done, the director stops, or a step can't go on. Then say where it stands and offer to carry on later: next time, "carry on with setup".
@@ -90,12 +90,16 @@ The phone comes once setup is finished: the `resume` after the green board gives
 
 ## Step 10, the health check
 
-Its Go ahead comes first, like any step's (covered by the one card, or on its own card). Once applied, wait until `status` says step 10's "own checks finished" (the board isn't green yet: that is your part). Then, in this session:
+Its Go ahead comes first, like any step's (covered by the one card, or on its own card).
+
+**One new session.** The sandbox's network limit, which step 7 writes, takes effect only in a session started after it. So when step 7 ran in this session, say in one line before step 10 that its last safety checks need one new session, and that you'll say when. Once its own checks are done (below), don't run 1 to 3 here: tell the director plainly to start a new session on this folder, then say "carry on with setup", and stop. That is expected, not a failure. In the new session `resume` gives step 10's wait: carry on at 1.
+
+**Waiting for its own checks.** Once applied, run `wait 10`, saying nothing: it waits while step 10 runs and answers `waited: true` once its own checks are done (each call waits up to a minute and a half; with `running: true`, run it again). Never write a wait loop of your own, in Bash or otherwise. When it has run long (three calls), tell the director in one line that the checks are still running. Then, with one plain line such as "Last safety checks now, about a minute." (never "trials", "sandbox" or "session" to the director), in this session:
 
 1. `health`, with no lines: it names `trials.pr` and `trials.project`.
 2. The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.
-3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused.
-4. **Green:** setup is finished. Run `resume` at once. The card it gives (the phone's, Step 9 above) opens with the verdict and the first briefing: ask it exactly as given, as every card, and that is how the director sees them. With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own. Show `lines` and the `board` only when they ask. **Not green:** show `lines` as they are (the last is the verdict), tell them plainly what failed and what to do (the lines say), and offer to carry on later.
+3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused. A note ending "Nothing to do." is not for the director.
+4. **Green:** setup is finished. Run `resume` at once. The card it gives (the phone's, Step 9 above) opens with the verdict and the first briefing: ask it exactly as given, as every card, and that is how the director sees them. With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own. Show `lines` and the `board` only when they ask. **Not green:** show `lines` as they are (the last is the verdict), tell them plainly what failed and what to do (the lines say), and offer to carry on later. A `Not yet` line saying a new session is needed is not a failure: tell them how, in the words above, and stop.
 5. When `health` gave a `card`, ask `card.question` exactly as given, after that first card, as a question of its own. On its answer, do as `wheelhouse:front-desk` says under "Work under way at setup's end". When there is no card and the briefing says it is carrying the work on ("I'm carrying them on", or "it"), do as that section says too.
 6. Then `resume` again, until it says setup is finished with nothing to ask.
 7. Then, in this order, hand the front desk (`wheelhouse:front-desk`) what waits for it, each as the director's own request, in their words, saying so in one line: first each of `requests` (changes they asked for after setup), then the request they came with ("Setup comes first", item 3).
@@ -122,15 +126,7 @@ A GitLab token, a password or a key goes only into the box the director's comput
 
 ## Uninstall
 
-When the director asks to remove Wheelhouse from the project, or types `/wheelhouse:uninstall`:
-
-1. Run `uninstall plan`.
-2. Ask each card in its `asks`, one at a time, before uninstall's own card. Each asks whether to delete something that can't come back, with Keep recommended. The director decides each one, even after "just get rid of all of it".
-3. When uninstall's card points to `uninstall status`, run it first and show its lines plainly, then ask the card. Ask its `card`. Only after **Remove it**, run `uninstall apply <hash>` with the plan's `hash`. It answers `started`; uninstall goes on by itself, and may show the director a password window to leave Locked. Their password goes only into that window, never into the chat.
-4. Run `uninstall status` about once a minute, saying nothing in between, until its first line says uninstall is done, stopped or did not finish. Show its lines plainly, each `Open <what>: <url>` line as a link: the pull request the director merges, and any installation page.
-5. Tell them the last step is theirs: remove the Wheelhouse plugin from this project in Claude Desktop.
-
-If apply says the list has changed, start again at 1. If it says uninstall needs the director's Remove it, start again at 1 and ask the card again; never apply without its click. If it says STOP is on, they lift STOP first. If plan's or status's first line says to start a new session, show its lines and stop there; don't ask the card again in this session. Otherwise, if status says uninstall stopped or did not finish, show what it says, then start again at 1: nothing is done twice.
+When the director asks to remove Wheelhouse from the project, or types `/wheelhouse:uninstall`: read `uninstall.md` in this skill's folder, and follow it with the command above.
 
 ## Red flags
 

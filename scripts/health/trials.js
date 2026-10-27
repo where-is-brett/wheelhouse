@@ -114,7 +114,7 @@ export async function runTrials(deps = {}) {
         try {
           fs.rmSync(file, { force: true });
         } catch {
-          notes.push('The .env.local this trial made could not be removed; setup\'s health check removes it, as it holds only the trial\'s marker.');
+          notes.push('The sandbox kept this trial from removing the .env.local it made; the health check removes it as the trial lines are handed in, since it holds only the trial\'s marker. Nothing to do.');
         }
       }
     }

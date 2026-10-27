@@ -741,6 +741,81 @@ test('step 1\'s install left in the folder, not committed, goes up in setup\'s c
   });
 });
 
+// From a new product's setup on v0.1.2: the folder's .claude/settings.json held only what the two
+// install commands wrote, the plugin switched on and Wheelhouse's marketplace as a git address at
+// the release, and step 7 asked about it as the director's own change.
+test('the install line\'s own marketplace entry, at any release, goes up in setup\'s commit with no question', async () => {
+  for (const ref of ['v0.1.2', 'v9.0.0', undefined]) {
+    await withHome(async () => {
+      const w = await world({ stepOne: 'untracked' });
+      const file = path.join(w.folder, '.claude', 'settings.json');
+      const source = { source: 'git', url: 'https://github.com/where-is-brett/wheelhouse.git', ...(ref ? { ref } : {}) };
+      fs.writeFileSync(file, `${JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source } }, enabledPlugins: STEP_ONE }, null, 2)}\n`);
+      const planned = await w.plan();
+      assert.ok(Array.isArray(planned.changes), `no question: ${planned.ask?.card.what}`);
+      const commit = planned.changes.find((c) => c.kind === 'host' && c.action === 'commit');
+      assert.deepEqual(commit.yours ?? [], [], 'nothing of the director\'s');
+      const done = await w.apply(planned.changes);
+      assert.equal(done.ok, true, done.reason);
+      const committed = JSON.parse(await g(w.bare, 'show', 'main:.claude/settings.json'));
+      assert.equal(committed.enabledPlugins['wheelhouse@wheelhouse'], true);
+    });
+  }
+  // Another repository's address under Wheelhouse's name is not the install's: it is asked about.
+  await withHome(async () => {
+    const w = await world({ stepOne: 'untracked' });
+    const file = path.join(w.folder, '.claude', 'settings.json');
+    fs.writeFileSync(file, `${JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'git', url: 'https://github.com/someone-else/wheelhouse.git' } } }, enabledPlugins: STEP_ONE }, null, 2)}\n`);
+    assert.match((await w.plan()).ask?.card.what ?? '', /\.claude\/settings\.json has changes of yours/);
+  });
+});
+
+// From a new product's setup on v0.1.2: step 3 made the repository with a starter README and
+// connected the folder in place, keeping the folder's own README; after setup's commit it was still
+// uncommitted. A new product's own files go up with setup's first commit, named on the card.
+test('a new product\'s own files go up with setup\'s first commit, never a .env file', async () => {
+  await withHome(async () => {
+    const w = await world({ stepOne: 'untracked' });
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'host', target: `github:${REPO}`, before: null, after: { made: true } }]);
+    fs.writeFileSync(path.join(w.folder, 'README.md'), '# Shop\n\nA shop for odd socks.\n');
+    fs.mkdirSync(path.join(w.folder, 'src'));
+    fs.writeFileSync(path.join(w.folder, 'src', 'app.js'), 'export {};\n');
+    fs.writeFileSync(path.join(w.folder, '.env.local'), 'SECRET=1\n');
+    const planned = await w.plan();
+    assert.ok(Array.isArray(planned.changes), planned.ask?.card.what);
+    const commit = planned.changes.find((c) => c.kind === 'host' && c.action === 'commit');
+    assert.deepEqual(commit.own.map((o) => o.file), ['README.md', 'src/app.js']);
+    assert.match(questionOf(planned.card), /with your product's own files, README\.md and src\/app\.js/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    assert.equal(await g(w.bare, 'show', 'main:README.md'), '# Shop\n\nA shop for odd socks.');
+    assert.equal(await g(w.bare, 'show', 'main:src/app.js'), 'export {};');
+    assert.equal(await g(w.bare, 'rev-list', '--count', 'main'), '2', 'in setup\'s one commit');
+    assert.doesNotMatch(await g(w.bare, 'ls-tree', '-r', '--name-only', 'main'), /\.env\.local/);
+    assert.doesNotMatch(await g(w.folder, 'status', '--porcelain'), /README|src/);
+  });
+  // A file changed after the card is not taken as it now is: nothing goes up.
+  await withHome(async () => {
+    const w = await world({ stepOne: 'untracked' });
+    const run = startRun({ folder: w.folder, now: () => T0 });
+    addChanges(run.id, [{ id: newId('chg'), step: 3, kind: 'host', target: `github:${REPO}`, before: null, after: { made: true } }]);
+    fs.writeFileSync(path.join(w.folder, 'README.md'), '# Shop\n\nOdd socks.\n');
+    const planned = await w.plan();
+    fs.writeFileSync(path.join(w.folder, 'README.md'), '# Shop\n\nEven socks.\n');
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, false);
+    assert.match(done.reason, /README\.md changed/);
+  });
+  // A product under way keeps its own files to itself.
+  await withHome(async () => {
+    const w = await world({ stepOne: 'untracked' });
+    fs.writeFileSync(path.join(w.folder, 'README.md'), '# Shop\n\nOdd socks.\n');
+    const planned = await w.plan();
+    assert.equal(planned.changes.find((c) => c.action === 'commit')?.own, undefined);
+  });
+});
+
 test('a commit, a branch switch or an edit made while the pins install never goes up', async () => {
   const cases = {
     commit: async (w) => {

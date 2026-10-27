@@ -328,6 +328,9 @@ test('where the default branch already has checks, they are required', async () 
   assert.deepEqual(rule.parameters.required_status_checks, [{ context: 'test' }, { context: 'ci/legacy' }]);
   assert.match(result.line, /requires its checks to pass/);
   assert.doesNotMatch(result.line, /isn't required/);
+  // Records stay on the computer (section 24): no state branch goes to the host, so the line names the lock branch alone.
+  assert.match(result.line, /force-pushes and deletion of Wheelhouse's lock branch/);
+  assert.doesNotMatch(result.line, /state/);
 });
 
 test('a paid-plan private repository is available', async () => {
@@ -357,6 +360,7 @@ test('GitLab status is on when the default branch takes no pushes and state and 
   assert.equal(status.available, true);
   assert.equal(status.on, true);
   assert.match(status.line, /requires pipelines to pass/);
+  assert.match(status.line, /force-pushes and deletion of Wheelhouse's lock branch/);
 });
 
 test('GitLab status is off when the branches are unprotected', async () => {
