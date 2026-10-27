@@ -31,14 +31,14 @@ const SYNTHETIC = '<synthetic>';
 
 // Why provenance does not match, always one of these set phrases (never text from a pull request).
 export const WHY = Object.freeze({
-  none: 'no provenance block',
-  unreadable: 'the provenance block can\'t be read',
-  manifest: 'the installed manifest can\'t be read',
-  wheelhouse: 'the Wheelhouse version differs',
-  upstream: 'an upstream commit differs',
-  fingerprints: 'the fingerprints did not match',
-  claudeCode: 'Claude Code is older than the floor',
-  agent: 'the agent is older than its pin',
+  none: 'it carries no record of how it was built',
+  unreadable: 'its record of how it was built can\'t be read',
+  manifest: 'Wheelhouse\'s own list of its parts can\'t be read',
+  wheelhouse: 'it was built with a different version of Wheelhouse',
+  upstream: 'it was built with different copies of the tools Wheelhouse relies on',
+  fingerprints: 'the files it was built from have changed since',
+  claudeCode: 'it was built with an older Claude Code than Wheelhouse allows',
+  agent: 'it was built by an older agent than Wheelhouse allows',
 });
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

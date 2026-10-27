@@ -142,6 +142,19 @@ export function featureAllowRules(config, { platform = process.platform, level =
   return rules(asked);
 }
 
+// The file rules for feature sessions the watcher starts, passed with --allowedTools beside the
+// build commands' (and never written into the project's settings): a session nobody watches
+// can't answer a prompt. It may read the files plugins installed, such as Superpowers' helper
+// scripts (read-only: `Edit(~/.claude/**)` stays denied), and it has `.wheelhouse/tmp/` in its
+// own worktree for temporary files, a folder git ignores (`.wheelhouse/` is kept out of git), so
+// the system temporary folder is never opened. `/` names the worktree, the project's root. The
+// Wheelhouse home (`~/.wheelhouse`) and everything else the deny rules and the sandbox refuse
+// stay refused: a deny rule wins over any allow rule.
+export const FEATURE_TEMPORARY_FOLDER = '.wheelhouse/tmp';
+export function featureFileRules() {
+  return ['Read(~/.claude/plugins/cache/**)', `Edit(/${FEATURE_TEMPORARY_FOLDER}/**)`];
+}
+
 // The copies of the pinned kits that must stay off in a project (check 24): Anthropic's
 // Superpowers, and the synced copies of Superpowers and Matt Pocock's skills. Two copies
 // of Superpowers share one manifest name, so they must never both be on.

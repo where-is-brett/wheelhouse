@@ -210,7 +210,7 @@ test('the waker asks the project\'s adapter for the foreman\'s call, the feature
   // The column in force goes to the adapter with the call: here Balanced, on the flat table's models.
   assert.deepEqual([start.options.model, start.options.effort, start.options.fallback], [null, 'high', null]);
   assert.deepEqual([foreman.options.model, foreman.options.effort, foreman.options.fallback], ['model-a', 'medium', null]);
-  assert.deepEqual(start.options.allowed, ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)']);
+  assert.deepEqual(start.options.allowed, ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)', 'Read(~/.claude/plugins/cache/**)', 'Edit(/.wheelhouse/tmp/**)']);
   assert.equal(calls[1].cwd, worktree);
 
   // The foreman's record ends so the feature's wake can go; the feature's session is the kept one.

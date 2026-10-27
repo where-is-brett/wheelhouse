@@ -346,6 +346,23 @@ test('a courier\'s card wake whose notification wasn\'t sent asks nothing, and i
   assert.match(row, /Ask nothing and end the turn: the courier's reminder asks them later/);
 });
 
+test('a failed or skipped phone notification is never mentioned to the director, and a phone test that didn\'t arrive stays a line on the board\'s health', () => {
+  const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
+  assert.ok(courier, 'the courier\'s rule');
+  assert.match(courier, /A notification that failed, wasn't sent or was skipped is not the director's concern: the board and their next look-in carry the card\. Say nothing about it, in this turn, in a briefing or in a reply, and don't suggest setting notifications up\./);
+  assert.match(courier, /A phone test that didn't arrive stays a line on the board's health/);
+  assert.ok(playbook.split('\n').some((line) => line.startsWith('| "I should tell the director the phone notification failed" |')), 'a red flag for telling them');
+});
+
+test('finished work is told with where the director can see it, never as a step of pulling or a branch or commit', () => {
+  const at = playbook.indexOf('## Telling the director what went in');
+  assert.ok(at > 0, 'the section');
+  const section = playbook.slice(at, playbook.indexOf('\n## ', at + 1));
+  assert.match(section, /say what changed and where they can see it/);
+  assert.match(section, /never tell them to pull, never name a branch or a commit/);
+  assert.doesNotMatch(section, /next time you pull/i);
+});
+
 test('asked what waits, the front desk names each waiting card in one line by its board number and offers to ask one again, never putting an asked card again unasked (ruling F103; scenario 5)', () => {
   // The plan's call 4: "Not now" keeps a card waiting, and the director asks for it again by its number on the board; design 5.3: each card asked once.
   const row = playbook.split('\n').find((line) => line.startsWith('| "Anything waiting on me?"'));

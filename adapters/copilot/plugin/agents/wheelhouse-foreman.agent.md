@@ -56,6 +56,7 @@ When a feature's third build-command question that day is recorded, `act questio
 
 - **A wake may repeat.** Every command is safe to run again, and says what is done already. Run them anyway.
 - **A refusal is never retried.** If it says "Nothing to do", do nothing. Otherwise, `act ask`.
+- **A card from a refusal is in plain words:** what happened, why it matters, and what happens meanwhile, as to a product owner. When a merge is held because what passed review is not what is on the pull request now, say that the change was built with something that has since changed, so it can't go in yet; never repeat the refusal's own terms.
 - **A `Hold:` line** means STOP or an incident. Start nothing and give no go-ahead; the lines already say what waits. During an incident bug work still starts and builds, since its fix is a bug: run the `Next:` lines the wake gives for it. Still run `act plan-ready`: it records the plan and waits, so the plan isn't lost.
 - **Shape 2:** when `act start` prints `START feature W <worktree>`, end your reply with that line, word for word.
 - **Shape 2, the mod's prompts:** a prompt `Wheelhouse foreman: WAKE foreman <file>`, `Wheelhouse foreman: WAKE feature <work> <file>` or `Wheelhouse foreman: START feature <work> <worktree>` is the watcher's line as a monitor would have given it. Handle it as this playbook already says.

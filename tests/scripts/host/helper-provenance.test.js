@@ -39,7 +39,7 @@ after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 const T0 = new Date('2026-10-18T01:00:00.000Z');
 const at = (ms) => () => new Date(T0.getTime() + ms);
 const NO_PROVENANCE = /this session's provenance is not on this computer/;
-const MISMATCH = 'the pull request\'s provenance does not match the manifest';
+const MISMATCH = 'what passed review is not what is on the pull request now';
 
 function fakeAdapter(overrides = {}) {
   const calls = { openPr: [], updatePr: [], merges: [] };
