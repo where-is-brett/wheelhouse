@@ -19,7 +19,6 @@ process.env.WHEELHOUSE_HOME = shortHome();
 
 const NO_CI = 'This project has no CI, so nothing can merge';
 const LOCKED_ELSEWHERE = 'Another computer holds this project, so this one is read-only';
-const NO_PROFILE = 'Your profile isn\'t backed up off this computer yet';
 const REAL_USERS = 'This project has real users: Locked would protect it more';
 
 // Everything fine: only the level line.
@@ -31,7 +30,6 @@ const calm = {
   helperUp: true,
   facts: { protection: 'on', ci: 'present' },
   renewal: { due: false },
-  profile: { remoteUrl: 'https://example.invalid/p.git' },
   platform: 'darwin',
   realUsers: false,
 };
@@ -49,7 +47,6 @@ test('each health line appears in its case and in its order', () => {
     helperUp: false,
     facts: { protection: 'none', ci: 'none' },
     renewal: { due: true, on: '2026-11-02' },
-    profile: null,
     platform: 'win32',
     realUsers: true,
     builds: { level: 'unattended', lockedUnattended: false },
@@ -65,10 +62,9 @@ test('each health line appears in its case and in its order', () => {
     LOCKED_ELSEWHERE,
     NO_HELPER,
     'Renew the host key by 2 November 2026',
-    NO_PROFILE,
   ]);
   assert.deepEqual(everything.map((line) => line.level), [
-    'stop', 'ok', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
+    'stop', 'ok', 'ok', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch', 'watch',
   ]);
 });
 
@@ -88,10 +84,10 @@ test('the quick connection is normal on a Mac and a calm note elsewhere (the dir
 
 test('a front desk on another model than the pin is one watch line; on the pin, or with either unknown, none (design section 8)', () => {
   const line = frontDeskModelLine({ running: 'model-small', pinned: 'model-top' });
-  const lines = healthLines({ profile: true, platform: 'darwin', frontDeskModel: { running: 'model-small', pinned: 'model-top' } });
+  const lines = healthLines({ platform: 'darwin', frontDeskModel: { running: 'model-small', pinned: 'model-top' } });
   assert.deepEqual(lines.filter((l) => l.text === line), [{ level: 'watch', text: line }]);
   for (const frontDeskModel of [{ running: 'model-top', pinned: 'model-top' }, { running: null, pinned: 'model-top' }, null, undefined]) {
-    assert.ok(!healthLines({ profile: true, platform: 'darwin', frontDeskModel }).some((l) => /front desk is running/.test(l.text)));
+    assert.ok(!healthLines({ platform: 'darwin', frontDeskModel }).some((l) => /front desk is running/.test(l.text)));
   }
 });
 
@@ -102,7 +98,8 @@ test('the lines come only in their own case', () => {
   assert.deepEqual(texts({ facts: { protection: 'unknown', ci: 'unknown' } }), ['Protection: Standard']);
   assert.deepEqual(texts({ helperUp: false }), ['Protection: Standard', NO_HELPER]);
   assert.deepEqual(texts({ renewal: { due: true, on: '2026-12-25' } }), ['Protection: Standard', 'Renew the host key by 25 December 2026']);
-  assert.deepEqual(texts({ profile: null }), ['Protection: Standard', NO_PROFILE]);
+  // The records stay on this computer (design section 24): no line asks for the profile's repository.
+  assert.deepEqual(texts({ profile: null }), ['Protection: Standard']);
   assert.deepEqual(texts({ stop: { on: true } }), ['STOP is on', 'Protection: Standard']);
 });
 
@@ -155,8 +152,8 @@ test('a push test that didn\'t reach the phone is a dated watch line saying why 
     { level: 'ok', text: 'Protection: Standard' }, { level: 'watch', text: line },
   ]);
   for (const phonePush of [{ arrived: true }, null, undefined, {}, { arrived: 'no' }]) assert.deepEqual(texts({ phonePush }), ['Protection: Standard'], JSON.stringify(phonePush));
-  // Among the watch lines, before the profile's.
-  assert.deepEqual(texts({ phonePush: { arrived: false }, helperUp: false, profile: null }), ['Protection: Standard', NO_HELPER, phonePushLine(undefined), NO_PROFILE]);
+  // Among the watch lines, after the helper's.
+  assert.deepEqual(texts({ phonePush: { arrived: false }, helperUp: false }), ['Protection: Standard', NO_HELPER, phonePushLine(undefined)]);
 });
 
 test('on Windows the build-commands level comes right after the Windows line', () => {

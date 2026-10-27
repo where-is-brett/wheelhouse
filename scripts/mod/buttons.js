@@ -12,9 +12,9 @@
 // does a setup card, nor setup's card of the rules found: its step goes ahead only by the
 // director's click on the very card setup showed, which only the prompt record counts
 // (scripts/setup/clicks.js). Nor does the baseline card, for the same reason
-// (scripts/lib/measures-clicks.js); it is never a card event anyway. Nor does a trust card (ruling
-// R80): another computer is trusted only by the director's click on the card the session start
-// composed, which only the prompt record counts (scripts/lib/trust-clicks.js). Nor does uninstall's
+// (scripts/lib/measures-clicks.js); it is never a card event anyway. Nor does a trust card (rulings
+// R80, R81, retired with the records kept on this computer): none is handed out now, and a press on
+// one asked before trusts nothing. Nor does uninstall's
 // card (ruling R90): Wheelhouse is removed from a project only by the director's click on the card the
 // helper composed for its list, which only the prompt record counts (scripts/lib/setup-clicks.js).
 import { cardProblems } from '../hooks/card-check.js';

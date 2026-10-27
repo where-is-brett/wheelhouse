@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startHelper, envForConnection, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
+import { startHelper, envForConnection, PUSH_REFUSALS, RESTORE_RETIRED } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
@@ -17,9 +17,8 @@ import { run } from '../../../scripts/lib/run.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { writeKey } from '../../../scripts/host/keys.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { eventPath, makeEvent, writeEvent } from '../../../scripts/state/events.js';
+import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
-import { writeBackup } from '../../../scripts/state/backup.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { parseArgs, runbook, USAGE } from '../../../scripts/runbook/runbook.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
@@ -397,61 +396,14 @@ test('the step 3 click lets a restore merge pass STOP for twenty-four hours, and
   } finally { s.cleanup(); }
 });
 
-test('restore-state adds back the events missing from the branch, and only adds', async () => {
-  const s = await scenario();
-  try {
-    let missing; let stays; let forged;
-    await as(s.home, async () => {
-      const dir = stateDir('o__p');
-      const push = async (_d, branch) => plainPush(dir, branch);
-      const note = (text, ms) => makeEvent({ kind: 'note', data: { text }, now: () => new Date(NOW.getTime() - ms) });
-      const kept = note('kept', 3 * HOUR);
-      const lost = note('lost', 2 * HOUR);
-      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: kept, push });
-      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: lost, push });
-      // An action whose data was changed after signing.
-      const bad = sign({ v: 1, id: crypto.randomUUID(), at: new Date(NOW.getTime() - HOUR).toISOString(), computer: computerId(), kind: 'action', data: { action: 'runbook', step: 5, question: 'q', label: 'l' } });
-      bad.data.step = 4;
-      fs.writeFileSync(path.join(dir, eventPath(bad)), `${JSON.stringify(bad, null, 2)}\n`);
-      await g(dir, 'add', '-A');
-      await g(dir, 'commit', '-q', '-m', 'forged');
-      await plainPush(dir, 'wheelhouse-state');
-      await writeBackup({ project: 'o__p', now: () => NOW });
-      // Afterwards: one event is lost, the forged one too, and a kept one is changed.
-      missing = path.join(dir, eventPath(lost));
-      forged = path.join(dir, eventPath(bad));
-      stays = path.join(dir, eventPath(kept));
-      await g(dir, 'rm', '-q', missing, forged);
-      fs.writeFileSync(stays, '{"v":1,"id":"changed","at":"2026-10-18T01:00:00.000Z","kind":"note","data":{}}\n');
-      await g(dir, 'add', '-A');
-      await g(dir, 'commit', '-q', '-m', 'lost');
-      await plainPush(dir, 'wheelhouse-state');
-      click(4);
-    });
-    const changed = fs.readFileSync(stays, 'utf8');
-    await viaHelper(s, fakeAdapter(), async (client) => {
-      const answer = await client.runbook.restoreState({ project: 'o__p' });
-      assert.equal(answer.ok, true, JSON.stringify(answer));
-      assert.equal(answer.added, 1);
-      assert.equal(answer.skipped, 1);
-    });
-    assert.equal(fs.existsSync(missing), true);
-    assert.equal(fs.existsSync(forged), false, 'an event that does not verify is not put back');
-    assert.equal(fs.readFileSync(stays, 'utf8'), changed, 'nothing already on the branch is changed');
-    const onHost = await g(s.remote.url, 'ls-tree', '-r', '--name-only', 'refs/heads/wheelhouse-state');
-    assert.ok(onHost.includes(path.basename(missing)), 'pushed');
-    assert.ok(!onHost.includes(path.basename(forged)));
-  } finally { s.cleanup(); }
-});
-
-test('restore-state with no backup says so', async () => {
+test('restore-state says no backup of the records is kept, and changes nothing', async () => {
   const s = await scenario();
   try {
     await as(s.home, async () => { click(4); });
     await viaHelper(s, fakeAdapter(), async (client) => {
       const answer = await client.runbook.restoreState({ project: 'o__p' });
       assert.equal(answer.ok, false);
-      assert.match(answer.refused, /no backup/i);
+      assert.equal(answer.refused, RESTORE_RETIRED);
     });
   } finally { s.cleanup(); }
 });
@@ -987,43 +939,3 @@ test('on the narrow connection: step 2, step 3 opens the restore, the director a
   } finally { s.cleanup(); }
 });
 
-test('restore-state runs no hook of the director\'s global git config', async () => {
-  const s = await scenario();
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-restore-cfg-'));
-  const hooks = path.join(scratch, 'hooks');
-  const marker = path.join(scratch, 'marker');
-  fs.mkdirSync(hooks);
-  for (const name of ['pre-commit', 'post-commit', 'post-checkout', 'post-merge', 'post-rewrite', 'pre-rebase']) {
-    fs.writeFileSync(path.join(hooks, name), `#!/bin/sh\necho ${name} >> '${marker}'\n`, { mode: 0o755 });
-  }
-  const home = path.join(scratch, 'home');
-  fs.mkdirSync(home);
-  fs.writeFileSync(path.join(home, '.gitconfig'), `[core]\n\thooksPath = ${hooks.replaceAll('\\', '/')}\n`);
-  const keep = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
-  try {
-    await as(s.home, async () => {
-      const dir = stateDir('o__p');
-      const push = async (_d, branch) => plainPush(dir, branch);
-      const lost = makeEvent({ kind: 'note', data: { text: 'lost' }, now: () => new Date(NOW.getTime() - 2 * HOUR) });
-      await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: lost, push });
-      await writeBackup({ project: 'o__p', now: () => NOW });
-      await g(dir, 'rm', '-q', path.join(dir, eventPath(lost)));
-      await g(dir, 'commit', '-q', '-m', 'lost');
-      await plainPush(dir, 'wheelhouse-state');
-      click(4);
-    });
-    process.env.HOME = home;
-    process.env.USERPROFILE = home;
-    process.env.XDG_CONFIG_HOME = path.join(home, '.config');
-    await viaHelper(s, fakeAdapter(), async (client) => {
-      const answer = await client.runbook.restoreState({ project: 'o__p' });
-      assert.equal(answer.ok, true, JSON.stringify(answer));
-      assert.equal(answer.added, 1);
-    });
-    assert.equal(fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '', '');
-  } finally {
-    for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
-    s.cleanup();
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
-});

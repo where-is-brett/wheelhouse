@@ -7,7 +7,7 @@ import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -177,6 +177,18 @@ test('Explain more and Not now record only the answer', async () => {
     await decide(input({ [approvalLine(7, FULL)]: 'Explain more', [LIFT_STOP]: 'Not now' }), deps(c));
     assert.equal(c.calls.write.length, 2);
     assert.equal(c.calls.record.length, 0);
+  });
+});
+
+test('a Trust it on a trust card asked before trusts nothing, keeps nothing and sends nothing (rulings R80, R81 retired)', async () => {
+  await withHome(async (home) => {
+    const c = fake();
+    const before = readEnrolled();
+    const line = trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345');
+    await decide(input({ [`Trust your computer?\n${line}`]: 'Trust it' }, { options: [{ label: 'Trust it' }, { label: 'Not now' }] }), deps(c));
+    assert.deepEqual(readEnrolled(), before);
+    assert.equal(fs.existsSync(path.join(home, 'trust')), false);
+    assert.deepEqual([c.calls.write.length, c.calls.record.length], [0, 0]);
   });
 });
 

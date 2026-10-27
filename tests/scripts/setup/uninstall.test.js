@@ -12,17 +12,16 @@ import path from 'node:path';
 import {
   uninstallPlan, uninstallRoutes, planLines, readProgress, writeProgress, PHASES, WHAT_CHARS, PLUGIN_LINE, ASK_STEP,
   UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
-  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION, ENV_STAYS, ARCHIVE, ARCHIVE_UNREAD, ARCHIVE_OUTSIDE, ARCHIVE_TWICE, archiveAt,
+  NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION, ENV_STAYS, ARCHIVE, ARCHIVE_UNREAD, ARCHIVE_OUTSIDE, ARCHIVE_TWICE, archiveAt, trustDir, seenFile, OLD_STAYS,
 } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
 import {
   startRun, addChanges, applyJsonKey, markPutBack, markStep, newId, readJournal, reverseChange, journalFile, closeRun,
 } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { wheelhouseHome, profileDir, stateDir, keysDir } from '../../../scripts/lib/paths.js';
+import { wheelhouseHome, profileDir, oldProfileDir, stateDir, oldStateDir, keysDir } from '../../../scripts/lib/paths.js';
 import { toolFolder } from '../../../scripts/lib/host-tools.js';
 import { clicksDir, usedDir } from '../../../scripts/lib/setup-clicks.js';
-import { trustDir, seenFile } from '../../../scripts/lib/trust-clicks.js';
 import { enrolledFile, signingKeyFile } from '../../../scripts/state/signing.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -30,9 +29,7 @@ import { CARD } from '../../../scripts/lib/front-desk.js';
 import { uninstallLine, UNINSTALL_LABEL } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { STATE_BRANCH } from '../../../scripts/state/record.js';
 import { keepAnswer, keepUninstallClick, uninstallShownFor, freshUninstallClicks } from '../../../scripts/setup/clicks.js';
-import { withdrawEnrolment } from '../../../scripts/setup/computers.js';
 import { madeBySetup, joinedFolder } from '../../../scripts/setup/host.js';
 import { writeKey, readKey } from '../../../scripts/host/keys.js';
 import { caFile } from '../../../scripts/host/company-ca.js';
@@ -126,23 +123,18 @@ function fullSetup(world, { through = 10, lockedDir = '/Library/Application Supp
   r.key(2, path.join(folder, '.claude', 'settings.local.json'), ['permissions', 'allow'], ['Bash(node setup)']);
   done(2);
   if (through < 3) return { run, r };
-  // Step 3: the product's repository made, the folder connected, the profile made and cloned, the
-  // app's keys, the project registered, its state cloned, this computer's enrolment published.
+  // Step 3: the product's repository made, the folder connected, the app's keys, the project
+  // registered, its private record opened, and the director's settings on this computer.
   r.add(3, { kind: 'host', target: `github:${REPO}`, before: null, after: { repository: REPO, private: true, made: true } });
   r.folder(3, path.join(folder, '.git'), { origin: `https://github.com/${REPO}.git`, branch: 'main' });
   writeText(path.join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  r.add(3, { kind: 'host', target: 'github:o/wheelhouse-profile', before: null, after: { repository: 'o/wheelhouse-profile', private: true, made: true } });
-  const profile = { remoteUrl: 'https://github.com/o/wheelhouse-profile.git', host: 'github', repo: 'o/wheelhouse-profile', connection: { host: 'github', mode: 'quick', project: 'o/wheelhouse-profile' } };
-  r.file(3, path.join(wheelhouseHome(), 'profile.json'), `${JSON.stringify(profile, null, 2)}\n`);
-  r.folder(3, profileDir(), { clone: profile.remoteUrl, branch: 'wheelhouse-profile' }, { before: null });
-  writeText(path.join(profileDir(), 'events', 'e1.json'), '{}');
   r.add(3, { kind: 'host', target: 'key github-app', before: null, after: { key: 'github-app', clientId: 'Iv1.x', app: 'wheelhouse' } });
   writeText(path.join(keysDir(), 'github-app.json'), '{}');
   r.add(3, { kind: 'file', target: path.join(stateDir(slug), '..', 'project.json'), before: null, after: 'x' });
   register(slug);
-  r.folder(3, stateDir(slug), { clone: `https://github.com/${REPO}.git`, branch: 'wheelhouse-state' });
-  writeText(path.join(stateDir(slug), 'events.json'), '[]');
-  r.add(3, { kind: 'host', target: 'github:o/wheelhouse-profile:enrolments/abcd1234.json', before: null, after: '{"computer":"abcd1234"}\n' });
+  r.folder(3, stateDir(slug), { record: true }, { before: null });
+  writeText(path.join(stateDir(slug), 'events', 'e1.json'), '{}');
+  writeText(path.join(profileDir(), 'events', 'e1.json'), '{}');
   done(3);
   if (through < 4) return { run, r };
   r.add(4, { kind: 'answer', target: 'step 4', before: null, after: { phase: 'building' } });
@@ -251,7 +243,6 @@ test('setup then uninstall lists every change setup made, by phase, newest first
     assert.deepEqual(names, [
       '7:exclude', '7:statusLine',
       '6:wheelhouse.telemetry.plist', 'unset-env:CLAUDE_CODE_ENABLE_TELEMETRY', '6:agentPushNotifEnabled', '6:cleanupPeriodDays',
-      'remove-enrolment:github:o/wheelhouse-profile:enrolments/abcd1234.json',
       '2:permissions.allow',
     ]);
     // Step 2's allow rule is in the folder's own settings, so it is the project's, not this computer's.
@@ -273,11 +264,17 @@ test('setup then uninstall lists every change setup made, by phase, newest first
       signingKeyFile(), keysDir(),
     ]);
     assert.ok(closing.filter((c) => [keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))].includes(c.target)).every((c) => c.put === 'remove-empty'));
-    // Last: the project's own folder, Wheelhouse's own folders and files, the plugin's line.
+    // Last: the project's own folder but for its private record (and v0.1.x's state clone), Wheelhouse's
+    // own folders and files, the plugin's line. The director's settings stay.
     const last = of(got, 'last');
     assert.equal(last[0].target, path.join(wheelhouseHome(), 'projects', SLUG));
+    assert.deepEqual(last[0].except, ['record', 'state']);
     const removed = last.filter((c) => c.put === 'remove').map((c) => c.target);
-    for (const p of [toolFolder('gh'), profileDir(), path.join(wheelhouseHome(), 'profile.json')]) assert.ok(removed.includes(p), p);
+    assert.ok(removed.includes(toolFolder('gh')));
+    assert.ok(!removed.includes(profileDir()), 'the settings stay');
+    assert.ok(got.keep.some((k) => k.what === path.join(wheelhouseHome(), 'settings') || k.what.endsWith('settings')));
+    // The private record has its own card, recommended Keep.
+    assert.deepEqual(got.asks.map((a) => a.about), ['product', 'record']);
     // The trust clicks and the session start's record of the profile's enrolments, Wheelhouse's own,
     // listed whether they are there yet or not.
     for (const p of [trustDir(), seenFile()]) assert.ok(removed.includes(p), p);
@@ -351,8 +348,9 @@ test('uninstall from a setup stopped at step 4 lists only what was done (Review 
     for (const phase of ['locked', 'files']) assert.deepEqual(of(got, phase), [], phase);
     assert.equal(got.changes.some((c) => c.put === 'pull-request' || c.put === 'unset-env'), false);
     // What step 3 made is still listed.
-    assert.ok(of(got, 'computer').some((c) => c.put === 'remove-enrolment'));
+    assert.ok(of(got, 'keys').some((c) => c.put === 'delete-key'));
     assert.ok(got.asks.some((a) => a.target === `github:${REPO}`));
+    assert.ok(got.asks.some((a) => a.about === 'record'));
     // A setup stopped before step 2 has nothing of its own to put back.
     await withHome(async () => {
       const early = makeWorld();
@@ -401,17 +399,18 @@ test('retries: a folder or host change recorded again reverses against the earli
   });
 });
 
-test('the state branch and the profile are kept unless their own card says delete, recommended Keep', async () => {
+test('uninstall offers no state-branch or profile card', async () => {
   await withHome(async () => {
     const world = makeWorld();
     fullSetup(world);
     const got = await plan(world);
     assert.deepEqual(got.asks.map((a) => [a.about, a.put, a.target]), [
       ['product', 'delete-repository', `github:${REPO}`],
-      ['state', 'delete-branch', `github:${REPO}:wheelhouse-state`],
-      ['profile', 'delete-repository', 'github:o/wheelhouse-profile'],
+      ['record', 'delete-record', stateDir(SLUG)],
     ]);
-    assert.equal(new Set(got.asks.map((a) => a.id)).size, 3);
+    assert.ok(!got.asks.some((a) => /wheelhouse-state|wheelhouse-profile|wheelhouse-lock/.test(a.target)));
+    assert.ok(!got.changes.some((c) => /wheelhouse-state|wheelhouse-profile|wheelhouse-lock/.test(JSON.stringify(c))));
+    assert.ok(!got.changes.some((c) => c.put === 'remove-enrolment'));
     for (const ask of got.asks) {
       assert.equal(ask.phase, 'kept');
       assert.equal(ask.card.level, 4);
@@ -424,7 +423,57 @@ test('the state branch and the profile are kept unless their own card says delet
     }
     // Nothing on the host is deleted by the plan itself.
     assert.equal(got.changes.some((c) => /delete-repository/.test(c.put)), false);
-    assert.equal(got.changes.some((c) => c.put === 'delete-branch' && c.branch === 'wheelhouse-state'), false);
+  });
+});
+
+test('uninstall keeps the private record by default', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { run } = fullSetup(world);
+    const got = await plan(world);
+    const ask = got.asks.find((a) => a.about === 'record');
+    assert.equal(ask.put, 'delete-record');
+    assert.equal(ask.target, stateDir(SLUG));
+    assert.match(ask.card.what, /private record on this computer/);
+    assert.match(ask.card.why, /can't be brought back/);
+    // The journal's change for the record is the card's, not the project folder's removal.
+    const recorded = readJournal().runs.find((x) => x.id === run.id).changes.find((c) => c.target === stateDir(SLUG));
+    assert.deepEqual(ask.ids, [recorded.id]);
+    const folder = got.changes.find((c) => c.target === path.join(wheelhouseHome(), 'projects', SLUG));
+    assert.deepEqual(folder.except, ['record', 'state']);
+    assert.ok(!(folder.ids ?? []).includes(recorded.id));
+    // No record folder, no card: its change is settled.
+    fs.rmSync(stateDir(SLUG), { recursive: true });
+    const gone = await plan(world);
+    assert.ok(!gone.asks.some((a) => a.about === 'record'));
+    assert.ok(gone.done.some((d) => d.ids.includes(recorded.id) && d.why === 'already gone'));
+  });
+});
+
+test('what Wheelhouse v0.1.x made is named as kept: the profile, profile.json, the enrolment and the state clone', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    fullSetup(world);
+    const run = startRun({ folder: world.folder, now: NOW });
+    const r = recorder(run.id);
+    r.add(3, { kind: 'host', target: 'github:o/wheelhouse-profile', before: null, after: { repository: 'o/wheelhouse-profile', private: true, made: true } });
+    const profileJson = path.join(wheelhouseHome(), 'profile.json');
+    r.file(3, profileJson, '{}\n');
+    r.folder(3, oldProfileDir(), { clone: 'x', branch: 'wheelhouse-profile' }, { before: null });
+    writeText(path.join(oldProfileDir(), 'events', 'e.json'), '{}');
+    r.folder(3, oldStateDir(SLUG), { clone: 'x', branch: 'wheelhouse-state' }, { before: null });
+    writeText(path.join(oldStateDir(SLUG), 'events', 'e.json'), '{}');
+    r.add(3, { kind: 'host', target: 'github:o/wheelhouse-profile:enrolments/abcd1234.json', before: null, after: '{"computer":"abcd1234"}\n' });
+    const got = await plan(world);
+    const kept = got.keep.filter((k) => k.why === OLD_STAYS).map((k) => k.what);
+    assert.ok(kept.some((w) => w.includes('wheelhouse-profile on GitHub')), kept.join('\n'));
+    assert.ok(kept.some((w) => w.includes('this computer\'s key in o/wheelhouse-profile')), kept.join('\n'));
+    assert.ok(kept.some((w) => w.endsWith('profile.json')), kept.join('\n'));
+    assert.ok(kept.some((w) => w.endsWith(path.join('.wheelhouse', 'profile')) || w === oldProfileDir() || w.endsWith(`${path.sep}profile`)), kept.join('\n'));
+    assert.ok(kept.some((w) => w.endsWith('state')), kept.join('\n'));
+    assert.ok(!got.changes.some((c) => [oldProfileDir(), profileJson, oldStateDir(SLUG)].includes(c.target)), 'none is removed');
+    assert.ok(!got.asks.some((a) => /wheelhouse-profile/.test(a.target)));
+    assert.deepEqual(accounted(got), recordedIds());
   });
 });
 
@@ -442,14 +491,13 @@ test('a second project keeps the helper, telemetry and the signing key', async (
     assert.equal(got.changes.some((c) => [6, 9].includes(c.change?.step)), false, 'steps 6 and 9 are this computer\'s');
     // Step 2's allow rule in the folder's own settings is the project's, and goes with it.
     assert.deepEqual(got.changes.filter((c) => c.change?.step === 2).map((c) => c.change.key), [['permissions', 'allow']]);
-    assert.equal(got.changes.some((c) => c.put === 'unset-env' || c.put === 'remove-enrolment'), false);
+    assert.equal(got.changes.some((c) => c.put === 'unset-env'), false);
     assert.equal(got.changes.some((c) => c.target === signingKeyFile() || c.target === profileDir() || c.target === toolFolder('gh')), false);
     // The app stays for the other project: this repository is unticked on its installation's page.
     assert.equal(got.changes.some((c) => c.put === 'delete-key'), false);
     assert.deepEqual(of(got, 'keys').map((c) => [c.put, c.repo]), [['untick-repository', REPO]]);
-    // The project's own are still listed, and the profile isn't asked about.
+    // The project's own are still listed.
     assert.ok(got.changes.some((c) => c.put === 'leave-locked'));
-    assert.equal(got.asks.some((a) => a.target.includes('wheelhouse-profile')), false);
     assert.ok(got.keep.some((k) => /another project/.test(k.why) && /helper/.test(k.what)));
     // The second project's own uninstall, now the last, puts back this computer's changes from the
     // first project's runs too.
@@ -462,28 +510,6 @@ test('a second project keeps the helper, telemetry and the signing key', async (
     assert.equal(lastOne.changes.some((c) => c.change?.step === 7 || c.change?.step === 2), false, 'the first project\'s own are not the second\'s');
     assert.ok(lastOne.changes.some((c) => c.put === 'remove' && c.target === toolFolder('gh')));
   });
-});
-
-test('the profile clone is Wheelhouse\'s own, removed whole on the last uninstall, whatever its before', async () => {
-  for (const before of [null, {}]) {
-    await withHome(async () => {
-      const world = makeWorld();
-      const run = startRun({ folder: world.folder, now: NOW });
-      const r = recorder(run.id);
-      r.folder(3, profileDir(), { clone: 'x', branch: 'wheelhouse-profile' }, { before });
-      writeText(path.join(profileDir(), 'events', 'e.json'), '{}');
-      fs.mkdirSync(clicksDir(), { recursive: true });
-      const got = await plan(world);
-      const entry = got.changes.find((c) => c.target === profileDir());
-      assert.equal(entry.put, 'remove');
-      assert.equal(entry.phase, 'last');
-      assert.equal(entry.ids.length, 1);
-      assert.equal(got.keep.some((k) => k.what.includes('profile')), false, JSON.stringify(before));
-      assert.ok(got.changes.some((c) => c.put === 'remove' && c.target === clicksDir()));
-      // journal.json itself is kept.
-      assert.equal(got.changes.some((c) => c.target === journalFile() || c.target === path.dirname(journalFile())), false);
-    });
-  }
 });
 
 test('a joining computer\'s uninstall plans no pull request for a commit it never made', async () => {
@@ -996,7 +1022,7 @@ function fakes(world, { vars = { CLAUDE_CODE_ENABLE_TELEMETRY: '1' }, cancel = f
 }
 
 // A stand-in host: the product's repository, holding on main what setup's commit left there and a
-// trial branch, and the profile's, holding this computer's enrolment and another's.
+// trial branch.
 async function standIn() {
   const product = await makeBareRemote({ repo: REPO });
   const work = tempFolder('wh-work ');
@@ -1005,18 +1031,10 @@ async function standIn() {
   await g(work, 'add', '-A');
   await g(work, 'commit', '-q', '-m', 'First');
   const trial = await g(work, 'rev-parse', 'HEAD');
-  await g(work, 'push', '-q', product.url, 'main', `HEAD:refs/heads/wheelhouse-health-check`, `HEAD:refs/heads/${STATE_BRANCH}`);
-  const profile = await makeBareRemote({ repo: 'o/wheelhouse-profile' });
-  const pw = tempFolder('wh-profile-work ');
-  await g(pw, 'init', '-q', '-b', 'wheelhouse-profile');
-  writeText(path.join(pw, 'enrolments', 'abcd1234.json'), '{"computer":"abcd1234"}\n');
-  writeText(path.join(pw, 'enrolments', 'ffff0000.json'), '{"computer":"ffff0000"}\n');
-  await g(pw, 'add', '-A');
-  await g(pw, 'commit', '-q', '-m', 'Keys');
-  await g(pw, 'push', '-q', profile.url, 'wheelhouse-profile');
-  const cleanup = () => { product.cleanup(); profile.cleanup(); };
+  await g(work, 'push', '-q', product.url, 'main', `HEAD:refs/heads/wheelhouse-health-check`);
+  const cleanup = () => { product.cleanup(); };
   hosts.push(cleanup);
-  return { product, profile, work, trial, cleanup };
+  return { product, work, trial, cleanup };
 }
 const hosts = [];
 after(() => { for (const cleanup of hosts.splice(0)) cleanup(); });
@@ -1036,7 +1054,7 @@ async function pushSetupCommit(world, host) {
 }
 
 // A world set up through `through`, ready for its plan to be applied: this computer's key enrolled,
-// Locked on in a scratch folder, the project's and the profile's addresses the stand-in's.
+// Locked on in a scratch folder, the project's address the stand-in's.
 async function applyWorld({ through = 10, host } = {}) {
   const world = makeWorld();
   const { computer, publicKey } = makeSigningKey();
@@ -1049,11 +1067,17 @@ async function applyWorld({ through = 10, host } = {}) {
   const made = fullSetup(world, { through, lockedDir: world.lockedDir, trialSha: host.trial });
   if (through >= 3) {
     writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO, installationId: 77 } });
-    const profileJson = path.join(wheelhouseHome(), 'profile.json');
-    writeText(profileJson, `${JSON.stringify({ ...readJson(profileJson), remoteUrl: host.profile.url }, null, 2)}\n`);
   }
   if (through >= 7) world.tip = await pushSetupCommit(world, host);
   return { world, ...made };
+}
+
+// The director's Delete it on the private record's own card, given once the card is shown, so the
+// last phase can empty the projects folder.
+async function deleteTheRecord(world, run, f) {
+  const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+  const shown = await routes['/setup/uninstall/plan']({ folder: world.folder });
+  answerAsk(run.id, shown.asks.find((a) => a.about === 'record'), 'Delete it');
 }
 
 const applyPlan = async (world, f, extra = {}) => {
@@ -1093,24 +1117,26 @@ test('setup then uninstall leaves this computer\'s files as they were, the proje
       assert.equal(f.seen.password, 1);
       assert.equal(fs.existsSync(path.join(world.lockedDir, 'managed-settings.json')), false);
       // The project's files: one pull request from Wheelhouse's branch, holding main's files with
-      // setup's taken out by their values before; the trial branch is deleted; the state branch,
-      // whose own card wasn't answered, stays.
+      // setup's taken out by their values before; the trial branch is deleted.
       assert.deepEqual(f.seen.prs, [{ head: UNINSTALL_BRANCH, base: 'main', title: UNINSTALL_TITLE, body: f.seen.prs[0].body }]);
       assert.deepEqual(await filesOn(host.product.url, UNINSTALL_BRANCH), ['.claude/settings.json', 'README.md']);
       assert.deepEqual(JSON.parse(await showOn(host.product.url, UNINSTALL_BRANCH, '.claude/settings.json')), { enabledPlugins: { 'wheelhouse@wheelhouse': true } });
       assert.equal((await g(host.product.url, 'rev-parse', `${UNINSTALL_BRANCH}^`)), world.tip);
       assert.equal(await filesOn(host.product.url, 'wheelhouse-health-check'), null);
-      assert.ok(await filesOn(host.product.url, STATE_BRANCH));
       // The folder's own copy of the project's files is the pull request's to change.
       assert.ok(readJson(path.join(world.folder, '.claude', 'settings.json')).extraKnownMarketplaces);
-      // This computer's key is out of the profile; the other computer's stays.
-      assert.deepEqual(await filesOn(host.profile.url, 'wheelhouse-profile'), ['enrolments/ffff0000.json']);
       // Keys, and Wheelhouse's own folders and files, are gone; the journal stays.
-      for (const p of [path.join(keysDir(), 'github-app.json'), signingKeyFile(), enrolledFile(), toolFolder('gh'), profileDir(), path.join(wheelhouseHome(), 'profile.json'), path.join(wheelhouseHome(), 'projects', SLUG), clicksDir(), trustDir(), seenFile()]) {
+      for (const p of [path.join(keysDir(), 'github-app.json'), signingKeyFile(), enrolledFile(), toolFolder('gh'), path.join(wheelhouseHome(), 'projects', SLUG, 'project.json'), clicksDir(), trustDir(), seenFile()]) {
         assert.equal(fs.existsSync(p), false, p);
       }
+      // The project's private record, whose own card wasn't answered, stays, and the projects
+      // folder with it; so do the director's settings.
+      assert.deepEqual(fs.readdirSync(path.join(wheelhouseHome(), 'projects', SLUG)), ['record']);
+      assert.ok(fs.existsSync(path.join(stateDir(SLUG), 'events', 'e1.json')));
+      assert.ok(fs.existsSync(profileDir()));
+      assert.ok(done.lines.includes('Kept: this project\'s private record on this computer, as its own card was not answered.'));
       // This computer's id, and the folders those were in, emptied, go too (ruling R138).
-      for (const p of [path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh'))]) {
+      for (const p of [path.join(wheelhouseHome(), 'computer.json'), keysDir(), path.dirname(toolFolder('gh'))]) {
         assert.equal(fs.existsSync(p), false, p);
       }
       assert.ok(fs.existsSync(journalFile()));
@@ -1163,7 +1189,6 @@ test('uninstall from a setup stopped at step 4 puts back only what was done (Rev
       assert.equal(f.seen.password, 0);
       assert.deepEqual(f.seen.unset, []);
       assert.deepEqual(await filesOn(host.product.url, 'main'), ['README.md']);
-      assert.deepEqual(await filesOn(host.profile.url, 'wheelhouse-profile'), ['enrolments/ffff0000.json']);
       assert.deepEqual(unmarked(), []);
     });
   } finally {
@@ -1217,7 +1242,7 @@ function answerAsk(runId, ask, label, at = new Date(READY().getTime() + 1000)) {
   keepAnswer(makeEvent({ kind: 'action', data: { action: 'setup-answer', runId, step: ASK_STEP, questionId: ask.id, question: ask.card.question, label, text: null }, now: () => at }));
 }
 
-test('the state branch and profile are kept unless their own card says delete', async () => {
+test('the private record is deleted only on its own card\'s Delete it, and a repository only by the director', async () => {
   const host = await standIn();
   try {
     await withHome(async () => {
@@ -1225,18 +1250,16 @@ test('the state branch and profile are kept unless their own card says delete', 
       const f = fakes(world);
       const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
       const shown = await routes['/setup/uninstall/plan']({ folder: world.folder });
-      assert.deepEqual(shown.asks.map((a) => a.about), ['product', 'state', 'profile']);
-      const ask = (about) => shown.asks.find((a) => a.about === about);
-      answerAsk(run.id, ask('state'), 'Delete it');
-      answerAsk(run.id, ask('profile'), 'Keep it');
+      assert.deepEqual(shown.asks.map((a) => a.about), ['product', 'record']);
+      answerAsk(run.id, shown.asks.find((a) => a.about === 'record'), 'Delete it');
       const { got, done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
-      // The state branch, on Delete it, is deleted with the director's own sign-in.
-      assert.equal(await filesOn(host.product.url, STATE_BRANCH), null);
-      // The profile, kept as its card said, and the product's repository, whose card wasn't
-      // answered: kept, and no settings page opened.
-      const profile = got.asks.find((a) => a.about === 'profile');
-      assert.deepEqual(markOf(profile.ids[0]), { at: READY().toISOString(), put: false, why: 'kept, as its own card said' });
+      // The record, on Delete it, is deleted from this computer, and the project's folder with it.
+      assert.equal(fs.existsSync(stateDir(SLUG)), false);
+      assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'projects')), false);
+      assert.deepEqual(markOf(got.asks.find((a) => a.about === 'record').ids[0]).put, true);
+      assert.ok(done.lines.includes('This project\'s private record is deleted from this computer.'));
+      // The product's repository, whose card wasn't answered: kept, and no settings page opened.
       assert.equal(f.seen.pages.some((u) => /\/settings$/.test(u)), false);
     });
     await withHome(async () => {
@@ -1245,13 +1268,17 @@ test('the state branch and profile are kept unless their own card says delete', 
       const f = fakes(world);
       const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
       const shown = await routes['/setup/uninstall/plan']({ folder: world.folder });
-      answerAsk(run.id, shown.asks.find((a) => a.about === 'profile'), 'Delete it');
+      answerAsk(run.id, shown.asks.find((a) => a.about === 'product'), 'Delete it');
+      answerAsk(run.id, shown.asks.find((a) => a.about === 'record'), 'Keep it');
       const { got, done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
       // A repository is deleted only by the director, on its own settings page.
-      assert.ok(f.seen.pages.includes('https://github.com/o/wheelhouse-profile/settings'));
-      assert.deepEqual(markOf(got.asks.find((a) => a.about === 'profile').ids[0]).why, 'left for your own Delete on its settings page');
-      assert.ok(await filesOn(second.product.url, STATE_BRANCH), 'the state branch stays without its own Delete it');
+      assert.ok(f.seen.pages.includes(`https://github.com/${REPO}/settings`));
+      assert.deepEqual(markOf(got.asks.find((a) => a.about === 'product').ids[0]).why, 'left for your own Delete on its settings page');
+      // The record, kept as its card said.
+      assert.deepEqual(markOf(got.asks.find((a) => a.about === 'record').ids[0]), { at: READY().toISOString(), put: false, why: 'kept, as its own card said' });
+      assert.ok(fs.existsSync(path.join(stateDir(SLUG), 'events', 'e1.json')));
+      second.cleanup();
     });
   } finally {
     host.cleanup();
@@ -1273,7 +1300,7 @@ test('a second project keeps the helper, telemetry and the signing key when the 
       assert.deepEqual(f.seen.unset, []);
       assert.equal(readJson(world.settings).cleanupPeriodDays, 30, 'this computer\'s settings stay for the other project');
       for (const p of [signingKeyFile(), enrolledFile(), path.join(keysDir(), 'github-app.json'), toolFolder('gh'), profileDir()]) assert.ok(fs.existsSync(p), p);
-      assert.equal(fs.existsSync(path.join(wheelhouseHome(), 'projects', SLUG)), false);
+      assert.deepEqual(fs.readdirSync(path.join(wheelhouseHome(), 'projects', SLUG)), ['record'], 'only the private record stays');
       assert.ok(fs.existsSync(path.join(wheelhouseHome(), 'projects', 'o__Other')));
       // The app's keys stay; its installation page is given to untick this repository.
       assert.ok(f.seen.pages.includes('https://github.com/settings/installations/77'));
@@ -1336,24 +1363,22 @@ test('an uninstall cut short resumes with a fresh plan and never puts anything b
     await withHome(async () => {
       const { world, run } = await applyWorld({ host });
       const f = fakes(world);
-      let fail = true;
-      f.ops.withdrawEnrolment = async (args) => {
-        if (fail) throw new Error('the profile could not be reached');
-        return withdrawEnrolment({ ...args, run: f.run });
-      };
-      const first = await applyPlan(world, f);
+      // The account's variable can't be read at first: uninstall stops there.
+      const failing = async (file, args, options) => (file === 'launchctl' ? { code: 1, stdout: '', stderr: 'launchctl could not be reached' } : f.run(file, args, options));
+      const listed = await uninstallPlan({ folder: world.folder, userHome: world.userHome, platform: 'darwin', run: f.run });
+      const first = { done: await applyUninstall({ folder: world.folder, plan: listed, now: READY, userHome: world.userHome, platform: 'darwin', run: failing, ops: f.ops }) };
       assert.equal(first.done.ok, false);
-      assert.match(first.done.refused, /something went wrong: the profile could not be reached\. What it did before is marked/);
+      assert.match(first.done.refused, /launchctl|CLAUDE_CODE_ENABLE_TELEMETRY/);
+      assert.match(first.done.refused, /What it did before is marked/);
       assert.equal(readJournal().runs.find((r) => r.id === run.id).closedAt, undefined);
-      // What came before the enrolment is done and marked: Locked, the pull request, step 7's and
-      // step 6's own changes here.
-      assert.equal(readText(world.settings), world.before);
-      assert.deepEqual(f.seen.unset, ['CLAUDE_CODE_ENABLE_TELEMETRY']);
-      fail = false;
+      // What came before the variable is done and marked: Locked, the pull request, step 7's own
+      // changes here and step 6's file.
+      assert.equal(fs.existsSync(path.join(world.userHome, 'Library', 'LaunchAgents', 'wheelhouse.telemetry.plist')), false);
+      assert.deepEqual(f.seen.unset, []);
       const { got, done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
-      assert.equal(got.changes.some((c) => ['leave-locked', 'pull-request', 'unset-env', 'delete-branch'].includes(c.put)), false);
-      assert.deepEqual(of(got, 'computer').map((c) => c.put), ['remove-enrolment', 'reverse']);
+      assert.equal(got.changes.some((c) => ['leave-locked', 'pull-request', 'delete-branch'].includes(c.put)), false);
+      assert.deepEqual(of(got, 'computer').map((c) => c.put), ['unset-env', 'reverse', 'reverse', 'reverse']);
       assert.equal(f.seen.password, 1);
       assert.equal(f.seen.prs.length, 1);
       assert.deepEqual(f.seen.unset, ['CLAUDE_CODE_ENABLE_TELEMETRY']);
@@ -1555,18 +1580,19 @@ test('uninstall\'s own process acts only for its click and hash, stops at its de
       assert.equal(await runUninstall(argv(), { ...deps, now: () => new Date(Date.parse(deadline) + 1000) }), 1);
       assert.match(readProgress(world.folder).refused, /more than 20 minutes after the click, so nothing was changed/);
       assert.deepEqual(f.seen.stops, []);
-      // Stopped part-way (the enrolment can't be reached): status gives why, what it did before, the
-      // pull request's page, and what is left.
+      // Stopped part-way (the app's installation page can't be opened): status gives why, what it
+      // did before, the pull request's page, and what is left.
       writeProgress(world.folder, record);
-      f.ops.withdrawEnrolment = async () => { throw new Error('the profile could not be reached'); };
+      const opened = f.ops.openPage;
+      f.ops.openPage = async (url) => { if (/installations/.test(url)) throw new Error('the browser could not be reached'); return opened(url); };
       assert.equal(await runUninstall(argv(), deps), 1);
       const { lines, uninstall } = await routes['/setup/uninstall/status']({ folder: world.folder });
       assert.equal(uninstall.state, 'stopped');
-      assert.match(lines[0], /^Uninstall stopped: something went wrong: the profile could not be reached/);
+      assert.match(lines[0], /^Uninstall stopped: something went wrong: the browser could not be reached/);
       assert.equal(lines[1], 'Done before it stopped:');
       assert.ok(lines.includes(`Open the pull request: ${ROOM_URL}`));
       assert.ok(lines.includes('What is left:'));
-      assert.ok(lines.some((l) => /take this computer's key out of your profile/.test(l)));
+      assert.ok(lines.some((l) => /remove the Wheelhouse plugin from this project/.test(l)));
       // Once a card is shown again, status gives the list.
       await routes['/setup/uninstall/plan']({ folder: world.folder });
       assert.match((await routes['/setup/uninstall/status']({ folder: world.folder })).lines[0], /^Uninstall of /);
@@ -1793,7 +1819,7 @@ test('a GitLab key is revoked through the API, then deleted; one GitLab won\'t r
   });
 });
 
-test('a Delete it given before its card was last asked counts for nothing: the card is asked again, and the state branch stays (ruling R117)', async () => {
+test('a Delete it given before its card was last asked counts for nothing: the card is asked again, and the record stays (ruling R117)', async () => {
   const host = await standIn();
   try {
     await withHome(async () => {
@@ -1801,17 +1827,17 @@ test('a Delete it given before its card was last asked counts for nothing: the c
       const f = fakes(world);
       const first = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run });
       const shown = await first['/setup/uninstall/plan']({ folder: world.folder });
-      const state = shown.asks.find((a) => a.about === 'state');
-      answerAsk(run.id, state, 'Delete it');
+      const record = shown.asks.find((a) => a.about === 'record');
+      answerAsk(run.id, record, 'Delete it');
       // The director didn't go ahead; later the plan is asked for again, and its cards with it.
       const later = new Date(READY().getTime() + 60 * 60 * 1000);
       const second = uninstallRoutes({ now: () => later, userHome: world.userHome, platform: 'darwin', run: f.run });
       const again = await second['/setup/uninstall/plan']({ folder: world.folder });
-      assert.equal(again.asks.find((a) => a.about === 'state').card.question, state.card.question, 'the same card, asked again');
+      assert.equal(again.asks.find((a) => a.about === 'record').card.question, record.card.question, 'the same card, asked again');
       const { done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
-      assert.ok(await filesOn(host.product.url, STATE_BRANCH), 'the old Delete it deleted nothing');
-      assert.ok(done.lines.some((l) => l.startsWith(`Kept: ${REPO}:${STATE_BRANCH}`)));
+      assert.ok(fs.existsSync(stateDir(SLUG)), 'the old Delete it deleted nothing');
+      assert.ok(done.lines.some((l) => l.startsWith("Kept: this project's private record on this computer")));
     });
   } finally {
     host.cleanup();
@@ -1932,6 +1958,7 @@ test('a commit never pushed is marked kept once setup\'s files are put back here
       const push = stepSevenToPush(world, r, await g(work, 'rev-parse', 'HEAD'), host.trial)();
       markStep(run.id, 7, 'failed', { now: NOW, reason: 'the setup commit could not be pushed' });
       const f = fakes(world);
+      await deleteTheRecord(world, run, f);
       // STOP comes on just after the last phase removed the project's own folder, its record.
       const projectDir = path.join(wheelhouseHome(), 'projects', SLUG);
       const first = await applyPlan(world, f, { stopped: () => !fs.existsSync(projectDir) });
@@ -1972,6 +1999,7 @@ test('the trusted-keys list and the signing key go last of all: an uninstall cut
     await withHome(async () => {
       const { world, run } = await applyWorld({ host });
       const f = fakes(world);
+      await deleteTheRecord(world, run, f);
       const projectDir = path.join(wheelhouseHome(), 'projects', SLUG);
       const first = await applyPlan(world, f, { stopped: () => !fs.existsSync(projectDir) });
       assert.equal(first.done.ok, false);
@@ -1999,10 +2027,11 @@ test('the last uninstall takes this computer\'s id and Wheelhouse\'s emptied fol
   const host = await standIn();
   try {
     await withHome(async () => {
-      const { world } = await applyWorld({ host });
+      const { world, run } = await applyWorld({ host });
       // Something not setup's in the keys folder: it is left, and the folder with it.
       writeText(path.join(keysDir(), 'theirs.txt'), 'kept\n');
       const f = fakes(world);
+      await deleteTheRecord(world, run, f);
       const { got, done } = await applyPlan(world, f);
       assert.equal(done.ok, true, done.refused);
       assert.deepEqual(got.changes.filter((c) => c.put === 'remove-empty').map((c) => c.target), [path.join(wheelhouseHome(), 'projects'), path.dirname(toolFolder('gh')), keysDir()]);
@@ -2090,6 +2119,7 @@ for (const [where, cut] of Object.entries(LEFT_AT)) {
       await withHome(async () => {
         const { world, run } = await applyWorld({ host });
         const f = fakes(world);
+        await deleteTheRecord(world, run, f);
         const target = (cut.rm ?? cut.rmdir)();
         const busy = (p) => Object.assign(new Error(`EBUSY: resource busy or locked, '${p}'`), { code: 'EBUSY' });
         const { rmSync, rmdirSync } = fs;
@@ -2139,6 +2169,7 @@ test('an uninstall whose run\'s close fails after the signing key went says in i
     await withHome(async () => {
       const { world, run } = await applyWorld({ host });
       const f = fakes(world);
+      await deleteTheRecord(world, run, f);
       const { renameSync } = fs;
       const mock = t.mock.method(fs, 'renameSync', (from, to, ...rest) => {
         if (to === journalFile() && fs.readFileSync(from, 'utf8').includes('"closedBy"')) throw Object.assign(new Error(`EBUSY: resource busy or locked, '${to}'`), { code: 'EBUSY' });
@@ -2263,7 +2294,7 @@ test('uninstall\'s plan, after an uninstall stopped past the trusted-keys list\'
 });
 
 // A computer that joined the project another computer set up (step 3's join answer): registered,
-// with the app's keys, this computer's enrolment published in the profile, its own key trusted.
+// with the app's keys, its own private record opened, its own key trusted.
 function joiningWorld(host) {
   const world = makeWorld();
   const { computer, publicKey } = makeSigningKey();
@@ -2274,17 +2305,16 @@ function joiningWorld(host) {
   r.add(3, { kind: 'answer', target: 'step 3', before: null, after: { joined: REPO } });
   r.folder(3, path.join(world.folder, '.git'), { origin: host.product.url, branch: 'main', joined: REPO });
   writeText(path.join(world.folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  const profile = { remoteUrl: host.profile.url, host: 'github', repo: 'o/wheelhouse-profile', connection: { host: 'github', mode: 'quick', project: 'o/wheelhouse-profile' } };
-  r.file(3, path.join(wheelhouseHome(), 'profile.json'), `${JSON.stringify(profile, null, 2)}\n`);
   r.add(3, { kind: 'host', target: 'key github-app', before: null, after: { key: 'github-app', clientId: 'Iv1.x', app: 'wheelhouse' } });
   writeKey('github-app', { clientId: 'Iv1.x', installations: { o: 77 } });
-  r.add(3, { kind: 'host', target: 'github:o/wheelhouse-profile:enrolments/abcd1234.json', before: null, after: '{"computer":"abcd1234"}\n' });
+  r.folder(3, stateDir(SLUG), { record: true }, { before: null });
+  writeText(path.join(stateDir(SLUG), 'events', 'e1.json'), '{}');
   r.file(3, path.join(world.folder, '.claude', 'settings.json'), '{"committed":true}\n');
   r.key(7, path.join(world.folder, '.claude', 'settings.local.json'), ['statusLine'], { type: 'command' });
   return { world, run };
 }
 
-test('a joining computer\'s uninstall leaves the app\'s installation and the state branch to the other computers, withdraws only its own enrolment, and says so truly (ruling R124)', async () => {
+test('a joining computer\'s uninstall leaves the app\'s installation to the other computers, offers only its own record\'s card, and says so truly (ruling R124)', async () => {
   const host = await standIn();
   try {
     await withHome(async () => {
@@ -2302,9 +2332,8 @@ test('a joining computer\'s uninstall leaves the app\'s installation and the sta
       assert.equal(got.last, true);
       assert.equal(got.changes.some((c) => c.put === 'untick-repository'), false);
       assert.deepEqual(got.changes.filter((c) => c.put === 'delete-key').map((c) => c.shared), [true]);
-      assert.deepEqual(got.asks, [], 'no Delete card: the state branch is the other computers\' too');
-      assert.ok(got.keep.some((k) => k.what === `the ${STATE_BRANCH} branch of ${REPO} on GitHub` && /other computers/.test(k.why)));
-      assert.deepEqual(got.changes.filter((c) => c.put === 'remove-enrolment').map((c) => c.target), ['github:o/wheelhouse-profile:enrolments/abcd1234.json']);
+      // The record is this computer's own, so its card is offered; nothing on the host is.
+      assert.deepEqual(got.asks.map((a) => a.about), ['record']);
       assert.doesNotMatch(got.card.checks, /no longer guard/);
       assert.match(got.card.checks, /other computers keep the checks/);
       assert.match(got.card.why, /stays on GitHub for your other computers/);
@@ -2316,9 +2345,7 @@ test('a joining computer\'s uninstall leaves the app\'s installation and the sta
       assert.deepEqual(done.pages, [], 'no installation page: nothing to untick or uninstall');
       assert.ok(done.lines.includes('The GitHub app\'s keys are deleted from this computer. The app stays installed on GitHub, as your other computers use it.'));
       assert.equal(done.lines.some((l) => /click Uninstall|untick/.test(l)), false);
-      // Only this computer's enrolment is out of the profile; the state branch stays on the host.
-      assert.deepEqual(await filesOn(host.profile.url, 'wheelhouse-profile'), ['enrolments/ffff0000.json']);
-      assert.ok(await filesOn(host.product.url, STATE_BRANCH));
+      assert.ok(fs.existsSync(stateDir(SLUG)), 'the record stays without its card');
       assert.equal(readText(path.join(world.folder, '.claude', 'settings.json')), '{"committed":true}\n');
       assert.equal(readJournal().runs.find((x) => x.id === run.id).closedBy, 'uninstall');
     });
@@ -2337,7 +2364,7 @@ test('a first computer that trusts another computer\'s key treats the project as
     const alone = await plan(world);
     assert.equal(alone.shared, false);
     assert.ok(alone.changes.some((c) => c.put === 'pull-request'));
-    assert.deepEqual(alone.asks.map((a) => a.about), ['product', 'state', 'profile']);
+    assert.deepEqual(alone.asks.map((a) => a.about), ['product', 'record']);
     assert.match(alone.card.checks, /no longer guard/);
     enrol({ computer: 'ffff0000', publicKey: 'AAAA', enrolledAt: '2026-10-19T01:00:00.000Z' });
     const got = await plan(world);
@@ -2347,8 +2374,8 @@ test('a first computer that trusts another computer\'s key treats the project as
     assert.ok(got.keep.some((k) => k.what === 'setup\'s commit on main' && /other computers/.test(k.why)));
     assert.ok(got.keep.some((k) => /CLAUDE\.md$/.test(k.what) && /as committed/.test(k.why)));
     assert.ok(got.keep.some((k) => /superpowers/.test(k.what)));
-    assert.deepEqual(got.asks, []);
-    for (const repo of [REPO, 'o/wheelhouse-profile']) assert.ok(got.keep.some((k) => k.what === `${repo} on GitHub` && /other computers/.test(k.why)), repo);
+    assert.deepEqual(got.asks.map((a) => a.about), ['record'], 'only this computer\'s own record');
+    assert.ok(got.keep.some((k) => k.what === `${REPO} on GitHub` && /other computers/.test(k.why)));
     assert.deepEqual(got.changes.filter((c) => c.put === 'delete-key').map((c) => c.shared), [true]);
     // The trial's branch, this computer's own, is still cleared.
     assert.ok(got.changes.some((c) => c.put === 'delete-branch' && c.branch === 'wheelhouse-health-check'));

@@ -81,14 +81,14 @@ function worktree(files) {
 
 // A stand-in for the helper's client, answering from `prs` and `merges`, and keeping every call.
 // With `carried`, it answers /pr/carried with it (a function throws or answers in its place).
-function fakeClient({ prs = {}, merges = {}, onSync = () => {}, carried } = {}) {
+function fakeClient({ prs = {}, merges = {}, carried } = {}) {
   const calls = [];
   return {
     calls,
     ...(carried === undefined ? {} : {
       carried: async (args) => { calls.push(['carried', args]); return typeof carried === 'function' ? carried(args) : carried; },
     }),
-    state: { sync: async (args) => { calls.push(['sync', args]); onSync(); return { ok: true, pulled: true, unpushed: 0 }; } },
+    state: { sync: async (args) => { calls.push(['sync', args]); return { ok: true, pulled: 0, unpushed: 0 }; } },
     prState: async (args) => {
       calls.push(['prState', args]);
       const pr = prs[args.number];
@@ -163,9 +163,8 @@ test('observe reads state, feature files and PRs into one observation', () => wi
   });
   assert.deepEqual(first.prs, { 7: { work: 'login-page', head: HEAD, branch: 'login-page', ci: 'failure', mergeable: 'yes', review: 'clean' } });
   assert.deepEqual(first.testMerges, [{ a: 'login-page', b: 'search-box', clean: false, conflicts: ['app.js'] }]);
-  assert.deepEqual(names(client.calls), ['sync', 'prState', 'ci', 'testMerge']);
-  assert.deepEqual(client.calls[0][1], { project: P });
-  assert.deepEqual(client.calls[3][1], { project: P, a: 'login-page', b: 'feature/search' });
+  assert.deepEqual(names(client.calls), ['prState', 'ci', 'testMerge']);
+  assert.deepEqual(client.calls[2][1], { project: P, a: 'login-page', b: 'feature/search' });
 
   // What it gives core: a red CI, a question, an extra plan, a clash, and the lines skipped.
   let cursor = step({ seen: [], prev: null }, first).cursor;
@@ -185,19 +184,19 @@ test('observe reads state, feature files and PRs into one observation', () => wi
   assert.deepEqual(woke, ['work-ready', 'incident']);
   cursor = step(cursor, second).cursor;
 
-  // A minute on: state and PRs are due, and pull request 7 has merged, so it is sent as null.
+  // A minute on: the PRs are due, and pull request 7 has merged, so it is sent as null.
   client.calls.length = 0;
   const merged = fakeClient({ prs: { 7: { headSha: HEAD, headRef: 'login-page', mergeable: 'unknown', state: 'merged' } } });
   setStop({ by: 'prompt', now: at(60 * SEC) });
   const third = await observe({ project: P, client: merged, now: at(61 * SEC), prev: cursor.prev });
-  assert.deepEqual(names(merged.calls), ['sync', 'prState']);
+  assert.deepEqual(names(merged.calls), ['prState']);
   assert.deepEqual(third.prs, { 7: null });
   assert.deepEqual(third.events, [], 'events seen before are not sent again');
   assert.equal(third.stop, true);
 }));
 
 test('the intervals are the plan\'s, and a test merge waits for its own', () => withHome(async () => {
-  assert.deepEqual(INTERVALS, { state: 30000, features: 15000, prs: 60000, testMerge: 600000 });
+  assert.deepEqual(INTERVALS, { features: 15000, prs: 60000, testMerge: 600000 });
   const a = worktree({ brief: briefText('a') });
   const b = worktree({ brief: briefText('b') });
   record('feature', { work: 'a', step: 'building', worktree: a, branch: 'a' }, 0);
@@ -212,6 +211,19 @@ test('the intervals are the plan\'s, and a test merge waits for its own', () => 
     prev = step({ seen: [], prev }, obs).cursor.prev;
   }
   assert.deepEqual(tested, [0, 600, 1200]);
+}));
+
+test('an observation asks for no sync', () => withHome(async () => {
+  const wt = worktree({ brief: briefText('w') });
+  record('feature', { work: 'w', step: 'building', worktree: wt, branch: 'w' }, 0);
+  const client = fakeClient();
+  let prev = null;
+  for (const s of [0, 30, 60, 600]) {
+    const obs = await observe({ project: P, client, now: at(s * SEC), prev });
+    assert.equal('state' in obs.polled, false, 'the record is read as it is: nothing to poll');
+    prev = step({ seen: [], prev }, obs).cursor.prev;
+  }
+  assert.equal(names(client.calls).includes('sync'), false);
 }));
 
 test('a feature whose worktree is gone is reported, not thrown', () => withHome(async () => {
@@ -241,15 +253,11 @@ test('the recorded briefs are the latest two distinct ones over all the feature\
   assert.equal(obs.features.w.recordedBrief, h('2'));
   assert.equal(obs.features.w.recordedBefore, h('1'));
 
-  // A record pulled by the sync is read in the same observation, with the brief written beside it.
+  // A record kept since is read in the next observation, with the brief written beside it.
   const text = briefText('w', 'Changed');
-  const client = fakeClient({
-    onSync: () => {
-      record('feature', { work: 'w', step: 'building', worktree: wt, brief: briefHash(text) }, 20 * SEC);
-      fs.writeFileSync(featurePaths(wt).brief, text);
-    },
-  });
-  obs = await observe({ project: P, client, now: at(30 * SEC) });
+  record('feature', { work: 'w', step: 'building', worktree: wt, brief: briefHash(text) }, 20 * SEC);
+  fs.writeFileSync(featurePaths(wt).brief, text);
+  obs = await observe({ project: P, client: fakeClient(), now: at(30 * SEC) });
   assert.equal(obs.features.w.briefHash, briefHash(text));
   assert.equal(obs.features.w.recordedBrief, briefHash(text));
   assert.equal(obs.features.w.recordedBefore, h('2'));
@@ -515,5 +523,5 @@ test('intervals given are laid over the plan\'s', () => withHome(async () => {
     calls.push(names(client.calls).join(','));
     prev = step({ seen: [], prev }, obs).cursor.prev;
   }
-  assert.deepEqual(calls, ['sync,testMerge', 'testMerge', 'sync,testMerge']);
+  assert.deepEqual(calls, ['testMerge', 'testMerge', 'testMerge']);
 }));

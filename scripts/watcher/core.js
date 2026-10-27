@@ -24,7 +24,7 @@
 //                             and an earlier commit's CLEAN review did not carry over to it)
 //     testMerges: Array<{ a, b, clean, conflicts? }>,   a and b are works
 //     stop: boolean,
-//     polled?: { state?, prs?, testMerge? },   when each was last asked for (sources.js)
+//     polled?: { prs?, testMerge? },   when each was last asked for (sources.js)
 //     stateIds?: string[],    the state events' ids within the look-back (sources.js)
 //   }
 //

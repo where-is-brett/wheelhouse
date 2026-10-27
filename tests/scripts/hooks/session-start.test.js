@@ -1,7 +1,6 @@
 // tests/scripts/hooks/session-start.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,11 +8,10 @@ import { spawnSync, spawn as spawnChild } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
-  decide, toolSheetLines, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere,
+  decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
+  importedLine, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
-import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { recordRole } from '../../../scripts/lib/role.js';
 import { runningModel } from '../../../scripts/lib/front-desk-model.js';
@@ -31,7 +29,7 @@ import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lin
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
-import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { unattendedBuildsLine } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
@@ -59,18 +57,22 @@ function withHome(fn) {
 
 const VIEWS = { rulebook: [], levels: {}, waiting: [], unconfirmed: [], damaged: [] };
 
-function fake({ answersAfterStart = true, startsUp = true, views = VIEWS, sync = { ok: true } } = {}) {
-  const calls = { spawn: [], health: 0, sync: 0, views: 0, unref: 0, writes: [], records: [] };
+function fake({ answersAfterStart = true, startsUp = true, views = VIEWS } = {}) {
+  const calls = { spawn: [], health: 0, sync: 0, imports: [], views: 0, unref: 0, writes: [], records: [] };
   let started = false;
   return {
     calls,
     client: {
       health: async () => { calls.health += 1; return { ok: answersAfterStart && started }; },
       state: {
-        sync: async () => { calls.sync += 1; return sync; },
+        sync: async () => { calls.sync += 1; return { ok: true, pulled: 0, unpushed: 0 }; },
+        import: async (body) => { calls.imports.push(['state', body]); return { ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 }; },
         views: async () => { calls.views += 1; return { ok: true, views }; },
         write: async (body) => { calls.writes.push(body); return { ok: true }; },
         record: async (body) => { calls.records.push(body); return { ok: true }; },
+      },
+      profile: {
+        import: async (body) => { calls.imports.push(['profile', body]); return { ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 }; },
       },
     },
     spawn: (file, args, opts) => { calls.spawn.push({ file, args, opts }); started = startsUp; return { unref() { calls.unref += 1; }, on() {} }; },
@@ -97,7 +99,7 @@ test('a helper that answers is not started again', async () => {
     f.client.health = async () => ({ ok: true });
     await run(f);
     assert.equal(f.calls.spawn.length, 0);
-    assert.equal(f.calls.sync, 1);
+    assert.equal(f.calls.sync, 0, 'the record is read as it is: nothing to sync');
   });
 });
 
@@ -115,7 +117,6 @@ test('a helper that does not answer is started, detached and hidden', async () =
     assert.equal(f.calls.spawn[0].opts.cwd, os.homedir());
     assert.ok(fs.statSync(home).isDirectory());
     assert.equal(f.calls.unref, 1);
-    assert.equal(f.calls.sync, 1);
     assert.doesNotMatch(text(out), /isn't running/);
   });
 });
@@ -261,19 +262,10 @@ test('when the helper cannot start, the session is told and carries on', async (
     const f = fake({ startsUp: false });
     const out = await run(f);
     assert.match(text(out), new RegExp(NO_HELPER));
-    assert.equal(f.calls.sync, 0);
+    assert.deepEqual(f.calls.imports, []);
     const thrower = fake();
     thrower.spawn = () => { throw new Error('no'); };
     assert.match(text(await run(thrower)), new RegExp(NO_HELPER));
-  });
-});
-
-test('a sync that fails is noted and the views are still used', async () => {
-  await withHome(async () => {
-    const f = fake({ sync: { ok: false, refused: 'x' }, views: { ...VIEWS, waiting: [{ id: 'c1', data: { title: 'T' } }] } });
-    const t = text(await run(f));
-    assert.match(t, new RegExp(NOT_SYNCED));
-    assert.match(t, /c1: T/);
   });
 });
 
@@ -490,15 +482,15 @@ test('an object value shows as JSON', async () => {
   });
 });
 
-test('a sync that never answers is cut off by the budget', async () => {
+test('an import that never answers is cut off by the budget, and says nothing', async () => {
   await withHome(async () => {
     const f = fake();
     f.client.health = async () => ({ ok: true });
-    f.client.state.sync = () => new Promise(() => {});
+    f.client.state.import = () => new Promise(() => {});
+    f.client.profile.import = () => new Promise(() => {});
     const ran = await beforeTimer(() => run(f, { totalMs: 300 }), 2000);
     assert.equal(ran.inTime, true, 'cut off');
-    const t = text(ran.value);
-    assert.match(t, new RegExp(NOT_SYNCED));
+    assert.doesNotMatch(text(ran.value), /moved/);
   });
 });
 
@@ -567,7 +559,7 @@ test('session-start exits in time with its context when the helper never answers
     assert.equal(code, 0);
     // Its limits count from when Node has started it, which a loaded computer can make slow.
     assert.ok(Date.now() - began - boot < 10000, `took ${Date.now() - began} ms, ${boot} ms of it to start Node`);
-    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, new RegExp(NOT_SYNCED));
+    assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, new RegExp(NO_LOCK));
     assert.ok(fs.existsSync(path.join(home, 'usage', 'sessions', 's1.json')), 'the session\'s part is recorded');
   } finally {
     // The receiver is stopped once it has written its pid (a slow start on Windows takes seconds), and
@@ -1592,108 +1584,81 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
   });
 });
 
-// ---- Another of the director's computers (rulings R80, R81) ----
+// ---- No trust cards (rulings R80, R81 retired), and the import from v0.1.x (design section 24.5) ----
 
-// A public key made here, standing for another computer's.
-const someKey = () => crypto.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
-// The trust cards a reload hands over, as AskUserQuestion's questions.
-const trustCards = (out) => text(out).split('\n').filter((l) => l.startsWith(TRUST_ASK)).map((l) => JSON.parse(l.slice(TRUST_ASK.length)));
-const ADDED = '2026-10-19T22:30:00.000Z';
 const AT = Date.parse('2026-10-20T03:00:00.000Z');
 
-test('the front desk is handed a trust card for each computer the profile holds that this one doesn\'t trust, the helper asked at most once an hour', async () => {
-  await withHome(async (home) => {
-    const own = makeSigningKey();
-    enrol({ ...own, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    const other = { computer: '0a1b2c3d', publicKey: someKey(), at: ADDED };
-    const known = { computer: '1b2c3d4e', publicKey: someKey() };
-    enrol({ ...known, enrolledAt: '2026-10-19T00:00:00.000Z' });
-    let enrolments = [other, { ...known, publicKey: someKey(), at: ADDED }, { ...own, at: ADDED }];
+test('the session start hands no trust card and asks for no enrolments', async () => {
+  await withHome(async () => {
     let asked = 0;
     const f = fake();
-    f.client.profile = { enrolments: async () => { asked += 1; return { ok: true, fetched: true, enrolments }; } };
-    const at = (minutes) => ({ now: () => new Date(AT + minutes * 60000) });
-
-    const out = await run(f, at(0));
-    assert.equal(asked, 1);
-    const [card, ...more] = trustCards(out);
-    assert.deepEqual(more, [], 'one card: this computer and the one it trusts get none');
-    assert.equal(setLineOf(card.question), trustLine(other.computer, ADDED, fingerprint(other.publicKey)));
-    assert.deepEqual(cardProblems(card.question), [], 'the card check lets it through');
-    assert.deepEqual(card.options.map((o) => o.label), ['Trust it', 'Not now']);
-    // A computer it trusts whose enrolment holds another key: a line, never a card.
-    assert.ok(text(out).split('\n').includes(differentKeyLine(known.computer)));
-    assert.equal(differentKeyLine(known.computer), 'A different key claims your computer 1b2c3d4e; nothing was trusted.');
-    // When it asked is kept beside weekly.json.
-    assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'jobs', 'enrolments.json'), 'utf8')).at, new Date(AT).toISOString());
-
-    // Within the hour the helper isn't asked again: the card comes from what the last fetch found.
-    assert.equal(trustCards(await run(f, at(59))).length, 1);
-    assert.equal(asked, 1);
-    // An hour on it is asked again; an ask with no answer (a refusal, or none in time) keeps what
-    // the last fetch found and its time, so the next start asks again (ruling R107).
-    f.client.profile.enrolments = async () => { asked += 1; return { ok: false, refused: 'the host helper did not answer in time' }; };
-    assert.equal(trustCards(await run(f, at(60))).length, 1);
-    assert.equal(asked, 2);
-    assert.equal(trustCards(await run(f, at(61))).length, 1);
-    assert.equal(asked, 3);
-    // A fetch slower than what is left of the budget: asked again at the next start too.
-    f.client.profile.enrolments = () => { asked += 1; return new Promise(() => {}); };
-    assert.equal(trustCards(await run(f, { ...at(62), totalMs: 300 })).length, 1);
-    assert.equal(asked, 4);
-    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: false, enrolments }; };
-    assert.equal(trustCards(await run(f, at(63))).length, 1);
-    assert.equal(asked, 5);
-    // Once an answer has arrived (here the helper's fetch failed, and it said so), not again for an hour.
-    assert.equal(trustCards(await run(f, at(90))).length, 1);
-    assert.equal(asked, 5);
-    // Each card handed over has its key's full hash kept, which a click must match.
-    assert.deepEqual(readShownTrust(), { [setLineOf(card.question)]: keyHash(other.publicKey) });
-
-    // Once trusted, no card.
-    enrol({ computer: other.computer, publicKey: other.publicKey, enrolledAt: new Date(AT).toISOString() });
-    assert.deepEqual(trustCards(await run(f, at(91))), []);
-
-    // At most MAX_TRUST_CARDS a time, and a line saying more are waiting.
-    enrolments = ['2a000001', '2a000002', '2a000003', '2a000004'].map((computer) => ({ computer, publicKey: someKey(), at: ADDED }));
-    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: true, enrolments }; };
-    const many = await run(f, at(200));
-    assert.equal(trustCards(many).length, MAX_TRUST_CARDS);
-    assert.ok(text(many).includes(moreTrust(4 - MAX_TRUST_CARDS)));
-  });
-});
-
-test('only the front desk is handed trust cards, and only once step 3 is done in a folder being set up', async () => {
-  await withHome(async () => {
-    const own = makeSigningKey();
-    enrol({ ...own, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    let asked = 0;
-    const f = fake();
-    f.client.profile = { enrolments: async () => { asked += 1; return { ok: true, fetched: true, enrolments: [{ computer: '0a1b2c3d', publicKey: someKey(), at: ADDED }] }; } };
-    // The foreman's session: not asked, no card.
-    recordRole('s-foreman', 'foreman');
-    assert.deepEqual(trustCards(await run(f, { now: () => new Date(AT) }, { session_id: 's-foreman' })), []);
-    assert.equal(asked, 0);
-    // A folder being set up: not before step 3 is done; then the card, for setup's session to ask.
-    const folder = fs.realpathSync.native(tempFolder('wh-trust-setup '));
-    const setupRun = startRun({ folder, now: () => new Date(AT) });
-    const g = fake();
-    g.client.profile = f.client.profile;
-    assert.deepEqual(trustCards(await setupStart(g, folder, { now: () => new Date(AT) })), []);
-    assert.equal(asked, 0);
-    markStep(setupRun.id, 3, 'doneAt', { now: () => new Date(AT) });
-    assert.equal(trustCards(await setupStart(g, folder, { now: () => new Date(AT) })).length, 1);
-    assert.equal(asked, 1);
-  });
-});
-
-test('a helper that answers nothing about enrolments costs the session start nothing and adds no line', async () => {
-  await withHome(async () => {
-    const f = fake();
-    f.client.profile = { enrolments: async () => { throw new Error('boom'); } };
+    f.client.health = async () => ({ ok: true });
+    f.client.profile.enrolments = async () => { asked += 1; return { ok: true, fetched: true, enrolments: [{ computer: '0a1b2c3d', publicKey: 'b3RoZXI=', at: '2026-10-19T22:30:00.000Z' }] }; };
     const out = await run(f, { now: () => new Date(AT) });
-    assert.deepEqual(trustCards(out), []);
-    assert.doesNotMatch(text(out), /different key|trusted/);
+    assert.equal(asked, 0);
+    assert.doesNotMatch(text(out), /trusted|Trust it/);
+    // Nor in a folder being set up, once step 3 is done.
+    const folder = fs.realpathSync.native(tempFolder('wh-no-trust '));
+    const setupRun = startRun({ folder, now: () => new Date(AT) });
+    for (const n of [1, 2, 3]) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(AT) });
+    const g = fake();
+    g.client.profile.enrolments = f.client.profile.enrolments;
+    assert.doesNotMatch(text(await setupStart(g, folder, { now: () => new Date(AT) })), /trusted|Trust it/);
+    assert.equal(asked, 0);
+  });
+});
+
+test('the session start imports once and says so', async () => {
+  await withHome(async () => {
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    let state = { ok: true, done: false, at: new Date(AT).toISOString(), imported: 12, held: 0, unsigned: 0, unreadable: 0 };
+    let profile = { ok: true, done: false, at: new Date(AT).toISOString(), imported: 3, held: 0, unsigned: 2, unreadable: 0 };
+    const order = [];
+    f.client.state.import = async (body) => { f.calls.imports.push(['state', body]); order.push('import'); return state; };
+    f.client.profile.import = async (body) => { f.calls.imports.push(['profile', body]); order.push('import'); return profile; };
+    const views = f.client.state.views;
+    f.client.state.views = async (body) => { order.push('views'); return views(body); };
+    const out = await run(f);
+    assert.deepEqual(f.calls.imports, [['state', { project: P }], ['profile', {}]]);
+    // Before the views are read, so the briefing holds what was imported.
+    assert.deepEqual(order, ['import', 'import', 'views']);
+    const line = importedLine({ imported: 15, unsigned: 2 });
+    assert.equal(line, 'Wheelhouse moved this project\'s records to this computer: 15 events. Nothing was deleted; the old copies stay until you choose. 2 signed records couldn\'t be checked and were left out.');
+    assert.ok(text(out).split('\n').includes(line));
+    assert.equal(importedLine({ imported: 1, unsigned: 0 }), 'Wheelhouse moved this project\'s records to this computer: 1 event. Nothing was deleted; the old copies stay until you choose.');
+    assert.match(importedLine({ imported: 4, unsigned: 1 }), /1 signed record couldn't be checked and was left out\.$/);
+
+    // Once the mark is kept, the helper answers done: nothing is said again.
+    state = { ...state, done: true };
+    profile = { ...profile, done: true };
+    assert.doesNotMatch(text(await run(f)), /moved/);
+    // Nothing to import (no old folder), a refusal, or a throw: no line.
+    for (const answer of [{ ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 }, { ok: false, refused: 'STOP is on' }]) {
+      state = answer;
+      profile = answer;
+      assert.doesNotMatch(text(await run(f)), /moved/);
+    }
+    f.client.state.import = async () => { throw new Error('boom'); };
+    f.client.profile.import = async () => { throw new Error('boom'); };
+    assert.doesNotMatch(text(await run(f)), /moved/);
+  });
+});
+
+test('a folder being set up imports the settings once step 3 is done, and not before', async () => {
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-import-setup '));
+    const setupRun = startRun({ folder, now: () => new Date(AT) });
+    const f = fake();
+    f.client.health = async () => ({ ok: true });
+    f.client.profile.import = async (body) => { f.calls.imports.push(['profile', body]); return { ok: true, done: false, imported: 5, held: 0, unsigned: 0, unreadable: 0 }; };
+    assert.doesNotMatch(text(await setupStart(f, folder, { now: () => new Date(AT) })), /moved/);
+    assert.deepEqual(f.calls.imports, []);
+    for (const n of [1, 2, 3]) markStep(setupRun.id, n, 'doneAt', { now: () => new Date(AT) });
+    const out = await setupStart(f, folder, { now: () => new Date(AT) });
+    assert.deepEqual(f.calls.imports, [['profile', {}]]);
+    assert.ok(text(out).split('\n').includes(importedLine({ imported: 5, unsigned: 0, what: 'your settings' })));
+    assert.match(importedLine({ imported: 5, unsigned: 0, what: 'your settings' }), /^Wheelhouse moved your settings to this computer: 5 events\./);
   });
 });
 

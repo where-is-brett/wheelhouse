@@ -20,19 +20,27 @@
 // the uninstall of the last project on this computer (no other project registered, and no other
 // folder with a setup run not closed, ruling R114), and then from every run in the journal, since
 // an earlier project's uninstall left them: steps 2, 6 and 9 (but for what they wrote inside the
-// project's folder, which is the project's); the profile's clone and profile.json;
-// the profile repository; the app's keys and the profile's own GitLab key; the own app recorded in
-// the profile; this computer's enrolment; and, recorded nowhere, the trusted-keys list and the
+// project's folder, which is the project's); the app's keys and a v0.1.x profile's own GitLab key;
+// the own app recorded in the director's settings on this computer; and, recorded nowhere, the
+// trusted-keys list and the
 // signing key beside it, removed last of all (ruling R123), after every change that can stop
 // uninstall, so an uninstall cut short can still be clicked again. The list goes first (ruling
 // R128): one that could not be removed leaves the key it trusts. Everything else of the last phase
 // (this computer's id, the emptied folders) goes after the list and before the key, and from the
 // list's removal on nothing stops uninstall but the run's own close: what can't be removed there is
-// left and named (ruling R142). Wheelhouse's own folders and files (the tools it fetched, the profile's clone and
-// profile.json, setup's clicks, answers and the like, the trust clicks and the record of the
-// profile's enrolments last fetched, the Windows installer's temporary folder, and the project's own
-// folder under projects/) are removed whole, never named as changed since setup. journal.json, and
-// uninstall's own progress record, are kept.
+// left and named (ruling R142). Wheelhouse's own folders and files (the tools it fetched, setup's
+// clicks, answers and the like, the trust clicks and the record of the profile's enrolments last
+// fetched, the Windows installer's temporary folder, and the project's own folder under projects/)
+// are removed whole, never named as changed since setup. journal.json, and uninstall's own progress
+// record, are kept.
+//
+// What stays without a card (design section 24.5): the director's settings on this computer
+// (~/.wheelhouse/settings/), and what Wheelhouse v0.1.x made: its profile clone and profile.json, the
+// profile repository and this computer's enrolment in it, and the project's state clone
+// (projects/<project>/state/). Each is named as kept. The project's private record
+// (projects/<project>/record/) stays too, unless the director picks Delete it on its own level 4
+// card, recommended Keep: like a deleted transcript, it can't come back. The project's folder under
+// projects/ is otherwise removed, the record and the old state clone left in it.
 //
 // The setup commit counts as on the host only when the journal or the folder shows it went up:
 // step 7 finished, or recorded protection after the push, or the folder's copy of the
@@ -41,10 +49,10 @@
 // and pins to be put back here, and the commit named as kept in the folder.
 //
 // A shared project (ruling R124): this computer joined a project another set up, or it trusts
-// another computer's key. Then the project and its committed files, the state branch, the profile
-// and the app's installation are other computers' too: the files stay as committed (no pull
-// request), no Delete card is offered for what is on the host, the app's installation is left as it
-// is (no untick, no Uninstall), and only this computer's own enrolment is withdrawn.
+// another computer's key. Then the project and its committed files and the app's installation are
+// other computers' too: the files stay as committed (no pull request), no Delete card is offered for
+// what is on the host, and the app's installation is left as it is (no untick, no Uninstall). The
+// private record is this computer's own, so its card is offered as on any project.
 //
 // The project's .wheelhouse/ folder (ruling R131): the front desk's and the foreman's files, which
 // setup did not make, stay with the project, and uninstall never touches them. While the folder is
@@ -77,8 +85,8 @@
 //     keep: Array<{ what, why, brief?, ids? }>,   left as they are; each changed since setup is
 //                              named on the card, by `brief` where it is given
 //     asks: Array<{ id, about, phase: 'kept', put, target, ids, card }>,   level 4 cards (a question's
-//                              input), recommended Keep: the product's repository setup made, the
-//                              state branch, and on the last project the profile repository
+//                              input), recommended Keep: the product's repository setup made, and
+//                              the project's private record on this computer
 //     done: Array<{ ids, why }>,   changes with nothing left to put back (put back already, closed
 //                              by the health check, not made by setup), marked put true as they are
 //     card,                    uninstall's own card input (kind 'uninstall', composed by Task 15c)
@@ -102,14 +110,15 @@
 //                                            key in the project's settings, as a json-key change)
 //       'unset-env' { target, where }        only while it still holds what setup set
 //       'put-back-own-app' { change }        own-app.js's putBackOwnApp
-//       'remove-enrolment' { target }        this computer's key off the profile, with the sign-in
 //       'delete-key' { key, shared? }        the keys deleted; for github-app, the installation's
 //                                            page given, to uninstall the app there, unless shared
 //       'untick-repository' { key, repo }    while another project stays, on a project not shared:
 //                                            the installation's settings page given, to untick
 //                                            this repository
 //       'revoke-key' { key, pasted, line }   a GitLab key revoked through the API, then deleted
-//       'remove' { target }                  a file, or a folder whole, of Wheelhouse's own
+//       'remove' { target, except? }         a file, or a folder whole, of Wheelhouse's own; with
+//                                            `except`, the folder but for those names in it, and
+//                                            the folder itself only once nothing else is left
 //       'remove-empty' { target }            a folder of Wheelhouse's own, only once it is empty
 //       'remove-plugin' { line }             the line the director follows in Claude Desktop
 //       'remove-login-start' { kind, target } the sign-in start the helper's install made, while it holds
@@ -121,7 +130,9 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
-import { wheelhouseHome, jobFolder, keysDir, profileDir, projectsDir, computerId } from '../lib/paths.js';
+import {
+  wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId,
+} from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
 import { loginStartRecord } from '../lib/login-start.js';
@@ -129,8 +140,6 @@ import { listHash } from '../lib/setup-writes.js';
 import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, recordsDir, writeWhole } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
-import { trustDir, seenFile } from '../lib/trust-clicks.js';
-import { STATE_BRANCH } from '../state/record.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
 import { CLICK_FRESH_MS, RETENTION_DAYS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';
@@ -140,7 +149,6 @@ import { readProfileViews } from '../profile/store.js';
 import { readJournal, heldNow } from './journal.js';
 import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
-import { PROFILE_REPO } from './host.js';
 import { SETUP_FILES, WHEELHOUSE_LINE, GITIGNORE, ENV_STAYS_LINES } from './project-files.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
@@ -161,8 +169,19 @@ export const WHAT_CHARS = 500;
 export const PLUGIN_LINE = 'Last, remove the Wheelhouse plugin from this project in Claude Desktop';
 // Said on the card, as step 6's card says (ruling R64).
 const TRANSCRIPTS = `Transcripts removed by the ${RETENTION_DAYS}-day retention can't come back.`;
-// The level 4 cards' order: the product's repository, the state branch, the profile.
-const ASK_ORDER = ['product', 'state', 'profile'];
+// The level 4 cards' order: the product's repository, the project's private record.
+const ASK_ORDER = ['product', 'record'];
+// The repository Wheelhouse v0.1.x kept the director's profile in, on their own account.
+const OLD_PROFILE_REPO = 'wheelhouse-profile';
+// Why what Wheelhouse v0.1.x made stays (design section 24.5): nothing of it goes without a card.
+export const OLD_STAYS = 'Wheelhouse v0.1.x made it, and it stays as it is';
+// The names in the project's folder under projects/ that its removal leaves: its private record,
+// which goes only on its own card's Delete it, and v0.1.x's state clone.
+const RECORD_NAMES = ['record', 'state'];
+// What the retired Trust it card left on this computer (v0.1.x): its clicks, and the record of the
+// profile's enrolments last fetched. Wheelhouse's own, removed on the last uninstall.
+export const trustDir = () => path.join(wheelhouseHome(), 'trust');
+export const seenFile = () => path.join(jobsDir(), 'enrolments.json');
 export const HOSTS = { github: 'GitHub', gitlab: 'GitLab' };
 const KEEP_LABEL = 'Keep it';
 // Why a commit setup made in the folder, never pushed, is kept: apply looks for it on the host first.
@@ -220,12 +239,12 @@ function computerWide(c, run) {
   if (typeof run?.folder === 'string' && path.isAbsolute(c.target) && within(realOr(run.folder), realOr(c.target))) return false;
   if (COMPUTER_STEPS.includes(c.step)) return true;
   if (c.kind === 'file') return samePath(c.target, profileFile());
-  if (c.kind === 'folder') return samePath(c.target, profileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target);
+  if (c.kind === 'folder') return samePath(c.target, oldProfileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target);
   if (c.kind !== 'host') return false;
   if (c.target === 'key github-app' || c.target === PROFILE_TARGET) return true;
-  if (/^key gitlab-project-\d+$/.test(c.target)) return repoName(c.after?.project) === PROFILE_REPO;
+  if (/^key gitlab-project-\d+$/.test(c.target)) return repoName(c.after?.project) === OLD_PROFILE_REPO;
   const h = hostTarget(c.target);
-  return h !== null && (h.file === null ? repoName(h.repo) === PROFILE_REPO : h.file.startsWith('enrolments/'));
+  return h !== null && (h.file === null ? repoName(h.repo) === OLD_PROFILE_REPO : h.file.startsWith('enrolments/'));
 }
 
 // A path for the card, with the home folder as ~.
@@ -660,6 +679,8 @@ export async function uninstallPlan({
   const keep = [];
   const asks = [];
   const done = [];
+  // The journal's changes for the project's private record, which its own card deals with.
+  const recordIds = [];
   const removals = new Map(); // path -> { phase, ids, seq }
   const add = (phase, at, entry) => items.push({ phase, seq: at, entry: { phase, ...entry } });
   const kept = (what, why, list, short) => keep.push({ what, why, ...(short && short !== what ? { brief: short } : {}), ...(list ? { ids: list } : {}) });
@@ -727,7 +748,7 @@ export async function uninstallPlan({
       case 'json-key':
       case 'file': {
         if (samePath(c.target, profileFile())) {
-          remove(c.target, 'last', list, at);
+          kept(shown(c.target, userHome), OLD_STAYS, list);
           break;
         }
         if (slug !== null && within(projectFolder(slug), c.target)) {
@@ -766,8 +787,11 @@ export async function uninstallPlan({
       case 'folder': {
         const one = asOne(group);
         if (path.basename(c.target) === '.git') kept(shown(c.target, userHome), 'the folder\'s git history is kept', list);
+        else if (slug !== null && samePath(c.target, stateDir(slug))) recordIds.push(...list);
+        else if (slug !== null && samePath(c.target, oldStateDir(slug))) kept(shown(c.target, userHome), OLD_STAYS, list);
         else if (slug !== null && within(projectFolder(slug), c.target)) remove(projectFolder(slug), 'last', list, at);
-        else if (samePath(c.target, profileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target) || typeof c.after?.installer === 'string') remove(c.target, 'last', list, at);
+        else if (samePath(c.target, oldProfileDir())) kept(shown(c.target, userHome), OLD_STAYS, list);
+        else if (within(path.join(wheelhouseHome(), 'tools'), c.target) || typeof c.after?.installer === 'string') remove(c.target, 'last', list, at);
         else if (one.before !== null) settled(list, 'not made by setup');
         else {
           // Gone is put back already; a folder that can't be read is kept, with why.
@@ -793,7 +817,7 @@ export async function uninstallPlan({
           const views = readProfileViews();
           const current = views === null ? undefined : acceptedOwnApp(views);
           if (current === undefined || same(current, one.after) || same(current, one.before)) add('computer', at, { put: 'put-back-own-app', change: one, ids: list });
-          else kept('your own GitHub App in your profile', 'changed since setup', list, 'own-github-app');
+          else kept('your own GitHub App in your settings on this computer', 'changed since setup', list, 'own-github-app');
         } else if (c.target === 'key github-app') add('keys', at, { put: 'delete-key', key: 'github-app', before: one.before, ids: list, ...(shared ? { shared: true } : {}) });
         else if (/^key gitlab-project-\d+$/.test(c.target)) {
           const pasted = c.after?.kind === 'pasted-token';
@@ -801,19 +825,13 @@ export async function uninstallPlan({
             put: 'revoke-key', key: c.target.slice('key '.length), pasted, before: one.before, ids: list,
             line: pasted ? 'The GitLab token you pasted is revoked, which stops it everywhere it is used' : 'The project\'s GitLab key is revoked, then deleted',
           });
-        } else if (h !== null && h.file?.startsWith('enrolments/')) add('computer', at, { put: 'remove-enrolment', target: c.target, ids: list });
+        } else if (h !== null && h.file?.startsWith('enrolments/')) kept(`this computer's key in ${h.repo} on ${HOSTS[h.host]}`, OLD_STAYS, list);
+        else if (h !== null && h.file === null && repoName(h.repo) === OLD_PROFILE_REPO) kept(`${h.repo} on ${HOSTS[h.host]}, your profile`, OLD_STAYS, list);
         else if (h !== null && h.file === null && one.after?.made === true && shared) kept(`${h.repo} on ${HOSTS[h.host]}`, OTHERS_USE, list);
         else if (h !== null && h.file === null && one.after?.made === true) {
-          const profile = repoName(h.repo) === PROFILE_REPO;
           asks.push({
-            id: askId(c.target), about: profile ? 'profile' : 'product', phase: 'kept', put: 'delete-repository', target: c.target, ids: list,
-            card: deleteCard(profile ? {
-              what: `Delete ${h.repo} on ${HOSTS[h.host]}, your Wheelhouse profile, which setup made?`,
-              why: 'It holds your profile and backups for every project and computer, and a deleted repository can\'t be brought back, so it is your call.',
-              keeps: `${h.repo} stays on ${HOSTS[h.host]}, for any project you set up again.`,
-              deletes: `${HOSTS[h.host]}'s settings page for it opens, where you click Delete yourself.`,
-              because: 'your profile and backups can\'t be brought back once deleted',
-            } : {
+            id: askId(c.target), about: 'product', phase: 'kept', put: 'delete-repository', target: c.target, ids: list,
+            card: deleteCard({
               what: `Delete ${h.repo} on ${HOSTS[h.host]}, the repository setup made for this product?`,
               why: 'It holds your product\'s code and history, and a deleted repository can\'t be brought back, so it is your call.',
               keeps: `${h.repo} and its history stay on ${HOSTS[h.host]}.`,
@@ -928,36 +946,41 @@ export async function uninstallPlan({
     ...[keysDir()].filter(exists).map(asRemove('remove-empty')),
   ] : [];
   if (last) {
-    for (const p of [...HOST_TOOLS.map(toolFolder), profileDir(), profileFile()]) if (exists(p)) remove(p, 'last');
+    for (const p of HOST_TOOLS.map(toolFolder)) if (exists(p)) remove(p, 'last');
+    if (exists(profileDir())) kept(shown(profileDir(), userHome), 'your settings on this computer: yours, so they stay');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
     // and clicking it write them, and the list must be the same before and after.
     // The trust clicks and the record of the profile's enrolments last fetched (the session start's)
     // too, Wheelhouse's own (ruling R86).
     for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
-    kept('Wheelhouse\'s helper, telemetry, tools, profile and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
+    kept('Wheelhouse\'s helper, telemetry, tools, your settings and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
   // The project's folder first in its phase, as the newest, then the others in their order.
   const projectKey = slug === null ? null : resolved(projectFolder(slug));
-  for (const [key, r] of removals) add(r.phase, key === projectKey ? Number.MAX_SAFE_INTEGER : r.seq, { put: 'remove', target: r.target, ...(r.ids.length > 0 ? { ids: r.ids } : {}) });
-
-  // The state branch, while the project is registered, and on the last project the profile, each
-  // asked about on its own card; neither is deleted otherwise (ruling R92). On a shared project the
-  // other computers use the state branch: it is not offered (ruling R124).
-  if (own !== null && shared) kept(`the ${STATE_BRANCH} branch of ${own.record.repo} on ${HOSTS[own.record.host]}`, OTHERS_USE);
-  if (own !== null && !shared) {
-    const host = own.record.host;
-    asks.push({
-      id: askId(`${host}:${own.record.repo}:${STATE_BRANCH}`), about: 'state', phase: 'kept', put: 'delete-branch', target: `${host}:${own.record.repo}:${STATE_BRANCH}`, ids: [],
-      card: deleteCard({
-        what: `Delete the ${STATE_BRANCH} branch of ${own.record.repo} on ${HOSTS[host]}, where this project's decisions and records are kept?`,
-        why: 'Your other computers may use it too, and once deleted its records can\'t be brought back, so it is your call.',
-        keeps: 'The branch and its records stay, for this project set up again or on another computer.',
-        deletes: 'Wheelhouse deletes the branch, with your own sign-in.',
-        because: 'the project\'s records can\'t be brought back once deleted',
-      }),
+  for (const [key, r] of removals) {
+    add(r.phase, key === projectKey ? Number.MAX_SAFE_INTEGER : r.seq, {
+      put: 'remove', target: r.target, ...(key === projectKey ? { except: RECORD_NAMES } : {}), ...(r.ids.length > 0 ? { ids: r.ids } : {}),
     });
   }
+
+  // The project's private record on this computer: kept unless its own card says delete, as a
+  // deleted transcript can't come back (design section 24.3, item 5). v0.1.x's state clone beside it
+  // stays (24.5). The state and lock branches on the host are left as they are: nothing of
+  // Wheelhouse's is pushed there now, and v0.1.x's go only on the migration's own cards.
+  if (slug !== null && exists(stateDir(slug))) {
+    asks.push({
+      id: askId(`record:${slug}`), about: 'record', phase: 'kept', put: 'delete-record', target: stateDir(slug), ids: recordIds,
+      card: deleteCard({
+        what: `Delete this project's private record on this computer, ${shown(stateDir(slug), userHome)}: your words, cards and clicks for ${own?.record?.repo ?? slug}?`,
+        why: 'It is kept only on this computer, like your chats with Claude, and once deleted it can\'t be brought back, so it is your call.',
+        keeps: 'The record stays on this computer, for this project set up again.',
+        deletes: 'Wheelhouse deletes the record from this computer.',
+        because: 'a deleted record can\'t be brought back',
+      }),
+    });
+  } else settled(recordIds, 'already gone');
+  if (slug !== null && exists(oldStateDir(slug))) kept(shown(oldStateDir(slug), userHome), OLD_STAYS);
   asks.sort((a, b) => ASK_ORDER.indexOf(a.about) - ASK_ORDER.indexOf(b.about));
 
   // In order: the phases, newest first within each; Stop and the line for Desktop around them, and
@@ -1122,12 +1145,11 @@ function entryLine(e, userHome) {
     case 'delete-branch': return `delete the trial branch ${e.branch}`;
     case 'reverse': return `put back ${describe(e.change, userHome)}`;
     case 'unset-env': return `take ${e.target} out of your account's settings`;
-    case 'put-back-own-app': return 'put back your own GitHub App in your profile';
-    case 'remove-enrolment': return 'take this computer\'s key out of your profile';
+    case 'put-back-own-app': return 'put back your own GitHub App in your settings on this computer';
     case 'delete-key': return e.shared ? 'delete the GitHub app\'s keys from this computer; the app stays installed for your other computers' : 'delete the GitHub app\'s keys, and give its installation page';
     case 'untick-repository': return `give the app's installation page, to untick ${e.repo}`;
     case 'revoke-key': return e.line;
-    case 'remove': return `remove ${shown(e.target, userHome)}`;
+    case 'remove': return e.except ? `remove ${shown(e.target, userHome)}, but for ${e.except.join(' and ')} in it` : `remove ${shown(e.target, userHome)}`;
     case 'remove-empty': return `remove ${shown(e.target, userHome)} once it is empty`;
     case 'remove-plugin': return e.line;
     case 'remove-login-start': return e.kind === 'run-entry'

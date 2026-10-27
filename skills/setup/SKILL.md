@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Use when the session start says "This folder isn't set up for Wheelhouse yet", that setup is part-way through, that setup's journal couldn't be read, that Wheelhouse was removed from this folder, or hands over a trust card; and when the director asks to set up Wheelhouse, carry on with setup, or remove Wheelhouse from a project.
+description: Use when the session start says "This folder isn't set up for Wheelhouse yet", that setup is part-way through, that setup's journal couldn't be read, or that Wheelhouse was removed from this folder; and when the director asks to set up Wheelhouse, carry on with setup, or remove Wheelhouse from a project.
 ---
 <!-- skills/setup/SKILL.md -->
 
@@ -104,7 +104,7 @@ Never skip a trial or the card, change a line, mark anything passed or switch an
 
 ## A computer joining a product
 
-In an empty folder, step 3 asks whether this is a new product or one from the director's other computer, and takes a typed owner/name. When the step did not finish because no repository, or several, held Wheelhouse's records, say so plainly and ask the join card the plan now gives. Explain owner/name as the two parts after github.com/ or gitlab.com/ in the project's address, such as jo-smith/tide-tables. Never look it up yourself.
+In an empty folder, step 3 asks whether this is a new product or one from the director's other computer, and takes a typed owner/name. When the step did not finish because no repository, or several, was set up with Wheelhouse, say so plainly and ask the join card the plan now gives. When it says the product is launched, so Quick is refused, say so plainly and ask step 3's card again for a narrow way. This computer keeps its own record of the project and its own settings; nothing of the other computer's record comes with the join. Explain owner/name as the two parts after github.com/ or gitlab.com/ in the project's address, such as jo-smith/tide-tables. Never look it up yourself.
 
 ## Step 7 and the director's own changes
 
@@ -116,8 +116,7 @@ A GitLab token, a password or a key goes only into the box the director's comput
 
 ## Lines the session start gives
 
-- **"Another of the director's computers asks to be trusted here"**, with a card: ask that card exactly as given, as a question of its own. Only its **Trust it** click trusts a computer.
-- **"A different key claims your computer <id>; nothing was trusted."**: tell the director just that, plainly. It is never a card, and nothing you do can trust it.
+- **"Wheelhouse moved your settings to this computer"**: tell the director that in one plain line, with what it says was left out. Nothing was deleted; offer nothing to do about the old copies.
 - **"Wheelhouse was removed from this folder."**: tell the director plainly that no agents work here now, and that what is left is theirs to remove: the Wheelhouse plugin, from this project in Claude Desktop. Offer to set Wheelhouse up here again; run `resume` only if they say yes.
 - **"The foreman is held back because setup's journal couldn't be read"**, or **"Setup's journal couldn't be read"**: run `status` and tell the director in plain words what it says. Only when it says a newer Wheelhouse wrote the journal, they update Wheelhouse; otherwise suggest no fix. Never open, edit, move or delete the journal, even with their permission. Offer to carry on later.
 

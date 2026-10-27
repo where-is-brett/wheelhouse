@@ -418,12 +418,12 @@ test('the model carries the verdict, the since line, launch, health, ideas, buil
   assert.deepEqual(model.ideas, { count: 2, fresh: 1 });
   assert.deepEqual(model.building, [{ text: 'Building Export', see: 'Before it merges' }]);
   assert.equal(model.updated, hhmm(NOW));
-  // With no profile backup yet, one line is to watch, so all is not well; the lines stay a list.
-  // On Windows the no-sandbox line comes first, as it does on every Windows computer.
+  // Nothing is to watch, so all is well; the lines stay a list. On Windows the no-sandbox line is to
+  // watch, as it is on every Windows computer.
   const lines = model.health.map((h) => [h.level, h.text]);
   if (process.platform === 'win32') assert.match(lines.shift().join(' '), /^watch This computer has no sandbox/);
-  assert.deepEqual(lines, [['watch', 'Your profile isn\'t backed up off this computer yet']]);
-  assert.deepEqual(model.healthNote, { allWell: false, protection: 'Standard', week: null });
+  assert.deepEqual(lines, []);
+  assert.deepEqual(model.healthNote, { allWell: process.platform !== 'win32', protection: 'Standard', week: null });
 }));
 
 test('the verdict counts the health lines at stop level other than STOP\'s own, and healthNote says what is not well', () => withHome(async (home) => {

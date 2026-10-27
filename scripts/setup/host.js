@@ -16,29 +16,24 @@
 //   2. for a new product, a private repository with a first commit on `main` (a README), and the
 //      product's folder, which exists from step 1, connected to it in place: git init -b main,
 //      remote add, fetch, the branch named main and reset to origin/main, so the folder's own files
-//      stay as they were; an existing product keeps its repository, which must already hold a
-//      branch of the product's, or its state branch would become the default;
-//   3. the private profile repository, wheelhouse-profile, always on the director's own account
-//      (never the product's organisation or group), while this computer has no profile (made only
-//      when the account has none), then ~/.wheelhouse/profile.json and the profile's clone;
-//   4. the connection: Quick needs nothing more. Narrow on GitHub is a code typed on GitHub, then
-//      the app's Install page, where setup recommends the project and the profile, not All
-//      repositories; the installation is looked up and its reach read back and said. A later
-//      project, with the app's keys kept, needs no new code: a tick on the settings page, or the
-//      Install page an earlier attempt left. Narrow on GitLab is a project key at Developer level,
-//      made with the director's own sign-in; where GitLab refuses it (401 or 403), the token page
-//      is opened and the token typed into the system's own box, straight to the keys file, never
-//      the chat. Their own GitHub App (own-app.js) comes first where it is chosen and not yet
-//      recorded: made from the filled-in new-app page on the account that holds the project, or
-//      found there by its name, read back and refused when it asks for more than Wheelhouse's
-//      manifest; read again before each code sign-in with it; and, once connected, recorded in
-//      the profile, where it takes effect on the director's Confirm (ruling R56). An app of their
-//      own on an organisation can't reach the profile on their own account, so a profile made
-//      with it is reached Quick;
-//   5. Wheelhouse's record of the project (writeProject), then its state clone (cloneState);
-//   6. this computer's key put in the profile as enrolments/<computer>.json, pushed by its exact
-//      commit with the director's own sign-in, so their other computers can trust it on a click
-//      there (computers.js, ruling R79).
+//      stay as they were; an existing product keeps its repository, public or private: nothing of
+//      the director's private record goes to it (design section 24);
+//   3. the connection: Quick needs nothing more. Narrow on GitHub is a code typed on GitHub, then
+//      the app's Install page, where setup recommends the project alone, not All repositories; the
+//      installation is looked up and its reach read back and said. A later project, with the app's
+//      keys kept, needs no new code: a tick on the settings page, or the Install page an earlier
+//      attempt left. Narrow on GitLab is a project key at Developer level, made with the director's
+//      own sign-in; where GitLab refuses it (401 or 403), the token page is opened and the token
+//      typed into the system's own box, straight to the keys file, never the chat. Their own GitHub
+//      App (own-app.js) comes first where it is chosen and not yet recorded: made from the
+//      filled-in new-app page on the account that holds the project, or found there by its name,
+//      read back and refused when it asks for more than Wheelhouse's manifest; read again before
+//      each code sign-in with it; and, once connected, recorded in the director's settings on this
+//      computer (~/.wheelhouse/settings/, through the helper), where it takes effect on the
+//      director's Confirm (ruling R56);
+//   4. Wheelhouse's record of the project (writeProject), then its private record, a local git
+//      repository with no remote (openProjectRecord), and the director's settings on this computer
+//      (openSettings). Nothing is pushed: there is no state branch and no profile repository.
 // Each change is recorded in the journal just before it is made. The step is long (ruling R40): it
 // runs in its own process, and says each thing the director must do (a code, the Install page) as
 // a line, through ctx.say, which /setup/status shows. It waits for step 2 (`after: [2]`, ruling
@@ -58,31 +53,33 @@
 // Protection is planned here and named on the card; it is switched on at the end of step 7, once
 // the setup commit is up, with the director's own sign-in (switchOnAsDirector, Task 13).
 //
-// A second computer joins a project from an empty folder (design section 15, ruling R77). In a
-// folder holding nothing but step 1's .claude/ and with no `origin`, the plan first asks `join`:
-// A new product, or `<folder name>, from my other computer`, or a typed owner/name; recommended A
-// new product when this computer has profile.json, else the other computer. Joining asks neither
-// the real-users nor the Locked question (the first computer's; a joining Mac's step 8 asks Locked
-// when the project is launched), but the host and the connection as usual, since each computer
-// signs in for itself. Its Go-ahead list is: the sign-in; the repository named by the answer found
-// on the director's account or one of their organisations (GitLab: groups), the one holding a
-// `wheelhouse-state` branch; this folder checked out to it in place (git init, the remote, the
-// default branch fetched, checkout -f), the committed .claude/settings.json in place of the
-// install's, which is recorded first; the profile, found, and its clone; the state clone, whose
-// `phase` setting refuses Quick on a launched project before anything is connected or registered;
-// the narrow connection; and the project's record. No protection: the first computer's step 7
-// switched it on. Apply records step 3's `answer` change { joined: <name> } before it does anything
-// else, so the run reads as joining (scripts/lib/setup-run.js, stepsFor) before step 4's or step
-// 5's questions could come (both wait for the project's records, which come later); it records
-// { joined, missed } and refuses, saying to type owner/name, when none or several are found, and
-// the plan then asks `join` again under an id naming what was missed; once connected it records
-// { joined: '<owner/name>' }. A new product chosen after a joining attempt records { joined: null }.
+// A second computer joins a project from an empty folder (design sections 15 and 24.3, ruling R77).
+// In a folder holding nothing but step 1's .claude/ and with no `origin`, the plan first asks
+// `join`: A new product, or `<folder name>, from my other computer`, or a typed owner/name;
+// recommended A new product. Joining asks neither the real-users nor the Locked question (the first
+// computer's; a joining Mac's step 8 asks Locked when the project is launched), but the host and
+// the connection as usual, since each computer signs in for itself. Its Go-ahead list is: the
+// sign-in; the repository named by the answer found on the director's account or one of their
+// organisations (GitLab: groups), the one whose default branch holds `.claude/wheelhouse.json`, or,
+// for a project set up with v0.1.x, a `wheelhouse-state` branch; this folder checked out to it in
+// place (git init, the remote, the default branch fetched, checkout -f), the committed
+// .claude/settings.json in place of the install's, which is recorded first; whether the product is
+// launched, read from its `.claude/wheelhouse.json` (`launched: true`) or a v0.1.x state branch's
+// `phase`, which refuses Quick before anything is connected or registered; the narrow connection;
+// and the project's record and its own private record, empty: the first computer's stays there.
+// No protection: the first computer's step 7 switched it on. Apply records step 3's `answer`
+// change { joined: <name> } before it does anything else, so the run reads as joining
+// (scripts/lib/setup-run.js, stepsFor) before step 4's or step 5's questions could come (both wait
+// for the project's records, which come later); it records { joined, missed } and refuses, saying
+// to type owner/name, when none or several are found, and the plan then asks `join` again under an
+// id naming what was missed; once connected it records { joined: '<owner/name>' }. A new product
+// chosen after a joining attempt records { joined: null }.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
-import { wheelhouseHome, profileDir, stateDir, projectSlug } from '../lib/paths.js';
+import { wheelhouseHome, stateDir, projectSlug } from '../lib/paths.js';
 import { toolPath } from '../lib/host-tools.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
@@ -97,27 +94,26 @@ import { DEFAULT_GITLAB, gitlabBase, readGitlabHosts } from '../host/gitlab-base
 import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
-import { writeProject } from '../lib/projects.js';
-import { openProjectRecord, STATE_BRANCH } from '../state/record.js';
+import { writeProject, readProject } from '../lib/projects.js';
+import { openProjectRecord, openSettings, STATE_BRANCH } from '../state/record.js';
 import { sameRemote } from '../state/git.js';
 import { listEvents } from '../state/events.js';
 import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
-import { profileRemote, ensureProfileClone, readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
+import { readProfileViews, PROFILE_BRANCH } from '../profile/store.js';
 import { toolsStatus, originUrl, applyCompanyCa } from './tools.js';
-import { caFile, probeCertificate, companyGitEnv, gitlabBaseOf } from '../host/company-ca.js';
+import { caFile, probeCertificate, companyGitEnv } from '../host/company-ca.js';
 import {
   appName, appSlug, checkOwnApp, ensureOwnApp, ownAppCode, ownAppFrom, readOwnApp, recordOwnApp, helperProfile, sameLogin, shadowedOwnApp,
   PROFILE_TARGET,
 } from './own-app.js';
 import { readJournal, newId } from './journal.js';
-import { enrolmentChange, ENROLMENT_PART, publishEnrolment } from './computers.js';
 import { setupGit, setupGitEnv, refuseUnlistedSettings, reaching } from './git.js';
 
 // The Wheelhouse organisation's GitHub App: null fields until the organisation is made and the app
 // registered (Card 1).
 export const APP_FILE = fileURLToPath(new URL('../host/app.json', import.meta.url));
-export const PROFILE_REPO = 'wheelhouse-profile';
-// Wheelhouse's own branches, which are never the product's.
+// Wheelhouse's own branches, which are never the product's: v0.1.x's state and profile branches,
+// and the lock.
 const WHEELHOUSE_BRANCHES = [STATE_BRANCH, 'wheelhouse-lock', PROFILE_BRANCH];
 
 // The answers' labels: step 4 (Task 9) reads the first two from `3.real-users` and `3.locked`.
@@ -146,24 +142,24 @@ export const INSTALL_POLL_MS = 5 * 1000;
 export const KEY_NAME = 'Wheelhouse agents';
 export const KEY_DAYS = 365;
 
-// Said when the person's own app, as their profile records it, belongs to another account than the
+// Said when the person's own app, as their settings on this computer record it, belongs to another account than the
 // project's: a private app reaches only its own account's repositories, and a second app of their
 // own waits for a later update (rulings R58, R83). The step waits, with this line, rather than show
 // a Go ahead apply could only refuse.
 export const ownAppElsewhere = (app, where) => `Your own GitHub App, ${app.slug}, belongs to ${app.owner}, and an app of your own reaches only its own account's repositories, so it can't reach ${where}: choose the Wheelhouse app or Quick for it`;
-// Their own app, accepted in their profile, hidden by a newer change to it that waits for the
+// Their own app, accepted in their settings, hidden by a newer change to it that waits for the
 // director's Confirm (rulings R84, R115). When that change is setup's own proposal of the same app,
 // the step waits for its Confirm with `ownAppWaiting`; any other change gets a card whose one change
 // proposes the accepted app again (`ownAppAgainCard`), never a new app; its apply ends with
 // `ownAppProposedAgain`, so step 3 is asked again once the director has confirmed.
 const appNamed = (app) => `${app.slug} on ${app.owner}`;
 const sameApp = (a, b) => a !== null && b !== null && a.clientId === b.clientId && a.slug === b.slug && sameLogin(a.owner, b.owner);
-export const ownAppWaiting = ({ accepted }) => `Your own GitHub App, ${appNamed(accepted)}, waits for your Confirm again in your profile, so step 3 waits: click Confirm on its card, then ask again`;
-export const ownAppProposedAgain = (app) => `Your own GitHub App, ${appNamed(app)}, is proposed again in your profile: click Confirm on its card, and step 3 goes on from there`;
+export const ownAppWaiting = ({ accepted }) => `Your own GitHub App, ${appNamed(accepted)}, waits for your Confirm again in your settings on this computer, so step 3 waits: click Confirm on its card, then ask again`;
+export const ownAppProposedAgain = (app) => `Your own GitHub App, ${appNamed(app)}, is proposed again in your settings on this computer: click Confirm on its card, and step 3 goes on from there`;
 const ownAppAgainCard = ({ accepted, waiting }) => ({
   kind: 'setup',
   level: 3,
-  what: `Setup step 3, ${SETUP_TITLES[3]}: your own GitHub App ${appNamed(accepted)} proposed again in your profile, since a newer change to it waits for your Confirm (${waiting === null ? 'no app of your own' : appNamed(waiting)}) and hides it. Nothing is made and nothing signed in.`,
+  what: `Setup step 3, ${SETUP_TITLES[3]}: your own GitHub App ${appNamed(accepted)} proposed again in your settings on this computer, since a newer change to it waits for your Confirm (${waiting === null ? 'no app of your own' : appNamed(waiting)}) and hides it. Nothing is made and nothing signed in.`,
   why: 'Confirm that other change only if you made it; Confirm on the new proposal brings your app back.',
   options: [
     { label: SETUP_LABEL, says: 'Setup proposes your app again; you confirm it on its card, then step 3 goes on.' },
@@ -176,7 +172,7 @@ const ownAppAgainCard = ({ accepted, waiting }) => ({
 export const OWN_APP_WAIT_MS = 10 * 60 * 1000;
 // Said when this computer's one `github-app` keys entry holds an installation of another app than
 // the one a project would use (ruling R58): signing in to the other would overwrite the keys that
-// serve the earlier projects, and the profile. The plan waits with it; apply refuses with it.
+// serve the earlier projects. The plan waits with it; apply refuses with it.
 export const oneAppLine = ({ kept, using, where }) => `This computer keeps one GitHub App's keys, and they serve your other projects through ${kept}, so ${where} can't be connected through ${using} until a later Wheelhouse update`;
 export const NO_APP_LISTED = 'Step 3\'s list names no GitHub App';
 // Said when setup has given this computer the company's certificate: a program already running
@@ -232,7 +228,7 @@ export function wheelhouseApp({ appFile = APP_FILE } = {}) {
   return { clientId, slug, owner: typeof owner === 'string' ? owner : null };
 }
 
-// The person's own app, as their profile's views on this computer hold it, confirmed by the
+// The person's own app, as the views of their settings on this computer hold it, confirmed by the
 // director (ruling R56): { clientId, slug, owner }, or null. An unconfirmed entry, or views that
 // can't be read, is no app. `views` reads them (readProfileViews).
 export function ownApp({ views = readProfileViews } = {}) {
@@ -243,7 +239,7 @@ export function ownApp({ views = readProfileViews } = {}) {
   }
 }
 
-// Their own app as accepted in their profile, when it is hidden only by a newer change to it that
+// Their own app as accepted in their settings, when it is hidden only by a newer change to it that
 // waits for the director's Confirm (ruling R84): { accepted, waiting }, or null.
 function ownAppShadowed({ views = readProfileViews } = {}) {
   try {
@@ -348,11 +344,27 @@ export function onlyInstall(folder) {
   return names.every((n) => n === '.claude' || SYSTEM_FILES.includes(n)) && originUrl(folder) === null;
 }
 
-// Whether the project's state, as cloned on this computer, says the product is launched (its
-// `phase` setting, ruling R38). A computer joining a project does not yet trust the other
-// computers' keys (Task 14's trust card), so it can't tell a confirmed setting from a proposal, or
-// a later one written to weaken it: any `phase` setting saying launched counts. It only ever takes
-// Quick away, or asks Locked, so a state that can't be listed counts as launched (it fails closed).
+// Whether a product's folder says it is launched: `launched: true` in its committed
+// .claude/wheelhouse.json (design section 24.2).
+export function launchedInFolder(folder) {
+  if (typeof folder !== 'string') return false;
+  return json(readText(path.join(folder, '.claude', 'wheelhouse.json')) ?? '')?.launched === true;
+}
+
+// Whether a joining attempt found the product `repo` launched (a v0.1.x state branch's `phase`,
+// which the private record on this computer doesn't hold): step 3's `answer` change
+// { joined, launched: true }, in any run uninstall hasn't closed.
+export function launchedFound(repo) {
+  if (typeof repo !== 'string') return false;
+  return readJournal().runs.filter((r) => !runClosed(r)).flatMap((r) => r?.changes ?? [])
+    .some((c) => c?.step === JOIN_STEP && c.kind === 'answer' && c.after?.launched === true && typeof c.after.joined === 'string' && c.after.joined.toLowerCase() === repo.toLowerCase());
+}
+
+// Whether the product is launched (ruling R38): its private record's `phase` setting says so, or its
+// folder's .claude/wheelhouse.json, or a joining attempt found it so. Any `phase` setting saying
+// launched counts, as a computer can't tell a confirmed setting from a proposal before it trusts
+// its own record. It only ever takes Quick away, or asks Locked, so a record that can't be listed
+// counts as launched (it fails closed).
 export function launchedIn(project) {
   let events;
   try {
@@ -360,7 +372,9 @@ export function launchedIn(project) {
   } catch {
     return true;
   }
-  return events.some((e) => e.kind === 'setting' && e.data?.key === 'phase' && e.data.value === 'launched');
+  if (events.some((e) => e.kind === 'setting' && e.data?.key === 'phase' && e.data.value === 'launched')) return true;
+  const record = readProject(project);
+  return launchedInFolder(record?.folder) || launchedFound(record?.repo);
 }
 
 // The https address of a repository, which the record and the clones use.
@@ -373,7 +387,6 @@ export function slugFor(repo) {
 }
 
 const projectFile = (slug) => path.join(stateDir(slug), '..', 'project.json');
-const profileFile = () => path.join(wheelhouseHome(), 'profile.json');
 
 // ---- The questions ----
 
@@ -441,18 +454,18 @@ function joinAsk(id, name, { missed }) {
   const other = fromOtherComputer(name);
   let found = '';
   if (missed?.missed === 'not-a-name') found = `"${missed.name}" is not a repository's name. `;
-  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} holds Wheelhouse's records: ${missed.missed.slice(0, 5).join(', ')}. `;
-  else if (missed) found = `Setup found no ${missed.name} holding Wheelhouse's records on your account or organisations. `;
+  else if (Array.isArray(missed?.missed)) found = `More than one ${missed.name} is set up with Wheelhouse: ${missed.missed.slice(0, 5).join(', ')}. `;
+  else if (missed) found = `Setup found no ${missed.name} set up with Wheelhouse on your account or organisations. `;
   return {
     id,
     typed: true,
     card: {
       level: 2,
       what: `${found}Is ${name} a new product, or one you set up with Wheelhouse on your other computer? If it is kept under another name, or to say which one, type its owner/name.`,
-      why: 'A product set up on another computer is checked out into this folder with its records, never made again.',
+      why: 'A product set up on another computer is checked out into this folder with its plans and settings, never made again.',
       options: [
         { label: NEW_PRODUCT, says: 'Setup makes a private repository for it and connects this folder to it.' },
-        { label: other, says: `Setup finds ${name} on your account or organisations, with Wheelhouse's records, and checks it out into this folder.` },
+        { label: other, says: `Setup finds ${name} on your account or organisations, set up with Wheelhouse, and checks it out into this folder.` },
       ],
       // An empty folder is far more often a new product, whether or not this computer knows
       // Wheelhouse yet (the director's first setup, design section 15.1).
@@ -568,11 +581,11 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   let recommend;
   if (host === 'github') {
     const app = wheelhouseAppOffered({ appFile });
-    if (app) options.push({ label: WAYS.wheelhouse, says: 'Narrow: you type a code on GitHub and tick this project and your profile on the app\'s Install page; agents reach only those.' });
+    if (app) options.push({ label: WAYS.wheelhouse, says: 'Narrow: you type a code on GitHub and tick this project on the app\'s Install page; agents reach only it.' });
     options.push({ label: WAYS.own, says: 'Narrow, through a GitHub App of your own, filled in from Wheelhouse\'s: you tick Enable Device Flow and click Create.' });
     recommend = app ? WAYS.wheelhouse : WAYS.own;
   } else {
-    options.push({ label: WAYS.narrow, says: 'A GitLab project key for this project and your profile, made with your sign-in; where GitLab refuses, a token typed into your computer\'s own box.' });
+    options.push({ label: WAYS.narrow, says: 'A GitLab project key for this project, made with your sign-in; where GitLab refuses, a token typed into your computer\'s own box.' });
     recommend = WAYS.narrow;
   }
   const quick = !locked && !launched;
@@ -582,7 +595,7 @@ export function connectionCard({ host, locked = false, launched = false, realUse
   else if (launched) noQuick = ' It is launched, and a launched product needs a narrow connection, so Quick is not offered.';
   const reach = platform === 'win32'
     ? 'Windows has no sandbox to keep agents from your sign-in, so a key to this one project keeps the rest of your account out of reach'
-    : 'agents then reach only this project and your profile, not your whole account';
+    : 'agents then reach only this project, not your whole account';
   return {
     level: 3,
     what: `How should Wheelhouse's agents reach ${place}?${noQuick}`,
@@ -604,7 +617,7 @@ export function stricterWay({ host, appFile } = {}) {
 // After STRICTER on GitHub with the Wheelhouse app registered: the app, or their own.
 export function stricterCard({ where, appFile } = {}) {
   const card = connectionCard({ host: 'github', locked: true, where, appFile });
-  return { ...card, what: `Which key should Wheelhouse's helper hold for ${where ?? 'the project on GitHub'}?`, because: 'agents then reach only this project and your profile, not your whole account' };
+  return { ...card, what: `Which key should Wheelhouse's helper hold for ${where ?? 'the project on GitHub'}?`, because: 'agents then reach only this project, not your whole account' };
 }
 
 // ---- Signing in ----
@@ -760,9 +773,9 @@ function outsideAny() {
   return wheelhouseHome();
 }
 
-// Refuses, as every setup git call does, when a clone of Wheelhouse's own that git is about to run
-// in (scripts/state/, scripts/profile/) holds a setting not on setup's allowed list (rulings R109
-// to R112).
+// Refuses, as every setup git call does, when a repository of Wheelhouse's own that git is about to
+// run in (a project's private record) holds a setting not on setup's allowed list (rulings R109 to
+// R112).
 async function refuseSettingsIn({ dir, run, gitPath }) {
   if (fs.existsSync(path.join(dir, '.git'))) await refuseUnlistedSettings({ run, gitPath, cwd: dir });
 }
@@ -794,58 +807,22 @@ async function repoInfo({ host, repo, run, api }) {
   return { repo: got.body.path_with_namespace, id: got.body.id, defaultBranch: got.body.default_branch ?? null, private: typeof visibility === 'string' ? visibility === 'private' : null };
 }
 
-// Wheelhouse's records (the state and lock branches on the product's repository, and the profile
-// repository) hold the director's own words, the cards, the briefs, the survey and the names of
-// work not yet pushed, so they are never put where anyone can read them: a repository the host
-// doesn't say is private is refused, with no card, and nothing is pushed to it
-// (docs/research/self-hosting-2026-10.md, design section 22).
-export const notPrivate = ({ host, repo, profile = false }) => (profile
-  ? `${repo} on ${NAME[host]} is not private, and Wheelhouse keeps your settings and backups in it, so setup has stopped: make it private in its settings on ${NAME[host]}, then a fresh Go ahead tries again`
-  : `${repo} on ${NAME[host]} is not private, and Wheelhouse keeps its records (your answers, its cards and its plans) on the project's own repository, so setup has stopped before putting anything there: a public project can't use Wheelhouse yet`);
-
-// The card for a project's repository that isn't private: checked again once the director has made
-// it private, or setup stops there. Its id counts the times asked, so each check is a card of its own.
-export const NOT_PRIVATE = Object.freeze({ again: 'I\'ve made it private', stop: 'Stop setup here' });
-export const NOT_PRIVATE_WAIT_MS = 60 * 1000;
-function notPrivateAsk(repo, host, tries) {
-  return {
-    id: `not-private-${tries}`,
-    card: {
-      level: 3,
-      what: `${repo} on ${NAME[host]} is not private, so Wheelhouse can't set it up yet.`,
-      why: 'Wheelhouse keeps its records (your answers, its cards and its plans) on the project\'s own repository, where anyone could read them.',
-      options: [
-        { label: NOT_PRIVATE.again, says: `Setup checks again once you have made it private in its settings on ${NAME[host]}.` },
-        { label: NOT_PRIVATE.stop, says: 'Nothing is made, and setup stops here for now.' },
-      ],
-      recommend: NOT_PRIVATE.stop,
-      because: 'a public project can\'t use Wheelhouse yet',
-      meanwhile: 'Nothing is made on the host.',
-    },
-  };
-}
-
-function mustBePrivate(info, { host, profile = false }) {
-  if (info.private !== true) throw new Error(notPrivate({ host, repo: info.repo, profile }));
-  return info;
-}
-
-// Makes a private repository on the director's own account; `readme` gives it a first commit on main.
-async function createRepo({ host, owner, name, readme, run, api }) {
+// Makes a private repository on the director's own account, with a first commit on main (a README).
+async function createRepo({ host, owner, name, run, api }) {
   const repo = `${owner}/${name}`;
   if (host === 'github') {
-    const args = ['repo', 'create', repo, '--private', ...(readme ? ['--add-readme'] : ['--description', 'Wheelhouse\'s profile: settings and backups, kept by Wheelhouse'])];
+    const args = ['repo', 'create', repo, '--private', '--add-readme'];
     const made = await ask(run, host, args);
     if (made.code !== 0) throw new Error(`GitHub did not make the private repository ${repo}`);
   } else {
     const made = await api.post('/projects', {
-      name, path: name, visibility: 'private', ...(readme ? { initialize_with_readme: true, default_branch: 'main' } : {}),
+      name, path: name, visibility: 'private', initialize_with_readme: true, default_branch: 'main',
     });
     if (made.status < 200 || made.status >= 300) throw new Error(`GitLab did not make the private project ${repo} (HTTP ${made.status})`);
   }
   const info = await repoInfo({ host, repo, run, api });
   if (info === null) throw new Error(`${repo} on ${NAME[host]} was made but can't be found`);
-  return mustBePrivate(info, { host, profile: !readme });
+  return info;
 }
 
 // Whether setup made this repository itself, in any run uninstall hasn't closed: a retry then
@@ -893,26 +870,6 @@ async function connectFolder({ folder, remoteUrl, gitPath, env, run, record }) {
   }
 }
 
-// Whether the profile's clone on this computer is whole: its branch's upstream set, the last thing
-// ensureProfileClone does. Read from its files.
-export function profileCloneWhole() {
-  const text = readText(path.join(profileDir(), '.git', 'config')) ?? '';
-  const section = new RegExp(`^\\s*\\[branch\\s+"${PROFILE_BRANCH}"\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`, 'm').exec(text)?.[1] ?? '';
-  return new RegExp(`^\\s*merge\\s*=\\s*refs/heads/${PROFILE_BRANCH}\\s*$`, 'm').test(section);
-}
-
-// Refuses an existing product whose repository has no branch of its own yet (an empty repository):
-// the state branch, pushed next, would become its default branch (ruling R34).
-async function productBranchOn({ host, repo, remoteUrl, gitPath, env, run }) {
-  const listed = await setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl]);
-  if (listed.code !== 0) throw new Error(`${repo} on ${NAME[host]} could not be reached with your sign-in`);
-  const own = String(listed.stdout).split(/\r?\n/).map((line) => /\trefs\/heads\/(.+)$/.exec(line)?.[1]).filter(Boolean)
-    .filter((branch) => !WHEELHOUSE_BRANCHES.includes(branch));
-  if (own.length === 0) {
-    throw new Error(`${repo} on ${NAME[host]} has no branch of the product's yet, so Wheelhouse's state branch would become its default: push the product's main branch to it first, then ask again`);
-  }
-}
-
 // ---- Joining a product set up on another computer (ruling R77) ----
 
 export const ORGS_UNREAD = 'GitHub could not list your organisations with your sign-in, so setup has not looked for the project: a fresh Go ahead tries again, or type its owner/name on step 3\'s question';
@@ -932,16 +889,34 @@ async function accountsOf({ host, run, api }) {
   return got.body.map((g) => g?.full_path).filter((p) => typeof p === 'string' && repoNamed(p) === p);
 }
 
-// Whether a repository holds Wheelhouse's state branch, read with the director's own sign-in.
+// Wheelhouse's own committed file, on a project's default branch (design section 24.3, item 3).
+export const CONFIG_FILE = '.claude/wheelhouse.json';
+
+// Whether a repository's default branch holds Wheelhouse's own file, read with the director's own
+// sign-in: through `gh api` on GitHub, GitLab's repository files API on GitLab. Anything but a found
+// file reads as not there.
+async function holdsConfig({ host, info, run, api }) {
+  if (host === 'github') return (await ask(run, host, ['api', `repos/${info.repo}/contents/${CONFIG_FILE}`])).code === 0;
+  const ref = typeof info.defaultBranch === 'string' && info.defaultBranch !== '' ? info.defaultBranch : 'HEAD';
+  try {
+    return (await api.get(`${projectPath(info.repo)}/repository/files/${encodeURIComponent(CONFIG_FILE)}?ref=${encodeURIComponent(ref)}`)).status === 200;
+  } catch {
+    return false;
+  }
+}
+
+// Whether a repository holds Wheelhouse v0.1.x's state branch, read with the director's own sign-in.
 async function holdsState({ remoteUrl, gitPath, env, run }) {
   const listed = await setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: outsideAny() })(['ls-remote', '--heads', remoteUrl, `refs/heads/${STATE_BRANCH}`]);
   if (listed.code !== 0) return false;
   return String(listed.stdout).split(/\r?\n/).some((line) => line.endsWith(`\trefs/heads/${STATE_BRANCH}`));
 }
 
-// The repositories a joining computer's answer names that hold Wheelhouse's state branch: the
-// typed owner/name, or a bare name on the director's own account and each of their organisations
-// (GitLab: groups). Each as repoInfo gives it.
+// The repositories a joining computer's answer names that were set up with Wheelhouse: their
+// default branch holds .claude/wheelhouse.json, or (a project set up with v0.1.x) they hold its
+// state branch. The typed owner/name, or a bare name on the director's own account and each of
+// their organisations (GitLab: groups). Each as repoInfo gives it, with `stateBranch` saying whether
+// it holds the v0.1.x state branch.
 async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl }) {
   const accounts = wanted.includes('/') ? [] : [user, ...(await accountsOf({ host, run, api }))];
   const candidates = wanted.includes('/') ? [wanted] : accounts.map((a) => `${a}/${wanted}`);
@@ -952,16 +927,36 @@ async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl 
     seen.add(repo.toLowerCase());
     const info = await repoInfo({ host, repo, run, api });
     if (info === null || found.some((f) => f.repo.toLowerCase() === info.repo.toLowerCase())) continue;
-    if (await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, run })) found.push(info);
+    const config = await holdsConfig({ host, info, run, api });
+    const stateBranch = await holdsState({ remoteUrl: hostUrl({ host, repo: info.repo }), gitPath, env, run });
+    if (config || stateBranch) found.push({ ...info, stateBranch });
   }
   return found;
+}
+
+// Whether a v0.1.x state branch on the host says the product is launched (its `phase` setting, any
+// one saying launched, as launchedIn reads it), fetched into the joined folder's FETCH_HEAD alone
+// with the director's own sign-in. A branch that can't be read counts as launched: it only takes
+// Quick away, and narrow still joins.
+async function stateBranchLaunched({ folder, remoteUrl, gitPath, env, run }) {
+  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
+  if ((await git(['fetch', '-q', '--no-tags', remoteUrl, `refs/heads/${STATE_BRANCH}`])).code !== 0) return true;
+  const listed = await git(['ls-tree', '-r', '-z', '--name-only', 'FETCH_HEAD', '--', 'events']);
+  if (listed.code !== 0) return true;
+  for (const file of listed.stdout.split('\0').filter((f) => /_setting_[0-9a-z]{4}\.json$/.test(f))) {
+    const shown = await git(['show', `FETCH_HEAD:${file}`]);
+    if (shown.code !== 0) return true;
+    const event = json(shown.stdout);
+    if (event?.kind === 'setting' && event.data?.key === 'phase' && event.data.value === 'launched') return true;
+  }
+  return false;
 }
 
 // Why a joining computer's answer found no repository, or several: said with what to type.
 export function joinMissLine({ host, wanted, found }) {
   const where = host === 'gitlab' ? 'your GitLab account or your groups' : 'your GitHub account or your organisations';
-  if (found.length === 0) return `Setup found no repository ${wanted} holding Wheelhouse's records on ${where}, so nothing was checked out: type the project's owner/name on step 3's question, which asks again`;
-  return `More than one repository named ${wanted} holds Wheelhouse's records (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again`;
+  if (found.length === 0) return `Setup found no repository ${wanted} set up with Wheelhouse on ${where}, so nothing was checked out: type the project's owner/name on step 3's question, which asks again`;
+  return `More than one repository named ${wanted} is set up with Wheelhouse (${found.map((f) => f.repo).join(', ')}), so nothing was checked out: type the one you mean as owner/name on step 3's question, which asks again`;
 }
 
 // Checks the project out into this folder in place (ruling R77, as R34 connects a new product's):
@@ -1017,19 +1012,7 @@ function readText(file) {
   }
 }
 
-function writeText(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(temp, text);
-    fs.renameSync(temp, file);
-  } catch (error) {
-    fs.rmSync(temp, { force: true });
-    throw error;
-  }
-}
-
-// The connection a repository is reached with, as the project record and profile.json keep it; on
+// The connection a repository is reached with, as the project record keeps it; on
 // GitHub narrow, the project record's carries the app's installation on the project's account.
 function connectionFor({ host, mode, repo, id, locked = false, installationId = null, base = DEFAULT_GITLAB }) {
   return {
@@ -1042,56 +1025,35 @@ function connectionFor({ host, mode, repo, id, locked = false, installationId = 
   };
 }
 
-// Makes the repositories step 3 needs, each a `host` change recorded before it is made, so uninstall
-// can offer to remove it: a private repository for a new product (a first commit on main), with the
-// product's folder connected to it in place; then, while this computer has no profile, the private
-// profile repository, always on the director's own account `user` (never the product's
-// organisation or group), made only when the account has none, then profile.json in the shape
-// scripts/profile/store.js reads, and the profile's clone, made again when an earlier attempt left
-// it part-way. An existing product keeps its repository. `owner` is the product's owner (for a new
-// product, `user`); `api` is GitLab's with the director's sign-in; `env` the director's git
-// environment; `hostUrl` gives a repository's address on the GitLab at `base`. Gives the changes made.
+// Makes a new product's repository, a `host` change recorded before it is made, so uninstall can
+// offer to remove it: a private repository on the director's own account (a first commit on main),
+// with the product's folder connected to it in place. Nothing else is made on the host: there is no
+// profile repository (design section 24). An existing product keeps its repository, and nothing is
+// made for it. `owner` is the product's owner (for a new product, `user`); `api` is GitLab's with
+// the director's sign-in; `env` the director's git environment; `hostUrl` gives a repository's
+// address on the GitLab at `base`. Gives the changes made.
 export async function makeRepos({
   host, owner, user = owner, name, isNew, run = realRun, api, folder, record = () => {}, gitPath = 'git', env = {},
-  hostUrl = httpsRemote, mode = 'quick', base = DEFAULT_GITLAB,
+  hostUrl = httpsRemote, base = DEFAULT_GITLAB,
 }) {
   const made = [];
+  if (!isNew) return made;
   const keep = (change) => {
     record(change);
     made.push(change);
   };
-  const ensure = async (account, repoName, readme) => {
-    const repo = `${account}/${repoName}`;
-    const target = `${host}:${repo}`;
-    const found = await repoInfo({ host, repo, run, api });
-    if (found !== null) {
-      // A new product's name already taken on the account, by a repository setup didn't make, is not
-      // taken over; the profile repository, made on another computer, is used as it is.
-      if (readme && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: if it is this product from your other computer, say so, and setup brings it into this folder instead; otherwise rename this folder, or connect it to that repository, then ask again`);
-      return mustBePrivate(found, { host, profile: !readme });
-    }
+  if (owner !== user) throw new Error('A new product\'s repository is made on your own account');
+  const repo = `${user}/${name}`;
+  const target = `${host}:${repo}`;
+  let info = await repoInfo({ host, repo, run, api });
+  // A new product's name already taken on the account, by a repository setup didn't make, is not
+  // taken over.
+  if (info !== null && !madeBySetup(target)) throw new Error(`${repo} on ${NAME[host]} already exists, so setup has not used it for a new product: if it is this product from your other computer, say so, and setup brings it into this folder instead; otherwise rename this folder, or connect it to that repository, then ask again`);
+  if (info === null) {
     keep({ id: newId('chg'), kind: 'host', target, before: null, after: { repository: repo, private: true, made: true } });
-    return createRepo({ host, owner: account, name: repoName, readme, run, api });
-  };
-  if (isNew) {
-    if (owner !== user) throw new Error('A new product\'s repository is made on your own account');
-    const info = await ensure(user, name, true);
-    await connectFolder({ folder, remoteUrl: hostUrl({ host, repo: info.repo, base }), gitPath, env, run, record: keep });
+    info = await createRepo({ host, owner: user, name, run, api });
   }
-  let profile = profileRemote();
-  if (profile === null) {
-    const info = await ensure(user, PROFILE_REPO, false);
-    profile = { remoteUrl: hostUrl({ host, repo: info.repo, base }), host, repo: info.repo, connection: connectionFor({ host, mode, repo: info.repo, id: info.id, base }) };
-    const file = profileFile();
-    const text = `${JSON.stringify(profile, null, 2)}\n`;
-    keep({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: text });
-    writeText(file, text);
-  }
-  if (!profileCloneWhole()) {
-    keep({ id: newId('chg'), kind: 'folder', target: profileDir(), before: fs.existsSync(profileDir()) ? {} : null, after: { clone: profile.remoteUrl, branch: PROFILE_BRANCH } });
-    await refuseSettingsIn({ dir: profileDir(), run, gitPath });
-    await ensureProfileClone({ remote: profile, env: reaching(env, profile.remoteUrl) });
-  }
+  await connectFolder({ folder, remoteUrl: hostUrl({ host, repo: info.repo, base }), gitPath, env, run, record: keep });
   return made;
 }
 
@@ -1417,7 +1379,7 @@ export function cardFor(given) {
   throw last;
 }
 
-function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts = false, base = DEFAULT_GITLAB }, mode) {
+function cardParts({ host, changes, product, owner, user, way, app, signedIn, appKeys, base = DEFAULT_GITLAB }, mode) {
   const tight = mode !== 'full';
   const bare = mode === 'bare';
   const name = NAME[host];
@@ -1447,31 +1409,26 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
     parts.push(bare ? `a private repository on ${name}, connected to this folder` : tight ? `a private repository ${where}, connected to this folder` : `a private repository ${where} with a README, this folder connected to it, its files kept`);
   } else if (product.joining) {
     const accounts = host === 'gitlab' ? 'account or groups' : 'account or organisations';
-    parts.push(bare ? `the repository holding Wheelhouse's records, checked out here with its settings`
-      : tight ? `${product.repo ?? product.name}, the one holding Wheelhouse's records, checked out here with its settings`
-        : `${product.repo ?? product.name} found on your ${name} ${accounts}, the one holding Wheelhouse's records, and checked out into this folder, its committed .claude/settings.json in place of the install's`);
+    parts.push(bare ? `the repository set up with Wheelhouse, checked out here with its settings`
+      : tight ? `${product.repo ?? product.name}, the one set up with Wheelhouse, checked out here with its settings`
+        : `${product.repo ?? product.name} found on your ${name} ${accounts}, the one set up with Wheelhouse, and checked out into this folder, its committed .claude/settings.json in place of the install's`);
   } else parts.push(bare ? `this project's repository on ${name}, kept as it is` : `${product.repo} on ${name}, kept as it is`);
-  if (changes.some((c) => c.action === 'profile-repository')) parts.push(tight ? `your private profile repository ${PROFILE_REPO} if there is none` : `your private profile repository ${user ? `${user}/` : ''}${PROFILE_REPO} if there is none`);
   if (way === WAYS.quick) parts.push('Quick: your own sign-in, which reaches your whole account');
-  else if (host === 'gitlab') parts.push(tight ? 'Developer project keys, or a token typed in your computer\'s box' : 'Developer project keys for the project and profile, or where GitLab refuses, a token typed in your computer\'s own box');
+  else if (host === 'gitlab') parts.push(tight ? 'a Developer project key, or a token typed in your computer\'s box' : 'a Developer project key for the project, or where GitLab refuses, a token typed in your computer\'s own box');
   else if (app === null) parts.push('your own GitHub App');
   else if (app.own && typeof app.clientId !== 'string' && product.joining) {
-    // A joining computer's profile isn't here yet, so the app the first computer made can't be known.
-    parts.push('your own GitHub App, made, or found in your profile: then a code and ticks on its Install page (not All repositories)');
+    // A joining computer's settings don't hold the app the first computer made: it is found on
+    // GitHub by its name (design section 24.3, item 3).
+    parts.push('your own GitHub App, made, or found on GitHub by its name: then a code and a tick on its Install page (not All repositories)');
   } else if (app.own && typeof app.clientId !== 'string') {
-    parts.push(`your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's: tick Enable Device Flow, click Create, then a code and ticks on its Install page (not All repositories); kept in your profile`);
+    parts.push(`your own GitHub App${app.name ? ` ${app.name} on ${app.account}` : ''}, filled in from Wheelhouse's: tick Enable Device Flow, click Create, then a code and a tick on its Install page (not All repositories); kept in your settings on this computer`);
   } else if (appKeys === 'installed') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: tick this project on its settings page if it is not ticked, or on its Install page if the app is not on ${owner ?? 'its account'} yet`);
   else if (appKeys === 'other-account') parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}, as signed in already: install it on ${owner} and tick this project on its Install page, not All repositories, or on its settings page if it is there already`);
   else {
-    // The project on an organisation and the profile on the director's own account: GitHub installs
-    // an app on each account, so the Install page comes once for each.
-    const ticks = twoAccounts
-      ? `tick the project on its Install page for ${owner}, then the profile on it again for ${user ?? 'your own account'}, not All repositories`
-      : 'tick the project and profile on its Install page, not All repositories';
+    const ticks = 'tick the project on its Install page, not All repositories';
     parts.push(`${app.own ? 'your own app' : 'the Wheelhouse app'}${appKeys === 'signed-in' ? ', as signed in already: ' : ': a code on GitHub, then '}${ticks}`);
   }
-  parts.push(tight ? 'the project\'s record' : 'the project\'s record and state branch');
-  if (changes.some((c) => c.action === 'enrolment')) parts.push(ENROLMENT_PART);
+  parts.push(tight ? 'the project\'s record' : 'the project\'s record, kept on this computer');
   // A joining computer's project already has its protection, from the first computer's step 7.
   if (!product.joining) parts.push(tight && host === 'gitlab' ? 'protection on at step 7, with your sign-in' : protectionPlanLine(host));
   return {
@@ -1489,24 +1446,24 @@ function cardParts({ host, changes, product, owner, user, way, app, signedIn, ap
   };
 }
 
-function directorFor({ signedIn, way, host, app, appKeys, joining = false, twoAccounts = false, via = null }) {
+function directorFor({ signedIn, way, host, app, appKeys, joining = false, via = null }) {
   const parts = ['One click'];
   if (!signedIn) parts.push(via === 'token' ? 'a token made on your company\'s GitLab page and pasted into your computer\'s box' : 'your sign-in in the browser');
   if (way !== WAYS.quick && host === 'github' && app !== null) {
-    if (app.own && typeof app.clientId !== 'string' && joining) parts.push('a code typed on GitHub, Authorise, and two ticks on the Install page (and, if your app is not in your profile, Enable Device Flow ticked and Create clicked first)');
-    else if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and two ticks on the Install page');
+    if (app.own && typeof app.clientId !== 'string' && joining) parts.push('a code typed on GitHub, Authorise, and a tick on the Install page (and, if your app is not on GitHub yet, Enable Device Flow ticked and Create clicked first)');
+    else if (app.own && typeof app.clientId !== 'string') parts.push('Enable Device Flow ticked and Create clicked on GitHub, a code typed on GitHub, Authorise, and a tick on the Install page');
     else if (appKeys === 'installed') parts.push('a tick on the app\'s settings page, if the project is not ticked (or on its Install page, if the app is not on the project\'s account yet)');
     else if (appKeys === 'other-account') parts.push('a tick on the app\'s Install page for the project\'s account (or on its settings page, if the app is there already)');
-    else if (appKeys === 'signed-in') parts.push(twoAccounts ? 'a tick on the app\'s Install page for the project\'s account, then one on it for your own account' : 'two ticks on the app\'s Install page');
-    else parts.push(twoAccounts ? 'a code typed on GitHub, Authorise, then a tick on the Install page for the project\'s account and one on it for your own account' : 'a code typed on GitHub, Authorise, and two ticks on the Install page');
+    else if (appKeys === 'signed-in') parts.push('a tick on the app\'s Install page');
+    else parts.push('a code typed on GitHub, Authorise, and a tick on the Install page');
   }
   return parts.join(', then ');
 }
 
 // Step 3. `run`, `fetch`, `sleep`, `open` and `askSecret` are its ways out, for tests; `appFile`
 // where Wheelhouse's app is read from; `hostUrl` a repository's address; `findGit` the git step 2
-// found; `views` the profile's views the plan reads their own app from, and `profileRoutes` the
-// profile's write and views routes apply records it through.
+// found; `views` the views of the director's settings the plan reads their own app from, and
+// `profileRoutes` the helper's settings routes (/profile/*) apply records it through.
 export function hostStep({
   run = realRun, fetch = globalThis.fetch, sleep = pause, open, askSecret = realAskSecret, appFile = APP_FILE,
   hostUrl = httpsRemote, findGit = async ({ platform }) => (await toolsStatus({ platform, run, tools: ['git'] })).git,
@@ -1516,7 +1473,7 @@ export function hostStep({
   // (company-ca.js, tools.js): stand-ins in tests.
   certificateProbe = probeCertificate, trustCertificate = applyCompanyCa,
 } = {}) {
-  // The profile's routes through the helper, for the person's own app's record: `profileRoutes`
+  // The settings routes through the helper, for the person's own app's record: `profileRoutes`
   // stands in for them in tests; otherwise made when apply needs them.
   const profileFor = () => profileRoutes ?? helperProfile();
   return {
@@ -1535,8 +1492,8 @@ export function hostStep({
       if (join?.ask) return { ask: join.ask };
       const product = join === null ? productOf(ctx.folder, { config: readGitlabHosts(ctx.folder) })
         : { isNew: false, joining: true, host: null, repo: join.join.includes('/') ? join.join : join.known, name: join.join.split('/').at(-1) };
-      // Real users and Locked are the first computer's questions; a joining computer reads the
-      // phase from the project's state, and its step 8 asks Locked.
+      // Real users and Locked are the first computer's questions; a joining computer reads whether
+      // the product is launched from what it checks out, and its step 8 asks Locked.
       let realUsers = false;
       let locked = false;
       if (!product.joining) {
@@ -1546,9 +1503,10 @@ export function hostStep({
         if (lockable && answer('locked') === null) return { ask: lockedAsk(product.name) };
         locked = lockable && answer('locked').label === LEVELS.locked;
       }
-      // A launched project a computer joins is never offered Quick, once its state here says so
-      // (an earlier attempt cloned it); before then, apply refuses Quick once it has.
-      const launched = product.joining && product.repo !== null && launchedIn(slugFor(product.repo));
+      // A launched project a computer joins is never offered Quick, once an earlier attempt found it
+      // so (its checked-out .claude/wheelhouse.json, or a v0.1.x state branch's phase); before then,
+      // apply refuses Quick once it has.
+      const launched = product.joining === true && (launchedInFolder(ctx.folder) || launchedFound(product.repo));
       let host = product.host;
       if (host === null) {
         if (answer('host') === null) return { ask: hostAsk(product.name) };
@@ -1556,8 +1514,8 @@ export function hostStep({
       }
       const where = product.isNew ? `the new private repository ${product.name} on ${NAME[host]}` : `${product.repo ?? product.name} on ${NAME[host]}`;
       // On a Mac, Quick first and the narrow ways behind Make it stricter; elsewhere a narrow way
-      // recommended. A joining computer can't know the phase before its state is cloned, so its
-      // card counts as one with real users. A card with one way (Locked or launched, on GitLab, or
+      // recommended. A joining computer can't know whether the product is launched before it is
+      // checked out, so its card counts as one with real users. A card with one way (Locked or launched, on GitLab, or
       // on GitHub with no Wheelhouse app) is no choice, and AskUserQuestion can't show it: that way
       // is taken, and step 3's Go-ahead card lists it.
       const card = connectionCard({ host, locked, launched, realUsers: realUsers || launched || product.joining === true, platform, where, appFile });
@@ -1586,26 +1544,10 @@ export function hostStep({
       const { signedIn, user } = await signInStatus({ host, run, base });
       const owner = product.isNew ? user : (product.repo === null ? null : product.repo.split('/').slice(0, -1).join('/'));
       const repo = product.isNew ? (user ? `${user}/${product.name}` : null) : product.repo;
-      // A project's repository the host doesn't say is private is put to the director on a short card
-      // of its own, before the Go ahead and before anything is made (design sections 15.1 and 22): the
-      // one card's Go ahead never covers it. Read on GitHub with the sign-in here; elsewhere, and when
-      // it can't be read here, apply refuses it as before.
-      if (host === 'github' && signedIn && !product.isNew && !product.joining && typeof repo === 'string') {
-        let info = null;
-        try {
-          info = await repoInfo({ host, repo, run });
-        } catch { /* apply asks again, and refuses what it can't read */ }
-        if (info !== null && info.private !== true) {
-          const tries = Object.keys(answers).filter((k) => k.startsWith('3.not-private-')).length;
-          const last = answers[`3.not-private-${tries - 1}`];
-          if (last?.label === NOT_PRIVATE.stop) return { wait: NOT_PRIVATE_WAIT_MS, why: `${notPrivate({ host, repo: info.repo })}; the director chose to stop setup here` };
-          return { ask: notPrivateAsk(info.repo, host, tries) };
-        }
-      }
       let app = null;
       if (mode === 'narrow' && host === 'github') {
         if (way === WAYS.own) {
-          // Their own app: the one their profile records, confirmed, when it belongs to the account
+          // Their own app: the one their settings record, confirmed, when it belongs to the account
           // that holds the project; else one made (or found) on that account at apply. A new
           // product's account is the director's, known once they are signed in.
           const own = ownApp({ views });
@@ -1650,11 +1592,6 @@ export function hostStep({
       }
       // How far this computer is with the app: a later project needs no new code (design section 15).
       const appKeys = typeof app?.clientId === 'string' ? appKeysState(app, owner) : null;
-      // The Wheelhouse app for a project on an organisation, with the profile on the director's own
-      // account joining it: an Install page for each account.
-      const profileNow = profileRemote();
-      const profileJoins = profileNow === null || (profileNow.connection?.mode === 'narrow' && profileNow.host === host);
-      const twoAccounts = app !== null && !app.own && typeof owner === 'string' && typeof user === 'string' && !sameLogin(owner, user) && profileJoins;
       const changes = [];
       // A company's GitLab whose certificate this computer does not trust: the company's own is given
       // first, for that address only. With the file made already, the question is whether it covers
@@ -1678,13 +1615,7 @@ export function hostStep({
         changes.push({ kind: 'host', target: host, action: 'join', name: product.repo ?? join.join });
         changes.push({ kind: 'folder', target: ctx.folder, action: 'checkout' });
       }
-      if (profileRemote() === null) {
-        changes.push({ kind: 'host', target: host, action: 'profile-repository', repo: user ? `${user}/${PROFILE_REPO}` : null });
-        changes.push({ kind: 'file', target: profileFile(), action: 'profile' });
-      }
-      // The profile's clone, also when an earlier attempt left it part-way.
-      if (profileRemote() === null || !profileCloneWhole()) changes.push({ kind: 'folder', target: profileDir(), action: 'profile-clone' });
-      // Their own app, made or found, and kept in the profile.
+      // Their own app, made or found, and kept in the director's settings on this computer.
       if (app?.own && typeof app.clientId !== 'string') changes.push({ kind: 'host', target: 'github', action: 'own-app', account: app.account, name: app.name });
       changes.push({
         kind: 'host', target: host, action: 'connection', mode, locked, ...(host === 'gitlab' && base !== DEFAULT_GITLAB ? { base } : {}),
@@ -1692,13 +1623,12 @@ export function hostStep({
       });
       const slug = repo === null ? null : slugFor(repo);
       changes.push({ kind: 'file', target: slug === null ? path.join(wheelhouseHome(), 'projects') : projectFile(slug), action: 'project', repo });
+      // The project's private record on this computer, opened, never cloned (design section 24.1).
       changes.push({ kind: 'folder', target: slug === null ? path.join(wheelhouseHome(), 'projects') : stateDir(slug), action: 'state', repo });
-      // This computer's key, in the profile for the director's other computers (ruling R79).
-      changes.push(enrolmentChange({ host }));
       return {
         changes,
-        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, twoAccounts, base }),
-        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, twoAccounts, via: changes.find((c) => c.action === 'sign-in')?.via ?? null }),
+        card: cardFor({ host, changes, product, owner, user, way, app, signedIn, appKeys, base }),
+        director: directorFor({ signedIn, way, host, app, appKeys, joining: product.joining === true, via: changes.find((c) => c.action === 'sign-in')?.via ?? null }),
       };
     },
 
@@ -1714,14 +1644,14 @@ export function hostStep({
       };
       halt();
       const opener = open ?? ((url) => openPage(url, { platform, run }));
-      // Their own app proposed again, and nothing else (ruling R115): only while the profile still
-      // holds that app as accepted, hidden by a change waiting. The step then stops, saying so, so
+      // Their own app proposed again, and nothing else (ruling R115): only while the settings still
+      // hold that app as accepted, hidden by a change waiting. The step then stops, saying so, so
       // step 3 is asked again once the director has confirmed.
       const again = changes.find((c) => c.action === 'own-app-again') ?? null;
       if (again !== null) {
         if (changes.length !== 1) throw new Error('Step 3\'s list proposes your own app again beside other changes, so nothing was done: ask for step 3\'s card again');
         const shadow = shadowedOwnApp(await profileFor().views());
-        if (shadow === null || !sameApp(shadow.accepted, again.app)) throw new Error('Your profile has changed since the card, so nothing was proposed: ask for step 3\'s card again');
+        if (shadow === null || !sameApp(shadow.accepted, again.app)) throw new Error('Your settings on this computer have changed since the card, so nothing was proposed: ask for step 3\'s card again');
         await recordOwnApp(shadow.accepted, { record, profile: profileFor() });
         throw new Error(ownAppProposedAgain(shadow.accepted));
       }
@@ -1773,27 +1703,25 @@ export function hostStep({
       const gitEnv = directorGitEnv({ host, gitPath: git.path, platform, base });
       const { user } = await signIn({ host, run, say, stopped, base, open: opener, askSecret, platform });
       // A repository the card named on one account is never made on another.
-      for (const c of changes.filter((x) => (x.action === 'repository' || x.action === 'profile-repository') && typeof x.repo === 'string')) {
+      for (const c of changes.filter((x) => x.action === 'repository' && typeof x.repo === 'string')) {
         if (c.repo.split('/')[0] !== user) throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);
       }
       halt();
       const api = host === 'gitlab' ? await gitlab({ run, fetch, baseUrl: base }) : null;
-      // The product a joining computer's answer names: exactly one repository holding Wheelhouse's
-      // records, or a refusal saying to type owner/name, recorded so the question asks again.
+      // The product a joining computer's answer names: exactly one repository set up with Wheelhouse,
+      // or a refusal saying to type owner/name, recorded so the question asks again.
       let joined = null;
       if (join !== null) {
         const found = await findJoined({ host, wanted: join.name, user, run, api, gitPath: git.path, env: gitEnv, hostUrl: urlFor });
         // The repository this folder is checked out to is checked again, never searched for.
         if (fixed !== null && found.length !== 1) {
-          throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or no longer holds Wheelhouse's records, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
+          throw new Error(`${fixed} on ${NAME[host]} can't be found with your sign-in, or is no longer set up with Wheelhouse, so setup has stopped: this folder is checked out to it and joins nothing else; check the repository on ${NAME[host]}, then a fresh Go ahead tries again`);
         }
         if (found.length !== 1) {
           answerRecord({ joined: join.name, missed: found.length === 0 ? 'none' : found.map((f) => f.repo) });
           throw new Error(joinMissLine({ host, wanted: join.name, found }));
         }
         [joined] = found;
-        // A public project is refused before this folder is checked out or the profile made.
-        mustBePrivate(joined, { host });
         answerRecord({ joined: joined.repo, found: true });
         halt();
       }
@@ -1807,17 +1735,6 @@ export function hostStep({
       if (narrowApp?.own && typeof narrowApp.account === 'string' && !sameLogin(narrowApp.account, projectOwner)) {
         throw new Error(`You are signed in to ${NAME[host]} as ${user}, not the account the card named; ask for step 3's card again`);
       }
-      // An app of their own on an organisation reaches only that organisation's repositories, never
-      // the profile on the director's own account.
-      const appReachesProfile = !narrowApp?.own || sameLogin(narrowApp.owner ?? projectOwner, user);
-      // An existing product's repository must be private before anything of Wheelhouse's goes near
-      // it, and must hold a branch of its own before the state branch goes up, or the state branch
-      // would become its default (ruling R34).
-      if (made === null && joined === null) {
-        const existing = await repoInfo({ host, repo: projectRepo, run, api });
-        if (existing !== null) mustBePrivate(existing, { host });
-      }
-      if (made === null && joined === null) await productBranchOn({ host, repo: projectRepo, remoteUrl: urlFor({ host, repo: projectRepo }), gitPath: git.path, env: gitEnv, run });
       // A joining computer's folder, checked out to the project in place, on its default branch.
       if (joined !== null) {
         const branch = joined.defaultBranch;
@@ -1827,36 +1744,40 @@ export function hostStep({
         await checkOutJoined({ folder: ctx.folder, repo: joined.repo, remoteUrl: urlFor({ host, repo: joined.repo }), branch, gitPath: git.path, env: gitEnv, run, record });
         halt();
       }
-      // The product under its owner; the profile always on the director's own account.
-      await makeRepos({
-        host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: made !== null,
-        run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, mode: appReachesProfile ? connection.mode : 'quick', base,
-      });
+      // A new product's repository, under the director's own account.
+      if (made !== null) {
+        await makeRepos({
+          host, owner: projectOwner, user, name: projectRepo.split('/').at(-1), isNew: true, run, api, folder: ctx.folder, record, gitPath: git.path, env: gitEnv, hostUrl, base,
+        });
+      }
       const project = await repoInfo({ host, repo: projectRepo, run, api });
       if (project === null) throw new Error(`${projectRepo} on ${NAME[host]} can't be found with your sign-in`);
-      mustBePrivate(project, { host });
-      const profile = profileRemote();
-      if (profile === null) throw new Error('The profile could not be read back after it was written');
       halt();
       const slug = slugFor(project.repo);
       const remoteUrl = urlFor({ host, repo: project.repo });
-      const cloneRecords = async () => {
+      // The project's private record, opened on this computer with no remote, and the director's
+      // settings beside it (design section 24.1): nothing is pushed. The settings are every
+      // project's, so they are not this project's change to put back.
+      const openRecords = async () => {
         record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { record: true } });
         await refuseSettingsIn({ dir: stateDir(slug), run, gitPath: git.path });
         await openProjectRecord(slug, { run });
+        await openSettings({ run });
       };
-      // A joining computer clones the project's state before anything is connected or registered,
-      // and its `phase` refuses Quick on a launched project (design section 11).
+      // A joining computer reads whether the product is launched before anything is connected or
+      // registered: its .claude/wheelhouse.json, as checked out, or a v0.1.x state branch's phase,
+      // which is recorded so the card is asked again without Quick (design sections 11 and 24.3).
       if (joined !== null) {
-        await cloneRecords();
-        if (connection.mode === 'quick' && launchedIn(slug)) throw new Error(quickLaunched(project.repo));
+        const launched = launchedInFolder(ctx.folder) || launchedFound(project.repo) || (joined.stateBranch === true
+          && await stateBranchLaunched({ folder: ctx.folder, remoteUrl, gitPath: git.path, env: gitEnv, run }));
+        if (launched && !launchedInFolder(ctx.folder) && !launchedFound(project.repo)) answerRecord({ joined: project.repo, launched: true });
+        if (connection.mode === 'quick' && launched) throw new Error(quickLaunched(project.repo));
+        await openRecords();
         halt();
       }
       // The app's installation on the project's account, kept in its record (ruling R83).
       let installationId = null;
       if (connection.mode === 'narrow') {
-        // The profile's own repository joins when its connection is narrow on this host too.
-        const withProfile = profile.connection?.mode === 'narrow' && profile.host === host && profile.repo !== project.repo;
         if (host === 'github') {
           // The app the card named, by its client ID and name; or their own, made or found now.
           let app = narrowApp;
@@ -1881,19 +1802,18 @@ export function hostStep({
             throw new Error(oneAppLine({ kept: appWords(keptId, { appFile, views }), using: own ? 'your own app' : 'the Wheelhouse app', where: `${project.repo} on ${NAME[host]}` }));
           }
           const installations = await connectGithubApp({
-            app, repos: [project.repo, ...(withProfile && appReachesProfile ? [profile.repo] : [])], fetch, say, open: opener, sleep, now, record, halt,
+            app, repos: [project.repo], fetch, say, open: opener, sleep, now, record, halt,
             ...(own ? { startCode: () => ownAppCode({ app, account: projectOwner, run, fetch, say, open: opener, sleep, now, halt }) } : {}),
           });
           installationId = installations[accountOf(project.repo)] ?? null;
-          // Their own app, once connected, kept in the profile for their other computers.
+          // Their own app, once connected, kept in the director's settings on this computer.
           if (own) {
             halt();
             await recordOwnApp({ clientId: app.clientId, slug: app.slug, owner: app.owner }, { record, profile: profileFor() });
           }
         } else {
-          const profileProject = withProfile ? await repoInfo({ host, repo: profile.repo, run, api }) : null;
           await connectGitlabKeys({
-            api, projects: [project, ...(profileProject ? [profileProject] : [])], owner: user, platform, say, open: opener, askSecret, now, record, halt,
+            api, projects: [project], owner: user, platform, say, open: opener, askSecret, now, record, halt,
           });
         }
       }
@@ -1902,15 +1822,7 @@ export function hostStep({
       const file = projectFile(slug);
       record({ id: newId('chg'), kind: 'file', target: file, before: readText(file), after: `${JSON.stringify(kept, null, 2)}\n` });
       writeProject(slug, kept);
-      if (joined === null) await cloneRecords();
-      // This computer's key, put in the profile with the director's own sign-in (ruling R79).
-      const enrolment = changes.find((c) => c.action === 'enrolment') ?? null;
-      if (enrolment !== null) {
-        halt();
-        await publishEnrolment({
-          profile, listed: enrolment, gitPath: git.path, env: directorGitEnv({ host: Object.hasOwn(TOOL, profile.host) ? profile.host : host, gitPath: git.path, platform, base: gitlabBaseOf(profile) ?? undefined }), run, record, now,
-        });
-      }
+      if (joined === null) await openRecords();
       say(`Connected: ${project.repo} on ${NAME[host]}, ${connection.mode === 'quick' ? 'Quick' : 'narrow'}`);
       return [];
     },

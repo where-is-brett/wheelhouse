@@ -22,8 +22,8 @@
 // next plan lists what is left, on a new card (after the list, see Resuming below).
 // Locked is left first, with the director's password, before anything that removes the project's
 // record. The level 4 cards (the asks) are acted on after the keys, and only on a Delete it given
-// since the card was last asked (ruling R117): the state branch is deleted with the director's own
-// sign-in; a repository's settings page is opened for their own Delete (ruling R92). Then the
+// since the card was last asked (ruling R117): the project's private record is deleted from this
+// computer; a repository's settings page is opened for their own Delete (ruling R92). Then the
 // settled and kept changes are marked, and last of all each of the folder's open runs is closed
 // (closeRun, by uninstall). The answers are read before anything is removed (the trusted-keys list
 // that verifies them is among what the last uninstall removes).
@@ -54,14 +54,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { wheelhouseHome } from '../lib/paths.js';
+import { wheelhouseHome, projectsDir } from '../lib/paths.js';
 import { readProject, registeredProjects } from '../lib/projects.js';
 import { runClosed } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
 import { stopState } from '../lib/stop.js';
 import { removeLoginStart } from '../lib/login-start.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
-import { STATE_BRANCH } from '../state/record.js';
 import { profileRemote } from '../profile/store.js';
 import { makeAdapter } from '../host/adapter.js';
 import { deleteKey } from '../host/keys.js';
@@ -77,7 +76,6 @@ import { putBackOwnApp } from './own-app.js';
 import { directorGitEnv, directorGitlabApi, openPage } from './host.js';
 import { setupGit, reaching } from './git.js';
 import { toolsStatus } from './tools.js';
-import { withdrawEnrolment } from './computers.js';
 import { enrolledFile, signingKeyFile } from '../state/signing.js';
 import { answersFor, askedRecord } from './clicks.js';
 import {
@@ -94,7 +92,7 @@ export const UNINSTALL_TITLE = 'Remove Wheelhouse';
 const UNINSTALL_BODY = 'This takes out of the project\'s files what Wheelhouse\'s setup put in: its settings, its configuration, its section of CLAUDE.md and the pinned kits. Once it is merged, Wheelhouse\'s checks no longer guard this project. Branch protection stays on.';
 // Added to the body when it puts archived instructions back.
 const ARCHIVE_BODY = ` It also moves the other agent setup's instructions out of ${ARCHIVE}/, back where they were.`;
-// Setup's own name on uninstall's commit, as on the enrolment's (scripts/setup/computers.js).
+// Setup's own name on uninstall's commit.
 const AUTHOR = ['-c', 'user.name=Wheelhouse setup', '-c', 'user.email=setup@wheelhouse.invalid', '-c', 'commit.gpgsign=false'];
 const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
@@ -104,7 +102,7 @@ const halt = (why) => { throw new Halt(why); };
 
 // git for uninstall's host work, with the director's own sign-in, in a scratch bare repository of
 // setup's own under the Wheelhouse home, removed afterwards: never the director's folder, never the
-// helper's clones (as scripts/setup/computers.js publishes the enrolment). `use(git)` gets
+// project's private record. `use(git)` gets
 // `{ ok(args, input?), out(args, input?), must(args, why, input?) }`.
 async function withScratchGit({ run, gitPath, env, remoteUrl, index = false }, use) {
   const parent = path.join(wheelhouseHome(), 'setup');
@@ -241,7 +239,7 @@ function hostWork({ platform, run, fetch }) {
 
 // Applies an uninstall plan worked out for `folder` (its real path). `ops` replaces parts for tests:
 // the stops, leaveLocked, the host work (`findGit`, `gitEnvFor`, `adapterFor`, `findOpenPr`,
-// `openPage`), putBackOwnApp's `profile`, revokeGitlabKey, withdrawEnrolment. `stopped` reads STOP,
+// `openPage`), putBackOwnApp's `profile`, revokeGitlabKey. `stopped` reads STOP,
 // which halts it between two changes. Gives { ok, lines, pages, helperStops? }, or, when it stopped
 // part-way, { ok: false, refused, lines, pages }.
 export async function applyUninstall({
@@ -255,7 +253,6 @@ export async function applyUninstall({
     leaveLocked: (args) => leaveLocked({ ...args, run }),
     putBackOwnApp: (change) => putBackOwnApp(change, ops.profile === undefined ? {} : { profile: ops.profile }),
     revokeGitlabKey: (args) => revokeGitlabKey({ ...args, fetch }),
-    withdrawEnrolment: (args) => withdrawEnrolment({ ...args, run }),
     ...hostWork({ platform, run, fetch }),
     ...ops,
   };
@@ -322,23 +319,26 @@ export async function applyUninstall({
   const asked = async () => {
     for (const ask of plan.asks) {
       const answer = answers[`${ASK_STEP}.${ask.id}`];
+      const named = ask.put === 'delete-record' ? 'this project\'s private record on this computer' : ask.target.replace(/^(github|gitlab):/, '');
       if (answer?.label !== DELETE_LABEL) {
         mark(ask.ids, false, answer ? 'kept, as its own card said' : 'kept: its own card was not answered Delete it');
-        say(`Kept: ${ask.target.replace(/^(github|gitlab):/, '')}${answer ? '' : ', as its own card was not answered'}.`);
+        say(`Kept: ${named}${answer ? '' : ', as its own card was not answered'}.`);
+        continue;
+      }
+      if (ask.put === 'delete-record') {
+        // Only a project's record folder under projects/ is ever deleted here.
+        if (path.basename(ask.target) !== 'record' || !samePath(path.dirname(path.dirname(ask.target)), projectsDir())) halt(`${ask.target} is not a project's private record, so it was not deleted`);
+        fs.rmSync(ask.target, { recursive: true, force: true });
+        mark(ask.ids, true);
+        say('This project\'s private record is deleted from this computer.');
         continue;
       }
       const h = hostTarget(ask.target);
-      if (ask.put === 'delete-branch') {
-        if (record === null) halt('the project\'s record is gone, so its state branch could not be deleted');
-        const got = await gitFor(record.host, record.remoteUrl, (g) => deleteHostBranch(g, record.remoteUrl, STATE_BRANCH, null), false, record.connection?.baseUrl);
-        say(got.put ? `The ${STATE_BRANCH} branch of ${record.repo} is deleted.` : `The ${STATE_BRANCH} branch stays: ${got.why}.`);
-      } else {
-        const base = h.host === 'gitlab' ? (record?.connection?.baseUrl ?? GITLAB_URL) : null;
-        const url = h.host === 'github' ? `https://github.com/${h.repo}/settings` : `${base}/${h.repo}/edit`;
-        mark(ask.ids, false, 'left for your own Delete on its settings page');
-        say(`${h.repo} is yours to delete: on its settings page (the Danger zone at the bottom), click Delete.`);
-        await page(`${h.repo}'s settings page`, url);
-      }
+      const base = h.host === 'gitlab' ? (record?.connection?.baseUrl ?? GITLAB_URL) : null;
+      const url = h.host === 'github' ? `https://github.com/${h.repo}/settings` : `${base}/${h.repo}/edit`;
+      mark(ask.ids, false, 'left for your own Delete on its settings page');
+      say(`${h.repo} is yours to delete: on its settings page (the Danger zone at the bottom), click Delete.`);
+      await page(`${h.repo}'s settings page`, url);
     }
   };
 
@@ -347,6 +347,22 @@ export async function applyUninstall({
   let removed = 0;
   // A removal of the list, throwing when it can't be made.
   const removeOne = (entry) => {
+    if (entry.put === 'remove' && Array.isArray(entry.except)) {
+      // The folder but for the names it keeps, then the folder itself once nothing is left in it.
+      if (!within(wheelhouseHome(), entry.target)) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
+      let names = [];
+      try {
+        names = fs.readdirSync(entry.target);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+      const going = names.filter((n) => !entry.except.includes(n));
+      for (const n of going) fs.rmSync(path.join(entry.target, n), { recursive: true, force: true });
+      if (going.length > 0) removed += 1;
+      if (names.length > 0 && going.length === names.length) fs.rmdirSync(entry.target);
+      mark(entry.ids, true);
+      return;
+    }
     if (entry.put === 'remove') {
       const recorded = (entry.ids ?? []).some((id) => byId.get(id)?.kind === 'folder' && samePath(byId.get(id).target, entry.target) && typeof byId.get(id).after?.installer === 'string');
       if (!within(wheelhouseHome(), entry.target) && !recorded) halt(`${entry.target} is not Wheelhouse's own, so it was not removed`);
@@ -558,20 +574,9 @@ export async function applyUninstall({
         }
         case 'put-back-own-app': {
           const got = await o.putBackOwnApp(entry.change);
-          if (!got.put && got.why !== 'changed since setup') halt(`your own GitHub App could not be put back in your profile: ${got.why}`);
+          if (!got.put && got.why !== 'changed since setup') halt(`your own GitHub App could not be put back in your settings on this computer: ${got.why}`);
           mark(entry.ids, got.put, got.put ? undefined : got.why);
-          say(got.put ? 'Your profile\'s own GitHub App is put back as it was; like any profile setting, it takes effect once you Confirm it.' : 'Left: your own GitHub App in your profile, changed since setup.');
-          break;
-        }
-        case 'remove-enrolment': {
-          const profile = profileRemote();
-          if (profile === null) halt('your profile isn\'t known on this computer, so this computer\'s key could not be taken out of it');
-          const setUp = byId.get(entry.ids.at(-1));
-          git ??= await o.findGit();
-          if (!git?.ok || typeof git.path !== 'string') halt('git is not on this computer, so uninstall can\'t reach the host');
-          const got = await o.withdrawEnrolment({ profile, target: entry.target, after: setUp?.after, gitPath: git.path, env: o.gitEnvFor({ host: profile.host, gitPath: git.path, base: profile.connection?.baseUrl }) });
-          mark(entry.ids, got.put, got.put ? undefined : got.why);
-          say(got.put ? 'This computer\'s key is taken out of your profile.' : `This computer's key in your profile: ${got.why}.`);
+          say(got.put ? 'Your own GitHub App in your settings on this computer is put back as it was; like any of your settings, it takes effect once you Confirm it.' : 'Left: your own GitHub App in your settings on this computer, changed since setup.');
           break;
         }
         case 'delete-key': {

@@ -232,7 +232,6 @@ test('a host route for a Lean project refuses and names why', async () => {
       ['/config', h.client.config({ cwd: c.folder })],
       ['/host/facts', h.client.host.facts({ project: PROJECT })],
       ['/state/clone', h.client.state.clone({ project: PROJECT })],
-      ['/state/backup', h.client.state.backup({ project: PROJECT })],
       ['/lock/take', h.client.lock.take({ project: PROJECT })],
       ['/runbook/candidates', h.client.runbook.candidates({ cwd: c.folder })],
       ['/foreman/run', h.client.foreman.run({ folder: c.folder, script: 'act', argv: [] })],
@@ -241,9 +240,7 @@ test('a host route for a Lean project refuses and names why', async () => {
     for (const [route, asked] of asks) {
       const answer = await asked;
       assert.equal(answer.ok, false, route);
-      // The profile's backup waits for the profile first, as it does for every project.
-      if (route === '/state/backup') assert.match(String(answer.why), /profile/, route);
-      else assert.equal(answer.refused, LEAN_NO_HOST, route);
+      assert.equal(answer.refused, LEAN_NO_HOST, route);
     }
     assert.deepEqual(h.asked, { env: [], adapter: [] }, 'no connection or adapter was asked for');
     // Nothing was made for a host: no mirror, no lock, no state clone with a remote.

@@ -1067,15 +1067,13 @@ export async function startHelper({
     });
   }
 
-  // The project's mirror, made if missing, with origin set from the helper's
-  // own state clone.
+  // The project's mirror, made if missing, with origin set from Wheelhouse's record of the project:
+  // the private record has no remote to find it from (design section 24.1).
   async function mirrorFor(project, ctx) {
-    await lookAtState(ctx, project);
     await lookAtMirror(ctx, project);
     const plain = unkeyed;
-    const origin = await plain('git', ['config', '--get', `remote.${REMOTE}.url`], { cwd: stateDir(project) });
-    const url = origin.stdout.trim();
-    if (origin.code !== 0 || url === '') refuse('the project has no state clone to find its repository from');
+    const url = String(readProject(project)?.remoteUrl ?? '').trim();
+    if (url === '') refuse('the project has no repository recorded to find it from');
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/@\s]*:[^/@\s]*@/.test(url)) {
       refuse('the project\'s repository address carries credentials, so nothing is pushed: keys travel only in the environment');
     }

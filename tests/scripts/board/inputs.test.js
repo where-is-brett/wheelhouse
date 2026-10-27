@@ -23,7 +23,6 @@ const NOW = new Date('2026-10-19T12:00:00.000Z');
 const P = 'owner__name';
 const NO_CI = 'This project has no CI, so nothing can merge';
 const LOCKED_ELSEWHERE = 'Another computer holds this project, so this one is read-only';
-const NO_PROFILE = 'Your profile isn\'t backed up off this computer yet';
 
 const put = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -135,7 +134,8 @@ test('the inputs gather the views, events, settings, usage, sources and health f
     assert.equal(found.sources.advisories.length, 1);
     const lines = texts(found);
     assert.equal(lines[0], 'STOP is on, since 18 October 2026');
-    for (const line of [NO_CI, LOCKED_ELSEWHERE, NO_PROFILE, 'A security advisory for owner/lib: A flaw']) assert.ok(lines.includes(line), line);
+    for (const line of [NO_CI, LOCKED_ELSEWHERE, 'A security advisory for owner/lib: A flaw']) assert.ok(lines.includes(line), line);
+    assert.equal(lines.some((l) => /profile/.test(l)), false, 'no line asks for the profile\'s repository');
     assert.equal(lines.includes(NO_HELPER), false);
     if (process.platform === 'darwin') assert.ok(lines.includes('This project has real users: Locked would protect it more'));
     assert.deepEqual(client.calls.sort(), ['health', 'lock']);
