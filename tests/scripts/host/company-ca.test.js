@@ -19,7 +19,7 @@ import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
 import { applyCompanyCa } from '../../../scripts/setup/tools.js';
 import { boardModel } from '../../../scripts/board/model.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { makeEvent, writeEvent, syncState } from '../../../scripts/state/events.js';
+import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -124,7 +124,7 @@ test('no route ever sets GIT_SSL_NO_VERIFY, NODE_TLS_REJECT_UNAUTHORIZED=0, sslV
   for (const bad of ['two', '-1', '1.5', '']) assert.throws(() => withGitConfig({ GIT_CONFIG_COUNT: bad }, gitCaConfig(BASE, caFile(home), 'darwin')), /whole number/);
 });
 
-test('an unreachable host gives HOST_UNREACHABLE and keeps the push for later', async () => {
+test('an unreachable host gives HOST_UNREACHABLE, and a write to the private record needs no host', async () => {
   // glab: every kind of unreachable text, on a read, gives the one line and the code, never glab's own words.
   for (const text of GLAB_UNREACHABLE) {
     const { adapter } = gitlabAdapter(() => ({ code: 1, stdout: '', stderr: text }));
@@ -144,22 +144,21 @@ test('an unreachable host gives HOST_UNREACHABLE and keeps the push for later', 
   assert.equal(unreachableRefusal({ host: 'github', connection: {} }, gitAway), null);
   assert.equal(unreachableRefusal({ host: 'gitlab', connection: { baseUrl: BASE } }, 'remote: GitLab: You are not allowed to push code to this project'), null);
 
-  // The push is kept: the event stays committed here, is not sent, and the next sync still counts it.
+  // The private record has no remote (design section 24.1): a write while the host is away is
+  // committed here, with nothing to send and no line about the host.
   const remote = await makeBareRemote();
   try {
     await as(shortHome(), async () => {
       const dir = await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       assert.equal(dir, stateDir('o__p'));
       const event = makeEvent({ kind: 'note', data: { text: 'while away' } });
-      const away = async () => ({ ok: false, refused: HOST_UNREACHABLE(BASE) });
-      const written = await writeEvent({ project: 'o__p', event, push: away });
-      assert.equal(written.pushed, false);
-      assert.equal(written.refused, HOST_UNREACHABLE(BASE));
+      const written = await writeEvent({ project: 'o__p', event });
+      assert.deepEqual(written, { path: written.path, pushed: false });
       assert.ok(fs.existsSync(written.path));
       const log = await realRun('git', ['log', '--format=%s', '-1'], { cwd: dir });
       assert.equal(log.stdout.trim(), `note ${event.id}`);
-      const synced = await syncState({ project: 'o__p', push: away });
-      assert.equal(synced.unpushed, 1);
+      assert.equal((await realRun('git', ['remote'], { cwd: dir })).stdout.trim(), '', 'the record has no remote');
+      assert.equal((await realRun('git', ['branch', '--list'], { cwd: remote.url })).stdout.trim(), '', 'nothing reached the host');
     });
   } finally { remote.cleanup(); }
 });

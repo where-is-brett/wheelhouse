@@ -15,13 +15,13 @@ import { fileURLToPath } from 'node:url';
 import { startHelper, PUSH_REFUSALS } from '../../../scripts/host/helper.js';
 import { startRealHelper } from '../../../scripts/host/helper-main.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { HOST_UNREACHABLE, CERTIFICATE_NOT_TRUSTED, caFile, gitCaConfig, writeCaFile } from '../../../scripts/host/company-ca.js';
+import { HOST_UNREACHABLE, caFile, gitCaConfig, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { connectionOf } from '../../../scripts/host/helper.js';
 import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { FENCE } from '../../../scripts/setup/git.js';
-import { openTestRecord } from '../../helpers/record-fixture.js';
+import { readLock } from '../../../scripts/state/lock.js';
 import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { keep, taken } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
@@ -116,8 +116,17 @@ async function computer(repo, { adapter = fakeAdapter(), envFor, project = {}, r
 
 const remoteFiles = async (remoteUrl, branch, folder = '.') => (await run('git', ['ls-tree', '-r', '--name-only', branch, folder], { cwd: remoteUrl }))
   .stdout.split('\n').filter(Boolean);
+// The events committed in this computer's private record of the project (design section 24.1). Run
+// inside the computer's home.
+const recordFiles = async () => (await run('git', ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'events'], { cwd: stateDir(PROJECT) }))
+  .stdout.split('\n').filter(Boolean);
+// The record is never pushed: the host holds no branch of Wheelhouse's records.
+const nothingOnHost = async (remoteUrl) => {
+  const branches = (await run('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'], { cwd: remoteUrl })).stdout.split('\n');
+  assert.ok(!branches.includes('wheelhouse-state'), 'nothing of the record reached the host');
+};
 
-test('narrow on a private repository: clone, write, sync and the lock all work through the helper', async () => {
+test('narrow on a private repository: write, sync and the lock all work through the helper, and only the lock reaches the host', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);
   try {
@@ -127,10 +136,10 @@ test('narrow on a private repository: clone, write, sync and the lock all work t
       assert.deepEqual(await ask(c.client.state.clone({ project: PROJECT })), { ok: true });
       const wrote = await ask(c.client.state.write({ project: PROJECT, kind: 'ruling', data: { words: 'Prices show two decimal places', reason: 'the director asked', scope: 'project' } }));
       assert.equal(wrote.ok, true);
-      assert.equal(wrote.pushed, true);
+      assert.equal(wrote.pushed, false);
       assert.match(wrote.id, /^[0-9a-f-]{36}$/);
       assert.deepEqual(await ask(c.client.lock.take({ project: PROJECT })), { ok: true, result: { taken: true, counter: 1 } });
-      assert.deepEqual(await ask(c.client.state.sync({ project: PROJECT })), { ok: true, pulled: true, unpushed: 0 });
+      assert.deepEqual(await ask(c.client.state.sync({ project: PROJECT })), { ok: true, pulled: 0, unpushed: 0 });
       const read = await ask(c.client.lock.read({ project: PROJECT }));
       assert.equal(read.result.counter, 1);
       assert.equal(read.result.computer, computerId());
@@ -138,47 +147,58 @@ test('narrow on a private repository: clone, write, sync and the lock all work t
       const views = await ask(c.client.state.views({ project: PROJECT }));
       assert.equal(views.ok, true);
       assert.equal(views.views.rulebook.find((r) => r.id === wrote.id)?.words, 'Prices show two decimal places');
+      assert.ok((await recordFiles()).some((n) => n.includes('_ruling_')), 'the ruling is committed in the record');
     });
-    assert.ok((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).some((n) => n.includes('_ruling_')), 'the ruling reached the host');
+    await nothingOnHost(repo.remote.url);
     assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-lock'), ['lock.json']);
     assert.equal(repo.host.refusedCount(), 0, 'every request the host saw carried the key');
     assert.ok(answers.every((a) => !JSON.stringify(a).includes(TOKEN)));
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-test('the same calls made without the helper are refused by the host', async () => {
+test('the lock read without the helper is refused by the host', async () => {
   const repo = await privateRepo();
   const home = shortHome();
   try {
     await as(home, async () => {
-      await assert.rejects(openTestRecord({ project: PROJECT, remoteUrl: repo.url, env: LOOPBACK_HTTP }), /could not be reached/);
+      writeProject(PROJECT, record(repo.url));
+      await assert.rejects(readLock({ project: PROJECT, env: LOOPBACK_HTTP }), /could not be reached/);
     });
     assert.ok(repo.host.refusedCount() > 0, 'the host refused the keyless request');
   } finally { fs.rmSync(home, { recursive: true, force: true }); await repo.cleanup(); }
 });
 
-test('the state clone comes from the project record, never from the request', async () => {
+test('the private record has no remote whatever the request names, and the lock\'s repository comes from the project record', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);
   try {
     await c.as(async () => {
       assert.deepEqual(await c.client.state.clone({ project: PROJECT, remoteUrl: 'file:///elsewhere', remote: 'file:///elsewhere' }), { ok: true });
-      const origin = await run('git', ['config', '--get', 'remote.origin.url'], { cwd: stateDir(PROJECT) });
+      assert.equal((await run('git', ['remote'], { cwd: stateDir(PROJECT) })).stdout.trim(), '');
+      assert.equal((await run('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: stateDir(PROJECT) })).stdout.trim(), 'record');
+      assert.equal((await c.client.lock.take({ project: PROJECT, remoteUrl: 'file:///elsewhere' })).result.taken, true);
+      const origin = await run('git', ['config', '--get', 'remote.origin.url'], { cwd: path.join(stateDir(PROJECT), '..', 'lock') });
       assert.equal(origin.stdout.trim(), readProject(PROJECT).remoteUrl);
       assert.equal(origin.stdout.trim(), repo.url);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-test('a project with no record is refused, and the answer carries no key', async () => {
+test('a project with no record is refused, no private record is made for it, and the answer carries no key', async () => {
   const repo = await privateRepo();
-  const c = await computer(repo);
+  // As the real helper's (scripts/host/helper-main.js), the connection is read from the project's record.
+  const envFor = async (project) => {
+    if (readProject(project) === null) throw new Error('the project has not been set up on this computer');
+    return { mode: 'narrow', env: hostKeyEnv(repo.host.url, TOKEN) };
+  };
+  const c = await computer(repo, { envFor });
   try {
     await c.as(async () => {
       const answer = await c.client.state.clone({ project: 'someone__else' });
       assert.equal(answer.ok, false);
       assert.match(answer.refused, /project/);
       assert.ok(!JSON.stringify(answer).includes(TOKEN));
+      assert.equal(fs.existsSync(stateDir('someone__else')), false);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
@@ -195,7 +215,7 @@ test('/state/write refuses a protected kind, an unknown kind and a missing kind'
       }
       const bad = await c.client.state.write({ project: PROJECT, kind: 'note', data: 'not an object' });
       assert.equal(bad.ok, false);
-      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), []);
+      assert.deepEqual(await recordFiles(), []);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
@@ -216,7 +236,7 @@ test('the helper refuses a setting event the catalogue refuses', async () => {
         assert.equal(answer.ok, false, JSON.stringify(data));
         assert.match(answer.refused, pattern);
       }
-      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), [], 'nothing reached the host');
+      assert.deepEqual(await recordFiles(), [], 'nothing was written');
       const ok = await c.client.state.write({ project: PROJECT, kind: 'setting', data: { key: 'presence', value: 'away', until: '2026-10-18T18:00:00.000Z' } });
       assert.equal(ok.ok, true);
     });
@@ -233,13 +253,13 @@ test('/state/write makes the event itself: its time and computer are the helper\
         assert.equal(refused.ok, false, String(id));
         assert.match(refused.refused, /id/, String(id));
       }
-      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), []);
+      assert.deepEqual(await recordFiles(), []);
       const answer = await c.client.state.write({
         project: PROJECT, kind: 'note', data: { words: 'hello' }, at: '1999-01-01T00:00:00.000Z', computer: 'deadbeef',
       });
       assert.equal(answer.ok, true);
       assert.match(answer.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-      const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
+      const files = await recordFiles();
       assert.equal(files.length, 1);
       assert.match(files[0], /^events\/2026\/10\/2026-10-18T01-00-01\.000Z_/);
       assert.ok(files[0].includes(`_${computerId()}_note_`));
@@ -254,7 +274,7 @@ test('/state/write takes a caller-made id, and refuses one the state already hol
     await c.as(async () => {
       const id = '0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
       const first = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'first' }, id });
-      assert.deepEqual(first, { ok: true, id, pushed: true });
+      assert.deepEqual(first, { ok: true, id, pushed: false });
       const views = await c.client.state.views({ project: PROJECT });
       assert.equal(views.ok, true);
       // The same id again, for the same record or another, is refused and writes nothing.
@@ -269,7 +289,7 @@ test('/state/write takes a caller-made id, and refuses one the state already hol
       const taken = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'third' }, id: review.id });
       assert.equal(taken.ok, false);
       assert.match(taken.refused, /already holds/);
-      const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
+      const files = await recordFiles();
       assert.equal(files.length, 2);
       assert.ok(files.some((f) => f.includes('_note_0f1e')), 'the note is filed under its caller-made id');
     });
@@ -350,11 +370,11 @@ test('/state/record accepts a record signed by this computer, and refuses one un
         assert.equal(answer.ok, false, label);
         assert.match(answer.refused, /sign|computer|record/, label);
       }
-      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), [], 'nothing reached the host');
+      assert.deepEqual(await recordFiles(), [], 'nothing was written');
 
       const accepted = await c.client.state.record({ project: PROJECT, event: review });
-      assert.deepEqual(accepted, { ok: true, id: review.id, pushed: true });
-      assert.ok((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events'))[0].includes('_review_'));
+      assert.deepEqual(accepted, { ok: true, id: review.id, pushed: false });
+      assert.ok((await recordFiles())[0].includes('_review_'));
 
       // A plain kind is not recorded this way.
       const note = makeEvent({ kind: 'note', data: { words: 'x' }, now: at(10) });
@@ -382,7 +402,7 @@ test('/state/record refuses an id the state already holds', async () => {
       const again = await c.client.state.record({ project: PROJECT, event: review });
       assert.equal(again.ok, false);
       assert.match(again.refused, /id/);
-      assert.equal((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).length, 2);
+      assert.equal((await recordFiles()).length, 2);
     });
   } finally { await c.close(); await repo.cleanup(); }
 });
@@ -413,7 +433,7 @@ test('/state/record takes a confirmation with the ruling or setting it confirms,
         assert.equal(answer.ok, false, label);
         assert.equal(taken(answer), false, `${label}: ${answer.refused}`);
       }
-      assert.deepEqual(await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events').catch(() => []), [], 'nothing reached the host');
+      assert.deepEqual(await recordFiles(), [], 'nothing was written');
 
       // A write can't take the id of a ruling a kept confirmation carries.
       keep(PROJECT, 'record', { project: PROJECT, event: confirmation, target: ruling }, at(100));
@@ -422,8 +442,8 @@ test('/state/record takes a confirmation with the ruling or setting it confirms,
 
       // Taken: the ruling first, then its confirmation; sent again, it is taken as already held.
       const accepted = await c.client.state.record({ project: PROJECT, event: confirmation, target: ruling });
-      assert.deepEqual(accepted, { ok: true, id: confirmation.id, pushed: true });
-      const files = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
+      assert.deepEqual(accepted, { ok: true, id: confirmation.id, pushed: false });
+      const files = await recordFiles();
       assert.deepEqual(files.map((f) => f.split('_').at(-2)).sort(), ['confirmation', 'ruling']);
       const again = await c.client.state.record({ project: PROJECT, event: confirmation, target: ruling });
       assert.equal(taken(again), true, again.refused);
@@ -431,7 +451,7 @@ test('/state/record takes a confirmation with the ruling or setting it confirms,
       const phase = makeEvent({ kind: 'setting', data: { key: 'phase', value: 'launched', words: 'Product phase: launched' }, now: at(200) });
       const confirmsPhase = makeEvent({ ...confirmationFor(phase), now: at(200) });
       assert.equal((await c.client.state.record({ project: PROJECT, event: confirmsPhase, target: phase })).ok, true);
-      assert.equal((await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).length, 4);
+      assert.equal((await recordFiles()).length, 4);
       const views = JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', 'settings.json'), 'utf8'));
       assert.equal(views.phase.value, 'launched');
       const rulebook = JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', 'rulebook.json'), 'utf8'));
@@ -474,7 +494,7 @@ test('setup\'s answers record the glossary entry, the phase and the rulings thro
       await click(productCard, 'A menu for a small café.', c.client);
       await click(rulesCard, 'Confirm all', c.client);
       assert.deepEqual(fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json')), [], 'nothing left pending');
-      const kinds = (await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).map((f) => f.split('_').at(-2)).sort();
+      const kinds = (await recordFiles()).map((f) => f.split('_').at(-2)).sort();
       assert.deepEqual(kinds, ['action', 'confirmation', 'confirmation', 'confirmation', 'glossary', 'note', 'ruling', 'ruling', 'setting']);
       const views = (name) => JSON.parse(fs.readFileSync(path.join(c.home, 'projects', PROJECT, 'views', `${name}.json`), 'utf8'));
       assert.equal(views('glossary').p.data.plain, 'A menu for a small café.');
@@ -507,9 +527,9 @@ test('setup\'s clicks and answers of a run are copied into the state through the
       const first = await copySetupRecords(run.id, PROJECT);
       assert.deepEqual(first, { copied: 2, skipped: 0, failed: 0 });
       assert.deepEqual(await copySetupRecords(run.id, PROJECT), { copied: 0, skipped: 2, failed: 0 });
+      const kinds = (await recordFiles()).map((f) => f.split('_').at(-2));
+      assert.deepEqual(kinds, ['action', 'action']);
     });
-    const kinds = (await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events')).map((f) => f.split('_').at(-2));
-    assert.deepEqual(kinds, ['action', 'action']);
   } finally { await c.close(); await repo.cleanup(); }
 });
 
@@ -636,47 +656,42 @@ test('/push refuses wheelhouse-state and wheelhouse-lock from a caller, whatever
   } finally { await c.close(); await repo.cleanup(); }
 });
 
-test('a write while the host is away is kept, and a later sync pushes it', async () => {
+// The private record has no remote (design section 24.1): a write needs no host, and says nothing of one.
+test('a write while the host is away is committed here and needs no host', async () => {
   const repo = await privateRepo();
   const c = await computer(repo);
   try {
     await c.as(async () => {
-      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
-      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } })).pushed, true);
-    });
-    await repo.host.close();
-    await c.as(async () => {
-      const away = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'three' } });
-      assert.equal(away.ok, true);
-      assert.equal(away.pushed, false);
-      const synced = await c.client.state.sync({ project: PROJECT });
-      assert.deepEqual(synced, { ok: true, pulled: false, unpushed: 1 });
-      assert.ok(!JSON.stringify([away, synced]).includes(TOKEN));
-    });
-  } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
-});
-
-test('a write while a company GitLab is away says so in the one line, and is kept for a later sync', async () => {
-  const repo = await privateRepo();
-  const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } } });
-  try {
-    await c.as(async () => {
-      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).ok, true);
     });
     await repo.host.close();
     await c.as(async () => {
       const away = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
-      assert.equal(away.ok, true);
-      assert.equal(away.pushed, false);
-      assert.equal(away.refused, HOST_UNREACHABLE(repo.host.url));
-      // The helper says so on /health, for the board, for this project alone.
-      assert.deepEqual((await c.client.health()).away, { [PROJECT]: repo.host.url });
-      assert.deepEqual(await c.client.state.sync({ project: PROJECT }), { ok: true, pulled: false, unpushed: 1 });
+      assert.deepEqual(away, { ok: true, id: away.id, pushed: false });
+      assert.equal((await recordFiles()).length, 2);
+      assert.deepEqual(await c.client.state.sync({ project: PROJECT }), { ok: true, pulled: 0, unpushed: 0 });
+    });
+    await nothingOnHost(repo.remote.url);
+  } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
+});
+
+test('a write while a company GitLab is away is committed here, with no line about the host', async () => {
+  const repo = await privateRepo();
+  const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } } });
+  try {
+    await repo.host.close();
+    await c.as(async () => {
+      const away = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } });
+      assert.deepEqual(away, { ok: true, id: away.id, pushed: false });
+      assert.notEqual(away.refused, HOST_UNREACHABLE(repo.host.url));
+      assert.equal((await recordFiles()).length, 1);
+      // The write never reached for the host, so /health names no project as away.
+      assert.equal((await c.client.health()).away, undefined);
     });
   } finally { await c.close(); fs.rmSync(repo.remote.root, { recursive: true, force: true }); }
 });
 
-test('git is given the company\'s certificate for that project\'s address only, once setup has made the file', async () => {
+test('the lock\'s git is given the company\'s certificate for that project\'s address only, once setup has made the file', async () => {
   const repo = await privateRepo();
   const pem = fs.readFileSync(new URL('../../fixtures/certs/ca-valid.pem', import.meta.url), 'utf8');
   const seen = [];
@@ -695,9 +710,10 @@ test('git is given the company\'s certificate for that project\'s address only, 
   const certificateKey = certificate('x').key;
   const c = await computer(repo, { project: gitlab, run: spy });
   try {
-    // Before setup has made the file: no certificate setting anywhere.
+    // Before setup has made the file: no certificate setting anywhere. The lock is the branch of
+    // Wheelhouse's that reaches the host (the record never does).
     await c.as(async () => {
-      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+      assert.equal((await c.client.lock.take({ project: PROJECT })).result.taken, true);
     });
     const gitCalls = () => seen.filter((s) => s.file === 'git' && s.env.GIT_CONFIG_COUNT !== undefined && beyondFence(s.env).length > 0);
     assert.ok(gitCalls().length > 0);
@@ -707,7 +723,7 @@ test('git is given the company\'s certificate for that project\'s address only, 
     const file = await c.as(async () => {
       const made = writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
       assert.equal(made, caFile(process.env.WHEELHOUSE_HOME));
-      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } })).pushed, true);
+      assert.deepEqual(await c.client.lock.touch({ project: PROJECT }), { ok: true, result: { touched: true } });
       return made;
     });
     const withIt = gitCalls().filter((s) => settingsOf(s.env).some(([k]) => k === certificateKey));
@@ -735,13 +751,13 @@ test('git is given the company\'s certificate for that project\'s address only, 
   try {
     await d.as(async () => {
       writeCaFile({ home: process.env.WHEELHOUSE_HOME, pem });
-      assert.equal((await d.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+      assert.equal((await d.client.lock.take({ project: PROJECT })).result.taken, true);
     });
     assert.ok(seen.every((s) => !/sslCAInfo|sslBackend/.test(JSON.stringify(s.env))));
   } finally { await d.close(); await other.cleanup(); }
 });
 
-test('a write refused over the company\'s certificate says the certificate line, never git\'s own text', async () => {
+test('a write while the company\'s certificate is refused is committed here; the lock\'s refusal carries none of git\'s text', async () => {
   const repo = await privateRepo();
   let down = false;
   const sslText = `fatal: unable to access '${repo.host.url}/o/p.git/': SSL certificate problem: unable to get local issuer certificate`;
@@ -751,12 +767,13 @@ test('a write refused over the company\'s certificate says the certificate line,
   const c = await computer(repo, { project: { host: 'gitlab', connection: { host: 'gitlab', mode: 'narrow', project: 'o/p', baseUrl: repo.host.url } }, run: spy });
   try {
     await c.as(async () => {
-      assert.equal((await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'one' } })).pushed, true);
+      assert.equal((await c.client.lock.take({ project: PROJECT })).result.taken, true);
       down = true;
-      const refused = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
-      assert.equal(refused.pushed, false);
-      assert.equal(refused.refused, CERTIFICATE_NOT_TRUSTED(repo.host.url));
-      assert.doesNotMatch(JSON.stringify(refused), /SSL certificate problem|unable to access/);
+      const wrote = await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: 'two' } });
+      assert.deepEqual(wrote, { ok: true, id: wrote.id, pushed: false });
+      const touched = await c.client.lock.touch({ project: PROJECT });
+      assert.notEqual(touched.result?.touched, true);
+      assert.doesNotMatch(JSON.stringify(touched), /SSL certificate problem|unable to access/);
       assert.equal((await c.client.health()).away, undefined, 'a certificate is not an unreachable server');
     });
   } finally { await c.close(); await repo.cleanup(); }
@@ -773,7 +790,7 @@ test('an environment carrying only the certificate setting is not a key', () => 
   assert.equal(connectionOf({ GITLAB_TOKEN: 'glpat-x' }).mode, 'narrow');
 });
 
-test('two computers writing at once through their own helpers both land', async () => {
+test('two computers writing at once each commit to their own record, and only one holds the lock', async () => {
   const repo = await privateRepo();
   const computers = [];
   const children = [];
@@ -797,29 +814,21 @@ test('two computers writing at once through their own helpers both land', async 
       });
       computers.push({ home, client: helperClient({ address }) });
     }
-    // Both clone, then each writes four events, one after another as its hooks would, the two computers at once.
-    // A write that loses the race stays committed in its clone (pushed:false); a sync then delivers it.
-    await Promise.all(computers.map((c) => c.client.state.clone({ project: PROJECT })));
+    // Each writes four events, one after another as its hooks would, the two computers at once. Each
+    // commits to its own private record (design section 24.1): the records never meet.
     const answers = (await Promise.all(computers.map(async (c, i) => {
       const done = [];
       for (let n = 0; n < 4; n++) done.push(await c.client.state.write({ project: PROJECT, kind: 'note', data: { words: `computer ${i} note ${n}` } }));
       return done;
     }))).flat();
-    assert.ok(answers.every((a) => a.ok === true), JSON.stringify(answers));
-    for (let round = 0; round < 3; round++) {
-      const synced = await Promise.all(computers.map((c) => c.client.state.sync({ project: PROJECT })));
-      if (synced.every((x) => x.unpushed === 0)) break;
-    }
-    const synced = await Promise.all(computers.map((c) => c.client.state.sync({ project: PROJECT })));
-    assert.deepEqual(synced, [{ ok: true, pulled: true, unpushed: 0 }, { ok: true, pulled: true, unpushed: 0 }]);
-    const names = await remoteFiles(repo.remote.url, 'wheelhouse-state', 'events');
-    assert.equal(names.length, 8, names.join('\n'));
-    for (const c of computers) {
-      const here = fs.readdirSync(path.join(c.home, 'projects', PROJECT, 'state', 'events', '2026', '10')).length;
-      assert.equal(here, 8, 'every event has landed on both computers');
-    }
+    assert.ok(answers.every((a) => a.ok === true && a.pushed === false), JSON.stringify(answers));
     const ids = await Promise.all(computers.map((c) => as(c.home, () => computerId())));
-    for (const id of ids) assert.equal(names.filter((n) => n.includes(`_${id}_note_`)).length, 4);
+    for (const [i, c] of computers.entries()) {
+      const names = await as(c.home, recordFiles);
+      assert.equal(names.length, 4, names.join('\n'));
+      assert.ok(names.every((n) => n.includes(`_${ids[i]}_note_`)), 'only its own events are in its record');
+    }
+    await nothingOnHost(repo.remote.url);
     const takes = await Promise.all(computers.map((c) => c.client.lock.take({ project: PROJECT })));
     assert.equal(takes.filter((t) => t.result?.taken).length, 1, 'only one computer holds the lock');
     assert.equal(repo.host.refusedCount(), 0);
@@ -873,12 +882,14 @@ test('the real helper reads each project\'s host, repository and connection from
     const client = helperClient({ address: helper.address });
     await as(home, async () => {
       assert.deepEqual(await client.state.clone({ project: PROJECT }), { ok: true });
-      assert.equal((await client.state.write({ project: PROJECT, kind: 'note', data: { words: 'real' } })).pushed, true);
+      assert.equal((await client.state.write({ project: PROJECT, kind: 'note', data: { words: 'real' } })).pushed, false);
       assert.deepEqual(await client.lock.take({ project: PROJECT }), { ok: true, result: { taken: true, counter: 1 } });
       const unknown = await client.state.clone({ project: 'not__set' });
       assert.equal(unknown.ok, false);
+      assert.equal((await recordFiles()).length, 1);
     });
-    assert.ok((await remoteFiles(remote.url, 'wheelhouse-state', 'events')).length === 1);
+    assert.deepEqual(await remoteFiles(remote.url, 'wheelhouse-lock'), ['lock.json']);
+    await nothingOnHost(remote.url);
   } finally {
     await helper?.close();
     fs.rmSync(home, { recursive: true, force: true });
