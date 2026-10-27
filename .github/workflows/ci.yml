@@ -1,7 +1,8 @@
 # .github/workflows/ci.yml
-# Runs the tests on Linux and Windows, and on macOS once a pull request is out of
-# draft or on main, checks the mod (validator, source, bridge imports and the mod's tests), and
-# checks the lineage manifest against fresh copies of the upstream skills.
+# Runs the tests on Linux, and on macOS once a pull request is out of draft or on main.
+# While the Mac version comes first, Windows runs only when started by hand (Actions, CI,
+# Run workflow, with Windows ticked). Checks the mod (validator, source, bridge imports and
+# the mod's tests), and checks the lineage manifest against fresh copies of the upstream skills.
 name: CI
 
 on:
@@ -10,6 +11,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: Also run the tests on Windows (up to most of an hour)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,8 +32,9 @@ jobs:
       fail-fast: false
       matrix:
         # A macOS minute costs about ten Linux minutes, and the tests run on the Mac
-        # before every push, so a draft pull request leaves macOS out.
-        os: ${{ fromJSON(github.event.pull_request.draft && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
+        # before every push, so a draft pull request leaves macOS out. Windows only on a run
+        # started by hand with Windows ticked.
+        os: ${{ fromJSON(inputs.windows && '["ubuntu-latest", "windows-latest", "macos-latest"]' || github.event.pull_request.draft && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     # The tests take a few minutes on Linux, longer on GitHub's busier macOS runners, and up to most of an hour on Windows, where
     # starting a process is slow; a hung run stops here, not at GitHub's six hours.
