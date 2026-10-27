@@ -152,7 +152,7 @@ export function featureAllowRules(config, { platform = process.platform, level =
 // stay refused: a deny rule wins over any allow rule.
 export const FEATURE_TEMPORARY_FOLDER = '.wheelhouse/tmp';
 export function featureFileRules() {
-  return ['Read(~/.claude/plugins/**)', `Edit(/${FEATURE_TEMPORARY_FOLDER}/**)`];
+  return ['Read(~/.claude/plugins/cache/**)', `Edit(/${FEATURE_TEMPORARY_FOLDER}/**)`];
 }
 
 // The copies of the pinned kits that must stay off in a project (check 24): Anthropic's

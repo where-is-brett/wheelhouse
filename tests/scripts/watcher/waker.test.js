@@ -33,7 +33,7 @@ const OTHER_SESSION = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ALLOWED = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'];
 // The file rules every feature session also gets: installed plugins' files to read, a temporary folder in its worktree.
-const FILE_RULES = ['Read(~/.claude/plugins/**)', 'Edit(/.wheelhouse/tmp/**)'];
+const FILE_RULES = ['Read(~/.claude/plugins/cache/**)', 'Edit(/.wheelhouse/tmp/**)'];
 // A flat routing table with no pins runs at Balanced: its models as written, Balanced's efforts.
 const FLAT_COLUMN = [
   'The models and efforts for the subagents you dispatch this wake (Thoroughness: Balanced):',

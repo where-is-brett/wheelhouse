@@ -462,7 +462,7 @@ test('Claude Code\'s deny rules carry the new paths', () => {
 
 test('feature sessions may read what plugins installed, and use a temporary folder inside their worktree, without a prompt', () => {
   const rules = featureFileRules();
-  assert.deepEqual(rules, ['Read(~/.claude/plugins/**)', 'Edit(/.wheelhouse/tmp/**)']);
+  assert.deepEqual(rules, ['Read(~/.claude/plugins/cache/**)', 'Edit(/.wheelhouse/tmp/**)']);
   // Read-only: nothing writes to the plugins, and nothing opens the system temporary folder or the home folder.
   assert.ok(!rules.some((r) => r.startsWith('Edit(~') || r.includes('/tmp/**') && !r.includes('.wheelhouse/tmp')), 'no home or system temporary folder');
   // Every guard stays: the Wheelhouse home is denied for reading and writing, and the shared settings carry no allow rule.
