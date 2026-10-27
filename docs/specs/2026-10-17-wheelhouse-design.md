@@ -2243,7 +2243,7 @@ Wheelhouse speaks as the front desk: a calm, capable manager who has done the re
 ### 23.8 Setup, notifications and toasts
 
 - **A setup step in the chat** names its place and time ("Step 3 of 9 · about 2 minutes") and what it is ("Connecting to GitHub"). It says what has happened in one line, and what carries on meanwhile ("Meanwhile, Node.js is still installing. Nothing for you to do there."). Its question box gives each option's meaning, led by "Recommended." where it is.
-- **The phone step** says what reaches the phone: "Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit."
+- **The phone step** says what reaches the phone: "Only things that need you, finished features and breakages reach your phone."
 - **The health check** ends setup with one verdict ("All 4 checks passed. Wheelhouse is ready.") and one plain line for each check.
 - **Notifications** have the title "Wheelhouse", plus "· STOP is on" when it is. They carry counts and card numbers only, never a card's words (section 13): "2 waiting on you: cards 3 and 4." and "Every builder has halted. Open Claude to see why."
 - **Toasts in the pane** are one line each: what happened, then what to do, if anything. "Approved. It goes live within the hour." "Away until 18:00. Undo in the pane for a minute." "Sent to the front desk. A new proposal will follow."

@@ -211,7 +211,7 @@ export const SETUP_GOING = Object.freeze({
 });
 export const toolsInstalling = (tools) => `${tools.join(' and ')} ${tools.length === 1 ? 'is' : 'are'} still installing`;
 // What reaches the director's phone, said on the phone step's card.
-export const PHONE_REACHES = 'Only things that need you, finished features and breakages reach your phone. Routine progress waits for your next visit.';
+export const PHONE_REACHES = 'Only things that need you, finished features and breakages reach your phone.';
 // Setup's closing verdict: how many of the health check's checks passed.
 export const healthVerdict = (passed, total) => (passed === total
   ? `All ${total} checks passed. Wheelhouse is ready.`
