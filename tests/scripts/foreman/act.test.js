@@ -98,6 +98,27 @@ function startViews() {
   return views;
 }
 
+test('start names the default branch from the host\'s when the main checkout names none, as a folder setup connected has none', () => withHome(async () => {
+  const checkout = await project({ git: true });
+  await g(checkout, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const waker = fakeWaker();
+
+  // The host's can't be read: the start is refused, and nothing is made.
+  const refused = fakeClient({ views: startViews() });
+  const r1 = await act(START, { client: refused.client, wakerFor: waker.wakerFor });
+  assert.equal(r1.code, 1);
+  assert.match(r1.err, /doesn't name its default branch/);
+  assert.deepEqual(waker.starts, []);
+
+  // The host's is main: origin/HEAD names it, and the work starts.
+  const fake = fakeClient({ views: startViews(), answers: { fetchBase: () => ({ ok: true, branch: 'main' }) } });
+  const r2 = await act(START, { client: fake.client, wakerFor: waker.wakerFor });
+  assert.equal(r2.code, 0, r2.err);
+  assert.match(r2.out, /^The main checkout named no default branch; it now names the host's, main\.$/m);
+  assert.equal(await g(checkout, 'symbolic-ref', 'refs/remotes/origin/HEAD'), 'refs/remotes/origin/main');
+  assert.equal(waker.starts.length, 1);
+}));
+
 test('start makes the worktree on feature/<work>, writes the brief, records it, then starts the session', () => withHome(async () => {
   const checkout = await project({ git: true });
   const fake = fakeClient({ views: startViews() });

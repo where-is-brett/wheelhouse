@@ -384,6 +384,24 @@ function checkRepoConfig(checkout) {
 // default branch is the one origin/HEAD names. Anything else leaves the copy fetched last and says
 // so: the gate brings a branch up to date before it merges. A look that refuses the repository's
 // settings refuses the start, as it does for every other call here.
+// A main checkout setup connected with `remote add` and a fetch, not a clone (a new product, a computer joining
+// one), names no default branch. It is named here from the host's, as the helper reads it (/base/fetch): true when
+// origin/HEAD now names it, false when the host's couldn't be read, which leaves the start refused.
+async function nameBase(ctx, git) {
+  let answer;
+  try {
+    answer = await ctx.client.fetchBase({ project: ctx.project });
+  } catch {
+    return false;
+  }
+  const ref = `refs/remotes/origin/${String(answer?.branch ?? '')}`;
+  if (answer?.ok !== true || !BASE_REF.test(ref) || ref.includes('..')) return false;
+  const named = await git(['symbolic-ref', 'refs/remotes/origin/HEAD', ref]);
+  if (named.code !== 0) return false;
+  ctx.say(`The main checkout named no default branch; it now names the host's, ${oneLine(answer.branch, 80)}.`);
+  return true;
+}
+
 async function fetchBase(ctx, git, checkout, base) {
   const name = base.slice('refs/remotes/origin/'.length);
   const behind = (why) => ctx.say(`origin/${name} wasn't brought up to date: ${why}, so the worktree starts from the copy fetched last.`);
@@ -485,7 +503,8 @@ async function makeWorktree(ctx, work, checkout, worktree, branch, from) {
   realFolders(checkout, ['.claude', 'worktrees']);
   if (lstatOf(worktree) !== null) refuse(`${worktree} is there already, but no recorded feature made it: ask the director`);
   checkRepoConfig(checkout);
-  const head = await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  let head = await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  if (head.code !== 0 && await nameBase(ctx, git)) head = await git(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   const base = String(head.stdout ?? '').trim();
   if (head.code !== 0 || !BASE_REF.test(base) || base.includes('..')) {
     refuse("The main checkout doesn't name its default branch (refs/remotes/origin/HEAD), so no worktree was made");
