@@ -329,7 +329,7 @@ async function githubStatus(gh, repo) {
   return {
     available: true,
     on: true,
-    line: `GitHub blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of the state and lock branches${checks ? ', and requires its checks to pass' : `; ${NO_CI}`}`.replace(/([^.])$/, '$1.'),
+    line: `GitHub blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of Wheelhouse's lock branch${checks ? ', and requires its checks to pass' : `; ${NO_CI}`}`.replace(/([^.])$/, '$1.'),
     defaultBranch,
   };
 }
@@ -452,7 +452,7 @@ async function gitlabStatus(api, repo, { realUsers = false, director = false } =
   return {
     available: true,
     on: true,
-    line: `GitLab blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of the state and lock branches${main.pipelinesMustSucceed ? ', and requires pipelines to pass.' : `; ${NO_CI}`}`,
+    line: `GitLab blocks direct pushes to ${defaultBranch}, and force-pushes and deletion of Wheelhouse's lock branch${main.pipelinesMustSucceed ? ', and requires pipelines to pass.' : `; ${NO_CI}`}`,
     defaultBranch,
     main,
     gaps,
