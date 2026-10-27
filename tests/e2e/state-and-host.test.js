@@ -2,8 +2,9 @@
 // State and the host end to end: a bare repository stands in for the host, a
 // fake adapter for gh and glab, and each computer is its own WHEELHOUSE_HOME
 // with its own real helper on a socket (a named pipe on Windows). State and
-// the lock are written through the helper's own requests: client -> helper ->
-// the helper's clone and mirror -> the bare repository.
+// the lock are written through the helper's own requests. Each computer's
+// events go into its own private record, which has no remote (design section
+// 24.1); only the lock goes through the helper's mirror to the bare repository.
 import { test, after } from 'node:test';
 import { guardedRun } from '../helpers/host-stand-ins.js';
 import assert from 'node:assert/strict';
@@ -16,7 +17,8 @@ import { helperClient } from '../../scripts/host/helper-client.js';
 import { computerId, stateDir } from '../../scripts/lib/paths.js';
 import { writeProject } from '../../scripts/lib/projects.js';
 import { run } from '../../scripts/lib/run.js';
-import { makeEvent, eventPath, confirmationFor } from '../../scripts/state/events.js';
+import { makeEvent, eventPath, confirmationFor, listEvents } from '../../scripts/state/events.js';
+import { LOCK_BRANCH } from '../../scripts/state/lock.js';
 import { makeSigningKey, enrol } from '../../scripts/state/signing.js';
 import { writeViews } from '../../scripts/state/views.js';
 import { makeBareRemote, g } from '../helpers/git-fixture.js';
@@ -92,7 +94,7 @@ async function makeComputer(adapter, remoteUrl) {
 }
 
 // Computers enrolled in one shared profile (each home holds the same list),
-// each with a state clone of one bare repository. With `pr`, the repository holds pull
+// each with its own private record, and one bare repository for the host. With `pr`, the repository holds pull
 // request 7, up to date with main, and `head` is its head commit.
 async function setUp(count, { pr = false } = {}) {
   const remote = await makeBareRemote({ repo: 'o/p' });
@@ -131,16 +133,16 @@ async function write(computer, client, kind, data, ms) {
     event = { id: written.id, kind, data, at: at(ms)().toISOString(), computer: computerId(), v: 1 };
   }
   assert.equal(written.ok, true, JSON.stringify(written));
-  assert.equal(written.pushed, true, `the ${kind} event reached the remote`);
+  assert.equal(written.pushed, false, `the ${kind} event stays on this computer`);
   return event;
 }
 
-const remoteEvents = async (remoteUrl) => (await run('git', ['ls-tree', '-r', '--name-only', 'wheelhouse-state', 'events'], { cwd: remoteUrl }))
-  .stdout.split('\n').filter(Boolean);
+// The events in the computer's own private record.
+const recordEvents = (computer) => computer.act(async () => listEvents(stateDir(PROJECT), { report: () => {} }));
 const remoteHeads = async (remoteUrl) => (await run('git', ['for-each-ref', '--format=%(refname)', 'refs/heads'], { cwd: remoteUrl }))
   .stdout.split('\n').filter(Boolean);
 
-test('two computers: events from both land, the lock passes on, and the old holder can no longer merge', async () => {
+test('two computers: each keeps its own record, the lock passes on, and the old holder can no longer merge', async () => {
   const { remote, head, computers: [a, b], cleanup } = await setUp(2, { pr: true });
   try {
     const idA = await a.act(async () => computerId());
@@ -159,17 +161,22 @@ test('two computers: events from both land, the lock passes on, and the old hold
     });
 
     // B is refused the lock while A's is fresh.
-    await b.act(async (client) => {
+    const note = await b.act(async (client) => {
       b.time(HOUR);
       const refused = await client.lock.take({ project: PROJECT });
       assert.deepEqual(refused, { ok: true, result: { taken: false, holder: idA, since: T0.toISOString() } });
-      await write(b, client, 'note', { words: 'from computer B' }, HOUR + 1000);
+      return write(b, client, 'note', { words: 'from computer B' }, HOUR + 1000);
     });
 
-    // Events from both computers are on the remote.
-    const names = await remoteEvents(remote.url);
-    assert.ok(names.some((n) => n.includes(`_${idA}_ruling_`)), 'A\'s ruling landed');
-    assert.ok(names.some((n) => n.includes(`_${idB}_note_`)), 'B\'s note landed');
+    // Each computer's events stay in its own record (design section 24.3 item 8): they don't meet, and only the
+    // lock and the product's main are on the host.
+    const ownA = await recordEvents(a);
+    const ownB = await recordEvents(b);
+    assert.ok(ownA.some((e) => e.id === ruling.id), 'A\'s ruling is in A\'s record');
+    assert.ok(ownB.some((e) => e.id === note.id), 'B\'s note is in B\'s record');
+    assert.ok(!ownA.some((e) => e.computer === idB), 'nothing of B\'s is in A\'s record');
+    assert.ok(!ownB.some((e) => e.computer === idA), 'nothing of A\'s is in B\'s record');
+    assert.deepEqual((await remoteHeads(remote.url)).sort(), ['refs/heads/main', `refs/heads/${LOCK_BRANCH}`].sort());
 
     // A's lock goes stale two hours on; B takes it, and the counter moves on.
     await b.act(async (client) => {
@@ -187,34 +194,35 @@ test('two computers: events from both land, the lock passes on, and the old hold
     });
     assert.deepEqual(a.adapter.merges, [], 'nothing reached the host from A');
 
-    // B pulls; its views show A's ruling as accepted, and B, holding the lock, may merge.
+    // Syncing has nothing to do. B's views don't hold A's ruling, and A's review counts for nothing on B: B, holding
+    // the lock, merges once its own review is recorded.
     await b.act(async (client) => {
-      assert.deepEqual(await client.state.sync({ project: PROJECT }), { ok: true, pulled: true, unpushed: 0 });
+      assert.deepEqual(await client.state.sync({ project: PROJECT }), { ok: true, pulled: 0, unpushed: 0 });
       b.time(2 * HOUR + 2 * MINUTE);
       const { views } = await client.state.views({ project: PROJECT });
-      const entry = views.rulebook.find((r) => r.id === ruling.id);
-      assert.equal(entry?.status, 'accepted');
-      assert.equal(entry.words, 'Prices show two decimal places');
+      assert.equal(views.rulebook.find((r) => r.id === ruling.id), undefined, 'A\'s ruling is not on B');
+      const before = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
+      assert.equal(before.ok, false, JSON.stringify(before));
+      assert.ok(!before.reasons.includes(LOCK_REASON), JSON.stringify(before));
+      assert.deepEqual(b.adapter.merges, [], 'A\'s review did not let B merge');
+      await write(b, client, 'review', { pr: PR, commit: head, verdict: 'CLEAN' }, 2 * HOUR + 3 * MINUTE);
       const merged = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
       assert.deepEqual(merged, { ok: true, merged: true, sha: head, guardrailPaths: [], criticalAreas: [] });
     });
     assert.deepEqual(b.adapter.merges, [{ number: PR, sha: head }]);
 
-    // A pulls and sees B's note.
+    // A's sync brings nothing of B's.
     await a.act(async (client) => {
-      assert.deepEqual(await client.state.sync({ project: PROJECT }), { ok: true, pulled: true, unpushed: 0 });
-      // The month the note was written in, worked out from the helper's clock.
-      const [year, month] = at(HOUR + 1000)().toISOString().split('-');
-      const files = fs.readdirSync(path.join(stateDir(PROJECT), 'events', year, month));
-      assert.ok(files.some((n) => n.includes(`_${idB}_note_`)));
+      assert.deepEqual(await client.state.sync({ project: PROJECT }), { ok: true, pulled: 0, unpushed: 0 });
     });
+    assert.ok(!(await recordEvents(a)).some((e) => e.computer === idB), 'B\'s note never reaches A');
   } finally {
     await cleanup();
   }
 });
 
 test('an approval written by hand without a signature changes nothing', async () => {
-  const { remote, head, computers: [a], cleanup } = await setUp(1, { pr: true });
+  const { head, computers: [a], cleanup } = await setUp(1, { pr: true });
   try {
     await a.act(async (client) => {
       a.time(0);
@@ -229,15 +237,14 @@ test('an approval written by hand without a signature changes nothing', async ()
       assert.equal(refusedUnsigned.ok, false);
       assert.match(refusedUnsigned.refused, /signed/);
 
-      // ...so it is written straight into the clone and pushed with plain git, past the helper.
+      // ...so it is written straight into the private record and committed with plain git, past the helper.
       const dir = stateDir(PROJECT);
       const rel = eventPath(unsigned);
       fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
       fs.writeFileSync(path.join(dir, rel), `${JSON.stringify(unsigned, null, 2)}\n`);
       await g(dir, 'add', '--', rel);
       await g(dir, 'commit', '-q', '-m', 'approval by hand');
-      await g(dir, 'push', '-q', 'origin', 'wheelhouse-state');
-      assert.ok((await remoteEvents(remote.url)).includes(rel.split(path.sep).join('/')), 'the hand-written approval is on the remote');
+      assert.ok((await g(dir, 'ls-tree', '-r', '--name-only', 'HEAD', 'events')).split('\n').includes(rel.split(path.sep).join('/')), 'the hand-written approval is in the record');
 
       const views = await writeViews(PROJECT, { now: at(3000) });
       assert.equal(views.approvals[String(PR)], undefined, 'the views ignore it');

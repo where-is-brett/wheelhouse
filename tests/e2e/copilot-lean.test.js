@@ -6,7 +6,7 @@
 // Copilot's let read only; an idea and a ruling confirmed by a chat click through the helper; a feature branch
 // approved by a chat click and merged with hooks planted in the store and the project's core.hooksPath (on macOS
 // and Linux, with a commit outside the fence first showing they fire), none run;
-// undo on a window click used once; the copy holding main and wheelhouse-state; the main version moved outside the
+// undo on a window click used once; the copy holding main only, the record staying in its own folder; the main version moved outside the
 // helper, said at the session start and kept in the window; the helper stopped, then a write refused and a read
 // let through. Then a real-user Lean project's merge refused on a chat click and accepted after the window's click.
 import { test, after, afterEach } from 'node:test';
@@ -24,6 +24,7 @@ import { NULL_FILE } from '../../scripts/lib/safe-git.js';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
 import { stateDir } from '../../scripts/lib/paths.js';
+import { RECORD_BRANCH } from '../../scripts/state/record.js';
 import { stopState, liftStop, NO_HELPER_STOP } from '../../scripts/lib/stop.js';
 import { listEvents, eventPath } from '../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../scripts/state/signing.js';
@@ -293,18 +294,20 @@ test('a Lean project with the helper, from the session start to the helper stopp
     assert.equal(await c.main(), reverted);
     assert.equal(fs.existsSync(marks), false, 'no planted hook ran');
 
-    // The copy holds the main version and the record.
+    // The copy holds the main version and nothing of the record (design section 24.3 item 7).
     const copied = await c.lean(['copy']);
     assert.equal(copied.ok, true, copied.refused);
     assert.equal(copied.pushed, true);
     assert.equal(await git(c.copy, ['rev-parse', 'refs/heads/main']), reverted);
-    // Its record is the state as it stood at the copy (the copy's own note comes after), holding the merge and the undo.
-    const held = await git(c.copy, ['rev-parse', 'refs/heads/wheelhouse-state']);
-    await git(stateDir('shop'), ['merge-base', '--is-ancestor', held, 'refs/heads/wheelhouse-state']);
-    const files = (await git(c.copy, ['ls-tree', '-r', '--name-only', held])).split('\n');
+    assert.deepEqual((await git(c.copy, ['for-each-ref', '--format=%(refname)'])).split('\n'), ['refs/heads/main'], 'the copy holds main only');
+    // The record stays in its own folder on this computer, on its own branch, holding the merge, the undo and the copy.
+    assert.equal(await git(stateDir('shop'), ['symbolic-ref', '--short', 'HEAD']), RECORD_BRANCH);
+    assert.equal(await git(stateDir('shop'), ['remote']), '', 'the record has no remote');
+    const files = (await git(stateDir('shop'), ['ls-tree', '-r', '--name-only', 'HEAD'])).split('\n');
     const mergeEvent = c.events().find((e) => e.kind === 'merge');
+    const copyNote = c.events().find((e) => e.kind === 'note' && e.data.lean === 'copy' && e.data.choice === 'pushed');
     // git names files with "/" on any system.
-    for (const e of [mergeEvent, undoClick]) assert.ok(files.includes(eventPath(e).split(path.sep).join('/')), `the copy holds ${e.kind}`);
+    for (const e of [mergeEvent, undoClick, copyNote]) assert.ok(files.includes(eventPath(e).split(path.sep).join('/')), `the record holds ${e.kind}`);
 
     // The main version moved outside the helper (P5-27): said at the session start, a merge waits, Keep it in the
     // window decides it.
