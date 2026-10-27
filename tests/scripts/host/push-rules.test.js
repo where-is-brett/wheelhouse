@@ -111,58 +111,6 @@ test('checkPush allows feature and feature:feature', async () => {
   } finally { work.cleanup(); }
 });
 
-test('a state push that changes an existing event is refused', async () => {
-  const work = await workOn('wheelhouse-state');
-  try {
-    write(work.dir, 'events/2026/10/one.json', '{"id":"1"}\n');
-    await work.commit('Add one');
-    await work.pushPlain();
-    write(work.dir, 'events/2026/10/one.json', '{"id":"1","changed":true}\n');
-    await work.commit('Change one');
-    const r = await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run });
-    assert.equal(r.allowed, false);
-    assert.match(r.refused, /events\//);
-
-    // Deleting an event is refused too.
-    await g(work.dir, 'reset', '-q', '--hard', 'origin/wheelhouse-state');
-    fs.rmSync(path.join(work.dir, 'events/2026/10/one.json'));
-    await work.commit('Delete one');
-    assert.equal((await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run })).allowed, false);
-
-    // So is a new file outside events/.
-    await g(work.dir, 'reset', '-q', '--hard', 'origin/wheelhouse-state');
-    write(work.dir, 'notes.txt', 'hello\n');
-    await work.commit('Add notes');
-    assert.equal((await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run })).allowed, false);
-  } finally { work.cleanup(); }
-});
-
-test('a state push that only adds event files is allowed', async () => {
-  const work = await workOn('wheelhouse-state');
-  try {
-    // The first push: the remote has no state branch, so every commit is checked, the root included.
-    write(work.dir, 'events/2026/10/one.json', '{"id":"1"}\n');
-    await work.commit('Add one');
-    assert.equal((await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run })).allowed, true);
-    await work.pushPlain();
-
-    write(work.dir, 'events/2026/10/two.json', '{"id":"2"}\n');
-    await work.commit('Add two');
-    write(work.dir, 'events/2026/11/three.json', '{"id":"3"}\n');
-    await work.commit('Add three');
-    assert.equal((await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run })).allowed, true);
-  } finally { work.cleanup(); }
-});
-
-test('a state push whose root commit adds anything outside events/ is refused', async () => {
-  const work = await workOn('wheelhouse-state');
-  try {
-    write(work.dir, 'README.md', 'hello\n');
-    await work.commit('Start');
-    assert.equal((await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run })).allowed, false);
-  } finally { work.cleanup(); }
-});
-
 test('a lock push that changes anything but lock.json is refused', async () => {
   const work = await workOn('wheelhouse-lock');
   try {
@@ -190,27 +138,27 @@ test('a lock push that changes anything but lock.json is refused', async () => {
   } finally { work.cleanup(); }
 });
 
-test('a state push may add only plain files: no symlinks or executables', async () => {
-  const work = await workOn('wheelhouse-state');
+test('a lock push may carry lock.json only as a plain file: no symlink or executable', async () => {
+  const work = await workOn('wheelhouse-lock');
+  const lockPush = () => checkPush({ refspec: 'wheelhouse-lock', dir: work.dir, defaultBranch: 'main', gitRun: run });
   try {
-    write(work.dir, 'events/2026/10/one.json', '{"id":"1"}\n');
-    await work.commit('Add one');
+    write(work.dir, 'lock.json', '{"counter":1}\n');
+    await work.commit('Take the lock');
     await work.pushPlain();
     // A symlink, made in the index so it works on every system.
     write(work.dir, 'target.txt', '../../../secret.txt');
     const blob = (await g(work.dir, 'hash-object', '-w', 'target.txt')).trim();
     fs.rmSync(path.join(work.dir, 'target.txt'));
-    await g(work.dir, 'update-index', '--add', '--cacheinfo', `120000,${blob},events/2026/10/link.json`);
-    await g(work.dir, 'commit', '-q', '-m', 'Add a link');
-    assert.deepEqual(await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run }),
-      { allowed: false, refused: PUSH_REFUSALS.state });
+    await g(work.dir, 'update-index', '--cacheinfo', `120000,${blob},lock.json`);
+    await g(work.dir, 'commit', '-q', '-m', 'Make the lock a link');
+    assert.deepEqual(await lockPush(), { allowed: false, refused: PUSH_REFUSALS.lock });
 
-    await g(work.dir, 'reset', '-q', '--hard', 'origin/wheelhouse-state');
-    write(work.dir, 'events/2026/10/run.json', '{}\n');
+    await g(work.dir, 'reset', '-q', '--hard', 'origin/wheelhouse-lock');
+    write(work.dir, 'lock.json', '{"counter":2}\n');
     await g(work.dir, 'add', '-A');
-    await g(work.dir, 'update-index', '--chmod=+x', 'events/2026/10/run.json');
-    await g(work.dir, 'commit', '-q', '-m', 'Add an executable');
-    assert.equal((await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run })).allowed, false);
+    await g(work.dir, 'update-index', '--chmod=+x', 'lock.json');
+    await g(work.dir, 'commit', '-q', '-m', 'Make the lock executable');
+    assert.deepEqual(await lockPush(), { allowed: false, refused: PUSH_REFUSALS.lock });
   } finally { work.cleanup(); }
 });
 
@@ -255,7 +203,7 @@ test('the default branch is read from the host, not assumed to be main', async (
   }
 });
 
-// --- CI files, the project's folder, partial clones, state files ---
+// --- CI files, the project's folder, partial clones ---
 
 const NOW = new Date('2026-10-18T02:00:00.000Z');
 const minutesAgo = (m) => () => new Date(NOW.getTime() - m * 60000);
@@ -517,32 +465,6 @@ test('a push from a partial clone is refused, and git never ran in it', async ()
       assert.equal((await client.push({ project: 'o__p', dir: linked, refspec: 'other' })).refused, PUSH_REFUSALS.partialClone);
     });
   } finally { s.cleanup(); }
-});
-
-test('a state push holding a file that is not JSON is refused', async () => {
-  const work = await workOn('wheelhouse-state');
-  try {
-    write(work.dir, 'events/2026/10/one.json', '{"id":"1"}\n');
-    await work.commit('Add one');
-    await work.pushPlain();
-    write(work.dir, 'events/2026/10/two.json', 'this is not json\n');
-    await work.commit('Add two');
-    assert.deepEqual(await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run }),
-      { allowed: false, refused: PUSH_REFUSALS.notJson });
-  } finally { work.cleanup(); }
-});
-
-test('a state push with a key hidden as \\u escapes in JSON is refused', async () => {
-  const work = await workOn('wheelhouse-state');
-  try {
-    const escaped = [...'ghp_0123456789abcdefghijklmnopqrstuvwxyz'].map((c) => `\\u00${c.charCodeAt(0).toString(16)}`).join('');
-    write(work.dir, 'events/2026/10/one.json', `{"text":"${escaped}"}\n`);
-    await work.commit('Add one');
-    const r = await checkPush({ refspec: 'wheelhouse-state', dir: work.dir, defaultBranch: 'main', gitRun: run });
-    assert.equal(r.allowed, false);
-    assert.match(r.refused, /matched/);
-    assert.equal(r.refused.includes('ghp_0123'), false);
-  } finally { work.cleanup(); }
 });
 
 test('/pr/open refuses a base other than the default branch, and a head the push rules refuse', async () => {
