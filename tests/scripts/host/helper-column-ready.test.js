@@ -11,7 +11,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { listEvents } from '../../../scripts/state/events.js';
 import { readyColumns } from '../../../scripts/state/views.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
@@ -40,7 +40,7 @@ async function computer({ pins = { ...PINS, premium: 'model-best' } } = {}) {
     writeProject('o__p', { folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     const { computer: id, publicKey } = makeSigningKey();
     enrol({ computer: id, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
   });
   const withHelper = (fn) => as(home, async () => {
     const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}), evalsFolder: evals });

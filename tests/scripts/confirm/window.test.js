@@ -17,7 +17,7 @@ import { registerLean } from '../../../scripts/lean/project.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { stopState, liftStop } from '../../../scripts/lib/stop.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { dataHash, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -162,7 +162,7 @@ async function computer(answer, { adapter } = {}) {
     writeProject(HOST_PROJECT, {
       folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ env: LOCAL_PATHS, project: HOST_PROJECT, remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: HOST_PROJECT, remoteUrl: remote.url });
   } else {
     registerLean({ project: PROJECT, folder, now: () => T0 });
   }

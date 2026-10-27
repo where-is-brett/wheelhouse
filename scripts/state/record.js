@@ -11,8 +11,9 @@ import { run as realRun } from '../lib/run.js';
 import { safeGit } from '../lib/safe-git.js';
 
 export const RECORD_BRANCH = 'record';
-// The branch name a Lean project's record had before (v0.1.x): still its own, so it is opened as it is.
-const OLD_BRANCH = 'wheelhouse-state';
+// The branch Wheelhouse v0.1.x kept its records on, on the product's repository, and the name a Lean
+// project's record had: still recognised as Wheelhouse's own, and a Lean record on it is opened as it is.
+export const STATE_BRANCH = 'wheelhouse-state';
 
 // The record's own commits are Wheelhouse's, as every event's commit is (scripts/state/git.js).
 const WHEELHOUSE = {
@@ -40,7 +41,7 @@ export async function openRecord(dir, { run = realRun, what = 'the private recor
     if (remotes.stdout.trim() !== '') throw new Error(`The folder ${dir} holds a repository that has a remote, so it is not ${what} and was left alone`);
     const branch = await git(['symbolic-ref', '--short', 'HEAD']);
     const name = branch.stdout.trim();
-    if (branch.code !== 0 || (name !== RECORD_BRANCH && name !== OLD_BRANCH)) {
+    if (branch.code !== 0 || (name !== RECORD_BRANCH && name !== STATE_BRANCH)) {
       throw new Error(`The folder ${dir} holds a repository that is not on the record's branch, so it was left alone`);
     }
     return dir;

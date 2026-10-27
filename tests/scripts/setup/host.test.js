@@ -25,7 +25,7 @@ import { questionsStep } from '../../../scripts/setup/questions.js';
 import { rulesStep } from '../../../scripts/setup/rules.js';
 import { stepsFor, joinedRepo, onRunList, JOINING_STEPS, SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { eventPath } from '../../../scripts/state/events.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { STEPS, planHash } from '../../../scripts/setup/steps.js';
 import { startRun, addChanges, findRun, readJournal } from '../../../scripts/setup/journal.js';
 import { readKey, writeKey } from '../../../scripts/host/keys.js';
@@ -2246,7 +2246,7 @@ async function applyIn(step, folder, runId, changes, extra = {}) {
   return lines;
 }
 
-const cloneStateFor = (slug, remoteUrl) => cloneState({ project: slug, remoteUrl, env: LOCAL_PATHS });
+const cloneStateFor = (slug, remoteUrl) => openTestRecord({ project: slug, remoteUrl, env: LOCAL_PATHS });
 
 const joinedOf = (folder) => findRun(folder).changes.filter((c) => c.kind === 'answer' && c.after && Object.hasOwn(c.after, 'joined')).map((c) => c.after);
 

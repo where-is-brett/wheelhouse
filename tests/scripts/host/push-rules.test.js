@@ -10,7 +10,7 @@ import { checkPush, startHelper, PUSH_REFUSALS } from '../../../scripts/host/hel
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir, computerId } from '../../../scripts/lib/paths.js';
@@ -230,7 +230,7 @@ test('the default branch is read from the host, not assumed to be main', async (
     writeProject('o__p', {
       folder: work.dir, remoteUrl: work.remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: work.remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: work.remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush })).taken, true);
     write(work.dir, 'a.txt', 'a\n');
     await work.commit('First');
@@ -279,7 +279,7 @@ async function scenario({ base = { 'README.md': 'x\n' }, change, files = {}, pro
     writeSessionProvenance('o__p', SESSION);
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: () => NOW })).taken, true);
     await g(work, 'init', '-q', '-b', 'main');
     for (const [name, text] of Object.entries(base)) write(work, name, text);

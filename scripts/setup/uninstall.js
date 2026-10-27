@@ -130,7 +130,7 @@ import { joinedRepo, runClosed, HEALTH_STEP } from '../lib/setup-run.js';
 import { clicksDir, usedDir, shownDir, askedDir, answersDir, answeredDir, recordsDir, writeWhole } from '../lib/setup-clicks.js';
 import { HOST_TOOLS, toolFolder, toolsDir } from '../lib/host-tools.js';
 import { trustDir, seenFile } from '../lib/trust-clicks.js';
-import { STATE_BRANCH } from '../state/clone.js';
+import { STATE_BRANCH } from '../state/record.js';
 import { enrolledFile, signingKeyFile, readEnrolled } from '../state/signing.js';
 import { CLICK_FRESH_MS, RETENTION_DAYS, STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
 import { canonicalJson } from '../lib/canonical.js';

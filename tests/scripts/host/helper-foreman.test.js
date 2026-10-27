@@ -19,7 +19,7 @@ import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { liftStop, setStop } from '../../../scripts/lib/stop.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { enrol, makeSigningKey } from '../../../scripts/state/signing.js';
 import { makeBareRemote, g, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
@@ -52,7 +52,7 @@ async function project() {
       folder: checkout, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
     enrol({ ...makeSigningKey(), enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: P, remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: P, remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: P, push: plainPush })).taken, true);
   });
   return { remote, checkout, home };

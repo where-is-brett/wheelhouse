@@ -34,7 +34,7 @@ import { caFile, gitCaConfig } from '../../../scripts/host/company-ca.js';
 import { copyTree } from '../../../scripts/lib/copy-tree.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { directorGitlabApi, REAL_USERS } from '../../../scripts/setup/host.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -1085,7 +1085,7 @@ test('the setup clicks reach the state branch once', async () => {
     await realRun('git', ['init', '--bare', '-q', bare]);
     const folder = fs.realpathSync.native(tempFolder('wh-proj-'));
     writeProject(SLUG, { folder, remoteUrl: bare, host: 'github', repo: REPO, connection: { host: 'github', mode: 'quick', project: REPO } });
-    await cloneState({ project: SLUG, remoteUrl: bare, env: LOCAL_PATHS });
+    await openTestRecord({ project: SLUG, remoteUrl: bare, env: LOCAL_PATHS });
 
     const run = startRun({ folder, now: () => T0 });
     const other = startRun({ folder: tempFolder('wh-other-'), now: () => T0 });

@@ -98,7 +98,7 @@ import { readKey, writeKey } from '../host/keys.js';
 import { switchOnProtection, protectionStatus, readGitlabProtection } from '../host/protection.js';
 import { askSecret as realAskSecret } from '../secrets/secret-box.js';
 import { writeProject } from '../lib/projects.js';
-import { cloneState, STATE_BRANCH } from '../state/clone.js';
+import { openProjectRecord, STATE_BRANCH } from '../state/record.js';
 import { sameRemote } from '../state/git.js';
 import { listEvents } from '../state/events.js';
 import { joinedRepo, runClosed, JOIN_STEP } from '../lib/setup-run.js';
@@ -1841,9 +1841,9 @@ export function hostStep({
       const slug = slugFor(project.repo);
       const remoteUrl = urlFor({ host, repo: project.repo });
       const cloneRecords = async () => {
-        record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { clone: remoteUrl, branch: STATE_BRANCH } });
+        record({ id: newId('chg'), kind: 'folder', target: stateDir(slug), before: fs.existsSync(stateDir(slug)) ? {} : null, after: { record: true } });
         await refuseSettingsIn({ dir: stateDir(slug), run, gitPath: git.path });
-        await cloneState({ project: slug, remoteUrl, env: reaching(gitEnv, remoteUrl) });
+        await openProjectRecord(slug, { run });
       };
       // A joining computer clones the project's state before anything is connected or registered,
       // and its `phase` refuses Quick on a launched project (design section 11).

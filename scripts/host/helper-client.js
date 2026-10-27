@@ -92,12 +92,12 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
     state: {
-      clone: post('/state/clone'), //   { project }
+      clone: post('/state/clone'), //   { project }: opens the project's private record, making it the first time
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`
       record: post('/state/record'), // { project, event, target? }: a signed event made by this computer's hook; a confirmation may carry the plain ruling or setting it confirms
-      sync: post('/state/sync'), //     { project } -> { ok, pulled, unpushed }
+      sync: post('/state/sync'), //     { project } -> { ok, pulled: 0, unpushed: 0 }: the record has no remote, so nothing to do
+      import: post('/state/import'), // { project } -> { ok, done, at?, imported, held, unsigned, unreadable }: v0.1.x's state clone imported once (design section 24.5); refused under STOP
       views: post('/state/views'), //   { project, cards?, review?, answers? } -> { ok, views, cards?, review?, answers? }: with cards: true, the card events too; with review: true, the delegation review, { due, since, proposals }; with answers: true, the card-answer events; `cwd` may stand for `project`
-      backup: post('/state/backup'), // { project } -> { ok, file, made }: this week's bundle, into the profile
       answer: post('/state/answer'), // { project | cwd, questionId } -> { ok, answer: label | null }: a verified answer only, read-only, answered under STOP
       columnReady: post('/state/column-ready'), // { project, column, pins, records } -> { ok, id, pushed }: a Thoroughness level ready (lean or lightest) or the premium model's pass (premium), recorded only when the helper's own read of the evaluation's records finds the whole bar passed on the project's pins now; refused under STOP
     },
@@ -108,14 +108,14 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       state: post('/premium/state'), // { project | cwd } -> { ok, value, pin, failed, yes, pins }: the premium setting in force, the pin the helper's check found for it, whether its evaluation failed under this Yes, the Yes's id, and the configuration's two pins
       failed: post('/premium/failed'), // { project | cwd } -> { ok, recorded, failed? | why? }: the helper reads the premium evaluation's records itself and, on a handled failure, records it once per Yes, which brings the director one card; refused under STOP
     },
-    // The director's profile. Each answers { ok: false, why } while the profile isn't set up.
+    // The director's settings on this computer (design section 24.2): a record with no remote.
     profile: {
-      clone: post('/profile/clone'), //   {} -> { ok, made }
+      clone: post('/profile/clone'), //   {} -> { ok }: opens the settings record, making it the first time
       write: post('/profile/write'), //   { kind: 'setting', data }: a setting whose home is the profile
-      record: post('/profile/record'), // { event }: a signed confirmation of a profile event
-      sync: post('/profile/sync'), //     {} -> { ok, pulled, unpushed, refused? }: commits new bundles, pulls and pushes
+      record: post('/profile/record'), // { event }: a signed confirmation of a settings event
+      sync: post('/profile/sync'), //     {} -> { ok, pulled: 0, unpushed: 0 }: nothing to do
       views: post('/profile/views'), //   {} -> { ok, views }
-      enrolments: post('/profile/enrolments'), // {} -> { ok, fetched, enrolments: [{ computer, publicKey, at }] }: each computer's key as the fetched profile holds it, trusted only on the director's click
+      import: post('/profile/import'), // {} -> { ok, done, at?, imported, held, unsigned, unreadable }: v0.1.x's profile clone imported once; refused under STOP
     },
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }
@@ -129,7 +129,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       cutAccess: post('/runbook/cut-access'), //     { project } -> { ok, message, url? }: step 2
       restoreMain: post('/runbook/restore-main'), // { project, sha } -> { ok, number, url, branch }: step 3, opens the pull request
       restoreMerge: post('/runbook/restore-merge'), // { project, number }: step 3, merges the restore pull request
-      restoreState: post('/runbook/restore-state'), // { project } -> { ok, added, skipped }: step 4
+      restoreState: post('/runbook/restore-state'), // { project } -> { ok: false, refused }: step 4, retired (no backup is kept)
       contain: post('/runbook/contain'), //          { project } -> { ok, message, output? }: step 5
       candidates: post('/runbook/candidates'), //    { project } -> { ok, candidates: [{ sha, sha12, at, title }] }
     },

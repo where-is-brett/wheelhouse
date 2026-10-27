@@ -16,7 +16,7 @@ import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { writeKey } from '../../../scripts/host/keys.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, makeEvent, writeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { writeBackup } from '../../../scripts/state/backup.js';
@@ -89,7 +89,7 @@ async function scenario({ headFiles = { 'a.txt': '3\n' }, headRemove = [], first
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: () => new Date(NOW.getTime() - HOUR) })).taken, true);
   });
   s.cleanup = () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(work, { recursive: true, force: true }); };

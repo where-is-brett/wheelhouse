@@ -13,7 +13,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { listEvents, makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
@@ -50,7 +50,7 @@ async function computer({ alias = async () => PREMIUM, top = async () => PINS.mo
     writeProject(P, { folder, remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     const { computer: id, publicKey } = makeSigningKey();
     enrol({ computer: id, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: P, remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: P, remoteUrl: remote.url });
   });
   const premiumAlias = async () => { asked.push('alias'); return alias(); };
   const mostCapableAlias = async () => { asked.push('top'); return top(); };

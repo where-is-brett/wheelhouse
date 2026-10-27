@@ -14,7 +14,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { helperAddress, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeEvent, eventPath, writeEvent, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
@@ -102,7 +102,7 @@ async function project({ lock = true } = {}) {
     });
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
     if (lock) assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(0) })).taken, true);
   });
   return { remote, home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
@@ -609,7 +609,7 @@ test('merge is refused when this computer has lost the lock', async () => {
   try {
     // Another computer takes the stale lock three hours later.
     await as(otherHome, async () => {
-      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: p.remote.url });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: p.remote.url });
       assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push: plainPush, now: at(3 * HOUR) })).taken, true);
     });
     const adapter = fakeAdapter();

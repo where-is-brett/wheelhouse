@@ -30,7 +30,7 @@ import { CARD } from '../../../scripts/lib/front-desk.js';
 import { uninstallLine, UNINSTALL_LABEL } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { makeEvent } from '../../../scripts/state/events.js';
-import { STATE_BRANCH } from '../../../scripts/state/clone.js';
+import { STATE_BRANCH } from '../../../scripts/state/record.js';
 import { keepAnswer, keepUninstallClick, uninstallShownFor, freshUninstallClicks } from '../../../scripts/setup/clicks.js';
 import { withdrawEnrolment } from '../../../scripts/setup/computers.js';
 import { madeBySetup, joinedFolder } from '../../../scripts/setup/host.js';

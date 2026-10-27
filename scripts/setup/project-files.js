@@ -120,7 +120,7 @@ import { resolveClaude, invocation, withoutHostVariables } from '../lib/claude.j
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
-import { STATE_BRANCH } from '../state/clone.js';
+import { STATE_BRANCH } from '../state/record.js';
 import { sameRemote } from '../state/git.js';
 import { PROFILE_BRANCH } from '../profile/store.js';
 import { readConfig, isModelName } from '../gate/guardrails.js';

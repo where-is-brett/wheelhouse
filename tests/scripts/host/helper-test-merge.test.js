@@ -14,7 +14,7 @@ import { safeKeyName } from '../../../scripts/lib/safe-git.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { setStop } from '../../../scripts/lib/stop.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeBareRemote, g, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../../helpers/homes.js';
 
@@ -64,7 +64,7 @@ async function project(remote) {
     writeProject('o__p', {
       folder: path.join(home, 'work'), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
     });
-    await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+    await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
   });
   return home;
 }

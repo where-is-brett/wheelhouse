@@ -61,7 +61,7 @@ import { toolPath } from '../lib/host-tools.js';
 import { stopState } from '../lib/stop.js';
 import { removeLoginStart } from '../lib/login-start.js';
 import { STEP_TIMEOUT_MS } from '../lib/setup-numbers.js';
-import { STATE_BRANCH } from '../state/clone.js';
+import { STATE_BRANCH } from '../state/record.js';
 import { profileRemote } from '../profile/store.js';
 import { makeAdapter } from '../host/adapter.js';
 import { deleteKey } from '../host/keys.js';

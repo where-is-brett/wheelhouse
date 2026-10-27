@@ -18,7 +18,7 @@ import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { confirmLine } from '../../../scripts/state/card-lines.js';
@@ -137,7 +137,7 @@ test('on a Claude Code project an unsigned Confirm in the chat is refused, and t
       writeProject('o__p', { folder: os.tmpdir(), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
       const { computer, publicKey } = makeSigningKey();
       enrol({ computer, publicKey, enrolledAt: T0.toISOString() });
-      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const ruling = makeEvent({ kind: 'ruling', data: { words: WORDS }, now: () => T0 });
       const question = `A rule you gave, in your words: "${WORDS}"`;
       const card = makeEvent({ kind: 'card', data: { question, header: 'Confirm', options: ['Confirm', 'Not now'], kind: 'confirm', level: 3, line: confirmLine(ruling) }, now: () => new Date(T0.getTime() + 1000) });

@@ -16,7 +16,7 @@ import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { delegationReview } from '../../../scripts/frontdesk/learning.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -1825,7 +1825,7 @@ test('through the real helper, the command places the project from its folder an
       });
       const { computer, publicKey } = makeSigningKey();
       enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
-      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       const adapter = { defaultBranch: async () => 'main', prState: async () => ({ headSha: FULL, state: 'open' }) };
       const helper = await startHelper({ run: hostGuard, address: testAddress(home), adapterFor: async () => adapter, envFor: async () => ({}) });
       try {

@@ -21,7 +21,7 @@ import { writeProject, readProject } from '../../../scripts/lib/projects.js';
 import { computerId, stateDir } from '../../../scripts/lib/paths.js';
 import { run } from '../../../scripts/lib/run.js';
 import { FENCE } from '../../../scripts/setup/git.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeEvent, confirmationFor } from '../../../scripts/state/events.js';
 import { keep, taken } from '../../../scripts/hooks/pending.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
@@ -150,7 +150,7 @@ test('the same calls made without the helper are refused by the host', async () 
   const home = shortHome();
   try {
     await as(home, async () => {
-      await assert.rejects(cloneState({ project: PROJECT, remoteUrl: repo.url, env: LOOPBACK_HTTP }), /could not be reached/);
+      await assert.rejects(openTestRecord({ project: PROJECT, remoteUrl: repo.url, env: LOOPBACK_HTTP }), /could not be reached/);
     });
     assert.ok(repo.host.refusedCount() > 0, 'the host refused the keyless request');
   } finally { fs.rmSync(home, { recursive: true, force: true }); await repo.cleanup(); }

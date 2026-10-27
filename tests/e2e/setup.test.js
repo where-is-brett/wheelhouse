@@ -38,7 +38,7 @@ import { readEnrolled, ownKey, verify } from '../../scripts/state/signing.js';
 import { readProject } from '../../scripts/lib/projects.js';
 import { stateDir } from '../../scripts/lib/paths.js';
 import { toolPath } from '../../scripts/lib/host-tools.js';
-import { STATE_BRANCH } from '../../scripts/state/clone.js';
+import { STATE_BRANCH } from '../../scripts/state/record.js';
 import { run as realRun, withoutGitVars } from '../../scripts/lib/run.js';
 import { g } from '../helpers/git-fixture.js';
 import { transcript, typed } from '../helpers/setup-answers.js';

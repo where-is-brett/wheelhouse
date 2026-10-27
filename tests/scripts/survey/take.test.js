@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { takeSurvey, shapedSurvey, missedSurvey, ownLines, recordSurvey, SURVEY_DEADLINE_MS, SURVEY_HOST_MS } from '../../../scripts/survey/take.js';
 import { makeEvent, writeEvent } from '../../../scripts/state/events.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeBareRemote, g, push, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -108,7 +108,7 @@ test('Wheelhouse\'s own lines are the feature lines its state records', async ()
   const remote = await makeBareRemote();
   try {
     await withHome(async () => {
-      await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+      await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       assert.deepEqual(ownLines('o__p'), []);
       for (const data of [{ work: 'export-csv', step: 'building', branch: 'feature/export-csv' }, { work: 'login', step: 'started' }, { work: 'odd', step: 'building', branch: 'their-name' }]) {
         await writeEvent({ env: LOCAL_PATHS, project: 'o__p', event: makeEvent({ kind: 'feature', data }), push });

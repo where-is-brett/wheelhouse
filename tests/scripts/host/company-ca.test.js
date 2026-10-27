@@ -18,7 +18,7 @@ import { makeAdapter } from '../../../scripts/host/adapter.js';
 import { gitlabApi } from '../../../scripts/host/gitlab-key.js';
 import { applyCompanyCa } from '../../../scripts/setup/tools.js';
 import { boardModel } from '../../../scripts/board/model.js';
-import { cloneState } from '../../../scripts/state/clone.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeEvent, writeEvent, syncState } from '../../../scripts/state/events.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -148,7 +148,7 @@ test('an unreachable host gives HOST_UNREACHABLE and keeps the push for later', 
   const remote = await makeBareRemote();
   try {
     await as(shortHome(), async () => {
-      const dir = await cloneState({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
+      const dir = await openTestRecord({ env: LOCAL_PATHS, project: 'o__p', remoteUrl: remote.url });
       assert.equal(dir, stateDir('o__p'));
       const event = makeEvent({ kind: 'note', data: { text: 'while away' } });
       const away = async () => ({ ok: false, refused: HOST_UNREACHABLE(BASE) });
