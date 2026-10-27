@@ -20,14 +20,12 @@
 //
 // readProject stays strict (scripts/lib/projects.js), so every caller that needs a host finds no
 // record and refuses. projectForFolder reads this record too, so the hooks place a Lean folder.
-// Its state is a local repository at stateDir(project): events are committed there and never pushed.
+// Its private record is a local repository at stateDir(project): events are committed there and never pushed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir, projectsDir } from '../lib/paths.js';
-import { run as realRun } from '../lib/run.js';
-import { safeGit } from '../lib/safe-git.js';
 import { readProject, projectForFolder } from '../lib/projects.js';
-import { STATE_BRANCH } from '../state/clone.js';
+import { openRecord } from '../state/record.js';
 
 // What every route that needs a host answers for a Lean project.
 export const LEAN_NO_HOST = 'a Lean project has no code host';
@@ -179,58 +177,8 @@ export function registerLean({ project, folder, now = () => new Date() }) {
   });
 }
 
-const STATE_WHAT = 'the Lean project\'s state repository';
-// The state's own commits are Wheelhouse's, as the state clone's are (scripts/state/git.js).
-const WHEELHOUSE = {
-  GIT_AUTHOR_NAME: 'Wheelhouse', GIT_AUTHOR_EMAIL: 'wheelhouse@invalid', GIT_COMMITTER_NAME: 'Wheelhouse', GIT_COMMITTER_EMAIL: 'wheelhouse@invalid',
-};
-const README = `<!-- README.md -->
-# Wheelhouse state
-
-This repository holds Wheelhouse's event log for a Lean project: small files under \`events/\`, one
-per event. It stays on this computer. Do not edit these files by hand.
-`;
-
-// The Lean project's state repository, made when the folder is absent or empty: `git init` on the
-// state branch and a first commit, with no remote, so nothing is ever pushed from it. Every call
-// goes through safeGit on the own list with the `lean` caller. A repository already there is looked
-// at first, and is used only when it has no remote and is on the state branch; any other is left
-// alone. A folder that holds anything but no repository is left alone too: it is the only copy of
-// the record, so nothing in it is removed. Gives the folder.
-export async function leanState(project, { run = realRun } = {}) {
-  const dir = stateDir(project);
-  const gitHere = (look) => safeGit({ run, cwd: dir, env: WHEELHOUSE, list: 'own', look, caller: 'lean', what: STATE_WHAT });
-  if (fs.existsSync(path.join(dir, '.git'))) {
-    const git = gitHere('once');
-    const remotes = await git(['remote']);
-    if (remotes.code !== 0) throw new Error(`The Lean project's state repository could not be read, so the folder ${dir} was left alone`);
-    if (remotes.stdout.trim() !== '') throw new Error(`The folder ${dir} holds a repository with a remote, so it is not this Lean project's own state and was left alone`);
-    const branch = await git(['symbolic-ref', '--short', 'HEAD']);
-    if (branch.code !== 0 || branch.stdout.trim() !== STATE_BRANCH) throw new Error(`The folder ${dir} holds a repository that is not on the state branch, so it was left alone`);
-    return dir;
-  }
-  let held = [];
-  try {
-    held = fs.readdirSync(dir);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error(`The Lean project's state folder ${dir} could not be read, so it was left alone`);
-  }
-  if (held.length > 0) throw new Error(`The Lean project's state folder ${dir} holds files but no repository, so it was left alone`);
-  fs.mkdirSync(dir, { recursive: true });
-  // The folder is empty, so there are no settings of its own to look at.
-  const git = gitHere('never');
-  try {
-    for (const args of [['init', '-q'], ['symbolic-ref', 'HEAD', `refs/heads/${STATE_BRANCH}`]]) {
-      if ((await git(args)).code !== 0) throw new Error('git init');
-    }
-    fs.writeFileSync(path.join(dir, 'README.md'), README);
-    for (const args of [['add', '--', 'README.md'], ['commit', '-q', '-m', 'Start the state branch']]) {
-      if ((await git(args)).code !== 0) throw new Error('git commit');
-    }
-  } catch {
-    // The folder was empty before, so it holds only what this start made.
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw new Error('The Lean project\'s state repository could not be made');
-  }
-  return dir;
+// The Lean project's private record, made when the folder is absent or empty, as every project's is
+// (scripts/state/record.js): no remote, so nothing is ever pushed from it. Gives the folder.
+export function leanState(project, { run } = {}) {
+  return openRecord(stateDir(project), { run, caller: 'lean', what: 'the Lean project\'s private record' });
 }

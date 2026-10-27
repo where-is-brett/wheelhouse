@@ -164,9 +164,9 @@ test('a Lean project\'s state is a local repository that is never pushed', async
     const dir = await c.as(() => stateDir(PROJECT));
     assert.equal(fs.existsSync(path.join(dir, '.git')), true);
     assert.equal((await git(dir, ['remote'])).stdout.trim(), '', 'the state has no remote to push to');
-    assert.equal((await git(dir, ['symbolic-ref', '--short', 'HEAD'])).stdout.trim(), 'wheelhouse-state');
+    assert.equal((await git(dir, ['symbolic-ref', '--short', 'HEAD'])).stdout.trim(), 'record');
     const log = (await git(dir, ['log', '--format=%s%x09%an'])).stdout.trim().split('\n');
-    assert.deepEqual(log, [`note ${second.id}\tWheelhouse`, `note ${first.id}\tWheelhouse`, 'Start the state branch\tWheelhouse']);
+    assert.deepEqual(log, [`note ${second.id}\tWheelhouse`, `note ${first.id}\tWheelhouse`, 'Start the record\tWheelhouse']);
     assert.equal((await git(dir, ['status', '--porcelain'])).stdout, '');
 
     // Sync has nothing to pull or push.
@@ -319,7 +319,7 @@ test('a refused look at a Lean project\'s state is worded for Lean, and nothing 
     await git(dir, ['config', 'core.fsmonitor', 'false']);
     const refused = await h.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'second' } });
     assert.equal(refused.ok, false);
-    assert.equal(refused.refused, lookRefusalLine('lean', { keys: ['core.fsmonitor'] }, { what: 'the Lean project\'s state repository' }));
+    assert.equal(refused.refused, lookRefusalLine('lean', { keys: ['core.fsmonitor'] }, { what: 'the Lean project\'s private record' }));
     assert.equal((await git(dir, ['rev-list', '--count', 'HEAD'])).stdout.trim(), '2');
   } finally {
     await h.close();

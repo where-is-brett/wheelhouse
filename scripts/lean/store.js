@@ -22,7 +22,6 @@ import { run as realRun } from '../lib/run.js';
 import { safeGit, lookRefusalLine } from '../lib/safe-git.js';
 import { computerId, stateDir } from '../lib/paths.js';
 import { setStop, stopState } from '../lib/stop.js';
-import { STATE_BRANCH } from '../state/clone.js';
 import { listEvents, makeEvent, writeEvent } from '../state/events.js';
 import { writeViews } from '../state/views.js';
 import { readEnrolled, sign, verify } from '../state/signing.js';
@@ -727,9 +726,9 @@ export async function keepMain({ project, from, to, run = realRun, now = () => n
 
 const COPY_WHAT = 'the Lean project\'s copy folder';
 
-// Brings the copy folder up to the store's main version and the state's branch, as `main` and `wheelhouse-state`
-// (ruling P5-24), never with force. The copy fetches them, in a git run in the copy through safeGit, naming the store
-// and the state repository by their paths (ruling P5-50): nothing is pushed into the copy, so its receive hooks never
+// Brings the copy folder up to the store's main version, as `main` (ruling P5-24; the private record never goes to
+// the copy, design section 24.3 item 7), never with force. The copy fetches it, in a git run in the copy through safeGit, naming the store
+// by its path (ruling P5-50): nothing is pushed into the copy, so its receive hooks never
 // run, the fence's hooks setting covers the one process that writes its refs, and the look reads the copy's own
 // settings first. No remote's name is read, so no push or fetch setting anywhere is followed. A copy that can't take
 // it is recorded and the work carries on. Gives { pushed, commit, refused? } (`pushed`: the copy holds them now).
@@ -740,7 +739,6 @@ async function updateCopy(project, { run, now, record }) {
   const commit = await storeMain(project, run);
   let pushed = false;
   if (fs.existsSync(lean.copy)) {
-    await leanState(project, { run });
     const copy = gitAt(lean.copy, { run, reach: 'local', what: COPY_WHAT });
     // The copy folder must be a repository itself (a bare one, or one with its own .git): git looks upwards from a
     // folder that isn't one, and the fetch would land in whatever repository holds it.
@@ -751,7 +749,7 @@ async function updateCopy(project, { run, now, record }) {
     };
     const fetch = (from, ref) => copy.ok(['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', from, `${ref}:${ref}`]);
     try {
-      pushed = (await own()) && (await fetch(storeDir(project), MAIN)) && (await fetch(stateDir(project), `refs/heads/${STATE_BRANCH}`));
+      pushed = (await own()) && (await fetch(storeDir(project), MAIN));
     } catch {
       pushed = false;
     }
