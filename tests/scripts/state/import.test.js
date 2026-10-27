@@ -101,7 +101,11 @@ test('many events, some written in other scripts, are all imported whole in one 
   makeSigningKey();
   const from = await oldClone('shop');
   const texts = ['café crème', '東京の注文', 'emoji 🍰 cake', ...Array.from({ length: 120 }, (_, i) => `order ${i}`)];
-  for (const text of texts) await writeEvent({ event: note(text), dir: from, now: () => T0 });
+  // Each at its own second, so no two file names can meet, even on a file system blind to case.
+  for (const [i, text] of texts.entries()) {
+    const at = () => new Date(T0.getTime() + i * 1000);
+    await writeEvent({ event: makeEvent({ kind: 'note', data: { text }, now: at }), dir: from, now: at });
+  }
   const to = await openProjectRecord('shop');
   assert.deepEqual(await importEvents({ from, to, enrolled: [ownKey()] }), { imported: texts.length, held: 0, unsigned: 0, unreadable: 0 });
   assert.deepEqual(listEvents(to, { report: () => {} }).map((e) => e.data.text).sort(), [...texts].sort());
