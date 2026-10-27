@@ -637,6 +637,12 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.deepEqual(finished, [{ project: SLUG }]);
     assert.equal(green.started, 'The foreman\'s watcher is started.');
     assert.equal(green.briefing, 'The briefing.');
+    // The verdict and the first briefing come next, from step 10's plan, once, before the phone card.
+    const routes = routesFor(user);
+    assert.equal((await routes['/setup/status']({ folder })).ask, 10);
+    assert.deepEqual(await routes['/setup/plan']({ folder, step: 10 }), { ok: true, done: true, said: `${green.lines.at(-1)}\n\nThe briefing.` });
+    assert.notEqual((await routes['/setup/status']({ folder })).ask, 10, 'given once');
+    await assert.rejects(routes['/setup/plan']({ folder, step: 10 }), /already done/);
     assert.equal(healthGreen(runOf(folder)), true);
     assert.equal(firstUnfinished(runOf(folder)), null, 'setup is finished once the board is green');
     // The run's last clicks and answers are copied into the project's state as it finishes (ruling R45).
@@ -990,5 +996,27 @@ test('a card the helper won\'t record leaves the line in the first briefing, as 
     assert.equal(done.card, undefined);
     assert.match(done.briefing, /Already under way here: 1 change waiting to be \w+ on GitHub, and 2 pieces of unfinished work on this computer\. Say if you'd like me to carry any of them on\./);
     assert.equal(readSurveyAt(SLUG), 'survey-1');
+  });
+});
+
+// The rehearsal of 27 October 2026: a session ran `resume` with its output cut short, then again,
+// and asked the second card. The phone's first card opens with the verdict and the first briefing
+// each time it is planned, until the director answers it.
+test('after a green board the phone card opens with the verdict and the briefing each time it is planned', async () => {
+  await withProject(async ({ folder, user }) => {
+    runWith(folder, { checks: GREEN_CHECKS, skip: [9] });
+    const routes = routesFor(user);
+    const green = await routes['/setup/health']({ folder, lines: GREEN_LINES });
+    assert.equal(green.green, true, green.lines.join('\n'));
+    const opening = [green.lines.at(-1), 'The briefing.'];
+    assert.equal((await routes['/setup/status']({ folder })).ask, 9);
+    for (let i = 0; i < 2; i += 1) {
+      const planned = await routes['/setup/plan']({ folder, step: 9 });
+      assert.match(planned.ask.id, /^phone-ready/);
+      assert.deepEqual(planned.ask.card.question.split('\n').slice(0, 2), opening, `planned ${i + 1} times`);
+    }
+    // While a phone card is left, step 10 gives no `said` of its own (tests/e2e/setup.test.js follows
+    // the card's answer: after it, nothing opens with the briefing again).
+    assert.equal((await routes['/setup/status']({ folder })).ask, 9);
   });
 });

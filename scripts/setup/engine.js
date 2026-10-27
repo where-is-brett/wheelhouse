@@ -104,12 +104,13 @@ import {
 } from '../lib/setup-run.js';
 import { parseTrialLine, MOST_TRIAL_LINES } from '../lib/trial-lines.js';
 import {
-  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, answersWithConsent, customisingSince, customiseBatch, consentIn, consentHolds,
+  ONE_CARD_STEP, CHOICE_STEPS, openChoices, oneCard, setupTime, answersWithConsent, customisingSince, customiseBatch, consentIn, consentHolds,
 } from './choices.js';
 import { redoCard, choiceList, changeRequests, setUpAgainAsked, stepFourDrift } from './redo.js';
 import { productOf } from './host.js';
 import { readGitlabHosts } from '../host/gitlab-base.js';
 import { readmeDescription, productName } from './questions.js';
+import { READY_ID } from './notify.js';
 
 export const STEPS_MODULE = fileURLToPath(new URL('./steps.js', import.meta.url));
 export const RUN_STEP = fileURLToPath(new URL('./run-step.js', import.meta.url));
@@ -334,6 +335,35 @@ export async function copyRunRecords(runId, folder) {
 }
 
 // The first step neither done nor running (`running(n)`), or null.
+// The verdict and the first briefing a green board left for the director (`after.briefing` of its
+// change), or null. Left to the session to show from the health check's answer, or as a `said`,
+// they went unshown in every rehearsal run of 27 October 2026, on Sonnet and on Opus: the phone
+// card or the front desk came straight after. A card is what a session passes on word for word, so
+// the phone's first card opens with them until it is answered (opensWithBriefing); with no phone
+// card left, step 10's plan gives them once as its `said` (pendingBriefing).
+const BRIEFING_TARGET = 'step 10 briefing';
+const briefingKept = (run) => (run?.changes ?? []).filter((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && c.target === BRIEFING_TARGET);
+function briefingOf(run) {
+  const text = briefingKept(run).find((c) => typeof c.after?.briefing === 'string' && c.after.briefing !== '')?.after.briefing;
+  return text ?? null;
+}
+const greenAt = (run) => (run?.changes ?? []).find((c) => c?.step === HEALTH_STEP && c.kind === 'answer' && typeof c.after?.green === 'string')?.after.green;
+const isReadyCard = (id) => id === READY_ID || id.startsWith(`${READY_ID}-`);
+// Whether the director answered the phone's first card since the board went green: the card that
+// opened with the briefing, so they have seen it.
+const readyAnsweredSinceGreen = (run, answers) => Object.entries(answers)
+  .some(([key, a]) => key.startsWith(`${PUSH_TEST_STEP}.`) && isReadyCard(key.slice(key.indexOf('.') + 1)) && Date.parse(a.at) >= Date.parse(greenAt(run)));
+// Not yet seen on a phone card, nor given once as step 10's `said`: the text, else null.
+function pendingBriefing(run, answers) {
+  return briefingKept(run).some((c) => c.after?.said === true) || readyAnsweredSinceGreen(run, answers) ? null : briefingOf(run);
+}
+// The briefing a phone card opens with: the phone's first card ('phone-ready'), on a green board,
+// while the director hasn't answered it since the board went green; else null.
+function opensWithBriefing(run, step, id, answers) {
+  if (step !== PUSH_TEST_STEP || !isReadyCard(id) || !healthGreen(run) || readyAnsweredSinceGreen(run, answers)) return null;
+  return briefingOf(run);
+}
+
 function toAsk(run, steps, running) {
   return askingOrder(steps.map((s) => s.n)).find((n) => !isDone(run, n) && !running(n)) ?? null;
 }
@@ -513,7 +543,7 @@ export function setupRoutes({
     const { id, card, choices, writes } = oneCard({ folder: run.folder, list, product, platform, toRun, count: keptAnswers(run.id).length, facts });
     if (JSON.stringify(cleanDeep(card, [])) !== JSON.stringify(card)) throw new Error('The one card could not be cleaned as it is sent');
     noteAsked({ runId: run.id, folder: run.folder, step: ONE_CARD_STEP, id, card, writes, choices, facts, now });
-    return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: ['Setup · about 5 minutes', 'One card: the plan for this project.'] };
+    return { ok: true, ask: { step: ONE_CARD_STEP, id, card }, progress: [`Setup · ${setupTime(toRun, list)}`, 'One card: the plan for this project.'] };
   }
 
   // Whether step n of a run has run or is running.
@@ -617,6 +647,12 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const step = await stepOf(body.step);
     let run = runFor(folder, userHome);
+    // Step 10 done on a green board: its plan gives the verdict and the first briefing, once.
+    const briefing = step.n === HEALTH_STEP && run !== null && healthGreen(run) ? pendingBriefing(run, answersFor(run.id)) : null;
+    if (briefing !== null) {
+      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: BRIEFING_TARGET, before: null, after: { said: true } }]);
+      return { ok: true, done: true, said: hide(briefing, []) };
+    }
     showable(run, step.n);
     // A run started by this plan starts when the plan does, so the step reads the time its run has.
     const startedAt = run?.startedAt ?? now().toISOString();
@@ -646,6 +682,10 @@ export function setupRoutes({
     if (run) showable(runById(run.id), step.n);
     run ??= startRun({ folder, now: () => new Date(startedAt) });
     if (got.ask) {
+      // The first card after a green board opens with the verdict and the first briefing, so the
+      // director sees them as the card is asked, word for word, and the card recorded is the one sent.
+      const briefing = opensWithBriefing(run, step.n, got.ask.id, answersFor(run.id));
+      if (briefing !== null) card = cleanDeep({ ...card, question: [...briefing.split('\n').filter((l) => l.trim() !== ''), card.question].join('\n') }, []);
       // What was typed on this card since it was last asked was not taken: said why, before it is asked again.
       const refused = typedRefused(run.id, step.n, got.ask.id);
       noteAsked({ runId: run.id, folder: run.folder, step: step.n, id: got.ask.id, card, typed: got.ask.typed, rules: got.ask.rules, writes: got.ask.writes, found: got.ask.found, now });
@@ -779,7 +819,11 @@ export function setupRoutes({
     const running = (n) => runningIn(run, n);
     if (run === null) return { ok: true, lines: ['Setup has not started in this folder.'], next: firstUnfinished(null, all), ask: toAsk(null, all, running), oneCard: true };
     const again = setUpAgainAsked(answersFor(run.id)) && stepDone(run, 3);
-    return { ok: true, ...statusLines(run, all, running), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
+    const listed = statusLines(run, all, running);
+    // A green board's briefing not yet given, and no card left to open with it (the phone's, see
+    // plan): step 10 is planned once more, to give it as its `said`.
+    const briefing = listed.ask === null && healthGreen(run) && pendingBriefing(run, answersFor(run.id)) !== null;
+    return { ok: true, ...listed, ...(briefing ? { ask: HEALTH_STEP } : {}), ...(oneCardNext(run) ? { oneCard: true } : {}), ...(again ? { setUpAgain: true } : {}) };
   }
 
   // Step 10's board (rulings R41, R44, R67, R68): the helper's checks, recorded by step 10's apply,
@@ -837,7 +881,11 @@ export function setupRoutes({
       } catch { /* the records stay in setup's own folder; the ending goes on */ }
       // Changes the director asked for after setup (design section 15.1), for the front desk to start.
       const requests = changeRequests(run.id, answersFor(run.id));
-      return { ...answerOf(got), ...(await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) })), ...(requests.length > 0 ? { requests } : {}) };
+      const ending = await finish({ project: got.project, ...(writeSurvey ? { writeSurvey } : {}) });
+      // The verdict and the first briefing, kept for the next card to open with (pendingBriefing).
+      const show = [got.verdict, ending.briefing].filter((part) => typeof part === 'string' && part !== '').join('\n\n');
+      addChanges(run.id, [{ id: newId('chg'), step: HEALTH_STEP, kind: 'answer', target: BRIEFING_TARGET, before: null, after: { briefing: show } }]);
+      return { ...answerOf(got), ...ending, ...(requests.length > 0 ? { requests } : {}) };
     });
     healthQueue.set(found.id, turn);
     try {
