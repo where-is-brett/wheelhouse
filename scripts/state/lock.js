@@ -48,7 +48,9 @@ async function ensureClone(project, env) {
     if (branch.code !== 0 || branch.stdout.trim() !== LOCK_BRANCH) {
       throw new Error(`The folder ${dir} holds a clone that is not this project's lock branch, so it was left alone`);
     }
-    const lockOrigin = await git(dir, ['remote', 'get-url', 'origin'], env);
+    // The address as written in the clone, never as a rewrite in the connection's environment turns
+    // it, since the recorded address it is compared with is never rewritten either.
+    const lockOrigin = await git(dir, ['config', '--get', 'remote.origin.url'], env);
     if (lockOrigin.code !== 0 || !sameRemote(lockOrigin.stdout.trim(), remoteUrl)) {
       throw new Error(`The folder ${dir} holds a lock clone whose remote is not the project's repository, so it was left alone`);
     }

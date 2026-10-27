@@ -421,7 +421,7 @@ test('the folder\'s origin is irrelevant: the push goes to the project\'s reposi
   } finally { p.cleanup(); elsewhere.cleanup(); }
 });
 
-test('the mirror reaches a remote only through the connection\'s environment', async () => {
+test('the lock and the mirror reach a remote only through the connection\'s environment', async () => {
   const p = await project();
   try {
     const head = await prOnHost(p.remote.url);
@@ -437,12 +437,9 @@ test('the mirror reaches a remote only through the connection\'s environment', a
         const refused = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.deepEqual(refused.reasons, [LOCK_REASON, UNCHECKED, UNREADABLE], 'without the environment neither the lock nor the mirror can be read');
       });
-      // With it, the mirror reads the pull request: whether it is up to date and what it changes are known.
-      // (The lock is not checked here: its clone's address, read back through the same insteadOf, no
-      // longer matches the recorded one.)
+      // With it, the lock is read and the mirror reads the pull request, so the merge goes through.
       await withHelper(fakeAdapter({ prState: openAt(head) }), async (client) => {
-        const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.ok(!answer.reasons?.includes(UNCHECKED) && !answer.reasons?.includes(UNREADABLE), JSON.stringify(answer));
+        assert.deepEqual(await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), { ok: true, merged: true, sha: head, ...NONE_FOUND });
       }, { envFor: async () => env });
     });
   } finally { p.cleanup(); }
