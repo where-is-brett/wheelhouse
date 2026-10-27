@@ -311,8 +311,9 @@ function forged({ computer, privateKey, kind, data, ms = 5000 }) {
 }
 const forgedApproval = ({ computer, privateKey, head }) => forged({ computer, privateKey, kind: 'approval', data: { pr: PR, commit: head } });
 
-// scenario 11 (design section 24.3 item 8): the gate and the views read only the private record, so files on main that
-// look like an approval or a ruling count for nothing, wherever they came from.
+// The gate and the views read only the private record (design section 24.3 item 8), so files on main that look like
+// an approval or a ruling count for nothing, wherever they came from.
+// scenario 11
 test('an approval or ruling committed to main by hand changes nothing', async () => {
   const undos = [];
   try {
