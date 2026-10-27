@@ -405,13 +405,16 @@ test('a running step\'s line for the director is kept on its entry, shown cleane
     await said;
     assert.deepEqual(findRun(folder).steps[3].say, { line: 'Then open https://someone:secret@example.com/page', at: NOW.toISOString() });
     const routes = setupRoutes({ now: () => NOW, stepsModule: TEST_STEPS, userHome: user });
-    const { lines } = await routes['/setup/status']({ folder });
+    const { lines, running } = await routes['/setup/status']({ folder });
+    assert.deepEqual(running, [3], 'status names the running steps, for cli.js wait');
     const at = lines.findIndex((l) => l.startsWith('Step 3,'));
     assert.match(lines[at], /running since/);
     assert.equal(lines[at + 1], '  Then open https://[hidden]@example.com/page');
     release();
     assert.deepEqual(await applying, { ok: true });
-    assert.ok(!(await routes['/setup/status']({ folder })).lines.some((l) => l.includes('Then open')), 'a finished step says nothing more');
+    const finished = await routes['/setup/status']({ folder });
+    assert.ok(!finished.lines.some((l) => l.includes('Then open')), 'a finished step says nothing more');
+    assert.equal(finished.running, undefined);
     // A new attempt says its own lines, never the last attempt's.
     markStep(run.id, 3, 'clickedAt', { now: () => NOW });
     assert.equal(findRun(folder).steps[3].say, undefined);

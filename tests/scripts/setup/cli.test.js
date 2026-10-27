@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { main, USAGE, WAIT_MOST_MS } from '../../../scripts/setup/cli.js';
+import { main, USAGE, WAIT_MOST_MS, RUNNING_POLL_MS } from '../../../scripts/setup/cli.js';
 import { startHelper } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
@@ -255,7 +255,8 @@ test('wait <step> waits while the step\'s plan is a wait, up to WAIT_MOST_MS a c
   const slept = [];
   const timing = { now: () => clock, sleep: async (ms) => { slept.push(ms); clock += ms; } };
   const until = (end) => () => (clock < end ? { ok: true, wait: end - clock, why: 'the director\'s screen is locked' } : { ok: true, ask: { step: 9, id: 'push-arrived', card: {} } });
-  const soon = fakeClient({ plan: until(T0.getTime() + 30000) });
+  const idle = { ok: true, lines: [] };
+  const soon = fakeClient({ status: idle, plan: until(T0.getTime() + 30000) });
   const over = await run(['wait', '9'], { client: soon, ...timing });
   assert.equal(over.code, 0, over.err);
   assert.deepEqual(JSON.parse(over.out), { step: 9, waited: true });
@@ -263,16 +264,57 @@ test('wait <step> waits while the step\'s plan is a wait, up to WAIT_MOST_MS a c
   // A wait longer than a call waits WAIT_MOST_MS, then says how long is left.
   clock = T0.getTime();
   slept.length = 0;
-  const long = fakeClient({ plan: until(T0.getTime() + WAIT_MOST_MS + 20000) });
+  const long = fakeClient({ status: idle, plan: until(T0.getTime() + WAIT_MOST_MS + 20000) });
   const part = await run(['wait', '9'], { client: long, ...timing });
   assert.deepEqual(JSON.parse(part.out), { step: 9, waiting: 20000 });
   assert.equal(slept.reduce((a, b) => a + b, 0), WAIT_MOST_MS);
   assert.ok(WAIT_MOST_MS <= 100000, 'well within the two minutes a command may run by default');
   // A step that isn't waiting is over at once, and a refusal is said as the helper gave it.
-  const none = await run(['wait', '3'], { client: fakeClient({ plan: { ok: true, ask: { step: 3, id: 'x', card: {} } } }), ...timing });
+  const none = await run(['wait', '3'], { client: fakeClient({ status: idle, plan: { ok: true, ask: { step: 3, id: 'x', card: {} } } }), ...timing });
   assert.deepEqual(JSON.parse(none.out), { step: 3, waited: true });
-  const refused = await run(['wait', '3'], { client: fakeClient({ plan: { ok: false, refused: 'STOP is on' } }), ...timing });
+  const refused = await run(['wait', '3'], { client: fakeClient({ status: idle, plan: { ok: false, refused: 'STOP is on' } }), ...timing });
   assert.equal(refused.code, 1);
   assert.match(refused.err, /STOP is on/);
   assert.match(USAGE, /wait <step>/);
+});
+
+// From a new product's setup on v0.1.2: after `apply 10` gave { started: true }, `wait 10` answered
+// "Health check is already running" at once, since a running step's plan is refused, and the
+// session wrote a wait loop of its own that failed for twenty minutes. A running step is a wait:
+// `wait` asks status, and is over once the step has stopped running.
+test('wait <step> waits while the step runs, and is over once it stops, within WAIT_MOST_MS a call', async () => {
+  let clock = T0.getTime();
+  const slept = [];
+  const timing = { now: () => clock, sleep: async (ms) => { slept.push(ms); clock += ms; } };
+  const stops = T0.getTime() + 14000;
+  const status = () => ({ ok: true, lines: [], ...(clock < stops ? { running: [10] } : {}) });
+  const refusedWhileRunning = () => (clock < stops ? { ok: false, refused: 'Step 10, Health check is already running' } : { ok: true, wait: 30000, why: 'step 10\'s own checks are done' });
+  const c = fakeClient({ status, plan: refusedWhileRunning });
+  const over = await run(['wait', '10'], { client: c, ...timing });
+  assert.equal(over.code, 0, over.err);
+  assert.deepEqual(JSON.parse(over.out), { step: 10, waited: true });
+  assert.ok(slept.every((ms) => ms <= RUNNING_POLL_MS));
+  assert.ok(clock >= stops && clock < stops + RUNNING_POLL_MS + 1);
+  assert.equal(c.calls.filter(([name]) => name === 'plan').length, 0, 'a running step is never planned');
+  // A long step running past a call's time says so, and the session runs wait again.
+  clock = T0.getTime();
+  slept.length = 0;
+  const long = fakeClient({ status: { ok: true, lines: [], running: [2] } });
+  const part = await run(['wait', '2'], { client: long, ...timing });
+  assert.deepEqual(JSON.parse(part.out), { step: 2, running: true });
+  assert.equal(slept.reduce((a, b) => a + b, 0), WAIT_MOST_MS);
+});
+
+// Step 10's own checks done: its plan is the session's part (the trials), not a wait to sit through.
+test('wait 10 is over once step 10\'s own checks are done', async () => {
+  let clock = T0.getTime();
+  const timing = { now: () => clock, sleep: async (ms) => { clock += ms; } };
+  const checked = fakeClient({ status: { ok: true, lines: ['Step 10, Health check: its own checks finished at x; the board isn\'t green yet'] }, plan: { ok: true, wait: 30000, why: 'step 10\'s own checks are done and its trial pull request, number 4, is open' } });
+  const got = await run(['wait', '10'], { client: checked, ...timing });
+  assert.deepEqual(JSON.parse(got.out), { step: 10, waited: true });
+  assert.equal(clock, T0.getTime(), 'no time spent waiting');
+  // Step 10 waiting for steps 7 and 8 is still a wait.
+  const before = fakeClient({ status: { ok: true, lines: [] }, plan: { ok: true, wait: 5000, why: 'step 8 is still running', waitsFor: 8 } });
+  const waiting = await run(['wait', '10'], { client: before, ...timing });
+  assert.deepEqual(JSON.parse(waiting.out), { step: 10, waiting: 5000 });
 });

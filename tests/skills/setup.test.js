@@ -156,14 +156,25 @@ test('the playbook waits for the labels the cards carry', () => {
 
 // From the pressure runs: a director who stops is not asked again; a typed answer on a card that
 // takes one goes back to the helper; a Go-ahead card is asked before any other plan; step 10's
-// trials wait for the line status gives once its own checks have finished.
+// trials wait for step 10's own checks, through `wait 10`.
 test('the playbook closes the gaps its pressure runs found', () => {
   assert.match(playbook, /\*\*The director stops\*\*[^\n]*stop at once[^\n]*don't ask the card again/);
   assert.match(playbook, /\*\*A card whose answer may be typed\*\*[^\n]*taken as their answer[^\n]*run `plan <step>` again/);
   assert.match(playbook, /a Go-ahead card:\*\* ask `card` before anything else; never run `plan` again over it/);
-  const engine = read('scripts/setup/engine.js');
-  assert.ok(engine.includes('its own checks finished at'), 'status words it so');
-  assert.match(playbook, /`status` says step 10's "own checks finished"/);
+  assert.match(playbook, /run `wait 10`, saying nothing: it waits while step 10 runs and answers `waited: true` once its own checks are done/);
+});
+
+// From a new product's setup on v0.1.2: `wait 10` was refused while step 10 ran, and the session's
+// own Bash wait loop failed silently for twenty minutes; it told the director it was "running the
+// last trials in this session"; and the network check's first run, before a new session, read as
+// a failure.
+test('step 10 names its wait, forbids a loop of the session\'s own, speaks plainly, and expects one new session', () => {
+  const ten = playbook.split('\n## Step 10, the health check\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(ten, /Never write a wait loop of your own, in Bash or otherwise\./);
+  assert.match(ten, /When it has run long \(three calls\), tell the director in one line/);
+  assert.match(ten, /never "trials", "sandbox" or "session" to the director/);
+  assert.match(ten, /\*\*One new session\.\*\*[^\n]*start a new session on this folder, then say "carry on with setup"[^\n]*not a failure/);
+  assert.match(ten, /A `Not yet` line saying a new session is needed is not a failure/);
 });
 
 // From the rehearsal: Claude Code refuses a foreground `sleep`, so every wait goes through `wait <step>`.
