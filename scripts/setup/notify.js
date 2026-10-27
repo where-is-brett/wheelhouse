@@ -65,7 +65,7 @@ const inWords = (ms) => {
   return `${NUMBERS[m] ?? m} minute${m === 1 ? '' : 's'}`;
 };
 const MINUTES = inWords(PUSH_TEST_WAIT_MS);
-const LOCK = `Lock your screen, and leave it locked until your phone buzzes, or for ${inWords(PUSH_TEST_LOCK_MS)} if it doesn't.`;
+const LOCK = `lock your screen until your phone buzzes, or for ${inWords(PUSH_TEST_LOCK_MS)}.`;
 // How old a Ready may be before card B is asked rather than card A again (ruling R66).
 const READY_STALE_MS = PUSH_TEST_WAIT_MS + CLICK_FRESH_MS;
 
@@ -79,19 +79,21 @@ function readyAsk(id) {
     id,
     card: {
       level: 2,
-      what: `Setup step ${PUSH_TEST_STEP}, phone notifications, so agents can reach you when they need you. ${PHONE_REACHES} `
-        + 'In Claude Desktop\'s settings, switch on Remote Control. '
-        + 'Check both push options are on: Push when Claude decides (setup switched it on at step 6) and Push when actions required. '
-        + 'On your phone, allow the Claude app\'s notifications. '
-        + `Then click Ready for one test notification. Claude doesn't send one while you are at the computer, so once you have clicked: ${LOCK}`,
-      why: 'Remote Control alone isn\'t enough: the push options and your phone\'s own permission are needed too.',
+      // Kept short (about 100 words with its options), since it opens with the health check's
+      // verdict and the first briefing. A push isn't sent while the director is at the computer,
+      // hence the locked screen.
+      what: `Setup step ${PUSH_TEST_STEP}, your phone. ${PHONE_REACHES} `
+        + 'In Claude Desktop\'s settings, switch on Remote Control and both push options, '
+        + 'and allow Claude\'s notifications on your phone. '
+        + `Then click Ready and ${LOCK}`,
+      why: 'Only you can do these.',
       options: [
-        { label: READY.ready, says: `Setup sends one test notification ${MINUTES} after your click, while your screen is locked, and then asks whether it arrived.` },
-        { label: READY.skip, says: 'No test is sent, and setup carries on without your phone. Ask the front desk to set up phone notifications whenever you like.' },
+        { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
+        { label: READY.skip, says: 'Setup carries on without your phone; the front desk can set it up later.' },
       ],
       recommend: READY.ready,
-      because: 'it takes a couple of minutes, and tells you now whether your phone hears from agents',
-      meanwhile: 'Setup waits for your click; anything already running carries on.',
+      because: 'it shows now whether your phone works',
+      meanwhile: 'Setup waits for your click.',
     },
   };
 }
