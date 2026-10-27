@@ -95,8 +95,8 @@ test('provenance matches the manifest only with the same versions, commits and f
   assert.deepEqual(bodyProvenance(stampProvenance('x', match), tempFolder('wh-empty-')), { ok: false, why: WHY.manifest });
   // Every reason is a set phrase.
   assert.deepEqual(Object.values(WHY).sort(), [
-    'Claude Code is older than the floor', 'an upstream commit differs', 'no provenance block', 'the Wheelhouse version differs',
-    'the agent is older than its pin', 'the fingerprints did not match', 'the installed manifest can\'t be read', 'the provenance block can\'t be read',
+    'Wheelhouse\'s own list of its parts can\'t be read', 'it carries no record of how it was built', 'it was built by an older agent than Wheelhouse allows', 'it was built with a different version of Wheelhouse',
+    'it was built with an older Claude Code than Wheelhouse allows', 'it was built with different copies of the tools Wheelhouse relies on', 'its record of how it was built can\'t be read', 'the files it was built from have changed since',
   ]);
 });
 

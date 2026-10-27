@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress } from '../../../scripts/lib/paths.js';
@@ -458,4 +458,17 @@ test('Claude Code\'s deny rules carry the new paths', () => {
   assert.equal(new Set(write).size, write.length);
   // Reading stays allowed: no Read rule is made for them.
   assert.ok(!deny.some((r) => r.startsWith('Read(') && /AGENTS|\.vscode|\.copilot|\.github/.test(r)));
+});
+
+test('feature sessions may read what plugins installed, and use a temporary folder inside their worktree, without a prompt', () => {
+  const rules = featureFileRules();
+  assert.deepEqual(rules, ['Read(~/.claude/plugins/cache/**)', 'Edit(/.wheelhouse/tmp/**)']);
+  // Read-only: nothing writes to the plugins, and nothing opens the system temporary folder or the home folder.
+  assert.ok(!rules.some((r) => r.startsWith('Edit(~') || r.includes('/tmp/**') && !r.includes('.wheelhouse/tmp')), 'no home or system temporary folder');
+  // Every guard stays: the Wheelhouse home is denied for reading and writing, and the shared settings carry no allow rule.
+  const s = projectSettings(config);
+  for (const denied of ['Read(~/.wheelhouse/**)', 'Edit(~/.wheelhouse/**)', 'Edit(~/.claude/**)']) assert.ok(s.permissions.deny.includes(denied), denied);
+  assert.ok(s.sandbox.filesystem.denyRead.includes('~/.wheelhouse'));
+  assert.ok(s.sandbox.filesystem.denyWrite.includes('~/.wheelhouse'));
+  assert.equal(Object.hasOwn(s.permissions, 'allow'), false);
 });

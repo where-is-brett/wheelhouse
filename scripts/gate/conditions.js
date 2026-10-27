@@ -142,7 +142,7 @@ export function gateDecision(input) {
   if (i.upToDate === null) reasons.push('whether the branch is up to date could not be checked');
   else if (i.upToDate !== true) reasons.push('the branch is not up to date with the default branch');
   if (i.provenance?.ok !== true) {
-    reasons.push(`the pull request's provenance does not match the manifest: ${provenanceWhy(i.provenance)}`);
+    reasons.push(`what passed review is not what is on the pull request now: ${provenanceWhy(i.provenance)}`);
   }
   const incident = incidentReason(i.incident);
   if (incident) reasons.push(incident);

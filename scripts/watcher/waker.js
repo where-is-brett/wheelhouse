@@ -160,7 +160,7 @@ import { ROLE_VARIABLE, featureModeOf, sessionEnv, sessionModeOf } from '../../a
 import { sessionsOfProject } from '../agents/project-agent.js';
 import { PLUGIN_ROOT, foremanCommands } from '../foreman/tools.js';
 import { lockedByPath } from '../hooks/kit.js';
-import { featureAllowRules } from '../protection/settings.js';
+import { featureAllowRules, featureFileRules } from '../protection/settings.js';
 import { LEVELS, buildGrants, buildsLevel } from '../protection/windows-builds.js';
 import { CONTROL_PATHS, listEvents } from '../state/events.js';
 import { readEnrolled, verify } from '../state/signing.js';
@@ -1238,9 +1238,9 @@ export function makeWaker({
     }
     const used = readGrantsUsed(project);
     const given = grants.filter((g) => g.scope !== 'run' || (used !== null && !used.includes(g.questionId)));
-    const allowed = platform === 'win32'
+    const allowed = [...(platform === 'win32'
       ? featureAllowRules(config, { platform, level, grants: given, guardedCommand })
-      : featureAllowRules(config, { platform });
+      : featureAllowRules(config, { platform })), ...featureFileRules()];
     // Used up at every level: a grant given while Unattended or Guarded is on is spent with
     // this run, so it is not there for a later run once the level goes back to Ask.
     const runs = given.filter((g) => g.scope === 'run' && typeof g.questionId === 'string').map((g) => g.questionId);
