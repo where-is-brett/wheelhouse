@@ -22,6 +22,7 @@ import { listEvents } from '../state/events.js';
 import { CARD_HASH_CHARS, PANE_LINES } from '../lib/mod-numbers.js';
 import { importanceOf, IMPORTANCE } from '../cards/visit.js';
 import { answerLine } from '../state/card-lines.js';
+import { controlFilesDue, gateAsksDue, holdsDue, premiumFailuresDue } from '../cards/build-loop.js';
 import { ownLineOf, brokenCount } from '../board/health.js';
 import { cardButtons, kindOf } from './buttons.js';
 import { previewFor } from './previews.js';
@@ -30,8 +31,11 @@ import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 
 const VERSION = 1;
 export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
-// The views the pane reads: the glance's, the reports and glossary, and the open incidents.
-const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas'];
+export const CARD_TO_MAKE = 'A card from the build waits; the front desk will make it and ask it';
+// The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
+// build's records the front desk makes cards from.
+const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
+  'gateAsks', 'lineageHolds', 'controlFiles', 'premiumFailures'];
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
@@ -204,6 +208,24 @@ export async function paneModel({ project, cwd, now = () => new Date(), helperUp
       revised: typeof data.revises === 'string',
     }];
   }), []);
+  // The build's records that wait on the director with no card yet, as the session start counts
+  // them (cardsDue): a click the merge gate waits for, a hold, a control-file record and a premium
+  // model's failed evaluation. The front desk makes and asks each card when it next runs `cards`,
+  // so each is one line with no buttons, after the cards waiting, and is never asked; the courier
+  // wakes the front desk for it. A hold holds all work, so it blocks.
+  cards.push(...part('cards to make', () => {
+    const make = (record, kind, blocking = false) => ({ id: `make:${record.id}`, at: record.at, kind, blocking });
+    const due = [
+      ...gateAsksDue(views, clock ?? new Date()).filter((d) => d.make).map(({ entry }) => make(entry, entry.data.ask === 'ci-push' ? 'ci-push' : 'approval')),
+      ...holdsDue(views).map((h) => make(h, 'question', true)),
+      ...controlFilesDue(views).map((r) => make(r, 'keep-control-files')),
+      ...premiumFailuresDue(views).map((r) => make(r, 'premium')),
+    ].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    return due.map((d, i) => ({
+      id: d.id, n: cards.length + i + 1, header: HEADERS[d.kind], kind: d.kind, text: CARD_TO_MAKE, hash: hashOf(CARD_TO_MAKE), buttons: [], note: null, blocking: d.blocking, asked: false,
+      parts: null, steered: null, waited: null, revised: false,
+    }));
+  }, []));
 
   const building = part('list of what is building', () => {
     const lines = list(model?.build?.features).filter((f) => f.step === 'building').map((f) => {
