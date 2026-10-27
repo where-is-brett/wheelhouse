@@ -248,3 +248,46 @@ test('holdsLock makes one round trip to the host', { skip: process.platform === 
     });
   } finally { process.env.PATH = pathBefore; remote.cleanup(); }
 });
+
+test('a live lock can be taken over only by naming the holder and counter it was shown, and the counter rises', async () => {
+  const remote = await makeBareRemote();
+  try {
+    const [a, b] = await setup(remote);
+    await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
+    const holder = idOf(a);
+    await as(b, async () => {
+      // Plain taking still refuses a live lock.
+      assert.equal((await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR) })).taken, false);
+      // A card made for another holder, or for an earlier counter, takes nothing.
+      const stale = await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR), over: { holder, counter: 7 } });
+      assert.deepEqual(stale, { taken: false, holder, since: '2026-10-18T01:00:00.000Z' });
+      assert.equal(heldCounter({ project: 'o__p' }), null);
+      const other = await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR), over: { holder: '0a1b2c3d', counter: 1 } });
+      assert.equal(other.taken, false);
+      // The card the director saw: the lock moves to this computer, one higher.
+      assert.deepEqual(await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR), over: { holder, counter: 1 } }), { taken: true, counter: 2 });
+      assert.equal(heldCounter({ project: 'o__p' }), 2);
+      assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 2 }), true);
+    });
+    // The old holder can no longer merge or push, and its touch does nothing.
+    await as(a, async () => {
+      assert.equal(await holdsLock({ env: LOCAL_PATHS, project: 'o__p', counter: 1 }), false);
+      assert.deepEqual(await touchLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(HOUR) }), { touched: false });
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('a take-over of a lock that moved since the card was shown takes nothing', async () => {
+  const remote = await makeBareRemote();
+  try {
+    const [a, b] = await setup(remote);
+    await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(0) }));
+    const holder = idOf(a);
+    await as(a, () => takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(1000) })); // counter 2
+    await as(b, async () => {
+      const r = await takeLock({ env: LOCAL_PATHS, project: 'o__p', push, now: at(2000), over: { holder, counter: 1 } });
+      assert.equal(r.taken, false);
+      assert.equal(heldCounter({ project: 'o__p' }), null);
+    });
+  } finally { remote.cleanup(); }
+});
