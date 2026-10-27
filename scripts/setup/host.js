@@ -935,21 +935,30 @@ async function findJoined({ host, wanted, user, run, api, gitPath, env, hostUrl 
 }
 
 // Whether a v0.1.x state branch on the host says the product is launched (its `phase` setting, any
-// one saying launched, as launchedIn reads it), fetched into the joined folder's FETCH_HEAD alone
-// with the director's own sign-in. A branch that can't be read counts as launched: it only takes
-// Quick away, and narrow still joins.
-async function stateBranchLaunched({ folder, remoteUrl, gitPath, env, run }) {
-  const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: folder, workTree: folder });
-  if ((await git(['fetch', '-q', '--no-tags', remoteUrl, `refs/heads/${STATE_BRANCH}`])).code !== 0) return true;
-  const listed = await git(['ls-tree', '-r', '-z', '--name-only', 'FETCH_HEAD', '--', 'events']);
-  if (listed.code !== 0) return true;
-  for (const file of listed.stdout.split('\0').filter((f) => /_setting_[0-9a-z]{4}\.json$/.test(f))) {
-    const shown = await git(['show', `FETCH_HEAD:${file}`]);
-    if (shown.code !== 0) return true;
-    const event = json(shown.stdout);
-    if (event?.kind === 'setting' && event.data?.key === 'phase' && event.data.value === 'launched') return true;
+// one saying launched, as launchedIn reads it), fetched with the director's own sign-in into a
+// scratch bare repository under Wheelhouse's own folder, removed afterwards: none of the state's
+// history goes into the product's folder, where agents could read it (design section 24.3). A branch
+// that can't be read counts as launched: it only takes Quick away, and narrow still joins.
+async function stateBranchLaunched({ remoteUrl, gitPath, env, run }) {
+  fs.mkdirSync(wheelhouseHome(), { recursive: true });
+  const dir = fs.mkdtempSync(path.join(wheelhouseHome(), 'join-'));
+  try {
+    const git = setupGit({ run, gitPath, env: reaching(env, remoteUrl), cwd: dir });
+    if ((await git(['init', '-q', '--bare', '.'])).code !== 0) return true;
+    const ref = 'refs/joined/state';
+    if ((await git(['fetch', '-q', '--no-tags', '--no-write-fetch-head', remoteUrl, `+refs/heads/${STATE_BRANCH}:${ref}`])).code !== 0) return true;
+    const listed = await git(['ls-tree', '-r', '-z', '--name-only', ref, '--', 'events']);
+    if (listed.code !== 0) return true;
+    for (const file of listed.stdout.split('\0').filter((f) => /_setting_[0-9a-z]{4}\.json$/.test(f))) {
+      const shown = await git(['show', `${ref}:${file}`]);
+      if (shown.code !== 0) return true;
+      const event = json(shown.stdout);
+      if (event?.kind === 'setting' && event.data?.key === 'phase' && event.data.value === 'launched') return true;
+    }
+    return false;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
-  return false;
 }
 
 // Why a joining computer's answer found no repository, or several: said with what to type.
@@ -1769,7 +1778,7 @@ export function hostStep({
       // which is recorded so the card is asked again without Quick (design sections 11 and 24.3).
       if (joined !== null) {
         const launched = launchedInFolder(ctx.folder) || launchedFound(project.repo) || (joined.stateBranch === true
-          && await stateBranchLaunched({ folder: ctx.folder, remoteUrl, gitPath: git.path, env: gitEnv, run }));
+          && await stateBranchLaunched({ remoteUrl, gitPath: git.path, env: gitEnv, run }));
         if (launched && !launchedInFolder(ctx.folder) && !launchedFound(project.repo)) answerRecord({ joined: project.repo, launched: true });
         if (connection.mode === 'quick' && launched) throw new Error(quickLaunched(project.repo));
         await openRecords();

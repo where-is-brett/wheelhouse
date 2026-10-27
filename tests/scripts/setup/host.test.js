@@ -2310,7 +2310,15 @@ test('a launched project refuses Quick at apply, before anything is connected or
       const slug = slugFor(`${USER}/Cafe-Menu`);
       assert.equal(readProject(slug), null, 'nothing registered');
       assert.equal(fs.existsSync(path.join(stateDir(slug), '.git')), false, 'no record opened');
-      if (seeded.phase) assert.deepEqual(joinedOf(folder).at(-1), { joined: `${USER}/Cafe-Menu`, launched: true }, 'the state branch\'s phase, recorded');
+      if (seeded.phase) {
+        assert.deepEqual(joinedOf(folder).at(-1), { joined: `${USER}/Cafe-Menu`, launched: true }, 'the state branch\'s phase, recorded');
+        // The state branch was read in a scratch repository: none of its history is in the product's
+        // folder, where agents could read it, and the scratch is gone.
+        const tip = await g(w.hostUrl({ repo: `${USER}/Cafe-Menu` }), 'rev-parse', 'refs/heads/wheelhouse-state');
+        assert.notEqual((await realRun('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: folder })).code, 0, 'the state branch\'s commits are not in the folder');
+        assert.doesNotMatch(fs.existsSync(path.join(folder, '.git', 'FETCH_HEAD')) ? fs.readFileSync(path.join(folder, '.git', 'FETCH_HEAD'), 'utf8') : '', /wheelhouse-state/);
+        assert.deepEqual(fs.readdirSync(wheelhouseHome()).filter((name) => name.startsWith('join-')), [], 'the scratch is removed');
+      }
       // Planned again: no Quick. With no Wheelhouse app their own app is the one way left, so it is
       // not asked (a card needs two options) and the Go-ahead card lists it.
       const card = connectionCard({ host: 'github', launched: true, realUsers: true, where: `${USER}/Cafe-Menu on GitHub` });

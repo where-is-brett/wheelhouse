@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { startHelper, PUSH_REFUSALS, secretsOf, GITLAB_MAINTAINERS_ONLY } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { helperAddress, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { helperAddress, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
+import { openSettings } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { run } from '../../../scripts/lib/run.js';
 import { openTestRecord, registerTestProject } from '../../helpers/record-fixture.js';
@@ -277,12 +278,64 @@ test('a state write is committed in the local record and never reaches the remot
   } finally { p.cleanup(); }
 });
 
+// An agent can write a .git file, a .git symlink or a commondir with Bash: none of them may hand the private record
+// or the settings to the host (design section 24.7). The git directory is found by real path, and refused when it
+// is outside the project or inside Wheelhouse's own folder, or borrows objects or refs from elsewhere.
+test('a folder whose git directory leads to the private record or the settings is refused, however it gets there', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      await openSettings();
+      const record = path.join(stateDir('o__p'), '.git');
+      const settings = path.join(profileDir(), '.git');
+      const tip = await g(stateDir('o__p'), 'rev-parse', 'HEAD');
+      const folder = async (make) => { const dir = tempFolder('wh-x-'); await make(dir); return dir; };
+      const cases = [
+        ['a .git file naming the record', 'record', await folder((d) => fs.writeFileSync(path.join(d, '.git'), `gitdir: ${record}\n`))],
+        ['a .git file naming the settings', 'record', await folder((d) => fs.writeFileSync(path.join(d, '.git'), `gitdir: ${settings}\n`))],
+        ['a .git symlink to the record', 'record', await folder((d) => fs.symlinkSync(record, path.join(d, '.git'), 'dir'))],
+        ['a commondir naming the record', 'record', await folder(async (d) => {
+          const gitdir = path.join(d, 'gd');
+          fs.mkdirSync(path.join(gitdir, 'refs'), { recursive: true });
+          fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/record\n');
+          fs.writeFileSync(path.join(gitdir, 'commondir'), `${record}\n`);
+          fs.writeFileSync(path.join(d, '.git'), `gitdir: ${gitdir}\n`);
+        })],
+        ['the record itself', 'record', stateDir('o__p')],
+        ['an alternates file borrowing the record\'s objects', 'feature', await folder(async (d) => {
+          await g(d, 'init', '-q', '-b', 'feature');
+          fs.writeFileSync(path.join(d, '.git', 'objects', 'info', 'alternates'), `${path.join(record, 'objects')}\n`);
+          fs.writeFileSync(path.join(d, '.git', 'refs', 'heads', 'feature'), `${tip}\n`);
+        })],
+        ['a symlinked ref', 'feature', await folder(async (d) => {
+          await g(d, 'init', '-q', '-b', 'feature');
+          fs.symlinkSync(path.join(record, 'refs', 'heads', 'record'), path.join(d, '.git', 'refs', 'heads', 'feature'));
+        })],
+        ['a symlinked objects folder', 'feature', await folder(async (d) => {
+          await g(d, 'init', '-q', '-b', 'feature');
+          fs.rmSync(path.join(d, '.git', 'objects'), { recursive: true });
+          fs.symlinkSync(path.join(record, 'objects'), path.join(d, '.git', 'objects'), 'dir');
+          fs.writeFileSync(path.join(d, '.git', 'refs', 'heads', 'feature'), `${tip}\n`);
+        })],
+      ];
+      await withHelper(fakeAdapter(), async (client) => {
+        for (const [label, refspec, dir] of cases) {
+          assert.deepEqual(await client.push({ project: 'o__p', dir, refspec }), { ok: false, refused: PUSH_REFUSALS.gitOutside }, label);
+        }
+        // A plain folder in the project still pushes.
+        assert.deepEqual(await client.push({ project: 'o__p', dir: await folderWith(), refspec: 'feature' }), { ok: true });
+      });
+      assert.doesNotMatch(await remoteHeads(p.remote.url), /refs\/heads\/record /);
+      assert.notEqual((await run('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: p.remote.url })).code, 0, 'the record\'s commits are not on the remote');
+    });
+  } finally { p.cleanup(); }
+});
+
 test('a code push is refused when this computer does not hold the lock', async () => {
   const p = await project({ lock: false });
   try {
     await as(p.home, async () => {
-      const dir = stateDir('o__p');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: false, refused: LOCK_REASON });
         assert.equal((await client.lock.take({ project: 'o__p' })).result.taken, true, 'a lock push needs no lock');
@@ -589,8 +642,7 @@ test('a push or merge refusal never includes a key', async () => {
   };
   try {
     await as(p.home, async () => {
-      const dir = stateDir('o__p');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
       await withHelper(leaky, async (client) => {
         // A recorded repository address with credentials in it is refused before git runs with the key.
         const recorded = { folder: os.tmpdir(), host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } };
@@ -698,8 +750,7 @@ test('quick and narrow both shut out the system and user git config; quick signs
   const p = await project();
   try {
     await withProcessEnv({ GIT_SSH_COMMAND: 'inherited-should-not-reach-git', GIT_CONFIG_PARAMETERS: "'core.hookspath'='/tmp'" }, () => as(p.home, async () => {
-      const dir = stateDir('o__p');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
       const cases = [
         ['quick, bare', async () => ({}), 'quick'],
         ['quick, said', async () => ({ mode: 'quick', env: {} }), 'quick'],
@@ -711,7 +762,6 @@ test('quick and narrow both shut out the system and user git config; quick signs
         const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
         await withHelper(fakeAdapter(), async (client) => {
           await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
-          await g(dir, 'branch', '-f', 'feature');
           assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }, label);
         }, { envFor, run: recordingRun });
         const push = calls.find((c) => c.args.includes('push'));
@@ -778,8 +828,7 @@ test('a folder that takes too long to read is refused', async () => {
   const p = await project();
   try {
     await as(p.home, async () => {
-      const dir = stateDir('o__p');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
       const slowFolder = async (file, args, options) => (args.includes('fetch') && args.includes(dir)
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
         : hostGuard(file, args, options));
@@ -796,7 +845,7 @@ test('pushes and merges at once share the lock clone without tripping over each 
     const head = await prOnHost(p.remote.url);
     await as(p.home, async () => {
       reviewAndApproval(head);
-      const dir = stateDir('o__p');
+      const dir = await folderWith();
       for (const b of ['f1', 'f2', 'f3']) await g(dir, 'branch', b);
       await withHelper(fakeAdapter({ prState: openAt(head) }), async (client) => {
         const answers = await Promise.all([
@@ -832,8 +881,7 @@ test('a push that times out is refused, saying so', async () => {
   const p = await project();
   try {
     await as(p.home, async () => {
-      const dir = stateDir('o__p');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
       const slowHost = async (file, args, options) => (args.includes('push')
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
         : hostGuard(file, args, options));
@@ -850,9 +898,8 @@ test('the mirror drops its per-request refs, keeps the base, and tidies after th
   try {
     let prHead = null;
     await as(p.home, async () => {
-      const dir = stateDir('o__p');
-      const mirror = path.join(dir, '..', 'mirror.git');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
+      const mirror = path.join(stateDir('o__p'), '..', 'mirror.git');
       await g(dir, 'branch', 'second');
       const calls = [];
       const recording = async (file, args, options) => { calls.push({ args, cwd: options?.cwd }); return hostGuard(file, args, options); };
@@ -1112,10 +1159,8 @@ test('a hostile global git config reaches none of the helper\'s git, in quick or
         `[credential]\n\thelper = !${slash(helperScript)}`,
       ].join('\n') + '\n');
       await as(p.home, async () => {
-        const dir = stateDir('o__p');
-        await g(dir, 'branch', 'feature');
+        const dir = await folderWith();
         await g(dir, 'commit', '-q', '--allow-empty', '-m', label);
-        await g(dir, 'branch', '-f', 'feature');
         // Only the helper and its git see the hostile home; the test's own git calls do not.
         const calls = [];
         const recordingRun = async (file, args, options) => { calls.push({ args, options }); return hostGuard(file, args, options); };
@@ -1252,8 +1297,7 @@ test('a request looks at each repository once, however many git calls it makes',
   const calls = [];
   try {
     await as(p.home, async () => {
-      const dir = stateDir('o__p');
-      await g(dir, 'branch', 'feature');
+      const dir = await folderWith();
       await withHelper(fakeAdapter(), async (client) => {
         assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'feature' }), { ok: true }); // makes the mirror
         calls.length = 0;

@@ -492,7 +492,7 @@ test('a folder with no repository of its own, beside a partial clone named <fold
     await viaHelper(s, async (client) => {
       const answer = await client.push({ project: 'o__p', dir: bare, refspec: 'feature' });
       assert.equal(answer.ok, false);
-      assert.ok([PUSH_REFUSALS.unchecked, PUSH_REFUSALS.missing].includes(answer.refused), answer.refused);
+      assert.ok([PUSH_REFUSALS.gitOutside, PUSH_REFUSALS.unchecked, PUSH_REFUSALS.missing].includes(answer.refused), answer.refused);
     }, { runWith: watching });
   } finally { s.cleanup(); }
 });

@@ -441,6 +441,61 @@ function folderGitConfigs(dir) {
   return dirs.flatMap((d) => [readIf(path.join(d, 'config')), readIf(path.join(d, 'config.worktree'))]);
 }
 
+// Why the git directory of `dir` may not be read from, or null when it may (design section 24.7): it
+// and its common directory, found by real path, must lie inside `root`, and outside Wheelhouse's own
+// repositories (each project's record, lock and mirror, the settings) unless `own` (the lock clone or
+// the mirror); neither may borrow objects through an alternates file, nor
+// hold a symlink among its objects or refs. A .git file, a .git symlink and a commondir file can each
+// point anywhere, so a folder in the project could otherwise hand over the private record. Read with
+// fs only, as folderGitConfigs is.
+export function gitDirRefusal(dir, { root, own = false }) {
+  const real = (p) => { try { return fs.realpathSync.native(p); } catch { return null; } };
+  let gitdir = null;
+  try {
+    const dot = path.join(dir, '.git');
+    let stat = null;
+    try { stat = fs.lstatSync(dot); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (stat?.isDirectory() || stat?.isSymbolicLink()) {
+      gitdir = real(dot);
+    } else if (stat) {
+      const match = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dot, 'utf8'));
+      if (match) gitdir = real(path.resolve(dir, match[1]));
+    } else if (fs.existsSync(path.join(dir, 'HEAD')) && fs.existsSync(path.join(dir, 'objects'))) {
+      gitdir = real(dir);
+    }
+    if (gitdir === null) return PUSH_REFUSALS.gitOutside;
+    const dirs = [gitdir];
+    let common = '';
+    try { common = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (common !== '') {
+      const commonDir = real(path.resolve(gitdir, common));
+      if (commonDir === null) return PUSH_REFUSALS.gitOutside;
+      dirs.push(commonDir);
+    }
+    const ownRepos = [path.join(wheelhouseHome(), 'projects'), profileDir(), oldProfileDir(), path.join(wheelhouseHome(), 'lineage')];
+    for (const d of dirs) {
+      if (!isInsideFolder(root, d)) return PUSH_REFUSALS.gitOutside;
+      if (!own && ownRepos.some((repo) => isInsideFolder(repo, d))) return PUSH_REFUSALS.gitOutside;
+      for (const name of ['alternates', 'http-alternates']) {
+        if (fs.existsSync(path.join(d, 'objects', 'info', name))) return PUSH_REFUSALS.gitOutside;
+      }
+      if (hasSymlink(path.join(d, 'objects'), 2) || hasSymlink(path.join(d, 'refs'), Infinity) || hasSymlink(path.join(d, 'packed-refs'), 0)) return PUSH_REFUSALS.gitOutside;
+    }
+    return null;
+  } catch {
+    return PUSH_REFUSALS.gitOutside;
+  }
+}
+
+// Whether `p`, or anything below it to `depth` levels, is a symlink. A missing `p` holds none.
+function hasSymlink(p, depth) {
+  let stat;
+  try { stat = fs.lstatSync(p); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  if (stat.isSymbolicLink()) return true;
+  if (!stat.isDirectory() || depth <= 0) return false;
+  return fs.readdirSync(p).some((name) => hasSymlink(path.join(p, name), depth - 1));
+}
+
 function isPartialClone(dir) {
   const configs = folderGitConfigs(dir);
   // No repository in the folder itself: git would also try <dir>.git, which is not read here.
@@ -468,6 +523,7 @@ export const PUSH_REFUSALS = {
   ciFile: 'the branch changes a CI file, so it needs the director\'s click on its card',
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
   outsideProject: 'the folder to push from is not inside the project',
+  gitOutside: 'the folder\'s git directory is not inside the project, or links outside it, so nothing is read from it',
   notOwn: 'that is not the branch this folder is on: a push sends only the folder\'s own branch',
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
   movedOn: 'the host\'s branch has moved on since this one was taken from it',
@@ -1161,7 +1217,9 @@ export async function startHelper({
 
   // Copies `branch` in from `source` into the mirror's INCOMING ref, as described in pushToHost.
   // The refusal, or null once it has arrived.
-  async function copyIn(mirror, source, branch, ctx) {
+  async function copyIn(mirror, source, branch, ctx, { root, own = false }) {
+    const outside = gitDirRefusal(source, { root, own });
+    if (outside !== null) return outside;
     // The folder's own config can name a program for git to run (core.fsmonitor and the like), so
     // git is not run there until its settings have been looked at.
     try {
@@ -1182,7 +1240,7 @@ export async function startHelper({
     return null;
   }
 
-  async function pushToHost({ project, branch, source, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
+  async function pushToHost({ project, branch, source, root, own = false, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
     return (async () => {
       const mirror = await mirrorFor(project, ctx);
       // Copy the branch's objects in from the folder, with no key, and nothing
@@ -1194,7 +1252,7 @@ export async function startHelper({
       // core.hooksPath set to the null file stops the hooks folder; a hook
       // named in the mirror's configuration (hook.<name>.command) would not
       // be stopped by it, so a mirror whose configuration sets one is refused.
-      const copied = await copyIn(mirror, source, branch, ctx);
+      const copied = await copyIn(mirror, source, branch, ctx, { root, own });
       if (copied !== null) return { ok: false, refused: copied };
 
       const keyed = keyedFor(ctx);
@@ -1267,7 +1325,7 @@ export async function startHelper({
     let source = null;
     try { source = fs.realpathSync.native(path.join(stateDir(project), '..', 'lock')); } catch { /* no clone */ }
     if (source === null) return { ok: false, refused: PUSH_REFUSALS.missing };
-    const answer = await pushFrom({ project, branch, source, refspec: branch, defaultBranch: NOT_THE_DEFAULT, allowStop }, ctx);
+    const answer = await pushFrom({ project, branch, source, root: source, own: true, refspec: branch, defaultBranch: NOT_THE_DEFAULT, allowStop }, ctx);
     return answer.ok ? { ok: true } : answer;
   }
 
@@ -1285,6 +1343,8 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to push from was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PUSH_REFUSALS.outsideProject };
+    const outside = gitDirRefusal(dir, { root: recordOf(project).folder });
+    if (outside !== null) return { ok: false, refused: outside };
     // A feature session's push (placed by its folder, `byFolder`): the worktrees of one repository
     // share its branches, so the folder's own branch is the only one it sends, as /pull brings in
     // only that one. Like /pull's, this reads the folder's HEAD, which a session can rewrite, so it
@@ -1296,7 +1356,7 @@ export async function startHelper({
       return { ok: false, refused: PUSH_REFUSALS.unchecked };
     }
     if (!(await lockHeld(project, ctx))) return { ok: false, refused: LOCK_REASON };
-    const answer = await pushFrom({ project, branch, source: dir, refspec, defaultBranch, ciGuard: true }, ctx);
+    const answer = await pushFrom({ project, branch, source: dir, root: recordOf(project).folder, refspec, defaultBranch, ciGuard: true }, ctx);
     if (answer.rejected === 'non-fast-forward') return { ...answer, refused: PUSH_REFUSALS.movedOn };
     return answer.ok ? { ok: true } : answer;
   }
@@ -1319,6 +1379,8 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to bring the branch into was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PULL_REFUSALS.outsideProject };
+    const outside = gitDirRefusal(dir, { root: recordOf(project).folder });
+    if (outside !== null) return { ok: false, refused: outside };
     if (!plainBranch(branch)) return { ok: false, refused: PULL_REFUSALS.plain };
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
@@ -1369,7 +1431,7 @@ export async function startHelper({
     const git = local(mirror);
     const refusal = await mirrorRefusal(mirror, keyed);
     if (refusal) return { ok: false, refused: refusal };
-    const copied = await copyIn(mirror, dir, branch, ctx);
+    const copied = await copyIn(mirror, dir, branch, ctx, { root: recordOf(project).folder });
     if (copied !== null) return { ok: false, refused: copied };
     const shallow = await git([...NO_HOOKS, 'rev-parse', '--is-shallow-repository']);
     if (shallow.code !== 0) return { ok: false, refused: PUSH_REFUSALS.unchecked };
@@ -2946,7 +3008,7 @@ export async function startHelper({
     if (made.conflicts) return { ok: false, refused: 'the branch conflicts with the default branch', conflicts: made.conflicts };
     if (made.current) return { ok: true, updated: false, head: pr.headSha };
     try {
-      const pushed = await pushFrom({ project, branch, source: made.mirror, refspec: branch, defaultBranch, ciGuard: true }, ctx);
+      const pushed = await pushFrom({ project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch, ciGuard: true }, ctx);
       if (pushed.rejected) return { ok: false, refused: 'the branch moved on the host while it was being brought up to date' };
       if (!pushed.ok && pushed.refused === PUSH_REFUSALS.ciFile) {
         // The card for this exact commit, which the next call builds again.
@@ -3296,7 +3358,7 @@ export async function startHelper({
     if (made.refused) return { ok: false, refused: made.refused };
     try {
       const pushed = await pushFrom({
-        project, branch, source: made.mirror, refspec: branch, defaultBranch, allowStop: true, asDirector: onGithub && made.ci,
+        project, branch, source: made.mirror, root: made.mirror, own: true, refspec: branch, defaultBranch, allowStop: true, asDirector: onGithub && made.ci,
       }, ctx);
       if (!pushed.ok) {
         return { ok: false, refused: pushed.rejected ? `the branch ${branch} is already on the host with other contents: open its pull request, or ask the director to remove the branch` : pushed.refused };
