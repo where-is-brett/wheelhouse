@@ -19,15 +19,19 @@ import { helperClient } from '../host/helper-client.js';
 import { QUICK_LINE } from '../lib/host-lines.js';
 import { frontDeskModelLine } from '../lib/front-desk-model.js';
 
-// The STOP line starts with these words, alone or followed by ", since <date>".
-export const STOP_LINE = 'STOP is on';
+// The All stop line starts with these words, alone or followed by ", since <date>". A line from
+// before the halt switch was called All stop starts with OLD_STOP_LINE, and counts as its own too.
+export const STOP_LINE = 'All stop is on';
+export const OLD_STOP_LINE = 'STOP is on';
+// Whether a health line's words are the All stop line, in either wording.
+export const isStopText = (text) => [STOP_LINE, OLD_STOP_LINE].some((lead) => text === lead || String(text).startsWith(`${lead}, `));
 
 // Whose own line a health line is, read before its words are made plain: STOP's, an open
 // incident's (by the incident the board names on it), or neither (null).
 export function ownLineOf(line) {
   if (typeof line?.incident === 'string') return 'incident';
   const text = String(line?.text);
-  return text === STOP_LINE || text.startsWith(`${STOP_LINE}, `) ? 'stop' : null;
+  return isStopText(text) ? 'stop' : null;
 }
 // How many of the health lines are broken: at stop level and not STOP's own, which is the
 // director's doing, not a fault. The pane's verdict and the briefing's count them the same way.

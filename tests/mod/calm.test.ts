@@ -17,7 +17,7 @@ const PANE_PROPS = {
 }
 // The theme keys the mod may colour with.
 const THEME = ['text', 'dimColor', 'subtle', 'suggestion', 'error', 'warning', 'success']
-const STOP_HALTS = 'Halts every builder at once.'
+const STOP_HALTS = 'Halts the whole Crew at once.'
 const ONLY_YOU_LIFT = 'Only you can lift it.'
 
 const card = (n: number, ask: string, extra: object = {}) => ({
@@ -102,13 +102,13 @@ test('the pane draws STOP outlined with its label in error, and its line beside 
     const stop = await ui.find({ key: 'stop' })
     expect(stop.type).toBe('Button')
     expect(stop.props.variant).toBe('secondary')
-    expect(stop.props.label).toBe('STOP')
-    expect((await textOf(ui, 'STOP')).props.color).toBe('error')
+    expect(stop.props.label).toBe('All stop')
+    expect((await textOf(ui, 'All stop')).props.color).toBe('error')
     const words = await textOf(ui, STOP_HALTS)
     expect(words.props.size).toBe('footnote')
     expect(words.props.dimColor).toBe(true)
     const drawnTexts = await texts(ui)
-    expect(drawnTexts.indexOf(STOP_HALTS)).toBe(drawnTexts.indexOf('STOP') + 1)
+    expect(drawnTexts.indexOf(STOP_HALTS)).toBe(drawnTexts.indexOf('All stop') + 1)
     // Never beside a filled button.
     expect((await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.variant === 'primary')).toHaveLength(0)
     await ui.unmount()
@@ -116,17 +116,17 @@ test('the pane draws STOP outlined with its label in error, and its line beside 
 })
 
 test('under STOP the pane leads with the STOP is on group and a filled Lift STOP', async ($, on) => {
-  const stopped = model({ stop: { on: true, since: '2026-10-19T02:00:00.000Z' }, health: [{ level: 'stop', text: 'STOP is on, since 19 October 2026', of: 'stop' }] })
+  const stopped = model({ stop: { on: true, since: '2026-10-19T02:00:00.000Z' }, health: [{ level: 'stop', text: 'All stop is on, since 19 October 2026', of: 'stop' }] })
   const { drawn } = setup(on)
   for (const surface of SURFACES) {
     const ui = await drawn($, surface, stopped)
     expect(await ui.find({ key: 'stop' })).toBeUndefined()
     const lift = await ui.find({ key: 'lift-stop' })
     expect(lift.props.variant).toBe('primary')
-    expect(lift.props.label).toBe('Lift STOP')
+    expect(lift.props.label).toBe('Lift All stop')
     const lead = (await texts(ui)).slice(0, 3)
-    expect(lead).toEqual(['STOP is on', 'Since 19 October 2026', ONLY_YOU_LIFT])
-    const heading = await textOf(ui, 'STOP is on')
+    expect(lead).toEqual(['All stop is on', 'Since 19 October 2026', ONLY_YOU_LIFT])
+    const heading = await textOf(ui, 'All stop is on')
     expect(heading.props.size).toBe('title')
     expect(heading.props.weight).toBe('semibold')
     await ui.unmount()

@@ -22,7 +22,7 @@ const common = {
 };
 // Inputs for the kinds the order tells apart.
 const INPUTS = {
-  stop: { ...common, kind: 'lift-stop', level: 4, checks: 'No checks change.', what: 'Every agent is stopped.', recommend: 'Lift STOP', options: [says('Lift STOP')], target: {} },
+  stop: { ...common, kind: 'lift-stop', level: 4, checks: 'No checks change.', what: 'Every agent is stopped.', recommend: 'Lift All stop', options: [says('Lift All stop')], target: {} },
   incident: { ...common, kind: 'lift-incident', level: 3, what: 'Incident bad-total, the wrong totals, has been corrected.', recommend: 'End it', options: [says('End it')], target: { incident: 'bad-total' } },
   approval: { ...common, kind: 'approval', what: 'Pull request #7 changes the sign-in page.', recommend: 'Approve', options: [says('Approve')], target: { pr: 7, sha: FULL } },
   answer: { ...common, level: 2, kind: 'answer', what: 'The export needs a separator.', recommend: 'Comma', options: [says('Comma'), says('Tab')], target: { questionId: 'q-export-csv-1' } },

@@ -132,7 +132,7 @@ test('the carry-on card holds the design\'s words, with the project\'s name and 
   const { question, card } = composeCard(input);
   assert.deepEqual(question.question.split('\n'), [
     'Wheelhouse found work already under way in tide-tables: 2 changes waiting to be merged on GitHub, and 3 pieces of unfinished work on this computer. Shall I carry them on?',
-    'Each piece would go through the usual intake: a short brief of its own, built on from where it stands, and checked by the reviewer before anything is merged. The original work is never changed.',
+    'Each piece would go through the usual intake: a short brief of its own, built on from where it stands, and checked by a Lookout before anything is merged. The original work is never changed.',
     'Nothing is touched while you decide.',
     'To know more, just ask.',
   ]);

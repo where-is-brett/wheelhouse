@@ -297,7 +297,7 @@ test('the foreman\'s long session asks the project\'s adapter too', () => withHo
   const checkout = await project();
   const call = foremanSession({ project: P, config: projectConfig(), pluginRoot: MAC_ROOT, platform: 'darwin', env: { PATH: '/bin' }, claude: { kind: 'direct', file: 'claude' } });
   assert.equal(call.file, 'claude');
-  assert.equal(call.args[0].startsWith('Wheelhouse foreman: you are the long-lived foreman of '), true);
+  assert.equal(call.args[0].startsWith('Wheelhouse foreman: you are the long-lived Bosun of '), true);
   assert.equal(call.options.cwd, checkout);
   assert.equal(call.options.env.WHEELHOUSE_ROLE, 'foreman');
   assert.equal(sessionsOfProject(projectConfig()), sessions);

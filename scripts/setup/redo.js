@@ -90,7 +90,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
     const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
     const options = [
       ...(described === null ? [] : [{ label: PRODUCT.readme, says: `"${described}"` }]),
-      { label: PRODUCT.shaping, says: 'No description yet; you can give one to the front desk later.' },
+      { label: PRODUCT.shaping, says: 'No description yet; you can give one to the First Mate later.' },
     ];
     return {
       id: `redo-describe-${n}`,
@@ -121,7 +121,7 @@ export function redoCard({ key, answers, name, record, described, count, stepRan
         what: `${live ? 'Live data' : 'Apple signing'} is saved in the project's settings now. Change them to ${want}?`,
         why: 'The project\'s settings change only through a reviewed change, which you approve.',
         options: [
-          { label: CHANGE_AFTER, says: 'The front desk starts the change right after the first briefing, and you approve it as usual.' },
+          { label: CHANGE_AFTER, says: 'The First Mate starts the change right after the first briefing, and you approve it as usual.' },
           { label: KEEP, says: 'It stays as it is.' },
         ],
         recommend: CHANGE_AFTER,

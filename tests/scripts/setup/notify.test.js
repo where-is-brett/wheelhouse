@@ -119,7 +119,7 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.equal(card.recommend, READY.ready);
   // The phone is optional: skipping says setup carries on, and where to set it up later.
   assert.match(card.options[1].says, /carries on without your phone/);
-  assert.match(card.options[1].says, /front desk can set it up later/);
+  assert.match(card.options[1].says, /First Mate can set it up later/);
   // The plain steps: Remote Control in Desktop, both push options, the phone's own permission for
   // Claude's notifications, then the locked screen.
   assert.match(card.what, /Remote Control/);

@@ -252,8 +252,8 @@ test('wake read: while STOP or an incident holds, it says so at the top, and not
   // STOP holds everything, a fix's merge too.
   setStop({ by: 'prompt' });
   const stopped = (await readWakeLines({ file, project: P, client, now })).lines.join('\n');
-  assert.match(stopped, /^Hold: STOP is on\. Start nothing and give no go-ahead: act start, plan-ready, build and resume wait or refuse, and no pull request merges\.$/m);
-  assert.match(stopped, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. It waits: STOP is on, and nothing merges while it is$/m);
+  assert.match(stopped, /^Hold: All stop is on\. Start nothing and give no go-ahead: act start, plan-ready, build and resume wait or refuse, and no pull request merges\.$/m);
+  assert.match(stopped, /^- merge-ready x: pull request #7 at bbbbbbbbbbbb\. It waits: All stop is on, and nothing merges while it is$/m);
   // With neither, no hold line.
   const plain = (await readWakeLines({
     file, project: P, client: fakeClient({ views: emptyViews() }).client, now, stopped: () => false,
@@ -448,7 +448,7 @@ test('wake read: during an incident bug work still starts, and all else waits (R
   assert.match(text, /^- incident: site-down: The site is down\. Start no more work but bug work, which may start and build; merges are frozen but for its fix\.$/m);
   // Under STOP bug work waits too.
   const stopped = (await readWakeLines({ file, project: P, client: fakeClient({ views }).client, now, stopped: () => true })).lines.join('\n');
-  assert.match(stopped, /^- start a-bug \(bug\): approved\. It waits: STOP is on\.$/m);
+  assert.match(stopped, /^- start a-bug \(bug\): approved\. It waits: All stop is on\.$/m);
 }));
 
 test('wake read: a plan-ready from work with no plan needs nothing; one whose brief changed asks the director (M2, M4)', () => withHome(async () => {
@@ -538,11 +538,11 @@ test('the command line reads, records and refuses in one plain line', () => with
   // The stop event says STOP was turned on; the line says whether it is on now.
   setStop({ by: 'prompt' });
   assert.equal(await main(['read', file], io), 0);
-  assert.match(said.out, /^- stop: STOP was turned on, and it is on now\. Start no more work\.$/m);
+  assert.match(said.out, /^- stop: All stop was turned on, and it is on now\. Start no more work\.$/m);
   liftStop();
   said.out = '';
   assert.equal(await main(['read', file], io), 0);
-  assert.match(said.out, /^- stop: STOP was turned on, but it is off now: read where things stand below\.$/m);
+  assert.match(said.out, /^- stop: All stop was turned on, but it is off now: read where things stand below\.$/m);
 
   for (const argv of [['done', file], ['done', file, '--acted', '--idle'], ['done', file, '--busy'], ['read'], ['nonsense'], ['read', path.join(checkout, 'missing.json')]]) {
     said.err = '';

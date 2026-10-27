@@ -10,7 +10,7 @@
 // a trust card is composed by the session start, which hands it to the front desk as it is, and
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
-  approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
+  approvalLine, confirmLine, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
   liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
@@ -26,7 +26,7 @@ import { baselineWording } from '../lib/measures-clicks.js';
 export const HEADERS = Object.freeze({
   approval: 'Approval',
   confirm: 'Confirm',
-  'lift-stop': 'Lift STOP',
+  'lift-stop': 'All stop',
   'ci-push': 'Push checks',
   runbook: 'Emergency',
   'approve-work': 'Approve work',
@@ -51,7 +51,7 @@ export const HEADERS = Object.freeze({
 export const DECIDING = Object.freeze({
   approval: 'Approve',
   confirm: 'Confirm',
-  'lift-stop': 'Lift STOP',
+  'lift-stop': LIFT_LABEL,
   'ci-push': 'Push it',
   runbook: 'Do it',
   'approve-work': 'Approve',
@@ -80,7 +80,7 @@ export const DECIDING = Object.freeze({
 export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
-// isn't the usual Suggest a change…, Show me and Not now (design section 23.4). STOP is lifted or it
+// isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
 // isn't, and the kinds answered only in setup's or the session start's own chat take no change to
 // suggest. The baseline card reads figures back, so there is nothing to show; a trust card has
 // nothing to show, nor has uninstall's card, whose whole list `cli.js uninstall status` gives. The
@@ -112,7 +112,7 @@ const PUT_OFF_SAYS = Object.freeze({
   [NOT_NOW]: 'Leave this waiting; nothing changes yet.',
   [SHOW_ME]: 'I show you what it looks like, then ask again.',
   [SUGGEST]: SUGGEST_SAYS,
-  [LEAVE_LABEL]: 'The other computer keeps the lock, and this one only shows the board.',
+  [LEAVE_LABEL]: 'The other computer keeps the lock, and this one only shows the Logbook.',
   [KEEP_AS_IS]: 'Things stay as they are, and this isn\'t asked again for a while.',
 });
 
@@ -121,7 +121,7 @@ const PUT_OFF_SAYS = Object.freeze({
 const ASKS = Object.freeze({
   approval: (t) => `Put pull request #${t.pr} live?`,
   confirm: () => 'Confirm this?',
-  'lift-stop': () => 'Lift STOP?',
+  'lift-stop': () => 'Lift All stop?',
   'ci-push': () => 'Push this change to the checks?',
   runbook: (t) => `${RUNBOOK_TITLES[t.step]}?`,
   'approve-work': () => 'Approve this work as written?',
@@ -129,7 +129,7 @@ const ASKS = Object.freeze({
   'lift-incident': () => 'End the incident?',
   'incident-fix': () => 'Merge this fix?',
   'keep-control-files': () => 'Keep these files as they are?',
-  'take-over': () => 'Take over the front desk here?',
+  'take-over': () => 'Move the First Mate to this computer?',
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -398,7 +398,7 @@ export function textOf(parts) {
 // lineage hold's) is tied to its record by it, as an answer card is by its line.
 export function composeCard(input) {
   const kind = input?.kind;
-  if (!CARD_KINDS.includes(kind)) throw new Error('A card needs its kind to be one the front desk knows');
+  if (!CARD_KINDS.includes(kind)) throw new Error('A card needs its kind to be one the First Mate knows');
   const { level } = input;
   if (![1, 2, 3, 4].includes(level)) fail(kind, 'level', 'must be 1, 2, 3 or 4');
   // Removing Wheelhouse removes the gate, so uninstall's card is level 4 (ruling R90).
@@ -521,7 +521,7 @@ export function answerInput(data, work) {
     why: flat(data.why),
     options: data.options.map((o) => ({ label: o?.label, says: foreman ? foremanSays(o) : flat(o?.says) || o?.label })),
     recommend: data.recommendation,
-    because: foreman ? `the foreman recommends it for ${work}` : `the session building ${work} recommends it`,
+    because: foreman ? `the Bosun recommends it for ${work}` : `the session building ${work} recommends it`,
     meanwhile: MEANWHILE,
     ...(data.level === 4 ? { checks: flat(data.checks) || CHECKS_UNSAID } : {}),
     target: { questionId: data.id },

@@ -185,8 +185,8 @@ function productAsk(name, { described, realUsers }) {
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
-    described === null ? { label: PRODUCT.shaping, says: `"${shaping}" You can describe it to the front desk once it is clearer.` } : { label: PRODUCT.readme, says: `"${described}"` },
-    { label: PRODUCT.later, says: 'Setup records no description of it yet; you can give one to the front desk later.' },
+    described === null ? { label: PRODUCT.shaping, says: `"${shaping}" You can describe it to the First Mate once it is clearer.` } : { label: PRODUCT.readme, says: `"${described}"` },
+    { label: PRODUCT.later, says: 'Setup records no description of it yet; you can give one to the First Mate later.' },
   ];
   return {
     id: `product-${phase}`,

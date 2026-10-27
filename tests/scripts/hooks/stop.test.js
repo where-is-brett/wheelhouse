@@ -61,7 +61,7 @@ test('under STOP, Edit, Write, Bash, Agent and mcp__ tools are refused; Read and
         assert.ok(denied(out), tool);
         assert.equal(out.hookSpecificOutput.permissionDecisionReason, DENIED);
       }
-      assert.equal(DENIED, 'STOP is on: only reading, reporting and the runbook carry on');
+      assert.equal(DENIED, 'All stop is on: only reading, reporting and the runbook carry on');
       for (const tool of READ_TOOLS) assert.equal(await guard(call(main, tool), deps(base)), undefined, tool);
       liftStop();
       assert.equal(await guard(call(main, 'Edit'), deps(base)), undefined);
@@ -329,21 +329,21 @@ test('"stop" after the app\'s reminder block sets STOP; a block alone, or a tag 
   });
 });
 
-test('stop, Stop., /stop and STOP! set STOP; "stop the build after this" does not', async () => {
+test('stop, Stop., /stop, STOP!, all stop, All stop. and /wheelhouse:all-stop set All stop; "stop the build after this" does not', async () => {
   await withHome(async () => {
     const { base, main } = makeProject();
     try {
       const d = { event: 'UserPromptSubmit', dir: path.join(base, 'managed') };
-      for (const prompt of ['stop', ' Stop. ', '/stop', 'STOP!', '/STOP.']) {
+      for (const prompt of ['stop', ' Stop. ', '/stop', 'STOP!', '/STOP.', 'all stop', 'All stop.', 'ALL STOP', '/wheelhouse:stop', '/wheelhouse:all-stop', '/all-stop']) {
         liftStop();
         const out = await word({ cwd: main, prompt }, d);
         assert.equal(stopState().on, true, prompt);
         assert.equal(stopState().by, 'prompt');
         assert.deepEqual(out, { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: CONTEXT } });
       }
-      assert.equal(CONTEXT, 'STOP is on. Say in one or two lines what was in progress; lifting it is a card for the director.');
+      assert.equal(CONTEXT, 'All stop is on. Say in one or two lines what was in progress; lifting it is a card for the director.');
       liftStop();
-      for (const prompt of ['stop the build after this', 'please stop', 'stopping', 'stop stop', '', 'stop?']) {
+      for (const prompt of ['stop the build after this', 'please stop', 'stopping', 'stop stop', '', 'stop?', 'all stop now', 'all', 'all-stop', 'not all stop']) {
         assert.equal(await word({ cwd: main, prompt }, d), undefined, prompt);
         assert.equal(stopState().on, false, prompt);
       }

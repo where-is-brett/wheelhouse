@@ -266,7 +266,7 @@ test('Claude Code hooks still sign and write as before', async () => {
       io({ hook_event_name: 'UserPromptSubmit', session_id: 's2', cwd: folder, prompt: 'stop' }));
     assert.deepEqual(given, ['self']);
     assert.deepEqual(stopState().by, 'prompt');
-    assert.match(out.join(''), /STOP is on/);
+    assert.match(out.join(''), /All stop is on/);
     liftStop();
     await hookMain(stopGuard, { failClosed: true, event: 'PreToolUse' },
       io({ hook_event_name: 'PreToolUse', session_id: 's2', cwd: folder, tool_name: 'Read', tool_input: {}, permission_mode: 'bypassPermissions' }));

@@ -160,7 +160,7 @@ test('update-branch merges the default branch in and pushes the merge commit', a
       // Under STOP nothing is pushed.
       await mainMoves(pr.work, { 'third.txt': 'x\n' });
       setStop({ by: 'prompt' });
-      assert.deepEqual(await update(client), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await update(client), { ok: false, refused: 'All stop is on' });
       assert.equal(await g(pr.remote.url, 'rev-parse', `refs/heads/${BRANCH}`), answer.head);
     });
   } finally { pr.remote.cleanup(); }
@@ -658,7 +658,7 @@ test('STOP halts photographing between pictures, and the gate compares nothing u
       release();
       const answer = await merge(client, { approvalRequired: true });
       assert.equal(answer.ok, false);
-      assert.ok(answer.reasons.includes('STOP is on') && answer.reasons.includes(`no approval of ${short(head)}`), JSON.stringify(answer));
+      assert.ok(answer.reasons.includes('All stop is on') && answer.reasons.includes(`no approval of ${short(head)}`), JSON.stringify(answer));
     }, { screens: { shoot, browser: BROWSER } });
     // Only the picture under way when STOP came was taken: none after it, and none for the gate.
     assert.equal(shots.length, 1);

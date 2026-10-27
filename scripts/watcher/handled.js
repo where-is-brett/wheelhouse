@@ -84,5 +84,5 @@ export function recordHandled(project, ids, { now = () => new Date() } = {}) {
     ...[...fresh].map((id) => ({ id, at })),
   ].slice(-HANDLED_CAP);
   watcherFolder(project);
-  writeJsonFile(handledFile(project), { entries }, () => { throw new Error("The foreman's handled ids can't be written"); });
+  writeJsonFile(handledFile(project), { entries }, () => { throw new Error("The Bosun's handled ids can't be written"); });
 }

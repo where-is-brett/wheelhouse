@@ -266,8 +266,8 @@ test('a card not in state, or with another hash, opens no window', async () => {
       // A card the state holds as shown, but no step the window confirms: a product question, a ruling's confirmation.
       [plain, /not one the window confirms/],
       [rulingCard, /not one the window confirms/],
-      // Lift STOP while STOP is off.
-      [{ card: 'lift-stop' }, /STOP is not on/],
+      // Lift All stop while STOP is off.
+      [{ card: 'lift-stop' }, /All stop is not on/],
     ];
     for (const [body, why] of refusals) {
       const got = await c.client.confirm({ project: PROJECT, ...body });
@@ -301,10 +301,10 @@ test('a deciding choice is signed by the helper with proof window', async () => 
     // The signed record decides the card, so it is no longer offered.
     assert.match((await c.client.confirm({ project: PROJECT, ...shown })).refused, /no longer waits/);
 
-    // Lift STOP: the card the helper composes, shown while STOP is on, and STOP lifted by the click.
+    // Lift All stop: the card the helper composes, shown while STOP is on, and STOP lifted by the click.
     assert.equal((await c.client.stop({})).ok, true);
     assert.equal(stopState().on, true);
-    reply = said('Lift STOP');
+    reply = said('Lift All stop');
     const lifted = await c.client.confirm({ project: PROJECT, card: 'lift-stop' });
     assert.equal(lifted.ok, true, JSON.stringify(lifted));
     assert.deepEqual([lifted.recorded, lifted.kind, lifted.step], [true, 'action', 'lift-stop']);
@@ -315,10 +315,10 @@ test('a deciding choice is signed by the helper with proof window', async () => 
     assert.ok(action.data.question.includes(LIFT_STOP));
     assert.ok(verify(action, readEnrolled()));
     const liftWindow = argvOf(c.windows.at(-1).args);
-    assert.equal(liftWindow[0], 'Wheelhouse: Lift STOP');
-    assert.deepEqual(liftWindow.slice(3), ['Lift STOP']);
+    assert.equal(liftWindow[0], 'Wheelhouse: All stop');
+    assert.deepEqual(liftWindow.slice(3), ['Lift All stop']);
 
-    // Not now on Lift STOP leaves STOP on and records nothing.
+    // Not now on Lift All stop leaves STOP on and records nothing.
     assert.equal((await c.client.stop({})).ok, true);
     reply = said(NOT_NOW);
     const before = c.events().length;
@@ -329,7 +329,7 @@ test('a deciding choice is signed by the helper with proof window', async () => 
     await c.close();
   }
   // An action's proof, when it names one, is text (ruling P5-23); approvals and confirmations have no shape here.
-  assert.throws(() => makeEvent({ kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: 'Lift STOP', proof: 7 } }), /proof that is not text/);
+  assert.throws(() => makeEvent({ kind: 'action', data: { action: 'lift-stop', question: LIFT_STOP, label: 'Lift All stop', proof: 7 } }), /proof that is not text/);
 });
 
 test('a second request while a window is open waits for the first', async () => {
@@ -372,7 +372,7 @@ test('a click on a window shown during one STOP never lifts a later one', async 
     liftStop();
     assert.equal((await c.client.stop({})).ok, true);
     const before = c.events().length;
-    open(said('Lift STOP'));
+    open(said('Lift All stop'));
     const got = await asked;
     assert.equal(got.ok, false);
     assert.match(got.refused, /changed while the window was open/);
@@ -383,7 +383,7 @@ test('a click on a window shown during one STOP never lifts a later one', async 
   }
 });
 
-test('under STOP the window serves only the Lift STOP card', async () => {
+test('under STOP the window serves only the Lift All stop card', async () => {
   let open = null;
   const c = await computer(() => new Promise((resolve) => { open = resolve; }));
   try {
@@ -391,7 +391,7 @@ test('under STOP the window serves only the Lift STOP card', async () => {
     const second = await c.card(runbookCard(2));
     assert.equal((await c.client.stop({})).ok, true);
     // Refused before any window opens.
-    assert.deepEqual(await c.client.confirm({ project: PROJECT, ...first }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ project: PROJECT, ...first }), { ok: false, refused: 'All stop is on' });
     assert.equal(c.windows.length, 0);
     liftStop();
     // STOP set while a card's window is open: the click records nothing.
@@ -401,7 +401,7 @@ test('under STOP the window serves only the Lift STOP card', async () => {
     assert.equal((await c.client.stop({})).ok, true);
     const before = c.events().length;
     open(said('Do it'));
-    assert.deepEqual(await asked, { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await asked, { ok: false, refused: 'All stop is on' });
     assert.equal(c.events().length, before, 'nothing was recorded');
   } finally {
     liftStop();
@@ -419,8 +419,8 @@ test('under STOP a card of a project that isn\'t Lean is refused before it is lo
     });
     assert.equal((await c.client.stop({})).ok, true);
     // Nothing is looked at: not the state, nor the code host's pull request.
-    assert.deepEqual(await c.client.confirm({ project: c.project, ...shown }), { ok: false, refused: 'STOP is on' });
-    assert.deepEqual(await c.client.confirm({ project: c.project, card: '00000000-0000-4000-8000-000000000000', hash: 'a'.repeat(64) }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ project: c.project, ...shown }), { ok: false, refused: 'All stop is on' });
+    assert.deepEqual(await c.client.confirm({ project: c.project, card: '00000000-0000-4000-8000-000000000000', hash: 'a'.repeat(64) }), { ok: false, refused: 'All stop is on' });
     assert.equal(asked, 0, 'the code host was not asked');
     assert.equal(c.windows.length, 0);
   } finally {

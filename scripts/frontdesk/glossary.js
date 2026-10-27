@@ -10,8 +10,13 @@ const STARTER = fileURLToPath(new URL('../../templates/glossary.json', import.me
 const ALIASES = { 'pull request': ['PR'] };
 // The verb forms that count for a term, beside its plurals.
 const FORMS = { merge: ['merged', 'merging'], review: ['reviewed', 'reviewing'], commit: ['committed', 'committing'] };
-// Names, not ordinary words: only the capitalised form counts ("stop" and "standard" in a sentence don't).
-export const NAMES = Object.freeze(['STOP', 'Standard', 'Locked']);
+// Names, not ordinary words: only the capitalised form counts ("all stop" and "standard" in a sentence don't).
+export const NAMES = Object.freeze(['All stop', 'Standard', 'Locked']);
+// The concepts of starter terms that were renamed, by their old `known:<concept>` names: a setting
+// on disk that names the old concept counts for the new one.
+export const RENAMED_CONCEPTS = Object.freeze({ 'the-foreman': 'the-bosun', stop: 'all-stop' });
+// A concept under its current name.
+export const currentConcept = (concept) => (Object.hasOwn(RENAMED_CONCEPTS, concept) ? RENAMED_CONCEPTS[concept] : concept);
 
 // The words that stand in for a term in a sentence, by how the text spells it. Each is a short
 // phrase that fits where the term stood, with no capital: `phrase` for the term itself, `plural`
@@ -62,7 +67,7 @@ export function glossaryOf(view) {
 }
 
 // A pattern for one term in a text: the term or an alias, in any case, as whole words, with an
-// optional plural ("branches", "PRs") and the verb forms ("merged"). A name (STOP, Standard,
+// optional plural ("branches", "PRs") and the verb forms ("merged"). A name (All stop, Standard,
 // Locked) matches in its own capitals only. Words are runs of letters and digits.
 export function termPattern(term) {
   const spaced = (n) => n.trim().split(/\s+/).map(escape).join('\\s+');
@@ -100,11 +105,13 @@ export function conceptOf(term) {
   return String(term).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-// The concepts the director knows, from the effective settings (those `known:*` that are true).
+// The concepts the director knows, from the effective settings (those `known:*` that are true). A
+// renamed concept known under its old name is known under its new name too.
 export function knownConcepts(settings) {
-  return Object.entries(settings ?? {})
+  const known = Object.entries(settings ?? {})
     .filter(([key, held]) => key.startsWith('known:') && held?.value === true)
     .map(([key]) => key.slice('known:'.length));
+  return [...new Set([...known, ...known.map(currentConcept)])];
 }
 
 // The alias a text spelt a term by ("PR" for "PR's" or "PRs"), or undefined when it used the term's own words.

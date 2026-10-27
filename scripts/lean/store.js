@@ -44,7 +44,7 @@ export const MAIN_CHECKED_OUT = 'The main version is checked out in a folder, so
 export const MAIN_MOVED = 'The main version changed without an approval, so nothing is added to it until the director decides: Undo it or Keep it';
 export const NOT_IN_STORE = 'This project\'s git isn\'t in Wheelhouse\'s store yet, so the helper can\'t merge, undo or copy it';
 export const NO_COPY = 'No copy folder is set for this project yet';
-export const STOPPED = 'STOP is on';
+export const STOPPED = 'All stop is on';
 
 // The longest a project's tests may run before they count as failed, and how long a merge waits for another.
 export const LEAN_TEST_MS = 15 * 60 * 1000;
@@ -283,13 +283,16 @@ export function mainMovedCard(from, to) {
 }
 
 // The card asking to undo a merge: Undo adds a commit that reverses it, confirmed in the helper's window, and works
-// while STOP is on (a runbook step, spec section 6.4).
-export function undoCard(merge) {
+// while STOP is on (a runbook step, spec section 6.4). `earlier` gives the card in its words before the
+// ship's-crew names (27 October 2026), which a card raised before an update still holds (undoCards).
+const UNDO_WORKS = 'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while All stop is on.';
+const UNDO_WORKS_EARLIER = 'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while STOP is on.';
+export function undoCard(merge, { earlier = false } = {}) {
   const line = undoLine(merge);
   return {
     question: [
       'Take this merge back out of the main version?',
-      'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while STOP is on.',
+      earlier ? UNDO_WORKS_EARLIER : UNDO_WORKS,
       line,
     ].join('\n'),
     header: 'Undo',
@@ -298,6 +301,11 @@ export function undoCard(merge) {
     level: 3,
     line,
   };
+}
+
+// The undo card in each of its wordings, the current one first: a click on either decides it.
+export function undoCards(merge) {
+  return [undoCard(merge), undoCard(merge, { earlier: true })];
 }
 
 export function approvalCard(branch, commit, testCommand) {
@@ -585,7 +593,7 @@ export async function mergeApproved({
       const merged = await tree.call(['merge', '--no-ff', '--no-edit', '-m', message, commit]);
       if (merged.code !== 0) {
         await tree.call(['merge', '--abort']);
-        refuse('It didn\'t fit the main version yet: later work touches the same lines, so it goes back to the builder. Nothing was added');
+        refuse('It didn\'t fit the main version yet: later work touches the same lines, so it goes back to the Crew. Nothing was added');
       }
       const sha = await tree.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The merge could not be read');
       const parents = (await tree.must(['rev-list', '--parents', '-n', '1', sha], 'The merge could not be read')).split(' ');
@@ -646,7 +654,7 @@ async function revertIn(project, lean, { run, now, at, commits }) {
       const reverted = await tree.call(['revert', '--no-edit', ...(parents === 2 ? ['-m', '1'] : []), commit]);
       if (reverted.code !== 0) {
         await tree.call(['revert', '--abort']);
-        refuse('The undo didn\'t apply cleanly, because later work touches the same files: ask the builder to do it as a new feature. Nothing was changed');
+        refuse('The undo didn\'t apply cleanly, because later work touches the same files: ask the Crew to do it as a new feature. Nothing was changed');
       }
     }
     return tree.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The undo could not be read');

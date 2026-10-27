@@ -89,7 +89,7 @@ function readyAsk(id) {
       why: 'Only you can do these.',
       options: [
         { label: READY.ready, says: `Setup sends a test ${MINUTES} later and asks if it arrived.` },
-        { label: READY.skip, says: 'Setup carries on without your phone; the front desk can set it up later.' },
+        { label: READY.skip, says: 'Setup carries on without your phone; the First Mate can set it up later.' },
       ],
       recommend: READY.ready,
       because: 'it shows now whether your phone works',
@@ -105,10 +105,10 @@ function arrivedAsk(id) {
     card: {
       level: 2,
       what: `Setup step ${PUSH_TEST_STEP}: did the test notification reach your phone while your screen was locked?`,
-      why: 'Agents use it to tell you when they need you; if it didn\'t come, the board says what to check.',
+      why: 'Agents use it to tell you when they need you; if it didn\'t come, the Logbook says what to check.',
       options: [
         { label: ARRIVED.yes, says: 'Setup records that notifications reach your phone, and moves on.' },
-        { label: ARRIVED.no, says: 'Setup records it and moves on; the board\'s health says what to check.' },
+        { label: ARRIVED.no, says: 'Setup records it and moves on; the Logbook\'s health says what to check.' },
       ],
       // The composer needs a recommendation among the card's options; on a question of fact it
       // only asks the director to answer what they saw.

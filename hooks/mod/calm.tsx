@@ -66,8 +66,8 @@ export function link(t: Table, href: string, label: string) {
 // STOP: outlined, its label in error, and never beside a filled button.
 export function stop(t: Table, onPress: () => unknown) {
   return (
-    <t.Button key="stop" label="STOP" variant="secondary" onPress={onPress}>
-      <t.Text color="error">STOP</t.Text>
+    <t.Button key="stop" label="All stop" variant="secondary" onPress={onPress}>
+      <t.Text color="error">All stop</t.Text>
     </t.Button>
   )
 }

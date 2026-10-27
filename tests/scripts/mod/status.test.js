@@ -99,7 +99,7 @@ test('the pane lists the waiting cards in the board\'s numbering, each with its 
   ]);
   // A question from the build that no card asks yet is one line and no buttons.
   assert.deepEqual(line, { id: 'q:q-export-csv-2', n: 2, header: 'Question', kind: 'question', text: QUESTION_WAITS, hash: sha(QUESTION_WAITS), buttons: [], note: null, blocking: false, asked: false, parts: null, steered: null, waited: null, revised: false });
-  assert.equal(QUESTION_WAITS, 'A question from the build waits; the front desk will ask it');
+  assert.equal(QUESTION_WAITS, 'A question from the build waits; the First Mate will ask it');
 }));
 
 test('the board\'s waiting items carry ids, and the pane numbers them as the board and the front desk do', () => withHome(async (home) => {
@@ -238,7 +238,7 @@ test('a card that fails the card check and offers no Explain more has no button,
   // Only Why?, which asks the front desk.
   assert.deepEqual(card.buttons, [{ label: 'Why?', does: 'turn', shape: 'small' }]);
   assert.equal(card.note, CANT_ANSWER);
-  assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the front desk about it.');
+  assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the First Mate about it.');
 }));
 
 test('a card\'s text is its question, or its title when it has none', () => {
@@ -259,7 +259,7 @@ test('a build-loop question no card asks yet is one line with no buttons', () =>
   assert.equal(cards.length, 1);
   assert.equal(cards[0].id, 'q:q-export-csv-2');
   assert.deepEqual(cards[0].buttons, []);
-  assert.equal(cards[0].text, 'A question from the build waits; the front desk will ask it');
+  assert.equal(cards[0].text, 'A question from the build waits; the First Mate will ask it');
 }));
 
 test('a card\'s text is kept as written; the other lines are one line each, in plain words', async () => {
@@ -341,7 +341,7 @@ test('no state, no helper and no usage still give a model naming what is missing
   fs.rmSync(path.join(viewsDir(), 'status.json'));
 
   const broken = await paneModel({ project: P, cwd: repo, now: () => NOW, loadInputs: async () => { throw new Error('no'); } });
-  assert.deepEqual(broken.missing, ['The board\'s inputs couldn\'t be read this time']);
+  assert.deepEqual(broken.missing, ['The Logbook\'s inputs couldn\'t be read this time']);
   const noClock = await paneModel({ project: P, cwd: repo, now: () => 'not a time' });
   assert.equal(noClock.at, null);
   assert.ok(noClock.missing.includes('The pane\'s clock couldn\'t be read'));

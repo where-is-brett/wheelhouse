@@ -33,10 +33,11 @@ import { helperClient } from '../host/helper-client.js';
 import { stateDir, profileDir } from '../lib/paths.js';
 import { PREMIUM_ON } from '../routing/premium.js';
 
-export const ADVANCED = 'Advanced settings: ask the front desk';
-const ASK = 'Changed by asking the front desk';
+export const ADVANCED = 'Advanced settings: ask the First Mate';
+const ASK = 'Changed by asking the First Mate';
 const BUDGET_WHY = 'The other budget levels come with the budget design';
-const STOP_REFUSED = 'STOP is on';
+// The helper's refusal under All stop, in its words before and after the ship's-crew names.
+const STOP_REFUSED = new Set(['All stop is on', 'STOP is on']);
 // What the helper client answers when the helper doesn't answer in time.
 const HELPER_LATE = 'the host helper did not answer in time';
 const HOUR_MS = 60 * 60 * 1000;
@@ -70,7 +71,7 @@ const LEVEL_WORDS = {
   pace: { 1: '1', 2: '2', 3: '3' },
   briefing: { short: 'Short', standard: 'Standard', detailed: 'Detailed' },
   explanations: { plain: 'Plain', 'some-terms': 'Some technical terms' },
-  boardTab: { director: 'Director', build: 'Build' },
+  boardTab: { director: 'Captain', build: 'Build' },
   phase: { 'before-launch': 'Before launch', launched: 'Launched' },
 };
 const PANE = {
@@ -81,13 +82,13 @@ const PANE = {
   efficiency: { label: 'Thoroughness', kind: 'levels' },
   premium: { label: 'Premium model', kind: 'none', why: ASK },
   budget: { label: 'Budget', kind: 'none', why: BUDGET_WHY },
-  pace: { label: 'Builders at once', kind: 'levels' },
+  pace: { label: 'Crew at once', kind: 'levels' },
   briefing: { label: 'Briefing length', kind: 'levels' },
   briefingGapHours: { label: 'Hours before a new briefing', kind: 'none', why: ASK },
   explanations: { label: 'Explanations', kind: 'levels' },
   notifications: { label: 'Notifications', kind: 'none', why: ASK },
   usageMark: { label: 'Usage nudge', kind: 'levels' },
-  boardTab: { label: 'Board opens on', kind: 'levels' },
+  boardTab: { label: 'Logbook opens on', kind: 'levels' },
   hours: { label: 'Working hours', kind: 'none', why: ASK },
   phase: { label: 'Product phase', kind: 'levels' },
   protection: { label: 'Protection', kind: 'none', why: ASK },
@@ -264,7 +265,7 @@ function rowOf(key, { effective, changes, nowMs, timeZone, locked, ready }) {
   const base = { key, label: spec.label };
   if (key === 'protection') {
     // Locked lives in the computer-wide file, which the pane doesn't read.
-    const current = locked === true ? 'Locked' : locked === false ? 'Standard' : 'Ask the front desk';
+    const current = locked === true ? 'Locked' : locked === false ? 'Standard' : 'Ask the First Mate';
     return { ...base, current, from: FROM.profile, choices: [], here: false, why: spec.why };
   }
   const held = heldOf(effective, key);
@@ -290,8 +291,8 @@ function rowOf(key, { effective, changes, nowMs, timeZone, locked, ready }) {
 
 // --- the groups ---
 
-const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them.';
-const YOU_NOTE = 'These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you.';
+const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the First Mate asks for them.';
+const YOU_NOTE = 'These follow you to every project. Notifications and working hours are changed with the First Mate, which checks them with you.';
 const WINDOWS_LEVELS = { ask: 'Ask', guarded: 'Guarded', unattended: 'Unattended' };
 // The settings the front desk changes: a value and Change….
 const CHANGE_KEYS = ['protection', 'premium', 'briefingGapHours', 'notifications', 'hours'];
@@ -331,7 +332,7 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
   const builders = !halted ? 'Working' : Number.isFinite(sinceMs) ? `Halted since ${hhmmOf(sinceMs, timeZone)}` : 'Halted';
   const build = { key: 'windowsBuildCommands', label: 'Build commands on Windows', value: WINDOWS_LEVELS[windows] ?? WINDOWS_LEVELS.ask, kind: 'change' };
   return [
-    { id: 'stop', title: 'STOP', note: `STOP ${lower(STOP_HALTS)} ${ONLY_YOU_LIFT}`, rows: [{ key: 'builders', label: 'Builders', value: builders, kind: 'value' }] },
+    { id: 'stop', title: 'All stop', note: `All stop ${lower(STOP_HALTS)} ${ONLY_YOU_LIFT}`, rows: [{ key: 'builders', label: 'Crew', value: builders, kind: 'value' }] },
     {
       id: 'project',
       title: 'This project',
@@ -500,7 +501,7 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
   if (wrote?.ok !== true) {
     // A write that timed out (or whose answer never came) may still land, so it isn't said to be refused.
     if (wrote === null || wrote.refused === HELPER_LATE) return no(SAYS.late);
-    return no(wrote.refused === STOP_REFUSED ? SAYS.stopOn : SAYS.notTaken);
+    return no(STOP_REFUSED.has(wrote.refused) ? SAYS.stopOn : SAYS.notTaken);
   }
 
   const label = PANE[key].label;

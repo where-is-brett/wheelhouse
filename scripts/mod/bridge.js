@@ -89,20 +89,20 @@ export const SAYS = {
   failed: NOT_RECORDED,
   late: 'Wheelhouse couldn\'t do that in time',
   notKept: 'That usage reading couldn\'t be kept',
-  notDirector: 'Only the director\'s own messages count',
+  notDirector: 'Only the Captain\'s own messages count',
   notProject: 'This isn\'t a Wheelhouse project',
-  goNotDirector: 'Only the director can lift STOP',
-  goNotProject: 'This isn\'t a Wheelhouse project, so STOP stays on',
-  goUndated: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it',
-  goOtherStop: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again',
-  stopOff: 'STOP isn\'t on.',
-  cantSign: 'Wheelhouse couldn\'t sign that here, so STOP stays on',
-  cantLift: 'STOP couldn\'t be lifted, so it stays on',
+  goNotDirector: 'Only the Captain can lift All stop',
+  goNotProject: 'This isn\'t a Wheelhouse project, so All stop stays on',
+  goUndated: 'The pane didn\'t say which All stop it showed, so All stop stays on; type /wheelhouse-go to lift it',
+  goOtherStop: 'That isn\'t the All stop the pane showed, so All stop stays on; look at the pane again',
+  stopOff: 'All stop isn\'t on.',
+  cantSign: 'Wheelhouse couldn\'t sign that here, so All stop stays on',
+  cantLift: 'All stop couldn\'t be lifted, so it stays on',
   nothingBuilding: 'No build work is in progress.',
   noCourier: 'The courier couldn\'t run this time',
-  stopNotPhone: 'Only a message from your phone or a press in the pane sets STOP here',
+  stopNotPhone: 'Only a message from your phone or a press in the pane sets All stop here',
   notPane: 'Only a press in the pane counts as one',
-  stopOn: 'STOP is on.',
+  stopOn: 'All stop is on.',
 };
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -320,7 +320,7 @@ async function go(req, d) {
   } catch {
     // Kept in pending/ for the next session start to send.
   }
-  return { ok: true, says: `STOP is off. ${await inProgress(req.cwd, d)}` };
+  return { ok: true, says: `All stop is off. ${await inProgress(req.cwd, d)}` };
 }
 
 // A typed "stop" is the stop-word hook's; a phoned one or STOP on the pane sets it here.

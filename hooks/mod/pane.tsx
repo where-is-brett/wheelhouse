@@ -353,16 +353,16 @@ function staleLine(kept: { readAt: number } | undefined, last: { at: number, fai
 }
 
 
-const STOP_IS_ON = 'STOP is on'
+const STOP_IS_ON = 'All stop is on'
 const text = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null)
 const count = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 // The "hh:mm" in a line such as "Since you were last here at 09:10."
 const timeIn = (line: unknown): string | null => (typeof line === 'string' ? /\b(\d{2}:\d{2})\b/.exec(line)?.[1] ?? null : null)
 
-// When STOP began, in words: the bridge's STOP line ("STOP is on, since 19 October 2026") without
+// When STOP began, in words: the bridge's All stop line ("All stop is on, since 19 October 2026", or the older "STOP is on") without
 // its lead, else the start the model carries, as a time.
 function stopSince(model: PaneModel, line: string | null): string | null {
-  const rest = line?.replace(/^STOP is on,?\s*/, '') ?? ''
+  const rest = line?.replace(/^(?:All stop|STOP) is on,?\s*/, '') ?? ''
   if (rest !== '') return rest.charAt(0).toUpperCase() + rest.slice(1)
   const at = isRecord(model.stop) && typeof model.stop.since === 'string' ? Date.parse(model.stop.since) : NaN
   return Number.isNaN(at) ? null : `Since ${timeOf(at)}`

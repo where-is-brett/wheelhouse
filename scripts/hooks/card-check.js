@@ -24,7 +24,7 @@ import { whatProblem, NO_REPLY_CODE } from '../cards/compose.js';
 import { TO_KNOW_MORE, TO_CHANGE_IT } from '../lib/calm-words.js';
 import { CARD } from '../lib/front-desk.js';
 import {
-  setLinesOf, replyCode, replyCodeLine, runbookLine, LIFT_STOP, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE,
+  setLinesOf, replyCode, replyCodeLine, runbookLine, isLiftStopLine, RUNBOOK_TITLES, SETUP_TITLES, ID, LANES, TRUST_LINE, TAKEOVER_LINE, UNINSTALL_LINE, KEEP_CONTROL_LINE, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -41,7 +41,7 @@ const REPLY_CODE = 'Reply code:';
 // characters the line holds.
 function targetOf(line) {
   let m;
-  if (line === LIFT_STOP) return { kind: 'lift-stop', target: {} };
+  if (isLiftStopLine(line)) return { kind: 'lift-stop', target: {} };
   if ((m = new RegExp(`^Approve pull request #([1-9][0-9]*) at commit ${SHA12}$`).exec(line))) return { kind: 'approval', target: { pr: Number(m[1]), sha: m[2] } };
   if ((m = /^Confirm [a-z-]+ \S+: "(.*)"$/.exec(line))) return { kind: 'confirm', target: { event: { data: { words: m[1] } } } };
   if ((m = new RegExp(`^Push the CI change on (\\S+) at commit ${SHA12} with your own sign-in$`).exec(line))) return { kind: 'ci-push', target: { branch: m[1], sha: m[2] } };

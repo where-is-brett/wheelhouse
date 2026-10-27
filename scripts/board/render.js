@@ -14,7 +14,7 @@
 import { CONTEXT_CHARS } from '../lib/core-numbers.js';
 import { sayTime } from '../settings/effective.js';
 import { NOT_AVAILABLE, NO_STATE, creditWords, dollarWords, oneLine, tokenWords } from './model.js';
-import { STOP_LINE, brokenCount } from './health.js';
+import { isStopText, brokenCount } from './health.js';
 import {
   verdict, askedSince, behindTheScenes, buildHeadline, foldedParts, RULINGS_NOTE, YOULL_SEE_IT,
 } from '../lib/calm-words.js';
@@ -22,7 +22,7 @@ import {
 const GLANCE_CHARS = 80;
 const LANES = [['quick', 'Quick lane'], ['small', 'Small lane'], ['feature', 'Feature lane'], ['bug', 'Bug lane']];
 const WHEN = [['now', 'Now'], ['next', 'Next'], ['later', 'Later']];
-const PARTS = [['front-desk', 'Front desk'], ['foreman', 'Foreman'], ['feature', 'Feature builders']];
+const PARTS = [['front-desk', 'First Mate'], ['foreman', 'Bosun'], ['feature', 'Crew']];
 const PHASES = { 'before-launch': 'before launch', launched: 'launched' };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 // A word that a Markdown viewer would make a link of.
@@ -251,9 +251,9 @@ export function renderBoard(model, { tab = 'director', limit = CONTEXT_CHARS } =
     const build = buildSections(b);
     const project = words(m.project);
     const when = Number.isNaN(nowMs) ? 'The time of this reading couldn\'t be read.' : `Updated ${sayTime(m.builtAt)}.`;
-    const intro = `Wheelhouse's board${project ? ` for ${project}` : ''}. ${when}`;
+    const intro = `Wheelhouse's Logbook${project ? ` for ${project}` : ''}. ${when}`;
     const said = isRecord(model) ? verdict({ waiting: records(d.waiting).length, broken: brokenCount(d.health) }) : null;
-    const missing = isRecord(model) ? list(m.missing).map(words).filter(Boolean) : ['The board couldn\'t be read'];
+    const missing = isRecord(model) ? list(m.missing).map(words).filter(Boolean) : ['The Logbook couldn\'t be read'];
     const first = list(m.director?.first).map(words).filter(Boolean);
     const joining = records(b.pullRequests).filter((p) => Number.isInteger(p.pr) && p.pr > 0).length;
     const headline = buildHeadline({ building: records(b.features).length, joining });
@@ -261,7 +261,7 @@ export function renderBoard(model, { tab = 'director', limit = CONTEXT_CHARS } =
     const heading = (text, note) => ({ heading: text, items: null, shown: 0, ...(note ? { note } : {}) });
     const listed = (text, items) => ({ heading: text, items: items.map((item) => `- ${unlinked(item)}`), shown: items.length });
     const tabs = {
-      director: [heading('## Director'), ...shown(director)],
+      director: [heading('## Captain'), ...shown(director)],
       build: [heading('## Build', headline), ...shown(build)],
     };
     const order = tab === 'build' ? ['build', 'director'] : ['director', 'build'];
@@ -275,14 +275,14 @@ export function renderBoard(model, { tab = 'director', limit = CONTEXT_CHARS } =
     ];
     return fit(sections, Number.isInteger(limit) && limit > 0 && limit <= CONTEXT_CHARS ? limit : CONTEXT_CHARS);
   } catch {
-    return 'Wheelhouse\'s board couldn\'t be put into words this time.';
+    return 'Wheelhouse\'s Logbook couldn\'t be put into words this time.';
   }
 }
 
-// glanceLine(model): "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34% · STOP on", each
+// glanceLine(model): "Wheelhouse · 2 waiting · 3 building · launch 3 of 5 · week 34% · All stop on", each
 // part only when it has something to say; "launch r of t" while the project has blockers open. At
 // most GLANCE_CHARS: where it would pass, the week's share drops first, then the launch part,
-// before any cut with "…". STOP on is never dropped.
+// before any cut with "…". All stop on is never dropped.
 export function glanceLine(model) {
   try {
     if (!isRecord(model)) return 'Wheelhouse';
@@ -297,14 +297,14 @@ export function glanceLine(model) {
       && progress.resolved >= 0 && progress.resolved < progress.total ? `launch ${progress.resolved} of ${progress.total}` : null;
     const share = model.director?.budget?.share;
     const week = isNumber(share) ? `week ${Math.round(share)}%` : null;
-    const stop = records(model.director?.health).some((line) => line.level === 'stop' && (line.text === STOP_LINE || String(line.text).startsWith(`${STOP_LINE}, `))) ? 'STOP on' : null;
+    const stop = records(model.director?.health).some((line) => line.level === 'stop' && isStopText(line.text)) ? 'All stop on' : null;
     const join = (parts) => parts.join(' · ');
     const tail = stop ? [stop] : [];
     for (const optional of [[launch, week], [launch], []]) {
       const line = join([...head, ...optional.filter(Boolean), ...tail]);
       if (line.length <= GLANCE_CHARS) return line;
     }
-    // Still too long: the front is cut with "…" and STOP on stays.
+    // Still too long: the front is cut with "…" and All stop on stays.
     if (!stop) {
       const line = join(head);
       return `${line.slice(0, GLANCE_CHARS - 1)}…`;

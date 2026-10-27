@@ -95,14 +95,14 @@ export { MEANWHILE, CHECKS_UNSAID } from '../cards/compose.js';
 export const LIFT_STOP_CARD = Object.freeze({
   kind: 'lift-stop',
   level: 3,
-  what: 'STOP is on: every agent has halted, and nothing is written, pushed or merged.',
-  why: 'Only you can lift STOP, so it comes to you.',
+  what: 'All stop is on: every agent has halted, and nothing is written, pushed or merged.',
+  why: 'Only you can lift All stop, so it comes to you.',
   options: [
-    { label: 'Lift STOP', says: 'The agents carry on from where they halted.' },
-    { label: 'Not now', says: 'STOP stays on, and nothing moves until you lift it.' },
+    { label: 'Lift All stop', says: 'The agents carry on from where they halted.' },
+    { label: 'Not now', says: 'All stop stays on, and nothing moves until you lift it.' },
   ],
   recommend: 'Not now',
-  because: 'STOP is the safe side: lift it once you are sure what was in progress can carry on',
+  because: 'All stop is the safe side: lift it once you are sure what was in progress can carry on',
   meanwhile: 'Everything stays halted; reading and reporting carry on.',
 });
 const INPUT_BYTES = 1024 * 1024;
@@ -515,7 +515,7 @@ export async function card({ client, cwd, input, now }) {
 export async function again({ client, cwd, n }) {
   const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
   const found = cardNumbered(views, n, { events });
-  if (found === null) throw new CliError(`The board has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
+  if (found === null) throw new CliError(`The Logbook has no card ${n} to ask again; a question from the build is asked once \`cards\` has made its card`);
   return { questions: [asQuestion(found)], id: found.id, ...withProblems(await markAsked(client, cwd, [found.id], stop)) };
 }
 
@@ -542,8 +542,8 @@ function keepAnswer(cwd, body) {
 export async function why({ client, cwd, n }) {
   const { views, stop, cards: events } = await viewsOf(client, cwd, { cards: true });
   const found = cardNumbered(views, n, { events });
-  if (found === null) throw new CliError(`The board has no card ${n} to note a why about`);
-  if (stop) return [`STOP is on, so nothing was noted about card ${n}.`];
+  if (found === null) throw new CliError(`The Logbook has no card ${n} to note a why about`);
+  if (stop) return [`All stop is on, so nothing was noted about card ${n}.`];
   const question = found.data?.question;
   if (typeof question !== 'string' || question === '') throw new CliError(`Card ${n} has no question to note a why against`);
   const body = { kind: 'card-answer', data: { question, label: WHY } };
@@ -645,7 +645,7 @@ export async function writeSetting({ client, cwd, data, words, ready, makeId = (
   // Build commands on Windows are turned on only by the director's click on their own card, never
   // by an agent (design section 12.2); the front desk may write only the off switch, Ask.
   if (definitionOf(data.key) === WINDOWS_BUILD_COMMANDS && data.value !== 'ask') {
-    throw new CliError('Build commands on Windows are turned on only by a click on their own card; the front desk can set them back to ask');
+    throw new CliError('Build commands on Windows are turned on only by a click on their own card; the First Mate can set them back to ask');
   }
   // A Thoroughness level is set only once its column is ready, as the settings pane's press holds it (`ready` is the
   // columns ready beyond Balanced and Thorough; none given means none).
@@ -655,7 +655,7 @@ export async function writeSetting({ client, cwd, data, words, ready, makeId = (
   // The premium model's paid-credits and within-plan modes are turned on only by the separate opt-in cards (design
   // section 14.6), never by one generic Confirm; the front desk can set it back to off.
   if (data.key === 'premium' && data.value !== 'off') {
-    throw new CliError('The premium model is turned on only through its own opt-in cards; the front desk can set it back to off');
+    throw new CliError('The premium model is turned on only through its own opt-in cards; the First Mate can set it back to off');
   }
   // The person's own GitHub App decides which app holds the narrow keys (ruling R56): only setup
   // records it, from the app GitHub shows for it.
@@ -854,7 +854,7 @@ export function levelCard(event, words) {
 export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
   const got = await client.state.views({ cwd, review: true });
   if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
-  if (got.stop === true) throw new CliError('STOP is on, so the review waits until it is lifted');
+  if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
   if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
   const words = await wordsOf(client, got.views, now);
   const problems = [];
@@ -1205,10 +1205,10 @@ export async function main(argv, {
       only(rest, 0, 'card takes no arguments: give the card as JSON on standard input');
       json(await card({ client: helper, cwd: here, input: parsed(await stdin()), now }));
     } else if (command === 'again') {
-      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number on the board: again <n>');
+      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number in the Logbook: again <n>');
       json(await again({ client: helper, cwd: here, n: Number(rest[0]) }));
     } else if (command === 'why') {
-      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number on the board: why <n>');
+      if (rest.length !== 1 || !/^[1-9][0-9]{0,8}$/.test(rest[0])) throw new CliError('Give the card\'s number in the Logbook: why <n>');
       lines(await why({ client: helper, cwd: here, n: Number(rest[0]) }));
     } else if (command === 'suggest') {
       if (rest.length < 3) throw new CliError('Give the card, the work and the change: suggest <card id> <work id> <the change in your own words>');

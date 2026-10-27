@@ -53,7 +53,7 @@ export function readFrontDeskModel({ project, folder }) {
 }
 
 // How the line for a front desk on another model starts: the briefing gives it once a week.
-export const FRONT_DESK_MODEL_LEAD = 'The front desk is running on ';
+export const FRONT_DESK_MODEL_LEAD = 'The First Mate is running on ';
 
 // The line for a front desk running on another model than the pin, or null.
 export function frontDeskModelLine({ running, pinned } = {}) {

@@ -463,9 +463,9 @@ test('a clock that can\'t be read is named, not replaced by this computer\'s', (
     () => { throw new Error('no clock'); }]) {
     const m = model({ now });
     assert.equal(m.builtAt, null);
-    assert.ok(m.missing.includes('The board\'s clock couldn\'t be read'));
+    assert.ok(m.missing.includes('The Logbook\'s clock couldn\'t be read'));
   }
-  assert.ok(!model().missing.includes('The board\'s clock couldn\'t be read'));
+  assert.ok(!model().missing.includes('The Logbook\'s clock couldn\'t be read'));
   for (const now of [NOW, NOW.getTime(), () => NOW.getTime()]) assert.equal(model({ now }).builtAt, NOW.toISOString());
 });
 

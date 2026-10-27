@@ -180,7 +180,7 @@ function whatOf(items) {
   const parts = [];
   if (numbers.length > 0) parts.push(`${plural(numbers.length, 'new card', 'new cards')} (${andList(numbers.map(String))})`);
   if (still.length > 0) parts.push(`${still.length === 1 ? 'card' : 'cards'} ${andList(still.map(String))} ${still.length === 1 ? 'is' : 'are'} still waiting`);
-  if (count('stop') > 0) parts.push('STOP is on');
+  if (count('stop') > 0) parts.push('All stop is on');
   if (count('incident') > 0) parts.push(`${plural(count('incident'), 'incident', 'incidents')} open`);
   if (count('health') > 0) parts.push(`${plural(count('health'), 'health line', 'health lines')} at its stop level`);
   if (count('finished') > 0) parts.push(`${plural(count('finished'), 'feature', 'features')} finished`);

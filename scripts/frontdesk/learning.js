@@ -31,7 +31,7 @@ import { ID } from '../state/card-lines.js';
 import { DECIDING, KEEP_AS_IS } from '../cards/compose.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { SETTINGS } from '../settings/catalogue.js';
-import { conceptOf } from './glossary.js';
+import { conceptOf, currentConcept, RENAMED_CONCEPTS } from './glossary.js';
 import { CARD_KINDS, DELEGATE_AFTER, KNOWN_AFTER } from '../lib/front-desk.js';
 
 // How long a Not now or a Keep as is on a proposal's card holds the proposal back.
@@ -107,10 +107,13 @@ const profileContext = ({ events, profile, outcomes, nowMs }) => ({
   events: [...list(events), ...list(profile?.events)], unconfirmed: profile?.unconfirmed, outcomes, nowMs,
 });
 
-// The concepts a card holds, as `known:<concept>` names them.
+// The concepts a card holds, as `known:<concept>` names them, a renamed one under its new name.
 function conceptsOf(card) {
-  return [...new Set(list(card.data?.concepts).filter((t) => typeof t === 'string').map(conceptOf).filter((c) => CONCEPT.test(c)))];
+  return [...new Set(list(card.data?.concepts).filter((t) => typeof t === 'string').map(conceptOf).map(currentConcept).filter((c) => CONCEPT.test(c)))];
 }
+// Whether a renamed concept is known under its old name, with no setting yet under its new one.
+const knownAsWas = (profile, concept) => profile?.settings?.[`known:${concept}`] === undefined
+  && Object.entries(RENAMED_CONCEPTS).some(([was, now]) => now === concept && profile?.settings?.[`known:${was}`]?.value === true);
 
 // conceptProposals(events, profile, { now, enrolled, outcomes, dayOf }) -> [{ concept, known, confirm }], by concept.
 // Why? counts wherever Explain more does. A concept is proposed as known (confirm: true, a card for the `known:<concept>` setting) once
@@ -130,6 +133,7 @@ export function conceptProposals(events, profile, { now, enrolled, outcomes: giv
     const key = `known:${concept}`;
     const holding = outcomes.filter(({ card }) => conceptsOf(card).includes(concept));
     const since = latestSetting(profile, key)?.at;
+    if (knownAsWas(profile, concept)) continue;
     if (profile?.settings?.[key]?.value === true) {
       const known = inForceSince(profile, key, keys) ?? since;
       const explained = holding.some((o) => o.explained.some((at) => after(at, known)));
@@ -175,7 +179,7 @@ export function settingProposals(events, profile, { now, enrolled, outcomes: giv
     for (const a of [...asks].sort((x, y) => ms(x.at) - ms(y.at))) lastOfVisit.set(a.visit, a);
     const visits = [...lastOfVisit.entries()].sort(([x], [y]) => ms(x) - ms(y)).slice(-BOARD_VISITS).map(([, a]) => a);
     if (visits.length === BOARD_VISITS && visits.every((a) => a.tab === 'build')) {
-      propose('boardTab', 'build', `you asked for the board's build tab on each of your last ${BOARD_VISITS} visits`);
+      propose('boardTab', 'build', `you asked for the Logbook's Build tab on each of your last ${BOARD_VISITS} visits`);
     }
   }
 

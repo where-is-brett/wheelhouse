@@ -257,7 +257,7 @@ test('cut-access on the quick connection changes nothing and names the page wher
       const answer = await client.runbook.cutAccess({ project: 'o__p' });
       assert.equal(answer.ok, true);
       assert.equal(answer.url, 'https://github.com/settings/applications');
-      assert.match(answer.message, /only the director can/i);
+      assert.match(answer.message, /only you can/i);
     }, { fetch: async () => { throw new Error('no host in tests'); } });
   } finally { s.cleanup(); }
 });
@@ -336,9 +336,9 @@ test('the restore pull request merges under STOP with the director\'s approval a
 
       // The same head on any other branch name stays stopped; so does the caller's own `stop`.
       adapter.prState = async () => ({ headSha: tip, headRef: 'feature', baseRef: 'main', mergeable: 'yes', state: 'open' });
-      assert.ok((await merge()).reasons.includes('STOP is on'));
+      assert.ok((await merge()).reasons.includes('All stop is on'));
       adapter.prState = async () => ({ headSha: tip, headRef: restoreBranch(s.c1), baseRef: 'main', mergeable: 'yes', state: 'open' });
-      assert.ok((await client.merge({ project: 'o__p', number: 7, stop: true, bypass: false })).reasons.includes('STOP is on'));
+      assert.ok((await client.merge({ project: 'o__p', number: 7, stop: true, bypass: false })).reasons.includes('All stop is on'));
       // Through the runbook's own route as well.
       assert.equal((await client.runbook.restoreMerge({ project: 'o__p', number: 7 })).ok, true);
     });
@@ -364,7 +364,7 @@ test('a restore branch whose tree is not the chosen commit\'s stays stopped', as
       await as(s.home, async () => { setStop({ by: 'runbook', now: () => NOW }); record('approval', { pr: 7, commit: bad }); });
       const merge = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
       assert.equal(merge.ok, false);
-      assert.ok(merge.reasons.includes('STOP is on'), JSON.stringify(merge));
+      assert.ok(merge.reasons.includes('All stop is on'), JSON.stringify(merge));
       assert.deepEqual(adapter.merges, []);
     });
   } finally { s.cleanup(); }
@@ -387,9 +387,9 @@ test('the step 3 click lets a restore merge pass STOP for twenty-four hours, and
         record('approval', { pr: 7, commit: tip });
         click(3, { sha: s.c1.slice(0, 12), ms: 25 * HOUR });
       });
-      assert.ok((await merge()).reasons.includes('STOP is on'), 'twenty-five hours is too long');
+      assert.ok((await merge()).reasons.includes('All stop is on'), 'twenty-five hours is too long');
       await as(s.home, async () => { click(3, { sha: 'a'.repeat(12), ms: HOUR }); click(3, { sha: s.c1.slice(0, 12), ms: 23 * HOUR, tamper: true }); });
-      assert.ok((await merge()).reasons.includes('STOP is on'), 'another commit, or a click that does not verify, does not count');
+      assert.ok((await merge()).reasons.includes('All stop is on'), 'another commit, or a click that does not verify, does not count');
       await as(s.home, async () => { click(3, { sha: s.c1.slice(0, 12), ms: 23 * HOUR }); });
       assert.equal((await merge()).ok, true);
     });
@@ -473,10 +473,10 @@ test('the runbook routes answer under STOP', async () => {
       assert.equal((await client.runbook.restoreMain({ ...base, sha: s.c1 })).ok, true);
       assert.equal((await client.runbook.contain(base)).ok, true);
       assert.equal((await client.runbook.candidates(base)).ok, true);
-      assert.notEqual((await client.runbook.restoreState(base)).refused, 'STOP is on');
+      assert.notEqual((await client.runbook.restoreState(base)).refused, 'All stop is on');
       assert.equal((await client.stop({})).ok, true);
       // Other writes stay refused.
-      assert.deepEqual(await client.openPr({ ...base, head: 'feature', base: 'main', title: 't', body: 'b' }), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await client.openPr({ ...base, head: 'feature', base: 'main', title: 't', body: 'b' }), { ok: false, refused: 'All stop is on' });
     });
   } finally { s.cleanup(); }
 });
@@ -625,7 +625,7 @@ test('the restore exception needs no review, with STOP on or off, and says why w
       // Under STOP the same failure is said, with STOP.
       await as(s.home, async () => { setStop({ by: 'runbook', now: () => NOW }); });
       const stopped = await says(/no step 3 click from the last 24 hours/);
-      assert.ok(stopped.reasons.includes('STOP is on'));
+      assert.ok(stopped.reasons.includes('All stop is on'));
     });
   } finally { s.cleanup(); }
 });
@@ -751,7 +751,7 @@ test('GitLab cut-access: only a 2xx deletes the file; a 401 says the key no long
       statuses = [204];
       const pasted = await client.runbook.cutAccess(base);
       assert.equal(pasted.ok, true);
-      assert.match(pasted.message, /director's own token/);
+      assert.match(pasted.message, /your own token/);
       assert.equal(pasted.url, 'https://gitlab.example.com/-/user_settings/personal_access_tokens');
     }, { fetch });
   } finally { s.cleanup(); }
@@ -823,7 +823,7 @@ test('under STOP, a failing restore check is said even when the gate would other
         setStop({ by: 'runbook', now: () => NOW });
       });
       const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-      assert.deepEqual(answer.reasons, ['restore pull request: its base is not the default branch', 'STOP is on']);
+      assert.deepEqual(answer.reasons, ['restore pull request: its base is not the default branch', 'All stop is on']);
     });
   } finally { s.cleanup(); }
 });
@@ -862,7 +862,7 @@ test('runbook.js never reads the projects folder: it sends its folder and the he
       sandboxed = false;
       assert.deepEqual(sent, [{ cwd: work }], 'step 2 reached the helper with the folder');
       assert.equal(out.code, 0, out.text);
-      assert.match(out.text, /only the director can/i);
+      assert.match(out.text, /only you can/i);
     }, { fetch: async () => { throw new Error('no host in tests'); } });
   } finally {
     sandboxed = false;

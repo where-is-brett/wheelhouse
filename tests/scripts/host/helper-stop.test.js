@@ -135,11 +135,11 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
           updateBranch: client.updateBranch({ ...base, number: 7 }),
         };
         for (const [name, pending] of Object.entries(writes)) {
-          assert.deepEqual(await pending, { ok: false, refused: 'STOP is on' }, name);
+          assert.deepEqual(await pending, { ok: false, refused: 'All stop is on' }, name);
         }
         const merge = await client.merge({ ...base, number: 7, stop: false, bypass: false });
         assert.equal(merge.ok, false);
-        assert.ok(merge.reasons.includes('STOP is on'), JSON.stringify(merge));
+        assert.ok(merge.reasons.includes('All stop is on'), JSON.stringify(merge));
 
         assert.equal((await client.prState({ ...base, number: 7 })).ok, true);
         assert.equal((await client.carried({ ...base, number: 7 })).ok, true);
@@ -160,7 +160,7 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
         // A signed record is taken under STOP (it carries the click that lifts it): this one is
         // refused for being no event, not for STOP.
         const rec = await client.state.record({ ...base, event: 'nothing' });
-        assert.notEqual(rec.refused, 'STOP is on');
+        assert.notEqual(rec.refused, 'All stop is on');
         assert.equal(rec.refused, 'the record must be an event');
       });
     });
@@ -203,7 +203,7 @@ test('a merge queued behind another reads STOP when its turn comes', async () =>
         const [a, b] = await Promise.all([first, second]);
         assert.equal(a.ok, true, JSON.stringify(a));
         assert.equal(b.ok, false);
-        assert.ok(b.reasons.includes('STOP is on'), JSON.stringify(b));
+        assert.ok(b.reasons.includes('All stop is on'), JSON.stringify(b));
         assert.equal(adapter.merges.length, 1);
       }, { onArrive: queue.onArrive });
     });
@@ -226,7 +226,7 @@ test('a push queued behind another reads STOP when its turn comes', async () => 
         setStop({ by: 'mod', now: at(5) });
         release();
         const [, b] = await Promise.all([first, second]);
-        assert.deepEqual(b, { ok: false, refused: 'STOP is on' });
+        assert.deepEqual(b, { ok: false, refused: 'All stop is on' });
       }, { onArrive: queue.onArrive });
     });
   } finally { p.cleanup(); }
@@ -247,7 +247,7 @@ test('STOP set while a merge waits on the host is seen before the merge', async 
         release();
         const answer = await merging;
         assert.equal(answer.ok, false);
-        assert.ok(answer.reasons.includes('STOP is on'), JSON.stringify(answer));
+        assert.ok(answer.reasons.includes('All stop is on'), JSON.stringify(answer));
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -268,7 +268,7 @@ test('STOP set while a pull request update waits for the adapter is seen before 
         await reach(atAdapter, updating);
         setStop({ by: 'mod', now: at(5) });
         release();
-        assert.deepEqual(await updating, { ok: false, refused: 'STOP is on' });
+        assert.deepEqual(await updating, { ok: false, refused: 'All stop is on' });
         assert.equal(updates, 0);
       }, { adapterFor: async () => { reached(); await held; return adapter; } });
     });
@@ -341,7 +341,7 @@ test('a caller\'s stop: false or bypass: false changes nothing; its true adds', 
         const clear = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
         assert.equal(clear.ok, true, JSON.stringify(clear));
         const stop = await client.merge({ project: 'o__p', number: 7, stop: true, bypass: false });
-        assert.ok(stop.reasons.includes('STOP is on'));
+        assert.ok(stop.reasons.includes('All stop is on'));
         const bypass = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: true });
         assert.ok(bypass.reasons.includes('the session is in bypass mode'));
         for (const junk of ['false', 0, null, 'no']) {
@@ -350,7 +350,7 @@ test('a caller\'s stop: false or bypass: false changes nothing; its true adds', 
         }
         setStop({ by: 'helper' });
         const under = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.ok(under.reasons.includes('STOP is on'));
+        assert.ok(under.reasons.includes('All stop is on'));
       });
     });
   } finally { p.cleanup(); }

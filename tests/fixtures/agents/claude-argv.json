@@ -165,7 +165,7 @@
     "argv": {
       "file": "claude",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -203,7 +203,7 @@
         "kind": "direct",
         "file": "claude"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "/plugins/wheelhouse",
       "tools": [
@@ -263,7 +263,7 @@
     "argv": {
       "file": "claude",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -298,7 +298,7 @@
         "kind": "direct",
         "file": "claude"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "/plugins/wheelhouse",
       "tools": [
@@ -473,7 +473,7 @@
     "argv": {
       "file": "claude",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -511,7 +511,7 @@
         "kind": "direct",
         "file": "claude"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "/plugins/wheelhouse",
       "tools": [
@@ -677,7 +677,7 @@
     "argv": {
       "file": "claude",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -712,7 +712,7 @@
         "kind": "direct",
         "file": "claude"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "/plugins/wheelhouse",
       "tools": [
@@ -871,7 +871,7 @@
     "argv": {
       "file": "claude",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -909,7 +909,7 @@
         "kind": "direct",
         "file": "claude"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "/plugins/wheelhouse",
       "tools": [
@@ -1060,7 +1060,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1087,7 +1087,7 @@
         "kind": "cmd",
         "file": "C:\\npm\\claude.cmd"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -1148,7 +1148,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode plan --model default --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode plan --model default --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1172,7 +1172,7 @@
         "kind": "cmd",
         "file": "C:\\npm\\claude.cmd"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -1322,7 +1322,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode dontAsk --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode dontAsk --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1349,7 +1349,7 @@
         "kind": "cmd",
         "file": "C:\\npm\\claude.cmd"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -1525,7 +1525,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1552,7 +1552,7 @@
         "kind": "cmd",
         "file": "C:\\npm\\claude.cmd"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -1693,7 +1693,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model default --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model default --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1717,7 +1717,7 @@
         "kind": "cmd",
         "file": "C:\\npm\\claude.cmd"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -1867,7 +1867,7 @@
         "/d",
         "/s",
         "/c",
-        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
+        "\"C:\\npm\\claude.cmd \"Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.\" --settings /fixture/home/projects/o__p/watcher/foreman-settings.json --permission-mode acceptEdits --model model-a --allowedTools Read \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/wake.js':*)\" \"Bash(node 'C:/plugins/wheelhouse/scripts/foreman/act.js':*)\" \"Skill(wheelhouse:foreman)\"\""
       ],
       "input": null,
       "verbatim": true,
@@ -1894,7 +1894,7 @@
         "kind": "cmd",
         "file": "C:\\npm\\claude.cmd"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -2055,7 +2055,7 @@
     "argv": {
       "file": "C:\\npm\\claude.exe",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -2093,7 +2093,7 @@
         "kind": "direct",
         "file": "C:\\npm\\claude.exe"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -2153,7 +2153,7 @@
     "argv": {
       "file": "C:\\npm\\claude.exe",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -2188,7 +2188,7 @@
         "kind": "direct",
         "file": "C:\\npm\\claude.exe"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -2347,7 +2347,7 @@
     "argv": {
       "file": "C:\\npm\\claude.exe",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -2385,7 +2385,7 @@
         "kind": "direct",
         "file": "C:\\npm\\claude.exe"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -2596,7 +2596,7 @@
     "argv": {
       "file": "C:\\npm\\claude.exe",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -2634,7 +2634,7 @@
         "kind": "direct",
         "file": "C:\\npm\\claude.exe"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -2784,7 +2784,7 @@
     "argv": {
       "file": "C:\\npm\\claude.exe",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -2819,7 +2819,7 @@
         "kind": "direct",
         "file": "C:\\npm\\claude.exe"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [
@@ -2978,7 +2978,7 @@
     "argv": {
       "file": "C:\\npm\\claude.exe",
       "args": [
-        "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+        "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
         "--settings",
         "/fixture/home/projects/o__p/watcher/foreman-settings.json",
         "--permission-mode",
@@ -3016,7 +3016,7 @@
         "kind": "direct",
         "file": "C:\\npm\\claude.exe"
       },
-      "prompt": "Wheelhouse foreman: you are the long-lived foreman of o__p. At each wake, follow the wheelhouse:foreman skill.",
+      "prompt": "Wheelhouse foreman: you are the long-lived Bosun of o__p. At each wake, follow the wheelhouse:foreman skill.",
       "settings": "/fixture/home/projects/o__p/watcher/foreman-settings.json",
       "pluginRoot": "C:\\plugins\\wheelhouse",
       "tools": [

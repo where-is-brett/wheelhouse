@@ -509,7 +509,7 @@ test('the mod\'s phoned "stop" is the stop-word hook\'s plain word', () => {
   };
   const mod = read('hooks/register.ts', 'STOP');
   const word = read('scripts/hooks/stop-word.js', 'STOP_WORD');
-  for (const text of ['stop', 'STOP', 'Stop.', 'stop!', 'stop!!', 'Stop.!', 'stop...', 'stop it', 'stopp', 'a stop', 'stop?']) {
+  for (const text of ['stop', 'STOP', 'Stop.', 'stop!', 'stop!!', 'Stop.!', 'stop...', 'stop it', 'stopp', 'a stop', 'stop?', 'all stop', 'All stop.', 'ALL  STOP', 'all stop it', 'allstop']) {
     assert.equal(mod.test(text), word.test(text), text);
   }
   assert.equal(mod.test('/stop'), false, 'a command is the stop-word hook\'s alone');

@@ -1,7 +1,7 @@
 // scripts/hooks/stop-word.js
-// The word "stop" typed as a whole prompt turns STOP on, in a Wheelhouse project. The app's
-// reminder blocks before the typed line are read past (own-words.js); a prompt that still holds a
-// reminder tag after them is not the word.
+// The words "stop" or "all stop" typed as a whole prompt, or /wheelhouse:stop or /wheelhouse:all-stop,
+// turn All stop on, in a Wheelhouse project. The app's reminder blocks before the typed line are read
+// past (own-words.js); a prompt that still holds a reminder tag after them is not the word.
 //
 // On an agent whose hooks only read (`writeVia: 'helper'`), STOP is set by the helper (/stop/set, `by: 'prompt'`,
 // ruling P5-18), never here. When the helper isn't answering (`helperUp: false`) or doesn't set it, nothing is
@@ -14,8 +14,8 @@ import { helperClient } from '../host/helper-client.js';
 import { projectForFolder } from '../lib/projects.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
-export const CONTEXT = 'STOP is on. Say in one or two lines what was in progress; lifting it is a card for the director.';
-const STOP_WORD = /^(?:stop[.!]*|\/(?:wheelhouse:)?stop\b.*)$/i;
+export const CONTEXT = 'All stop is on. Say in one or two lines what was in progress; lifting it is a card for the director.';
+const STOP_WORD = /^(?:(?:all[ \t]+)?stop[.!]*|\/(?:wheelhouse:)?(?:all-)?stop\b.*)$/i;
 
 export async function decide(input, { dir, projectOf: find = projectOf, writeVia = 'self', client, helperUp } = {}) {
   if (typeof input.prompt !== 'string') return undefined;

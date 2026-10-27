@@ -345,7 +345,7 @@ test('step 7 pins the front desk to what Claude Code\'s opus alias stands for, i
     assert.equal(w.bestAsked, 2);
     assert.deepEqual(w.aliases, [FRONT_DESK_ALIAS, MID_SIZED_ALIAS], 'never the strongest: setup asks nothing about it');
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, new RegExp(`the front desk runs on ${BEST_MODEL}\\b`));
+    assert.match(text, new RegExp(`the First Mate runs on ${BEST_MODEL}\\b`));
     assert.doesNotMatch(text, /strongest/);
     const done = await w.apply(planned.changes);
     assert.equal(done.ok, true, done.reason);
@@ -488,7 +488,7 @@ test('when Claude Code can\'t say what its most capable model is, step 7 goes on
     w.best = null;
     const planned = await w.plan();
     const text = composeCard({ ...planned.card, target: { step: 7, hash: planHash(planned.changes) } }).question.question;
-    assert.match(text, /the front desk's model is left as it is: Claude Code didn't say which model to use/);
+    assert.match(text, /the First Mate's model is left as it is: Claude Code didn't say which model to use/);
     assert.ok(!planned.changes.some((c) => c.key?.[0] === 'model'));
   });
 });

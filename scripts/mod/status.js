@@ -30,8 +30,8 @@ import { readSeen } from '../briefing/seen.js';
 import { SHOW_ME, verdict, sinceLine, askedSince } from '../lib/calm-words.js';
 
 const VERSION = 1;
-export const QUESTION_WAITS = 'A question from the build waits; the front desk will ask it';
-export const CARD_TO_MAKE = 'A card from the build waits; the front desk will make it and ask it';
+export const QUESTION_WAITS = 'A question from the build waits; the First Mate will ask it';
+export const CARD_TO_MAKE = 'A card from the build waits; the First Mate will make it and ask it';
 // The views the pane reads: the glance's, the reports and glossary, the open incidents, and the
 // build's records the front desk makes cards from.
 const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glossary', 'status', 'incidents', 'blockers', 'ideas',
@@ -39,7 +39,7 @@ const PANE_VIEWS = ['waiting', 'questions', 'work', 'features', 'reports', 'glos
 // The line of an approval card's set line, from which its preview is asked for.
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
 const NEVER_SYNCED = 'Nothing has been synced to this computer yet, so nothing below is current';
-const NO_INPUTS = 'The board\'s inputs couldn\'t be read this time';
+const NO_INPUTS = 'The Logbook\'s inputs couldn\'t be read this time';
 const NO_CLOCK = 'The pane\'s clock couldn\'t be read';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

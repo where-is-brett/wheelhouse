@@ -44,7 +44,7 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 
 **What it puts back or removes:**
 
-- Its jobs for the project stop: the foreman and its watcher.
+- Its jobs for the project stop: the Bosun and its watcher.
 - Locked, if you chose it, is taken off. It asks for your computer password.
 - Its settings, its configuration, its part of `CLAUDE.md` and the pinned kits come out of the project's files, by a pull request you merge (or straight from the folder, if setup's own commit never reached the host).
 - The changes setup made to this computer (the 30 days for transcripts, the usage counts, Claude Code's update channel and phone notifications) are put back, but only with the last project on this computer that uses Wheelhouse, since the others still need them. While another project here still uses the GitHub app, the app stays, and you get its installation page to untick this project's repository there.
@@ -61,7 +61,7 @@ Typing `/wheelhouse:uninstall` in a session on the project shows a card listing 
 - Branch protection on the host stays on.
 - Setup's journal stays in `~/.wheelhouse`, so what setup did stays on record, and so does uninstall's own record of how it went. So do the usage counts already gathered, which hold counts only; delete that folder yourself if you want them gone.
 - Your git history stays, setup's commit included.
-- The project's `.wheelhouse` folder stays, with the front desk's and the foreman's files in it, which uninstall never touches. So does the line setup added to keep that folder out of git, so its files don't show up as changes. If the folder isn't there when you remove Wheelhouse, that line comes out with setup's other changes.
+- The project's `.wheelhouse` folder stays, with the First Mate's and the Bosun's files in it, which uninstall never touches. So does the line setup added to keep that folder out of git, so its files don't show up as changes. If the folder isn't there when you remove Wheelhouse, that line comes out with setup's other changes.
 - git, and anything else setup installed with its official installer, stays on your computer.
 - Transcripts already removed by the 30 days can't come back.
 

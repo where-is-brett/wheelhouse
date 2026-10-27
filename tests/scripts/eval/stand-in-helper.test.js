@@ -91,7 +91,7 @@ test('the stand-in helper signs the records a run starts with, and the merge rou
   });
   try {
     const client = helperClient({ address: raised.address });
-    assert.match((await client.merge({ project: 'p', number: 1, stop: true })).refused, /STOP is on/);
+    assert.match((await client.merge({ project: 'p', number: 1, stop: true })).refused, /All stop is on/);
     assert.match((await client.merge({ project: 'p', number: 1, bypass: true })).refused, /bypass/);
     assert.match((await client.merge({ project: 'p', number: 1, approvalRequired: true })).refused, /no approval of ccccccc/);
     assert.match((await client.merge({ project: 'p', number: 1, touchesGuardrails: true })).refused, /no approval of ccccccc/);

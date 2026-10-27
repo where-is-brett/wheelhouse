@@ -331,7 +331,7 @@ test('a start STOP refuses just before its run records no level (review Minor 7)
     stopped: () => stop,
     windowsBuilds: () => { stop = true; return { level: 'ask', grants: [], guardedCommand: null }; },
   });
-  await assert.rejects(w.startFeature({ work: WORK, worktree: dir }), /STOP is on/);
+  await assert.rejects(w.startFeature({ work: WORK, worktree: dir }), /All stop is on/);
   assert.equal(fake.calls.length, 0);
   assert.deepEqual(raised.filter((r) => r.kind === 'level'), []);
   assert.equal(fs.existsSync(levelFile(P)), false);

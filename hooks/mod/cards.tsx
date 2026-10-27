@@ -27,7 +27,7 @@ const STOPPING = { plugin: 'wheelhouse', key: 'stopping' } as const
 export const WAIT = 'Wait for Claude to finish, or type stop'
 // A Shape 2 foreman's watcher lines that couldn't be handed to the foreman. NOT_HANDED, for a
 // prompt that couldn't be handed to the front desk, is in numbers.ts.
-export const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the foreman.'
+export const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the Bosun.'
 const LIFT = 'lift-stop'
 const WHY_OPEN = { plugin: 'wheelhouse', key: 'why' } as const
 const SUGGESTING = { plugin: 'wheelhouse', key: 'suggesting' } as const
@@ -172,9 +172,9 @@ async function pressStop($: EngineInterface, after: After) {
   await carry($, { cmd: 'stop', origin: 'pane' }, RECORDING, () => $.state.set(STOPPING, false), after)
 }
 
-// Lift STOP, carrying the start of the STOP the pane drew: the bridge lifts only that one.
+// Lift All stop, carrying the start of the All stop the pane drew: the bridge lifts only that one.
 async function pressLift($: EngineInterface, since: unknown, after: After) {
-  if (!(await claim($, { on: LIFT, label: 'Lift STOP' }))) return
+  if (!(await claim($, { on: LIFT, label: 'Lift All stop' }))) return
   await carry($, { cmd: 'go', origin: 'pane', since: typeof since === 'string' ? since : null }, RECORDING, () => release($), after)
 }
 
@@ -184,7 +184,7 @@ function labelsOf(card: Card): string[] {
   return [...new Set(given.map((b) => (isRecord(b) && typeof b.label === 'string' ? b.label : '')).filter((label) => label !== ''))]
 }
 
-// STOP's control, which the pane lays out: STOP while STOP is off, Lift STOP while it is on, or
+// All stop's control, which the pane lays out: All stop while it is off, Lift All stop while it is on, or
 // the word that the press is being recorded. `live` is false while HIDE_WHILE_BUSY holds every
 // button back.
 export async function drawStop($: EngineInterface, e: RenderInput<'Pane'>, model: PaneModel, pressing: Pressing, live: boolean, after: After) {
@@ -193,9 +193,9 @@ export async function drawStop($: EngineInterface, e: RenderInput<'Pane'>, model
   const stop = isRecord(model.stop) ? model.stop : {}
   if (stop.on === true) {
     if (pressing?.on === LIFT) return body(t, RECORDING)
-    if (pressing !== null) return footnote(t, 'Lift STOP')
+    if (pressing !== null) return footnote(t, 'Lift All stop')
     const since = stop.since
-    return filled(t, LIFT, 'Lift STOP', () => pressLift($, since, after))
+    return filled(t, LIFT, 'Lift All stop', () => pressLift($, since, after))
   }
   if ((await $.state.get(STOPPING)).value === true) return body(t, RECORDING)
   return stopButton(t, () => pressStop($, after))

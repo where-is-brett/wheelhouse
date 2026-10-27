@@ -13,7 +13,7 @@ const SESSION = '0b6a4e1c-4f3a-4d7e-9a51-2f3c8d9e1a77'
 const PANE_ID = 'wheelhouse'
 const TICK_MS = 15000
 const TICK_ASK_MS = 50000
-const STOP_HALTS = 'Halts every builder at once.'
+const STOP_HALTS = 'Halts the whole Crew at once.'
 // 03:00:50 UTC on 19 October 2026, so a tick fifteen seconds on reads a minute later.
 const START = Date.parse('2026-10-19T03:00:50.000Z')
 const RUN_RESULT = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -47,7 +47,7 @@ const model = (glance: string) => ({
   building: [{ text: 'Building the banner, slice 1 of 3', see: 'You\'ll see it tomorrow' }],
   health: [
     { level: 'watch', text: 'CI is failing on main', of: null },
-    { level: 'stop', text: 'STOP is on, since 19 October 2026', of: 'stop' },
+    { level: 'stop', text: 'All stop is on, since 19 October 2026', of: 'stop' },
   ],
   usage: 'This week: 34% of the allowance',
   finished: [],
@@ -122,7 +122,7 @@ function world(on: any, answer: (request: any) => Reply) {
 const timeOf = (ms: number) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(11, 16)
 
 // The first line drawn when nothing is out of date: the STOP is on group's title, since STOP is on.
-const FIRST_LINE = 'STOP is on'
+const FIRST_LINE = 'All stop is on'
 
 const mount = ($: any, surface: string) => $.ui.mount({ plugin: 'wheelhouse', surface, component: 'Pane', requestId: PANE_ID, props: PANE_PROPS })
 const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
@@ -179,7 +179,7 @@ test('the pane draws each card\'s text as plain text, one card at a time', async
     // The STOP is on group, the verdict and its since line, the card, the next card's subject,
     // Next, then each group in turn and the foot.
     expect(drawn).toEqual([
-      'STOP is on',
+      'All stop is on',
       'Since 19 October 2026',
       'Only you can lift it.',
       'Two things need you. Nothing is broken.',
@@ -592,7 +592,7 @@ test('the stale line comes by itself while a tick hangs', async ($, on) => {
 })
 
 // What /wheelhouse says where the session has no pane of its own.
-const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.'
+const NOT_HERE = 'This pane lives in the First Mate\'s chat. Type /wheelhouse there.'
 const SETTING_UP = 'Setup is still running. This pane opens when it finishes.'
 const NO_PROJECT = 'This folder isn\'t a Wheelhouse project, so it has no pane'
 
@@ -630,7 +630,7 @@ for (const surface of SURFACES) {
     expect(result).toMatchObject({ text: 'Wheelhouse' })
     expect(seen.opens).toEqual([{ id: PANE_ID, title: 'Wheelhouse' }])
     const ui = await mount($, surface)
-    expect(await texts(ui)).toEqual(['STOP', STOP_HALTS, 'Reading how the project stands…'])
+    expect(await texts(ui)).toEqual(['All stop', STOP_HALTS, 'Reading how the project stands…'])
     await clock.advance(60000)
     await ui.unmount()
   })
@@ -647,7 +647,7 @@ for (const surface of SURFACES) {
       await clock.settle()
       await $.command.run({ command: 'wheelhouse', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
       const ui = await mount($, surface)
-      expect(await texts(ui)).toEqual(['STOP', STOP_HALTS, 'Reading how the project stands…'])
+      expect(await texts(ui)).toEqual(['All stop', STOP_HALTS, 'Reading how the project stands…'])
       expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
       await clock.advance(20000)
       expect(await texts(ui)).toEqual([says])

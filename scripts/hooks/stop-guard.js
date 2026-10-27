@@ -30,7 +30,7 @@ export const HALT_TOOLS = tools.halt;
 // phone. It only tells them. It is kept out of READ_TOOLS; the lineage hold lets it through separately (lineage-hold.js).
 export const NOTIFY_TOOLS = tools.notify;
 export const SANDBOX_NEEDED = 'Locked needs the sandbox on in this project\'s settings';
-export const DENIED = 'STOP is on: only reading, reporting and the runbook carry on';
+export const DENIED = 'All stop is on: only reading, reporting and the runbook carry on';
 
 // The plugin's folder, from this script's own place: scripts/hooks/ is two down.
 const SELF = fileURLToPath(import.meta.url);

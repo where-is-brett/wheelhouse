@@ -208,7 +208,7 @@ test('state/write and state/views work for a Lean project with no connection', a
 
     // STOP holds a Lean write back, and reading carries on.
     assert.equal((await h.client.stop({})).ok, true);
-    assert.deepEqual(await h.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'later' } }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await h.client.state.write({ project: PROJECT, kind: 'note', data: { text: 'later' } }), { ok: false, refused: 'All stop is on' });
     const read = await h.client.state.views({ project: PROJECT });
     assert.equal(read.ok, true);
     assert.equal(read.stop, true);

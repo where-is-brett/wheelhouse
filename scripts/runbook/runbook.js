@@ -77,7 +77,7 @@ export async function runbook({ argv, cwd = path.resolve(process.cwd()), client 
   try {
     if (args.step === 1) {
       const answer = await client.stop({});
-      return { code: answer?.ok === true ? 0 : 1, text: answer?.ok === true ? 'STOP is on. Nothing more is written to the host until the director lifts it.' : said(answer) };
+      return { code: answer?.ok === true ? 0 : 1, text: answer?.ok === true ? 'All stop is on. Nothing more is written to the host until the director lifts it.' : said(answer) };
     }
     // Inside the sandbox ~/.wheelhouse cannot be read, so the helper places the project from the folder.
     const base = { cwd };

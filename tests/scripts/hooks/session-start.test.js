@@ -9,7 +9,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  importedLine, importFailedLine, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
+  importedLine, importFailedLine, NOT_SET_UP, TITLES, sessionTitle, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { cardProblems } from '../../../scripts/hooks/card-check.js';
@@ -240,7 +240,7 @@ test('STOP and damaged state come first in the reload', async () => {
     const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read', 'an event with a repeated id: e1'], waiting: [{ id: 'c1', data: { title: 'A card' } }] } });
     const out = await run(f, { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-18T01:00:00.000Z' }) });
     const lines = text(out).split('\n');
-    assert.equal(lines[0], 'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)');
+    assert.equal(lines[0], 'All stop is on (set by prompt at 2026-10-18T01:00:00.000Z)');
     assert.equal(lines[1], 'Damaged state:');
     assert.match(lines[2], /bad\.json/);
     assert.match(lines[3], /repeated id/);
@@ -465,7 +465,7 @@ test('the Windows and Unattended lines come before the lists, so a cut reload ke
     const t = text(await run(f, { platform: 'win32', stopState: () => ({ on: true, by: 'the director', at: '2026-10-19T01:00:00.000Z' }) }));
     assert.equal(t.length, 9000, 'cut');
     const lines = t.split('\n');
-    assert.match(lines[0], /^STOP is on/);
+    assert.match(lines[0], /^All stop is on/);
     assert.deepEqual(lines.slice(1, 3), [WINDOWS_LINE, UNATTENDED_LINE]);
   });
 });
@@ -478,7 +478,7 @@ test('a computer id that can\'t be read leaves the rest of the reload, and shows
     const f = fake({ views: { ...VIEWS, waiting: [{ id: 'c1', data: { title: 'T' } }] } });
     f.client.health = async () => ({ ok: true });
     const t = text(await run(f, { platform: 'win32', stopState: () => ({ on: true, by: 'the director', at: '2026-10-19T01:00:00.000Z' }) }));
-    assert.match(t, /^STOP is on/);
+    assert.match(t, /^All stop is on/);
     assert.ok(t.includes(WINDOWS_LINE));
     assert.ok(!t.includes(UNATTENDED_LINE));
     assert.match(t, /c1: T/);
@@ -518,7 +518,7 @@ test('the STOP line is made one short line', async () => {
     const t = text(await run(fake(), { stopState: () => ({ on: true, by: `a\nb${'z'.repeat(500)}`, at: 'x\ny' }) }));
     const first = t.split('\n')[0];
     assert.ok(first.length < 500);
-    assert.match(first, /^STOP is on \(set by a b/);
+    assert.match(first, /^All stop is on \(set by a b/);
     assert.match(first, /at x y\)$/);
   });
 });
@@ -872,8 +872,8 @@ test('the session start refreshes this computer\'s settings in a project past st
 // director (rulings R72, R73).
 test('in a registered folder whose setup journal can\'t be read, the session start starts no watcher and tells the front desk why', async () => {
   await withHome(async (home) => {
-    assert.equal(FOREMAN_HELD_NEWER, 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.');
-    assert.equal(FOREMAN_HELD_UNREADABLE, 'The foreman is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.');
+    assert.equal(FOREMAN_HELD_NEWER, 'The Bosun is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.');
+    assert.equal(FOREMAN_HELD_UNREADABLE, 'The Bosun is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.');
     const folder = fs.realpathSync.native(tempFolder('wh-unreadable journal '));
     fs.mkdirSync(path.join(folder, '.git'));
     writeProject(P, { folder, remoteUrl: 'https://example.com/o/p.git', host: 'github', repo: 'o/p', connection: {} });
@@ -969,12 +969,12 @@ test('the session start leaves the watcher alone in Shape 2, and fails open when
 
 test('in the project\'s main folder the reload names the front desk\'s playbook, after STOP and damaged state', async () => {
   await withHome(async () => {
-    assert.equal(FRONT_DESK_LINE, 'This is the front desk. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.');
+    assert.equal(FRONT_DESK_LINE, 'This is the First Mate. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.');
     const lines = text(await run(fake(), { env: {} })).split('\n');
     assert.equal(lines.filter((l) => l === FRONT_DESK_LINE).length, 1);
     const f = fake({ views: { ...VIEWS, damaged: ['events/bad.json could not be read'] } });
     const stopped = text(await run(f, { env: {}, stopState: () => ({ on: true, by: 'prompt', at: 'now' }) })).split('\n');
-    assert.deepEqual(stopped.slice(0, 4), ['STOP is on (set by prompt at now)', 'Damaged state:', '- events/bad.json could not be read', FRONT_DESK_LINE]);
+    assert.deepEqual(stopped.slice(0, 4), ['All stop is on (set by prompt at now)', 'Damaged state:', '- events/bad.json could not be read', FRONT_DESK_LINE]);
   });
 });
 
@@ -986,14 +986,14 @@ test('a feature worktree and the foreman are not pointed at the front desk\'s pl
     fs.mkdirSync(gitdir, { recursive: true });
     fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
     fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
-    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree })), /front desk/);
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree })), /First Mate/);
     // Nor when a front-desk role was recorded for the session earlier: the worktree decides.
     recordRole('s-moved', 'front-desk');
-    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree, session_id: 's-moved' })), /front desk/);
-    assert.doesNotMatch(text(await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } })), /front desk/);
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { cwd: tree, session_id: 's-moved' })), /First Mate/);
+    assert.doesNotMatch(text(await run(fake(), { env: { WHEELHOUSE_ROLE: 'foreman' } })), /First Mate/);
     // A foreman known from its first prompt, as the board-context hook recorded it, after a compaction.
     recordRole('s-foreman', 'foreman');
-    assert.doesNotMatch(text(await run(fake(), { env: {} }, { session_id: 's-foreman' })), /front desk/);
+    assert.doesNotMatch(text(await run(fake(), { env: {} }, { session_id: 's-foreman' })), /First Mate/);
   });
 });
 
@@ -1028,7 +1028,7 @@ test('in the main folder the session start keeps .wheelhouse/ out of git, once, 
     const listed = () => (fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8').split('\n').filter((l) => l.trim() === '.wheelhouse/').length : 0);
     const inMain = { projectOf: () => ({ project: P, record: { folder: main } }), env: {} };
     assert.equal(listed(), 0);
-    assert.match(text(await run(fake(), inMain, { cwd: main })), /This is the front desk/);
+    assert.match(text(await run(fake(), inMain, { cwd: main })), /This is the First Mate/);
     assert.equal(listed(), 1, 'added to the main checkout\'s local exclusions');
     await run(fake(), inMain, { cwd: main });
     assert.equal(listed(), 1, 'a second start does not add it again');
@@ -1053,7 +1053,7 @@ test('in the main folder the session start keeps .wheelhouse/ out of git, once, 
     fs.rmSync(otherExclude);
     fs.mkdirSync(otherExclude);
     const out = text(await run(fake(), { projectOf: () => ({ project: P, record: { folder: other } }), env: {} }, { cwd: other }));
-    assert.match(out, /This is the front desk/);
+    assert.match(out, /This is the First Mate/);
     assert.ok(fs.statSync(otherExclude).isDirectory());
   });
 });
@@ -1080,7 +1080,7 @@ test('an installed Superpowers file that differs raises the warning and writes t
 
     fixture.put({ 'skills/brainstorming/SKILL.md': 'brainstorm, changed\n', LICENSE: 'another licence\n' });
     const lines = text(await lineageRun(f, fixture, folder, stop)).split('\n');
-    assert.equal(lines[0], 'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)');
+    assert.equal(lines[0], 'All stop is on (set by prompt at 2026-10-18T01:00:00.000Z)');
     assert.equal(lines[1], LINEAGE_LINE('skills/brainstorming, LICENSE'), 'first after STOP');
     assert.equal(lines[2], 'Damaged state:');
     const held = JSON.parse(fs.readFileSync(holdFile(P), 'utf8'));
@@ -1290,7 +1290,7 @@ test('on Windows under STOP, the lineage hold line comes first after STOP, then 
     const stop = { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-18T01:00:00.000Z' }), now: () => new Date('2026-10-19T02:00:00.000Z') };
     const lines = text(await lineageRun(f, fixture, folder, { ...stop, platform: 'win32' })).split('\n');
     assert.deepEqual(lines.slice(0, 4), [
-      'STOP is on (set by prompt at 2026-10-18T01:00:00.000Z)', LINEAGE_LINE('LICENSE'), WINDOWS_LINE, UNATTENDED_LINE,
+      'All stop is on (set by prompt at 2026-10-18T01:00:00.000Z)', LINEAGE_LINE('LICENSE'), WINDOWS_LINE, UNATTENDED_LINE,
     ]);
   });
 });
@@ -1390,7 +1390,7 @@ test('the next session start resumes at the first unfinished step', async () => 
     // STOP and a helper that could not start are said first.
     const stopped = await setupStart(fake({ startsUp: false }), folder, { stopState: () => ({ on: true, by: 'prompt', at: '2026-10-19T04:00:00.000Z' }) });
     assert.deepEqual(withoutSheet(stopped).split('\n'), [
-      'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
+      'All stop is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       NO_HELPER,
       partWay(4, 'Three questions'),
     ]);
@@ -1620,7 +1620,7 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
       background: async () => ({ receiver: 'running', weekly: 'not-due' }), lineage: MATCHED, ...windows,
     });
     const lines = text(out).split('\n');
-    assert.deepEqual(lines.slice(0, 3), ['STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)', WINDOWS_LINE, UNATTENDED_LINE], lines.join('\n'));
+    assert.deepEqual(lines.slice(0, 3), ['All stop is on (set by prompt at 2026-10-19T04:00:00.000Z)', WINDOWS_LINE, UNATTENDED_LINE], lines.join('\n'));
     assert.ok(lines.includes(STEP_4), lines.join('\n'));
     assert.ok(!lines.includes(FRONT_DESK_LINE), lines.join('\n'));
     // No project record yet: setup's short reload, with no Windows lines.
@@ -1631,7 +1631,7 @@ test('on Windows, a registered folder being set up gets the Windows lines straig
       pluginRoot: PLUGIN_ROOT, client: g.client, spawn: g.spawn, projectOf: () => null, pause: async () => {}, startWaitMs: 200, ...windows,
     });
     assert.deepEqual(withoutSheet(short).split('\n'), [
-      'STOP is on (set by prompt at 2026-10-19T04:00:00.000Z)',
+      'All stop is on (set by prompt at 2026-10-19T04:00:00.000Z)',
       partWay(1, 'Install'),
     ]);
   });
@@ -1855,5 +1855,34 @@ test('a usage card is handed out only once the helper has taken its offer, since
     const out = await run(f, { columnsReady: () => ['lean'], now: () => new Date(USAGE_NOW), allowance: weekly(80) });
     assert.equal(usageLines(out).length, 0);
     assert.deepEqual(kept(P).filter((r) => r.body?.event?.kind === 'usage-card' || r.body?.kind === 'usage-card'), [], 'not kept, so the card is offered at a later start');
+  });
+});
+
+test('a session is titled by its role when it starts afresh, and keeps its own title on a resume', async () => {
+  await withHome(async (home) => {
+    const f = fake();
+    const titleOf = async (extra = {}, input = {}) => (await run(f, extra, { source: 'startup', ...input }))?.hookSpecificOutput?.sessionTitle;
+    assert.equal(await titleOf(), TITLES.firstMate);
+    assert.equal(await titleOf({ env: { WHEELHOUSE_ROLE: 'foreman' } }), TITLES.bosun);
+    const tree = path.join(home, 'tree');
+    const gitdir = path.join(home, 'main', '.git', 'worktrees', 'tree');
+    fs.mkdirSync(tree, { recursive: true });
+    fs.mkdirSync(gitdir, { recursive: true });
+    fs.writeFileSync(path.join(tree, '.git'), `gitdir: ${gitdir}\n`);
+    fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/feature/gift-cards\n');
+    assert.equal(await titleOf({}, { cwd: tree }), 'Wheelhouse · Crew: gift-cards');
+    assert.equal(await titleOf({}, { source: 'resume' }), undefined);
+    assert.equal(await titleOf({}, { source: 'compact' }), undefined);
+    assert.equal(await decide({ cwd: '/x', source: 'startup' }, { client: f.client, spawn: f.spawn, projectOf: () => null }), undefined, 'nothing outside a project');
+    assert.equal(await titleOf({ writeVia: 'helper', helperUp: false }), undefined, 'none for an agent whose hooks only read');
+  });
+});
+
+test('a folder being set up is titled Setup', async () => {
+  await withHome(async () => {
+    const folder = tempFolder('wh-setup-');
+    startRun({ folder });
+    assert.equal(sessionTitle({ cwd: folder, source: 'startup' }, { projectOf: () => null }), TITLES.setup);
+    assert.equal(sessionTitle({ cwd: folder, source: 'startup' }, { projectOf: () => ({ project: P }) }), TITLES.setup, 'a project setup is still finishing');
   });
 });

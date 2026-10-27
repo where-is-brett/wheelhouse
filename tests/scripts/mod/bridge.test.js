@@ -134,7 +134,7 @@ test('a reply from composer or bridge is recorded; from sdk or peer it is not', 
 
   for (const origin of ['sdk', 'peer', 'Composer', 'hook', undefined, null, ['composer'], { origin: 'composer' }]) {
     const answer = await handle({ cmd: 'reply', origin, text: 'K7QD Approve', cwd: '/work' }, deps({ replyRecord, client }));
-    assert.deepEqual(answer, { ok: false, says: 'Only the director\'s own messages count' });
+    assert.deepEqual(answer, { ok: false, says: 'Only the Captain\'s own messages count' });
   }
   assert.equal(calls.length, 2);
 
@@ -161,7 +161,7 @@ test('/wheelhouse-go from the director lifts STOP with a signed record, kept bef
       liftStop();
     };
     const answer = await handle({ cmd: 'go', origin, cwd: '/work' }, deps({ client, liftStop: lift, loadInputs: building(2, 1) }));
-    assert.deepEqual(answer, { ok: true, says: 'STOP is off. In progress: 2 features building.' });
+    assert.deepEqual(answer, { ok: true, says: 'All stop is off. In progress: 2 features building.' });
     assert.equal(stopState().on, false);
 
     assert.equal(seen.length, 1);
@@ -182,7 +182,7 @@ test('/wheelhouse-go from the director lifts STOP with a signed record, kept bef
   // Kept when the helper doesn't take it, for the next session start to send.
   setStop({ by: 'prompt', now: () => NOW });
   const refused = await handle({ cmd: 'go', origin: 'composer', cwd: '/work' }, deps({ client: fakeClient({ takes: false }), loadInputs: building(1) }));
-  assert.deepEqual(refused, { ok: true, says: 'STOP is off. In progress: 1 feature building.' });
+  assert.deepEqual(refused, { ok: true, says: 'All stop is off. In progress: 1 feature building.' });
   assert.equal(pendingFiles().length, 1);
   fs.rmSync(pendingDir(P), { recursive: true, force: true });
 
@@ -190,12 +190,12 @@ test('/wheelhouse-go from the director lifts STOP with a signed record, kept bef
   for (const loadInputs of [building(0, 2), async () => ({ none: 'This folder isn\'t part of a Wheelhouse project' }), async () => { throw new Error('no'); }]) {
     setStop({ by: 'prompt', now: () => NOW });
     const answer = await handle({ cmd: 'go', origin: 'composer', cwd: '/work' }, deps({ client: fakeClient(), loadInputs }));
-    assert.deepEqual(answer, { ok: true, says: 'STOP is off. No build work is in progress.' });
+    assert.deepEqual(answer, { ok: true, says: 'All stop is off. No build work is in progress.' });
   }
 
   // STOP off: nothing to lift, and nothing signed.
   const client = fakeClient();
-  assert.deepEqual(await handle({ cmd: 'go', origin: 'composer', cwd: '/work' }, deps({ client })), { ok: true, says: 'STOP isn\'t on.' });
+  assert.deepEqual(await handle({ cmd: 'go', origin: 'composer', cwd: '/work' }, deps({ client })), { ok: true, says: 'All stop isn\'t on.' });
   assert.equal(client.calls.record.length, 0);
   assert.deepEqual(pendingFiles(), []);
 }));
@@ -207,7 +207,7 @@ test('/wheelhouse-go from any other origin leaves STOP on', () => withHome(async
   let lifted = 0;
   for (const origin of ['sdk', 'peer', 'hook', '', undefined, 'COMPOSER', ['bridge']]) {
     const answer = await handle({ cmd: 'go', origin, cwd: '/work' }, deps({ client, liftStop: () => { lifted += 1; } }));
-    assert.deepEqual(answer, { ok: false, says: 'Only the director can lift STOP' });
+    assert.deepEqual(answer, { ok: false, says: 'Only the Captain can lift All stop' });
   }
   assert.equal(lifted, 0);
   assert.equal(stopState().on, true);
@@ -223,10 +223,10 @@ test('/wheelhouse-go from any other origin leaves STOP on', () => withHome(async
 test('stop from the phone sets STOP by the mod', () => withHome(async () => {
   for (const origin of ['composer', 'sdk', 'peer', undefined]) {
     const answer = await handle({ cmd: 'stop', origin, cwd: '/work' }, deps());
-    assert.deepEqual(answer, { ok: false, says: 'Only a message from your phone or a press in the pane sets STOP here' });
+    assert.deepEqual(answer, { ok: false, says: 'Only a message from your phone or a press in the pane sets All stop here' });
     assert.equal(stopState().on, false);
   }
-  assert.deepEqual(await handle({ cmd: 'stop', origin: 'bridge', cwd: '/work' }, deps()), { ok: true, says: 'STOP is on.' });
+  assert.deepEqual(await handle({ cmd: 'stop', origin: 'bridge', cwd: '/work' }, deps()), { ok: true, says: 'All stop is on.' });
   assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
 }));
 
@@ -259,10 +259,10 @@ test('press is refused for any origin but pane; stop and go accept pane', () => 
   assert.equal((await handle({ ...request, origin: 'pane' }, deps({ pressCard: prompt }))).ok, true);
 
   // The pane sets STOP, and lifts it with a signed record, answering what is in progress.
-  assert.deepEqual(await handle({ cmd: 'stop', origin: 'pane', cwd: '/work' }, deps()), { ok: true, says: 'STOP is on.' });
+  assert.deepEqual(await handle({ cmd: 'stop', origin: 'pane', cwd: '/work' }, deps()), { ok: true, says: 'All stop is on.' });
   assert.deepEqual(stopState(), { on: true, by: 'mod', at: NOW.toISOString() });
   const go = await handle({ cmd: 'go', origin: 'pane', cwd: '/work', since: NOW.toISOString() }, deps({ client, loadInputs: building(1) }));
-  assert.deepEqual(go, { ok: true, says: 'STOP is off. In progress: 1 feature building.' });
+  assert.deepEqual(go, { ok: true, says: 'All stop is off. In progress: 1 feature building.' });
   assert.equal(stopState().on, false);
   assert.equal(client.calls.record.length, 1);
   assert.equal(client.calls.record[0].event.data.action, 'lift-stop');
@@ -281,11 +281,11 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /wh
   for (const since of [undefined, null, 5, '', '2026-10-19T03:00:00.000Z', NOW.toISOString()]) {
     const answer = await goFromPane(since);
     assert.equal(answer.ok, false, String(since));
-    assert.match(answer.says, /STOP stays on/, String(since));
+    assert.match(answer.says, /All stop stays on/, String(since));
     assert.doesNotMatch(answer.says, /\n/);
   }
-  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it' });
-  assert.deepEqual(await goFromPane('2026-10-19T03:00:00.000Z'), { ok: false, says: 'That isn\'t the STOP the pane showed, so STOP stays on; look at the pane again' });
+  assert.deepEqual(await goFromPane(undefined), { ok: false, says: 'The pane didn\'t say which All stop it showed, so All stop stays on; type /wheelhouse-go to lift it' });
+  assert.deepEqual(await goFromPane('2026-10-19T03:00:00.000Z'), { ok: false, says: 'That isn\'t the All stop the pane showed, so All stop stays on; look at the pane again' });
   assert.equal(lifted, 0);
   assert.equal(stopState().on, true);
   assert.equal(client.calls.record.length, 0);
@@ -301,7 +301,7 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /wh
 
   // The STOP the pane drew is lifted.
   setStop({ by: 'prompt', now: () => new Date(SHOWN) });
-  assert.deepEqual(await goFromPane(SHOWN), { ok: true, says: 'STOP is off. In progress: 1 feature building.' });
+  assert.deepEqual(await goFromPane(SHOWN), { ok: true, says: 'All stop is off. In progress: 1 feature building.' });
   assert.equal(stopState().on, false);
   assert.equal(client.calls.record.length, 1);
 
@@ -309,7 +309,7 @@ test('Lift STOP on the pane lifts only the STOP the pane drew, by its start; /wh
   for (const [origin, since] of [['composer', undefined], ['bridge', '2026-10-19T03:00:00.000Z']]) {
     setStop({ by: 'prompt', now: () => new Date(SHOWN) });
     const answer = await handle({ cmd: 'go', origin, cwd: '/work', ...(since === undefined ? {} : { since }) }, deps({ client, loadInputs: building(1) }));
-    assert.deepEqual(answer, { ok: true, says: 'STOP is off. In progress: 1 feature building.' }, origin);
+    assert.deepEqual(answer, { ok: true, says: 'All stop is off. In progress: 1 feature building.' }, origin);
   }
 }));
 
@@ -364,7 +364,7 @@ test('a request it cannot read answers ok false and exits 0', () => withHome(asy
   // A request it can read, through the process: a phoned stop.
   const stop = run(JSON.stringify({ cmd: 'stop', origin: 'bridge', cwd: home }));
   assert.equal(stop.status, 0);
-  assert.deepEqual(JSON.parse(stop.stdout), { ok: true, says: 'STOP is on.' });
+  assert.deepEqual(JSON.parse(stop.stdout), { ok: true, says: 'All stop is on.' });
 
   // A throw inside is an answer too.
   const thrown = await handle({ cmd: 'stop', origin: 'bridge' }, deps({ setStop: () => { throw new Error('disk'); } }));
@@ -388,7 +388,7 @@ test('run where the signing key cannot be read, it signs nothing and says so', (
     const client = fakeClient();
     let lifted = 0;
     const answer = await handle({ cmd: 'go', origin: 'composer', cwd: '/work' }, deps({ client, liftStop: () => { lifted += 1; } }));
-    assert.deepEqual(answer, { ok: false, says: 'Wheelhouse couldn\'t sign that here, so STOP stays on' });
+    assert.deepEqual(answer, { ok: false, says: 'Wheelhouse couldn\'t sign that here, so All stop stays on' });
     assert.equal(stopState().on, true);
     assert.equal(lifted, 0);
     assert.deepEqual(pendingFiles(), []);
@@ -688,10 +688,10 @@ test('the model is written to status.json before the tick answers', () => withHo
 test('STOP set from the phone shows in the next tick\'s model', () => withHome(async (home) => {
   const repo = registered(home);
   assert.equal((await handle(tickOf(repo), live())).pane.stop.on, false);
-  assert.deepEqual(await handle({ cmd: 'stop', origin: 'bridge', cwd: repo }, live()), { ok: true, says: 'STOP is on.' });
+  assert.deepEqual(await handle({ cmd: 'stop', origin: 'bridge', cwd: repo }, live()), { ok: true, says: 'All stop is on.' });
   const next = await handle(tickOf(repo), live());
   assert.deepEqual(next.pane.stop, { on: true, since: NOW.toISOString() });
-  assert.match(next.glance, /STOP on/);
+  assert.match(next.glance, /All stop on/);
 }));
 
 test('in the terminal with Wheelhouse\'s status line set, the tick gives no status', () => withHome(async (home) => {
@@ -1047,7 +1047,7 @@ test('a pane origin is the only one the bridge takes for why, suggest and settin
   const spy = (name, answer) => async (args) => { calls.push([name, args]); return answer; };
   const extra = {
     whyCard: spy('why', { made: true }),
-    suggestCard: spy('suggest', { made: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] }),
+    suggestCard: spy('suggest', { made: true, says: 'Sent to the First Mate. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] }),
     pressSetting: spy('setting', { made: true, says: 'Pace is now 1, for this project' }),
   };
   const requests = [
@@ -1065,7 +1065,7 @@ test('a pane origin is the only one the bridge takes for why, suggest and settin
 
   assert.deepEqual(await handle({ ...requests[0], origin: 'pane' }, deps(extra)), { ok: true });
   const suggested = await handle({ ...requests[1], origin: 'pane' }, deps(extra));
-  assert.deepEqual(suggested, { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] });
+  assert.deepEqual(suggested, { ok: true, says: 'Sent to the First Mate. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggested a change on card 1 (c): x'] });
   assert.deepEqual(JSON.parse(lineOf(suggested)).submit, suggested.submit);
   assert.equal((await handle({ ...requests[2], origin: 'pane' }, deps(extra))).ok, true);
   assert.deepEqual(calls.map(([name, args]) => [name, args.project]), [['why', P], ['suggest', P], ['setting', P]]);

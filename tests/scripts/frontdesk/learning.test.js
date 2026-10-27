@@ -84,6 +84,14 @@ test('a concept is proposed as known after three cards on different days without
   });
 });
 
+test('a renamed starter term counts under its new name, and a setting under its old name keeps it known', async () => {
+  await inHome(async () => {
+    const events = [...decided(day(10), day(10), ['the foreman']), ...decided(day(11), day(11), ['the Bosun']), ...decided(day(12), day(12), ['the Bosun'])];
+    assert.deepEqual(conceptProposals(events, profileOf(), { now: when(day(13)) }), [{ concept: 'the-bosun', known: true, confirm: true }]);
+    assert.deepEqual(conceptProposals(events, profileOf({ settings: { 'known:the-foreman': true } }), { now: when(day(13)) }), []);
+  });
+});
+
 test('three cards in one visit do not make a concept known', async () => {
   await inHome(async () => {
     const events = [...decided(day(10)), ...decided(day(10, 10)), ...decided(day(10, 20)), ...decided(day(10, 30))];

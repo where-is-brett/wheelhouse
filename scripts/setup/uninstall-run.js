@@ -444,7 +444,7 @@ export async function applyUninstall({
       if (afterFiles(entry)) keepCommit();
       const closing = firstKeyFile !== -1 && i > firstKeyFile;
       if (closing) pastKeys = true;
-      if (entry.put !== 'stop' && !closing && stopped()) halt('STOP came on, so uninstall stopped here; once STOP is lifted, ask for uninstall\'s plan again');
+      if (entry.put !== 'stop' && !closing && stopped()) halt('All stop came on, so uninstall stopped here; once All stop is lifted, ask for uninstall\'s plan again');
       if (closing && ['remove', 'remove-empty'].includes(entry.put)) {
         try {
           removeOne(entry);
@@ -466,7 +466,7 @@ export async function applyUninstall({
           }
           const got = entry.what === 'receiver' ? await o.stopReceiver()
             : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
-          const name = { foreman: 'The foreman', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
+          const name = { foreman: 'The Bosun', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
           say(got.stopped ? `${name} is stopped.` : `${name}: ${got.why}.`);
           break;
         }
@@ -517,7 +517,7 @@ export async function applyUninstall({
               ?? await (await o.adapterFor({ host: record.host, repo: record.repo, base: record.connection?.baseUrl })).openPr({
                 head: UNINSTALL_BRANCH, base: entry.branch, title: UNINSTALL_TITLE, body: `${UNINSTALL_BODY}${entry.archive?.moves?.length > 0 ? ARCHIVE_BODY : ''}`,
               });
-            mark(entry.ids, true, `taken out by pull request ${pr.number}, for the director to merge`);
+            mark(entry.ids, true, `taken out by pull request ${pr.number}, for you to merge`);
             say(`Pull request ${pr.number} takes setup's files and pins out of ${entry.branch}: merge it on ${hostName(record.host)}. Once it is merged, Wheelhouse's checks no longer guard this project; protection stays on.`);
             for (const line of archiveSays(entry.archive ?? null)) say(line);
             await page('the pull request', pr.url);
@@ -679,7 +679,7 @@ export async function runUninstall([folder, hash, clickedAt, deadlineText, userH
     exit(1);
   }, tickMs);
   try {
-    if (stopState().on) return stop('Uninstall stopped: STOP is on, so nothing was changed. Lift STOP first, then ask for uninstall\'s plan again.');
+    if (stopState().on) return stop('Uninstall stopped: All stop is on, so nothing was changed. Lift All stop first, then ask for uninstall\'s plan again.');
     const plan = await uninstallPlan({ folder, userHome, platform, run });
     if (plan.hash !== hash) return stop(`Uninstall stopped: ${UNINSTALL_CHANGED}. Nothing was changed.`);
     const done = await applyUninstall({ folder, plan, now, userHome, platform, run, fetch, ops, stopped: () => stopState().on || expired });

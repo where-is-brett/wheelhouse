@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
-  approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
+  approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE,
   uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine,
 } from '../../../scripts/state/card-lines.js';
@@ -39,6 +39,23 @@ test('setLineOf finds one set line and refuses a card with two', () => {
   assert.equal(setLineOf(`${approvalLine(12, FULL)}\n${LIFT_STOP}`), null);
   assert.equal(setLineOf(`${LIFT_STOP}\n${LIFT_STOP}`), null);
   assert.equal(setLineOf(undefined), null);
+});
+
+test('the Lift All stop line is in the words the director sees, and a card made with the earlier STOP words still reads as one', () => {
+  assert.equal(LIFT_STOP, 'Lift All stop and let the agents carry on');
+  assert.equal(LIFT_STOP_EARLIER, 'Lift STOP and let the agents carry on');
+  assert.equal(LIFT_LABEL, 'Lift All stop');
+  assert.deepEqual(LIFT_LABELS, ['Lift All stop', 'Lift STOP']);
+  for (const line of [LIFT_STOP, LIFT_STOP_EARLIER]) {
+    assert.equal(isLiftStopLine(line), true);
+    assert.equal(setLineOf(`All stop is on.\n${line}\nReply code: ${replyCode(line)}`), line);
+    assert.equal(setLineOf(`Please ${line}`), null);
+  }
+  // A card carrying both is two set lines, so none.
+  assert.equal(setLineOf(`${LIFT_STOP}\n${LIFT_STOP_EARLIER}`), null);
+  assert.equal(isLiftStopLine('Lift all STOP and let the agents carry on'), false);
+  // Each keeps its own reply code, so a code shown on an earlier card still names that card.
+  assert.notEqual(replyCode(LIFT_STOP), replyCode(LIFT_STOP_EARLIER));
 });
 
 const BUILD_LINES = [

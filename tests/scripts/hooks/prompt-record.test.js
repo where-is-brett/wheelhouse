@@ -7,7 +7,7 @@ import path from 'node:path';
 import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -64,7 +64,7 @@ function fake({ pr = { ok: true, result: { headSha: FULL, state: 'open' } }, ref
   };
 }
 
-const BUTTONS = ['Approve', 'Confirm', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Explain more', 'Not now'].map((label) => ({ label }));
+const BUTTONS = ['Approve', 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Explain more', 'Not now'].map((label) => ({ label }));
 const input = (answers, { multi = false, response = true, options = BUTTONS } = {}) => ({
   cwd: '/x', hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion',
   tool_input: { questions: Object.keys(answers).map((question) => ({ question, options, multiSelect: multi })), answers },
@@ -143,6 +143,21 @@ test('Lift STOP lifts it and records who clicked', async () => {
     assert.equal(c.calls.record[0].event.data.action, 'lift-stop');
     assert.ok(c.calls.record[0].event.sig);
   });
+});
+
+test('Lift All stop and Lift STOP, its earlier name, each lift it from a card in either words, and the record verifies', async () => {
+  for (const [line, label] of [[LIFT_STOP, 'Lift All stop'], [LIFT_STOP_EARLIER, 'Lift STOP'], [LIFT_STOP, 'Lift STOP'], [LIFT_STOP_EARLIER, 'Lift All stop']]) {
+    await withHome(async () => {
+      fs.writeFileSync(stopFile(), '{}');
+      const c = fake();
+      const question = `All stop is on.\n${line}\n${replyCodeLine(replyCode(line))}`;
+      await decide(input({ [question]: label }), deps(c));
+      assert.equal(fs.existsSync(stopFile()), false, `${label} on "${line}"`);
+      const lift = c.calls.record.find((r) => r.event.kind === 'action');
+      assert.deepEqual([lift.event.data.action, lift.event.data.question, lift.event.data.label], ['lift-stop', question, label]);
+      assert.equal(verify(lift.event, readEnrolled()), true);
+    });
+  }
 });
 
 test('Do it on a runbook card records a signed runbook action with its step and commit', async () => {

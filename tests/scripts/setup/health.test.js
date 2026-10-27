@@ -86,7 +86,7 @@ test('step 10\'s plan waits for the project, then lists the trial branch and its
     assert.deepEqual((await step.plan({ folder })).changes, first.changes);
     assert.match(first.card.what, /^Setup step 10, Health check:/);
     assert.match(first.card.what, /without your approval/);
-    assert.match(first.card.what, /STOP/);
+    assert.match(first.card.what, /All stop/);
     assert.match(first.card.what, /closes the pull request and deletes the branch/);
     assert.match(first.card.what, /session/);
     assert.equal(typeof first.director, 'string');
@@ -429,7 +429,7 @@ test('step 10\'s git shuts out git\'s global and system config, with hooks off, 
 test('the merge trial passes on any refusal that leaves the pull request unmerged', async () => {
   const adapter = (state) => ({ prState: async () => ({ state }) });
   const trial = (answer, state = 'open') => mergeTrial({ client: { merge: async () => answer }, adapter: adapter(state), project: SLUG, number: 12 });
-  for (const refused of ['the lock is held', 'CI has not passed', 'no review yet', 'the director\'s approval is missing', 'STOP is on']) {
+  for (const refused of ['the lock is held', 'CI has not passed', 'no review yet', 'the director\'s approval is missing', 'All stop is on']) {
     assert.equal(await trial({ ok: false, refused, reasons: [refused] }), 'refused', refused);
   }
   assert.equal(await trial({ ok: false, refused: 'the lock is held' }, 'merged'), 'MERGED (unexpected)', 'the host says merged');
@@ -475,8 +475,8 @@ test('a green run gives a green board', async () => {
     assert.equal(helper.length, Object.keys(HELPER_CHECKS).length + 1, 'and the clean-up');
     assert.equal(session.length, Object.keys(SESSION_CHECKS).length);
     assert.ok(session.every((l) => l.startsWith('Passed:')));
-    assert.ok(got.lines.includes('Board: Protection: Standard'));
-    assert.match(got.board, /Wheelhouse's board/);
+    assert.ok(got.lines.includes('Logbook: Protection: Standard'));
+    assert.match(got.board, /Wheelhouse's Logbook/);
     const checks = Object.keys(HELPER_CHECKS).length + Object.keys(SESSION_CHECKS).length;
     assert.equal(got.verdict, `All ${checks} checks passed. Wheelhouse is ready.`);
     assert.equal(got.lines.at(-1), got.verdict, 'one verdict ends the lines');
@@ -494,7 +494,7 @@ test('a failed trial is named with what to do, and what to do can be done', asyn
       .map((l) => (l.startsWith('helper health') ? 'helper health: reached / could not run' : l));
     const got = await healthCheck({ folder, run, reported, load: OK_BOARD });
     assert.equal(got.green, false);
-    assert.ok(got.lines.includes('Failed: With STOP on, an agent\'s change was not refused (refused was expected, allowed came back). Reload this project in Claude Desktop so Wheelhouse\'s checks run in it, then run step 10 again.'), got.lines.join('\n'));
+    assert.ok(got.lines.includes('Failed: With All stop on, an agent\'s change was not refused (refused was expected, allowed came back). Reload this project in Claude Desktop so Wheelhouse\'s checks run in it, then run step 10 again.'), got.lines.join('\n'));
     assert.ok(got.lines.includes('Failed: An agent could read a .env.local file (refused was expected, allowed came back). The sandbox isn\'t on in this session: reload this project in Claude Desktop, then run step 10 again. (reported by the session)'), got.lines.join('\n'));
     assert.ok(got.lines.some((l) => /^Failed: setup couldn't try reaching the helper\. Run step 10 again.*\(reported by the session\)$/.test(l)), got.lines.join('\n'));
     assert.equal(got.lines.filter((l) => /^(Passed|Failed|Watch):/.test(l)).length, Object.keys(HELPER_CHECKS).length + 1 + Object.keys(SESSION_CHECKS).length);
@@ -546,9 +546,9 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed, 
     assert.equal(short.green, false);
     assert.ok(short.lines.some((l) => l.startsWith('Not reported by the session: reading .env.local.')), short.lines.join('\n'));
     assert.ok(short.lines.includes('Left out: 2 lines the session handed in that aren\'t trials\'.'), short.lines.join('\n'));
-    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'STOP is on' }]) });
+    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'All stop is on' }]) });
     assert.equal(stopped.green, false);
-    assert.ok(stopped.lines.includes('Board: STOP is on'));
+    assert.ok(stopped.lines.includes('Logbook: All stop is on'));
   });
   await withProject(async ({ folder }) => {
     const open = await healthCheck({ folder, run: runWith(folder, { checks: GREEN_CHECKS }), reported: GREEN_LINES, load: OK_BOARD });
@@ -560,7 +560,7 @@ test('trials not handed in, lines that aren\'t trials\', a step 10 that failed, 
     const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD });
     assert.equal(got.green, false);
     assert.match(got.lines[0], /^Failed: step 10 did not finish: git push failed for the trial branch\. Run step 10 again/);
-    assert.ok(got.lines.some((l) => l.startsWith('Failed: setup couldn\'t try STOP before step 10 stopped.')), got.lines.join('\n'));
+    assert.ok(got.lines.some((l) => l.startsWith('Failed: setup couldn\'t try All stop before step 10 stopped.')), got.lines.join('\n'));
   });
   await withProject(async ({ folder }) => {
     const got = await healthCheck({ folder, run: runWith(folder, { upTo: 9 }), reported: GREEN_LINES, load: OK_BOARD });
@@ -583,7 +583,7 @@ test('the verdict counts only the checks that print a line, so its figures match
   await withProject(async ({ folder }) => {
     // A STOP line on the board is shown and counted, once.
     const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
-    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'STOP is on' }]) });
+    const stopped = await healthCheck({ folder, run, reported: GREEN_LINES, load: boardWith([{ level: 'stop', text: 'All stop is on' }]) });
     assert.equal(stopped.verdict, `${every} of ${every + 1} checks passed. Here is what to do.`);
   });
   await withProject(async ({ folder }) => {
@@ -613,8 +613,8 @@ test('with the real board, STOP on the computer holds it', async () => {
     try {
       const got = await healthCheck({ folder, run, reported: GREEN_LINES, client, now: () => T0 });
       assert.equal(got.green, false);
-      assert.ok(got.lines.some((l) => l.startsWith('Board: STOP is on')), got.lines.join('\n'));
-      assert.match(got.board, /STOP is on/);
+      assert.ok(got.lines.some((l) => l.startsWith('Logbook: All stop is on')), got.lines.join('\n'));
+      assert.match(got.board, /All stop is on/);
     } finally {
       liftStop();
     }
@@ -629,7 +629,7 @@ function routesFor(user, { stopped = () => false, load = OK_BOARD, finished = []
   return setupRoutes({
     now: () => T0, userHome: user, stopped, writeSurvey,
     health: (args) => healthCheck({ ...args, load }),
-    finish: async (args) => { finished.push(args); return { started: 'The foreman\'s watcher is started.', briefing: 'The briefing.' }; },
+    finish: async (args) => { finished.push(args); return { started: 'The Bosun\'s watcher is started.', briefing: 'The briefing.' }; },
     closeTrial: closer(closes),
     copy: copy ?? (async (runId, folder) => { copied.push([runId, folder]); return { copied: 0, skipped: 0, failed: 0 }; }),
   });
@@ -655,7 +655,7 @@ test('the trial stays open until the session\'s lines are in; then it is closed,
     assert.equal(green.green, true, green.lines.join('\n'));
     assert.deepEqual(closes, [12]);
     assert.deepEqual(finished, [{ project: SLUG }]);
-    assert.equal(green.started, 'The foreman\'s watcher is started.');
+    assert.equal(green.started, 'The Bosun\'s watcher is started.');
     assert.equal(green.briefing, 'The briefing.');
     // The verdict and the first briefing come next, from step 10's plan, once, before the phone card.
     const routes = routesFor(user);
@@ -770,7 +770,7 @@ test('under STOP the health route only reads: no close, no removal, no green mar
 test('the health route takes only trial lines, and removes only a trial\'s own leftover .env.local', async () => {
   await withProject(async ({ folder, user }) => {
     runWith(folder, { checks: GREEN_CHECKS });
-    const route = routesFor(user, { load: boardWith([{ level: 'stop', text: 'STOP is on' }]) })['/setup/health'];
+    const route = routesFor(user, { load: boardWith([{ level: 'stop', text: 'All stop is on' }]) })['/setup/health'];
     await assert.rejects(route({ folder, lines: ['read .env.local: refused / refused; rm -rf x'] }), /trial/);
     await assert.rejects(route({ folder, lines: 'read .env.local: refused / refused' }), /trial/);
     await assert.rejects(route({ folder, lines: GREEN_LINES, changes: [] }), /folder/);

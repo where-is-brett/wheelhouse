@@ -247,7 +247,7 @@ export async function runWatcher({
           try {
             file = writeWake(project, bundle, { now });
           } catch (error) {
-            fault(`A wake for ${bundle.to === 'foreman' ? 'the foreman' : bundle.work} couldn't be written and was dropped: ${error.message}`);
+            fault(`A wake for ${bundle.to === 'foreman' ? 'the Bosun' : bundle.work} couldn't be written and was dropped: ${error.message}`);
             continue;
           }
           if (bundle.to === 'foreman') await wake.wakeForeman(file);

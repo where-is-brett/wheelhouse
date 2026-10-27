@@ -752,9 +752,9 @@ test('while an incident is open or STOP is on, start, build and resume refuse, p
   views.incidents = { open: [] };
   const stopped = fakeClient({ views, answers: { updateBranch: { ok: true } } });
   const s = await act(START, { client: stopped.client, wakerFor: waker.wakerFor });
-  assert.match(s.err, /^add-export can't start while STOP is on/m);
+  assert.match(s.err, /^add-export can't start while All stop is on/m);
   fs.writeFileSync(featurePaths(views.features.x.data.worktree).pr, JSON.stringify({ pr: 7, plan: 'b.md' }));
-  assert.match((await act(['merge', 'x'], { client: stopped.client })).err, /^Pull request #7 for x can't merge while STOP is on/m);
+  assert.match((await act(['merge', 'x'], { client: stopped.client })).err, /^Pull request #7 for x can't merge while All stop is on/m);
   assert.equal(stopped.writes.length, 0);
 }));
 
@@ -980,7 +980,7 @@ test('during an incident bug work starts and builds while all else waits; under 
   fake.views.work['b-bug'] = workView('b-bug', { lane: 'bug', approved: false });
   const stopped = await act(['start', 'b-bug', ...BUG.slice(2)], { client: fake.client, wakerFor: waker.wakerFor });
   refusedInOneLine(stopped);
-  assert.match(stopped.err, /^b-bug can't start while STOP is on/);
+  assert.match(stopped.err, /^b-bug can't start while All stop is on/);
 }));
 
 test('build waits while the feature\'s own pull request is open', () => withHome(async () => {
@@ -1183,7 +1183,7 @@ test('the Unattended card passes the card check and fits the card, with and with
     assert.deepEqual(data.options, words.options.map((o) => o.label));
     assert.equal(data.question.split('\n').includes(unattendedBuildsLine(setting.id, computer)), true, name);
     // No reply code answers it, so it says a click is needed.
-    assert.ok(data.question.split('\n').includes('Builders keep asking; answer by a click only.'), name);
+    assert.ok(data.question.split('\n').includes('The Crew keeps asking; answer by a click only.'), name);
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data, now: () => new Date(T0) }));
     // A Turn on (dangerous) click on it still confirms the Unattended setting event, with its line.
     const click = await earned({ project: P, question: data.question, label: 'Turn on (dangerous)' });
@@ -1234,7 +1234,7 @@ test('question writes no Unattended card that would pass the card\'s length, and
   for (const k of [1, 2]) assert.equal((await run(k)).code, 0);
   const third = await run(3);
   assert.equal(third.code, 0, third.err);
-  assert.match(third.out, new RegExp(`^Recorded question q-mine-3 for the director\\.\\nThe Unattended card wasn't written, so builders keep asking: it would pass ${CARD.chars} characters \\(it is \\d+\\)\\.\\n$`));
+  assert.match(third.out, new RegExp(`^Recorded question q-mine-3 for the director\\.\\nThe Unattended card wasn't written, so the Crew keeps asking: it would pass ${CARD.chars} characters \\(it is \\d+\\)\\.\\n$`));
   assert.deepEqual(fake.writes.map((w) => w.kind), ['question', 'question', 'question', 'setting', 'setting'], 'no card');
 }));
 
@@ -1595,7 +1595,7 @@ test('merge brings the pull request up to date, then merges it, or waits for CI 
   const behind = fakeClient({ views, answers: { updateBranch: { ok: true, updated: true, head: 'd'.repeat(40) } } });
   const brought = await act(['merge', 'mine'], { client: behind.client });
   assert.equal(brought.code, 0, brought.err);
-  assert.equal(brought.out, 'Brought pull request #12 for mine up to date at dddddddddddd; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.\n');
+  assert.equal(brought.out, 'Brought pull request #12 for mine up to date at dddddddddddd; the merge waits for CI on that commit, and the next merge-ready wakes the Bosun.\n');
   assert.deepEqual(behind.calls.map(([name]) => name), ['prState', 'updateBranch']);
   assert.deepEqual(kept(), { pr: 12, plan: 'docs/plans/a.md' });
 
@@ -1654,7 +1654,7 @@ test('at Thorough, work in a critical area goes to the gate only once two review
   const one = scene('thorough', ['src/pay/a.js']);
   const waits = await act(['merge', 'mine'], { client: one.client });
   assert.equal(waits.code, 0, waits.err);
-  assert.equal(waits.out, "Pull request #12 for mine is in a critical area, and at Thorough it merges only once two fresh reviewers have each reported CLEAN on bbbbbbbbbbbb: 1 so far. It waits for the feature session's second reviewer; nothing to do.\n");
+  assert.equal(waits.out, "Pull request #12 for mine is in a critical area, and at Thorough it merges only once two fresh Lookouts have each reported CLEAN on bbbbbbbbbbbb: 1 so far. It waits for the feature session's second Lookout; nothing to do.\n");
   assert.deepEqual(one.calls.map(([name]) => name), ['prState', 'updateBranch']);
 
   // Outside the critical areas, as its plan and git both say, one review is the gate's to weigh.
@@ -2005,13 +2005,13 @@ test('merge asks the helper once for its clean review when the gate lacks it, an
   views.features.mine = featureView('mine', { step: 'building', worktree: wt });
   const head = 'b'.repeat(40);
   const current = { ok: true, updated: false, head };
-  const noClean = `no review of ${head.slice(0, 7)} from a clean session: the helper's own reviewer hasn't passed it`;
+  const noClean = `no review of ${head.slice(0, 7)} from a clean session: the helper's own Lookout hasn't passed it`;
 
   // An agent whose reviews are the helper's: the gate refuses with NO_CLEAN_REVIEW, so the helper is asked once.
   const wants = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: noClean, reasons: [noClean] } } });
   const asked = await act(['merge', 'mine'], { client: wants.client });
   assert.equal(asked.code, 0, asked.err);
-  assert.equal(asked.out, 'The helper is reviewing #12 in a clean session; the next merge-ready wakes the foreman.\n');
+  assert.equal(asked.out, 'The helper is reviewing #12 in a clean session; the next merge-ready wakes the Bosun.\n');
   assert.deepEqual(wants.calls.map(([name, body]) => [name, body]), [
     ['prState', { project: P, number: 12 }], ['updateBranch', { project: P, number: 12 }], ['merge', { project: P, number: 12 }], ['review', { project: P, number: 12 }],
   ]);
@@ -2022,7 +2022,7 @@ test('merge asks the helper once for its clean review when the gate lacks it, an
     updateBranch: current, review: { ok: true, running: true },
     merge: { ok: false, refused: 'x', reasons: [noClean, 'no approval'], needs: { approval: { pr: 12, commit: head } } },
   } });
-  assert.equal((await act(['merge', 'mine'], { client: both.client })).out, 'The helper is reviewing #12 in a clean session; the next merge-ready wakes the foreman.\n');
+  assert.equal((await act(['merge', 'mine'], { client: both.client })).out, 'The helper is reviewing #12 in a clean session; the next merge-ready wakes the Bosun.\n');
   assert.equal(both.calls.filter(([name]) => name === 'review').length, 1);
 
   // The helper refuses the review (one review per commit): one line for the director, never tried again.
@@ -2044,7 +2044,7 @@ test('merge asks the helper once for its clean review when the gate lacks it, an
   assert.match(before.err.trim(), /^Pull request #12 for mine was not merged: no CLEAN review of bbbbbbb\. Ask the director; don't try again\.$/);
   assert.deepEqual(today.calls.map(([name]) => name), ['prState', 'updateBranch', 'merge']);
   // A NO_CLEAN_REVIEW for another commit is not this head's, so nothing is asked.
-  const other = `no review of ${'c'.repeat(7)} from a clean session: the helper's own reviewer hasn't passed it`;
+  const other = `no review of ${'c'.repeat(7)} from a clean session: the helper's own Lookout hasn't passed it`;
   const stale = fakeClient({ views, answers: { updateBranch: current, merge: { ok: false, refused: other, reasons: [other] } } });
   refusedInOneLine(await act(['merge', 'mine'], { client: stale.client }));
   assert.equal(stale.calls.filter(([name]) => name === 'review').length, 0);

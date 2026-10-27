@@ -54,7 +54,7 @@ function block(marker, lang = 'sh') {
   assert.equal(found.length, 1, `one ${lang} block marked "# ${marker}"`);
   return found[0].body;
 }
-// The skill's section named heading, up to the next `##` heading that is outside a fenced block (the board's own headings are in one).
+// The skill's section named heading, up to the next `##` heading that is outside a fenced block (the Logbook's own headings are in one).
 function section(heading) {
   const lines = skill.split('\n');
   const start = lines.indexOf(`## ${heading}`);
@@ -315,12 +315,12 @@ test('the blocks run in one persistent shell: the folder is unchanged and the sh
   assert.ok(fs.existsSync(path.join(project, '.gitignore')), 'the project\'s own folder got the file');
 });
 
-test('setup run again keeps the board the director has, and changes only its tier lines', () => {
+test('setup run again keeps the Logbook the director has, and changes only its tier lines', () => {
   const step = section('Step 4: set up the project');
   assert.match(step, /only if there is none/);
   assert.match(step, /keep it as it is/i);
-  assert.match(step, /STOP/);
-  assert.match(step, /never turns STOP off/);
+  assert.match(step, /All stop/);
+  assert.match(step, /never turns All stop off/);
   assert.match(step, /waiting to be recorded|Waiting to be recorded/i);
   assert.match(step, /Change only its tier lines/);
   assert.match(step, /only if they differ/);
@@ -360,27 +360,27 @@ test('step 3 asks the computer four things and says the tier in one sentence', (
   assert.match(step, /Linux/);
 });
 
-test('the board case is chosen by what is running, and a Mac without Node.js takes the shell guard\'s', () => {
+test('the Logbook case is chosen by what is running, and a Mac without Node.js takes the shell guard\'s', () => {
   const step = section('Step 3: can Wheelhouse run here?');
   // Ruling P5-35: a Mac with no Node.js has the kit's shell guard once step 4 puts it in place.
   const guarded = safetyLine({ tier: 'lean', platform: 'darwin', node: false, shellGuard: true });
-  assert.ok(step.includes(guarded[3]), 'the skill says what the board says on a Mac with the shell guard');
+  assert.ok(step.includes(guarded[3]), 'the skill says what the Logbook says on a Mac with the shell guard');
   assert.ok(lean.includes(`- ${guarded[3]}\n`), 'the playbook holds the shell guard\'s line');
   assert.match(step, /A Mac without Node\.js:\*\* the lines for a Mac where Wheelhouse's shell guard runs/);
   // A Mac where it couldn't, or where Node.js runs: the line safetyLine gives with no shell guard.
   const mac = safetyLine({ tier: 'lean', platform: 'darwin', node: false, shellGuard: false });
   assert.ok(mac.includes('No Wheelhouse guards run on this computer yet'));
-  assert.ok(step.includes('No Wheelhouse guards run on this computer yet'), 'the skill says what the board says on a Mac without the guard');
+  assert.ok(step.includes('No Wheelhouse guards run on this computer yet'), 'the skill says what the Logbook says on a Mac without the guard');
   assert.ok(step.includes('No Wheelhouse guards run on Windows without Node.js, until a way is found'), 'and on Windows');
   assert.match(step, /Mac or Windows without Node\.js|without Node\.js/);
-  assert.match(step, /even where Node\.js runs|Node\.js runs[^\n]*until the helper is installed|until the helper is installed/i, 'until the helper is installed the board shows the no-Node.js lines');
+  assert.match(step, /even where Node\.js runs|Node\.js runs[^\n]*until the helper is installed|until the helper is installed/i, 'until the helper is installed the Logbook shows the no-Node.js lines');
   // The lines themselves are the playbook's, copied exactly.
   assert.ok(lean.includes(`- ${mac[3]}\n`), 'the playbook holds the Mac line');
 });
 
 // ---- Step 4: the project ----
 
-test('step 4 sets up the project: settings, the record, the board, a first commit', () => {
+test('step 4 sets up the project: settings, the record, the Logbook, a first commit', () => {
   const step = section('Step 4: set up the project');
   assert.match(step, /git rev-parse --is-inside-work-tree/);
   assert.ok(step.includes('adapters/copilot/vscode-settings.json'));
@@ -419,7 +419,7 @@ test('the ignore lines are the ones the playbook\'s preflight checks, and they w
     const result = sh(script, { cwd: project, home });
     assert.equal(result.status, 0, `${JSON.stringify(gitignore)}: ${result.stderr}${result.stdout}`);
     assert.equal(check(project, home, '.wheelhouse/feature/brief.md'), 0, 'the feature folder is ignored');
-    assert.equal(check(project, home, 'wheelhouse/board.md'), 0, 'the board is ignored');
+    assert.equal(check(project, home, 'wheelhouse/board.md'), 0, 'the Logbook is ignored');
     assert.equal(check(project, home, '.wheelhouse/record/2026-10-23.jsonl'), 1, 'the record is not');
     const text = fs.readFileSync(path.join(project, '.gitignore'), 'utf8');
     if (gitignore !== undefined) assert.ok(text.startsWith(gitignore), 'the lines the project had are kept as they were');
@@ -539,7 +539,7 @@ test('hooks come from the kit only on a Mac without Node.js, and only when the k
   // Step 4 says which board block follows, and that the guard runs (ruling P5-35).
   assert.ok(step.includes('Wheelhouse\'s shell guard now runs on this Mac: it keeps the files that steer agents, and refuses a tool it doesn\'t know'));
   assert.match(step, /the block for a Mac where the shell guard runs/);
-  assert.ok(step.indexOf('# copy-guard') < step.indexOf('Write the board'), 'the guard is put in place before the board is written');
+  assert.ok(step.indexOf('# copy-guard') < step.indexOf('Write the Logbook'), 'the guard is put in place before the Logbook is written');
 });
 
 test('the copy-guard block puts the kit\'s guard in place on a Mac without Node.js, and the guard runs', { skip: process.platform !== 'darwin' && 'the shell guard is for macOS' }, () => {
@@ -589,9 +589,9 @@ test('the copy-guard block puts the kit\'s guard in place on a Mac without Node.
   assert.match(withNode.stdout, /Node\.js runs here/);
 });
 
-test('the board setup writes has the playbook\'s parts, in the playbook\'s order, and says no copy yet', () => {
+test('the Logbook setup writes has the playbook\'s parts, in the playbook\'s order, and says no copy yet', () => {
   const step = section('Step 4: set up the project');
-  const headings = ['Waiting on you', 'Building now', 'Done lately', 'The copy', 'STOP', 'Waiting to be recorded'];
+  const headings = ['Waiting on you', 'Building now', 'Done lately', 'The copy', 'All stop', 'Waiting to be recorded'];
   let at = -1;
   for (const heading of headings) {
     const next = step.indexOf(`## ${heading}\n`);

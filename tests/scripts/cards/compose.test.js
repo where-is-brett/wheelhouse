@@ -44,7 +44,7 @@ const says = (what) => ({ label: what, says: `It ${what.toLowerCase()} and goes 
 const INPUTS = {
   approval: { ...common, kind: 'approval', what: 'Pull request #7 changes the wording on the sign-in page.', options: [says('Approve')], target: { pr: 7, sha: FULL } },
   confirm: { ...common, recommend: 'Confirm', kind: 'confirm', what: 'A rule you gave: money is shown in dollars.', options: [says('Confirm')], target: { event: RULING } },
-  'lift-stop': { ...common, recommend: 'Lift STOP', kind: 'lift-stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift STOP')], target: {} },
+  'lift-stop': { ...common, recommend: 'Lift All stop', kind: 'lift-stop', what: 'Every agent is stopped, and nothing moves until you say.', options: [says('Lift All stop')], target: {} },
   'ci-push': { ...common, recommend: 'Push it', kind: 'ci-push', what: 'A change to the automatic checks, on the ci-fix branch, is ready to go out under your sign-in.', options: [says('Push it')], target: { branch: 'ci-fix', sha: FULL } },
   runbook: { ...common, recommend: 'Do it', kind: 'runbook', what: 'The emergency steps say: put the product back to an earlier release.', options: [says('Do it')], target: { step: 3, sha: FULL } },
   'approve-work': { ...common, kind: 'approve-work', what: 'The plan for exporting a report as a spreadsheet file (export-csv).', options: [says('Approve')], target: { work: 'export-csv', lane: 'feature', hash: DOC, shownFirst: true } },
@@ -196,7 +196,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
   const asks = {
     approval: 'Put pull request #7 live?',
     confirm: 'Confirm this?',
-    'lift-stop': 'Lift STOP?',
+    'lift-stop': 'Lift All stop?',
     'ci-push': 'Push this change to the checks?',
     runbook: 'Put the product back to an earlier release?',
     'approve-work': 'Approve this work as written?',
@@ -206,7 +206,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     'keep-control-files': 'Keep these files as they are?',
     usage: 'Switch to Lean until it resets?',
     premium: 'Allow the premium model at Thorough?',
-    'take-over': 'Take over the front desk here?',
+    'take-over': 'Move the First Mate to this computer?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));
@@ -352,7 +352,7 @@ test('an approval card offers Approve, Suggest a change…, Show me and Not now,
 
 test('decision cards offer the deciding label, Suggest a change…, Show me and Not now; the kinds answered in setup\'s own chat and lift-stop offer no Suggest a change…', () => {
   const expected = {
-    approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift STOP', 'ci-push': 'Push it', runbook: 'Do it',
+    approval: 'Approve', confirm: 'Confirm', 'lift-stop': 'Lift All stop', 'ci-push': 'Push it', runbook: 'Do it',
     'approve-work': 'Approve', amend: 'Change it', 'lift-incident': 'End it', 'incident-fix': 'Merge the fix', setup: 'Go ahead',
   };
   const lists = {
@@ -392,7 +392,7 @@ test('decision cards offer the deciding label, Suggest a change…, Show me and 
   refused({ options: [says('Approve'), { label: 'Why?' }] }, /options.*Why\?/);
   refused({ recommend: 'Delete everything' }, /recommend/);
   refused({ options: [says('Approve'), says('Approve')] }, /options.*twice|options.*Approve/);
-  refused({ options: [says('Lift STOP'), { label: SUGGEST }] }, /options.*Suggest a change/, 'lift-stop');
+  refused({ options: [says('Lift All stop'), { label: SUGGEST }] }, /options.*Suggest a change/, 'lift-stop');
   refused({ options: [says('Go ahead'), { label: 'Explain more' }] }, /options.*Explain more/, 'setup');
   refused({ options: [says('Trust it'), { label: SUGGEST }] }, /options.*Suggest a change/, 'trust');
   refused({ options: [says('Take over here'), { label: SUGGEST }] }, /options.*Suggest a change/, 'take-over');
@@ -533,9 +533,9 @@ test("concepts default to the glossary terms in the card's text", () => {
   const plain = composeCard(input('approval')).card;
   assert.ok(plain.line.includes('commit'));
   assert.deepEqual(plain.concepts, ['pull request']);
-  assert.deepEqual(composeCard(input('lift-stop')).card.concepts, ['STOP']);
-  // The checks line is explanation too, and names such as STOP count only in their capitals.
-  assert.deepEqual(composeCard(input('approval', { level: 4, checks: 'It lets a change merge while STOP is on; stop signs are unaffected.' })).card.concepts, ['pull request', 'merge', 'STOP']);
+  assert.deepEqual(composeCard(input('lift-stop')).card.concepts, ['All stop']);
+  // The checks line is explanation too, and names such as All stop count only in their capitals.
+  assert.deepEqual(composeCard(input('approval', { level: 4, checks: 'It lets a change merge while All stop is on; all stop signs are unaffected.' })).card.concepts, ['pull request', 'merge', 'All stop']);
   assert.deepEqual(composeCard(input('approval', { concepts: ['merge'] })).card.concepts, ['merge']);
   assert.deepEqual(composeCard(input('approval', { concepts: [] })).card.concepts, []);
   const mine = composeCard(input('question', { what: 'Should the sprocket be blue?', glossary: { sprocket: { plain: 'a toothed wheel' } } }));

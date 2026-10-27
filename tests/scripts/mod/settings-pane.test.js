@@ -90,8 +90,8 @@ test('every everyday setting is a row in the design\'s order, with its current c
     'notifications', 'usageMark', 'boardTab', 'hours', 'phase', 'protection',
   ]);
   assert.deepEqual(rows.map((r) => r.label), [
-    'Autonomy', 'Show before building', 'Availability', 'Feature milestones', 'Thoroughness', 'Premium model', 'Budget', 'Builders at once', 'Briefing length', 'Hours before a new briefing',
-    'Explanations', 'Notifications', 'Usage nudge', 'Board opens on', 'Working hours', 'Product phase', 'Protection',
+    'Autonomy', 'Show before building', 'Availability', 'Feature milestones', 'Thoroughness', 'Premium model', 'Budget', 'Crew at once', 'Briefing length', 'Hours before a new briefing',
+    'Explanations', 'Notifications', 'Usage nudge', 'Logbook opens on', 'Working hours', 'Product phase', 'Protection',
   ]);
 
   const pace = rowOf(rows, 'pace');
@@ -116,7 +116,7 @@ test('every everyday setting is a row in the design\'s order, with its current c
 
   // Every row is plain data the bridge can pass on.
   assert.deepEqual(JSON.parse(JSON.stringify(rows)), rows);
-  assert.equal(ADVANCED, 'Advanced settings: ask the front desk');
+  assert.equal(ADVANCED, 'Advanced settings: ask the First Mate');
 });
 
 test('presence offers its six choices, marks the one in force, and says when it ends', () => {
@@ -148,7 +148,7 @@ test('presence offers its six choices, marks the one in force, and says when it 
 test('a choice sets the setting and signs its confirmation, in the project or the profile by its home', () => withKey(async () => {
   const client = fake();
   const said = await press(client, 'pace', '2');
-  assert.deepEqual(said, { made: true, says: 'Builders at once is now 2, for this project' });
+  assert.deepEqual(said, { made: true, says: 'Crew at once is now 2, for this project' });
   assert.deepEqual(client.calls.order, ['write', 'record']);
   assert.deepEqual(client.calls.write, [{ project: P, kind: 'setting', data: { key: 'pace', value: 2 } }]);
   const setting = listEvents(stateDir(P), { report: () => {} }).find((e) => e.kind === 'setting');
@@ -196,13 +196,13 @@ test('where the confirmation can\'t be signed or the setting can\'t be read back
   const client = fake();
   const said = await press(client, 'pace', '1');
   assert.equal(said.made, false);
-  assert.equal(said.says, 'Builders at once was set but not confirmed, so it waits for your Confirm');
+  assert.equal(said.says, 'Crew at once was set but not confirmed, so it waits for your Confirm');
   assert.equal(client.calls.record.length, 0);
   assert.deepEqual(pendingFiles(), []);
 
   // The helper took the write but its event isn't in the clone.
   const lost = { state: { write: async () => ({ ok: true, id: 'no-such-event', pushed: true }), record: async () => { throw new Error('not reached'); } } };
-  assert.equal((await press(lost, 'pace', '1')).says, 'Builders at once was set but not confirmed, so it waits for your Confirm');
+  assert.equal((await press(lost, 'pace', '1')).says, 'Crew at once was set but not confirmed, so it waits for your Confirm');
 }));
 
 test('Away until 18:00 is not offered at 18:00, and a press on it then records nothing', () => withKey(async () => {
@@ -334,9 +334,9 @@ test('protection, notifications and working hours offer no choice and say where 
     const rows = settingsRows({ effective, now, timeZone: SYDNEY, locked });
     for (const key of ['protection', 'notifications', 'hours', 'briefingGapHours']) {
       const row = rowOf(rows, key);
-      assert.deepEqual([row.choices, row.here, row.why], [[], false, 'Changed by asking the front desk'], key);
+      assert.deepEqual([row.choices, row.here, row.why], [[], false, 'Changed by asking the First Mate'], key);
     }
-    assert.equal(rowOf(rows, 'protection').current, locked === true ? 'Locked' : locked === false ? 'Standard' : 'Ask the front desk');
+    assert.equal(rowOf(rows, 'protection').current, locked === true ? 'Locked' : locked === false ? 'Standard' : 'Ask the First Mate');
   }
   const rows = settingsRows({ effective, now, timeZone: SYDNEY });
   assert.equal(rowOf(rows, 'notifications').current, 'claude, ntfy, quiet from 22:00 to 07:00');
@@ -366,7 +366,7 @@ test('budget offers no other level while budget allocation is in the backlog', (
 test('under STOP a choice records nothing and says when it can', () => withKey(async () => {
   const client = fake({ stop: true });
   for (const [key, choice] of [['pace', '2'], ['presence', 'away-hours'], ['briefing', 'short']]) {
-    assert.deepEqual(await press(client, key, choice), { made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
+    assert.deepEqual(await press(client, key, choice), { made: false, says: 'Settings can\'t change while All stop is on. Lift All stop first.' });
   }
   // The helper refused every write; nothing was signed, kept or recorded.
   assert.equal(client.calls.record.length + client.calls.profileRecord.length, 0);
@@ -375,7 +375,7 @@ test('under STOP a choice records nothing and says when it can', () => withKey(a
   assert.deepEqual(listEvents(profileDir(), { report: () => {} }), []);
   // With the real STOP file too: the helper's refusal is the word on it.
   setStop({ by: 'mod' });
-  assert.equal((await press(fake({ stop: true }), 'pace', '1')).says, 'Settings can\'t change while STOP is on. Lift STOP first.');
+  assert.equal((await press(fake({ stop: true }), 'pace', '1')).says, 'Settings can\'t change while All stop is on. Lift All stop first.');
 }));
 
 test('a helper that is down or refuses leaves the setting as it was', () => withKey(async () => {
@@ -390,14 +390,14 @@ test('a helper that is down or refuses leaves the setting as it was', () => with
   assert.equal((await press(unset, 'briefing', 'short')).made, false);
   // An answer without an id is not one to confirm.
   const noId = { state: { write: async () => ({ ok: true }) } };
-  assert.equal((await press(noId, 'pace', '2')).says, 'Builders at once was set but not confirmed, so it waits for your Confirm');
+  assert.equal((await press(noId, 'pace', '2')).says, 'Crew at once was set but not confirmed, so it waits for your Confirm');
 }));
 
 test('setting is refused for any origin but pane', () => withKey(async () => {
   const calls = [];
   const pressSettingSpy = async (args) => {
     calls.push(args);
-    return { made: true, says: 'Builders at once is now 2, for this project' };
+    return { made: true, says: 'Crew at once is now 2, for this project' };
   };
   const client = fake();
   const request = { cmd: 'setting', cwd: '/work', key: 'pace', choice: '2' };
@@ -406,18 +406,18 @@ test('setting is refused for any origin but pane', () => withKey(async () => {
     assert.deepEqual(await handle({ ...request, origin }, deps()), { ok: false, says: 'Only a press in the pane counts as one' });
   }
   assert.equal(calls.length, 0);
-  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps()), { ok: true, says: 'Builders at once is now 2, for this project' });
+  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps()), { ok: true, says: 'Crew at once is now 2, for this project' });
   assert.equal(calls.length, 1);
   assert.deepEqual([calls[0].project, calls[0].key, calls[0].choice, calls[0].client, calls[0].timeZone], [P, 'pace', '2', client, SYDNEY]);
   assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ projectOf: () => null })), { ok: false, says: 'This isn\'t a Wheelhouse project' });
-  const refused = async () => ({ made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
-  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ pressSetting: refused })), { ok: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
+  const refused = async () => ({ made: false, says: 'Settings can\'t change while All stop is on. Lift All stop first.' });
+  assert.deepEqual(await handle({ ...request, origin: 'pane' }, deps({ pressSetting: refused })), { ok: false, says: 'Settings can\'t change while All stop is on. Lift All stop first.' });
 
   // Through the real code: the origin gates the press and the press records.
   assert.deepEqual(await handle({ ...request, origin: 'composer' }, { now: () => new Date('2026-10-19T05:00:00.000Z'), projectOf: () => ({ project: P }), client }), { ok: false, says: 'Only a press in the pane counts as one' });
   assert.equal(nothingSent(client), 0);
   const real = await handle({ ...request, origin: 'pane' }, { now: () => new Date('2026-10-19T05:00:00.000Z'), projectOf: () => ({ project: P }), client });
-  assert.deepEqual(real, { ok: true, says: 'Builders at once is now 2, for this project' });
+  assert.deepEqual(real, { ok: true, says: 'Crew at once is now 2, for this project' });
   assert.deepEqual(client.calls.order, ['write', 'record']);
 }));
 
@@ -434,7 +434,7 @@ test('settings answers the rows from the views, in the bridge\'s zone, with the 
   const deps = (extra = {}) => ({ now: () => new Date('2026-10-19T06:59:00.000Z'), projectOf: () => ({ project: P, locked: true }), timeZone: SYDNEY, ...extra });
   const answer = await handle({ cmd: 'settings', cwd: '/work' }, deps());
   assert.equal(answer.ok, true);
-  assert.equal(answer.text, 'Advanced settings: ask the front desk');
+  assert.equal(answer.text, 'Advanced settings: ask the First Mate');
   assert.equal(rowOf(answer.rows, 'pace').current, '2');
   assert.equal(rowOf(answer.rows, 'pace').from, 'this project');
   assert.equal(rowOf(answer.rows, 'protection').current, 'Locked');
@@ -476,7 +476,7 @@ test('a read-back event with another value or end time is not signed', () => wit
   };
   for (const data of [{ key: 'pace', value: 1 }, { key: 'autonomy', value: 'cautious' }]) {
     const client = other(data);
-    assert.deepEqual(await press(client, 'pace', '2'), { made: false, says: 'Builders at once was set but not confirmed, so it waits for your Confirm' });
+    assert.deepEqual(await press(client, 'pace', '2'), { made: false, says: 'Crew at once was set but not confirmed, so it waits for your Confirm' });
     assert.equal(client.calls.record.length, 0);
     assert.deepEqual(pendingFiles(), []);
   }
@@ -499,7 +499,7 @@ test('a write that times out is said apart from one that was refused', () => wit
   assert.equal((await press(throwing, 'pace', '2')).says, late);
   // Refusals are said as refusals.
   assert.equal((await press(fake({ down: true }), 'pace', '2')).says, 'That setting couldn\'t be changed now: the helper didn\'t take it');
-  assert.equal((await press(fake({ stop: true }), 'pace', '2')).says, 'Settings can\'t change while STOP is on. Lift STOP first.');
+  assert.equal((await press(fake({ stop: true }), 'pace', '2')).says, 'Settings can\'t change while All stop is on. Lift All stop first.');
   assert.deepEqual(pendingFiles(), []);
 }));
 
@@ -528,7 +528,7 @@ test('undo within a minute sets the value before, signed and confirmed', () => w
 
   const client = fake({ from: '2026-10-19T05:02:40.000Z' });
   const said = await press(client, 'pace', 'undo', { now: soon });
-  assert.deepEqual(said, { made: true, says: 'Builders at once is now 1, for this project' });
+  assert.deepEqual(said, { made: true, says: 'Crew at once is now 1, for this project' });
   assert.deepEqual(client.calls.order, ['write', 'record']);
   assert.deepEqual(client.calls.write, [{ project: P, kind: 'setting', data: { key: 'pace', value: 1 } }]);
   const latest = listEvents(stateDir(P), { report: () => {} }).filter((e) => e.kind === 'setting').pop();
@@ -564,8 +564,8 @@ test('undo under STOP records nothing and says Settings can\'t change while STOP
   setStop({ by: 'mod' });
   const client = fake({ stop: true });
   const now = at('2026-10-19T05:00:40.000Z');
-  assert.deepEqual(await press(client, 'pace', 'undo', { now }), { made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
-  assert.deepEqual(await press(client, 'pace', '2', { now }), { made: false, says: 'Settings can\'t change while STOP is on. Lift STOP first.' });
+  assert.deepEqual(await press(client, 'pace', 'undo', { now }), { made: false, says: 'Settings can\'t change while All stop is on. Lift All stop first.' });
+  assert.deepEqual(await press(client, 'pace', '2', { now }), { made: false, says: 'Settings can\'t change while All stop is on. Lift All stop first.' });
   assert.equal(nothingSent(client), 0);
 }));
 
@@ -579,22 +579,22 @@ const groupRows = (groups, id) => groups.find((g) => g.id === id).rows;
 const groupRow = (groups, key) => groups.flatMap((g) => g.rows).find((r) => r.key === key);
 
 test('the four plainer names show, and the keys stay', () => {
-  assert.deepEqual(['presence', 'pace', 'efficiency', 'boardTab'].map((k) => SETTINGS[k].label), ['Availability', 'Builders at once', 'Thoroughness', 'Board opens on']);
+  assert.deepEqual(['presence', 'pace', 'efficiency', 'boardTab'].map((k) => SETTINGS[k].label), ['Availability', 'Crew at once', 'Thoroughness', 'Logbook opens on']);
   const groups = groupsAt('2026-10-19T05:00:00.000Z');
-  assert.deepEqual(['presence', 'pace', 'efficiency', 'boardTab'].map((k) => groupRow(groups, k).label), ['Availability', 'Builders at once', 'Thoroughness', 'Board opens on']);
+  assert.deepEqual(['presence', 'pace', 'efficiency', 'boardTab'].map((k) => groupRow(groups, k).label), ['Availability', 'Crew at once', 'Thoroughness', 'Logbook opens on']);
 });
 
 test('the groups come in order, with their notes word for word', () => {
   const groups = groupsAt('2026-10-19T05:00:00.000Z');
-  assert.deepEqual(groups.map((g) => [g.id, g.title]), [['stop', 'STOP'], ['project', 'This project'], ['you', 'You, in every project'], ['advanced', 'Advanced settings']]);
-  assert.equal(groups[0].note, 'STOP halts every builder at once. Only you can lift it.');
-  assert.equal(groups[1].note, 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the front desk asks for them.');
-  assert.equal(groups[2].note, 'These follow you to every project. Notifications and working hours are changed with the front desk, which checks them with you.');
+  assert.deepEqual(groups.map((g) => [g.id, g.title]), [['stop', 'All stop'], ['project', 'This project'], ['you', 'You, in every project'], ['advanced', 'Advanced settings']]);
+  assert.equal(groups[0].note, 'All stop halts the whole Crew at once. Only you can lift it.');
+  assert.equal(groups[1].note, 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the First Mate asks for them.');
+  assert.equal(groups[2].note, 'These follow you to every project. Notifications and working hours are changed with the First Mate, which checks them with you.');
   assert.deepEqual(groups[1].rows.map((r) => r.label), [
-    'Autonomy', 'Show before building', 'Feature milestones', 'Builders at once', 'Thoroughness', 'Product phase', 'Build commands on Windows', 'Budget', 'Protection',
+    'Autonomy', 'Show before building', 'Feature milestones', 'Crew at once', 'Thoroughness', 'Product phase', 'Build commands on Windows', 'Budget', 'Protection',
   ]);
   assert.deepEqual(groups[2].rows.map((r) => r.label), [
-    'Availability', 'Briefing length', 'Hours before a new briefing', 'Explanations', 'Usage nudge', 'Board opens on', 'Notifications', 'Working hours',
+    'Availability', 'Briefing length', 'Hours before a new briefing', 'Explanations', 'Usage nudge', 'Logbook opens on', 'Notifications', 'Working hours',
   ]);
   assert.deepEqual(groups[3].rows.map((r) => [r.label, r.kind]), [['Advanced settings', 'change']]);
   assert.deepEqual(JSON.parse(JSON.stringify(groups)), groups);
@@ -605,7 +605,7 @@ test('a setting with levels is a select with its options and the value in force'
   const effective = effectiveSettings({ project: { pace: { key: 'pace', value: 2, id: 'a', at: '2026-10-18T00:00:00.000Z', before: null } }, now });
   const groups = settingsGroups({ effective, now, timeZone: SYDNEY });
   const pace = groupRow(groups, 'pace');
-  assert.deepEqual(pace, { key: 'pace', label: 'Builders at once', value: '2', kind: 'select', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }] });
+  assert.deepEqual(pace, { key: 'pace', label: 'Crew at once', value: '2', kind: 'select', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }] });
   const autonomy = groupRow(groups, 'autonomy');
   assert.equal(autonomy.value, 'balanced');
   assert.deepEqual(autonomy.options, [{ value: 'cautious', label: 'Cautious' }, { value: 'balanced', label: 'Balanced' }, { value: 'trusting', label: 'Trusting' }]);
@@ -635,7 +635,7 @@ test('Budget shows Report only alone', () => {
 
 test('the STOP group says Working, or Halted since a time', () => {
   const working = groupRows(groupsAt('2026-10-19T05:00:00.000Z', { stop: { on: false } }), 'stop');
-  assert.deepEqual(working, [{ key: 'builders', label: 'Builders', value: 'Working', kind: 'value' }]);
+  assert.deepEqual(working, [{ key: 'builders', label: 'Crew', value: 'Working', kind: 'value' }]);
   assert.equal(groupRows(groupsAt('2026-10-19T05:00:00.000Z'), 'stop')[0].value, 'Working');
   // 03:05 UTC is 14:05 in Sydney's daylight time.
   assert.equal(groupRows(groupsAt('2026-10-19T05:00:00.000Z', { stop: { on: true, by: 'mod', at: '2026-10-19T03:05:00.000Z' } }), 'stop')[0].value, 'Halted since 14:05');

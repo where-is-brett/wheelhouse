@@ -427,7 +427,7 @@ function checkPlain(kind, data) {
     // The question and its header as AskUserQuestion takes them; composing keeps them within CARD's limits.
     text('question');
     text('header');
-    if (!CARD_KINDS.includes(data.kind)) bad('needs its kind to be one the front desk knows');
+    if (!CARD_KINDS.includes(data.kind)) bad('needs its kind to be one the First Mate knows');
     if (!Array.isArray(data.options) || data.options.length < 2 || data.options.length > CARD.options || !data.options.every(isText)) {
       bad(`needs two to ${CARD.options} options, each text`);
     }

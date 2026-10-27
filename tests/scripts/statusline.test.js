@@ -108,5 +108,5 @@ test('in a Wheelhouse project the line is the glance, with the share just record
   const resetsAt = Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60;
   const result = runScript(JSON.stringify({ workspace: { current_dir: repo }, rate_limits: { seven_day: { used_percentage: 41.2, resets_at: resetsAt } } }), home);
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), 'Wheelhouse · 1 waiting · launch 1 of 2 · week 41% · STOP on');
+  assert.equal(result.stdout.trim(), 'Wheelhouse · 1 waiting · launch 1 of 2 · week 41% · All stop on');
 }));

@@ -45,9 +45,9 @@ function lean(options) {
   lines.push(helper || addOn
     ? 'Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'
     : 'Approvals are clicks in the chat, recorded as not proven');
-  if (helper) lines.push('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks');
-  else if (addOn) lines.push('STOP is enforced by the add-on, which also cancels the chat\'s running request');
-  else lines.push('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request');
+  if (helper) lines.push('All stop is enforced by Wheelhouse\'s guards, which run as Copilot hooks');
+  else if (addOn) lines.push('All stop is enforced by the add-on, which also cancels the chat\'s running request');
+  else lines.push('All stop isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request');
   if (guards.line !== null) lines.push(guards.line);
   if (guards.running) lines.push(TIME_OUT);
   lines.push(
@@ -70,7 +70,7 @@ function upper({ level, sandbox, platform, phoneStop }) {
     'At Standard, Wheelhouse\'s hooks run beside the agent, so no hook holds a secret an agent can\'t read',
     networkLine(platform),
     'You can lower the level, or switch the sandbox off, unless Locked or your company\'s settings hold it',
-    ...(phoneStop === true ? [] : ['Phone STOP isn\'t available until a way is found']),
+    ...(phoneStop === true ? [] : ['Phone All stop isn\'t available until a way is found']),
     'Wheelhouse can\'t pin VS Code or its Copilot runtime; it records them and runs its safety checks again when they change',
     'Your company\'s own settings win over Wheelhouse\'s, Locked included, and can stop its hooks loading or Copilot\'s command-line agent running',
   ];

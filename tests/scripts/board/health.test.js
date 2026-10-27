@@ -52,7 +52,7 @@ test('each health line appears in its case and in its order', () => {
     builds: { level: 'unattended', lockedUnattended: false },
   });
   assert.deepEqual(everything.map((line) => line.text), [
-    'STOP is on, since 18 October 2026',
+    'All stop is on, since 18 October 2026',
     'Protection: Standard',
     QUICK_LINE,
     WINDOWS_LINE,
@@ -100,7 +100,7 @@ test('the lines come only in their own case', () => {
   assert.deepEqual(texts({ renewal: { due: true, on: '2026-12-25' } }), ['Protection: Standard', 'Renew the host key by 25 December 2026']);
   // The records stay on this computer (design section 24): no line asks for the profile's repository.
   assert.deepEqual(texts({ profile: null }), ['Protection: Standard']);
-  assert.deepEqual(texts({ stop: { on: true } }), ['STOP is on', 'Protection: Standard']);
+  assert.deepEqual(texts({ stop: { on: true } }), ['All stop is on', 'Protection: Standard']);
 });
 
 test('with pages listed and no Chrome found, one line says an approval asks again after an update (F74)', () => {
@@ -192,7 +192,7 @@ test('the lock line shows only when another computer holds the project', () => {
 
 test('STOP comes first, at level stop', () => {
   const lines = healthLines({ ...calm, stop: { on: true, at: '2026-10-18T09:30:00.000Z' }, helperUp: false, locked: true });
-  assert.deepEqual(lines[0], { level: 'stop', text: 'STOP is on, since 18 October 2026' });
+  assert.deepEqual(lines[0], { level: 'stop', text: 'All stop is on, since 18 October 2026' });
   assert.equal(lines.filter((line) => line.level === 'stop').length, 1);
   assert.equal(healthLines({ ...calm, stop: { on: false } }).some((line) => line.level === 'stop'), false);
 });

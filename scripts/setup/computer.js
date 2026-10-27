@@ -150,7 +150,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
   const out = [];
   const has = (what) => changes.some((c) => c.what === what);
   if (kept.length > 0) {
-    out.push(`telemetry left as you set it (${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'} yours), so the board counts no tokens here`);
+    out.push(`telemetry left as you set it (${kept.map((k) => k.name).join(', ')} ${kept.length === 1 ? 'is' : 'are'} yours), so the Logbook counts no tokens here`);
   } else if (has('telemetry')) {
     const where = route === 'launch-env'
       ? `4 variables for your account${platform === 'darwin' ? ', set again by a login item at log-in' : ''}; ${RESTART}`

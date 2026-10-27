@@ -192,7 +192,7 @@ test("the clean check fails on an extra agent, an extra disabled tool or a missi
     assert.ok(check.reasons.some((r) => pattern.test(r)), check.reasons.join('; '));
   };
   const info = ROUTE_B.events[0];
-  fails(routeB({ events: [...ROUTE_B.events, { type: 'session.custom_agents_updated', data: { agents: [{ name: 'reviewer' }, { name: 'claude-reviewer', source: 'project' }] } }] }), /agents besides the reviewer: claude-reviewer/);
+  fails(routeB({ events: [...ROUTE_B.events, { type: 'session.custom_agents_updated', data: { agents: [{ name: 'reviewer' }, { name: 'claude-reviewer', source: 'project' }] } }] }), /agents besides the Lookout: claude-reviewer/);
   fails(routeB({ debugLines: [ROUTE_B.debugLines[0].replace('loaded=1', 'loaded=2')] }), /2 agents were loaded/);
   fails(routeB({ events: [{ ...info, data: { ...info.data, message: `${info.data.message}, lsp` } }, ...ROUTE_B.events.slice(1)] }), /beyond it: lsp/);
   fails(routeB({ events: [{ ...info, data: { ...info.data, message: info.data.message.replace(', task', '') } }, ...ROUTE_B.events.slice(1)] }), /missing: task/);
@@ -215,7 +215,7 @@ test("the clean check fails on an extra agent, an extra disabled tool or a missi
   fails(routeB({ listings: { ...routeB().listings, lsp: { code: 1 } } }), /lsp listing failed/);
   fails(routeB({ listings: { ...routeB().listings, mcp: undefined } }), /mcp listing failed or is missing/);
   // The reviewer's own line must open the answer, and the nonce must not be in the prompt.
-  fails(routeB({ answer: 'Read it.' }), /reviewer's own line/);
+  fails(routeB({ answer: 'Read it.' }), /Lookout's own line/);
   fails({ ...routeB(), prompt: `Begin with ${NONCE}` }, /nonce is missing or is in the prompt/);
 });
 
@@ -492,7 +492,7 @@ test('the route refuses under STOP, while the clean session is switched off, and
       try {
         const client = helperClient({ address: helper.address });
         assert.deepEqual(await client.stop({}), { ok: true });
-        assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: false, refused: 'STOP is on' });
+        assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: false, refused: 'All stop is on' });
       } finally {
         await helper.close();
       }
@@ -547,7 +547,7 @@ test('a prompt past MOST_PROMPT_BYTES refuses with NO_CLEAN_REVIEW in plain word
     review: { reviewKind: 'clean-session', session: async () => { sessions += 1; return { clean: true }; } },
     withChange: (build) => build({ ...changed({ 'src/a.js': 'a\n' }), diff: '+a\n', rules: [{ path: 'CLAUDE.md', text: 'r'.repeat(MOST_PROMPT_BYTES) }] }),
   });
-  assert.deepEqual(outcome, { ok: false, why: `the reviewer's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the reviewer` });
+  assert.deepEqual(outcome, { ok: false, why: `the Lookout's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the Lookout` });
   assert.equal(sessions, 0);
   assert.deepEqual(fs.readdirSync(tmp), [], 'the folder is removed');
 });

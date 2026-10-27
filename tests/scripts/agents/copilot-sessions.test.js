@@ -140,7 +140,7 @@ test('each call has --no-ask-user and the level\'s rules', () => {
   const shells = foremanTools().filter((t) => t.startsWith('Bash(')).map((t) => `--allow-tool=shell(${t.slice(5)}`);
   assert.deepEqual(f.args.filter((arg) => arg.startsWith('--allow-tool=') || arg.startsWith('--deny-tool=')), shells);
   assert.equal(shells.length, 2);
-  assert.throws(() => foreman({ long: true }), /Copilot's foreman runs one wake at a time; its long session isn't built/);
+  assert.throws(() => foreman({ long: true }), /Copilot's Bosun runs one wake at a time; its long session isn't built/);
 
   // The level's rules hold the granted command, the loop's tools and the denies.
   for (const rule of ['--allow-tool=write', '--allow-tool=shell(npm test:*)', '--allow-tool=task', '--deny-tool=shell(copilot:*)', '--deny-tool=write(**/AGENTS.md)']) {

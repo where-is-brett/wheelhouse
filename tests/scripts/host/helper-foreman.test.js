@@ -32,7 +32,7 @@ const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
 
 const P = 'o__p';
-const NOT_MAIN = { ok: false, refused: 'the foreman\'s commands run only in the project\'s main checkout' };
+const NOT_MAIN = { ok: false, refused: 'the Bosun\'s commands run only in the project\'s main checkout' };
 
 // A host with `main`, the project's main checkout cloned from it, and a home whose record names
 // that checkout, with the state cloned and the lock taken.
@@ -339,7 +339,7 @@ test('a feature session\'s pull brings the host\'s branch into its own, by fast-
       assert.match((await ask({ dir: p.checkout, branch: 'main' })).refused, /default branch|feature/);
       setStop({ by: 'prompt' });
       try {
-        assert.deepEqual(await ask(), { ok: false, refused: 'STOP is on' });
+        assert.deepEqual(await ask(), { ok: false, refused: 'All stop is on' });
       } finally { liftStop(); }
 
       // A branch the host doesn't hold yet.

@@ -506,7 +506,7 @@ test('STOP while the installer runs ends the step and leaves the installer to fi
     let stop = false;
     const done = runApply({ step, runId: run.id, changes: planned.changes, ctx: ctxFor(folder, { runId: run.id, stopped: () => stop }) });
     stop = true;
-    assert.match((await done).reason, /STOP/);
+    assert.match((await done).reason, /All stop/);
     assert.equal(m.installs, 1);
     assert.equal(m.installerOpen, true);
   });

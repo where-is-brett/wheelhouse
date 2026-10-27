@@ -221,7 +221,7 @@ test('the playbook\'s similar, with the request\'s words as arguments, runs, and
 });
 
 test('the playbook says what to do under STOP, with a card already asked, and with a problem `cards` reports', () => {
-  assert.match(playbook, /\*\*STOP:\*\*[^\n]*what was in progress[^\n]*`cards`[^\n]*Lift STOP card/);
+  assert.match(playbook, /\*\*All stop:\*\*[^\n]*what was in progress[^\n]*`cards`[^\n]*Lift All stop card/);
   assert.match(playbook, /`alreadyAsked`/);
   assert.match(playbook, /`problems`/);
   assert.match(playbook, /`views glossary`/);
@@ -233,9 +233,9 @@ test('the playbook looks at the work before it says how things stand or what was
   // nothing is running without having looked; under STOP, what was in progress comes from it too.
   const going = playbook.split('\n').find((line) => line.startsWith('| "How\'s it going?"')) ?? '';
   assert.match(going, /`views work`/);
-  assert.match(going, /`\/wheelhouse:board`/);
+  assert.match(going, /`\/wheelhouse:logbook`/);
   assert.match(going, /[Nn]ever say nothing is running/);
-  assert.match(playbook, /\*\*STOP:\*\*[^\n]*`views work`/);
+  assert.match(playbook, /\*\*All stop:\*\*[^\n]*`views work`/);
 });
 
 test('the playbook decides a level 2 question itself, and puts the review before the visit\'s other cards', () => {
@@ -332,14 +332,14 @@ test('the playbook records the private note\'s figures only by the baseline comm
 test('under a courier\'s wake with no AskUserQuestion, the cards are said to be on the board, not put in the reply (merge review of 63d5ceb)', () => {
   const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
   assert.ok(courier, 'the courier\'s rule');
-  assert.match(courier, /When your clickable-question tool can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the board\./);
+  assert.match(courier, /When your clickable-question tool can't be loaded on a wake, put no card in your reply: the one sentence says the cards are on the Logbook\./);
 });
 
 test('a courier\'s card wake whose notification wasn\'t sent asks nothing, and its reminder asks the cards whatever the notification answers (ruling 68)', () => {
   const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
   assert.ok(courier, 'the courier\'s rule');
   assert.match(courier, /cards still waiting \(by their numbers\)/);
-  assert.match(courier, /When the notification answers that it was not sent \("Not sent …"\) and the wake names new cards but no cards still waiting, STOP or incidents, run no `cards` and ask nothing/);
+  assert.match(courier, /When the notification answers that it was not sent \("Not sent …"\) and the wake names new cards but no cards still waiting, All stop or incidents, run no `cards` and ask nothing/);
   assert.match(courier, /When the wake names cards still waiting, that is the courier's one reminder: ask the cards whatever the notification answers\./);
   const row = playbook.split('\n').find((line) => line.startsWith('| "The notification wasn\'t sent'));
   assert.ok(row, 'a red flag for asking anyway');
@@ -349,8 +349,8 @@ test('a courier\'s card wake whose notification wasn\'t sent asks nothing, and i
 test('a failed or skipped phone notification is never mentioned to the director, and a phone test that didn\'t arrive stays a line on the board\'s health', () => {
   const courier = playbook.split('\n').find((line) => line.startsWith('- **"Wheelhouse courier:"**'));
   assert.ok(courier, 'the courier\'s rule');
-  assert.match(courier, /A notification that failed, wasn't sent or was skipped is not the director's concern: the board and their next look-in carry the card\. Say nothing about it, in this turn, in a briefing or in a reply, and don't suggest setting notifications up\./);
-  assert.match(courier, /A phone test that didn't arrive stays a line on the board's health/);
+  assert.match(courier, /A notification that failed, wasn't sent or was skipped is not the director's concern: the Logbook and their next look-in carry the card\. Say nothing about it, in this turn, in a briefing or in a reply, and don't suggest setting notifications up\./);
+  assert.match(courier, /A phone test that didn't arrive stays a line on the Logbook's health/);
   assert.ok(playbook.split('\n').some((line) => line.startsWith('| "I should tell the director the phone notification failed" |')), 'a red flag for telling them');
 });
 
@@ -369,7 +369,7 @@ test('asked what waits, the front desk names each waiting card in one line by it
   assert.ok(row, 'a row for what waits');
   assert.match(row, /`views waiting`/);
   // Ruling F104: the line may read as `views waiting` lists the card; it is not asking it again.
-  assert.match(row, /name each waiting card in one line, as it lists it \(its number on the board, its question and its choice\)/);
+  assert.match(row, /name each waiting card in one line, as it lists it \(its number on the Logbook, its question and its choice\)/);
   assert.doesNotMatch(row, /words of your own/);
   // `views waiting` names each card's id too, for matching a press; the director isn't given it (fix G).
   assert.match(row, /but without its id/);

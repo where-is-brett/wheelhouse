@@ -137,7 +137,7 @@ function buildWhat(worktree, commands) {
     const line = Object.hasOwn(scripts, script) && typeof scripts[script] === 'string' ? scripts[script] : null;
     return line === null ? `${c}, which runs (no such script)` : `${c}, which runs "${line.replace(/\s*[\r\n]+\s*/g, ' ').slice(0, SCRIPT_CHARS)}"`;
   });
-  return `Let this feature's builder run: ${named.join('; ')}.`;
+  return `Let this feature's Crew run: ${named.join('; ')}.`;
 }
 
 // A build-command question (design section 12.2): its options are the design's, never the
@@ -488,7 +488,7 @@ export async function main(argv, {
         got = await helper().lineage.provenance({ cwd: worktree, ...(session ? { session } : {}) });
       } catch { /* said below */ }
       if (got?.ok === true && got.stop === true) {
-        out('STOP is on, so the report was not stamped with what built it.\n');
+        out('All stop is on, so the report was not stamped with what built it.\n');
         return 0;
       }
       const usable = got?.ok === true && got.stop === false && session !== null && typeof got.block === 'string';

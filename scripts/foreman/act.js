@@ -972,7 +972,7 @@ async function offerUnattended(ctx, views, work, asked) {
     const data = unattendedCardData(card, settingId, computer, guardedEvent);
     const fault = unattendedCardFault(data);
     if (fault !== null) {
-      ctx.say(`The Unattended card wasn't written, so builders keep asking: ${fault}.`);
+      ctx.say(`The Unattended card wasn't written, so the Crew keeps asking: ${fault}.`);
       return;
     }
     await ctx.write('card', data);
@@ -1254,13 +1254,13 @@ async function secondReviewWait(ctx, views, work, pr, head) {
   if (!takesColumn(config)) return null;
   const clean = head === undefined ? 0 : cleanReviewsOf(ctx.project, pr, head);
   if (clean >= 2) return null;
-  const merges = `at Thorough it merges only once two fresh reviewers have each reported CLEAN on ${head === undefined ? 'its head' : short(head)}: ${clean} so far. `;
+  const merges = `at Thorough it merges only once two fresh Lookouts have each reported CLEAN on ${head === undefined ? 'its head' : short(head)}: ${clean} so far. `;
   if (area === 'unknown') {
     return `Pull request #${pr} for ${work} is treated as in a critical area, because git couldn't say which files it changes, and ${merges}`
-      + "It waits for the feature session's second reviewer; if none comes, ask the director.";
+      + "It waits for the feature session's second Lookout; if none comes, ask the director.";
   }
   return `Pull request #${pr} for ${work} is in a critical area, and ${merges}`
-    + "It waits for the feature session's second reviewer; nothing to do.";
+    + "It waits for the feature session's second Lookout; nothing to do.";
 }
 
 async function merge(ctx, work, rest) {
@@ -1307,7 +1307,7 @@ async function merge(ctx, work, rest) {
   if (updated?.ok !== true) refuse(`Pull request #${pr} for ${work} couldn't be brought up to date: ${refusal(updated)}. Ask the director; don't try again.`);
   // A new head needs CI on that exact commit before the gate lets it merge (design section 12).
   if (updated.updated === true) {
-    ctx.say(`Brought pull request #${pr} for ${work} up to date at ${short(updated.head)}; the merge waits for CI on that commit, and the next merge-ready wakes the foreman.`);
+    ctx.say(`Brought pull request #${pr} for ${work} up to date at ${short(updated.head)}; the merge waits for CI on that commit, and the next merge-ready wakes the Bosun.`);
     return;
   }
   const head = [updated.head, state?.result?.headSha].find((h) => typeof h === 'string' && FULL_COMMIT.test(h));
@@ -1328,7 +1328,7 @@ async function merge(ctx, work, rest) {
   if (merged?.ok === false && wantsCleanReview(merged, [updated.head, state?.result?.headSha])) {
     const review = await ctx.client.review(number);
     if (review?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}; and the helper's review wasn't started: ${refusal(review)}. Ask the director; don't try again.`);
-    ctx.say(`The helper is reviewing #${pr} in a clean session; the next merge-ready wakes the foreman.`);
+    ctx.say(`The helper is reviewing #${pr} in a clean session; the next merge-ready wakes the Bosun.`);
     return;
   }
   if (merged?.ok !== true) refuse(`Pull request #${pr} for ${work} was not merged: ${refusal(merged)}. Ask the director; don't try again.`);

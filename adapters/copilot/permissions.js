@@ -118,7 +118,7 @@ function denies(allowed) {
 // and Copilot holds the file tools to it (check 61). Without a whole path to one, no rules are made.
 function checkWorktree(worktree, platform) {
   const paths = platform === 'win32' ? path.win32 : path.posix;
-  if (!fitsRule(worktree) || !paths.isAbsolute(worktree)) throw new Error("A builder's rules are made for its worktree, and no whole path to one was given");
+  if (!fitsRule(worktree) || !paths.isAbsolute(worktree)) throw new Error("A Crew member's rules are made for its worktree, and no whole path to one was given");
 }
 
 // The rules for a session at `level`, as `{ allow, deny, droppedDomains }`. At `sandbox` the shell is allowed (the sandbox holds it);
@@ -150,7 +150,7 @@ export function levelRules({ level, grants = [], runner = null, worktree, domain
   return { allow: unique(['write', ...LOOP_TOOLS, ...shell, ...web]), deny: denies(allowed), droppedDomains };
 }
 
-const ASKS = 'so builders ask you before each build command';
+const ASKS = 'so the Crew ask you before each build command';
 
 // Whether `level` may run, as `{ ok, level, why }`: `level` is the one that runs, `why` says in plain words why it
 // isn't the one asked for (null when it is). Ask always runs. The sandbox has no test on this computer until Part 9

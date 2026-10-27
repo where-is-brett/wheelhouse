@@ -213,7 +213,7 @@ const STARTING = Symbol('starting');
 // What a check made just before a run starts throws when STOP has come on: the wake goes again.
 class StopNow extends Error {
   constructor() {
-    super('STOP is on: no session is started');
+    super('All stop is on: no session is started');
   }
 }
 const WAKE_BYTES = 8 * 1024 * 1024;
@@ -481,7 +481,7 @@ function realFolderUnder(root, parts, fail) {
 // The foreman's copies: the main checkout's .wheelhouse/foreman/wakes/,
 // git-ignored through the repository's info/exclude.
 export function foremanWakesDir(checkout) {
-  const fail = () => { throw new Error("The foreman's wakes folder isn't a real folder in the project"); };
+  const fail = () => { throw new Error("The Bosun's wakes folder isn't a real folder in the project"); };
   ensureIgnored(checkout, { mainCheckout: checkout });
   return realFolderUnder(checkout, ['.wheelhouse', 'foreman', 'wakes'], fail);
 }
@@ -759,7 +759,7 @@ export function makeWaker({
   };
   mayStart('checkForeman');
   if (!Array.isArray(foremanTools) || !foremanTools.every((t) => typeof t === 'string' && t !== '' && !/[\r\n]/.test(t))) {
-    throw new Error("The foreman's tools are a list of tool rules");
+    throw new Error("The Bosun's tools are a list of tool rules");
   }
   watcherDir(project); // a project name that is not a folder name throws here
   const buildsOf = windowsBuilds ?? windowsBuildsOf(project, { pluginRoot, now, platform });
@@ -878,7 +878,7 @@ export function makeWaker({
         const failures = (Number.isInteger(e.failures) ? e.failures : 0) + 1;
         const wait = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1];
         kept.push({ ...e, flight: null, failures, retryAt: new Date(now().getTime() + wait).toISOString(), lastError: why });
-        if (failures >= FAILURES_REPORTED) onError(`A wake for ${e.to === 'foreman' ? 'the foreman' : e.work} has failed ${failures} times: ${why}`);
+        if (failures >= FAILURES_REPORTED) onError(`A wake for ${e.to === 'foreman' ? 'the Bosun' : e.work} has failed ${failures} times: ${why}`);
       }
     }
     save(kept);
@@ -1041,7 +1041,7 @@ export function makeWaker({
     try {
       await raise({ kind: 'premium-rest', data: { why: refusal.why, at, until, ...(target === 'foreman' ? {} : { work: nameOf(target) }) } });
     } catch (error) {
-      onError(`The premium model was ${refusal.why === 'billing' ? 'refused for billing' : 'at its usage limit'}, and its line for the board couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+      onError(`The premium model was ${refusal.why === 'billing' ? 'refused for billing' : 'at its usage limit'}, and its line for the Logbook couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
     // A wake goes again as it was; a start, which has no wake of its own, gets one, so its session is woken again.
     if (entries.length > 0) settle(entries, 'again');
@@ -1067,7 +1067,7 @@ export function makeWaker({
     try {
       await raise({ kind: 'level', data: { level, work, at: now().toISOString() } });
     } catch (error) {
-      onError(`The level builders run at here (${level}) couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
+      onError(`The level the Crew runs at here (${level}) couldn't be recorded: ${error instanceof Error ? error.message : 'unknown error'}`);
       return;
     }
     watcherFolder(project);
@@ -1292,7 +1292,7 @@ export function makeWaker({
       return;
     }
     fs.rmSync(file, { force: true });
-    onError(`The ${work} session's first run gave no session id; it is started again by the foreman's next \`act start\``);
+    onError(`The ${work} session's first run gave no session id; it is started again by the Bosun's next \`act start\``);
   };
 
   // Whether the feature's wakes `ids` are held by the files in `worktree` that steer agents: when
@@ -1565,7 +1565,7 @@ export function makeWaker({
       if (briefFile !== undefined && path.resolve(briefFile) !== brief) throw new Error("The brief must be the worktree's own .wheelhouse/feature/brief.md");
       if (!lstatOf(brief)?.isFile()) throw new Error("The feature's brief isn't there");
       return serial(async () => {
-        if (stopped()) throw new Error('STOP is on: no session is started');
+        if (stopped()) throw new Error('All stop is on: no session is started');
         // The files that steer agents are checked as before a wake: a worktree a closed feature
         // left, started again, may hold some an earlier session planted (ruling P7-33).
         if (await controlHeld(work, worktree, [])) throw new Error("the files in its folder that steer agents are new or changed, or can't be checked, so its session waits for the director's card");
@@ -1583,7 +1583,7 @@ export function makeWaker({
         // Checked before anything is written, so a refused start leaves nothing behind.
         sessionsOf().checkFeature(config);
         const sessionId = crypto.randomUUID();
-        if (stopped()) throw new Error('STOP is on: no session is started');
+        if (stopped()) throw new Error('All stop is on: no session is started');
         const feature = await levelInputs(work, worktree);
         const column = columnNow();
         let named = sessionId;
@@ -1597,7 +1597,7 @@ export function makeWaker({
           })),
           file: brief,
           beforeRun: (call) => {
-            if (stopped()) throw new Error('STOP is on: no session is started');
+            if (stopped()) throw new Error('All stop is on: no session is started');
             feature.recordUsed(call);
           },
           // The session's id is kept before the run starts, once its record is written: the one made here, or, for

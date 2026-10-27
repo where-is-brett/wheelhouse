@@ -1,11 +1,11 @@
 ---
 name: foreman
-description: Use when a session's first prompt begins "Wheelhouse foreman:" - a wake to handle, or the start of the long-lived foreman session - and on every WAKE foreman line after it.
+description: Use when a session's first prompt begins "Wheelhouse foreman:" - a wake to handle, or the start of the long-lived Bosun session - and on every WAKE foreman line after it.
 allowed-tools: Bash(node '${CLAUDE_PLUGIN_ROOT}/scripts/foreman/wake.js':*)
 ---
 <!-- skills/foreman/SKILL.md -->
 
-# The foreman
+# The Bosun
 
 You start, hold, merge and close work through two commands, and pass questions to the director. **You never build, plan, edit files or run git.** Act on what the commands print, not on files.
 
@@ -46,8 +46,8 @@ A line with `Next: act start W` names a document. Read that, and nothing else. T
 
 On Windows a feature session asks for its build commands (to run its tests, say) with a build-command question. Its wake line is `Next: act question …`, as for any question: run it. The director sees the question as a card that names the commands from the question's `commands`, with its `what` beside them as the explanation, and its three options:
 
-- **Allow this time:** for the builder's next run only.
-- **Allow for this feature:** until the feature ends. The card says that for as long as this lasts, the builder can do whatever your account can.
+- **Allow this time:** for the Crew member's next run only.
+- **Allow for this feature:** until the feature ends. The card says that for as long as this lasts, the Crew member can do whatever your account can.
 - **Not now:** no answer is recorded, so the feature waits and the question stays on the director's waiting list, which the next briefing shows. Nothing for you to run.
 
 When a feature's third build-command question that day is recorded, `act question` offers the Unattended card itself, once that day: after the question, never in its place. It prints "Offered the director the Unattended card". You never offer the Unattended card yourself, and never ask about build commands with `act ask`.
@@ -57,10 +57,10 @@ When a feature's third build-command question that day is recorded, `act questio
 - **A wake may repeat.** Every command is safe to run again, and says what is done already. Run them anyway.
 - **A refusal is never retried.** If it says "Nothing to do", do nothing. Otherwise, `act ask`.
 - **A card from a refusal is in plain words:** what happened, why it matters, and what happens meanwhile, as to a product owner. When a merge is held because what passed review is not what is on the pull request now, say that the change was built with something that has since changed, so it can't go in yet; never repeat the refusal's own terms.
-- **A `Hold:` line** means STOP or an incident. Start nothing and give no go-ahead; the lines already say what waits. During an incident bug work still starts and builds, since its fix is a bug: run the `Next:` lines the wake gives for it. Still run `act plan-ready`: it records the plan and waits, so the plan isn't lost.
+- **A `Hold:` line** means All stop or an incident. Start nothing and give no go-ahead; the lines already say what waits. During an incident bug work still starts and builds, since its fix is a bug: run the `Next:` lines the wake gives for it. Still run `act plan-ready`: it records the plan and waits, so the plan isn't lost.
 - **Shape 2:** when `act start` prints `START feature W <worktree>`, end your reply with that line, word for word.
 - **Shape 2, the mod's prompts:** a prompt `Wheelhouse foreman: WAKE foreman <file>`, `Wheelhouse foreman: WAKE feature <work> <file>` or `Wheelhouse foreman: START feature <work> <worktree>` is the watcher's line as a monitor would have given it. Handle it as this playbook already says.
-- **You talk to no one:** not the front desk, the director or a feature session. Questions go through `act ask`.
+- **You talk to no one:** not the First Mate, the director or a feature session. Questions go through `act ask`.
 
 ## Red flags: stop
 

@@ -216,7 +216,7 @@ test('the Unattended card recommends Guarded where it is offered, and keeping as
   assert.equal(not.recommend, 'keep-asking');
   assert.equal(UNATTENDED_CARD({}).recommend, 'keep-asking');
   for (const card of [offered, not]) {
-    assert.equal(card.risk, 'Builders on this computer will run their tests and build steps without asking you, and with nothing to hold them. A builder writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and STOP still hold.');
+    assert.equal(card.risk, 'The Crew on this computer will run their tests and build steps without asking you, and with nothing to hold them. A Crew member writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and All stop still hold.');
     for (const k of ['what', 'why']) assert.ok(typeof card[k] === 'string' && card[k] !== '', k);
     assert.ok(card.options.every((o) => typeof o.says === 'string' && o.says !== ''));
     assert.match(card.options.find((o) => o.name === 'turn-on').says, /whatever your account can/);
@@ -259,7 +259,7 @@ const grantsOf = (events, extra = {}) => buildGrants({ views: views(events), wor
 
 test('the build-command question\'s options are the design\'s, and each Allow says what it lets the builder do', () => {
   assert.deepEqual(BUILD_QUESTION_OPTIONS.map((o) => o.label), ['Allow this time', 'Allow for this feature', 'Not now']);
-  for (const o of BUILD_QUESTION_OPTIONS.slice(0, 2)) assert.match(o.says, /for as long as this lasts, the builder can do whatever your account can/i, o.label);
+  for (const o of BUILD_QUESTION_OPTIONS.slice(0, 2)) assert.match(o.says, /for as long as this lasts, the Crew member can do whatever your account can/i, o.label);
   assert.match(BUILD_QUESTION_OPTIONS[0].says, /next run only/);
   assert.match(BUILD_QUESTION_OPTIONS[1].says, /until the feature ends/i);
   assert.match(BUILD_QUESTION_OPTIONS[2].says, /waits/);

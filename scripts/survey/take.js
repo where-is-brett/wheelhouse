@@ -169,6 +169,6 @@ export async function recordSurvey({ write: writeWith, take, again = false }) {
   }
   const got = await write(data);
   const missed = JSON.stringify(data) === JSON.stringify(missedSurvey());
-  if (got?.ok === true || missed || got?.refused === 'STOP is on' || got?.refused === 'the helper could not be asked') return got;
+  if (got?.ok === true || missed || got?.refused === 'All stop is on' || got?.refused === 'STOP is on' || got?.refused === 'the helper could not be asked') return got;
   return write(missedSurvey());
 }

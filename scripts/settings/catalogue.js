@@ -40,7 +40,7 @@ export const SETTINGS = {
   // Only "report" is on offer while budget allocation is in the backlog.
   budget: { label: 'Budget', group: 'everyday', levels: ['report', 'weekly-share', 'per-feature'], only: ['report'], default: 'report', home: 'project' },
   // The build loop's limit of three wins over the main design's two.
-  pace: { label: 'Builders at once', group: 'everyday', levels: [1, 2, 3], default: 3, home: 'project' },
+  pace: { label: 'Crew at once', group: 'everyday', levels: [1, 2, 3], default: 3, home: 'project' },
   phase: { label: 'Product phase', group: 'everyday', levels: ['before-launch', 'launched'], default: 'before-launch', home: 'project' },
   // Everyday, kept in the director's profile.
   presence: { label: 'Availability', group: 'everyday', levels: ['here', 'away', 'dnd'], default: 'here', home: 'profile', temporary: true },
@@ -50,7 +50,7 @@ export const SETTINGS = {
   notifications: { label: 'Notifications', group: 'everyday', check: checkNotifications, default: { channels: ['claude'] }, home: 'profile' },
   // The usage level (a percentage of the plan's allowance) at which the front desk speaks up, or off.
   usageMark: { label: 'Usage nudge', group: 'everyday', levels: ['off', 50, 65, 75, 90], default: 75, home: 'profile' },
-  boardTab: { label: 'Board opens on', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
+  boardTab: { label: 'Logbook opens on', group: 'everyday', levels: ['director', 'build'], default: 'director', home: 'profile' },
   hours: { label: 'Working hours', group: 'everyday', check: checkHours, default: null, home: 'profile' },
   // Advanced, kept in the project.
   roundCap: { label: 'Review round cap', group: 'advanced', check: wholeBetween(1, 5), default: 3, home: 'project' },
@@ -64,7 +64,7 @@ export const SETTINGS = {
 };
 
 // One per concept the director already knows (a plain-words glossary switch).
-export const KNOWN = { label: 'Concept the director knows', group: 'everyday', check: (v) => typeof v === 'boolean', default: false, home: 'profile' };
+export const KNOWN = { label: 'Concept you know', group: 'everyday', check: (v) => typeof v === 'boolean', default: false, home: 'profile' };
 
 // One per computer (`windowsBuildCommands:<computer>`): the level its build commands run at
 // on Windows (design section 12.2).

@@ -905,7 +905,7 @@ export function toolsStep({
       const waiting = [...new Set(changes.filter((c) => c.kind === 'process').map((c) => c.target))];
       let seenAt = now().getTime();
       while (waiting.length > 0) {
-        if (ctx.stopped?.()) throw new Error('STOP came on while the installer ran; it is left to finish');
+        if (ctx.stopped?.()) throw new Error('All stop came on while the installer ran; it is left to finish');
         const status = await toolsStatus({ platform, run, tools: waiting, env });
         if (waiting.every((tool) => status[tool].ok)) break;
         const open = await Promise.all(waiting.filter((tool) => !status[tool].ok).map((tool) => openInstaller(tool, { platform, run })));

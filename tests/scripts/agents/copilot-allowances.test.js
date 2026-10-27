@@ -1,5 +1,5 @@
 // tests/scripts/agents/copilot-allowances.test.js
-// Lift STOP and Ask allowances confirmed in the helper's own window on Copilot (Part 8 Task 1, dispatch 1d; rulings
+// Lift All stop and Ask allowances confirmed in the helper's own window on Copilot (Part 8 Task 1, dispatch 1d; rulings
 // P8-7 and P8-8). Under STOP the Copilot cards line names the window at every tier, and at Middle and Full the
 // Wheelhouse command's `confirm lift-stop`, which posts /confirm as the Lean command does. An Ask build question's
 // Allow this time and Allow for this feature are confirmed in the window, which says what allowing the commands
@@ -53,12 +53,12 @@ const argvOf = (args) => args.slice(args.indexOf('--') + 1);
 
 // --- The cards line under STOP (P8-7) ---
 
-test('under STOP on Copilot the cards line names Lift STOP in the window at every tier, and the Wheelhouse command\'s confirm at Middle and Full', () => {
+test('under STOP on Copilot the cards line names Lift All stop in the window at every tier, and the Wheelhouse command\'s confirm at Middle and Full', () => {
   const lean = cardsLineFor('copilot', { count: 1, lean: true, stop: true });
   const middle = cardsLineFor('copilot', { count: 1, stop: true });
   // Lean's line is as it was.
-  assert.equal(lean, 'Cards to ask this visit: 1, Lift STOP, which is confirmed in Wheelhouse\'s own window: after the briefing, run the Lean command\'s `confirm lift-stop` and wait for the director\'s click there.');
-  assert.equal(middle, 'Cards to ask this visit: 1, Lift STOP, which is confirmed in Wheelhouse\'s own window: after the briefing, run the Wheelhouse command\'s `confirm lift-stop` and wait for the director\'s click there.');
+  assert.equal(lean, 'Cards to ask this visit: 1, Lift All stop, which is confirmed in Wheelhouse\'s own window: after the briefing, run the Lean command\'s `confirm lift-stop` and wait for the director\'s click there.');
+  assert.equal(middle, 'Cards to ask this visit: 1, Lift All stop, which is confirmed in Wheelhouse\'s own window: after the briefing, run the Wheelhouse command\'s `confirm lift-stop` and wait for the director\'s click there.');
   for (const line of [lean, middle]) {
     assert.match(line, /Wheelhouse's own window/);
     assert.doesNotMatch(line, /ask_user|AskUserQuestion|cli\.js/);
@@ -73,7 +73,7 @@ test('under STOP on Copilot the cards line names Lift STOP in the window at ever
 // --- The front desk's confirm (P8-7), against a stand-in helper ---
 
 // A stand-in helper client: the card events its views hold, and each /confirm request kept and answered.
-function deskClient({ cards = [], answer = { ok: true, recorded: true, choice: 'Lift STOP' } } = {}) {
+function deskClient({ cards = [], answer = { ok: true, recorded: true, choice: 'Lift All stop' } } = {}) {
   const asked = [];
   return {
     asked,
@@ -88,12 +88,12 @@ async function desk(argv, client) {
   return { code, out: out.join(''), err: err.join('') };
 }
 
-test('the front desk\'s confirm posts /confirm for Lift STOP, and for a card by its id with the hash the state holds', async () => {
+test('the front desk\'s confirm posts /confirm for Lift All stop, and for a card by its id with the hash the state holds', async () => {
   const lift = deskClient();
   const got = await desk(['confirm', 'lift-stop'], lift);
   assert.equal(got.code, 0, got.err);
   assert.deepEqual(lift.asked, [{ cwd: path.resolve('/projects/shop'), card: 'lift-stop' }]);
-  assert.deepEqual(JSON.parse(got.out), { ok: true, recorded: true, choice: 'Lift STOP' });
+  assert.deepEqual(JSON.parse(got.out), { ok: true, recorded: true, choice: 'Lift All stop' });
 
   const data = { question: 'Q', options: ['Allow this time', 'Not now'] };
   const id = '0b7c1d1e-2f3a-4b5c-8d6e-7f8091a2b3c4';
@@ -107,9 +107,9 @@ test('the front desk\'s confirm posts /confirm for Lift STOP, and for a card by 
   assert.equal(missing.code, 1);
   assert.match(missing.err, /not in this project's state/);
   assert.deepEqual(none.asked, []);
-  const refused = await desk(['confirm', 'lift-stop'], deskClient({ answer: { ok: false, refused: 'STOP is not on, so there is nothing to lift' } }));
+  const refused = await desk(['confirm', 'lift-stop'], deskClient({ answer: { ok: false, refused: 'All stop is not on, so there is nothing to lift' } }));
   assert.equal(refused.code, 1);
-  assert.equal(refused.err, 'STOP is not on, so there is nothing to lift\n');
+  assert.equal(refused.err, 'All stop is not on, so there is nothing to lift\n');
   assert.equal((await desk(['confirm'], deskClient())).code, 1);
   assert.equal((await desk(['confirm', 'a', 'b'], deskClient())).code, 1);
 });
@@ -343,7 +343,7 @@ test('the window confirms no answer but an Ask allowance on a build question as 
     // Under STOP an allowance isn't served.
     const live = await c.ask(buildQuestion(4));
     assert.equal((await c.client.stop({})).ok, true);
-    assert.deepEqual(await c.client.confirm({ cwd: c.folder, card: live.card, hash: live.hash }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ cwd: c.folder, card: live.card, hash: live.hash }), { ok: false, refused: 'All stop is on' });
   } finally {
     liftStop();
     await c.close();
@@ -351,7 +351,7 @@ test('the window confirms no answer but an Ask allowance on a build question as 
 });
 
 test('the front desk\'s confirm lifts STOP through the helper\'s window', async () => {
-  const c = await computer(() => said('Lift STOP'));
+  const c = await computer(() => said('Lift All stop'));
   try {
     assert.equal((await c.client.stop({})).ok, true);
     const out = [];
@@ -361,7 +361,7 @@ test('the front desk\'s confirm lifts STOP through the helper\'s window', async 
     const got = JSON.parse(out.join(''));
     assert.deepEqual([got.recorded, got.step], [true, 'lift-stop']);
     assert.equal(stopState().on, false);
-    assert.equal(argvOf(c.windows[0].args)[0], 'Wheelhouse: Lift STOP');
+    assert.equal(argvOf(c.windows[0].args)[0], 'Wheelhouse: All stop');
   } finally {
     liftStop();
     await c.close();

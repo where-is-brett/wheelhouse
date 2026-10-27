@@ -222,7 +222,7 @@ test('the report is brought up to date before each open-pr, never at a close no 
   }
   // The override's own finish names the report and the signed review too, its rule and quotes unchanged.
   const rule4 = overrideText().split(/^(?=\*\*\d\. )/m).find((s) => s.startsWith('**4. '));
-  assert.match(rule4.replace(/\s+/g, ' '), /To finish, write the report and run `report`, open the pull request through the host helper \(`open-pr`\), have Wheelhouse's reviewer review its head, then own it until it merges\./);
+  assert.match(rule4.replace(/\s+/g, ' '), /To finish, write the report and run `report`, open the pull request through the host helper \(`open-pr`\), have Wheelhouse's Lookout review its head, then own it until it merges\./);
   assert.match(rule4, /^> Overrides `writing-plans`: "link it for your human partner"$/m);
   assert.match(rule4, /^> Overrides `finishing-a-development-branch`: "1\. Merge back to <base-branch> locally"$/m);
 });

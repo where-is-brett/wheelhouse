@@ -170,10 +170,10 @@ export function foremanSession({
   if (typeof checkout !== 'string') refuse("The project's folder isn't known on this computer");
   const adapter = sessions ?? sessionsOfProject(config);
   const model = config.routing?.foreman ?? null;
-  if (model !== null && !isModelName(model)) refuse("The foreman's model can't be passed to claude");
+  if (model !== null && !isModelName(model)) refuse("The Bosun's model can't be passed to claude");
   const settings = path.join(watcherFolder(project), 'foreman-settings.json');
   writeJsonFile(settings, { autoCompactWindow: FOREMAN_FALLBACK_COMPACT });
-  const prompt = `${FOREMAN_PROMPT_LEAD} you are the long-lived foreman of ${project}. At each wake, follow the wheelhouse:foreman skill.`;
+  const prompt = `${FOREMAN_PROMPT_LEAD} you are the long-lived Bosun of ${project}. At each wake, follow the wheelhouse:foreman skill.`;
   let column = null;
   try {
     column = routing();

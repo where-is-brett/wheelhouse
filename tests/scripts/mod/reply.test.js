@@ -9,7 +9,7 @@ import { decide } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { writeViews } from '../../../scripts/state/views.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine } from '../../../scripts/state/card-lines.js';
 import { computerId, profileDir, stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { BUILD_QUESTION_OPTIONS, settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 
@@ -164,7 +164,7 @@ test('a reply earns exactly the record the click would have', async () => {
     const cases = [
       [approvalLine(12, FULL), 'Approve', 'Recorded: Approve pull request #12'],
       [confirmLine(ruling), 'Confirm', 'Recorded: Confirm the ruling'],
-      [LIFT_STOP, 'Lift STOP', 'Recorded: Lift STOP'],
+      [LIFT_STOP, 'Lift STOP', 'Recorded: Lift All stop'],
       [runbookLine(3, FULL), 'Do it', 'Recorded: Runbook step 3: Put the product back to an earlier release'],
     ];
     for (const [line, label, says] of cases) {
@@ -238,10 +238,36 @@ test('a Lift STOP reply while STOP is off records nothing and leaves its code to
     // The card was let go, so once STOP is on its code works.
     stopOn();
     const on = fake();
-    assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client: on, now: () => LATER, liftStop: () => { lifted += 1; } }), { made: true, says: 'Recorded: Lift STOP' });
+    assert.deepEqual(await replyRecord({ project: P, text: `${replyCode(LIFT_STOP)} Lift STOP`, client: on, now: () => LATER, liftStop: () => { lifted += 1; } }), { made: true, says: 'Recorded: Lift All stop' });
     assert.equal(on.calls.record.length, 1);
     assert.equal(lifted, 1);
   });
+});
+
+test('a reply code lifts All stop from a card in the new words or the earlier STOP words, with either label typed', async () => {
+  const cases = [
+    // A card shown now: Lift All stop, its line in the new words; typed as the card says, or by the earlier name.
+    [LIFT_STOP, ['Lift All stop', 'Not now'], 'lift all stop', 'Lift All stop'],
+    [LIFT_STOP, ['Lift All stop', 'Not now'], 'Lift  STOP.', 'Lift All stop'],
+    // A card shown before the upgrade: Lift STOP, its line in the earlier words; typed either way.
+    [LIFT_STOP_EARLIER, ['Lift STOP', 'Not now'], 'Lift STOP', 'Lift STOP'],
+    [LIFT_STOP_EARLIER, ['Lift STOP', 'Not now'], 'Lift All stop', 'Lift STOP'],
+  ];
+  for (const [line, options, typed, label] of cases) {
+    await withHome(async () => {
+      stopOn();
+      const question = cardOf(line, 'All stop is on.');
+      await show(question, { options });
+      let lifted = 0;
+      const c = fake();
+      const out = await replyRecord({ project: P, text: `${replyCode(line)} ${typed}`, client: c, now: () => LATER, liftStop: () => { lifted += 1; } });
+      assert.deepEqual(out, { made: true, says: 'Recorded: Lift All stop' }, typed);
+      assert.equal(lifted, 1, typed);
+      assert.deepEqual(signed(c), [{ kind: 'action', data: { action: 'lift-stop', question, label } }], typed);
+      // The plain answer is in the card's own spelling of the option.
+      assert.deepEqual(c.calls.write, [{ project: P, kind: 'card-answer', data: { question, label } }], typed);
+    });
+  }
 });
 
 test('two replies in a row, or a click then a reply, record once while the views on disk are old', async () => {
@@ -315,7 +341,7 @@ test('a Lift STOP card shown before this STOP began can\'t lift it by reply; a c
     assert.equal(newer.calls.record.filter((r) => r.event.kind === 'shown').length, 1);
     for (const r of newer.calls.record) keepEvent(r.event);
     await writeViews(P, { now: () => LATER });
-    assert.deepEqual(await reply(fake(), new Date(LATER.getTime() + 1000)), { made: true, says: 'Recorded: Lift STOP' });
+    assert.deepEqual(await reply(fake(), new Date(LATER.getTime() + 1000)), { made: true, says: 'Recorded: Lift All stop' });
     assert.equal(lifted, 1);
 
     // A click is the director at the card now, so it lifts whatever the card's age.
@@ -342,7 +368,7 @@ test('a line that repeats gets a working code on each new card, and two waiting 
     for (const r of c.calls.record) keepEvent(r.event);
     assert.equal(c.calls.record.filter((r) => r.event.kind === 'shown').length, 1);
     const out = await reply(fake({ takes: true }), new Date(second.getTime() + 1000));
-    assert.deepEqual(out, { made: true, says: 'Recorded: Lift STOP' });
+    assert.deepEqual(out, { made: true, says: 'Recorded: Lift All stop' });
 
     // The same card again, after its record was used, gets a new shown record that works.
     await writeViews(P, { now: () => second });

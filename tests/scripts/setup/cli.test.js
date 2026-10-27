@@ -137,7 +137,7 @@ test('health hands the trial lines to the helper, as they are, and gives back th
 });
 
 test('a wrong form, a step out of range, a short hash or a refusal is one line on standard error', async () => {
-  const c = fakeClient({ apply: { ok: false, refused: 'STOP is on' }, plan: { ok: false, refused: 'step 1, Install is already done' } });
+  const c = fakeClient({ apply: { ok: false, refused: 'All stop is on' }, plan: { ok: false, refused: 'step 1, Install is already done' } });
   for (const argv of [[], ['go'], ['plan'], ['plan', '11'], ['plan', '1', '2'], ['plan', 'x'], ['apply', '1'], ['apply', '1', H.slice(0, 12)],
     ['apply', '1', H.toUpperCase()], ['apply', '1', H, 'more'], ['status', 'now'], ['resume', '3']]) {
     const got = await run(argv, { client: c });
@@ -147,7 +147,7 @@ test('a wrong form, a step out of range, a short hash or a refusal is one line o
   }
   assert.deepEqual(c.calls, [], 'nothing was asked for a wrong form');
   const stopped = await run(['apply', '1', H], { client: c });
-  assert.deepEqual([stopped.code, stopped.err], [1, 'STOP is on\n']);
+  assert.deepEqual([stopped.code, stopped.err], [1, 'All stop is on\n']);
   const done = await run(['plan', '1'], { client: c });
   assert.deepEqual([done.code, done.err], [1, 'step 1, Install is already done\n']);
   const gone = await run(['status'], { client: { setup: { status: async () => { throw new Error('connect ENOENT'); } } } });
@@ -188,7 +188,7 @@ test('against the helper, a card is planned, refused without its click, applied 
       assert.equal((await run(['status'], { client, cwd: folder })).code, 0);
       assert.equal((await run(['plan', '1'], { client, cwd: folder })).code, 0);
       assert.equal((await run(['resume'], { client, cwd: folder })).code, 0);
-      assert.deepEqual((await run(['apply', '1', plan.hash], { client, cwd: folder })).err, 'STOP is on\n');
+      assert.deepEqual((await run(['apply', '1', plan.hash], { client, cwd: folder })).err, 'All stop is on\n');
       liftStop();
       const applied = await run(['apply', '1', plan.hash], { client, cwd: folder });
       assert.equal(applied.code, 0, applied.err);
@@ -272,9 +272,9 @@ test('wait <step> waits while the step\'s plan is a wait, up to WAIT_MOST_MS a c
   // A step that isn't waiting is over at once, and a refusal is said as the helper gave it.
   const none = await run(['wait', '3'], { client: fakeClient({ status: idle, plan: { ok: true, ask: { step: 3, id: 'x', card: {} } } }), ...timing });
   assert.deepEqual(JSON.parse(none.out), { step: 3, waited: true });
-  const refused = await run(['wait', '3'], { client: fakeClient({ status: idle, plan: { ok: false, refused: 'STOP is on' } }), ...timing });
+  const refused = await run(['wait', '3'], { client: fakeClient({ status: idle, plan: { ok: false, refused: 'All stop is on' } }), ...timing });
   assert.equal(refused.code, 1);
-  assert.match(refused.err, /STOP is on/);
+  assert.match(refused.err, /All stop is on/);
   assert.match(USAGE, /wait <step>/);
 });
 
