@@ -302,6 +302,14 @@ test('a folder whose git directory leads to the private record or the settings i
           fs.writeFileSync(path.join(d, '.git'), `gitdir: ${gitdir}\n`);
         })],
         ['the record itself', 'record', stateDir('o__p')],
+        // A decoy: x/.git is not a repository, so git would pass it over and read x itself, whose
+        // commondir names the record.
+        ['a decoy .git beside a commondir naming the record', 'record', await folder((d) => {
+          fs.mkdirSync(path.join(d, '.git'));
+          fs.writeFileSync(path.join(d, '.git', 'HEAD'), 'ref: refs/heads/record\n');
+          fs.writeFileSync(path.join(d, 'HEAD'), 'ref: refs/heads/record\n');
+          fs.writeFileSync(path.join(d, 'commondir'), `${record}\n`);
+        })],
         ['an alternates file borrowing the record\'s objects', 'feature', await folder(async (d) => {
           await g(d, 'init', '-q', '-b', 'feature');
           fs.writeFileSync(path.join(d, '.git', 'objects', 'info', 'alternates'), `${path.join(record, 'objects')}\n`);
@@ -326,6 +334,40 @@ test('a folder whose git directory leads to the private record or the settings i
         assert.deepEqual(await client.push({ project: 'o__p', dir: await folderWith(), refspec: 'feature' }), { ok: true });
       });
       assert.doesNotMatch(await remoteHeads(p.remote.url), /refs\/heads\/record /);
+      assert.notEqual((await run('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: p.remote.url })).code, 0, 'the record\'s commits are not on the remote');
+    });
+  } finally { p.cleanup(); }
+});
+
+// What the folder does between the check and the fetch can't matter: a folder that turns its .git into
+// one whose commondir names the record just before git reads it has its branch refused once it arrives,
+// as it holds the record's root commit, and nothing reaches the host.
+test('a folder that points its git directory at the record after the check is refused once the branch arrives', async () => {
+  const p = await project();
+  try {
+    await as(p.home, async () => {
+      const record = path.join(stateDir('o__p'), '.git');
+      const tip = await g(stateDir('o__p'), 'rev-parse', 'HEAD');
+      const dir = await folderWith();
+      await g(dir, 'branch', 'record');
+      const swapped = [];
+      const swapping = async (file, args, options) => {
+        if (args.includes('fetch') && swapped.length === 0 && args.some((a) => typeof a === 'string' && a.startsWith(fs.realpathSync.native(dir)))) {
+          const gitdir = path.join(dir, '.git');
+          fs.rmSync(gitdir, { recursive: true, force: true });
+          fs.mkdirSync(gitdir);
+          fs.writeFileSync(path.join(gitdir, 'HEAD'), 'ref: refs/heads/record\n');
+          fs.writeFileSync(path.join(gitdir, 'commondir'), `${record}\n`);
+          swapped.push(args);
+        }
+        return hostGuard(file, args, options);
+      };
+      await withHelper(fakeAdapter(), async (client) => {
+        assert.deepEqual(await client.push({ project: 'o__p', dir, refspec: 'record' }), { ok: false, refused: PUSH_REFUSALS.ownHistory });
+      }, { run: swapping });
+      assert.equal(swapped.length, 1, 'the folder was swapped just before the fetch');
+      const mirror = path.join(stateDir('o__p'), '..', 'mirror.git');
+      assert.equal((await run('git', ['for-each-ref', 'refs/wheelhouse/'], { cwd: mirror })).stdout.trim(), '', 'what arrived is not kept');
       assert.notEqual((await run('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: p.remote.url })).code, 0, 'the record\'s commits are not on the remote');
     });
   } finally { p.cleanup(); }
@@ -678,7 +720,7 @@ test('a push or merge refusal never includes a key', async () => {
       assert.ok(calls.some((c) => c.args.includes('fetch') && Object.entries(c.env ?? {}).some(([name, value]) => /^GIT_CONFIG_VALUE_\d+$/.test(name) && value === env.GIT_CONFIG_VALUE_0)), 'the key reached git, through its environment');
       assert.ok(pushes.every((c) => !c.args.some((a) => a === '--force' || a === '-f' || a.startsWith('--force') || a.startsWith('+'))));
       // The copy from the folder runs with no key at all.
-      const copies = calls.filter((c) => c.args.includes('fetch') && c.args.includes(dir));
+      const copies = calls.filter((c) => c.args.includes('fetch') && c.args.some((a) => typeof a === 'string' && a.startsWith(fs.realpathSync.native(dir))));
       assert.ok(copies.length > 0);
       assert.ok(copies.every((c) => c.env?.GH_TOKEN === undefined && !pairsOf(c.env ?? {}).some(([, v]) => v.includes(basic))));
     });
@@ -776,7 +818,7 @@ test('quick and narrow both shut out the system and user git config; quick signs
           assert.ok(pairs.some(([k, v]) => k.toLowerCase() === 'http.extraheader' && v === EXTRA), `${label}: the key's pair`);
           assert.ok(!pairs.some(([k, v]) => k === 'credential.helper' && v !== ''), `${label}: no host-tool helper`);
         }
-        const copy = calls.find((c) => c.args.includes('fetch') && c.args.includes(dir));
+        const copy = calls.find((c) => c.args.includes('fetch') && c.args.some((a) => typeof a === 'string' && a.startsWith(fs.realpathSync.native(dir))));
         assert.equal(copy.options.env.GIT_NO_LAZY_FETCH, '1', label);
         assert.equal(copy.options.env.GIT_CONFIG_NOSYSTEM, '1', label);
         assert.equal(copy.options.env.GH_TOKEN, undefined, label);
@@ -829,7 +871,7 @@ test('a folder that takes too long to read is refused', async () => {
   try {
     await as(p.home, async () => {
       const dir = await folderWith();
-      const slowFolder = async (file, args, options) => (args.includes('fetch') && args.includes(dir)
+      const slowFolder = async (file, args, options) => (args.includes('fetch') && args.some((a) => typeof a === 'string' && a.startsWith(fs.realpathSync.native(dir)))
         ? { code: 1, stdout: '', stderr: '', timedOut: true }
         : hostGuard(file, args, options));
       await withHelper(fakeAdapter(), async (client) => {
@@ -1331,7 +1373,7 @@ test('only the copy into the mirror may reach a local path', async () => {
         assert.equal(answer.ok, false, 'the host cannot be reached');
         const reaching = calls.filter((c) => c.file === 'git' && String(c.env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file'));
         assert.ok(reaching.length >= 1, 'the copy ran');
-        const sources = [dir, fs.realpathSync.native(dir)];
+        const sources = [dir, fs.realpathSync.native(dir), fs.realpathSync.native(path.join(dir, '.git'))];
         for (const c of reaching) assert.ok(c.args.includes('fetch') && sources.some((source) => c.args.includes(source)), `a call other than the copy may reach a path: ${c.args.join(' ')}`);
         const others = calls.filter((c) => c.file === 'git' && !reaching.includes(c));
         assert.ok(others.length >= 1 && others.every((c) => !String(c.env?.GIT_ALLOW_PROTOCOL ?? '').split(':').includes('file')));

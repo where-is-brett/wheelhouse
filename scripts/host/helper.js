@@ -441,15 +441,20 @@ function folderGitConfigs(dir) {
   return dirs.flatMap((d) => [readIf(path.join(d, 'config')), readIf(path.join(d, 'config.worktree'))]);
 }
 
-// Why the git directory of `dir` may not be read from, or null when it may (design section 24.7): it
-// and its common directory, found by real path, must lie inside `root`, and outside Wheelhouse's own
-// repositories (each project's record, lock and mirror, the settings) unless `own` (the lock clone or
-// the mirror); neither may borrow objects through an alternates file, nor
-// hold a symlink among its objects or refs. A .git file, a .git symlink and a commondir file can each
-// point anywhere, so a folder in the project could otherwise hand over the private record. Read with
-// fs only, as folderGitConfigs is.
-export function gitDirRefusal(dir, { root, own = false }) {
+// The git directory of `dir` to read from, found by real path, or why it may not be read (design
+// section 24.7): { gitdir } or { refused }. It and its common directory must lie inside `root`, and
+// outside Wheelhouse's own repositories (each project's record, lock and mirror, the settings) unless
+// `own` (the lock clone or the mirror); it must be a git directory by git's own test (HEAD, with
+// objects/ and refs/ in it or in its common directory), so a decoy .git that git would pass over is
+// refused rather than looked past; and neither may borrow objects through an alternates file, nor hold
+// a symlink among its objects or refs. A .git file, a .git symlink and a commondir file can each point
+// anywhere, so a folder in the project could otherwise hand over the private record. Read with fs only,
+// as folderGitConfigs is. The caller reads from the gitdir given, strictly, never from `dir`.
+export function checkedGitDir(dir, { root, own = false }) {
+  const refused = { refused: PUSH_REFUSALS.gitOutside };
   const real = (p) => { try { return fs.realpathSync.native(p); } catch { return null; } };
+  const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+  const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
   let gitdir = null;
   try {
     const dot = path.join(dir, '.git');
@@ -460,30 +465,32 @@ export function gitDirRefusal(dir, { root, own = false }) {
     } else if (stat) {
       const match = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dot, 'utf8'));
       if (match) gitdir = real(path.resolve(dir, match[1]));
-    } else if (fs.existsSync(path.join(dir, 'HEAD')) && fs.existsSync(path.join(dir, 'objects'))) {
+    } else {
       gitdir = real(dir);
     }
-    if (gitdir === null) return PUSH_REFUSALS.gitOutside;
+    if (gitdir === null) return refused;
     const dirs = [gitdir];
     let common = '';
     try { common = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (common !== '') {
       const commonDir = real(path.resolve(gitdir, common));
-      if (commonDir === null) return PUSH_REFUSALS.gitOutside;
+      if (commonDir === null) return refused;
       dirs.push(commonDir);
     }
+    const base = dirs.at(-1);
+    if (!isFile(path.join(gitdir, 'HEAD')) || !isDir(path.join(base, 'objects')) || !isDir(path.join(base, 'refs'))) return refused;
     const ownRepos = [path.join(wheelhouseHome(), 'projects'), profileDir(), oldProfileDir(), path.join(wheelhouseHome(), 'lineage')];
     for (const d of dirs) {
-      if (!isInsideFolder(root, d)) return PUSH_REFUSALS.gitOutside;
-      if (!own && ownRepos.some((repo) => isInsideFolder(repo, d))) return PUSH_REFUSALS.gitOutside;
+      if (!isInsideFolder(root, d)) return refused;
+      if (!own && ownRepos.some((repo) => isInsideFolder(repo, d))) return refused;
       for (const name of ['alternates', 'http-alternates']) {
-        if (fs.existsSync(path.join(d, 'objects', 'info', name))) return PUSH_REFUSALS.gitOutside;
+        if (fs.existsSync(path.join(d, 'objects', 'info', name))) return refused;
       }
-      if (hasSymlink(path.join(d, 'objects'), 2) || hasSymlink(path.join(d, 'refs'), Infinity) || hasSymlink(path.join(d, 'packed-refs'), 0)) return PUSH_REFUSALS.gitOutside;
+      if (hasSymlink(path.join(d, 'objects'), 2) || hasSymlink(path.join(d, 'refs'), Infinity) || hasSymlink(path.join(d, 'packed-refs'), 0)) return refused;
     }
-    return null;
+    return { gitdir };
   } catch {
-    return PUSH_REFUSALS.gitOutside;
+    return refused;
   }
 }
 
@@ -523,6 +530,7 @@ export const PUSH_REFUSALS = {
   ciFile: 'the branch changes a CI file, so it needs the director\'s click on its card',
   ciSignIn: 'sign in to GitHub (or GitLab) on this computer to push the CI change',
   outsideProject: 'the folder to push from is not inside the project',
+  ownHistory: 'the branch holds the history of Wheelhouse\'s own records, so nothing is sent',
   gitOutside: 'the folder\'s git directory is not inside the project, or links outside it, so nothing is read from it',
   notOwn: 'that is not the branch this folder is on: a push sends only the folder\'s own branch',
   partialClone: 'the folder is set up to fetch missing objects from elsewhere, so it is not read',
@@ -1218,8 +1226,8 @@ export async function startHelper({
   // Copies `branch` in from `source` into the mirror's INCOMING ref, as described in pushToHost.
   // The refusal, or null once it has arrived.
   async function copyIn(mirror, source, branch, ctx, { root, own = false }) {
-    const outside = gitDirRefusal(source, { root, own });
-    if (outside !== null) return outside;
+    const checked = checkedGitDir(source, { root, own });
+    if (checked.refused) return checked.refused;
     // The folder's own config can name a program for git to run (core.fsmonitor and the like), so
     // git is not run there until its settings have been looked at.
     try {
@@ -1232,12 +1240,50 @@ export async function startHelper({
     await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
     const fetched = await gitIn({ GIT_NO_LAZY_FETCH: '1' }, FOLDER_MS, 'local')('git', [
       '-c', `core.hooksPath=${NO_FILE}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
-      'fetch', '-q', '--no-tags', '--no-recurse-submodules', source, `+refs/heads/${branch}:${INCOMING}`,
+      // From the git directory that was checked, read strictly: git takes that path as it is, and does
+      // not go on to try <path>/.git, <path>.git and the like, as it otherwise would.
+      'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--upload-pack=git upload-pack --strict', checked.gitdir, `+refs/heads/${branch}:${INCOMING}`,
     ], { cwd: mirror });
     if (fetched.timedOut) return 'reading the folder took too long';
     const arrived = await unkeyed('git', ['rev-parse', '--verify', '-q', INCOMING], { cwd: mirror });
     if (fetched.code !== 0 || arrived.code !== 0) return PUSH_REFUSALS.missing;
+    // Whatever the folder did between the check and the fetch, what arrived is refused when its history
+    // holds the root commit of one of Wheelhouse's own records.
+    const held = await holdsOwnRoot(mirror);
+    if (held !== null) {
+      await unkeyed('git', ['update-ref', '-d', INCOMING], { cwd: mirror });
+      return held;
+    }
     return null;
+  }
+
+  // The root commits of Wheelhouse's own records (each project's record and old state clone, the
+  // settings and the old profile clone), kept once read: a record's first commit never changes.
+  const ownRoots = new Map();
+  async function ownRootsNow() {
+    const projects = path.join(wheelhouseHome(), 'projects');
+    let names = [];
+    try { names = fs.readdirSync(projects); } catch { /* no projects yet */ }
+    const repos = [...names.flatMap((name) => [path.join(projects, name, 'record'), path.join(projects, name, 'state')]), profileDir(), oldProfileDir()];
+    const roots = new Set();
+    for (const repo of repos) {
+      if (!ownRoots.has(repo) && fs.existsSync(path.join(repo, '.git'))) {
+        const listed = await unkeyed('git', ['rev-list', '--max-parents=0', '--all'], { cwd: repo });
+        const found = listed.code === 0 ? listed.stdout.split('\n').map((l) => l.trim()).filter((l) => FULL_SHA.test(l)) : [];
+        if (found.length > 0) ownRoots.set(repo, found);
+      }
+      for (const sha of ownRoots.get(repo) ?? []) roots.add(sha);
+    }
+    return roots;
+  }
+
+  // Why the branch at INCOMING in `mirror` may not go on, or null: its history holds one of
+  // ownRootsNow's root commits, or could not be read.
+  async function holdsOwnRoot(mirror) {
+    const roots = await ownRootsNow();
+    const listed = await unkeyed('git', ['rev-list', '--max-parents=0', INCOMING], { cwd: mirror });
+    if (listed.code !== 0) return PUSH_REFUSALS.unchecked;
+    return listed.stdout.split('\n').some((l) => roots.has(l.trim())) ? PUSH_REFUSALS.ownHistory : null;
   }
 
   async function pushToHost({ project, branch, source, root, own = false, refspec, defaultBranch, ciGuard = false, allowStop = false, asDirector: asOwn = false }, ctx) {
@@ -1343,8 +1389,8 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to push from was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PUSH_REFUSALS.outsideProject };
-    const outside = gitDirRefusal(dir, { root: recordOf(project).folder });
-    if (outside !== null) return { ok: false, refused: outside };
+    const outside = checkedGitDir(dir, { root: recordOf(project).folder });
+    if (outside.refused) return { ok: false, refused: outside.refused };
     // A feature session's push (placed by its folder, `byFolder`): the worktrees of one repository
     // share its branches, so the folder's own branch is the only one it sends, as /pull brings in
     // only that one. Like /pull's, this reads the folder's HEAD, which a session can rewrite, so it
@@ -1379,8 +1425,8 @@ export async function startHelper({
     try { isDir = fs.statSync(dir).isDirectory(); } catch { /* missing */ }
     if (!isDir) refuse('the folder to bring the branch into was not found');
     if (!isInsideFolder(recordOf(project).folder, dir)) return { ok: false, refused: PULL_REFUSALS.outsideProject };
-    const outside = gitDirRefusal(dir, { root: recordOf(project).folder });
-    if (outside !== null) return { ok: false, refused: outside };
+    const outside = checkedGitDir(dir, { root: recordOf(project).folder });
+    if (outside.refused) return { ok: false, refused: outside.refused };
     if (!plainBranch(branch)) return { ok: false, refused: PULL_REFUSALS.plain };
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
