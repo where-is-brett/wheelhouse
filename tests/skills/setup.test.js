@@ -146,12 +146,16 @@ test('the playbook opens with the one card, applies what its Go ahead covers, as
 });
 
 test('the playbook waits for the labels the cards carry', () => {
-  for (const label of [SETUP_LABEL, UNINSTALL_LABEL, LEAVE_YOURS]) assert.ok(playbook.includes(`**${label}**`), label);
+  const uninstall = read('skills/setup/uninstall.md');
+  for (const label of [SETUP_LABEL, LEAVE_YOURS]) assert.ok(playbook.includes(`**${label}**`), label);
+  assert.ok(uninstall.includes(`**${UNINSTALL_LABEL}**`), UNINSTALL_LABEL);
   // No trust card is handed out now (rulings R80, R81 retired), so the playbook waits for no Trust it.
   assert.equal(playbook.includes(`**${TRUST_LABEL}**`), false);
   // Apply only after the click, with the hash from that same plan.
   assert.match(playbook, /Only after the director's \*\*Go ahead\*\* on that card, run `apply <step> <hash>`/);
-  assert.match(playbook, /Only after \*\*Remove it\*\*, run `uninstall apply <hash>`/);
+  assert.match(uninstall, /Only after \*\*Remove it\*\*, run `uninstall apply <hash>`/);
+  // Uninstall's part is read only when it is asked for, so a setup session doesn't carry it.
+  assert.match(playbook, /## Uninstall\n\nWhen the director asks to remove Wheelhouse from the project, or types `\/wheelhouse:uninstall`: read `uninstall\.md` in this skill's folder/);
 });
 
 // From the pressure runs: a director who stops is not asked again; a typed answer on a card that
@@ -175,6 +179,12 @@ test('step 10 names its wait, forbids a loop of the session\'s own, speaks plain
   assert.match(ten, /never "trials", "sandbox" or "session" to the director/);
   assert.match(ten, /\*\*One new session\.\*\*[^\n]*start a new session on this folder, then say "carry on with setup"[^\n]*not a failure/);
   assert.match(ten, /A `Not yet` line saying a new session is needed is not a failure/);
+});
+
+// From a new product's setup on v0.1.2: "Setup hasn't started here yet. One card covers the whole
+// plan:", said before the one card, headed the message the app showed at setup's end.
+test('the playbook says nothing before the one card when setup hasn\'t started', () => {
+  assert.match(playbook, /When setup hasn't started, say nothing before the one card: it speaks for itself/);
 });
 
 // From the rehearsal: Claude Code refuses a foreground `sleep`, so every wait goes through `wait <step>`.
@@ -203,7 +213,7 @@ test('the playbook keeps a project under way safe when step 7 finds the folder o
 // runs it and shows its lines before asking the card. Rulings R142, R146: once a stopped uninstall's
 // status, or plan, says first to start a new session, the card is not asked again in this one.
 test('the playbook shows uninstall\'s list when its card points to status, and stops asking the card when plan or status says to start a new session', () => {
-  const uninstall = playbook.split('\n## Uninstall\n')[1]?.split('\n## ')[0] ?? '';
+  const uninstall = read('skills/setup/uninstall.md');
   assert.match(uninstall, /When uninstall's card points to `uninstall status`, run it first and show its lines plainly, then ask the card\./);
   assert.match(read('scripts/setup/uninstall.js'), /\$\{head\}[^\n]*What else stays: \$\{STATUS_FORM\}/, 'the card points so');
   assert.ok(UNINSTALL_NEW_SESSION.startsWith('Start a new session on this folder, then ask for uninstall\'s plan again'));
@@ -253,7 +263,7 @@ test('the playbook names step 10\'s trials and wait, stops on a refusal twice on
   assert.match(playbook, /\*\*`wait` without `waitsFor`:\*\*[^\n]*On step 10 it is your part: follow Step 10 below/);
   assert.match(playbook, /\*\*Never retry in a loop\.\*\* The same refusal twice: stop[^\n]*`uninstall status` while uninstall runs, are not refusals/);
   assert.doesNotMatch(playbook, /The same answer twice/);
-  const uninstall = playbook.split('\n## Uninstall\n')[1]?.split('\n## ')[0] ?? '';
+  const uninstall = read('skills/setup/uninstall.md');
   assert.match(uninstall, /password window/);
   assert.match(read('commands/uninstall.md'), /password window/);
   assert.ok(UNINSTALL_NEEDS_CLICK.startsWith('uninstall needs the director\'s Remove it'));
