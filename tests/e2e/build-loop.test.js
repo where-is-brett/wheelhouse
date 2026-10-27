@@ -787,7 +787,7 @@ test('an installed Superpowers file differs: a warning, a hold, and the gate ref
     assert.match(body, /- Fingerprints: mismatch/);
     assert.match(body, /- Models: model-a/);
     assert.match(fs.readFileSync(featurePaths(s.worktree).report, 'utf8'), /- Fingerprints: mismatch/, 'the report says the same');
-    const why = "the pull request's provenance does not match the manifest: the fingerprints did not match";
+    const why = "what passed review is not what is on the pull request now: the files it was built from have changed since";
     const gate = await world.client.merge({ project: P, number: built.pr, stop: false, bypass: false });
     assert.deepEqual(gate.reasons, [why]);
     const refused = await foreman(world, ['merge', 'export']);

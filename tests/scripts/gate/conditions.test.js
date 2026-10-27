@@ -154,7 +154,7 @@ test('every reason is listed, the new conditions after the old', async () => {
     assert.deepEqual(d.reasons, [
       'STOP is on',
       'the branch is not up to date with the default branch',
-      "the pull request's provenance does not match the manifest: the model is not in the routing table",
+      "what passed review is not what is on the pull request now: the model is not in the routing table",
       'incident login-down is open, so only its fix may merge',
     ]);
   });
@@ -190,17 +190,17 @@ test('a missing approval of the head is marked, so the caller can ask for it', a
 test('provenance that does not match the manifest blocks with its reason', async () => {
   await withHome(() => {
     assert.deepEqual(gateDecision(input({ provenance: { ok: false, why: 'the block is missing' } })).reasons,
-      ["the pull request's provenance does not match the manifest: the block is missing"]);
+      ["what passed review is not what is on the pull request now: the block is missing"]);
   });
 });
 
 test('missing or malformed provenance blocks with a reason that still reads sensibly', async () => {
   await withHome(() => {
-    const why = ["the pull request's provenance does not match the manifest: it could not be checked"];
+    const why = ["what passed review is not what is on the pull request now: it could not be checked"];
     for (const provenance of [{ ok: false }, { ok: 'true' }, { ok: false, why: '' }, { why: 'x' }, 'ok', true, null, undefined]) {
       const reasons = gateDecision(input({ provenance })).reasons;
       assert.equal(reasons.length, 1);
-      assert.match(reasons[0], /^the pull request's provenance does not match the manifest: .+/);
+      assert.match(reasons[0], /^what passed review is not what is on the pull request now: .+/);
     }
     assert.deepEqual(gateDecision(input({ provenance: undefined })).reasons, why);
   });
