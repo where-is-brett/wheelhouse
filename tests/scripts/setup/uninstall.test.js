@@ -268,7 +268,7 @@ test('setup then uninstall lists every change setup made, by phase, newest first
     // own folders and files, the plugin's line. The director's settings stay.
     const last = of(got, 'last');
     assert.equal(last[0].target, path.join(wheelhouseHome(), 'projects', SLUG));
-    assert.deepEqual(last[0].except, ['record', 'state']);
+    assert.deepEqual(last[0].except, ['record', 'state', 'imported.json']);
     const removed = last.filter((c) => c.put === 'remove').map((c) => c.target);
     assert.ok(removed.includes(toolFolder('gh')));
     assert.ok(!removed.includes(profileDir()), 'the settings stay');
@@ -440,7 +440,7 @@ test('uninstall keeps the private record by default', async () => {
     const recorded = readJournal().runs.find((x) => x.id === run.id).changes.find((c) => c.target === stateDir(SLUG));
     assert.deepEqual(ask.ids, [recorded.id]);
     const folder = got.changes.find((c) => c.target === path.join(wheelhouseHome(), 'projects', SLUG));
-    assert.deepEqual(folder.except, ['record', 'state']);
+    assert.deepEqual(folder.except, ['record', 'state', 'imported.json']);
     assert.ok(!(folder.ids ?? []).includes(recorded.id));
     // No record folder, no card: its change is settled.
     fs.rmSync(stateDir(SLUG), { recursive: true });

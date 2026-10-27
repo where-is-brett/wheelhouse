@@ -1443,10 +1443,15 @@ export async function startHelper({
   // committed and never pushed, for every project as for a Lean one.
   async function ensureStateClone(project, ctx) {
     // A Lean project's record is looked at by its own opener, which words a refusal for Lean.
-    if (ctx.lean) return leanState(project, { run });
-    recordOf(project); // a project not set up here gets no record made for it
-    await lookAtState(ctx, project);
-    return openProjectRecord(project, { run });
+    if (ctx.lean) await leanState(project, { run });
+    else {
+      recordOf(project); // a project not set up here gets no record made for it
+      await lookAtState(ctx, project);
+      await openProjectRecord(project, { run });
+    }
+    // v0.1.x's records come in before anything reads this one (design section 24.5 step 2).
+    await stateImport(project, ctx);
+    return stateDir(project);
   }
 
   // The lock's push: the one branch of Wheelhouse's that goes to the host.
@@ -2238,7 +2243,10 @@ export async function startHelper({
   // One at a time: the settings record is shared by every settings route.
   const profileRoute = (fn, { open = true, write = false } = {}) => (body, ctx) => oneAtATime('profile', async () => {
     if (write && stopped()) return STOP_REFUSAL;
-    if (open) await openSettings({ run });
+    if (open) {
+      await openSettings({ run });
+      await settingsImport(ctx);
+    }
     if (write && stopped()) return STOP_REFUSAL;
     return fn(body, ctx);
   });
@@ -2597,7 +2605,8 @@ export async function startHelper({
     const pr = await adapter.prState(number);
     if (pr?.state !== 'open') return { ok: false, refused: `pull request ${number} is not open` };
     const skipped = [];
-    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), readEnrolled(), { damaged: skipped, now });
+    // As the merge gate counts them: this computer's own signatures alone.
+    const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), ownKeyOnly(), { damaged: skipped, now });
     const reviews = views.reviews?.[String(number)] ?? {};
     const cleanEarlier = Object.values(reviews).filter((r) => r?.data?.verdict === 'CLEAN' && r.data.commit !== pr.headSha);
     // With no CLEAN review as the latest, nothing counts and nothing can carry: the mirror is not
@@ -2836,7 +2845,8 @@ export async function startHelper({
   // own count (refused too when that count can't be read). So a commit is reviewed once, and a run that fails is
   // tried again only up to the limit: a fix needs a new commit.
   function reviewSpent(project, number, headSha) {
-    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled(), { damaged: [], now });
+    // Only a review the gate would count spends the head: one signed by this computer's own key.
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { damaged: [], now });
     const short = headSha.slice(0, 7);
     if (views.reviews?.[String(number)]?.[headSha] !== undefined) return `${short} has a signed review already`;
     const failed = readFailedReviews(project);
@@ -3034,7 +3044,8 @@ export async function startHelper({
     // (design section 24.3 item 1). Only this computer's own signed clicks count, checked against its
     // own key, so a record another computer signed, or one committed to main, counts for nothing.
     const stateReasons = [];
-    await lookAtState(ctx, project);
+    // Opened first, so v0.1.x's records are in it before the gate reads it (design section 24.5).
+    await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
     const skipped = [];
     const enrolled = ownKeyOnly();
     const views = buildViews(listEvents(stateDir(project), { report: () => {}, skipped }), enrolled, { damaged: skipped, now });
@@ -3356,30 +3367,44 @@ export async function startHelper({
   // record, once, with a mark beside the record saying what was done. A folder that isn't there, or a
   // mark already kept, imports nothing. The old folder is looked at first, as every repository the
   // helper runs git in is, and is never changed.
+  // Runs whenever the record or the settings are opened, so nothing reads them before the import
+  // has run (an open incident, say, would otherwise be missed by the merge gate). Gives the mark.
   async function importOnce({ from, to, mark, what }, ctx) {
     const kept = readMark(mark);
-    if (kept !== null) return { ok: true, done: true, ...kept };
-    if (!fs.existsSync(path.join(from, '.git'))) return { ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 };
+    if (kept !== null) return kept;
+    if (!fs.existsSync(path.join(from, '.git'))) return null;
     await lookOnce(ctx, from, '.git', what);
     const counts = await importEvents({ from, to, enrolled: readEnrolled() });
-    const record = { at: now().toISOString(), ...counts };
+    const record = { at: now().toISOString(), ...counts, said: false };
     fs.writeFileSync(mark, `${JSON.stringify(record, null, 2)}\n`);
-    return { ok: true, done: false, ...record };
+    return record;
+  }
+  const stateImport = (project, ctx) => importOnce({
+    from: oldStateDir(project), to: stateDir(project), mark: path.join(stateDir(project), '..', IMPORT_MARK), what: 'the project\'s v0.1.x state clone',
+  }, ctx);
+  const settingsImport = (ctx) => importOnce({
+    from: oldProfileDir(), to: profileDir(), mark: path.join(wheelhouseHome(), SETTINGS_IMPORT_MARK), what: 'your v0.1.x profile clone',
+  }, ctx);
+
+  // What the session start says of the import: `done: false` the first time it is asked after the
+  // import ran, with the counts, so it is said once; `done: true` after that.
+  function importAnswer(kept, mark) {
+    if (kept === null) return { ok: true, done: false, imported: 0, held: 0, unsigned: 0, unreadable: 0 };
+    const { said, ...counts } = kept;
+    if (said !== false) return { ok: true, done: true, ...counts };
+    fs.writeFileSync(mark, `${JSON.stringify({ ...counts, said: true }, null, 2)}\n`);
+    return { ok: true, done: false, ...counts };
   }
 
   async function doStateImport({ project }, ctx) {
-    const answer = await importOnce({
-      from: oldStateDir(project), to: stateDir(project), mark: path.join(stateDir(project), '..', IMPORT_MARK), what: 'the project\'s v0.1.x state clone',
-    }, ctx);
-    if (answer.imported > 0) await freshViews(() => writeViews(project, { now }));
+    const answer = importAnswer(await stateImport(project, ctx), path.join(stateDir(project), '..', IMPORT_MARK));
+    if (!answer.done && answer.imported > 0) await freshViews(() => writeViews(project, { now }));
     return answer;
   }
 
   async function doProfileImport(_body, ctx) {
-    const answer = await importOnce({
-      from: oldProfileDir(), to: profileDir(), mark: path.join(wheelhouseHome(), SETTINGS_IMPORT_MARK), what: 'your v0.1.x profile clone',
-    }, ctx);
-    if (answer.imported > 0) await freshViews(() => writeProfileViews({ now }));
+    const answer = importAnswer(await settingsImport(ctx), path.join(wheelhouseHome(), SETTINGS_IMPORT_MARK));
+    if (!answer.done && answer.imported > 0) await freshViews(() => writeProfileViews({ now }));
     return answer;
   }
 

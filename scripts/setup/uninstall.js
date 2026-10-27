@@ -177,7 +177,9 @@ const OLD_PROFILE_REPO = 'wheelhouse-profile';
 export const OLD_STAYS = 'Wheelhouse v0.1.x made it, and it stays as it is';
 // The names in the project's folder under projects/ that its removal leaves: its private record,
 // which goes only on its own card's Delete it, and v0.1.x's state clone.
-const RECORD_NAMES = ['record', 'state'];
+// Kept in the project's folder when it is removed: the private record, v0.1.x's state clone, and the
+// import's mark, so a record deleted on its card is never imported again from the old clone.
+const RECORD_NAMES = ['record', 'state', 'imported.json'];
 // What the retired Trust it card left on this computer (v0.1.x): its clicks, and the record of the
 // profile's enrolments last fetched. Wheelhouse's own, removed on the last uninstall.
 export const trustDir = () => path.join(wheelhouseHome(), 'trust');
@@ -974,7 +976,7 @@ export async function uninstallPlan({
       card: deleteCard({
         what: `Delete this project's private record on this computer, ${shown(stateDir(slug), userHome)}: your words, cards and clicks for ${own?.record?.repo ?? slug}?`,
         why: 'It is kept only on this computer, like your chats with Claude, and once deleted it can\'t be brought back, so it is your call.',
-        keeps: 'The record stays on this computer, for this project set up again.',
+        keeps: 'The record stays on this computer, for this project set up again. Once Wheelhouse is gone from this computer altogether, the clicks signed in it no longer count, since its key goes too.',
         deletes: 'Wheelhouse deletes the record from this computer.',
         because: 'a deleted record can\'t be brought back',
       }),

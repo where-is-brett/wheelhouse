@@ -12,7 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startHelper, incidentFor, shownFirstNeeded } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
-import { stateDir } from '../../../scripts/lib/paths.js';
+import { stateDir, oldStateDir } from '../../../scripts/lib/paths.js';
+import { openRecord } from '../../../scripts/state/record.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { makeEvent, eventPath, writeEvent } from '../../../scripts/state/events.js';
@@ -142,6 +143,28 @@ test('an incident is declared while two PRs are ready: neither merges; the fix d
       assert.deepEqual(await merge(client, 8), { ok: true, merged: true, sha: b.headSha, ...NONE_FOUND });
       assert.deepEqual((await merge(client, 7)).reasons, [frozen('bad-total')]);
       assert.deepEqual(adapter.merges, [{ number: 8, sha: b.headSha }]);
+    });
+  } finally { remote.cleanup(); }
+});
+
+// An incident kept only in the v0.1.x state clone still freezes the first merge after the upgrade:
+// the gate imports the old clone before it reads the record (design section 24.5), with no
+// /state/import call from the session start.
+test('an incident in the old v0.1.x clone freezes a merge before any import is asked for', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const a = await readyPr(home, remote, 7, 'feature/totals', { 'a.txt': 'a\n' });
+    const adapter = fakeAdapter({ 7: a });
+    await as(home, async () => {
+      const from = oldStateDir('o__p');
+      await openRecord(from, { what: 'a test clone' });
+      await writeEvent({ event: makeEvent({ kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' }, now: at(500) }), dir: from, now: at(500) });
+    });
+    await withHelper(home, adapter, async (client) => {
+      const answer = await merge(client);
+      assert.deepEqual([answer.ok, answer.reasons], [false, [frozen('bad-total')]]);
+      assert.deepEqual(adapter.merges, []);
     });
   } finally { remote.cleanup(); }
 });
