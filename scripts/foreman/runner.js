@@ -13,7 +13,7 @@ const SCRIPTS = { act: './act.js', wake: './wake.js' };
 
 export async function runForeman([address, script, ...argv]) {
   if (typeof address !== 'string' || address === '' || !Object.hasOwn(SCRIPTS, script)) {
-    process.stderr.write('The foreman runner is run by the host helper alone\n');
+    process.stderr.write('The Bosun\'s runner is run by the host helper alone\n');
     return 2;
   }
   const { main } = await import(SCRIPTS[script]);

@@ -95,7 +95,7 @@ function plainId(value, what) {
 // `--resume` finds its session and two sessions never share Copilot's lock files.
 export function sessionHome(project, target) {
   if (typeof target !== 'string' || !(target === 'foreman' || (target.startsWith('feature-') && SLUG.test(target.slice('feature-'.length))))) {
-    throw new Error(`A session's home is the foreman's or a feature's, and this target isn't either: ${JSON.stringify(target)}`);
+    throw new Error(`A session's home is the Bosun's or a feature's, and this target isn't either: ${JSON.stringify(target)}`);
   }
   let folder;
   try {
@@ -243,7 +243,7 @@ function switchedOn(ready) {
 // asked for (on Copilot the watcher wakes a fresh foreman for each wake, ruling P8-6), when its model can't be
 // passed, and while the sessions aren't switched on.
 function checkForemanAt(config, ready) {
-  if (config?.watcherShape === 2) throw new Error("On Copilot the watcher wakes a fresh foreman for each wake; the second shape isn't offered");
+  if (config?.watcherShape === 2) throw new Error("On Copilot the watcher wakes a fresh Bosun for each wake; the second shape isn't offered");
   modelOf(config, 'foreman');
   switchedOn(ready);
 }
@@ -353,7 +353,7 @@ function sessionCall({ project, target, role, config, prompt, rules = {}, resume
 // `Bash(<command>:*)` given as `shell(<command>:*)`, with no write (ruling P7-3). Copilot runs the watcher's first
 // shape only, so there is no long foreman session, and asking for one refuses (ruling P8-6).
 function buildForemanCall({ config, project, prompt, tools = null, env, platform = process.platform, pluginRoot = PLUGIN_ROOT, copilot = null, runId, long = false }) {
-  if (long) throw new Error("Copilot's foreman runs one wake at a time; its long session isn't built");
+  if (long) throw new Error("Copilot's Bosun runs one wake at a time; its long session isn't built");
   const given = tools ?? foremanTools(pluginRoot, { platform });
   const allow = given.filter((tool) => /^Bash\(.+\)$/s.test(tool)).map((tool) => `shell(${tool.slice('Bash('.length)}`);
   return sessionCall({ project, target: 'foreman', role: 'foreman', config, prompt, rules: { allow }, env, platform, copilot, runId });
@@ -619,7 +619,7 @@ export function pruneActivity({ project, now = () => new Date() }) {
 // the tools, never what was refused (the activity record holds that).
 function guardNote(refusals, work) {
   const tools = [...new Set(refusals.map((r) => r.tool))].slice(0, 5);
-  const who = work === undefined ? "the foreman's run" : `the ${work} session's run`;
+  const who = work === undefined ? "the Bosun's run" : `the ${work} session's run`;
   const times = refusals.length === 1 ? 'one tool call' : `${refusals.length} tool calls`;
   return `A Wheelhouse guard refused ${times} in ${who} (${tools.join(', ')}). The run's activity record lists them.`;
 }

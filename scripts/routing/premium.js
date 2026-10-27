@@ -40,7 +40,7 @@ export function premiumValueOf(from, label) {
 // section 14.6's, with the account check said as it is: the check is made only after the Yes.
 export function premiumInput({ from, at }) {
   const meanwhile = "If you allow it, I first check your account has it, then try it on your project's own checks, which uses some of it. Nothing changes until it passes, and I'll tell you when it does.";
-  const checks = 'Every check still runs. Work it writes is reviewed by a different model, and the front desk stays on its own model.';
+  const checks = 'Every check still runs. Work it writes is reviewed by a different model, and the First Mate stays on its own model.';
   if (from === 'within-plan') {
     return {
       kind: 'premium',

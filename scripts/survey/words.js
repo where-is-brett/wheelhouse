@@ -133,7 +133,7 @@ export function carryOnCard(survey, { project, host = null } = {}) {
     kind: 'question',
     level: 3,
     what: `Wheelhouse found work already under way in ${project}: ${listed(parts)}. Shall I carry ${total === 1 ? 'it' : 'them'} on?`,
-    why: 'Each piece would go through the usual intake: a short brief of its own, built on from where it stands, and checked by the reviewer before anything is merged. The original work is never changed.',
+    why: 'Each piece would go through the usual intake: a short brief of its own, built on from where it stands, and checked by a Lookout before anything is merged. The original work is never changed.',
     meanwhile: 'Nothing is touched while you decide.',
     options: [
       { label: CARRY_ON, says: 'Each piece gets its own brief and joins the queue, and you see each brief as usual.' },

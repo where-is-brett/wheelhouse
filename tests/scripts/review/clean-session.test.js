@@ -215,7 +215,7 @@ test("the clean check fails on an extra agent, an extra disabled tool or a missi
   fails(routeB({ listings: { ...routeB().listings, lsp: { code: 1 } } }), /lsp listing failed/);
   fails(routeB({ listings: { ...routeB().listings, mcp: undefined } }), /mcp listing failed or is missing/);
   // The reviewer's own line must open the answer, and the nonce must not be in the prompt.
-  fails(routeB({ answer: 'Read it.' }), /reviewer's own line/);
+  fails(routeB({ answer: 'Read it.' }), /Lookout's own line/);
   fails({ ...routeB(), prompt: `Begin with ${NONCE}` }, /nonce is missing or is in the prompt/);
 });
 
@@ -547,7 +547,7 @@ test('a prompt past MOST_PROMPT_BYTES refuses with NO_CLEAN_REVIEW in plain word
     review: { reviewKind: 'clean-session', session: async () => { sessions += 1; return { clean: true }; } },
     withChange: (build) => build({ ...changed({ 'src/a.js': 'a\n' }), diff: '+a\n', rules: [{ path: 'CLAUDE.md', text: 'r'.repeat(MOST_PROMPT_BYTES) }] }),
   });
-  assert.deepEqual(outcome, { ok: false, why: `the reviewer's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the reviewer` });
+  assert.deepEqual(outcome, { ok: false, why: `the Lookout's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the Lookout` });
   assert.equal(sessions, 0);
   assert.deepEqual(fs.readdirSync(tmp), [], 'the folder is removed');
 });

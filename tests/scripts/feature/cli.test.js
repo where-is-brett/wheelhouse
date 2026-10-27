@@ -113,7 +113,7 @@ test('ask --kind build-command writes its own three options, recommending once',
   assert.deepEqual(questions[0], {
     id: 'q-login-page-1',
     kind: 'build-command',
-    what: 'Let this feature\'s builder run: npm test, which runs "node --test tests/"; git status.',
+    what: 'Let this feature\'s Crew run: npm test, which runs "node --test tests/"; git status.',
     why: 'The tests need running',
     options: BUILD_QUESTION_OPTIONS,
     recommendation: 'Allow this time',
@@ -126,7 +126,7 @@ test('ask --kind build-command writes its own three options, recommending once',
   await ask({ worktree: tree, argv: ['--kind', 'build-command', '--command', 'npm run build', '--command', 'npm run build', '--why', 'w'], client });
   const second = readQuestions(featurePaths(tree).questions).questions[1];
   assert.deepEqual(second.commands, ['npm run build']);
-  assert.equal(second.what, 'Let this feature\'s builder run: npm run build, which runs "tsc -p .".');
+  assert.equal(second.what, 'Let this feature\'s Crew run: npm run build, which runs "tsc -p .".');
   // From the command line, the helper places the project from the worktree's folder and gives
   // the configuration; nothing here reads ~/.wheelhouse (ruling R150).
   const lines = [];
@@ -189,11 +189,11 @@ test('what it runs comes from package.json, cut at 200 characters', async () => 
   const argv = ['--kind', 'build-command', '--command', 'npm test', '--command', 'npm run lint', '--command', 'npm run gone', '--command', 'node scripts/x.js', '--why', 'w'];
   await ask({ worktree: tree, argv, client });
   const q = readQuestions(featurePaths(tree).questions).questions[0];
-  assert.equal(q.what, `Let this feature's builder run: npm test, which runs "${long.slice(0, 200)}"; npm run lint, which runs "eslint . --fix"; npm run gone, which runs (no such script); node scripts/x.js.`);
+  assert.equal(q.what, `Let this feature's Crew run: npm test, which runs "${long.slice(0, 200)}"; npm run lint, which runs "eslint . --fix"; npm run gone, which runs (no such script); node scripts/x.js.`);
   // No package.json at all: every script is missing.
   fs.rmSync(path.join(tree, 'package.json'));
   await ask({ worktree: tree, argv: ['--kind', 'build-command', '--command', 'npm test', '--why', 'w'], client });
-  assert.equal(readQuestions(featurePaths(tree).questions).questions[1].what, 'Let this feature\'s builder run: npm test, which runs (no such script).');
+  assert.equal(readQuestions(featurePaths(tree).questions).questions[1].what, 'Let this feature\'s Crew run: npm test, which runs (no such script).');
 });
 
 test('ask refuses a question the director\'s card could not carry, in the composer\'s words, and writes nothing', async () => {

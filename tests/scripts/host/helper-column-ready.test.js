@@ -136,7 +136,7 @@ test('no caller writes a column-ready record, and the helper writes none under S
       fs.writeFileSync(stopFile(), '');
       const stopped = await client.state.columnReady({ project: 'o__p', column: 'lean', pins: PINS, records });
       assert.equal(stopped.ok, false);
-      assert.match(stopped.refused, /STOP/);
+      assert.match(stopped.refused, /All stop/);
       assert.deepEqual(await c.readies(), []);
     });
   } finally { c.cleanup(); }

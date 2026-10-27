@@ -223,7 +223,7 @@ test('at Lean with nothing added the line says approvals are not proven and STOP
   const out = lines({ tier: 'lean', platform: 'darwin' });
   assert.equal(out[0], 'Nothing is held off this computer except the copy in your folder');
   assert.equal(out[1], 'Approvals are clicks in the chat, recorded as not proven');
-  assert.ok(out.includes('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
+  assert.ok(out.includes('All stop isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
   assert.ok(out.includes('Copilot\'s command prompts aren\'t a control'));
   assert.ok(out.includes('Tests and second looks at a change aren\'t independent of the agent that built it'));
   assert.ok(out.includes('Not for projects with real users'));
@@ -256,13 +256,13 @@ test('at Lean with the helper or the add-on, approvals and STOP are no longer th
   assert.equal(node[0], 'Nothing is held off this computer except the copy in your folder');
   assert.ok(!node.includes('Approvals are clicks in the chat, recorded as not proven'));
   assert.ok(node.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'));
-  assert.ok(!node.includes('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
-  assert.ok(node.includes('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks'));
+  assert.ok(!node.includes('All stop isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
+  assert.ok(node.includes('All stop is enforced by Wheelhouse\'s guards, which run as Copilot hooks'));
   assert.ok(node.includes(`Copilot lets a guard through if it runs past ${GUARD_TIMEOUT_SEC} seconds, so every guard answers within ${GUARD_DEADLINE_MS / 1000} seconds or refuses`));
   assert.ok(!node.some((line) => /^No Wheelhouse guards|shell guard/.test(line)));
   const addOn = lines({ tier: 'lean', platform: 'win32', addOn: true });
   assert.ok(addOn.includes('Everyday approvals are clicks in the chat; the steps that matter most are confirmed outside it'));
-  assert.ok(addOn.includes('STOP is enforced by the add-on, which also cancels the chat\'s running request'));
+  assert.ok(addOn.includes('All stop is enforced by the add-on, which also cancels the chat\'s running request'));
   // The things Lean never holds are said whatever is added.
   for (const out of [node, addOn]) {
     for (const line of ['Copilot\'s command prompts aren\'t a control', 'Tests and second looks at a change aren\'t independent of the agent that built it', 'Not for projects with real users']) assert.ok(out.includes(line), line);
@@ -271,7 +271,7 @@ test('at Lean with the helper or the add-on, approvals and STOP are no longer th
 
 test('at Lean the helper\'s lines follow whether the helper answers, never whether Node.js runs (ruling P5-31)', () => {
   const helperBlock = lines({ tier: 'lean', platform: 'darwin', node: true, helper: true });
-  assert.ok(helperBlock.includes('STOP is enforced by Wheelhouse\'s guards, which run as Copilot hooks'));
+  assert.ok(helperBlock.includes('All stop is enforced by Wheelhouse\'s guards, which run as Copilot hooks'));
   // Node.js runs but no helper answers: the lines of a computer with no guard, on either system.
   const macNode = lines({ tier: 'lean', platform: 'darwin', node: true, helper: false });
   assert.deepEqual(macNode, lines({ tier: 'lean', platform: 'darwin', node: false }));
@@ -279,7 +279,7 @@ test('at Lean the helper\'s lines follow whether the helper answers, never wheth
   assert.ok(winNode.includes('No Wheelhouse guards run on this computer yet'), 'where Node.js runs, Windows waits only for the helper');
   assert.ok(!winNode.some((line) => /without Node\.js/.test(line)));
   assert.ok(winNode.includes('Approvals are clicks in the chat, recorded as not proven'));
-  assert.ok(winNode.includes('STOP isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
+  assert.ok(winNode.includes('All stop isn\'t enforced: agents are told to stop, and VS Code\'s stop button ends the running request'));
   assert.ok(!winNode.some((line) => /time-out|seconds/.test(line)));
   // Without Node.js the Windows line stays as it was.
   assert.ok(lines({ tier: 'lean', platform: 'win32', node: false }).includes('No Wheelhouse guards run on Windows without Node.js, until a way is found'));
@@ -297,7 +297,7 @@ const ITEMS = {
   5: /^At Standard, Wheelhouse's hooks run beside the agent/,
   6: /network/,
   7: /^You can lower the level/,
-  8: /^Phone STOP isn't available/,
+  8: /^Phone All stop isn't available/,
   9: /^Wheelhouse can't pin VS Code/,
   10: /^Your company's own settings win/,
 };

@@ -361,7 +361,7 @@ test('the front desk\'s confirm lifts STOP through the helper\'s window', async 
     const got = JSON.parse(out.join(''));
     assert.deepEqual([got.recorded, got.step], [true, 'lift-stop']);
     assert.equal(stopState().on, false);
-    assert.equal(argvOf(c.windows[0].args)[0], 'Wheelhouse: Lift STOP');
+    assert.equal(argvOf(c.windows[0].args)[0], 'Wheelhouse: All stop');
   } finally {
     liftStop();
     await c.close();

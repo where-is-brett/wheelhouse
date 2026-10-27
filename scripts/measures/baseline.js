@@ -174,7 +174,7 @@ function useClick(event, now) {
 // folder (where the front desk runs) the STOP guard refuses scripts/measures/cli.js, so neither form
 // is reached there; a request that arrives all the same, from a folder STOP doesn't hold, may still
 // get its card, but the route records nothing until STOP is lifted.
-export function baselineRoutes({ now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' } } = {}) {
+export function baselineRoutes({ now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'All stop is on' } } = {}) {
   function show(body) {
     sweepStale(now);
     const given = figuresOf(body);

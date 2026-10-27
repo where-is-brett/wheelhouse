@@ -127,7 +127,7 @@ function pullRequestName(p, features) {
 // The pull requests whose work's latest report says blocked (the board model's `blocked`), in
 // Wheelhouse's own words. The report's summary is text the build wrote, which may carry its own
 // talk or an instruction (design section 12.5), so it stays on the board and never reaches here.
-const BLOCKED = 'is blocked: its build stopped and couldn\'t go on; the board has its report';
+const BLOCKED = 'is blocked: its build stopped and couldn\'t go on; the Logbook has its report';
 function blockedLines(model) {
   const features = records(model.build?.features);
   return openPullRequests(model).filter((p) => typeof p.blocked === 'string').map((p) => `${pullRequestName(p, features)} ${BLOCKED}`);

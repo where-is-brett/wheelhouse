@@ -156,5 +156,5 @@ test('columnLines names each subagent role\'s model and effort, and the level\'s
   const none = columnLines(routingFrom({ config: { routing: {} }, views: {}, now }));
   assert.ok(none.includes("builder: model the session's own, effort medium"));
   assert.equal(REWORK_LINE, 'When a task is sent back by its review, build it again at effort high.');
-  assert.equal(SECOND_REVIEWER_LINE, 'Critical-area work gets a second fresh reviewer; both must report CLEAN.');
+  assert.equal(SECOND_REVIEWER_LINE, 'Critical-area work gets a second fresh Lookout; both must report CLEAN.');
 });

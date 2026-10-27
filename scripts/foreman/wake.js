@@ -138,7 +138,7 @@ export function projectHere(cwd) {
   try {
     found = projectForFolder(fs.realpathSync.native(cwd));
   } catch { /* not a folder */ }
-  if (!found) refuse("This folder isn't in a Wheelhouse project: run the foreman's commands from the project's main checkout");
+  if (!found) refuse("This folder isn't in a Wheelhouse project: run the Bosun's commands from the project's main checkout");
   return found.project;
 }
 
@@ -257,7 +257,7 @@ export function documentOf(project, views, work) {
 // incident. Null when neither holds. `stop` says which; during an incident
 // bug work still starts, plans and builds (ruling R101): see haltFor.
 export function haltOf(views, { stopped = () => stopState().on } = {}) {
-  if (stopped()) return { why: 'STOP is on', fixes: [], stop: true };
+  if (stopped()) return { why: 'All stop is on', fixes: [], stop: true };
   const open = Array.isArray(views?.incidents?.open) ? views.incidents.open.filter(isPlain) : [];
   if (open.length === 0) return null;
   const ids = open.map((i) => oneLine(i.id, 40));
@@ -504,8 +504,8 @@ function eventLine(e, ctx) {
     case 'clash': return said(`${d.a} and ${d.b} no longer merge cleanly together`);
     // The event says STOP was turned on; a wake held while it was on may be read after the lift.
     case 'stop': return ctx.halt?.stop === true
-      ? `${head}: STOP was turned on, and it is on now. Start no more work.`
-      : `${head}: STOP was turned on, but it is off now: read where things stand below.`;
+      ? `${head}: All stop was turned on, and it is on now. Start no more work.`
+      : `${head}: All stop was turned on, but it is off now: read where things stand below.`;
     case 'incident': return said(`${d.incident}: ${d.what}`, 'Start no more work but bug work, which may start and build; merges are frozen but for its fix.');
     case 'long-gap': return said(`the watcher was off since ${d.since}: read where things stand below`);
     case 'plan-ready': return planReadyLine(head, work, ctx);
@@ -647,7 +647,7 @@ export async function readWakeLines({
 }) {
   const wake = readWake(file);
   if (wake === null) refuse(`This isn't a wake that can be read: ${oneLine(file, 120)}`);
-  if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the foreman");
+  if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the Bosun");
   // Without the configuration or the views, the events are still read; the queue and clash answers are unknown.
   const missing = [];
   let config = null;
@@ -731,7 +731,7 @@ export function recordDone({ file, project, outcome, now = () => new Date() }) {
   if (!['acted', 'idle'].includes(outcome)) refuse('A wake is done --acted or --idle');
   const wake = readWake(file);
   if (wake === null) refuse(`This isn't a wake that can be read: ${oneLine(file, 120)}`);
-  if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the foreman");
+  if (wake.to !== 'foreman') refuse("This wake is for a feature session, not the Bosun");
   const id = path.basename(file, '.json');
   if (measureLines(project).some((m) => m.wake === id)) return { recorded: false, wake: id };
   const all = [...(Array.isArray(wake.events) ? wake.events : []), ...(Array.isArray(wake.digest) ? wake.digest : [])];
@@ -793,7 +793,7 @@ function foremanWake(project, cwd, given) {
   } catch (error) {
     if (error instanceof ForemanError) throw error;
   }
-  if (file === null || dir === null || path.dirname(file) !== dir) refuse(`This isn't a wake copied for the foreman: ${oneLine(given, 120)}`);
+  if (file === null || dir === null || path.dirname(file) !== dir) refuse(`This isn't a wake copied for the Bosun: ${oneLine(given, 120)}`);
   return file;
 }
 

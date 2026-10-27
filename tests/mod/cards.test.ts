@@ -20,7 +20,7 @@ const PANE_PROPS = {
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
 const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
-const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.'
+const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mate about it.'
 
 const FIRST = 'Merge the banner change?'
 const SECOND = 'Allow build commands to run unattended?'
@@ -48,7 +48,7 @@ const model = (stopOn: boolean) => ({
     },
   ],
   building: [],
-  health: stopOn ? [{ level: 'stop', text: 'STOP is on, since 19 October 2026', of: 'stop' }] : [],
+  health: stopOn ? [{ level: 'stop', text: 'All stop is on, since 19 October 2026', of: 'stop' }] : [],
   usage: null,
   finished: [],
   incidents: [],
@@ -257,17 +257,17 @@ test('a double click on a card button, a moment apart, sends once', async ($, on
 
 test('a press whose answer holds a prompt submits it', async ($, on) => {
   const prompts = ['Wheelhouse pane: the director pressed Explain more on card 1 (card-1).', 'Wheelhouse pane: a second prompt.']
-  let reply: object = { ok: true, says: 'Asking the front desk', submit: [prompts[0]] }
+  let reply: object = { ok: true, says: 'Asking the First Mate', submit: [prompts[0]] }
   const { seen, clear, start } = world(on, () => reply)
   for (const surface of SURFACES) {
     await start($, surface)
     const ui = await mount($, surface)
     clear()
-    reply = { ok: true, says: 'Asking the front desk', submit: [prompts[0]] }
+    reply = { ok: true, says: 'Asking the First Mate', submit: [prompts[0]] }
     await ui.press({ key: cardKey('card-1', 'Explain more') })
     expect(seen.submits.map((p: any) => p.text)).toEqual([prompts[0]])
     expect(seen.submits[0].origin).toMatchObject({ kind: 'plugin', name: 'wheelhouse' })
-    expect(seen.toasts).toEqual(['Recording…', 'Asking the front desk'])
+    expect(seen.toasts).toEqual(['Recording…', 'Asking the First Mate'])
     // Several prompts go in order, each once.
     clear()
     reply = { ok: true, submit: prompts }
@@ -275,10 +275,10 @@ test('a press whose answer holds a prompt submits it', async ($, on) => {
     expect(seen.submits.map((p: any) => p.text)).toEqual(prompts)
     // A refused press can still hand the front desk its prompt.
     clear()
-    reply = { ok: false, says: 'STOP is on: the front desk takes it from here', submit: [prompts[0]] }
+    reply = { ok: false, says: 'All stop is on: the First Mate takes it from here', submit: [prompts[0]] }
     await ui.press({ key: cardKey('card-1', 'Explain more') })
     expect(seen.submits.map((p: any) => p.text)).toEqual([prompts[0]])
-    expect(seen.toasts.at(-1)).toBe('STOP is on: the front desk takes it from here')
+    expect(seen.toasts.at(-1)).toBe('All stop is on: the First Mate takes it from here')
     await ui.unmount()
   }
 })
@@ -286,32 +286,32 @@ test('a press whose answer holds a prompt submits it', async ($, on) => {
 test('STOP shows while STOP is off, Lift STOP while it is on, each sending pane', async ($, on) => {
   let stopOn = false
   const { seen, clear, start, clock } = world(on, (request) => {
-    if (request.cmd === 'stop') return { ok: true, says: 'STOP is on.' }
-    if (request.cmd === 'go') return { ok: true, says: 'STOP is off. In progress: 1 feature building.' }
+    if (request.cmd === 'stop') return { ok: true, says: 'All stop is on.' }
+    if (request.cmd === 'go') return { ok: true, says: 'All stop is off. In progress: 1 feature building.' }
     return { ok: false }
   }, () => frontDesk(stopOn))
   for (const surface of SURFACES) {
     stopOn = false
     await start($, surface)
     const ui = await mount($, surface)
-    expect((await ui.find({ key: 'stop' }))?.props.label).toBe('STOP')
+    expect((await ui.find({ key: 'stop' }))?.props.label).toBe('All stop')
     expect(await ui.find({ key: 'lift-stop' })).toBeUndefined()
     clear()
     stopOn = true
     await ui.press({ key: 'stop' })
     expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
-    expect(seen.toasts).toEqual(['Recording…', 'STOP is on.'])
+    expect(seen.toasts).toEqual(['Recording…', 'All stop is on.'])
     expect(seen.ticks).toHaveLength(1)
 
     // The tick after the press drew STOP on: Lift STOP now, carrying the STOP the pane drew.
     await ui.redraw()
     expect(await ui.find({ key: 'stop' })).toBeUndefined()
-    expect((await ui.find({ key: 'lift-stop' }))?.props.label).toBe('Lift STOP')
+    expect((await ui.find({ key: 'lift-stop' }))?.props.label).toBe('Lift All stop')
     clear()
     stopOn = false
     await ui.press({ key: 'lift-stop' })
     expect(seen.requests).toEqual([{ cmd: 'go', origin: 'pane', cwd: ROOT, since: SINCE }])
-    expect(seen.toasts).toEqual(['Recording…', 'STOP is off. In progress: 1 feature building.'])
+    expect(seen.toasts).toEqual(['Recording…', 'All stop is off. In progress: 1 feature building.'])
     expect(seen.ticks).toHaveLength(1)
     await ui.redraw()
     expect((await ui.find({ key: 'stop' }))?.type).toBe('Button')
@@ -322,7 +322,7 @@ test('STOP shows while STOP is off, Lift STOP while it is on, each sending pane'
 
 test('STOP stays live while a card press is recorded', async ($, on) => {
   let reply: Reply = { ok: true }
-  const { seen, clear, start, clock } = world(on, (request) => (request.cmd === 'stop' ? { ok: true, says: 'STOP is on.' } : reply))
+  const { seen, clear, start, clock } = world(on, (request) => (request.cmd === 'stop' ? { ok: true, says: 'All stop is on.' } : reply))
   for (const surface of SURFACES) {
     await start($, surface)
     const ui = await mount($, surface)
@@ -376,7 +376,7 @@ test('the pane origin is sent only from a press', async ($, on) => {
 test('Lift STOP on a picture with no STOP start sends since null, and the bridge\'s refusal is a toast', async ($, on) => {
   // The bridge lifts only the STOP the pane drew (ruling 21): with no start drawn it refuses, and
   // the director sees its words.
-  const UNDATED = 'The pane didn\'t say which STOP it showed, so STOP stays on; type /wheelhouse-go to lift it'
+  const UNDATED = 'The pane didn\'t say which All stop it showed, so All stop stays on; type /wheelhouse-go to lift it'
   let stop: object = { on: true, since: null }
   let reply: Reply = { ok: false, says: UNDATED }
   const { seen, clear, start } = world(on, () => reply, () => ({ ...frontDesk(true), pane: { ...model(true), stop } }))
@@ -403,19 +403,19 @@ test('Lift STOP on a picture with no STOP start sends since null, and the bridge
 })
 
 test('STOP pressed twice sends once', async ($, on) => {
-  let reply: Reply = { ok: true, says: 'STOP is on.' }
+  let reply: Reply = { ok: true, says: 'All stop is on.' }
   const { seen, clear, start, clock } = world(on, () => reply)
   for (const surface of SURFACES) {
     await start($, surface)
     const ui = await mount($, surface)
     // Two presses at once.
     clear()
-    reply = { ok: true, says: 'STOP is on.' }
+    reply = { ok: true, says: 'All stop is on.' }
     await Promise.all([ui.press({ key: 'stop' }), ui.press({ key: 'stop' })])
     expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
     // A second click a moment later, while the first is recorded: STOP is Recording, not a button.
     clear()
-    reply = { hold: 1000, then: { ok: true, says: 'STOP is on.' } }
+    reply = { hold: 1000, then: { ok: true, says: 'All stop is on.' } }
     const pressed = ui.press({ key: 'stop' })
     await clock.advance(200)
     await ui.redraw()
@@ -443,7 +443,7 @@ test('Lift STOP is plain text while a card press is recorded, and sends nothing'
     await clock.settle()
     await ui.redraw()
     expect(await ui.find({ key: 'lift-stop' })).toBeUndefined()
-    expect(await texts(ui)).toContain('Lift STOP')
+    expect(await texts(ui)).toContain('Lift All stop')
     await expect(ui.press({ key: 'lift-stop' })).rejects.toThrow()
     await clock.advance(2000)
     await pressed
@@ -466,19 +466,19 @@ for (const surface of SURFACES) {
     test(`STOP is drawn before the first tick has answered (${surface}, ${'hold' in first ? 'a tick still running' : 'a failed tick'})`, async ($, on) => {
       // STOP needs only the session's folder, so the pane carries it from its first drawing.
       let tickReply: object = first
-      const { seen, clear, clock } = world(on, () => ({ ok: true, says: 'STOP is on.' }), () => tickReply)
+      const { seen, clear, clock } = world(on, () => ({ ok: true, says: 'All stop is on.' }), () => tickReply)
       await $.session.start({ cwd: ROOT, surface, isInteractive: true })
       await clock.settle()
       const ui = await mount($, surface)
       expect(await buttons(ui)).toEqual(['stop'])
       const drawn = await texts(ui)
-      expect(drawn.slice(0, 2)).toEqual(['STOP', 'Halts every builder at once.'])
+      expect(drawn.slice(0, 2)).toEqual(['All stop', 'Halts the whole Crew at once.'])
       expect(drawn).toHaveLength(3)
       expect(drawn[2]).toStartWith(line)
       clear()
       await ui.press({ key: 'stop' })
       expect(seen.requests).toEqual([{ cmd: 'stop', origin: 'pane', cwd: ROOT }])
-      expect(seen.toasts).toEqual(['Recording…', 'STOP is on.'])
+      expect(seen.toasts).toEqual(['Recording…', 'All stop is on.'])
       tickReply = frontDesk()
       await clock.advance(60000)
       await ui.unmount()
@@ -804,7 +804,7 @@ test('an approval card shows what it is under the ask while Why? is closed, and 
 // here; the tests below seed the words through a state kept by the test (keepState).
 const SUGGEST_KEY = cardKey('card-1', 'Suggest a change…')
 const BOX = 'suggest:card-1'
-const suggestBridge = (request: any) => (request.cmd === 'suggest' ? { ok: true, says: 'Sent to the front desk. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggests a change to card 1 (card-1).'] } : { ok: true })
+const suggestBridge = (request: any) => (request.cmd === 'suggest' ? { ok: true, says: 'Sent to the First Mate. A new proposal will follow.', submit: ['Wheelhouse pane: the director suggests a change to card 1 (card-1).'] } : { ok: true })
 
 test('Suggest a change… opens a box with What would you change?, Send and Cancel', async ($, on) => {
   const { seen, clear, start } = world(on, suggestBridge, withCards([partsCard()]))
@@ -912,7 +912,7 @@ function keepState(on: any) {
     seed: (words: string) => store.set('wheelhouse/suggesting', { value: { card: 'card-1', words }, version: 1 }),
   }
 }
-const SENT = 'Sent to the front desk. A new proposal will follow.'
+const SENT = 'Sent to the First Mate. A new proposal will follow.'
 const SUGGEST_PROMPT = 'Wheelhouse pane: the director suggests a change to card 1 (card-1).'
 const SUGGESTION = { cmd: 'suggest', origin: 'pane', cwd: ROOT, card: 'card-1', hash: 'aaaaaaaaaaaa', words: 'make it blue' }
 

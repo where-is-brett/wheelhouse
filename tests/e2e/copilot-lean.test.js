@@ -206,10 +206,10 @@ test('a Lean project with the helper, from the session start to the helper stopp
     assertLetThrough(await entry('preToolUse', read));
     // The chat can't decide anything under STOP; Lift STOP is the window's.
     const head0 = await c.main();
-    assert.match((await c.lean(['click', 'merge-x', 'Approve', head0], { question: 'x' })).refused, /STOP is on/);
+    assert.match((await c.lean(['click', 'merge-x', 'Approve', head0], { question: 'x' })).refused, /All stop is on/);
     const lifted = await c.lean(['confirm', 'lift-stop']);
     assert.equal(lifted.ok, true, lifted.refused);
-    assert.equal(c.windows.at(-1).title, 'Wheelhouse: Lift STOP');
+    assert.equal(c.windows.at(-1).title, 'Wheelhouse: All stop');
     assert.equal(stopState().on, false);
     assert.equal((await entry('preToolUse', patch)).text, '');
 

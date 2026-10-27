@@ -26,7 +26,7 @@ function rootOf(pluginRoot, platform) {
   try {
     return commandPath(pluginRoot, { platform }).slice(1, -1);
   } catch {
-    throw new Error(`The plugin's folder can't be given to the foreman as a command: ${JSON.stringify(pluginRoot)}`);
+    throw new Error(`The plugin's folder can't be given to the Bosun as a command: ${JSON.stringify(pluginRoot)}`);
   }
 }
 

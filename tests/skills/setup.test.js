@@ -119,11 +119,11 @@ test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one 
   assert.ok(section.includes(`**${READY.skip}:**`), 'Skip for now is named');
   const skip = section.split(`**${READY.skip}:**`)[1].split('\n')[0];
   assert.match(skip, /settles as skipped/);
-  assert.match(skip, /front desk sets up phone notifications/);
+  assert.match(skip, /First Mate sets up phone notifications/);
   assert.match(skip, /Don't ask the card again/);
   assert.doesNotMatch(section, /don't try step 10/);
   // The phone comes last, once setup is finished, and never holds it up (design section 15.1).
-  assert.match(section, /The phone comes once setup is finished: the `resume` after the green board gives its card/);
+  assert.match(section, /The phone comes once setup is finished: the `resume` after the green Logbook gives its card/);
   assert.match(section, /never holds setup up/);
   // The front desk takes the test when the director asks for it later.
   const desk = read('skills/front-desk/SKILL.md');
@@ -140,7 +140,7 @@ test('the playbook opens with the one card, applies what its Go ahead covers, as
   assert.match(playbook, /run `choices`, pick the key whose `about` matches what they said, then `change <key>`/);
   assert.match(playbook, /Never say an answer can't be changed/);
   assert.match(playbook, /\*\*`setUpAgain: true`\*\*, whatever the plan says[^\n]*Follow Uninstall below/);
-  assert.match(playbook, /\*\*Change it after setup\*\*: tell them in one line that the front desk starts that change right after setup/);
+  assert.match(playbook, /\*\*Change it after setup\*\*: tell them in one line that the First Mate starts that change right after setup/);
   assert.match(playbook, /first each of `requests` \(changes they asked for after setup\), then the request they came with/);
   assert.match(USAGE, /choices, change <key>/);
 });
@@ -280,6 +280,6 @@ test('step 10\'s green board: the playbook runs resume at once and asks its card
   assert.match(green, /Run `resume` at once\. The card it gives \(the phone's, Step 9 above\) opens with the verdict and the first briefing: ask it exactly as given/);
   assert.match(green, /With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own/);
   assert.ok(section.indexOf('**Green:**') < section.indexOf('When `health` gave a `card`'), 'the briefing\'s card before the carry-on card');
-  assert.ok(playbook.includes('| "The board is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
+  assert.ok(playbook.includes('| "The Logbook is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
   assert.match(playbook.split(`## Step ${PUSH_TEST_STEP}, `)[1], /opens with the verdict and the first briefing/);
 });

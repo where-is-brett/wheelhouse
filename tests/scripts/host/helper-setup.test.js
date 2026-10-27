@@ -351,7 +351,7 @@ test('under STOP, plan and status answer and apply is refused', async () => {
     const status = await client.setup.status({ folder });
     assert.equal(status.ok, true);
     assert.ok(status.lines.some((l) => /^Step 1, Install: card shown at /.test(l)), status.lines.join('\n'));
-    assert.deepEqual(await client.setup.apply({ folder, step: 1, hash: card.hash }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await client.setup.apply({ folder, step: 1, hash: card.hash }), { ok: false, refused: 'All stop is on' });
     assert.equal(written(folder), null);
     liftStop();
     assert.equal((await client.setup.apply({ folder, step: 1, hash: card.hash })).ok, true);

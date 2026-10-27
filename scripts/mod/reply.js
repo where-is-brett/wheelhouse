@@ -61,7 +61,7 @@ export function recordedAs(made, question) {
     const kind = /^Confirm ([a-z-]+) /.exec(setLineOf(question) ?? '')?.[1];
     return kind ? `Confirm the ${kind}` : 'Confirm';
   }
-  if (data.action === 'lift-stop') return 'Lift STOP';
+  if (data.action === 'lift-stop') return 'Lift All stop';
   if (data.action === 'runbook') return `Runbook step ${data.step}: ${RUNBOOK_TITLES[data.step]}`;
   if (data.action === 'ci-push') return `Push the CI change on ${data.branch}`;
   if (data.action === 'approve-work') return `Approve ${data.work}`;

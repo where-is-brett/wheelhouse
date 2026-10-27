@@ -186,14 +186,14 @@ export function reviewPrompt({ number, sha, brief = null, rules = [], ci = null,
 // whole, from a reviewer, naming `number` and `sha`. Gives `{ ok: true, data: { pr, commit, verdict, findings } }`
 // or `{ ok: false, why }`.
 export function readVerdict({ answer, firstLine, number, sha }) {
-  if (typeof answer !== 'string' || answer.trim() === '') return { ok: false, why: 'the reviewer gave no answer' };
+  if (typeof answer !== 'string' || answer.trim() === '') return { ok: false, why: 'the Lookout gave no answer' };
   if (typeof firstLine !== 'string' || firstLine === '' || answer.split(/\r?\n/)[0].trim() !== firstLine) {
-    return { ok: false, why: "the answer doesn't begin with the reviewer's own first line, so the reviewer may not have been the agent in effect" };
+    return { ok: false, why: "the answer doesn't begin with the Lookout's own first line, so the Lookout may not have been the agent in effect" };
   }
   const { fields, missing } = parseReport(answer, 'reviewer');
-  if (missing.length > 0) return { ok: false, why: `the reviewer's report is missing or has an invalid: ${missing.join(', ')}` };
-  if (fields.pr !== String(number)) return { ok: false, why: `the reviewer's report names another pull request than ${number}` };
-  if (fields.commit !== sha) return { ok: false, why: "the reviewer's report names another commit than the head" };
+  if (missing.length > 0) return { ok: false, why: `the Lookout's report is missing or has an invalid: ${missing.join(', ')}` };
+  if (fields.pr !== String(number)) return { ok: false, why: `the Lookout's report names another pull request than ${number}` };
+  if (fields.commit !== sha) return { ok: false, why: "the Lookout's report names another commit than the head" };
   return { ok: true, data: { pr: number, commit: sha, verdict: fields.verdict, findings: fields.verdict === 'FINDINGS' ? Number(fields.findings) : 0 } };
 }
 
@@ -203,9 +203,9 @@ export function readVerdict({ answer, firstLine, number, sha }) {
 // prompt, stopped })`, which gives `{ clean, reasons, answer, firstLine }`). Gives `{ ok: true, data }`, the data of the
 // `review` record the helper signs, with the module's `reviewKind`, or `{ ok: false, why }`. `stopped()` says
 // whether STOP is on: read before the session starts, and handed to it to read before each program it runs, so a
-// STOP raised meanwhile starts no agent (`{ ok: false, why: 'STOP is on', stopped: true }`). After the session the
+// STOP raised meanwhile starts no agent (`{ ok: false, why: 'All stop is on', stopped: true }`). After the session the
 // folder is scanned again before the verdict counts. The folder is removed whatever happens.
-export const STOPPED = Object.freeze({ ok: false, why: 'STOP is on', stopped: true });
+export const STOPPED = Object.freeze({ ok: false, why: 'All stop is on', stopped: true });
 export async function runReview({ number, sha, review, withChange, brief = null, ci = null, tmp = os.tmpdir(), stopped = () => false }) {
   if (review === null || typeof review !== 'object' || typeof review.session !== 'function' || typeof review.reviewKind !== 'string') {
     return { ok: false, why: "this project's agent has no clean review session" };
@@ -218,7 +218,7 @@ export async function runReview({ number, sha, review, withChange, brief = null,
     made = gathered.built;
     const prompt = reviewPrompt({ number, sha, brief, rules: gathered.rules ?? [], ci, copied: made.copied, diffOnly: made.diffOnly });
     if (Buffer.byteLength(prompt) > MOST_PROMPT_BYTES) {
-      throw new NoCleanReview(`the reviewer's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the reviewer`);
+      throw new NoCleanReview(`the Lookout's prompt, with the project's rules and the brief, is larger than ${MOST_PROMPT_BYTES / 1024} KB, so it can't be given to the Lookout`);
     }
     if (stopped()) return STOPPED;
     const session = await review.session({ folder: made.folder, prompt, stopped });

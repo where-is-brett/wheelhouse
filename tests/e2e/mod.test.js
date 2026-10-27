@@ -368,7 +368,7 @@ test('Pace 2 from the settings pane is in force at once, confirmed, and shown on
   assert.equal(before.current, '3');
   assert.equal(before.from, 'the default');
 
-  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Builders at once is now 2, for this project' });
+  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Crew at once is now 2, for this project' });
   const after = await paceRow();
   assert.equal(after.current, '2');
   assert.equal(after.from, 'this project');
@@ -385,7 +385,7 @@ test('Pace 2 from the settings pane is in force at once, confirmed, and shown on
   // The board's settings show it, in force, with no confirm left waiting.
   const shown = await prompt(c, '/wheelhouse:settings');
   assert.ok(shown.startsWith(`${HEADINGS.settings}\n\n`), shown);
-  assert.match(shown, /^Builders at once: 2 \(this project\)$/m);
+  assert.match(shown, /^Crew at once: 2 \(this project\)$/m);
   const board = await prompt(c, '/wheelhouse:board');
   assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
   assert.doesNotMatch(board, /not yet confirmed by you|Changed without your confirmation/, 'the board has nothing of it waiting for a confirm');
@@ -396,7 +396,7 @@ test('STOP from the pane holds a push; Lift STOP from the pane lets it through, 
   assert.equal((await c.client.lock.take({ project: PROJECT })).result.taken, true);
   assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
   assert.equal(stopState().on, true);
-  assert.deepEqual(await pushFeature(), { ok: false, refused: 'STOP is on' });
+  assert.deepEqual(await pushFeature(), { ok: false, refused: 'All stop is on' });
 
   // The pane draws STOP with its start, which Lift STOP sends back.
   const { stop } = (await tick(c)).pane;
@@ -405,7 +405,7 @@ test('STOP from the pane holds a push; Lift STOP from the pane lets it through, 
   assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'pane', cwd: c.folder, since: new Date(Date.parse(stop.since) - MINUTE).toISOString() }), { ok: false, says: SAYS.goOtherStop });
   assert.equal(stopState().on, true);
 
-  assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'pane', cwd: c.folder, since: stop.since }), { ok: true, says: `STOP is off. ${SAYS.nothingBuilding}` });
+  assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'pane', cwd: c.folder, since: stop.since }), { ok: true, says: `All stop is off. ${SAYS.nothingBuilding}` });
   assert.equal(stopState().on, false);
   const lifts = eventsOf('action').filter((e) => e.data.action === 'lift-stop');
   assert.equal(lifts.length, 1);
@@ -461,7 +461,7 @@ test('a STOP wake the mod couldn\'t hand on is undone, and the next tick wakes f
   // STOP from the pane, as the director pressed it after Esc left the session interrupted.
   assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'pane', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
   const woke = await tick(c);
-  assert.deepEqual(woke.submit, [`${LEADS.courier} STOP is on. Send Claude's notification in one line, titled "Wheelhouse · STOP is on", saying: Every builder has halted. Open Claude to see why. Then ask any new cards now, once.`]);
+  assert.deepEqual(woke.submit, [`${LEADS.courier} All stop is on. Send Claude's notification in one line, titled "Wheelhouse · All stop is on", saying: The whole Crew has halted. Open Claude to see why. Then ask any new cards now, once.`]);
   assert.deepEqual(woke.woken, [`stop:${stopState().at}`]);
   const { lastWakeAt } = JSON.parse(fs.readFileSync(courierFile(PROJECT), 'utf8'));
   assert.equal(lastWakeAt, woke.wokeAt);
@@ -709,7 +709,7 @@ test('a pick in the settings pane is undone within a minute; Undo under STOP is 
   const paceRow = async () => (await bridge(c, { cmd: 'settings', cwd: c.folder })).rows.find((r) => r.key === 'pace');
   assert.equal((await paceRow()).current, '3');
 
-  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Builders at once is now 2, for this project' });
+  assert.deepEqual(await choose(c, 'pace', '2'), { ok: true, says: 'Crew at once is now 2, for this project' });
   const picked = await paceRow();
   assert.equal(picked.current, '2');
   assert.equal(picked.changed?.undo, true, 'the row offers Undo');

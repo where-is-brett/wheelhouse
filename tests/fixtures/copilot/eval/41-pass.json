@@ -5,7 +5,7 @@
   "decision": {
     "allow": false,
     "reasons": [
-      "no review of 3f9a1c7 from a clean session: the helper's own reviewer hasn't passed it"
+      "no review of 3f9a1c7 from a clean session: the helper's own Lookout hasn't passed it"
     ]
   },
   "records": [
@@ -22,7 +22,7 @@
       "number": 1,
       "refused": true,
       "reasons": [
-        "no review of 3f9a1c7 from a clean session: the helper's own reviewer hasn't passed it"
+        "no review of 3f9a1c7 from a clean session: the helper's own Lookout hasn't passed it"
       ]
     }
   ]

@@ -99,7 +99,7 @@ export const NO_LOCK = 'The lock couldn\'t be taken this time, so pushes and mer
 export const heldElsewhere = (holder, since) => `Another computer (${oneLine(holder)}) holds this project's lock, last written ${oneLine(since)}, so pushes and merges from this computer are refused`;
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
 // In the project's main folder, for any session that isn't the foreman's: the front desk's playbook.
-export const FRONT_DESK_LINE = 'This is the front desk. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.';
+export const FRONT_DESK_LINE = 'This is the First Mate. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.';
 
 // In a folder being set up: where setup stands, and that setup comes before whatever the director's
 // message asks, which is kept for the front desk (SETUP_FIRST). board-context.js says it again with
@@ -116,8 +116,8 @@ export const REMOVE_PLUGIN = `remove the Wheelhouse plugin (${PLUGIN_KEY}) from 
 export const REMOVED = `Wheelhouse was removed from this folder. What is left is the director's: ${REMOVE_PLUGIN}. To set it up here again, follow wheelhouse:setup.`;
 // In a project's front desk, when setup's journal can't be read, whether setup has finished isn't
 // known, so the foreman is held back (ruling R72): a journal a newer Wheelhouse wrote, or anything else.
-export const FOREMAN_HELD_NEWER = 'The foreman is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.';
-export const FOREMAN_HELD_UNREADABLE = 'The foreman is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.';
+export const FOREMAN_HELD_NEWER = 'The Bosun is held back because setup\'s journal couldn\'t be read: a newer Wheelhouse wrote it. Tell the director to update Wheelhouse.';
+export const FOREMAN_HELD_UNREADABLE = 'The Bosun is held back because setup\'s journal couldn\'t be read. Tell the director, and follow wheelhouse:setup to look at it.';
 
 // hooks.json's `onFailure: "block"` makes a guard that fails (crashes, times out) stop the
 // tool call, which Claude Code reads from 2.1.295; the mod's files load from CLAUDE_CODE_FLOOR
@@ -383,7 +383,7 @@ async function keepLock(project, client, left, seen = {}) {
 }
 
 // The words before the take-over card's AskUserQuestion input, as JSON on the same line.
-export const TAKEOVER_ASK = 'Another computer holds the front desk: show the director the board as it stands, read-only, and ask them this card with AskUserQuestion, exactly as given, as a question of its own: ';
+export const TAKEOVER_ASK = 'Another computer has the First Mate: show the director the Logbook as it stands, read-only, and ask them this card with AskUserQuestion, exactly as given, as a question of its own: ';
 // Within this long since the other computer last wrote, it counts as in use. (A lock idle two hours is taken at once.)
 const RECENT_MS = 30 * 60 * 1000;
 const agoWords = (ms) => {
@@ -410,15 +410,15 @@ async function takeOverNotes({ client, left, project, now }) {
     const { question } = composeCard({
       kind: 'take-over',
       level: 3,
-      what: `Your computer ${lock.computer} has the front desk, and last wrote ${ago}; this computer can only look at the board until you take over.`,
+      what: `Your computer ${lock.computer} has the First Mate, and last wrote ${ago}; this computer can only look at the Logbook until you take over.`,
       why: 'Only one computer runs the work at a time, so two never merge or push over each other.',
       options: [
         { label: TAKEOVER_LABEL, says: `This computer runs the work from now on, and computer ${lock.computer} can no longer merge or push code.` },
-        { label: LEAVE_LABEL, says: `Computer ${lock.computer} keeps the work, and this one only shows the board.` },
+        { label: LEAVE_LABEL, says: `Computer ${lock.computer} keeps the work, and this one only shows the Logbook.` },
       ],
       recommend: inUse ? LEAVE_LABEL : TAKEOVER_LABEL,
       because: inUse ? `computer ${lock.computer} was in use ${ago}` : `nothing has been written on computer ${lock.computer} since ${ago}`,
-      meanwhile: 'This computer shows the board and changes nothing; its merges and pushes are refused.',
+      meanwhile: 'This computer shows the Logbook and changes nothing; its merges and pushes are refused.',
       target: { holder: lock.computer, counter: lock.counter },
     });
     return [`${TAKEOVER_ASK}${JSON.stringify(question)}`];
@@ -448,7 +448,7 @@ const isBuildsProposal = (u) => u?.kind === 'setting' && [u.key, u.data?.key].so
 // a cut takes the briefing and never the tool sheet.
 export function reload({ views, stop, lineage = [], notes, feature, stateRoot, windows, builds, frontDesk = false, sheet = [] }) {
   const lines = [];
-  if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+  if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   lines.push(...lineage);
   if (windows) {
     lines.push(WINDOWS_LINE);
@@ -575,7 +575,7 @@ async function setupStart(input, setup, { given, spawn, pluginRoot, root, platfo
   const end = Date.now() + totalMs;
   const lines = [];
   const stop = stopOf();
-  if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+  if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
   const version = claudeCodeVersion(input.transcript_path);
   if (version !== null && olderThan(version, GUARD_FLOOR)) lines.push(OLD_CLAUDE_CODE);
   const up = await ensureHelper(given ?? helperClient({ timeout: Math.min(3000 + helperGrace(), totalMs) }), { spawn, pluginRoot, waitMs: startWaitMs, pause, end });
@@ -626,7 +626,7 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
     if (setup === null) return undefined;
     const stop = stopOf();
     const lines = [];
-    if (stop?.on) lines.push(`STOP is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
+    if (stop?.on) lines.push(`All stop is on (set by ${oneLine(stop.by ?? 'unknown')} at ${oneLine(stop.at ?? 'an unknown time')})`);
     if (!up) lines.push(NO_HELPER_STOP);
     lines.push(...sheet(false));
     const note = setupNote(setup);

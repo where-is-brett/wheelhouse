@@ -178,7 +178,7 @@ export const NO_APP_LISTED = 'Step 3\'s list names no GitHub App';
 // Said when setup has given this computer the company's certificate: a program already running
 // reads its trusted certificates when it starts, so the step goes on in a fresh process.
 export const CERTIFICATE_GIVEN = (base) => `Setup has given this computer your company's certificate for ${base}, for that address only. Step 3 stopped here so the certificate takes effect: ask for step 3's card again`;
-export const STOPPED = 'STOP came on, so setup stopped here; once STOP is lifted, a fresh Go ahead carries on';
+export const STOPPED = 'All stop came on, so setup stopped here; once All stop is lifted, a fresh Go ahead carries on';
 // How often the browser sign-in looks at STOP while it waits.
 export const STOP_LOOK_MS = 1000;
 export const HISTORY_LINE = 'This folder has its own git history but no GitHub or GitLab address, so setup has left it as it is: connect it to its repository (git remote add origin <address>), then ask again';

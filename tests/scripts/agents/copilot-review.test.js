@@ -119,11 +119,11 @@ test('a session that runs as route b did is clean, its answer opens with its own
 
 test('a session with an extra agent, an extra disabled tool, no agent count or no own line is not clean', async () => {
   for (const [knobs, pattern] of [
-    [{ extraAgent: 'claude-reviewer' }, /agents besides the reviewer/],
+    [{ extraAgent: 'claude-reviewer' }, /agents besides the Lookout/],
     [{ extraDisabled: 'lsp' }, /beyond it: lsp/],
     [{ agents: null }, /no agent count/],
     [{ agents: 2 }, /2 agents were loaded/],
-    [{ answer: 'no-nonce' }, /reviewer's own line/],
+    [{ answer: 'no-nonce' }, /Lookout's own line/],
     [{ instructions: [{ id: 'nested-agents', location: 'working-directory' }] }, /instruction sources/],
     [{ skills: 'Project skills:\n  planted\n\nBuiltin skills:\n  x\n' }, /skills besides the built-in ones/],
   ]) {
@@ -168,7 +168,7 @@ test('under STOP the session starts no further program', async () => {
     const { result, seen } = await session({}, { stopped: () => calls++ >= after });
     assert.equal(result.stopped, true, String(after));
     assert.equal(result.clean, false);
-    assert.deepEqual(result.reasons, ['STOP is on']);
+    assert.deepEqual(result.reasons, ['All stop is on']);
     assert.equal(seen.length, after, String(after));
   }
 });
@@ -201,6 +201,6 @@ test('STOP coming on while the session runs ends the session, and nothing of it 
   });
   assert.ok(ended !== null, 'the session was ended');
   assert.ok(ended - started < 60_000);
-  assert.deepEqual(result, { clean: false, reasons: ['STOP is on'], answer: null, firstLine: null, stopped: true });
+  assert.deepEqual(result, { clean: false, reasons: ['All stop is on'], answer: null, firstLine: null, stopped: true });
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith('wheelhouse-review-home-')), [], 'its home goes too');
 });

@@ -98,6 +98,18 @@ Wheelhouse keeps the loop and rebuilds everything around it, for any director an
 
 **Why:** the director's conversation stays short, its context stays small, and the build traffic lives where it belongs.
 
+**The names the director sees** (section 22, 27 October 2026). This design, the code and the records keep the internal names; everything the director sees or types uses the ship's-crew names:
+
+| Internal name | What the director sees | What it is |
+|---|---|---|
+| the director | Captain (or "you") | the product owner |
+| front desk | First Mate | the director's one point of contact, which asks the cards |
+| foreman | Bosun | plans the work and hands it out |
+| builders | Crew | the agents that build |
+| reviewers | Lookouts | check the Crew's work |
+| board | Logbook | the status view |
+| STOP | All stop | the halt switch |
+
 ## 5. The front desk
 
 ### 5.1 Its role
@@ -2003,6 +2015,7 @@ Answered on 17 October 2026:
 | Records on a public repository (the self-hosting study, `docs/research/self-hosting-2026-10.md`) | Decided 27 October 2026 in the self-hosting work, on the director's rule that records, the board and transcripts are never pushed publicly: setup refuses, with no card, a product or profile repository the host doesn't say is private (an `internal` repository on GitHub or GitLab counts as not private, and an answer that says nothing counts as not private), before anything is made or pushed. Where a public project's records could live instead is still the director's (below). *Lifted by section 24 (v0.1.3): with records kept on the computer and nothing of them pushed, a public repository is set up like any other.* |
 | A plugin's own parts as guardrails (the same study) | Decided 27 October 2026 in the self-hosting work, from section 16's rule on safety changes: in a project whose default branch holds `.claude-plugin/plugin.json`, the plugin's manifest and marketplace, `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/` and `.lsp.json` are guardrails at the gate, read from the default branch's tree, never from the configuration. Builders may still write them. Wheelhouse's own configuration marks all of its `scripts/` and `adapters/` as a critical area, since its hooks import from nearly every folder there (section 12.4) |
 | Where records live (after the self-hosting study) | Decided 27 October 2026: the Superpowers way. Product documents (designs, plans, the board and the rulings agents follow) are ordinary files on the product's normal branch, reviewed like code; the director's private record (their words, cards, clicks, signed answers, usage, keys and feature state) stays on the computer in `~/.wheelhouse`. No state branch, no profile repository, no separate records repository; public projects must work, Wheelhouse's own included. The design is section 24, approved on 27 October 2026 ("Build it"), with its questions answered: each feature's pull request adds its own board line; a ruling goes on main in the front desk's wording, shown on the card first; the `wheelhouse-lock` branch stays; the private record doesn't move between computers for now; and each computer checks evaluation readiness for itself (the foreman's call). Parts 1, 2 and 5 are built (v0.1.3); parts 3, 4 and 6 are not yet (section 24.6) |
+| The names the director sees | Decided 27 October 2026, once real use began: a wheelhouse is a ship's bridge, so everything the director sees or types uses a ship's crew. The director is addressed as **Captain** where a role is named (otherwise "you"); the front desk is the **First Mate**; the foreman the **Bosun**; builders the **Crew**; reviewers **Lookouts**; the board the **Logbook**; STOP **All stop**. The old words stay as typed aliases ("stop", `/wheelhouse:board`, `/wheelhouse:stop`) beside the new ones ("all stop", `/wheelhouse:logbook`, `/wheelhouse:all-stop`). Code, file names, record kinds and keys, environment variables, skill and agent names (`wheelhouse:front-desk`, `wheelhouse:builder`) and this design keep the old words as internal names (section 4). In the same ruling each session is titled by its role when it starts ("Wheelhouse · First Mate", "Wheelhouse · Setup", "Wheelhouse · Bosun", "Wheelhouse · Crew: <feature>"), through the SessionStart hook's `sessionTitle` |
 
 **Still the director's to decide, later:**
 

@@ -27,7 +27,7 @@ const NO_TOKENS = 'Token counts start once setup switches on usage counting on t
 const NO_ALLOWANCE = 'The weekly allowance shows once the mod or the terminal has read it';
 // The agent whose allowance the mod and the terminal read.
 const CLAUDE_CODE = 'claude-code';
-const PART_WORDS = { 'front-desk': 'front desk work', foreman: 'foreman work', feature: 'feature work' };
+const PART_WORDS = { 'front-desk': 'First Mate work', foreman: 'Bosun work', feature: 'feature work' };
 
 const usagePath = (...parts) => path.join(usageDir(), ...parts);
 const dateOf = (ms) => new Date(ms).toISOString().slice(0, 10);

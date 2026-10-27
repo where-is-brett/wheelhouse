@@ -180,7 +180,7 @@ test('promptContext gives what the real board context hook gives over the same s
   assert.ok(block(real, 'Waiting on you').includes('Should Christmas pre-orders close'));
   for (const text of [real, mine]) {
     assert.match(text, /\n\nOne thing needs you\. Nothing is broken\.\n\n/);
-    assert.match(text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\./);
+    assert.match(text, /\n\nAsk me anything\. For the full Logbook, type \/wheelhouse:logbook\./);
   }
   // The settings are kept on this computer (design section 24.2), so no health line asks for a backup of them.
   assert.doesNotMatch(real, /profile isn't backed up/);

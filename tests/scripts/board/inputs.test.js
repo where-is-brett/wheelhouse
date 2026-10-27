@@ -133,7 +133,7 @@ test('the inputs gather the views, events, settings, usage, sources and health f
     assert.equal(found.model.director.budget.share, 34);
     assert.equal(found.sources.advisories.length, 1);
     const lines = texts(found);
-    assert.equal(lines[0], 'STOP is on, since 18 October 2026');
+    assert.equal(lines[0], 'All stop is on, since 18 October 2026');
     for (const line of [NO_CI, LOCKED_ELSEWHERE, 'A security advisory for owner/lib: A flaw']) assert.ok(lines.includes(line), line);
     assert.equal(lines.some((l) => /profile/.test(l)), false, 'no line asks for the profile\'s repository');
     assert.equal(lines.includes(NO_HELPER), false);
@@ -267,7 +267,7 @@ test('with every file missing, a project still gets a model that names what is m
     // A clock that can't be read is named, and nothing throws.
     const unread = await loadBoardInputs({ cwd: repo, client: fakeClient(), address: testAddress(home), now: () => { throw new Error('no clock'); } });
     assert.equal(unread.model.builtAt, null);
-    assert.ok(unread.model.missing.includes('The board\'s clock couldn\'t be read'));
+    assert.ok(unread.model.missing.includes('The Logbook\'s clock couldn\'t be read'));
   });
 });
 
@@ -333,7 +333,7 @@ process.exit(0);`;
     const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, WHEELHOUSE_HOME: home }, timeout: 5000 });
     assert.equal(run.error, undefined, 'it read a pipe and waited');
     assert.equal(run.status, 0, run.stderr);
-    assert.equal(run.stdout, 'Wheelhouse · 1 waiting · 1 building · week 34% · STOP on');
+    assert.equal(run.stdout, 'Wheelhouse · 1 waiting · 1 building · week 34% · All stop on');
   });
 });
 

@@ -182,10 +182,10 @@ function sentence(e) {
     case 'undo': return e.choice === null
       ? `Lean: ${card} was undone at ${e.commit} with no click behind it.`
       : `Lean: the director chose to undo ${card}, undone at ${e.commit}, by a click in the chat, not proven.`;
-    case 'stop': return 'Lean: the director said stop. Nothing at Lean enforces it.';
+    case 'stop': return 'Lean: the director turned All stop on. Nothing at Lean enforces it.';
     case 'lift-stop': return e.choice === null
-      ? 'Lean: STOP was lifted with no click behind it.'
-      : 'Lean: the director lifted STOP, by a click in the chat, not proven.';
+      ? 'Lean: All stop was lifted with no click behind it.'
+      : 'Lean: the director lifted All stop, by a click in the chat, not proven.';
     case 'copy': return e.choice === 'pushed' ? `Lean: the copy was updated to ${e.commit}.` : `Lean: the copy was not updated at ${e.commit}.`;
     case 'ruling': return `Lean: the director confirmed the ruling ${card}, by a click in the chat, not proven.`;
     case 'design': return `Lean: the director chose to build the design ${card}, by a click in the chat, not proven.`;

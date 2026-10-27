@@ -628,7 +628,7 @@ test('under STOP neither a gate card nor a hold card is made', async () => {
     const helper = fakeHelper({ stop: true, events: [EXPORT, hold, gateAsks(APPROVE_ASK), gateAsks({ ...PUSH_ASK, pr: 8 })] });
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0, out.err);
-    assert.deepEqual(out.json.questions.map((q) => q.header), ['Lift STOP']);
+    assert.deepEqual(out.json.questions.map((q) => q.header), ['All stop']);
     assert.deepEqual(helper.writes(), []);
     assert.equal(helper.calls.filter(([name]) => name === 'prState').length, 0);
   });
@@ -1302,7 +1302,7 @@ test('why n under STOP notes nothing and says so', async () => {
     const helper = fakeHelper({ stop: true, events: [cardEvent(PRODUCT(1), 1)] });
     const out = await run(helper, ['why', '1']);
     assert.equal(out.code, 0, out.err);
-    assert.equal(out.out, 'STOP is on, so nothing was noted about card 1.\n');
+    assert.equal(out.out, 'All stop is on, so nothing was noted about card 1.\n');
     assert.deepEqual(helper.writes(), []);
   });
 });
@@ -1582,7 +1582,7 @@ test('under STOP the reading commands run and record is refused', async () => {
     assert.equal(cards.code, 0, cards.err);
     // The Lift STOP card alone; the waiting card stays on the board. The question's card can't be
     // written under STOP, so none is tried, and nothing is written.
-    assert.deepEqual(cards.json.questions.map((q) => q.header), ['Lift STOP']);
+    assert.deepEqual(cards.json.questions.map((q) => q.header), ['All stop']);
     assert.equal(cards.json.left, 1);
     assert.equal(cards.json.problems, undefined);
     assert.deepEqual(helper.writes(), []);
@@ -1593,7 +1593,7 @@ test('under STOP the reading commands run and record is refused', async () => {
     // The review writes, so it waits until STOP is lifted.
     const review = await run(helper, ['review']);
     assert.equal(review.code, 1);
-    assert.match(review.err, /STOP/);
+    assert.match(review.err, /All stop/);
     assert.equal((await run(helper, ['explain', 'merge'])).code, 0);
     assert.equal((await run(helper, ['similar'], 'export a report')).code, 0);
     assert.equal((await run(helper, ['similar', 'export', 'a', 'report'])).code, 0);
@@ -1613,7 +1613,7 @@ test('under STOP, cards gives the Lift STOP card alone, never recorded, and the 
     assert.equal(visit.code, 0, visit.err);
     assert.equal(visit.json.questions.length, 1, 'the Lift STOP card alone, as the hook\'s line of 1 says');
     const [lift] = visit.json.questions;
-    assert.equal(lift.header, 'Lift STOP');
+    assert.equal(lift.header, 'All stop');
     assert.equal(setLineOf(lift.question), LIFT_STOP);
     assert.deepEqual(lift.options.map((o) => o.label), ['Lift STOP', 'Show me', 'Not now']);
     // The four cards waiting stay on the board, counted as left; nothing is written, so nothing is refused.
@@ -1641,7 +1641,7 @@ test('under STOP, cards gives the Lift STOP card alone, never recorded, and the 
     assert.equal(stopState().on, false);
     // With STOP off, a visit has no Lift STOP card, and the cards waiting are asked.
     const after = await run(helper, ['cards']);
-    assert.ok(after.json.questions.every((q) => q.header !== 'Lift STOP'), JSON.stringify(after.json));
+    assert.ok(after.json.questions.every((q) => q.header !== 'All stop'), JSON.stringify(after.json));
     assert.deepEqual(after.json.questions.map((q) => q.question), waiting.map((e) => e.data.question));
   });
 });
@@ -1873,7 +1873,7 @@ test('through the real helper, the command places the project from its folder an
         // Under STOP the real helper's views say so, and the visit's one card is Lift STOP.
         setStop({ by: 'prompt' });
         const stopped = JSON.parse(await say(['cards']));
-        assert.deepEqual(stopped.questions.map((q) => q.header), ['Lift STOP']);
+        assert.deepEqual(stopped.questions.map((q) => q.header), ['All stop']);
         assert.equal(stopped.problems, undefined);
       } finally {
         await helper.close();

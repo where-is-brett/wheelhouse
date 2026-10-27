@@ -756,7 +756,7 @@ const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/con
 // Why a premium setting that allows the model is refused anywhere but from its own card's click.
 const PREMIUM_OWN_CARD = 'the premium model is allowed only by a click on its own card; anything else can only set it back to off';
 
-const NOT_MAIN_CHECKOUT = 'the foreman\'s commands run only in the project\'s main checkout';
+const NOT_MAIN_CHECKOUT = 'the Bosun\'s commands run only in the project\'s main checkout';
 
 // The project whose main checkout `folder` is, for /foreman/run (ruling R156): placed from this
 // computer's records, as placeFolder does, and refused for any other folder inside the project,
@@ -1051,7 +1051,7 @@ export async function startHelper({
 
   // STOP and bypass are read here, when a request's turn comes, never when it
   // arrived: a request queued before STOP was set still reads it.
-  const STOP_REFUSAL = { ok: false, refused: 'STOP is on' };
+  const STOP_REFUSAL = { ok: false, refused: 'All stop is on' };
   const stopped = () => stopState().on;
   const BYPASS_PUSH = 'a session on this computer is in bypass mode';
 
@@ -2149,7 +2149,7 @@ export async function startHelper({
   async function windowCard({ project, card, hash }, ctx, { shownAt } = {}) {
     let event;
     if (card === LIFT_STOP_NAME) {
-      if (!stopped()) refuse('STOP is not on, so there is nothing to lift');
+      if (!stopped()) refuse('All stop is not on, so there is nothing to lift');
       event = { at: shownAt ?? now().toISOString(), data: composeCard(LIFT_STOP_CARD).card };
     } else {
       const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'card' && e.id === card);
@@ -2165,7 +2165,7 @@ export async function startHelper({
       const got = await windowEarned(project, event, label, ctx);
       if (got) deciding.push({ label, ...got });
     }
-    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift STOP, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
+    if (deciding.length === 0) refuse('that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance');
     return { event, deciding };
   }
 
@@ -3221,7 +3221,7 @@ export async function startHelper({
       };
     }
     if (stopped() && !restore) {
-      const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'STOP is on'];
+      const reasons = [...(restoreCheck.matched ? [`restore pull request: ${restoreCheck.why}`] : []), 'All stop is on'];
       return { ok: false, refused: reasons.join('; '), reasons, ...found };
     }
     const merged = await adapter.merge({ number, sha: headSha });
@@ -3424,7 +3424,7 @@ export async function startHelper({
     });
     return {
       ok: true, number: opened.number, url: opened.url, branch, head: made.commit,
-      message: `Pull request ${opened.number} is open: it puts the files back to release ${sha12}. Next, the director approves it on its card; once CI has passed, the merge follows.${onGithub && made.ci ? ' This release changes CI files, so the branch was pushed with your own sign-in, and the merge will need your own sign-in too.' : ''}`,
+      message: `Pull request ${opened.number} is open: it puts the files back to release ${sha12}. Next, you approve it on its card; once CI has passed, the merge follows.${onGithub && made.ci ? ' This release changes CI files, so the branch was pushed with your own sign-in, and the merge will need your own sign-in too.' : ''}`,
     };
   }
 
@@ -3839,9 +3839,9 @@ export async function startHelper({
           cwd: recordOf(project).folder, baseEnv: foremanEnv(process.env), timeoutMs: FOREMAN_RUN_MS, limit: FOREMAN_OUTPUT_BYTES,
         });
       } catch {
-        return { ok: false, refused: `the foreman's ${script} command could not be started` };
+        return { ok: false, refused: `the Bosun's ${script} command could not be started` };
       }
-      const stopped = result.timedOut ? `The foreman's ${script} command did not finish in fifteen minutes and was stopped.\n` : '';
+      const stopped = result.timedOut ? `The Bosun's ${script} command did not finish in fifteen minutes and was stopped.\n` : '';
       return { ok: true, code: result.timedOut ? 1 : result.code, stdout: result.stdout, stderr: `${result.stderr}${stopped}` };
     }),
     '/host/facts': hostFacts,
@@ -3906,7 +3906,7 @@ export async function startHelper({
         setStop({ by: body.by === 'prompt' ? 'prompt' : 'helper', now });
         return send(res, 200, { ok: true });
       } catch {
-        return send(res, 200, { ok: false, refused: 'STOP could not be recorded' });
+        return send(res, 200, { ok: false, refused: 'All stop could not be recorded' });
       }
     }
     if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/')) {

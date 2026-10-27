@@ -82,7 +82,7 @@ export function reviewerAgent(nonce) {
   if (typeof nonce !== 'string' || !/^[0-9a-f]{32}$/.test(nonce)) throw new Error("A review's nonce is 32 hexadecimal characters");
   const kit = fs.readFileSync(KIT_REVIEWER, 'utf8');
   const front = /^---\n([\s\S]*?)\n---\n/.exec(kit);
-  if (!front || !/^name: "wheelhouse-reviewer"$/m.test(front[1])) throw new Error("The kit's reviewer has no front matter naming it");
+  if (!front || !/^name: "wheelhouse-reviewer"$/m.test(front[1])) throw new Error("The kit's Lookout has no front matter naming it");
   const header = front[1].replace(/^name: "wheelhouse-reviewer"$/m, `name: "${REVIEWER}"`);
   const body = kit.slice(front[0].length).replace(/^<!--.*-->\n/, '');
   return [
@@ -168,7 +168,7 @@ const sameSet = (a, b) => a.length === b.length && new Set(a).size === a.length 
 export function cleanCheck({ facts, debug, args, expectedArgs, environment, listings, answer, firstLine, prompt, nonce }) {
   const reasons = [];
   if (!debug || debug.agentCounts.length === 0) reasons.push('the debug log has no agent count');
-  else if (debug.agentCounts.some((n) => n !== 1)) reasons.push(`${Math.max(...debug.agentCounts)} agents were loaded, not the reviewer alone`);
+  else if (debug.agentCounts.some((n) => n !== 1)) reasons.push(`${Math.max(...debug.agentCounts)} agents were loaded, not the Lookout alone`);
   if (debug?.repoHooks !== false) reasons.push('repo hooks were loaded, or the log could not say');
   if (debug?.workspaceMcp !== false) reasons.push('workspace MCP sources were loaded, or the log could not say');
 
@@ -180,7 +180,7 @@ export function cleanCheck({ facts, debug, args, expectedArgs, environment, list
     reasons.push(`the disabled tools differ from route b's recorded set${extra.length ? `; beyond it: ${extra.join(', ')}` : ''}${missing.length ? `; missing: ${missing.join(', ')}` : ''}`);
   }
   const agents = (facts?.agents ?? []).filter((a) => a.name !== REVIEWER);
-  if (agents.length > 0) reasons.push(`agents besides the reviewer: ${agents.map((a) => a.name).join(', ')}`);
+  if (agents.length > 0) reasons.push(`agents besides the Lookout: ${agents.map((a) => a.name).join(', ')}`);
   const skills = (facts?.skills ?? []).filter((k) => k.source !== 'builtin');
   if (skills.length > 0) reasons.push(`skills that are not built in: ${skills.map((k) => k.name).join(', ')}`);
   const started = Object.entries(facts?.servers ?? {}).filter(([, statuses]) => statuses.some((s) => /^(connected|pending|connecting)$/.test(s))).map(([name]) => name);
@@ -215,7 +215,7 @@ export function cleanCheck({ facts, debug, args, expectedArgs, environment, list
   }
 
   if (typeof firstLine !== 'string' || typeof answer !== 'string' || answer.split(/\r?\n/)[0].trim() !== firstLine) {
-    reasons.push("the answer doesn't begin with the reviewer's own line, so the reviewer may not have been the agent in effect");
+    reasons.push("the answer doesn't begin with the Lookout's own line, so the Lookout may not have been the agent in effect");
   }
   if (typeof nonce !== 'string' || nonce === '' || String(prompt ?? '').includes(nonce)) reasons.push("the review's nonce is missing or is in the prompt");
   return { clean: reasons.length === 0, reasons };
@@ -251,7 +251,7 @@ export const versionOf = (text) => /\b(\d+\.\d+\.\d+)\b/.exec(String(text ?? '')
 // .cmd shim the review is not started, since its prompt, with the project's rules and the brief, can be longer than a cmd.exe line.
 export async function runSession({ folder, prompt, stopped = () => false, env = process.env, platform = process.platform, copilot = null, run = realRun, signedInFrom = copilotHome(), tmp = os.tmpdir(), timeoutMs = SESSION_MS, stopPollMs = STOP_POLL_MS }) {
   const refused = (why) => ({ clean: false, reasons: [why], answer: null, firstLine: null });
-  const halted = { clean: false, reasons: ['STOP is on'], answer: null, firstLine: null, stopped: true };
+  const halted = { clean: false, reasons: ['All stop is on'], answer: null, firstLine: null, stopped: true };
   let resolved;
   try {
     resolved = copilot ?? resolveCommand({ name: 'copilot', platform, env });

@@ -1,5 +1,5 @@
 ---
-description: Set up Wheelhouse in this folder, or carry on where setup stopped. Nothing changes until the director clicks Go ahead on each step's card.
+description: Set up Wheelhouse in this folder, or carry on where setup stopped. Nothing changes until you click Go ahead on each step's card.
 disable-model-invocation: true
 ---
 <!-- commands/setup.md -->

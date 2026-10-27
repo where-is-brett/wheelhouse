@@ -21,7 +21,7 @@ const PANE_PROPS = {
   scroll: { offset: 0, bodyRows: 40 }, view: {},
 }
 const FAILED = 'That wasn\'t recorded. Try again, or type it in the chat.'
-const ADVANCED = 'Advanced settings: ask the front desk'
+const ADVANCED = 'Advanced settings: ask the First Mate'
 
 const model = {
   v: 1, project: 'shop', at: '2026-10-19T03:00:50.000Z', glance: 'Nothing waits',
@@ -34,12 +34,12 @@ const AUTONOMY = [{ value: 'cautious', label: 'Cautious' }, { value: 'balanced',
 const PROJECT_NOTE = 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute.'
 const YOU_NOTE = 'These follow you to every project.'
 const groupsWith = (autonomy: string, changed?: any) => [
-  { id: 'stop', title: 'STOP', note: 'STOP halts every builder at once. Only you can lift it.', rows: [{ key: 'builders', label: 'Builders', value: 'Working', kind: 'value' }] },
+  { id: 'stop', title: 'All stop', note: 'All stop halts the whole Crew at once. Only you can lift it.', rows: [{ key: 'builders', label: 'Crew', value: 'Working', kind: 'value' }] },
   {
     id: 'project', title: 'This project', note: PROJECT_NOTE,
     rows: [
       { key: 'autonomy', label: 'Autonomy', value: autonomy, kind: 'select', options: AUTONOMY, ...(changed ? { changed } : {}) },
-      { key: 'pace', label: 'Builders at once', value: '2', kind: 'select', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }] },
+      { key: 'pace', label: 'Crew at once', value: '2', kind: 'select', options: [{ value: '1', label: '1' }, { value: '2', label: '2' }, { value: '3', label: '3' }] },
       { key: 'protection', label: 'Protection', value: 'Standard', kind: 'change' },
     ],
   },
@@ -116,7 +116,7 @@ const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b
 
 const choiceKey = (key: string, id: string) => `setting:${key}:${id}`
 const textNodes = async (ui: any) => await ui.findAll({ type: 'Text' })
-const STOP_NOTE = 'Settings can\'t change while STOP is on. Lift STOP first.'
+const STOP_NOTE = 'Settings can\'t change while All stop is on. Lift All stop first.'
 const PICK = { cmd: 'setting', origin: 'pane', cwd: ROOT, key: 'autonomy', choice: 'cautious' }
 const SETTINGS_READ = { cmd: 'settings', cwd: ROOT }
 const readsOf = (seen: any) => seen.requests.filter((r: any) => r.cmd === 'settings')
@@ -139,7 +139,7 @@ test('Settings draws its groups with their notes, and Done filled in the header'
     expect(done?.props.variant).toBe('primary')
     expect(done?.props.label).toBe('Done')
     const drawn = await texts(ui)
-    for (const words of ['STOP', 'This project', 'You, in every project', 'Advanced settings', PROJECT_NOTE, YOU_NOTE, 'STOP halts every builder at once. Only you can lift it.']) expect(drawn).toContain(words)
+    for (const words of ['All stop', 'This project', 'You, in every project', 'Advanced settings', PROJECT_NOTE, YOU_NOTE, 'All stop halts the whole Crew at once. Only you can lift it.']) expect(drawn).toContain(words)
     // Four groups, each rounded and quiet; the Advanced group has no note, so no empty line under it.
     const boxes = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.borderStyle !== undefined)
     expect(boxes).toHaveLength(4)
@@ -149,7 +149,7 @@ test('Settings draws its groups with their notes, and Done filled in the header'
     }
     expect(drawn).not.toContain('')
     // A value row is its name and value; a change row its name, its value in footnote and a small Change….
-    expect(drawn).toContain('Builders')
+    expect(drawn).toContain('Crew')
     expect(drawn).toContain('Working')
     const standard = (await textNodes(ui)).find((n: any) => n.text === 'Standard')
     expect(standard?.props.size).toBe('footnote')
@@ -286,7 +286,7 @@ test('a row with no value in force draws no Select, and its Change… opens the 
     await ui.redraw()
     expect((await ui.find({ key: 'settings-back' }))?.props.label).toBe('‹ Settings')
     expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.key, b.props.label])).toEqual([
-      ['stop', 'STOP'],
+      ['stop', 'All stop'],
       ['settings-back', '‹ Settings'],
       [choiceKey('presence', 'available'), 'Available'],
       [choiceKey('presence', 'away'), 'Away'],
@@ -340,7 +340,7 @@ test('a double click on Change…, a moment apart, asks once; a prompt the engin
     clear()
     control.refuseSubmit = true
     await ui.press({ key: choiceKey('notifications', 'change') })
-    expect(seen.toasts).toEqual(['That didn\'t reach the front desk. Type it in the chat instead.'])
+    expect(seen.toasts).toEqual(['That didn\'t reach the First Mate. Type it in the chat instead.'])
     expect((await ui.find({ key: choiceKey('notifications', 'change') }))?.type).toBe('Button')
     control.refuseSubmit = false
     await ui.press({ key: choiceKey('notifications', 'change') })
@@ -437,7 +437,7 @@ test('on the phone a row opens its choices on their own page, with a tick on the
   expect((await ui.find({ key: 'settings-back' }))?.props.label).toBe('‹ Settings')
   expect(await ui.find({ key: 'done' })).toBeUndefined()
   expect((await ui.findAll({ type: 'Button' })).map((b: any) => [b.key, b.props.label])).toEqual([
-    ['stop', 'STOP'],
+    ['stop', 'All stop'],
     ['settings-back', '‹ Settings'],
     [choiceKey('autonomy', 'cautious'), 'Cautious'],
     [choiceKey('autonomy', 'balanced'), 'Balanced ✓'],

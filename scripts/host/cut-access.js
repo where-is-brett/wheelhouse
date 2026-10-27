@@ -89,33 +89,33 @@ export async function cutAccess({ record, fetch }) {
   const base = host === 'gitlab' ? checkBaseUrl(connection.baseUrl ?? GITLAB_URL) : null;
   if (connection.mode !== 'narrow') {
     if (host === 'github') {
-      return plainAnswer('Nothing was changed on this computer: the agents use the director\'s own GitHub sign-in, and only the director can revoke it. Still for the director: open the page below and revoke the sign-in that Wheelhouse uses.', { url: 'https://github.com/settings/applications' });
+      return plainAnswer('Nothing was changed on this computer: the agents use your own GitHub sign-in, and only you can revoke it. Still for you: open the page below and revoke the sign-in that Wheelhouse uses.', { url: 'https://github.com/settings/applications' });
     }
     const apps = `${base}/-/user_settings/applications`;
     const tokens = `${base}/-/user_settings/personal_access_tokens`;
-    return plainAnswer(`Nothing was changed on this computer: the agents use the director's own GitLab sign-in, and only the director can revoke it. Still for the director: revoke the sign-in on ${apps}, and check ${tokens} for any token of theirs that Wheelhouse uses.`, { url: apps });
+    return plainAnswer(`Nothing was changed on this computer: the agents use your own GitLab sign-in, and only you can revoke it. Still for you: revoke the sign-in on ${apps}, and check ${tokens} for any token of yours that Wheelhouse uses.`, { url: apps });
   }
   if (host === 'github') {
     // The project's own installation of the app, on its account (ruling R83).
     const { url } = deleteAppKeys(connection);
-    return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for the director: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });
+    return plainAnswer('Done on this computer: the Wheelhouse app\'s keys were deleted from it, so nothing here can use them. Still for you: the app is still installed on GitHub, and a copy of its keys would still work until the app is suspended or uninstalled. Open the page below and choose Suspend or Uninstall.', { url });
   }
   const got = await revokeGitlabKey({ name: `gitlab-project-${connection.projectId}`, projectId: connection.projectId, base, repo, fetch });
   const { pasted, url, status } = got;
   if (!got.found) {
-    return plainAnswer('No project key was found on this computer, so there was nothing to revoke from here. Still for the director: check the page below for any key that Wheelhouse made, and revoke it.', { url });
+    return plainAnswer('No project key was found on this computer, so there was nothing to revoke from here. Still for you: check the page below for any key that Wheelhouse made, and revoke it.', { url });
   }
   if (got.revoked) {
     return plainAnswer(pasted
-      ? 'Done: GitLab revoked the token. It was the director\'s own token, pasted in at setup, so it stops working anywhere else they used it too; its file was deleted from this computer. The page below lists their personal access tokens, to check it is gone.'
-      : 'Done: GitLab revoked the project key, and its file was deleted from this computer. Nothing is left for the director on this step.', { url });
+      ? 'Done: GitLab revoked the token. It was your own token, pasted in at setup, so it stops working anywhere else you used it too; its file was deleted from this computer. The page below lists your personal access tokens, to check it is gone.'
+      : 'Done: GitLab revoked the project key, and its file was deleted from this computer. Nothing is left for you on this step.', { url });
   }
   if (status === 401) {
-    return plainAnswer(`GitLab no longer accepts this key (HTTP 401), so it no longer works; its file was kept on this computer. Still for the director: open the page below and check that the key is gone.`, { url });
+    return plainAnswer(`GitLab no longer accepts this key (HTTP 401), so it no longer works; its file was kept on this computer. Still for you: open the page below and check that the key is gone.`, { url });
   }
   return {
     ok: false,
-    refused: `GitLab did not revoke the ${pasted ? 'token' : 'project key'}${status === null ? ' (it could not be reached)' : ` (HTTP ${status})`}, so its file was kept on this computer. For the director: open the page below, find ${pasted ? 'the token' : 'the key Wheelhouse made'}, and revoke it.`,
+    refused: `GitLab did not revoke the ${pasted ? 'token' : 'project key'}${status === null ? ' (it could not be reached)' : ` (HTTP ${status})`}, so its file was kept on this computer. For you: open the page below, find ${pasted ? 'the token' : 'the key Wheelhouse made'}, and revoke it.`,
     url,
   };
 }

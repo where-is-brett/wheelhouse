@@ -632,8 +632,8 @@ test('a Shape 2 foreman\'s tick submits each wake line in order', async ($, on) 
 
 // What a toast says when a tick's prompt can't be handed on: the courier's wake goes to the front
 // desk, a Shape 2 foreman's watcher lines to the foreman.
-const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
-const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the foreman.'
+const NOT_HANDED = 'That didn\'t reach the First Mate. Type it in the chat instead.'
+const NOT_HANDED_FOREMAN = 'The watcher\'s news didn\'t reach the Bosun.'
 
 test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by role, and the rest are handed on', async ($, on) => {
   const LINES = ['Wheelhouse watcher: CI failed on pull request #4', 'Wheelhouse watcher: pull request #5 merged', 'Wheelhouse watcher: review asked on #6'] as const
@@ -675,7 +675,7 @@ test('a prompt of a tick\'s that can\'t be handed on is one toast, worded by rol
 })
 
 test('a courier\'s wake that can\'t be handed on asks the bridge to undo its marks, naming the session and the ids', async ($, on) => {
-  const WAKE = 'Wheelhouse courier: STOP is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
+  const WAKE = 'Wheelhouse courier: All stop is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
   const IDS = ['stop:2026-10-20T09:12:55.000Z', 'card:c-4']
   const AT = '2026-10-20T09:12:56.000Z'
   const LINES = ['Wheelhouse watcher: CI failed on pull request #4'] as const
@@ -729,7 +729,7 @@ test('a courier\'s wake that can\'t be handed on asks the bridge to undo its mar
 })
 
 test('a run of courier wakes that can\'t be handed on toasts once; a wake handed on or a turn starting lets the next failure toast', async ($, on) => {
-  const WAKE = 'Wheelhouse courier: STOP is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
+  const WAKE = 'Wheelhouse courier: All stop is on. Send Claude\'s notification in one line, then ask any new cards now, once.'
   const failing = { ...frontDesk([WAKE]), woken: ['stop:s'], wokeAt: '2026-10-20T09:12:56.000Z' }
   const { seen, clear, start, clock, control } = world(on, () => failing)
   const unsent = () => seen.runs.filter((r: any) => r.request?.cmd === 'unsent')
@@ -827,7 +827,7 @@ test('/wheelhouse-digest answers with the bridge\'s briefing', async ($, on) => 
   for (const surface of SURFACES) {
     await start($, surface)
     expect(seen.registered).toEqual([
-      { name: 'wheelhouse-go', description: 'Lift STOP' },
+      { name: 'wheelhouse-go', description: 'Lift All stop' },
       { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
       { name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' },
     ])

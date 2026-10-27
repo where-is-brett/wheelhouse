@@ -105,7 +105,7 @@ export function premiumViewOf({ project }) {
 // The subagent roles a feature session dispatches, in the order its brief names them.
 export const SUBAGENT_ROLES = Object.freeze(['builder', 'mechanical', 'builderCritical', 'reviewer', 'reviewerCritical', 'tester']);
 export const REWORK_LINE = 'When a task is sent back by its review, build it again at effort high.';
-export const SECOND_REVIEWER_LINE = 'Critical-area work gets a second fresh reviewer; both must report CLEAN.';
+export const SECOND_REVIEWER_LINE = 'Critical-area work gets a second fresh Lookout; both must report CLEAN.';
 const LEVEL_NAMES = Object.freeze({ lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' });
 
 // The lines a feature wake's prompt carries for the subagents it dispatches (design section 14.6): one per role,

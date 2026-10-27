@@ -196,8 +196,8 @@ test('the undo reinstalls the previous release, including after the clean-up', a
   assert.equal(opened[0].title, 'Put Wheelhouse back to v1.0.0');
 
   // A refusal from the opener is said, and nothing runs.
-  const refused = await undo({ ...common, previous, open: async () => ({ ok: false, refused: 'STOP is on' }) });
-  assert.deepEqual(refused, { ok: false, line: 'The undo\'s pull request could not be opened: STOP is on.' });
+  const refused = await undo({ ...common, previous, open: async () => ({ ok: false, refused: 'All stop is on' }) });
+  assert.deepEqual(refused, { ok: false, line: 'The undo\'s pull request could not be opened: All stop is on.' });
 
   // Once it merges and the folder has it, the undo reinstalls A: Superpowers by update, since its
   // version differs; Wheelhouse by uninstall and install, since both releases say 0.0.0.

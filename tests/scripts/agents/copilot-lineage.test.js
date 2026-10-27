@@ -510,8 +510,8 @@ test('a missing usage field shows as not available, not zero', () => {
   const { model, text } = boardText(figuresWith());
   assert.equal(model.build.usage.feature.credits, null);
   assert.equal(model.build.usage.foreman.credits, 3);
-  assert.match(text, /Feature builders: credits not available/);
-  assert.match(text, /Foreman: 3 credits/);
+  assert.match(text, /Crew: credits not available/);
+  assert.match(text, /Bosun: 3 credits/);
   assert.doesNotMatch(text, /0 credits/);
 });
 

@@ -632,7 +632,7 @@ test('the card names the groups, what is kept, that removed transcripts can\'t c
       assert.deepEqual(cardProblems(question.question), []);
       assert.equal(data.line, uninstallLine(SLUG, one.hash));
       assert.equal(data.code, null);
-      assert.match(question.question, /if STOP is on, lift it first/, 'the card says to lift STOP first (ruling R91)');
+      assert.match(question.question, /if All stop is on, lift it first/, 'the card says to lift STOP first (ruling R91)');
     }
   });
 });
@@ -1919,7 +1919,7 @@ test('a commit on the host the folder\'s tracking ref never showed: the push is 
       const record = stepSevenToPush(world, r, null, host.trial);
       const tip = await pushSetupCommit(world, host);
       const push = record(tip);
-      markStep(run.id, 7, 'failed', { now: NOW, reason: 'STOP came on before the push was fetched back' });
+      markStep(run.id, 7, 'failed', { now: NOW, reason: 'All stop came on before the push was fetched back' });
       const f = fakes(world);
       const first = await applyPlan(world, f);
       assert.ok(first.got.keep.some((k) => k.why === NEVER_PUSHED));
@@ -1964,7 +1964,7 @@ test('a commit never pushed is marked kept once setup\'s files are put back here
       const first = await applyPlan(world, f, { stopped: () => !fs.existsSync(projectDir) });
       assert.ok(first.got.keep.some((k) => k.why === NEVER_PUSHED));
       assert.equal(first.done.ok, false);
-      assert.match(first.done.refused, /STOP came on/);
+      assert.match(first.done.refused, /All stop came on/);
       assert.equal(fs.existsSync(projectDir), false);
       assert.deepEqual(markOf(push.id), { at: READY().toISOString(), put: false, why: NEVER_PUSHED });
       assert.equal(fs.existsSync(path.join(world.folder, 'CLAUDE.md')), false, 'setup\'s files were put back here');
@@ -2003,7 +2003,7 @@ test('the trusted-keys list and the signing key go last of all: an uninstall cut
       const projectDir = path.join(wheelhouseHome(), 'projects', SLUG);
       const first = await applyPlan(world, f, { stopped: () => !fs.existsSync(projectDir) });
       assert.equal(first.done.ok, false);
-      assert.match(first.done.refused, /STOP came on/);
+      assert.match(first.done.refused, /All stop came on/);
       // The keys phase is done, the project's record gone, and this computer can still sign.
       assert.equal(fs.existsSync(path.join(keysDir(), 'github-app.json')), false);
       for (const p of [signingKeyFile(), enrolledFile()]) assert.ok(fs.existsSync(p), p);
@@ -2415,8 +2415,8 @@ test('the .wheelhouse/ exclude line stays while the project\'s .wheelhouse/ fold
     const stays = got.keep.filter((k) => /\.wheelhouse\//.test(k.what));
     assert.equal(stays.length, 2, 'the line and the folder, each named as kept');
     assert.deepEqual(stays.find((k) => k.ids !== undefined).ids, [ownLine.id]);
-    assert.ok(stays.every((k) => /front desk's and the foreman's files/.test(k.why)), JSON.stringify(stays));
-    assert.match(got.card.what, / \.wheelhouse\/ stays, out of git: the front desk's and foreman's files\. /);
+    assert.ok(stays.every((k) => /First Mate's and the Bosun's files/.test(k.why)), JSON.stringify(stays));
+    assert.match(got.card.what, / \.wheelhouse\/ stays, out of git: the First Mate's and Bosun's files\. /);
     assert.ok(planLines(got, world.folder, world.userHome).some((l) => /^Stays: \.wheelhouse\/ in /.test(l)));
     // Only the settings line is put back, Wheelhouse's own staying where it was.
     const reversing = got.changes.filter((c) => c.put === 'reverse' && c.change.target === exclude);
@@ -2432,7 +2432,7 @@ test('the .wheelhouse/ exclude line stays while the project\'s .wheelhouse/ fold
     assert.ok(fs.existsSync(path.join(world.folder, '.wheelhouse', 'foreman', 'wakes', 'w1.json')));
     assert.equal(markOf(settingsLine.id).put, true);
     assert.equal(markOf(ownLine.id).put, false);
-    assert.match(markOf(ownLine.id).why, /front desk's and the foreman's files/);
+    assert.match(markOf(ownLine.id).why, /First Mate's and the Bosun's files/);
   });
 
   await withHome(async () => {

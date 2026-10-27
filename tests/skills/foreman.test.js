@@ -192,7 +192,7 @@ test('the foreman offers the Unattended card at most once a day, after the quest
   // A build-command question is recorded like any other, and becomes a card with its three options.
   assert.match(flat, /`act question`/);
   for (const label of Object.values(BUILD_QUESTION_LABELS)) assert.ok(flat.includes(`- **${label}:**`), label);
-  assert.ok(flat.includes('for as long as this lasts, the builder can do whatever your account can'));
+  assert.ok(flat.includes('for as long as this lasts, the Crew member can do whatever your account can'));
   // The card names the commands from the question's commands, with its what beside them.
   assert.match(flat, /names the commands from the question's `commands`, with its `what` beside them/);
   // Not now holds the feature and puts it in the next briefing.

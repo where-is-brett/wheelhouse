@@ -207,7 +207,7 @@ When this conversation is summarised, keep:
 - what the director asked for and decided, in their own words where they gave them;
 - the work in hand: the step being done, what is finished and what is not;
 - each card shown to the director, and whether it was answered;
-- whether STOP is on;
+- whether All stop is on;
 - the pull requests and branches in play, by number and name.
 
 Leave out file contents and command output that can be read again. Wheelhouse's records hold the rulebook, the levels, the waiting list and the status, and the session start after a compaction gives them back.
@@ -943,8 +943,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (files.length > shared.length) parts.push(`this computer's settings into .claude/settings.local.json, which stays here${excluded ? `${ours ? '; it and .wheelhouse/' : ','} kept out of git` : ''}`);
   else if (excluded) parts.push(`.claude/settings.local.json${ours ? ' and .wheelhouse/' : ''} kept out of git`);
   if (ours && !excluded) parts.push('.wheelhouse/ kept out of git');
-  if (frontDesk === NO_PIN) parts.push('the front desk\'s model is left as it is: Claude Code didn\'t say which model to use');
-  else if (frontDesk) parts.push(`the front desk runs on ${frontDesk}`);
+  if (frontDesk === NO_PIN) parts.push('the First Mate\'s model is left as it is: Claude Code didn\'t say which model to use');
+  else if (frontDesk) parts.push(`the First Mate runs on ${frontDesk}`);
   if (midSized === NO_PIN) parts.push('Lean and Lightest wait for the lighter model: Claude Code didn\'t say which model to use');
   else if (midSized) parts.push('Lean and Lightest move most building and routine checking to the lighter model');
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);

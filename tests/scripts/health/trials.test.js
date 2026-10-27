@@ -226,7 +226,7 @@ test('the forgery is sent to the helper and the merge asks for approval', async 
 // refused on the lock, CI and review instead, and the pull request stayed open. Any refusal that
 // leaves the pull request unmerged counts.
 test('the merge trial passes on any refusal that leaves the pull request unmerged', async () => {
-  for (const refused of ['CI has not passed', 'no review yet', 'the lock is held', 'STOP is on', '']) {
+  for (const refused of ['CI has not passed', 'no review yet', 'the lock is held', 'All stop is on', '']) {
     const f = fakes();
     f.client.merge = async () => ({ ok: false, refused, reasons: [refused] });
     const lines = await runTrials(f);

@@ -253,7 +253,7 @@ test('STOP mid-build: writes, pushes, merges and new agents are refused; reading
 
       // The director types the word; the hook turns STOP on.
       const said = await stopWord(input(a, { hook_event_name: 'UserPromptSubmit', prompt: 'stop' }), { dir: NO_MANAGED });
-      assert.match(said.hookSpecificOutput.additionalContext, /STOP is on/);
+      assert.match(said.hookSpecificOutput.additionalContext, /All stop is on/);
       assert.equal(stopState().on, true);
 
       // Writes, shell commands, new agents and connectors are denied.
@@ -276,11 +276,11 @@ test('STOP mid-build: writes, pushes, merges and new agents are refused; reading
       assert.equal(await guard(a, { tool_name: 'Bash', tool_input: { command: runbook } }), undefined);
 
       // The helper refuses the host writes, whatever the lock says.
-      const stopped = { ok: false, refused: 'STOP is on' };
+      const stopped = { ok: false, refused: 'All stop is on' };
       assert.deepEqual(await client.push({ project: PROJECT, dir: a.folder, refspec: 'feature' }), stopped);
       const merge = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
       assert.equal(merge.ok, false);
-      assert.deepEqual(merge.reasons, ['STOP is on'], 'STOP is the only thing in the way');
+      assert.deepEqual(merge.reasons, ['All stop is on'], 'STOP is the only thing in the way');
       assert.deepEqual(await client.openPr({ project: PROJECT, head: 'feature', base: 'main', title: 't', body: 'b' }), stopped);
       assert.deepEqual(a.adapter.merges, []);
 

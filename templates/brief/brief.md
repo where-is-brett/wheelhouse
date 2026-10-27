@@ -4,7 +4,7 @@
 
 # The work
 
-You are the session for the work `{{work}}`, in the {{lane}} lane. Read the whole brief before you start. The files you share with the foreman are in `{{featureDir}}/` in your worktree: this brief, the status (a script writes it; you never do), your questions and your report.
+You are the session for the work `{{work}}`, in the {{lane}} lane. Read the whole brief before you start. The files you share with the Bosun are in `{{featureDir}}/` in your worktree: this brief, the status (a script writes it; you never do), your questions and your report.
 {{fromLine}}{{planLine}}{{slicesLine}}{{shownFirstLine}}
 # The goal
 
@@ -30,12 +30,12 @@ Turn each line into a test before any code. When those tests pass, the work is d
 
 # Rules in every lane
 
-- **The lane only goes up.** If the work proves bigger than this lane, stop. Report `partial` with what you found; the foreman puts the work in the right lane.
+- **The lane only goes up.** If the work proves bigger than this lane, stop. Report `partial` with what you found; the Bosun puts the work in the right lane.
 - **Check before you say it is done.** Start `superpowers:verification-before-completion` first, run the checks and read their output.
 - **Conflicts.** When a wake says your branch conflicts with the default branch, merge the default branch into your branch, resolve each conflict so both sides' intent survives, then run the checks and have the result reviewed again.
-- **Builders and reviewers.** Builders are `wheelhouse:builder` and reviews are done by `wheelhouse:reviewer`, each with the model and effort the wake gives for its role (see "Models by role"). Never dispatch a general-purpose subagent for either.
-- **Dispatching a reviewer.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the reviewer that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
-- **Long test runs.** One command runs for at most ten minutes, and a feature that shows no progress for twenty minutes counts as stuck. Run the test files your change touches. When the whole suite takes more than a few minutes, don't run it in one go: the pull request's checks run all of it, and the foreman merges only once they pass on its head. Say in the report's `tests` which files ran.
+- **The Crew and the Lookouts.** Crew members are `wheelhouse:builder`, and reviews are done by Lookouts (`wheelhouse:reviewer`), each with the model and effort the wake gives for its role (see "Models by role"). Never dispatch a general-purpose subagent for either.
+- **Dispatching a Lookout.** Before each `wheelhouse:reviewer` dispatch, write the diff under review to `{{featureDir}}/review/<n>.diff` (`<n>` counting up from 1), and give the Lookout that path, the full commit hash of the head it reviews, and the pull request number once the feature's pull request is open (`pr: none` before then). The signed review on the pull request's head is recorded only with that number.
+- **Long test runs.** One command runs for at most ten minutes, and a feature that shows no progress for twenty minutes counts as stuck. Run the test files your change touches. When the whole suite takes more than a few minutes, don't run it in one go: the pull request's checks run all of it, and the Bosun merges only once they pass on its head. Say in the report's `tests` which files ran.
 - **Temporary files.** Put scratch files, such as a test script you write for one run, in `.wheelhouse/tmp/` in this worktree (make the folder if it isn't there). Git ignores it, and it needs no permission. Don't use `/tmp`. You may read the files of installed plugins, such as Superpowers' helper scripts, but not change them.
 - **Fix rounds.** A fix and its re-review is one round. After {{fixRounds}} rounds, put what is still open to the director with `ask`.
 <!-- builds:ask -->
@@ -63,8 +63,8 @@ Nobody reads this chat. Never use `AskUserQuestion`. To ask, write a question an
 
 - When your work is built, checked and reviewed, write your report to `{{featureDir}}/report.md`: a fenced json block, then at most {{reportWords}} words on what shipped, the tests, your assumptions and your concerns. Put every ruling from your Superpowers ledger in `rulings`. Then run `{{cli}} report`; it names anything missing, so put that right and run it again.
 - Once `report` passes, open the pull request: `{{cli}} open-pr --title "<what the pull request does>"`. The report becomes the pull request's body, and `open-pr` refuses until the report passes. It pushes your branch through the host helper, then opens the pull request from it.
-- Once `open-pr` prints the pull request's number (#n), dispatch `wheelhouse:reviewer` on its head commit with `pr: n`, as "Dispatching a reviewer" says. Only that review is recorded as the signed review of the head, and without it the pull request is never merged.
-- Then the pull request is yours until it merges. When a wake tells you of red checks, review findings or a conflict, fix them, push with `{{cli}} push` (when it says the host's branch has moved on, bring it in with `{{cli}} pull`, then push again), and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`. When a wake says the review is needed (`review-needed`: the gate brought the branch up to date and the review didn't carry over), bring the host's branch in with `{{cli}} pull`, then dispatch `wheelhouse:reviewer` on the head it names with `pr: n`. You never merge it yourself: the foreman merges once the checks pass and the head's signed review is clean.
+- Once `open-pr` prints the pull request's number (#n), dispatch `wheelhouse:reviewer` on its head commit with `pr: n`, as "Dispatching a Lookout" says. Only that review is recorded as the signed review of the head, and without it the pull request is never merged.
+- Then the pull request is yours until it merges. When a wake tells you of red checks, review findings or a conflict, fix them, push with `{{cli}} push` (when it says the host's branch has moved on, bring it in with `{{cli}} pull`, then push again), and dispatch `wheelhouse:reviewer` again on the new head with `pr: n`. When a wake says the review is needed (`review-needed`: the gate brought the branch up to date and the review didn't carry over), bring the host's branch in with `{{cli}} pull`, then dispatch `wheelhouse:reviewer` on the head it names with `pr: n`. You never merge it yourself: the Bosun merges once the checks pass and the head's signed review is clean.
 - Do not offer a menu of choices and do not wait for a person to tell you what to do next.
 - Before each `open-pr`, bring `report.md` up to date (the pull request's number in `pr` once there is one, the head commit, and anything that has changed since) and run `{{cli}} report` again: `open-pr` checks it the same way.
 

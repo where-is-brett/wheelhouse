@@ -164,10 +164,10 @@ test('a code in capitals and any short option is sent, and shown only when it ma
 })
 
 test('a phone message that is just stop sends stop; a typed one does not', async ($, on) => {
-  const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"STOP is on."}\n' }))
+  const { seen, clear, start } = world(on, () => ({ stdout: '{"ok":true,"says":"All stop is on."}\n' }))
   for (const surface of SURFACES) {
     await startOn($, surface, { clear, start })
-    for (const text of ['stop', 'STOP', ' Stop. ', 'stop!!']) {
+    for (const text of ['stop', 'STOP', ' Stop. ', 'stop!!', 'all stop', 'All stop.']) {
       clear()
       await submit($, text, 'bridge')
       expect(seen.runs).toHaveLength(1)
@@ -203,13 +203,13 @@ test('a message from sdk, peer or task-notification sends nothing', async ($, on
 })
 
 test('/wheelhouse-go answers with the bridge\'s words', async ($, on) => {
-  let goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
+  let goLine = '{"ok":true,"says":"All stop is off. No build work is in progress."}\n'
   const { seen, clear, start } = world(on, (request) => request.cmd === 'go' ? { stdout: goLine } : { stdout: '{"ok":true}\n' })
   for (const surface of SURFACES) {
     clear()
     await start($, surface)
     expect(seen.registered).toEqual([
-      { name: 'wheelhouse-go', description: 'Lift STOP' },
+      { name: 'wheelhouse-go', description: 'Lift All stop' },
       { name: 'wheelhouse', description: 'Open Wheelhouse\'s pane' },
       { name: 'wheelhouse-digest', description: 'Show the briefing, with no Claude turn' },
     ])
@@ -219,18 +219,18 @@ test('/wheelhouse-go answers with the bridge\'s words', async ($, on) => {
       const result = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind }, presentation: PRESENTATION })
       expect(seen.runs).toHaveLength(1)
       expect(bridgeCall(seen.runs[0])).toEqual({ cmd: 'go', origin: kind, cwd: ROOT })
-      expect(result).toMatchObject({ text: 'STOP is off. No build work is in progress.' })
+      expect(result).toMatchObject({ text: 'All stop is off. No build work is in progress.' })
       expect(seen.toasts).toHaveLength(0)
       expect(seen.commands).toHaveLength(0)
     }
 
     // A refusal is the bridge's own words, shown as the answer and nothing else.
-    goLine = '{"ok":false,"says":"Only the director can lift STOP"}\n'
+    goLine = '{"ok":false,"says":"Only the Captain can lift All stop"}\n'
     clear()
     const refused = await $.command.run({ command: 'wheelhouse-go', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
-    expect(refused).toMatchObject({ text: 'Only the director can lift STOP' })
+    expect(refused).toMatchObject({ text: 'Only the Captain can lift All stop' })
     expect(seen.toasts).toHaveLength(0)
-    goLine = '{"ok":true,"says":"STOP is off. No build work is in progress."}\n'
+    goLine = '{"ok":true,"says":"All stop is off. No build work is in progress."}\n'
   }
 })
 

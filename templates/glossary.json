@@ -73,11 +73,11 @@
     "phrase": "separate working folder",
     "plural": "separate working folders",
     "takesName": true,
-    "example": "Like giving each builder their own workbench."
+    "example": "Like giving each carpenter in a workshop their own bench."
   },
-  "STOP": {
+  "All stop": {
     "plain": "the big red button: every agent stops until you lift it",
-    "phrase": "STOP (the emergency stop)",
+    "phrase": "All stop (the emergency stop)",
     "example": "Like pulling the emergency cord on a train."
   },
   "Standard": {
@@ -95,10 +95,10 @@
     "phrase": "the key-holding program on your computer",
     "example": "Like a bank teller who handles the money so the clerks never touch the vault."
   },
-  "the foreman": {
-    "plain": "the agent that runs a project's building: it queues work, writes briefs, starts and closes the builder sessions, checks for clashes, passes questions to you and merges through the gate, but never builds",
+  "the Bosun": {
+    "plain": "the agent that runs a project's building: it queues work, writes briefs, starts and closes the Crew's sessions, checks for clashes, passes questions to you and merges through the gate, but never builds",
     "phrase": "the agent that runs the building",
-    "example": "Like the site manager on a building job, who is not laying bricks but knows who is."
+    "example": "Like a ship's bosun, who runs the deck crew and hands out the jobs but doesn't haul every rope."
   },
   "the gate": {
     "plain": "the last checks a change must pass at the moment it merges: tests green on exactly that version, a clean signed review, and still fitting with the latest product",

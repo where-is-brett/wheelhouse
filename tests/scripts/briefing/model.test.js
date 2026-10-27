@@ -51,9 +51,9 @@ test('a blocked pull request is in what to watch in Wheelhouse\'s own words, not
   });
   const b = briefingModel({ model, usage: usageWith(), sources: null, now: NOW, wasRaised: never });
   assert.deepEqual(b.watch, [
-    'Pull request #17 for Export the orders is blocked: its build stopped and couldn\'t go on; the board has its report',
-    'Pull request #20 for promo is blocked: its build stopped and couldn\'t go on; the board has its report',
-    'Pull request #18 for gift-cards is blocked: its build stopped and couldn\'t go on; the board has its report',
+    'Pull request #17 for Export the orders is blocked: its build stopped and couldn\'t go on; the Logbook has its report',
+    'Pull request #20 for promo is blocked: its build stopped and couldn\'t go on; the Logbook has its report',
+    'Pull request #18 for gift-cards is blocked: its build stopped and couldn\'t go on; the Logbook has its report',
     'A security advisory for a library',
   ]);
   assert.deepEqual(b.progress, ['Building Export the orders, slice 2 of 3', 'Pull request #19 for menu is waiting on CI or review']);
@@ -373,7 +373,7 @@ test('the verdict is the pane\'s sentence: what waits and what is broken, STOP n
   const said = (health) => briefingModel({ model: board({ waiting, health }), usage: null, now: NOW, wasRaised: never }).verdict;
   assert.equal(said([]), verdict({ waiting: 2, broken: 0 }));
   assert.equal(said([]), 'Two things need you. Nothing is broken.');
-  assert.equal(said([{ level: 'stop', text: 'STOP is on, since 18 October 2026' }]), 'Two things need you. Nothing is broken.');
+  assert.equal(said([{ level: 'stop', text: 'All stop is on, since 18 October 2026' }]), 'Two things need you. Nothing is broken.');
   assert.equal(said([{ level: 'stop', text: 'Incident i1 is open, so nothing merges: x', incident: 'i1' }, { level: 'watch', text: 'Something to watch' }]),
     verdict({ waiting: 2, broken: 1 }));
 });

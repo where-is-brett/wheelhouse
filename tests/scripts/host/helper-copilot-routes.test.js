@@ -239,7 +239,7 @@ test('the gate refuses a real-user merge on a chat click and names what it needs
     assert.deepEqual(leanMergeDecision({ ...lean, stop: true, tests: false, mainMoved: true, realUsers: true }), {
       allow: false,
       reasons: [
-        'STOP is on',
+        'All stop is on',
         'no approval of aaaaaaa that counts: the project has real users, so a click in the chat isn\'t enough and it needs the director\'s click in Wheelhouse\'s window',
         'the tests have not passed on aaaaaaa',
         'the main branch has moved since the tests ran, so they must run again',

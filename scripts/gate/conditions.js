@@ -17,7 +17,7 @@ function reviewCounts(entry, headSha, enrolled, kinds = null) {
 }
 
 // The refusal where only a review of the kinds the agent's clean session gives counts, and none does.
-export const NO_CLEAN_REVIEW = (short) => `no review of ${short} from a clean session: the helper's own reviewer hasn't passed it`;
+export const NO_CLEAN_REVIEW = (short) => `no review of ${short} from a clean session: the helper's own Lookout hasn't passed it`;
 
 // The review kinds that count: null (absent) for today's rule, which reads no kind; an array as given; anything
 // else counts none, failing closed.
@@ -118,7 +118,7 @@ export function gateDecision(input) {
   const short = headSha.slice(0, 7);
   const reasons = [];
 
-  if (i.stop !== false) reasons.push('STOP is on');
+  if (i.stop !== false) reasons.push('All stop is on');
   if (i.bypass !== false) reasons.push('the session is in bypass mode');
   if (i.holdsLock !== true) reasons.push('this computer no longer holds the lock');
 
@@ -161,7 +161,7 @@ export function leanMergeDecision(input) {
   const headSha = typeof i.headSha === 'string' ? i.headSha : '';
   const short = headSha.slice(0, 7);
   const reasons = [];
-  if (i.stop !== false) reasons.push('STOP is on');
+  if (i.stop !== false) reasons.push('All stop is on');
   const approved = approvalOf(i, headSha);
   if (!approved.counts) reasons.push(approvalReason(short, approved.needs));
   if (i.tests !== true) reasons.push(`the tests have not passed on ${short}`);

@@ -315,7 +315,7 @@ test('a deciding choice is signed by the helper with proof window', async () => 
     assert.ok(action.data.question.includes(LIFT_STOP));
     assert.ok(verify(action, readEnrolled()));
     const liftWindow = argvOf(c.windows.at(-1).args);
-    assert.equal(liftWindow[0], 'Wheelhouse: Lift STOP');
+    assert.equal(liftWindow[0], 'Wheelhouse: All stop');
     assert.deepEqual(liftWindow.slice(3), ['Lift STOP']);
 
     // Not now on Lift STOP leaves STOP on and records nothing.

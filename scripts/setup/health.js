@@ -105,22 +105,22 @@ export const HELPER_CHECKS = Object.freeze({
     expected: 'refused',
     passed: 'The merge gate refused to merge a pull request without your approval, and it stayed unmerged',
     failed: 'The merge gate did not refuse a pull request without your approval',
-    todo: 'Type stop, so no agent works, and report it to Wheelhouse before going on: nothing may merge without the gate',
+    todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on: nothing may merge without the gate',
     what: 'the merge gate',
   },
   'write under stop': {
     expected: 'refused',
-    passed: 'With STOP on, an agent\'s change was refused',
-    failed: 'With STOP on, an agent\'s change was not refused',
+    passed: 'With All stop on, an agent\'s change was refused',
+    failed: 'With All stop on, an agent\'s change was not refused',
     todo: 'Reload this project in Claude Desktop so Wheelhouse\'s checks run in it, then run step 10 again',
-    what: 'STOP',
+    what: 'All stop',
   },
   'read under stop': {
     expected: 'allowed',
-    passed: 'With STOP on, an agent could still read and report',
-    failed: 'With STOP on, an agent could not even read',
+    passed: 'With All stop on, an agent could still read and report',
+    failed: 'With All stop on, an agent could not even read',
     todo: 'Reload this project in Claude Desktop, then run step 10 again',
-    what: 'STOP',
+    what: 'All stop',
   },
   'installed skills': {
     expected: 'match',
@@ -132,7 +132,7 @@ export const HELPER_CHECKS = Object.freeze({
   'host protection': {
     expected: 'on',
     ok: ['on', 'not offered'],
-    passed: 'The host\'s protection of the main branch is on, or your plan doesn\'t offer it and the board says so',
+    passed: 'The host\'s protection of the main branch is on, or your plan doesn\'t offer it and the Logbook says so',
     failed: 'The host\'s protection of the main branch is off',
     todo: 'Run step 7 again, which switches it on with your sign-in, then step 10',
     what: 'the host\'s protection',
@@ -205,14 +205,14 @@ export const SESSION_CHECKS = Object.freeze({
     expected: 'refused',
     passed: 'A forged approval was refused',
     failed: 'A forged approval was recorded',
-    todo: 'Type stop, so no agent works, and report it to Wheelhouse before going on',
+    todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on',
     what: 'recording a forged approval',
   },
   'merge with forged approval': {
     expected: 'refused',
     passed: 'A merge resting on a forged approval was refused',
     failed: 'A merge resting on a forged approval was not refused',
-    todo: 'Type stop, so no agent works, and report it to Wheelhouse before going on',
+    todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on',
     what: 'merging with a forged approval',
   },
 });
@@ -251,11 +251,11 @@ function card(repo) {
     level: 3,
     what: `Setup step ${HEALTH_STEP}, ${SETUP_TITLES[HEALTH_STEP]}: setup tries Wheelhouse's safety checks for real on ${repo}. `
       + `It pushes a branch, ${HEALTH_BRANCH}, holding one empty commit, opens a pull request from it, and asks the merge gate to merge it without your approval, which the gate must refuse. `
-      + 'It checks STOP halts an agent, the installed skills and the host\'s protection. '
-      + 'The session then tries the sandbox\'s checks, the merge among them, and shows the board; setup then closes the pull request and deletes the branch.',
-    why: 'A check never tried can\'t be trusted: these show the board is green for real.',
+      + 'It checks All stop halts an agent, the installed skills and the host\'s protection. '
+      + 'The session then tries the sandbox\'s checks, the merge among them, and shows the Logbook; setup then closes the pull request and deletes the branch.',
+    why: 'A check never tried can\'t be trusted: these show the Logbook is green for real.',
     options: [
-      { label: SETUP_LABEL, says: 'Setup runs the checks, then shows the board, with what to do about any that didn\'t pass.' },
+      { label: SETUP_LABEL, says: 'Setup runs the checks, then shows the Logbook, with what to do about any that didn\'t pass.' },
       { label: 'Not now', says: 'Setup waits at this step; nothing changes.' },
     ],
     recommend: SETUP_LABEL,
@@ -472,14 +472,14 @@ export function healthStep({
       if (trial !== null) {
         return {
           wait: 30 * 1000,
-          why: `step 10's own checks are done and its trial pull request, number ${trial.pr}, is open: run cli.js health, then the trials it names in this session's Bash, then cli.js health with every line they printed, and show its board`,
+          why: `step 10's own checks are done and its trial pull request, number ${trial.pr}, is open: run cli.js health, then the trials it names in this session's Bash, then cli.js health with every line they printed, and show its Logbook`,
         };
       }
       const changes = [{
         kind: 'host', what: 'health-check', target: `${record.repo}: branch ${HEALTH_BRANCH} and a pull request from it, closed once the session's trials are done`,
         project, host: record.host, repo: record.repo, branch: HEALTH_BRANCH,
       }];
-      return { changes, card: card(record.repo), director: 'One click, then read the board' };
+      return { changes, card: card(record.repo), director: 'One click, then read the Logbook' };
     },
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
@@ -557,7 +557,7 @@ export function healthStep({
         await closeTrial({ project, projectRecord: record, pr: number, sha: pushed, adapter, gitFor, record: ctx.record });
       }
       if (failure !== null) throw failure;
-      if (failed.length > 0) throw new Error(`these checks didn't pass: ${failed.map((c) => c.name).join(', ')}; the board says what to do`);
+      if (failed.length > 0) throw new Error(`these checks didn't pass: ${failed.map((c) => c.name).join(', ')}; the Logbook says what to do`);
       return [];
     },
   };
@@ -666,14 +666,14 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   if (health === null) {
     count(false);
     green = false;
-    lines.push(`Failed: the board couldn't be read: ${inputs?.none ?? 'its health lines are missing'}. ${RERUN}.`);
+    lines.push(`Failed: the Logbook couldn't be read: ${inputs?.none ?? 'its health lines are missing'}. ${RERUN}.`);
   } else {
     for (const line of health) {
       if (line?.level === 'stop') {
         green = false;
         count(false);
       }
-      lines.push(`Board: ${line.text}`);
+      lines.push(`Logbook: ${line.text}`);
     }
   }
   // One verdict ends the lines.
@@ -735,7 +735,7 @@ export async function finishSetup({
   try {
     started = start ? await start(project) : await startForeman(project, { client, spawn });
   } catch {
-    started = 'The foreman couldn\'t be started now; the next session start in this project starts it.';
+    started = 'The Bosun couldn\'t be started now; the next session start in this project starts it.';
   }
   let briefing = null;
   let card = null;
@@ -763,10 +763,10 @@ function rulesFound(project, userHome) {
 // work. Shape 2's foreman is a session in a terminal, which the helper can't open: the line says so.
 async function startForeman(project, { client, spawn }) {
   const read = await projectConfig(project, client);
-  if (read.config === null) return `The foreman couldn't be started now (${read.why}); the next session start in this project starts it.`;
-  if (read.config.watcherShape === 2) return `This project's foreman runs in a terminal of its own: start it there with start.js ${project}.`;
+  if (read.config === null) return `The Bosun couldn't be started now (${read.why}); the next session start in this project starts it.`;
+  if (read.config.watcherShape === 2) return `This project's Bosun runs in a terminal of its own: start it there with start.js ${project}.`;
   const { started } = startWatcher(project, spawn ? { spawn } : {});
-  return started ? 'The foreman\'s watcher is started: it wakes a foreman when there is work.' : 'The foreman\'s watcher is running: it wakes a foreman when there is work.';
+  return started ? 'The Bosun\'s watcher is started: it wakes a Bosun when there is work.' : 'The Bosun\'s watcher is running: it wakes a Bosun when there is work.';
 }
 
 // The front desk's first briefing, as the board-context hook gives one, and kept as given so the

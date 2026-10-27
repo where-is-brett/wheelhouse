@@ -309,7 +309,7 @@ test('the report carries the same block', async () => {
         try {
           assert.equal(await featureCli(['report'], deps), 0, said.err);
         } finally { liftStop(); }
-        assert.equal(said.out, 'The report is whole.\nSTOP is on, so the report was not stamped with what built it.\n');
+        assert.equal(said.out, 'The report is whole.\nAll stop is on, so the report was not stamped with what built it.\n');
         assert.equal(fs.readFileSync(files.report, 'utf8').includes(BEGIN), false);
         // An answer that doesn't say STOP is off stamps nothing.
         said.out = '';

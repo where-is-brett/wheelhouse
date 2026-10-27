@@ -377,7 +377,7 @@ function statusLines(run, steps, running) {
   for (const { n } of [...steps].sort((a, b) => a.n - b.n)) {
     const entry = run.steps?.[n] ?? {};
     const name = `Step ${n}, ${SETUP_TITLES[n]}`;
-    if (entry.doneAt && !stepDone(run, n)) lines.push(`${name}: its own checks finished at ${entry.doneAt}; the board isn't green yet`);
+    if (entry.doneAt && !stepDone(run, n)) lines.push(`${name}: its own checks finished at ${entry.doneAt}; the Logbook isn't green yet`);
     else if (entry.doneAt) {
       lines.push(`${name}: done at ${entry.doneAt}`);
       // What a step said as it settled, such as step 6's settings that weaken Standard (ruling R101).
@@ -414,7 +414,7 @@ function statusLines(run, steps, running) {
 // and answers into its project's state (copyRunRecords, ruling R45); `writeSurvey(project, data)`
 // the helper's own writer of the survey finishSetup takes (scripts/survey/take.js).
 export function setupRoutes({
-  now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'STOP is on' },
+  now = () => new Date(), stopped = () => false, stopRefusal = { ok: false, refused: 'All stop is on' },
   stepsModule = STEPS_MODULE, userHome = os.homedir(), platform = process.platform, spawn = nodeSpawn, mark = markStep,
   writeSurvey, health = healthCheck, finish = (args) => finishSetup({ ...args, now }),
   closeTrial = (args) => closeOpenTrial(args), copy = copyRunRecords,
@@ -564,7 +564,7 @@ export function setupRoutes({
     const folder = admitFolder(body.folder, { userHome });
     const run = runFor(folder, userHome);
     if (run === null) refuse('setup has not started in this folder: ask for the one card first');
-    if (finished(run)) refuse('setup is finished: the front desk changes settings from here');
+    if (finished(run)) refuse('setup is finished: the First Mate changes settings from here');
     const key = String(body.key ?? '');
     const own = answersWithConsent(run.id).answers;
     const open = (await openNow(run, folder)).find((c) => c.key === key);

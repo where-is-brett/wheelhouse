@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Use when the session start says "This folder isn't set up for Wheelhouse yet", that setup is part-way through, that setup's journal couldn't be read, or that Wheelhouse was removed from this folder; and when the director asks to set up Wheelhouse, carry on with setup, or remove Wheelhouse from a project.
+description: Use when the session start says "This folder isn't set up for Wheelhouse yet", that setup is part-way through, that setup's journal couldn't be read, or that Wheelhouse was removed from this folder; and when the Captain asks to set up Wheelhouse, carry on with setup, or remove Wheelhouse from a project.
 ---
 <!-- skills/setup/SKILL.md -->
 
@@ -45,7 +45,7 @@ Setup opens with one card: the plan for this project, a plain line each, with **
 - **Customise:** run `resume` again. It gives the choices as cards (`asks`), up to four at once: ask them together, in one call. Then `resume` again: more choices, or the one card again with their choices on it. Nothing runs until its **Go ahead**.
 - **The director wants to change an answer** ("I meant no live data", "change it to GitLab"), at any point in setup: run `choices`, pick the key whose `about` matches what they said, then `change <key>`, and ask the cards it gives. `acted: true` means a step has already used that answer: its card then offers what changing it takes, not the answer itself. Never say an answer can't be changed. After their click, `resume`:
   - a new answer to a choice no step has used yet brings the one card back with the change on it: ask it, at any point in setup; its Go ahead covers the steps still to run;
-  - **Change it after setup**: tell them in one line that the front desk starts that change right after setup, and they approve it as usual;
+  - **Change it after setup**: tell them in one line that the First Mate starts that change right after setup, and they approve it as usual;
   - **Set up again**: `resume` gives `setUpAgain` (below);
   - **Keep it**, or a record changed at once (the description, real users): one line saying so, then carry on.
 
@@ -71,7 +71,7 @@ Setup opens with one card: the plan for this project, a plain line each, with **
 
 - **"the list has changed since the card":** run `plan <step>` again and ask the new card. Say in one line why, when the new card shows it (git was installed meanwhile, so the list is shorter). The earlier click doesn't count for the new list.
 - **"needs the director's click":** ask the card again; never apply again without its click.
-- **"STOP is on":** tell the director to lift STOP first.
+- **"All stop is on":** tell the director to lift All stop first.
 - **A step that "did not finish"** (in `status`, or a refusal): tell the director plainly what it says and what they can do, then ask the card the plan now gives (step 3 asks again for the project's owner/name this way).
 - **Step 7 on a folder on a line of unfinished work** first asks a Go-ahead card of its own, to switch the folder to the product's main line. Ask it like any other; after the click and `apply`, run `resume`: step 7's own card follows.
 - **"this folder is on <line>"** (step 7, where the switch can't be made for them): the director's unfinished work on that line is safe, and setup leaves it as it is. Tell them plainly that the folder has to be on the product's main line, which the refusal names, before setup can put its files there, and that changes not yet committed stay as they are. Never suggest putting their changes aside (stash), undoing, committing or deleting them, or changing the host's default branch: the Wheelhouse install's own lines in `.claude/settings.json` are among those changes. If they ask how, one command in a terminal in this folder does it, `git switch <branch>` with the branch the refusal names: it keeps changes not yet committed, or refuses and changes nothing. Then offer to carry on.
@@ -81,11 +81,11 @@ Setup opens with one card: the plan for this project, a plain line each, with **
 
 ## Step 9, phone notifications
 
-The phone comes once setup is finished: the `resume` after the green board gives its card, which opens with the verdict and the first briefing. Ask it once, exactly as given. It is optional and never holds setup up.
+The phone comes once setup is finished: the `resume` after the green Logbook gives its card, which opens with the verdict and the first briefing. Ask it once, exactly as given. It is optional and never holds setup up.
 
 - A step 9 wait **with** `waitsFor` is the wait for another step: no push.
 - A step 9 wait **without** `waitsFor` means the director's screen is locked for the test. Run `wait 9` until it answers `waited: true` (each call waits up to a minute and a half, then says how long is left), then send exactly one test notification with the session's push tool, saying "Wheelhouse test: phone notifications reach you.", then `plan 9` again. One push, even when the director asks for more; no push at any other time, not even to try the tool.
-- **Skip for now:** the phone is optional. Run `plan 9` again: it settles as skipped, never as a test that failed. Say in one line that the front desk sets up phone notifications whenever they ask. Don't ask the card again.
+- **Skip for now:** the phone is optional. Run `plan 9` again: it settles as skipped, never as a test that failed. Say in one line that the First Mate sets up phone notifications whenever they ask. Don't ask the card again.
 - **A run parked on the earlier card** (answered Later before this release): `plan 9` asks the card again, now with **Skip for now**. Ask it as given.
 
 ## Step 10, the health check
@@ -102,7 +102,7 @@ Its Go ahead comes first, like any step's (covered by the one card, or on its ow
 4. **Green:** setup is finished. Run `resume` at once. The card it gives (the phone's, Step 9 above) opens with the verdict and the first briefing: ask it exactly as given, as every card, and that is how the director sees them. With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own. Show `lines` and the `board` only when they ask. **Not green:** show `lines` as they are (the last is the verdict), tell them plainly what failed and what to do (the lines say), and offer to carry on later. A `Not yet` line saying a new session is needed is not a failure: tell them how, in the words above, and stop.
 5. When `health` gave a `card`, ask `card.question` exactly as given, after that first card, as a question of its own. On its answer, do as `wheelhouse:front-desk` says under "Work under way at setup's end". When there is no card and the briefing says it is carrying the work on ("I'm carrying them on", or "it"), do as that section says too.
 6. Then `resume` again, until it says setup is finished with nothing to ask.
-7. Then, in this order, hand the front desk (`wheelhouse:front-desk`) what waits for it, each as the director's own request, in their words, saying so in one line: first each of `requests` (changes they asked for after setup), then the request they came with ("Setup comes first", item 3).
+7. Then, in this order, hand the First Mate (`wheelhouse:front-desk`) what waits for it, each as the director's own request, in their words, saying so in one line: first each of `requests` (changes they asked for after setup), then the request they came with ("Setup comes first", item 3).
 
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
 
@@ -122,7 +122,7 @@ A GitLab token, a password or a key goes only into the box the director's comput
 
 - **"Wheelhouse moved your settings to this computer"**: tell the director that in one plain line, with what it says was left out. Nothing was deleted; offer nothing to do about the old copies.
 - **"Wheelhouse was removed from this folder."**: tell the director plainly that no agents work here now, and that what is left is theirs to remove: the Wheelhouse plugin, from this project in Claude Desktop. Offer to set Wheelhouse up here again; run `resume` only if they say yes.
-- **"The foreman is held back because setup's journal couldn't be read"**, or **"Setup's journal couldn't be read"**: run `status` and tell the director in plain words what it says. Only when it says a newer Wheelhouse wrote the journal, they update Wheelhouse; otherwise suggest no fix. Never open, edit, move or delete the journal, even with their permission. Offer to carry on later.
+- **"The Bosun is held back because setup's journal couldn't be read"**, or **"Setup's journal couldn't be read"**: run `status` and tell the director in plain words what it says. Only when it says a newer Wheelhouse wrote the journal, they update Wheelhouse; otherwise suggest no fix. Never open, edit, move or delete the journal, even with their permission. Offer to carry on later.
 
 ## Uninstall
 
@@ -144,5 +144,5 @@ When the director asks to remove Wheelhouse from the project, or types `/wheelho
 | "They want to change an answer, but that step is done; I'll say it can't be changed" | Run `choices`, then `change <key>`: its card says what changing it takes. Never a flat no. |
 | "Customise gave four cards; I'll ask them one by one" | Ask `asks` together, in one call, so they can move between them. |
 | "Their message is a big product request; I'll start on that and set up later" | Setup comes first. One line saying so, keep the request, then `resume`. |
-| "I'll just look into their idea while a step runs" | No work on the request until setup is done; it goes to the front desk then. |
-| "The board is green; I'll sum it up and move on" | `resume` at once and ask its card exactly as given: it opens with the director's first briefing. |
+| "I'll just look into their idea while a step runs" | No work on the request until setup is done; it goes to the First Mate then. |
+| "The Logbook is green; I'll sum it up and move on" | `resume` at once and ask its card exactly as given: it opens with the director's first briefing. |

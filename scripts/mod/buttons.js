@@ -26,7 +26,7 @@ import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, UNINSTALL_LINE } from '../state/
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
-export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
+export const CANT_ANSWER = 'This card can\'t be answered here: ask the First Mate about it.';
 // A setup card's note: setup asks it in its own chat, and that is where it is answered.
 export const SETUP_ANSWER = 'This card can\'t be answered here: answer it in the chat where setup asked it.';
 // A trust card's note, and a take-over card's: each is answered only in the chat where it was asked.

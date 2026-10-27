@@ -26,7 +26,7 @@ export const FOREMAN_LEAD = 'Wheelhouse foreman:'
 export const ASK_MS = BRIDGE_MS + 1500
 export const TICK_ASK_MS = WATCH_BRIDGE_MS + 5000
 // The Calm interface's set words (scripts/lib/calm-words.js), written as the pane says them.
-export const STOP_HALTS = 'Halts every builder at once.'
+export const STOP_HALTS = 'Halts the whole Crew at once.'
 export const ONLY_YOU_LIFT = 'Only you can lift it.'
 export const NOTHING_NEEDS_YOU = 'Nothing needs you.'
 export const RECORDING = 'Recording…'
@@ -36,9 +36,9 @@ export const SHOW_ME = 'Show me'
 export const WHAT_CHANGED = 'What changed:'
 export const SUGGEST = 'Suggest a change…'
 export const WHAT_WOULD_YOU_CHANGE = 'What would you change?'
-export const SENT_TO_FRONT_DESK = 'Sent to the front desk. A new proposal will follow.'
-export const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.'
-export const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.'
+export const SENT_TO_FRONT_DESK = 'Sent to the First Mate. A new proposal will follow.'
+export const NOT_HANDED = 'That didn\'t reach the First Mate. Type it in the chat instead.'
+export const NOT_HERE = 'This pane lives in the First Mate\'s chat. Type /wheelhouse there.'
 // The toast at a session's start on a computer with no Node.js, where no hook can run (check 35):
 // scripts/hooks/node-floor.cjs's missingMessage(), kept in step by tests/scripts/hooks/node-floor.test.js.
 export const NODE_MISSING = 'Wheelhouse needs a free program called Node.js, version 22 or later, and this computer doesn\'t have it. Download the version marked LTS from https://nodejs.org and install it, then start a new conversation. Nothing else needs to change, and nothing has been lost.'

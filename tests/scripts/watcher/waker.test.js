@@ -879,7 +879,7 @@ test('under STOP nothing is started or woken; what waits goes once STOP lifts', 
   setStop({ by: 'prompt' });
   await w.wakeForeman(writeWake(P, bundle('e1')));
   await w.wakeFeature('login-page', writeWake(P, featureBundle('login-page')));
-  await assert.rejects(w.startFeature({ work: 'search-box', worktree: worktree() }), /STOP/);
+  await assert.rejects(w.startFeature({ work: 'search-box', worktree: worktree() }), /All stop/);
   assert.equal(fake.calls.length, 0);
   assert.equal(w.waiting().length, 2);
 
@@ -907,7 +907,7 @@ test('under STOP Shape 2 prints nothing until STOP lifts', () => withHome(async 
   setStop({ by: 'prompt' });
   const record = writeWake(P, bundle('e1'));
   await two.wakeForeman(record);
-  await assert.rejects(two.startFeature({ work: 'search-box', worktree: worktree() }), /STOP/);
+  await assert.rejects(two.startFeature({ work: 'search-box', worktree: worktree() }), /All stop/);
   assert.deepEqual(lines, []);
   liftStop();
   await two.pump();
@@ -1126,7 +1126,7 @@ test('each wake reads the level in force and gives the foreman and a feature tha
   assert.match(feature.args[1], /Thoroughness: Balanced/);
   assert.match(feature.args[1], /\nbuilder: model model-top, effort medium\n/);
   assert.match(feature.args[1], /\nreviewer: model model-mid, effort high\n/);
-  assert.doesNotMatch(feature.args[1], /build it again|second fresh reviewer/);
+  assert.doesNotMatch(feature.args[1], /build it again|second fresh Lookout/);
   assert.deepEqual(notes, []);
 
   // Lean, not ready yet: Balanced, said once in the watcher's log.
@@ -1155,7 +1155,7 @@ test('each wake reads the level in force and gives the foreman and a feature tha
   assert.deepEqual(sessionFlags((await wakeForeman()).args), { model: 'model-top', effort: 'medium', fallback: 'model-mid' });
   feature = await startFeature();
   assert.deepEqual(sessionFlags(feature.args), { model: 'model-top', effort: 'xhigh', fallback: 'model-mid' });
-  assert.match(feature.args[1], /\nCritical-area work gets a second fresh reviewer; both must report CLEAN\.$/);
+  assert.match(feature.args[1], /\nCritical-area work gets a second fresh Lookout; both must report CLEAN\.$/);
   assert.doesNotMatch(feature.args[1], /build it again/);
   // A premium setting its own card didn't make, and a pin in the configuration alone, count for nothing.
   confirmSetting('premium', 'paid-too');
@@ -1376,7 +1376,7 @@ test('the rest holds on this computer when its record can\'t be raised, and a wa
   fs.appendFileSync(fake.calls[0].output, "You've hit your limit · resets 5pm\n");
   fake.end(fake.calls[0].pid, 1);
   await flush();
-  assert.match(errors.join('\n'), /at its usage limit, and its line for the board couldn't be recorded/);
+  assert.match(errors.join('\n'), /at its usage limit, and its line for the Logbook couldn't be recorded/);
   assert.equal(sessionFlags(fake.calls[1].args).model, 'model-top');
   // At Balanced the premium model isn't used, so nothing is kept.
   confirmSetting('efficiency', 'balanced');

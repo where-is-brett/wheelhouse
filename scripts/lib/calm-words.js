@@ -24,7 +24,7 @@ export const SUGGEST_SAYS = 'Tell me what you\'d change; I\'ll come back with a 
 // The prompt shown when the director has chosen to suggest a change.
 export const WHAT_WOULD_YOU_CHANGE = 'What would you change?';
 // The note shown once the director's words have been handed to the front desk.
-export const SENT_TO_FRONT_DESK = 'Sent to the front desk. A new proposal will follow.';
+export const SENT_TO_FRONT_DESK = 'Sent to the First Mate. A new proposal will follow.';
 // The note for a suggestion made at a time: a new proposal is coming and nothing goes live meanwhile.
 export const suggestedAt = (hhmm) => `You suggested a change at ${hhmm}. A new proposal is on its way, and nothing goes live meanwhile.`;
 // The note for a suggestion typed in the chat, naming the card it is about.
@@ -32,22 +32,22 @@ export const typeYourChange = (n) => `Type your change in the chat, and I'll kno
 // The note shown while a press is being written down.
 export const RECORDING = 'Recording…';
 // The note shown when a suggestion could not be handed to the front desk.
-export const NOT_HANDED = 'That didn\'t reach the front desk. Type it in the chat instead.';
+export const NOT_HANDED = 'That didn\'t reach the First Mate. Type it in the chat instead.';
 // The note shown when a press could not be written down at all.
 export const NOT_RECORDED = 'That wasn\'t recorded. Try again, or type it in the chat.';
 // The note shown in place of the pane while setup is still running.
 export const SETTING_UP = 'Setup is still running. This pane opens when it finishes.';
 // The note shown in a chat that is not the front desk's.
-export const NOT_HERE = 'This pane lives in the front desk\'s chat. Type /wheelhouse there.';
+export const NOT_HERE = 'This pane lives in the First Mate\'s chat. Type /wheelhouse there.';
 // The note shown when a setting is changed while STOP is on.
-export const SETTINGS_UNDER_STOP = 'Settings can\'t change while STOP is on. Lift STOP first.';
+export const SETTINGS_UNDER_STOP = 'Settings can\'t change while All stop is on. Lift All stop first.';
 // The line shown when the latest state could not be read: when it failed and which reading is shown.
 export const staleLine = (failedAt, shownAt) => `Couldn't read the latest at ${failedAt}. Showing ${shownAt}'s.`;
 // The verdict when no card is waiting, and the note shown when a card was replaced under the director.
 export const NOTHING_NEEDS_YOU = 'Nothing needs you.';
 export const CHANGED_WHILE_READING = 'That card changed while you were reading. Here is the new one.';
 // What STOP does, and who can undo it.
-export const STOP_HALTS = 'Halts every builder at once.';
+export const STOP_HALTS = 'Halts the whole Crew at once.';
 export const ONLY_YOU_LIFT = 'Only you can lift it.';
 
 const NUMBER_WORDS = ['Nothing', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
@@ -94,10 +94,10 @@ export const YOULL_SEE_IT = 'You\'ll see it';
 // The board's note under its rulings, and the briefing's and the board's closing lines.
 export const RULINGS_NOTE = 'For a glance, not a decision. Disagree? Say so and it becomes a question for you.';
 export const ASK_ME_ANYTHING = 'Ask me anything.';
-export const FULL_BOARD = 'For the full board, type /wheelhouse:board.';
+export const FULL_BOARD = 'For the full Logbook, type /wheelhouse:logbook.';
 export const USAGE_ON_TRACK = 'On track.';
 // The line that points the director to the board when a briefing is cut to nothing else.
-export const ASK_FOR_THE_BOARD = 'Ask for the board.';
+export const ASK_FOR_THE_BOARD = 'Ask for the Logbook.';
 // The mark on a card that can wait, with the minutes it takes.
 export const optionalMark = (minutes) => `optional · ${minutes} min`;
 // The front desk's recommendation on a card ("Approve, because the checks passed.").
@@ -150,7 +150,7 @@ export function foldedParts(keys) {
 }
 
 // What each deciding button is said to have done, in the past.
-const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift STOP': 'STOP lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
+const DECIDED = { Approve: 'Approved', Confirm: 'Confirmed', 'Lift STOP': 'All stop lifted', 'Do it': 'Done', 'Push it': 'Pushed', 'Change it': 'Changed', 'End it': 'Ended', 'Merge the fix': 'Merged' };
 const decidedWord = (label) => DECIDED[label];
 // A meanwhile that says when something happens ("It goes live within the hour"), as opposed to
 // one that says only what waits.
@@ -197,8 +197,8 @@ export const SETUP_DONE = Object.freeze({
 // What has happened, said for step 9 when it settled on something other than a test that arrived
 // just now: the test of an earlier setup on this computer, or a test that didn't arrive.
 export const PHONE_TESTED_EARLIER = 'Phone notifications reached your phone in an earlier setup.';
-export const PHONE_TEST_MISSED = 'The test notification didn\'t arrive. The board says what to check.';
-export const PHONE_SKIPPED = 'Phone notifications skipped for now: ask the front desk to set them up any time.';
+export const PHONE_TEST_MISSED = 'The test notification didn\'t arrive. The Logbook says what to check.';
+export const PHONE_SKIPPED = 'Phone notifications skipped for now: ask the First Mate to set them up any time.';
 // The line that opens a setup step: its place among the steps this computer runs and its minutes.
 export const setupStepLine = (position, total, minutes) => `Step ${position} of ${total} · about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
 // What carries on while the director's step is asked, and that it needs nothing from them.
@@ -226,8 +226,8 @@ export const healthVerdict = (passed, total, waiting = 0) => {
 // The notification's title, and what it says when STOP is on (design section 23.8). A notification
 // carries counts and card numbers only, never a card's words.
 export const NOTIFICATION_TITLE = 'Wheelhouse';
-export const NOTIFICATION_TITLE_STOP = 'Wheelhouse · STOP is on';
-export const STOP_NOTIFICATION = 'Every builder has halted. Open Claude to see why.';
+export const NOTIFICATION_TITLE_STOP = 'Wheelhouse · All stop is on';
+export const STOP_NOTIFICATION = 'The whole Crew has halted. Open Claude to see why.';
 // "2 waiting on you: cards 3 and 4." from the cards' numbers, in order.
 export function waitingOnYou(numbers) {
   const named = numbers.length === 1 ? String(numbers[0]) : `${numbers.slice(0, -1).join(', ')} and ${numbers.at(-1)}`;

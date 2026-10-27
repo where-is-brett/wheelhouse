@@ -200,8 +200,8 @@ test('a card with a set line for another pull request than its plain lines name 
   const data = otherPullRequest();
   assert.match(cardProblems(data.question).join(' '), /pull request #14/);
   // Only Why?, which asks the front desk: its parts can't be trusted to show.
-  assert.deepEqual(cardButtons(data), { buttons: [FAILED_WHY], note: 'This card can\'t be answered here: ask the front desk about it.' });
-  assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the front desk about it.');
+  assert.deepEqual(cardButtons(data), { buttons: [FAILED_WHY], note: 'This card can\'t be answered here: ask the First Mate about it.' });
+  assert.equal(CANT_ANSWER, 'This card can\'t be answered here: ask the First Mate about it.');
   assert.deepEqual(cardButtons({ ...data, options: ['Approve', 'Not now'] }), { buttons: [FAILED_WHY], note: CANT_ANSWER });
 });
 

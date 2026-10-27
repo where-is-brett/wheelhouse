@@ -22,7 +22,7 @@ const NO_USAGE = 'Usage counts aren\'t on yet';
 const NO_HEALTH = 'How the project stands couldn\'t be read';
 export const NO_SETTINGS = 'The settings couldn\'t be read';
 export const NO_SOURCES = 'The weekly check of official sources hasn\'t run yet';
-const NO_CLOCK = 'The board\'s clock couldn\'t be read';
+const NO_CLOCK = 'The Logbook\'s clock couldn\'t be read';
 // The step a feature reads as while the director's Not now to its build commands holds it.
 export const NOT_NOW_STEP = 'waiting on you to allow its build commands';
 // The Windows build-commands settings, one per computer: confirmed only through their own card.
@@ -314,7 +314,7 @@ const AGENT_LINES_SHOWN = 2;
 // reads as it always has. An agent that isn't known, or options the adapter refuses, throw.
 function agentHealth(agent) {
   const { name, ...options } = typeof agent === 'string' ? { name: agent } : agent;
-  if (typeof name !== 'string' || !Object.hasOwn(SAFETY_LINES, name)) throw new Error(`The board has no safety line for the agent ${JSON.stringify(name)}`);
+  if (typeof name !== 'string' || !Object.hasOwn(SAFETY_LINES, name)) throw new Error(`The Logbook has no safety line for the agent ${JSON.stringify(name)}`);
   const { label, safetyLine } = SAFETY_LINES[name];
   return safetyLine(options).slice(0, AGENT_LINES_SHOWN).map((line, i) => ({ level: 'watch', text: cap(i === 0 ? `${label}: ${line}` : line) }));
 }
@@ -355,7 +355,7 @@ function part(missing, name, build, fallback) {
   try {
     return build();
   } catch {
-    missing.push(`The board's ${name} couldn't be built`);
+    missing.push(`The Logbook's ${name} couldn't be built`);
     return fallback;
   }
 }

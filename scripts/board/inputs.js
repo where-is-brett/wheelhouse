@@ -124,7 +124,7 @@ export async function loadBoardInputs(options = {}) {
   try {
     return await gather(isRecord(options) ? options : {});
   } catch {
-    return { none: 'The board\'s inputs couldn\'t be read this time' };
+    return { none: 'The Logbook\'s inputs couldn\'t be read this time' };
   }
 }
 

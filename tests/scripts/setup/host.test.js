@@ -714,11 +714,11 @@ test('STOP stops the step between its parts, with what it made still recorded', 
     const folder = productFolder();
     const step = stepFor(w);
     const planned = await answerAll(step, ctxFor(folder), choose());
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped: () => true }), /STOP came on/);
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped: () => true }), /All stop came on/);
     assert.deepEqual(readJournal().runs.flatMap((r) => r.changes), [], 'stopped before anything was made');
     // STOP coming on after the repositories: they stay recorded; no record or state clone follows.
     let looks = 0;
-    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped: () => (looks += 1) > 3 }), /STOP came on/);
+    await assert.rejects(applyStep(step, folder, planned.changes, { answers: planned.answers, stopped: () => (looks += 1) > 3 }), /All stop came on/);
     const made = readJournal().runs.flatMap((r) => r.changes);
     assert.ok(made.some((c) => c.target === `github:${USER}/Shop`));
     assert.ok(!made.some((c) => c.target.endsWith('project.json')));

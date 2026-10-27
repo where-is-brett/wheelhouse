@@ -65,14 +65,14 @@ test('the set words are the ones the design names', () => {
   assert.equal(words.WHAT_CHANGED, 'What changed:');
   assert.equal(words.SUGGEST_SAYS, 'Tell me what you\'d change; I\'ll come back with a new proposal.');
   assert.equal(words.WHAT_WOULD_YOU_CHANGE, 'What would you change?');
-  assert.equal(words.SENT_TO_FRONT_DESK, 'Sent to the front desk. A new proposal will follow.');
+  assert.equal(words.SENT_TO_FRONT_DESK, 'Sent to the First Mate. A new proposal will follow.');
   assert.equal(words.RECORDING, 'Recording…');
-  assert.equal(words.NOT_HANDED, 'That didn\'t reach the front desk. Type it in the chat instead.');
+  assert.equal(words.NOT_HANDED, 'That didn\'t reach the First Mate. Type it in the chat instead.');
   assert.equal(words.SETTING_UP, 'Setup is still running. This pane opens when it finishes.');
-  assert.equal(words.NOT_HERE, 'This pane lives in the front desk\'s chat. Type /wheelhouse there.');
-  assert.equal(words.SETTINGS_UNDER_STOP, 'Settings can\'t change while STOP is on. Lift STOP first.');
+  assert.equal(words.NOT_HERE, 'This pane lives in the First Mate\'s chat. Type /wheelhouse there.');
+  assert.equal(words.SETTINGS_UNDER_STOP, 'Settings can\'t change while All stop is on. Lift All stop first.');
   assert.equal(words.CHANGED_WHILE_READING, 'That card changed while you were reading. Here is the new one.');
-  assert.equal(words.STOP_HALTS, 'Halts every builder at once.');
+  assert.equal(words.STOP_HALTS, 'Halts the whole Crew at once.');
   assert.equal(words.ONLY_YOU_LIFT, 'Only you can lift it.');
 });
 
@@ -94,10 +94,10 @@ test('PUT_OFF holds Why? and Suggest a change… and keeps Explain more', () => 
 
 test('each pane message reads as section 23.7 has it', () => {
   assert.equal(words.RECORDING, 'Recording…');
-  assert.equal(words.NOT_HANDED, 'That didn\'t reach the front desk. Type it in the chat instead.');
+  assert.equal(words.NOT_HANDED, 'That didn\'t reach the First Mate. Type it in the chat instead.');
   assert.equal(words.SETTING_UP, 'Setup is still running. This pane opens when it finishes.');
-  assert.equal(words.NOT_HERE, 'This pane lives in the front desk\'s chat. Type /wheelhouse there.');
-  assert.equal(words.SETTINGS_UNDER_STOP, 'Settings can\'t change while STOP is on. Lift STOP first.');
+  assert.equal(words.NOT_HERE, 'This pane lives in the First Mate\'s chat. Type /wheelhouse there.');
+  assert.equal(words.SETTINGS_UNDER_STOP, 'Settings can\'t change while All stop is on. Lift All stop first.');
   assert.equal(words.staleLine('14:05', '14:02'), 'Couldn\'t read the latest at 14:05. Showing 14:02\'s.');
   assert.equal(words.NOT_RECORDED, 'That wasn\'t recorded. Try again, or type it in the chat.');
 });
@@ -108,7 +108,7 @@ test('a deciding toast is the label in the past, then what happens where the car
   assert.equal(words.decidedToast('Confirm', 'that feature waits; the others carry on'), 'Confirmed.');
   assert.equal(words.decidedToast('Confirm', 'The change is in force; it applies by 18:00.'), 'Confirmed. It applies by 18:00.');
   assert.equal(words.decidedToast('Do it', undefined), 'Done.');
-  assert.equal(words.decidedToast('Lift STOP', 'Builders start again within the hour.'), 'STOP lifted. Builders start again within the hour.');
+  assert.equal(words.decidedToast('Lift STOP', 'Builders start again within the hour.'), 'All stop lifted. Builders start again within the hour.');
   assert.equal(words.awayToast('Away until 18:00', true), 'Away until 18:00. Undo in the pane for a minute.');
   assert.equal(words.awayToast('Here', false), 'Here.');
 });
@@ -168,9 +168,9 @@ test('the briefing\'s and the board\'s set phrases', () => {
   assert.equal(words.YOULL_SEE_IT, 'You\'ll see it');
   assert.equal(words.RULINGS_NOTE, 'For a glance, not a decision. Disagree? Say so and it becomes a question for you.');
   assert.equal(words.ASK_ME_ANYTHING, 'Ask me anything.');
-  assert.equal(words.FULL_BOARD, 'For the full board, type /wheelhouse:board.');
+  assert.equal(words.FULL_BOARD, 'For the full Logbook, type /wheelhouse:logbook.');
   assert.equal(words.USAGE_ON_TRACK, 'On track.');
-  assert.equal(words.ASK_FOR_THE_BOARD, 'Ask for the board.');
+  assert.equal(words.ASK_FOR_THE_BOARD, 'Ask for the Logbook.');
   assert.equal(words.optionalMark(3), 'optional · 3 min');
   assert.equal(words.recommends('Approve, because the checks passed.'), 'I recommend Approve, because the checks passed.');
   assert.equal(words.behindTheScenes(9), 'Plus 9 changes behind the scenes you don\'t need to see.');
@@ -217,8 +217,8 @@ test('setup\'s step line, meanwhile line, phone words and verdict say what the d
 
 test('the notification\'s title and words are the design\'s, and name only counts and card numbers', () => {
   assert.equal(words.NOTIFICATION_TITLE, 'Wheelhouse');
-  assert.equal(words.NOTIFICATION_TITLE_STOP, 'Wheelhouse · STOP is on');
-  assert.equal(words.STOP_NOTIFICATION, 'Every builder has halted. Open Claude to see why.');
+  assert.equal(words.NOTIFICATION_TITLE_STOP, 'Wheelhouse · All stop is on');
+  assert.equal(words.STOP_NOTIFICATION, 'The whole Crew has halted. Open Claude to see why.');
   assert.equal(words.waitingOnYou([3, 4]), '2 waiting on you: cards 3 and 4.');
   assert.equal(words.waitingOnYou([4]), '1 waiting on you: card 4.');
   assert.equal(words.waitingOnYou([1, 2, 3]), '3 waiting on you: cards 1, 2 and 3.');

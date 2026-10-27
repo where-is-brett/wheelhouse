@@ -225,8 +225,8 @@ test('device flow switched off is said with the page to tick, and asked again', 
     /Enable Device Flow was not ticked on your app's page after 8 minutes/,
   );
   await assert.rejects(
-    ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: deviceFlow({ disabled: Infinity }).fetch, halt: () => { throw new Error('STOP came on'); } }),
-    /STOP came on/,
+    ownAppCode({ app: OWN, account: USER, run: gh.run, fetch: deviceFlow({ disabled: Infinity }).fetch, halt: () => { throw new Error('All stop came on'); } }),
+    /All stop came on/,
   );
   // Another refusal is not taken for the tick.
   const refused = async () => ({ ok: true, status: 200, json: async () => ({ error: 'unauthorized_client' }) });

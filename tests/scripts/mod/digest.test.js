@@ -54,7 +54,7 @@ test('/digest gives the briefing since the last one, within its words, in plain 
   // The verdict opens it, the same sentence as the pane's; there is no title before it.
   assert.equal(plain.text.split('\n')[0], 'One thing needs you. Nothing is broken.');
   assert.match(plain.text, /Waiting on you:\n1\. Approve the sign-in page/);
-  assert.match(plain.text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\.$/);
+  assert.match(plain.text, /\n\nAsk me anything\. For the full Logbook, type \/wheelhouse:logbook\.$/);
 
   // The glossary's plain words, as the briefing the hook adds is given in.
   fs.rmSync(path.join(wheelhouseHome(), 'projects', P, 'views', 'waiting.json'));

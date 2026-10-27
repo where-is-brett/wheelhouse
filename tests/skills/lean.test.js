@@ -1,5 +1,5 @@
 // tests/skills/lean.test.js
-// Lean's playbook (design section 6.4, Part 4 Task 3): the record, the board, building, merging, undo and the copy, with
+// Lean's playbook (design section 6.4, Part 4 Task 3): the record, the Logbook, building, merging, undo and the copy, with
 // git alone. The playbook is text the chat follows, so these tests hold what it says: the record line for each kind,
 // the git commands as the brief gives them (and that they work, in a repository of the test's own), the safety lines the
 // board starts with, and that the kit built from it names neither a Claude Code tool nor, in its source, Copilot.
@@ -32,7 +32,7 @@ after(() => stand.restore());
 
 const KINDS = ['card', 'approval', 'review', 'merge', 'undo', 'stop', 'lift-stop', 'copy'];
 const KEYS = ['at', 'kind', 'card', 'choice', 'commit', 'proof', 'by', 'tier'];
-const FRONT_DESK_LINE = 'At Lean, follow wheelhouse-lean for the record, the board, building and merging';
+const FRONT_DESK_LINE = 'At Lean, follow wheelhouse-lean for the record, the Logbook, building and merging';
 const CLAUDE_CODE_TOOL_WORDS = /\b(Write|Read|Edit|Bash) tool\b|Claude Code/;
 const TOOL_NAMES = ['AskUserQuestion', 'PushNotification', 'ToolSearch', 'SendMessage', 'CLAUDE_PLUGIN_ROOT', 'TodoWrite', 'WebFetch', 'WebSearch', 'NotebookRead'];
 
@@ -41,7 +41,7 @@ function exampleLines() {
   return playbook.split('\n').filter((line) => line.startsWith('{"at"'));
 }
 
-// The playbook's section named heading, up to the next `##` heading, leaving out the fenced examples (the board's own headings are in them).
+// The playbook's section named heading, up to the next `##` heading, leaving out the fenced examples (the Logbook's own headings are in them).
 function section(text, heading) {
   text = text.replace(/^```[\s\S]*?^```$/gm, '');
   const start = text.indexOf(`\n## ${heading}\n`);
@@ -66,16 +66,16 @@ test('the playbook has front matter, then its path comment, and is named lean', 
   assert.ok(playbook.split('\n')[2].length < 1100);
 });
 
-test('Claude Code\'s front desk does not mention Lean or wheelhouse-lean', () => {
+test('Claude Code\'s First Mate does not mention Lean or wheelhouse-lean', () => {
   const frontDesk = read('skills/front-desk/SKILL.md');
   assert.doesNotMatch(frontDesk, /wheelhouse-lean/);
   assert.doesNotMatch(frontDesk, /\bLean\b/);
 });
 
-test('the kit\'s front desk sends a Lean session to wheelhouse-lean, near its top', () => {
+test('the kit\'s First Mate sends a Lean session to wheelhouse-lean, near its top', () => {
   const frontDesk = kit.get('skills/wheelhouse-front-desk/SKILL.md');
   const at = frontDesk.indexOf(FRONT_DESK_LINE);
-  assert.ok(at > 0, 'the line is in the kit\'s front desk');
+  assert.ok(at > 0, 'the line is in the kit\'s First Mate');
   assert.ok(at < frontDesk.indexOf('## The command'), 'before the steps that need Node.js');
   assert.equal(frontDesk.split(FRONT_DESK_LINE).length, 2, 'once');
 });
@@ -230,12 +230,12 @@ test('a feature is in hand from the branch until the director says it is built, 
   assert.match(section(playbook, 'Building'), /Check nothing is in hand/);
 });
 
-test('a feature that writes into the record or the board is caught before an approval card', () => {
+test('a feature that writes into the record or the Logbook is caught before an approval card', () => {
   const check = 'git diff --name-only main...feature/<slug> -- .wheelhouse wheelhouse';
   assert.equal(playbook.split(check).length, 3, 'in Reviewing and in Merging');
   assert.match(section(playbook, 'Reviewing'), new RegExp(check.replaceAll('.', '\\.')));
   assert.match(section(playbook, 'Merging'), /don't offer \*\*Approve\*\*/);
-  // The command, as written, in a repository: silent for a clean feature, naming the file for one that touches the record or the board.
+  // The command, as written, in a repository: silent for a clean feature, naming the file for one that touches the record or the Logbook.
   const r = repo('guard');
   const { cwd } = r.make('project');
   r.run(cwd, 'init', '-b', 'main');
@@ -247,7 +247,7 @@ test('a feature that writes into the record or the board is caught before an app
   commitFile(r, cwd, '.wheelhouse/record/2026-10-23.jsonl', '{"kind":"approval"}\n', 'Builder writes an approval');
   assert.equal(diff(), '.wheelhouse/record/2026-10-23.jsonl');
   r.run(cwd, 'switch', '-c', 'feature/board', 'main');
-  commitFile(r, cwd, 'wheelhouse/board.md', 'Tier: Lean\n', 'Builder writes the board');
+  commitFile(r, cwd, 'wheelhouse/board.md', 'Tier: Lean\n', 'Builder writes the Logbook');
   assert.equal(r.run(cwd, 'diff', '--name-only', 'main...feature/board', '--', '.wheelhouse', 'wheelhouse'), 'wheelhouse/board.md');
 });
 
@@ -386,15 +386,15 @@ function command(start) {
 const sh = (cwd, env, script) => spawnSync('sh', ['-c', script], { cwd, env, encoding: 'utf8' });
 const recordLine = (kind, extra = {}) => `${JSON.stringify({ at: '2026-10-23T01:00:00Z', kind, card: null, choice: null, commit: null, proof: kind === 'review' ? 'chat-review' : 'chat-click', by: 'chat', tier: 'lean', ...extra })}\n`;
 
-test('the board chooses its block by whether the helper is installed and answering, never by Node.js alone', () => {
-  const board = section(playbook, 'The board');
+test('the Logbook chooses its block by whether the helper is installed and answering, never by Node.js alone', () => {
+  const board = section(playbook, 'The Logbook');
   assert.match(board, /whether Wheelhouse's own helper is installed here and answering/);
   assert.doesNotMatch(playbook, /Node\.js may run/, 'the rule no longer keys off Node.js');
   assert.match(board, /Having Node\.js on the computer doesn't count/);
   // Ruling P5-31: the helper exists now, and its block is used while `<lean> status` answers.
   assert.doesNotMatch(board, /not used until the helper exists/);
   assert.match(board, /The helper answers when `<lean> status` prints `"ok":true`/);
-  assert.match(board, /never switch a board to the third block because `node --version` printed a version/);
+  assert.match(board, /never switch the Logbook to the third block because `node --version` printed a version/);
   assert.ok(playbook.includes('On a Mac or Windows where Wheelhouse\'s helper is installed and answering (`<lean> status` prints `"ok":true`):'));
   // Windows where Node.js runs has the first block's guard line (safetyLine), so the first block names it.
   assert.ok(playbook.includes('On a Mac, or on Windows where Node.js runs, with no helper answering:'));
@@ -405,18 +405,18 @@ test('the board chooses its block by whether the helper is installed and answeri
   assert.equal(blocks.length, 4);
   assert.match(blocks[0], /No Wheelhouse guards run on this computer yet/);
   assert.match(blocks[1], /No Wheelhouse guards run on Windows without Node\.js/);
-  assert.match(blocks[2], /STOP is enforced by Wheelhouse's guards/);
+  assert.match(blocks[2], /All stop is enforced by Wheelhouse's guards/);
   assert.match(blocks[3], /Wheelhouse's shell guard runs on this Mac/);
-  assert.match(blocks[3], /STOP isn't enforced/, 'the shell guard keeps no STOP');
+  assert.match(blocks[3], /All stop isn't enforced/, 'the shell guard keeps no All stop');
   assert.ok(playbook.includes('On a Mac where Wheelhouse\'s shell guard runs, with no helper answering:'));
-  assert.match(playbook, /\| "Node\.js is here, so the board can show the helper's lines" \|/);
+  assert.match(playbook, /\| "Node\.js is here, so the Logbook can show the helper's lines" \|/);
 });
 
-test('the board takes the shell guard\'s block only where the hook file names the guard and the guard is beside it (ruling P5-35)', { skip: !unix && 'a shell script' }, () => {
-  const board = section(leanKit, 'The board');
+test('the Logbook takes the shell guard\'s block only where the hook file names the guard and the guard is beside it (ruling P5-35)', { skip: !unix && 'a shell script' }, () => {
+  const board = section(leanKit, 'The Logbook');
   const check = /`(grep -q wheelhouse-lean-guard\.sh [^`]+)`/.exec(board)?.[1];
-  assert.ok(check, 'the board says how to ask whether the shell guard runs');
-  assert.match(section(playbook, 'The board'), /\{\{agent-hooks\}\}/, 'the source names the hook folder in general words');
+  assert.ok(check, 'the Logbook says how to ask whether the shell guard runs');
+  assert.match(section(playbook, 'The Logbook'), /\{\{agent-hooks\}\}/, 'the source names the hook folder in general words');
   const home = tempFolder('wh-lean-guard-check-');
   const hooks = path.join(home, '.copilot', 'hooks');
   const asks = (env = {}) => spawnSync('/bin/sh', ['-c', check], { env: { PATH: '/usr/bin:/bin', HOME: home, ...env }, encoding: 'utf8' }).status;
@@ -426,7 +426,7 @@ test('the board takes the shell guard\'s block only where the hook file names th
   assert.notEqual(asks(), 0, 'a hook file with no guard beside it');
   fs.writeFileSync(path.join(hooks, 'wheelhouse-lean-guard.sh'), kit.get('hooks/wheelhouse-lean-guard.sh'));
   assert.equal(asks(), 0, 'the hook file and the guard');
-  // The helper's registration, written over it, names no shell guard, so the board doesn't take that block.
+  // The helper's registration, written over it, names no shell guard, so the Logbook doesn't take that block.
   fs.writeFileSync(path.join(hooks, 'wheelhouse.json'), '{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"node hook-entry.js preToolUse"}]}}\n');
   assert.notEqual(asks(), 0, 'the helper\'s hook file');
   // COPILOT_HOME, where it is set, is the folder Copilot reads.
@@ -453,14 +453,14 @@ test('a record line is added with the shell, word for word, never by editing the
   assert.equal(fs.readFileSync(day, 'utf8'), `${recordLine('stop')}${line}\n`);
 });
 
-test('the board is a view: STOP comes from the last committed stop or lift-stop line on the main version', () => {
-  const stop = section(playbook, 'STOP');
-  assert.match(stop, /The record says, not the board/);
+test('the Logbook is a view: All stop comes from the last committed stop or lift-stop line on the main version', () => {
+  const stop = section(playbook, 'All stop');
+  assert.match(stop, /The record says, not the Logbook/);
   assert.match(stop, /the last one decides/);
-  assert.match(stop, /the board and the record disagree, follow the record/);
-  assert.match(section(playbook, 'The board'), /The board is a view, not state/);
-  assert.match(section(playbook, 'The board'), /follow the record/);
-  // The command, as written, in a repository: a builder's edit to the board (ignored, so not in git) and a lift-stop on a feature's branch change nothing.
+  assert.match(stop, /the Logbook and the record disagree, follow the record/);
+  assert.match(section(playbook, 'The Logbook'), /The Logbook is a view, not state/);
+  assert.match(section(playbook, 'The Logbook'), /follow the record/);
+  // The command, as written, in a repository: a Crew member's edit to the Logbook (ignored, so not in git) and a lift-stop on a feature's branch change nothing.
   const grep = command('git grep -h -e stop main');
   const r = repo('stop');
   const { cwd } = r.make('project');
@@ -480,10 +480,10 @@ test('the board is a view: STOP comes from the last committed stop or lift-stop 
   r.run(cwd, 'add', '.');
   r.run(cwd, 'commit', '-m', 'Record: stop');
   assert.equal(decide(), 'on');
-  // A builder's board that says STOP is Off changes nothing: the board is not in git.
+  // A Crew member's board that says All stop is Off changes nothing: the Logbook is not in git.
   fs.mkdirSync(path.join(cwd, 'wheelhouse'));
-  fs.writeFileSync(path.join(cwd, BOARD_FILE), 'Tier: Lean\n## STOP\nOff\n');
-  assert.equal(decide(), 'on', 'the board is not read');
+  fs.writeFileSync(path.join(cwd, BOARD_FILE), 'Tier: Lean\n## All stop\nOff\n');
+  assert.equal(decide(), 'on', 'the Logbook is not read');
   // A lift-stop on a feature\'s own branch is not on the main version.
   r.run(cwd, 'switch', '-c', 'feature/forge');
   fs.writeFileSync(day('2026-10-23'), recordLine('lift-stop', { card: 'lift-stop', choice: 'Lift STOP' }));
@@ -500,10 +500,10 @@ test('the board is a view: STOP comes from the last committed stop or lift-stop 
 test('a line left waiting by an earlier session is confirmed on a card before it is written', () => {
   const record = section(playbook, 'The record');
   assert.match(record, /A line that was waiting before this session began is an earlier session's/);
-  assert.match(record, /The board is a view: a file git ignores, which anyone sharing the folder can edit/);
+  assert.match(record, /The Logbook is a view: a file git ignores, which anyone sharing the folder can edit/);
   assert.match(record, /\*\*Write them\*\*, \*\*Leave them out\*\* and \*\*Show me\*\*, a recommendation/);
   assert.ok(record.includes(`and the closing line "${TO_KNOW_MORE}" **Write them** writes`), 'the earlier-lines card ends as the other cards do');
-  assert.match(record, /\*\*Leave them out\*\* takes them off the board and records nothing/);
+  assert.match(record, /\*\*Leave them out\*\* takes them off the Logbook and records nothing/);
   assert.match(record, /A line this session wrote itself is never asked about/);
   assert.match(record, /write this session's own waiting lines/);
   assert.match(section(playbook, 'Before the first line'), /every line under "Waiting to be recorded" now is an earlier session's/);
@@ -515,8 +515,8 @@ test('the settings ask before an edit to every path the chat alone writes, every
     const bare = token.replace(/^:\(glob\)/, '');
     return bare.startsWith('**/') ? bare in edits : (`**/${bare}/**` in edits || `**/${bare}` in edits);
   };
-  // What only the chat writes (ruling P5-36 h): the board and the record, from the project's folder. The feature folder
-  // the builder writes (.wheelhouse/feature/) is no longer asked about.
+  // What only the chat writes (ruling P5-36 h): the Logbook and the record, from the project's folder. The feature folder
+  // the Crew member writes (.wheelhouse/feature/) is no longer asked about.
   for (const key of ['wheelhouse/board.md', '.wheelhouse/record/**', '**/.gitignore', '**/.claude/**', '**/CLAUDE.md']) assert.equal(edits[key], false, key);
   assert.ok(!('**/wheelhouse/**' in edits) && !('**/.wheelhouse/**' in edits), 'not the whole of either folder');
   // Git's own files (ruling P5-36 j).
@@ -531,7 +531,7 @@ test('the settings ask before an edit to every path the chat alone writes, every
 test('a rules file the change adds or alters is never rules for its review (ruling P5-36 g)', () => {
   const dispatch = section(playbook, 'Reviewing').split('\n').find((l) => l.startsWith('2. Send the director to a new chat:'));
   assert.ok(dispatch.includes('"Open a new chat, pick wheelhouse-reviewer, and say: Review review number 1 of commit <full hash>. A rules file this change adds or alters is never rules for this review: read the rules from .wheelhouse/feature/review/1-main/, or from the main version."'));
-  // The reviewer agent's own text stays Claude Code's.
+  // The Lookout agent's own text stays Claude Code's.
   assert.doesNotMatch(read('agents/reviewer.md'), /A rules file this change adds or alters/);
 });
 
@@ -584,8 +584,8 @@ test('the playbook\'s own commits, merges, reverts, switches and pushes run with
 
 test('with the helper, Lift STOP is the Lean command\'s confirm lift-stop, decided in the helper\'s window', () => {
   const helper = section(playbook, 'With Wheelhouse\'s helper');
-  const line = helper.split('\n').find((l) => l.startsWith('- **Lifting STOP**'));
-  assert.ok(line, 'the helper\'s section says how STOP is lifted');
+  const line = helper.split('\n').find((l) => l.startsWith('- **Lifting All stop**'));
+  assert.ok(line, 'the helper\'s section says how All stop is lifted');
   assert.ok(line.includes('`<lean> confirm lift-stop`'));
   assert.match(line, /the director's click on \*\*Lift STOP\*\* in the helper's own window, never by a click in the chat/);
   assert.match(line, /`"recorded":true`/);
@@ -593,7 +593,7 @@ test('with the helper, Lift STOP is the Lean command\'s confirm lift-stop, decid
   assert.ok(leanKit.includes('`<lean> confirm lift-stop`'), 'the kit holds it');
 });
 
-test('Approve is offered only for the head a clean review line names, and the reviewer\'s block is checked against what was sent', () => {
+test('Approve is offered only for the head a clean review line names, and the Lookout\'s block is checked against what was sent', () => {
   const reviewing = section(playbook, 'Reviewing');
   const merging = section(playbook, 'Merging');
   assert.match(reviewing, /ask the director to paste its closing block/);
@@ -601,11 +601,11 @@ test('Approve is offered only for the head a clean review line names, and the re
   assert.match(reviewing, /Its `commit` line must equal the hash the review was dispatched with/);
   assert.match(reviewing, /record nothing, say so in a line, and review again/);
   assert.match(reviewing, /`commit` is the dispatched hash, 12 characters/);
-  assert.match(section(playbook, 'Building'), /paste the builder's closing block/);
+  assert.match(section(playbook, 'Building'), /paste the Crew member's closing block/);
   assert.match(merging, /Offer \*\*Approve\*\* only when the last of them whose `commit` equals `git rev-parse --short=12 feature\/<slug>` says `clean`/);
-  assert.match(merging, /a reviewer has not read this code/);
+  assert.match(merging, /a Lookout has not read this code/);
   assert.match(section(playbook, 'Cards'), /the one a clean `review` line names/);
-  // The check, as written, in a repository: a builder\'s later commit means no Approve until a new clean review.
+  // The check, as written, in a repository: a Crew member\'s later commit means no Approve until a new clean review.
   const grep = command('git grep -h -e review main');
   const r = repo('approve');
   const { cwd } = r.make('project');
@@ -624,9 +624,9 @@ test('Approve is offered only for the head a clean review line names, and the re
     const lines = sh(cwd, r.env, grep).stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.kind === 'review' && e.commit === head);
     return lines.length > 0 && lines.at(-1).choice === 'clean';
   };
-  assert.equal(offered(), true, 'the head is the one a reviewer read');
+  assert.equal(offered(), true, 'the head is the one a Lookout read');
   r.run(cwd, 'switch', 'feature/export');
-  commitFile(r, cwd, 'c.txt', 'three\n', 'The builder commits again after the review');
+  commitFile(r, cwd, 'c.txt', 'three\n', 'The Crew member commits again after the review');
   r.run(cwd, 'switch', 'main');
   assert.equal(offered(), false, 'new code: no Approve');
   fs.appendFileSync(path.join(cwd, LEAN_RECORD_DIR, '2026-10-23.jsonl'), recordLine('review', { choice: 'findings', commit: r.run(cwd, 'rev-parse', '--short=12', 'feature/export') }));
@@ -634,11 +634,11 @@ test('Approve is offered only for the head a clean review line names, and the re
   assert.equal(offered(), false, 'a review with findings is not a clean one');
 });
 
-test('a change to a file that steers the agents is said plainly on the card, and the reviewer reads the rules from the main version', () => {
+test('a change to a file that steers the agents is said plainly on the card, and the Lookout reads the rules from the main version', () => {
   const guard = section(playbook, 'Guardrail changes');
   assert.match(guard, /This change alters what steers the agents or VS Code/);
   assert.match(guard, /`guardrail-<slug>`/);
-  assert.match(guard, /The reviewer reads the project's rules from the main version, not from the feature/);
+  assert.match(guard, /The Lookout reads the project's rules from the main version, not from the feature/);
   assert.match(guard, /`git show <base>:<path>`/);
   assert.match(guard, /\.wheelhouse\/feature\/review\/<n>-main\/<path>/);
   assert.match(section(playbook, 'Reviewing'), /read the project's rules from \.wheelhouse\/feature\/review\/1-main\//);
@@ -710,13 +710,13 @@ test('on a code host the approved commit is what is pushed, and Undo is the host
     r.run(hostSide, 'push', 'origin', 'main');
   };
 
-  // M1: the feature is approved at one head; the builder commits again before the push; the host gets the approved commit.
+  // M1: the feature is approved at one head; the Crew member commits again before the push; the host gets the approved commit.
   r.run(mine, 'fetch', 'origin');
   r.run(mine, 'switch', '-c', 'feature/export', 'origin/main');
   commitFile(r, mine, 'b.txt', 'two\n', 'Add the export');
   const full = r.run(mine, 'rev-parse', 'feature/export');
   const approved = full.slice(0, 12);
-  commitFile(r, mine, 'sneak.txt', 'unreviewed\n', 'The builder commits again');
+  commitFile(r, mine, 'sneak.txt', 'unreviewed\n', 'The Crew member commits again');
   r.run(mine, 'switch', 'main');
   assert.notEqual(r.run(mine, 'rev-parse', '--short=12', 'feature/export'), approved, 'the head moved after the approval, so the playbook pushes nothing');
   const pushed = sh(mine, r.env, pushFeature.replace('<full approved hash>', full).replace('<slug>', 'export'));
@@ -763,10 +763,10 @@ test('Lean checks the project was set up before it acts, and points to setup whe
   assert.ok(kit.has('skills/wheelhouse-setup/SKILL.md'));
 });
 
-// ---- STOP ----
+// ---- All stop ----
 
-test('STOP is said to be unenforced', () => {
-  const stop = section(playbook, 'STOP');
+test('All stop is said to be unenforced', () => {
+  const stop = section(playbook, 'All stop');
   assert.match(stop, /nothing here makes me stop|nothing enforces/i);
   assert.match(stop, /once (in|per) (a )?session/i);
   assert.match(stop, /VS Code's stop button/);
@@ -788,14 +788,14 @@ test('the key is never asked for in the chat', () => {
   assert.doesNotMatch(playbook, /ask (them|the director) for (the|a|their) (project )?(key|token|password)/i);
 });
 
-// ---- The board ----
+// ---- The Logbook ----
 
-test('the board is the file the design names, rewritten whole, and starts with the tier and the safety lines', () => {
-  const board = section(playbook, 'The board');
+test('the Logbook is the file the design names, rewritten whole, and starts with the tier and the safety lines', () => {
+  const board = section(playbook, 'The Logbook');
   assert.ok(board.includes(BOARD_FILE));
   assert.match(board, /rewrite/i);
   assert.match(board, /first line/i);
-  assert.ok(playbook.includes('```\nTier: Lean\n- Nothing is held off'), 'the board starts with the tier, then the safety lines');
+  assert.ok(playbook.includes('```\nTier: Lean\n- Nothing is held off'), 'the Logbook starts with the tier, then the safety lines');
   assert.equal(playbook.split('\nTier: Lean\n').length, 5, 'one block for each case');
 });
 
@@ -822,8 +822,8 @@ test('every safety line safetyLine gives for Lean is in the playbook exactly, fo
   assert.deepEqual(safetyLine({ tier: 'lean', platform: 'win32', node: true, helper: true }), safetyLine({ tier: 'lean', platform: 'darwin', node: true, helper: true }));
 });
 
-test('the playbook names a case for the board by what the computer allows, not by guessing', () => {
-  const board = section(playbook, 'The board');
+test('the playbook names a case for the Logbook by what the computer allows, not by guessing', () => {
+  const board = section(playbook, 'The Logbook');
   assert.match(board, /Mac/);
   assert.match(board, /Windows/);
   assert.match(board, /Node\.js/);
@@ -893,11 +893,11 @@ test('the kit\'s sources and settings skills send the chat to wheelhouse-lean, a
   assert.match(sources, /no weekly check|nothing checks the sources/i, 'Lean has no weekly check, and the skill says so');
   assert.match(settings, /wheelhouse-lean/);
   assert.match(settings, /section "Settings"/);
-  for (const heading of ['The board', 'Settings', 'Sources', 'The briefing', 'STOP']) assert.ok(section(playbook, heading), heading);
+  for (const heading of ['The Logbook', 'Settings', 'Sources', 'The briefing', 'All stop']) assert.ok(section(playbook, heading), heading);
   for (const command of ['board', 'briefing', 'stop']) assert.match(kit.get(`skills/wheelhouse-${command}/SKILL.md`), /wheelhouse-lean/, command);
 });
 
-test('the builder and the reviewer the playbook names are in the kit', () => {
+test('the Crew member and the Lookout the playbook names are in the kit', () => {
   assert.ok(playbook.includes('wheelhouse-builder'));
   assert.ok(playbook.includes('wheelhouse-reviewer'));
   assert.ok(kit.has('agents/wheelhouse-builder.agent.md'));
@@ -989,9 +989,9 @@ test('an idea is written at once and a ruling only after its confirm card, each 
   assert.match(part, /never narrowed/);
   // The ruling's card has every part a card has, and the three options.
   const ruling = /\*\*A ruling\*\*[\s\S]*?(?=\n- \*\*Confirm|\n\n)/.exec(part)?.[0] ?? '';
-  for (const bit of [/what this is \(a standing rule for every feature/, /why it comes to them \(it steers the builder from now on\)/, /\*\*Confirm\*\*/, /\*\*Change the words\*\*/, /\*\*Not now\*\*/, /recommend/, /meanwhile \(nothing changes until they confirm\)/]) assert.match(ruling, bit);
+  for (const bit of [/what this is \(a standing rule for every feature/, /why it comes to them \(it steers the Crew member from now on\)/, /\*\*Confirm\*\*/, /\*\*Change the words\*\*/, /\*\*Not now\*\*/, /recommend/, /meanwhile \(nothing changes until they confirm\)/]) assert.match(ruling, bit);
   assert.match(part, /only after/);
-  // The board shows them; the builder's brief names the confirmed rulings, and the reviewer checks against them.
+  // The Logbook shows them; the Crew member's brief names the confirmed rulings, and the Lookout checks against them.
   assert.match(section(playbook, 'Building'), /"Rulings"/);
   assert.match(section(playbook, 'Building'), /"kind":"ruling"/);
   assert.match(section(playbook, 'Reviewing'), /Check the change against the rulings/);
@@ -1046,12 +1046,12 @@ test('the record\'s git grep reads only the day files, so a design\'s text never
   }
 });
 
-test('new words for a ruling keep its short name, and the brief and the board take the last line for each (ruling P5-53)', () => {
+test('new words for a ruling keep its short name, and the brief and the Logbook take the last line for each (ruling P5-53)', () => {
   const part = intake();
   assert.match(part, /New words for a ruling are a new `ruling` line under the same `card`/);
   assert.match(part, /The last `ruling` line with a short name is the ruling/);
   assert.match(section(playbook, 'Building'), /the last `ruling` line for each short name/);
-  assert.match(playbook.slice(playbook.indexOf('\n## The board\n'), playbook.indexOf('\n## Intake at Lean\n')), /Rulings the last `ruling` line for each short name/);
+  assert.match(playbook.slice(playbook.indexOf('\n## The Logbook\n'), playbook.indexOf('\n## Intake at Lean\n')), /Rulings the last `ruling` line for each short name/);
   // A merged idea that would pass the limit keeps the newest words, and says where the older ones are.
   assert.match(part, /would pass 4000 characters/);
   assert.match(part, /\(The earlier words are in this idea's earlier line\.\)/);
@@ -1083,7 +1083,7 @@ test('Intake at Lean names no Claude Code tool and no cli.js step without the he
   assert.match(part, /With Wheelhouse's helper/);
 });
 
-test('where the helper answers, intake uses the front desk\'s command and writes no record line', () => {
+test('where the helper answers, intake uses the First Mate\'s command and writes no record line', () => {
   const helper = section(playbook, 'With Wheelhouse\'s helper');
   const bullet = /- \*\*Intake\*\*[^\n]*/.exec(helper)?.[0] ?? '';
   for (const step of ['`cli.js similar`', '`cli.js record idea`', '`cli.js record ruling`', '`cli.js card`']) assert.ok(bullet.includes(step), step);
@@ -1099,13 +1099,13 @@ test('where the helper answers, intake uses the front desk\'s command and writes
   assert.match(bullet, /shaping questions/);
 });
 
-test('the board lists ideas and rulings, with Nothing when there are none', () => {
-  const board = playbook.slice(playbook.indexOf('\n## The board\n'), playbook.indexOf('\n## Intake at Lean\n'));
+test('the Logbook lists ideas and rulings, with Nothing when there are none', () => {
+  const board = playbook.slice(playbook.indexOf('\n## The Logbook\n'), playbook.indexOf('\n## Intake at Lean\n'));
   const at = (h) => board.indexOf(`\n## ${h}\n`);
   assert.ok(at('Ideas') > at('Waiting to be recorded') && at('Rulings') > at('Ideas'), 'Ideas, then Rulings, after the lines waiting');
   assert.ok(at('What the record\'s marks mean') > at('Rulings'));
   assert.match(board, /say "Nothing" where a part is empty/);
-  assert.match(section(playbook, 'The board'), /Ideas/);
+  assert.match(section(playbook, 'The Logbook'), /Ideas/);
   // A new board from setup has them, with Nothing.
   const setup = read('adapters/copilot/skills/setup-lean/SKILL.md');
   assert.ok(setup.includes('## Ideas\nNothing\n'));

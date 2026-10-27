@@ -13,7 +13,7 @@ const at = (ms) => new Date(ms);
 const MIN = 60 * 1000;
 // The notification's exact words (design section 23.8): its title, what it says and what is asked after it.
 const SAY = (saying, { title = 'Wheelhouse', ask = 'Then ask any new cards now, once.' } = {}) => `Send Claude's notification in one line, titled "${title}", saying: ${saying} ${ask}`;
-const STOP_SAY = SAY('Every builder has halted. Open Claude to see why.', { title: 'Wheelhouse · STOP is on' });
+const STOP_SAY = SAY('The whole Crew has halted. Open Claude to see why.', { title: 'Wheelhouse · All stop is on' });
 const HERE = { value: 'here' };
 
 // A pane model as status.js gives it, with only what the courier reads filled in.
@@ -72,7 +72,7 @@ test('a new card, STOP, an incident, a health stop and a finished feature are ea
   assert.deepEqual(needsYou({ after: model({ stop: { on: true, since: 'yesterday' } }) }), []);
 
   const first = await wake(items);
-  assert.equal(first.submit, `${LEADS.courier} 3 new cards (1, 2 and 3); STOP is on; 1 incident open; 1 health line at its stop level; 1 feature finished. ${STOP_SAY}`);
+  assert.equal(first.submit, `${LEADS.courier} 3 new cards (1, 2 and 3); All stop is on; 1 incident open; 1 health line at its stop level; 1 feature finished. ${STOP_SAY}`);
   assert.deepEqual(first.sent, items.map((i) => i.id));
   // The same items, later, with STOP lifted, wake only for the reminder of the cards still not
   // asked, the build question's too (ruling 72); then nothing: each was sent once.
@@ -111,7 +111,7 @@ test('do not disturb and quiet hours let through only STOP and an incident', () 
   const items = [cardItem('c-block', 1, true), { id: 'health:h', kind: 'health' }, { id: 'finished:w', kind: 'finished' }];
   assert.deepEqual(await wake(items, { presence: { value: 'dnd' } }), { submit: null, sent: [] });
   const urgent = await wake([...items, { id: 'stop:s', kind: 'stop' }, { id: 'incident:i', kind: 'incident' }], { presence: { value: 'dnd' } });
-  assert.equal(urgent.submit, `${LEADS.courier} STOP is on; 1 incident open. ${STOP_SAY}`);
+  assert.equal(urgent.submit, `${LEADS.courier} All stop is on; 1 incident open. ${STOP_SAY}`);
   assert.deepEqual(urgent.sent, ['stop:s', 'incident:i']);
 
   // Quiet hours from 22:00 to 07:00 in the computer's own time zone: 23:30 in Sydney is inside,
@@ -157,7 +157,7 @@ test('nothing wakes while a turn runs, and the items wait for the next tick', ()
   assert.deepEqual(await wake(items, { idle: false }), { submit: null, sent: [] });
   assert.deepEqual(await wake(items, { idle: undefined }), { submit: null, sent: [] });
   const next = await wake(items, { now: () => at(T0 + TICK_MS) });
-  assert.equal(next.submit, `${LEADS.courier} 1 new card (1); STOP is on. ${STOP_SAY}`);
+  assert.equal(next.submit, `${LEADS.courier} 1 new card (1); All stop is on. ${STOP_SAY}`);
 }));
 
 test('ten cards in a minute make one wake; another comes no sooner than ten minutes on', () => opened(async () => {
@@ -192,7 +192,7 @@ test('STOP wakes at once, inside the ten minutes', () => opened(async () => {
   const held = [cardItem('c-1', 1), cardItem('c-2', 2)];
   assert.deepEqual(await wake(held, { now: () => at(T0 + MIN) }), { submit: null, sent: [] });
   const stop = await wake([...held, { id: 'stop:s', kind: 'stop' }], { now: () => at(T0 + 2 * MIN) });
-  assert.equal(stop.submit, `${LEADS.courier} 1 new card (2); STOP is on. ${STOP_SAY}`);
+  assert.equal(stop.submit, `${LEADS.courier} 1 new card (2); All stop is on. ${STOP_SAY}`);
   // An incident too.
   const incident = await wake([...held, { id: 'incident:i', kind: 'incident' }], { now: () => at(T0 + 3 * MIN) });
   assert.equal(incident.submit, `${LEADS.courier} 1 incident open. ${SAY('1 incident open.')}`);
@@ -215,7 +215,7 @@ test('the first tick of a session wakes for nothing and marks what it found', ()
   // What comes after it wakes as usual: no wake has been given yet, so no gap holds it.
   const next = await wake([...found, cardItem('c-2', 2)], { now: () => at(T0 + 2 * TICK_MS) });
   // STOP is among the items, so the notification's title says so, though STOP itself woke before.
-  assert.equal(next.submit, `${LEADS.courier} 1 new card (2). ${SAY('1 waiting on you: card 2.', { title: 'Wheelhouse · STOP is on' })}`);
+  assert.equal(next.submit, `${LEADS.courier} 1 new card (2). ${SAY('1 waiting on you: card 2.', { title: 'Wheelhouse · All stop is on' })}`);
   // A tick with no session id to know it by wakes for nothing and marks nothing.
   assert.deepEqual(await wake([cardItem('c-3', 3)], { session: undefined, now: () => at(T0 + COURIER_GAP_MS * 2) }), { submit: null, sent: [] });
   assert.ok(!sentIds().includes('card:c-3'));
@@ -226,7 +226,7 @@ test('a gap between ticks is no opening: a STOP that came meanwhile wakes for it
   // The session's ticks stopped for ten minutes (the computer slept); STOP was set meanwhile. The
   // wake's turn had asked the card.
   const back = await wake([{ id: 'stop:s', kind: 'stop' }], { now: () => at(T0 + 10 * MIN) });
-  assert.equal(back.submit, `${LEADS.courier} STOP is on. ${STOP_SAY}`);
+  assert.equal(back.submit, `${LEADS.courier} All stop is on. ${STOP_SAY}`);
 }));
 
 test('a second front desk opening beside a ticking one marks nothing, so the first still wakes', () => opened(async () => {
@@ -260,7 +260,7 @@ test('STOP or an incident set inside quiet hours wakes once, and its own health 
     ],
   });
   const first = await wake(needsYou({ after }), { quiet, now: inside });
-  assert.equal(first.submit, `${LEADS.courier} STOP is on; 1 incident open. ${STOP_SAY}`);
+  assert.equal(first.submit, `${LEADS.courier} All stop is on; 1 incident open. ${STOP_SAY}`);
   assert.deepEqual(await wake(needsYou({ after }), { quiet, now: outside }), { submit: null, sent: [] });
 }));
 
@@ -460,7 +460,7 @@ test('a reminder waits for the gap after the card\'s own wake, and is held while
     await wake([cardItem('c-2', 2)]);
     const stopped = [cardItem('c-2', 2), { id: 'stop:s', kind: 'stop' }];
     const stop = await wake(stopped, { now: () => at(T0 + 6 * MIN) });
-    assert.equal(stop.submit, `${LEADS.courier} STOP is on. ${STOP_SAY}`);
+    assert.equal(stop.submit, `${LEADS.courier} All stop is on. ${STOP_SAY}`);
     assert.deepEqual(stop.sent, ['stop:s']);
     assert.deepEqual(await wake(stopped, { now: () => at(T0 + 6 * MIN + 2 * COURIER_GAP_MS) }), { submit: null, sent: [] }, 'held while STOP is on');
     assert.ok(!sentIds().includes('remind:c-2'));
@@ -584,9 +584,9 @@ test('a reminder\'s mark is kept while its card waits, past SENT_KEPT too', () =
   assert.deepEqual(await wake(items, { now: () => at(T0 + 4 * COURIER_GAP_MS) }), { submit: null, sent: [] });
 }));
 
-test('the wake hands the front desk the notification\'s exact words, titled Wheelhouse, or Wheelhouse · STOP is on under STOP', () => opened(async () => {
+test('the wake hands the front desk the notification\'s exact words, titled Wheelhouse, or Wheelhouse · All stop is on under STOP', () => opened(async () => {
   const cards = await wake([cardItem('c-3', 3), cardItem('c-4', 4)]);
   assert.equal(cards.submit, 'Wheelhouse courier: 2 new cards (3 and 4). Send Claude\'s notification in one line, titled "Wheelhouse", saying: 2 waiting on you: cards 3 and 4. Then ask any new cards now, once.');
   const stop = await wake([{ id: 'stop:s2', kind: 'stop' }], { now: () => at(T0 + TICK_MS) });
-  assert.equal(stop.submit, 'Wheelhouse courier: STOP is on. Send Claude\'s notification in one line, titled "Wheelhouse · STOP is on", saying: Every builder has halted. Open Claude to see why. Then ask any new cards now, once.');
+  assert.equal(stop.submit, 'Wheelhouse courier: All stop is on. Send Claude\'s notification in one line, titled "Wheelhouse · All stop is on", saying: The whole Crew has halted. Open Claude to see why. Then ask any new cards now, once.');
 }));

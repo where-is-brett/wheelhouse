@@ -70,10 +70,10 @@ export const SAYS = {
   noPrState: 'Wheelhouse couldn\'t check the pull request just now, so nothing was recorded; try again',
   failed: 'That card\'s answer can\'t be recorded now',
   cantSign: 'Wheelhouse couldn\'t sign that here, so nothing was recorded',
-  cantLift: 'STOP couldn\'t be lifted, so nothing was recorded',
-  notNoted: 'STOP is on, so that wasn\'t noted; the card stays as it was',
+  cantLift: 'All stop couldn\'t be lifted, so nothing was recorded',
+  notNoted: 'All stop is on, so that wasn\'t noted; the card stays as it was',
   lost: 'That wasn\'t noted this time, so the card stays as it was',
-  buildsByClick: 'That setting is set only by a click on its own card when the front desk asks it, so nothing was recorded',
+  buildsByClick: 'That setting is set only by a click on its own card when the First Mate asks it, so nothing was recorded',
   setupByClick: 'A setup step goes ahead only by a click on its own card when setup asks it, so nothing was recorded',
   elsewhere: ALLOWED_ELSEWHERE,
   noWords: WRITE_FIRST,
@@ -201,7 +201,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const prompt = [promptOf(kindOf(data), label, n, card)];
   if (stopState().on) {
     if (label === NOT_NOW) return no(SAYS.notNoted);
-    return { made: false, says: `STOP is on, so that wasn't noted; the front desk has ${what}`, submit: prompt };
+    return { made: false, says: `All stop is on, so that wasn't noted; the First Mate has ${what}`, submit: prompt };
   }
   // A choice closes the card, so it is claimed first, and let go only when it was neither sent
   // nor kept.
@@ -212,7 +212,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   if (written === null) {
     if (marker) release([marker]);
     if (label === NOT_NOW || choice) return no(SAYS.lost);
-    return { made: false, says: `That wasn't noted this time; the front desk has ${what}`, submit: prompt };
+    return { made: false, says: `That wasn't noted this time; the First Mate has ${what}`, submit: prompt };
   }
   const says = kept(`Recorded: ${what}`, written === 'sent');
   return label === NOT_NOW ? { made: true, says } : { made: true, says, submit: prompt };

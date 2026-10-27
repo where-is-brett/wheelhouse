@@ -345,7 +345,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   assert.deepEqual(waitingIds(), [other.id]);
 
   const noted = fake({ stop: true });
-  assert.deepEqual(await press(other, noted, 'Not now'), { made: false, says: 'STOP is on, so that wasn\'t noted; the card stays as it was' });
+  assert.deepEqual(await press(other, noted, 'Not now'), { made: false, says: 'All stop is on, so that wasn\'t noted; the card stays as it was' });
   assert.equal(untouched(noted), 0);
   assert.deepEqual(pendingFiles(), []);
 
@@ -353,7 +353,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   const explain = fake({ stop: true });
   const asked = await press(other, explain, 'Show me');
   assert.equal(asked.made, false);
-  assert.equal(asked.says, 'STOP is on, so that wasn\'t noted; the front desk has Show me on card 1');
+  assert.equal(asked.says, 'All stop is on, so that wasn\'t noted; the First Mate has Show me on card 1');
   assert.deepEqual(asked.submit, [`Wheelhouse pane: the director pressed Show me on card 1 (${other.id}).`]);
   assert.equal(untouched(explain), 0);
   assert.equal(stopState().on, true);
@@ -361,7 +361,7 @@ test('under STOP, Approve still records and closes its card; Not now says it was
   // A Lift STOP press lifts it, and its answer is then written.
   const lift = putCard(liftStopCard(), 2);
   const lifting = fake();
-  assert.deepEqual(await press(lift, lifting, 'Lift STOP', { liftStop }), { made: true, says: 'STOP lifted.' });
+  assert.deepEqual(await press(lift, lifting, 'Lift STOP', { liftStop }), { made: true, says: 'All stop lifted.' });
   assert.equal(stopState().on, false);
   assert.deepEqual(lifting.calls.order, ['record', 'write']);
 }));
@@ -632,7 +632,7 @@ test('suggest hands one prompt naming the card by number and id, with the words 
   const client = fake();
   const out = await suggest(card, client, '  Make it\n\nshorter,\tplease  ');
   assert.deepEqual(out, {
-    made: true, says: 'Sent to the front desk. A new proposal will follow.',
+    made: true, says: 'Sent to the First Mate. A new proposal will follow.',
     submit: [`Wheelhouse pane: the director suggested a change on card 2 (${card.id}): Make it shorter, please`],
   });
   const long = await suggest(card, fake(), `${'a'.repeat(499)}${'b'.repeat(50)}`);
@@ -672,7 +672,7 @@ test('suggest under STOP notes nothing but still hands the prompt', () => withKe
   setStop({ by: 'mod' });
   const client = fake({ stop: true });
   const out = await suggest(card, client, 'Shorter', { stopState });
-  assert.equal(out.says, 'Sent to the front desk. A new proposal will follow.');
+  assert.equal(out.says, 'Sent to the First Mate. A new proposal will follow.');
   assert.deepEqual(out.submit, [`Wheelhouse pane: the director suggested a change on card 1 (${card.id}): Shorter`]);
   assert.equal(client.calls.write.length, 0);
   assert.deepEqual(pendingFiles(), []);

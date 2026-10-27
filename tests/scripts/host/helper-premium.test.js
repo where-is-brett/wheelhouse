@@ -282,8 +282,8 @@ test('under STOP the helper offers no card and checks nothing', async () => {
     await c.withHelper(async (client) => {
       await atThorough(c, client);
       fs.writeFileSync(stopFile(), '');
-      assert.match((await client.premium.card({ project: P })).refused, /STOP/);
-      assert.match((await client.premium.check({ project: P })).refused, /STOP/);
+      assert.match((await client.premium.card({ project: P })).refused, /All stop/);
+      assert.match((await client.premium.check({ project: P })).refused, /All stop/);
       assert.deepEqual(c.asked, []);
     });
   } finally { c.cleanup(); }

@@ -6,7 +6,7 @@ import { NAMES, glossaryOf, termsIn, termMatches, plainWords, knownConcepts, con
 
 const STARTER_TERMS = [
   'pull request', 'CI', 'merge', 'branch', 'commit', 'review', 'slice', 'lane', 'feature flag', 'preview',
-  'worktree', 'STOP', 'Standard', 'Locked', 'the helper', 'the foreman', 'the gate', 'appetite', 'the done contract',
+  'worktree', 'All stop', 'Standard', 'Locked', 'the helper', 'the Bosun', 'the gate', 'appetite', 'the done contract',
 ];
 
 test('the starter holds every term, each with plain words and an everyday example', () => {
@@ -21,12 +21,13 @@ test('the starter holds every term, each with plain words and an everyday exampl
 
 test('the project\'s entries come over the starter\'s, whatever their case', () => {
   const g = glossaryOf({
-    foreman: { data: { term: 'the foreman', plain: 'our site manager', example: 'Dave' } },
+    bosun: { data: { term: 'the bosun', plain: 'our deck boss', example: 'Dave' } },
     ci: { data: { term: 'ci', plain: 'the checks' } },
     sprocket: { data: { term: 'sprocket', plain: 'a toothed wheel' } },
     broken: { data: { term: 'broken' } },
   });
-  assert.deepEqual(g['the foreman'], { plain: 'our site manager', example: 'Dave' });
+  assert.deepEqual(g['the bosun'], { plain: 'our deck boss', example: 'Dave' });
+  assert.equal(g['the Bosun'], undefined);
   assert.equal(g.CI, undefined);
   assert.deepEqual(g.ci, { plain: 'the checks' });
   assert.deepEqual(g.sprocket, { plain: 'a toothed wheel' });
@@ -57,11 +58,11 @@ test('the verbs count in their other forms', () => {
   assert.deepEqual(termsIn('It was merged, reviewed and committed; merging and reviewing and committing go on', g), ['merge', 'review', 'commit']);
 });
 
-test('STOP, Standard and Locked count only in their own capitals', () => {
+test('All stop, Standard and Locked count only in their own capitals', () => {
   const g = glossaryOf({});
-  assert.deepEqual(termsIn('STOP is on; the Standard level, not Locked', g), ['STOP', 'Standard', 'Locked']);
-  assert.deepEqual(termsIn('We stop at the standard door, locked up', g), []);
-  assert.deepEqual(termsIn('Stop. Locked. Standard.', g), ['Locked', 'Standard']);
+  assert.deepEqual(termsIn('All stop is on; the Standard level, not Locked', g), ['All stop', 'Standard', 'Locked']);
+  assert.deepEqual(termsIn('We all stop at the standard door, locked up', g), []);
+  assert.deepEqual(termsIn('All Stop. Locked. Standard.', g), ['Locked', 'Standard']);
   // Other terms stay case-insensitive.
   assert.deepEqual(termsIn('ci and Merge', g), ['CI', 'merge']);
 });
@@ -155,11 +156,11 @@ test('verbs: a past or -ing form is replaced where there are words for it; the b
   assert.equal(verb.text, `We will commit it, then the saved step is checked\n\nTerms: commit means ${g.commit.plain}.`);
 });
 
-test('STOP, Standard and Locked keep their names, with their meaning, and only in their capitals', () => {
+test('All stop, Standard and Locked keep their names, with their meaning, and only in their capitals', () => {
   const g = glossaryOf({});
   assert.equal(
-    plainWords('STOP is on, so we stop. Standard is set, not Locked.', g, PLAIN).text,
-    'STOP (the emergency stop) is on, so we stop. Standard (the normal protection level) is set, not Locked (the stronger protection level).',
+    plainWords('All stop is on, so we all stop. Standard is set, not Locked.', g, PLAIN).text,
+    'All stop (the emergency stop) is on, so we all stop. Standard (the normal protection level) is set, not Locked (the stronger protection level).',
   );
 });
 
@@ -199,6 +200,17 @@ test('knownConcepts reads the known:* settings that are true; conceptOf names a 
   };
   assert.deepEqual(knownConcepts(settings), ['ci', 'the-helper']);
   assert.deepEqual(knownConcepts(undefined), []);
+});
+
+test('a concept known under a starter term\'s old name is known under its new one', () => {
+  assert.equal(conceptOf('the Bosun'), 'the-bosun');
+  assert.equal(conceptOf('All stop'), 'all-stop');
+  const settings = { 'known:the-foreman': { value: true, from: 'profile' }, 'known:stop': { value: true, from: 'profile' } };
+  assert.deepEqual(knownConcepts(settings), ['the-foreman', 'stop', 'the-bosun', 'all-stop']);
+  const g = glossaryOf({});
+  const out = plainWords('The Bosun asks; All stop is on.', g, { explanations: 'plain', known: knownConcepts(settings) });
+  assert.equal(out.text, 'The Bosun asks; All stop is on.');
+  assert.deepEqual(knownConcepts({ 'known:the-foreman': { value: false, from: 'profile' } }), []);
 });
 
 test('commands, addresses, branch and file names, quotations and setting names are kept as written', () => {

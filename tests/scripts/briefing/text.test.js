@@ -58,7 +58,7 @@ test('the parts come in the design\'s order, with unconfirmed changes first, and
     '',
     'Usage this week: 1.2M tokens.',
     '',
-    'Ask me anything. For the full board, type /wheelhouse:board.',
+    'Ask me anything. For the full Logbook, type /wheelhouse:logbook.',
   ].join('\n'));
   // Entries are plain lines, whatever they were written as.
   const plain = briefingText({ ...empty, waiting: ['[Pick](https://x.test) a\n## colour'], usage: 'Usage this week: 950 tokens.' });
@@ -108,7 +108,7 @@ test('an empty part folds into one line, never a heading saying None', () => {
   assert.doesNotMatch(text, /Changed for users:|To watch:|\bNone\b/);
   // Everything empty folds all three, and nothing waits.
   const none = briefingText(empty);
-  assert.equal(none, 'Nothing needs you. Nothing is broken.\n\n*Nothing changed for users, nothing in progress, nothing to watch.*\n\nAsk me anything. For the full board, type /wheelhouse:board.');
+  assert.equal(none, 'Nothing needs you. Nothing is broken.\n\n*Nothing changed for users, nothing in progress, nothing to watch.*\n\nAsk me anything. For the full Logbook, type /wheelhouse:logbook.');
   // With changes to confirm, they are the one part shown; the empty ones still fold.
   const first = briefingText({ ...empty, first: ['A level: copy 2'] });
   assert.match(first, /^Not in effect until you confirm:\n- A level: copy 2$/m);
@@ -145,7 +145,7 @@ test('each length keeps within its words, cutting from the end of each part with
     assert.ok(wordCount(text) <= words, `${name}: ${wordCount(text)} words`);
     const lines = text.split('\n');
     assert.equal(lines[0], '10 things need you. Nothing is broken.');
-    assert.equal(lines.at(-1), 'Ask me anything. For the full board, type /wheelhouse:board.');
+    assert.equal(lines.at(-1), 'Ask me anything. For the full Logbook, type /wheelhouse:logbook.');
     assert.equal(lines.at(-3), briefing.usage);
     // Each part keeps its first entries, in order, and says how many more there are.
     for (const [heading, what] of [['Waiting on you:', 'Question'], ['Changed for users:', 'Change'], ['Progress:', 'Step'], ['To watch:', 'Warning']]) {
@@ -165,7 +165,7 @@ test('each length keeps within its words, cutting from the end of each part with
   const small = { ...empty, waiting: ['One question'], watch: ['One warning'] };
   assert.equal(briefingText(small, { words: BRIEFING_WORDS.short }), [
     'One thing needs you. Nothing is broken.', '', 'Waiting on you:', '1. One question', '', 'To watch:', '- One warning', '',
-    '*Nothing changed for users, nothing in progress.*', '', 'Ask me anything. For the full board, type /wheelhouse:board.',
+    '*Nothing changed for users, nothing in progress.*', '', 'Ask me anything. For the full Logbook, type /wheelhouse:logbook.',
   ].join('\n'));
   // A length that can't be read is the standard one.
   assert.equal(briefingText(briefing, { words: 'long' }), briefingText(briefing, { words: BRIEFING_WORDS.standard }));
@@ -209,14 +209,14 @@ test('no input passes the word limit, however long its usage line or one entry',
   // The usage line alone too long is left out; the cut parts still show.
   assert.equal(briefingText(briefing, { words: BRIEFING_WORDS.short }), [
     'One thing needs you. Nothing is broken.', '', 'Waiting on you:', 'and 1 more', '', 'To watch:', 'and 1 more', '',
-    'Ask me anything. For the full board, type /wheelhouse:board.',
+    'Ask me anything. For the full Logbook, type /wheelhouse:logbook.',
   ].join('\n'));
   // A usage line that fits stays, with the parts cut to make room for it.
   const standard = briefingParts(briefing, { words: BRIEFING_WORDS.standard });
   assert.match(standard.text, /^One thing needs you\. Nothing is broken\.\n\nWaiting on you:\nand 1 more\n\nTo watch:\nand 1 more\n\nUsage this week: (a )+a?…\n\nAsk me anything\./);
   assert.equal(standard.shownWatch, 0);
   // A limit too small for even the headings sends the director to the board.
-  assert.equal(briefingText(briefing, { words: 5 }), 'Ask for the board.');
+  assert.equal(briefingText(briefing, { words: 5 }), 'Ask for the Logbook.');
   // With room for the verdict alone, that is what is shown.
   assert.equal(briefingText(briefing, { words: 7 }), 'One thing needs you. Nothing is broken.');
 });

@@ -4,29 +4,29 @@
 
 **Direct AI agents building your product, in plain words, with checks they can't skip.**
 
-Wheelhouse is for a product owner who isn't a developer. You say what you want in plain words. A front desk asks you short questions about what is yours to decide, each with buttons to click. Behind it, agents build the work and other agents review it, and nothing reaches the main version of your product until it has passed checks the agents can't skip. You make the product decisions; the agents do the building.
+Wheelhouse is for a product owner who isn't a developer. You say what you want in plain words. A First Mate asks you short questions about what is yours to decide, each with buttons to click. Behind it, the Crew builds the work and Lookouts check it, and nothing reaches the main version of your product until it has passed checks the agents can't skip. You make the product decisions; the agents do the building.
 
 `v0.1.2` is an early release for trying Wheelhouse out. It hasn't yet been used from start to finish on a real product.
 
 ## How it works
 
 1. **You ask.** In a Claude Desktop conversation, you write what you want: "Add a page where customers can book a time."
-2. **The front desk checks with you.** It asks only what is really yours to decide, as a card with clickable answers, and decides the rest itself, telling you so.
-3. **Agents build it.** A foreman hands each piece of work to builder agents, and to reviewer agents who check it.
-4. **Nothing ships unchecked.** The work reaches your main product only after its checks pass and a reviewer has looked. Anything that changes the safety rules needs your click as well.
-5. **You get a short briefing** of what's done, what's under way and what needs you. Type "stop" at any time and every builder halts until you click to carry on.
+2. **The First Mate checks with you.** It asks only what is really yours to decide, as a card with clickable answers, and decides the rest itself, telling you so.
+3. **The Crew builds it.** The Bosun hands each piece of work to the Crew, and to Lookouts who check it.
+4. **Nothing ships unchecked.** The work reaches your main product only after its checks pass and a Lookout has looked. Anything that changes the safety rules needs your click as well.
+5. **You get a short briefing** of what's done, what's under way and what needs you. Type "all stop" at any time and the whole Crew halts until you click to carry on.
 
 A card looks like this (an illustration):
 
 > **Approve** · Add the booking page to your product?
-> It lets customers pick a time from your calendar. The checks passed and a reviewer has looked.
+> It lets customers pick a time from your calendar. The checks passed and a Lookout has looked.
 > [ Approve ] [ Change it ]
 
 And a briefing opens like this:
 
 > Since you were last here at 09:10: the booking page is ready for you to look at. One thing needs you. Nothing is broken.
 
-**What it costs.** Wheelhouse is free and open source (Apache 2.0). The agents run on your own Claude plan, so their work comes out of your plan's usage, and Wheelhouse's board shows this week's usage, including the share of your weekly allowance.
+**What it costs.** Wheelhouse is free and open source (Apache 2.0). The agents run on your own Claude plan, so their work comes out of your plan's usage, and Wheelhouse's Logbook shows this week's usage, including the share of your weekly allowance.
 
 **What it protects.** Agents never hold your GitHub or GitLab keys, your clicks are signed so an agent can't approve for you, and on a Mac the agents' commands run fenced off from the rest of your computer. What it doesn't protect you from is in [`SECURITY.md`](SECURITY.md).
 
@@ -73,11 +73,11 @@ Copilot asks you before it runs each command, as it always does. What the line d
 1. **Checks git is here.** Without it, setup stops and tells you where to get it. Nothing has changed.
 2. **Gets Wheelhouse with git.** It fetches the release into `~/.copilot/wheelhouse/<tag>/`, copies Wheelhouse's skills, agents and instructions into `~/.copilot/`, and checks every copied file against the fingerprint the release lists for it. A file that doesn't match stops setup.
 3. **Asks the computer what it can run,** and says in one sentence which tier this is.
-4. **Sets up your project.** It adds Wheelhouse's VS Code settings to `.vscode/settings.json` (your own file is only changed after you click **Approve**), makes the record folder `.wheelhouse/record/` and the board `wheelhouse/board.md`, and makes one commit of the files it added.
+4. **Sets up your project.** It adds Wheelhouse's VS Code settings to `.vscode/settings.json` (your own file is only changed after you click **Approve**), makes the record folder `.wheelhouse/record/` and the Logbook `wheelhouse/board.md`, and makes one commit of the files it added.
 5. **Asks where the copy goes:** a folder you choose, such as a company drive, holding a bare copy of your project's history.
 6. **Compares your versions of VS Code and Copilot** with the list of versions Wheelhouse has tested, and says when yours haven't been tested yet.
 
-Then the chat follows Wheelhouse's own playbook for Lean: the record, the board, cards, building, merging, undo and the copy, all with git. The board's first lines say plainly what is and isn't enforced on your computer. At Lean nothing enforces STOP, an approval is a click in the chat that the chat records itself, and the VS Code settings are conveniences, not controls. **Lean is not for projects with real users.**
+Then the chat follows Wheelhouse's own playbook for Lean: the record, the Logbook, cards, building, merging, undo and the copy, all with git. The Logbook's first lines say plainly what is and isn't enforced on your computer. At Lean nothing enforces All stop, an approval is a click in the chat that the chat records itself, and the VS Code settings are conveniences, not controls. **Lean is not for projects with real users.**
 
 **For the chat reading this:** check `git --version` first; then `git clone --depth 1 --branch <tag> https://github.com/where-is-brett/wheelhouse.git "$HOME/.copilot/wheelhouse/<tag>"`, and follow `adapters/copilot/skills/setup-lean/SKILL.md` in that clone, step by step.
 

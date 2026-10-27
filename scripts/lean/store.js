@@ -44,7 +44,7 @@ export const MAIN_CHECKED_OUT = 'The main version is checked out in a folder, so
 export const MAIN_MOVED = 'The main version changed without an approval, so nothing is added to it until the director decides: Undo it or Keep it';
 export const NOT_IN_STORE = 'This project\'s git isn\'t in Wheelhouse\'s store yet, so the helper can\'t merge, undo or copy it';
 export const NO_COPY = 'No copy folder is set for this project yet';
-export const STOPPED = 'STOP is on';
+export const STOPPED = 'All stop is on';
 
 // The longest a project's tests may run before they count as failed, and how long a merge waits for another.
 export const LEAN_TEST_MS = 15 * 60 * 1000;
@@ -585,7 +585,7 @@ export async function mergeApproved({
       const merged = await tree.call(['merge', '--no-ff', '--no-edit', '-m', message, commit]);
       if (merged.code !== 0) {
         await tree.call(['merge', '--abort']);
-        refuse('It didn\'t fit the main version yet: later work touches the same lines, so it goes back to the builder. Nothing was added');
+        refuse('It didn\'t fit the main version yet: later work touches the same lines, so it goes back to the Crew. Nothing was added');
       }
       const sha = await tree.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The merge could not be read');
       const parents = (await tree.must(['rev-list', '--parents', '-n', '1', sha], 'The merge could not be read')).split(' ');
@@ -646,7 +646,7 @@ async function revertIn(project, lean, { run, now, at, commits }) {
       const reverted = await tree.call(['revert', '--no-edit', ...(parents === 2 ? ['-m', '1'] : []), commit]);
       if (reverted.code !== 0) {
         await tree.call(['revert', '--abort']);
-        refuse('The undo didn\'t apply cleanly, because later work touches the same files: ask the builder to do it as a new feature. Nothing was changed');
+        refuse('The undo didn\'t apply cleanly, because later work touches the same files: ask the Crew to do it as a new feature. Nothing was changed');
       }
     }
     return tree.must(['rev-parse', '--verify', 'HEAD^{commit}'], 'The undo could not be read');

@@ -319,14 +319,14 @@ export function describePlan({ plan, pins, assumptions = [] }) {
   for (const pin of pins) lines.push(`${pin.name}: ${pin.ref} (${pin.sha})`);
   for (const item of plan.changed) lines.push(`changed: ${item.upstream} ${item.path}`);
   lines.push(...stopReasons(plan));
-  if (plan.licenceChanged) lines.push('a licence file changed: the director gets a card');
+  if (plan.licenceChanged) lines.push('a licence file changed: you get a card');
   for (const id of plan.retest) {
     const assumption = assumptions.find((a) => a.id === id);
     lines.push(`re-test: ${id}${assumption ? ` (${assumption.retest === 'person' ? 'needs a person' : 'a script can re-test it'}): ${assumption.says}` : ''}`);
   }
   lines.push({
     plumbing: 'upgrade is plumbing: only the pins move; the release notes say "pins only"',
-    changed: 'upgrade changed files: the independent reviewer reads them as untrusted text, then the evaluation scenarios run',
+    changed: 'upgrade changed files: the independent Lookout reads them as untrusted text, then the evaluation scenarios run',
     stopped: 'upgrade stopped: an override or carried text breaks; rewrite or drop it before the upgrade goes on',
   }[plan.kind]);
   return lines;

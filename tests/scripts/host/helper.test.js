@@ -565,7 +565,7 @@ test('merge is refused with every gate reason when conditions fail', async () =>
       const answer = await client.merge({ project: 'o__p', number: 7, stop: true, bypass: true });
       assert.equal(answer.ok, false);
       assert.deepEqual(answer.reasons, [
-        'STOP is on',
+        'All stop is on',
         'the session is in bypass mode',
         LOCK_REASON,
         'CI has not passed on abc1234',
@@ -612,7 +612,7 @@ test('merge is refused while the STOP file exists, whatever the caller says', as
       fs.writeFileSync(stopFile(), '');
       await withHelper(adapter, async (client) => {
         const answer = await client.merge({ project: 'o__p', number: 7, stop: false, bypass: false });
-        assert.deepEqual(answer.reasons, ['STOP is on', UNCHECKED, UNREADABLE]);
+        assert.deepEqual(answer.reasons, ['All stop is on', UNCHECKED, UNREADABLE]);
         assert.deepEqual(adapter.merges, []);
       });
     });
@@ -1533,7 +1533,7 @@ test('/survey/again is refused under STOP, and takes nothing', async () => {
     await as(p.home, () => withHelper(fakeAdapter({ openRequests: async () => [] }), async (client) => {
       seedSurvey(SURVEYED);
       fs.writeFileSync(stopFile(), '');
-      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await client.survey.again({ project: 'o__p' }), { ok: false, refused: 'All stop is on' });
       assert.equal(surveysIn().length, 1);
     }));
   } finally { p.cleanup(); }
@@ -1556,7 +1556,7 @@ test('/survey/again holds the project\'s state only to write: other state reques
       // STOP set while it looks: nothing is written.
       fs.writeFileSync(stopFile(), '');
       answer();
-      assert.deepEqual(await again, { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await again, { ok: false, refused: 'All stop is on' });
       assert.equal(surveysIn().length, 1);
     }));
   } finally { p.cleanup(); }
@@ -1634,7 +1634,7 @@ test('/survey/carry-on makes an open request ready at the work\'s ref, on a line
       assert.doesNotMatch(await remoteHeads(p.remote.url), /feature|carry-on/);
       // Refused under STOP, making nothing ready.
       fs.writeFileSync(stopFile(), '');
-      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', number: 7 }), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', number: 7 }), { ok: false, refused: 'All stop is on' });
       assert.equal(readReadyRecord('o__p', 'carry-on-7-4'), null);
     }, { authorFor }));
   } finally { p.cleanup(); }
@@ -1666,7 +1666,7 @@ test('/survey/carry-on with a line makes a piece the survey lists ready, from wh
       assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'main' }), { ok: false, refused: 'the latest survey lists no unfinished work named main' });
       assert.doesNotMatch(await remoteHeads(p.remote.url), /carry-on-feature|carry-on-hours/);
       fs.writeFileSync(stopFile(), '');
-      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'hours' }), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await client.survey.carryOn({ project: 'o__p', line: 'hours' }), { ok: false, refused: 'All stop is on' });
     }, { authorFor }));
   } finally { p.cleanup(); }
 });
@@ -1699,8 +1699,8 @@ test('/survey/archive archives the survey\'s instruction files as they are on th
       assert.equal(await g(p.dir, 'show', `${restored.from.sha}:AGENTS.md`), 'Agents');
       assert.deepEqual(readReadyRecord('o__p', 'restore-instructions'), { ...restored.from, request: null, branch: null });
       fs.writeFileSync(stopFile(), '');
-      assert.deepEqual(await client.survey.archive({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
-      assert.deepEqual(await client.survey.restore({ project: 'o__p' }), { ok: false, refused: 'STOP is on' });
+      assert.deepEqual(await client.survey.archive({ project: 'o__p' }), { ok: false, refused: 'All stop is on' });
+      assert.deepEqual(await client.survey.restore({ project: 'o__p' }), { ok: false, refused: 'All stop is on' });
     }, { authorFor }));
   } finally { p.cleanup(); }
 });

@@ -284,7 +284,7 @@ test('telemetry posted to the receiver shows as this week\'s usage on the board 
     const board = await prompt(c, '/wheelhouse:board');
     assert.ok(board.startsWith(`${HEADINGS.board}\n\n`), board);
     assert.match(board, /- This week: 1\.2M tokens, about \$84 at API prices, 34% of your weekly allowance\n/);
-    assert.match(board, /- Front desk: 1\.2M tokens, about \$84\n/);
+    assert.match(board, /- First Mate: 1\.2M tokens, about \$84\n/);
     assert.match(board, /- Subagents: 200K tokens/);
     assert.doesNotMatch(board, /Token counts start once|weekly allowance shows once/);
 
@@ -292,7 +292,7 @@ test('telemetry posted to the receiver shows as this week\'s usage on the board 
     c.time(3 * HOUR);
     const briefing = await prompt(c, 'Good morning');
     assert.ok(briefing.startsWith(`${HEADINGS.briefing}\n\n`), briefing);
-    assert.ok(bodyOf(briefing).endsWith('Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance. On track.\n\nAsk me anything. For the full board, type /wheelhouse:board.'), briefing);
+    assert.ok(bodyOf(briefing).endsWith('Usage this week: 1.2M tokens, about $84 at API prices, 34% of your weekly allowance. On track.\n\nAsk me anything. For the full Logbook, type /wheelhouse:logbook.'), briefing);
   } finally {
     if (receiver) {
       receiver.kill();
@@ -490,7 +490,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.deepEqual(await bridge(c, { cmd: 'stop', origin: 'bridge', cwd: c.folder }), { ok: true, says: SAYS.stopOn });
     assert.deepEqual(await c.act(() => stopState()), { on: true, by: 'mod', at: new Date(T0 + MINUTE).toISOString() });
     // The board still answers under STOP, and says so.
-    assert.match(await prompt(c, '/wheelhouse:board'), /\n- STOP \(the emergency stop\) is on, since 19 October 2026\n/);
+    assert.match(await prompt(c, '/wheelhouse:board'), /\n- All stop \(the emergency stop\) is on, since 19 October 2026\n/);
 
     // /go run by anything but the director leaves STOP on.
     c.time(10 * MINUTE);
@@ -498,7 +498,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.equal(await c.act(() => stopState().on), true);
 
     // The director's /go lifts it, with a signed record of the lift.
-    assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: `STOP is off. ${SAYS.nothingBuilding}` });
+    assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: `All stop is off. ${SAYS.nothingBuilding}` });
     assert.equal(await c.act(() => stopState().on), false);
     const lifts = await c.act(() => eventsOf('action').filter((e) => e.data.action === 'lift-stop'));
     assert.deepEqual(lifts.map((e) => e.data.label), ['/wheelhouse-go']);
@@ -506,7 +506,7 @@ test('under STOP, /go from the bridge lifts it and the board shows STOP off', as
     assert.deepEqual(await c.act(() => fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json'))), [], 'the helper took it');
 
     const board = await prompt(c, '/wheelhouse:board');
-    assert.doesNotMatch(board, /STOP is on/);
+    assert.doesNotMatch(board, /All stop is on/);
     // A second /go says STOP isn't on and records nothing more.
     assert.deepEqual(await bridge(c, { cmd: 'go', origin: 'composer', cwd: c.folder }), { ok: true, says: SAYS.stopOff });
     assert.equal(await c.act(() => eventsOf('action').length), 1);
@@ -555,7 +555,7 @@ test('a prompt after a two-hour gap brings the briefing, in order and within 150
     const watching = process.platform === 'win32';
     assert.deepEqual(parts.map((part) => part.split('\n')[0]), [
       'Not in effect until you confirm:', 'Waiting on you (+14):', 'Changed for users (+1):', 'Progress:', ...(watching ? ['To watch:'] : []),
-      'Usage this week: 300K tokens. On track.', 'Ask me anything. For the full board, type /wheelhouse:board.',
+      'Usage this week: 300K tokens. On track.', 'Ask me anything. For the full Logbook, type /wheelhouse:logbook.',
     ]);
     // Fourteen cards wait and the waiting cards are the last thing cut, so the other parts give way first.
     assert.deepEqual(parts[0].split('\n').slice(1), ['and 1 more']);

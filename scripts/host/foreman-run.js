@@ -59,7 +59,7 @@ export function foremanEnv(env = process.env) {
 // Why a /foreman/run request can't be run, or null when it can: the script must be act or wake,
 // and its arguments a short list of plain text.
 export function foremanRequestRefusal({ script, argv } = {}) {
-  if (!FOREMAN_SCRIPTS.includes(script)) return `the foreman's commands are ${FOREMAN_SCRIPTS.join(' and ')}`;
+  if (!FOREMAN_SCRIPTS.includes(script)) return `the Bosun's commands are ${FOREMAN_SCRIPTS.join(' and ')}`;
   if (!Array.isArray(argv) || argv.length > MOST_ARGUMENTS) return 'the arguments must be a list of at most 256';
   if (!argv.every((a) => typeof a === 'string' && a.length <= MOST_ARGUMENT_CHARS && !a.includes('\0'))) {
     return 'each argument must be text of at most 16,384 characters';

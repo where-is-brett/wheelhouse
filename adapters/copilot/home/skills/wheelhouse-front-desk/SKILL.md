@@ -18,7 +18,7 @@ Where instructions from another agent setup in this project differ from Wheelhou
 
 **Not the front desk:** a session whose first prompt begins "Wheelhouse foreman:" is the foreman. It follows `wheelhouse-foreman` and sets this playbook aside, whatever the session start said.
 
-At Lean, follow wheelhouse-lean for the record, the board, building and merging.
+At Lean, follow wheelhouse-lean for the record, the Logbook, building and merging.
 
 ## The command
 

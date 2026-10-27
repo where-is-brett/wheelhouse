@@ -46,7 +46,7 @@ test('everything in order is allowed', async () => {
 
 test('STOP alone blocks', async () => {
   await withHome(() => {
-    assert.deepEqual(gateDecision(input({ stop: true })), { allow: false, reasons: ['STOP is on'] });
+    assert.deepEqual(gateDecision(input({ stop: true })), { allow: false, reasons: ['All stop is on'] });
   });
 });
 
@@ -139,7 +139,7 @@ test('every reason is listed, not just the first', async () => {
     }));
     assert.equal(d.allow, false);
     assert.deepEqual(d.reasons, [
-      'STOP is on', 'the session is in bypass mode', 'this computer no longer holds the lock',
+      'All stop is on', 'the session is in bypass mode', 'this computer no longer holds the lock',
       'CI has not passed on abcdef1', 'no CLEAN review of abcdef1', 'no approval of abcdef1',
     ]);
   });
@@ -152,7 +152,7 @@ test('every reason is listed, the new conditions after the old', async () => {
       incident: { open: true, id: 'login-down', isFix: false },
     }));
     assert.deepEqual(d.reasons, [
-      'STOP is on',
+      'All stop is on',
       'the branch is not up to date with the default branch',
       "what passed review is not what is on the pull request now: the model is not in the routing table",
       'incident login-down is open, so only its fix may merge',
@@ -311,7 +311,7 @@ test('missing or malformed flags fail safe and nothing throws', async () => {
   await withHome(() => {
     const d = gateDecision({ headSha: SHA });
     assert.equal(d.allow, false);
-    assert.equal(d.reasons.includes('STOP is on'), true);
+    assert.equal(d.reasons.includes('All stop is on'), true);
     assert.equal(d.reasons.includes('the session is in bypass mode'), true);
     assert.equal(d.reasons.includes('this computer no longer holds the lock'), true);
     assert.doesNotThrow(() => gateDecision(undefined));

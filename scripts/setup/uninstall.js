@@ -192,13 +192,13 @@ export const NEVER_PUSHED = 'it stays in this folder\'s history';
 const OTHERS_USE = 'your other computers use it, so it stays';
 // Why step 7's .wheelhouse/ exclude line stays, and the project's .wheelhouse/ folder with it
 // (ruling R131): uninstall never touches the files in that folder.
-export const FOLDER_STAYS = 'it holds the front desk\'s and the foreman\'s files, which stay with the project';
+export const FOLDER_STAYS = 'it holds the First Mate\'s and the Bosun\'s files, which stay with the project';
 // Why setup's .env lines stay, in the project's .gitignore and in a joining computer's own list: they
 // keep secrets out of git and cost nothing, so uninstall never takes them out.
 export const ENV_STAYS = 'they keep .env files, which hold secrets, out of git, and cost nothing, so they stay';
-export const LINE_STAYS = 'the project\'s .wheelhouse/ folder stays, with the front desk\'s and the foreman\'s files, so this line keeps it out of git';
+export const LINE_STAYS = 'the project\'s .wheelhouse/ folder stays, with the First Mate\'s and the Bosun\'s files, so this line keeps it out of git';
 // The two, as the card names them, and in short when the card has no room for more.
-export const FOLDER_NOTE = '.wheelhouse/ stays, out of git: the front desk\'s and foreman\'s files.';
+export const FOLDER_NOTE = '.wheelhouse/ stays, out of git: the First Mate\'s and Bosun\'s files.';
 export const FOLDER_NOTE_SHORT = '.wheelhouse/ stays, out of git.';
 // Where the whole list is read.
 const STATUS_FORM = 'cli.js uninstall status';
@@ -1018,7 +1018,7 @@ export async function uninstallPlan({
     recommend: 'Remove it',
     because: 'you asked, and what changed since setup is kept',
     // Uninstall's apply is refused under STOP, as setup's is (ruling R91).
-    meanwhile: 'Nothing changes until you click; if STOP is on, lift it first.',
+    meanwhile: 'Nothing changes until you click; if All stop is on, lift it first.',
     // Said only when the checks really go: never on a shared project (ruling R124).
     checks: shared
       ? 'Your other computers keep the checks for this project; they stop on this computer only, and protection stays as it is.'
@@ -1075,7 +1075,7 @@ export const UNINSTALL_FIELDS = Object.freeze(['folder', 'hash']);
 export const UNINSTALL_NEEDS_CLICK = `uninstall needs the director's Remove it on its card, from the last ${CLICK_FRESH_MS / 60000} minutes`;
 export const UNINSTALL_CHANGED = 'the list has changed since the card: ask for uninstall\'s plan again and show the new card';
 export const UNINSTALL_OWN_LIST = 'the helper works out uninstall\'s list itself: a request names only the folder and the hash on the card';
-export const UNINSTALL_STOP = { ok: false, refused: 'STOP is on, so nothing is removed: lift STOP first, then ask for uninstall\'s plan again' };
+export const UNINSTALL_STOP = { ok: false, refused: 'All stop is on, so nothing is removed: lift All stop first, then ask for uninstall\'s plan again' };
 export const UNINSTALL_RUNNING = 'uninstall is already running for this folder: ask for its status';
 // Status's and plan's first line for an uninstall that stopped, or did not finish, once a click made
 // in this session can no longer count: past the trusted-keys list's removal (rulings R142, R146).
@@ -1139,7 +1139,7 @@ function progressLines(record, now) {
 // One line for a change of the list, for `status`.
 function entryLine(e, userHome) {
   switch (e.put) {
-    case 'stop': return `stop the ${e.what === 'receiver' ? 'usage receiver' : e.what === 'helper' ? 'host helper, after its answer' : e.what}`;
+    case 'stop': return `stop the ${e.what === 'receiver' ? 'usage receiver' : e.what === 'helper' ? 'host helper, after its answer' : e.what === 'foreman' ? 'Bosun' : e.what}`;
     case 'leave-locked': return 'leave Locked (your password)';
     case 'pull-request': return `a pull request taking setup's files and pins out of ${e.branch}, for you to merge`;
     case 'in-pull-request': return `  in it: ${describe(e.change, userHome)}`;

@@ -81,16 +81,16 @@ const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 // Lean to give the front desk's own views (the description is the command's).
 const LEAN = '`wheelhouse-lean`';
 const COMMAND_SKILLS = Object.freeze({
-  board: `Show the director the board: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the board couldn't be read.\n\nLean's playbook (${LEAN}) keeps the board up to date; its section "The board" says how and when. Its parts include "Ideas" and "Rulings", the ideas kept for later and the rulings the director confirmed, with "Nothing" when there are none.`,
+  board: `Show the director the Logbook: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the Logbook couldn't be read.\n\nLean's playbook (${LEAN}) keeps the Logbook up to date; its section "The Logbook" says how and when. Its parts include "Ideas" and "Rulings", the ideas kept for later and the rulings the director confirmed, with "Nothing" when there are none.`,
   briefing: `Give the director the briefing now, as ${LEAN} gives it (its section "The briefing"), with nothing added. If you can't build it, say only that the briefing couldn't be read.`,
-  settings: `Show the director the settings in force, and where each comes from, as ${LEAN} gives them (its section "Settings"), with nothing added: at Lean they are the tier and its lines at the top of the board, and the folder the copy goes to. If they can't be read, say only that the settings couldn't be read.`,
+  settings: `Show the director the settings in force, and where each comes from, as ${LEAN} gives them (its section "Settings"), with nothing added: at Lean they are the tier and its lines at the top of the Logbook, and the folder the copy goes to. If they can't be read, say only that the settings couldn't be read.`,
   sources: `Lean has no weekly check of the sources: it is a Wheelhouse program, and none runs here. Say so in one line, as ${LEAN} does (its section "Sources"), and show nothing else.`,
-  stop: `Turn STOP on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "STOP" of ${LEAN}: tell the director once that nothing enforces STOP here, and ask the Lift STOP card alone.`,
+  stop: `Turn All stop on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "All stop" of ${LEAN}: tell the director once that nothing enforces All stop here, and ask the Lift STOP card alone.`,
 });
 
 // The one line the kit's front desk holds that Claude Code's doesn't: Claude Code has no `wheelhouse-lean` skill, so the
 // source stays without it and the kit adds it, straight before the heading that opens the steps that need Node.js.
-const FRONT_DESK_LEAN_LINE = 'At Lean, follow wheelhouse-lean for the record, the board, building and merging.';
+const FRONT_DESK_LEAN_LINE = 'At Lean, follow wheelhouse-lean for the record, the Logbook, building and merging.';
 const FRONT_DESK_LEAN_ANCHOR = '\n## The command\n';
 // The kit's front desk at Middle and Full (review Minor 2, rulings P8-7 and P8-8): on Copilot a click in the chat
 // binds nothing, so a card a confirmed click decides goes to the helper's window through the Wheelhouse command's

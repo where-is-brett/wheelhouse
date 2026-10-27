@@ -17,12 +17,12 @@ export const settingKey = (computer) => `windowsBuildCommands:${computer}`;
 
 // The options on a build-command question.
 export const BUILD_QUESTION_LABELS = { once: 'Allow this time', feature: 'Allow for this feature', notNow: 'Not now' };
-const WHATEVER_YOUR_ACCOUNT_CAN = 'For as long as this lasts, the builder can do whatever your account can.';
+const WHATEVER_YOUR_ACCOUNT_CAN = 'For as long as this lasts, the Crew member can do whatever your account can.';
 // The options as the feature session's ask writes them, in the design's words. The session never writes its own.
 export const BUILD_QUESTION_OPTIONS = Object.freeze([
-  { label: BUILD_QUESTION_LABELS.once, says: `For the builder's next run only. ${WHATEVER_YOUR_ACCOUNT_CAN}` },
+  { label: BUILD_QUESTION_LABELS.once, says: `For this Crew member's next run only. ${WHATEVER_YOUR_ACCOUNT_CAN}` },
   { label: BUILD_QUESTION_LABELS.feature, says: `Until the feature ends. This is the dangerous level, Unattended, for one feature. ${WHATEVER_YOUR_ACCOUNT_CAN}` },
-  { label: BUILD_QUESTION_LABELS.notNow, says: 'The feature waits, and the foreman raises it with your next briefing.' },
+  { label: BUILD_QUESTION_LABELS.notNow, says: 'The feature waits, and the Bosun raises it with your next briefing.' },
 ].map((o) => Object.freeze(o)));
 
 // The labels whose click allows a build question's commands: an Ask allowance (ruling P8-8).
@@ -36,8 +36,8 @@ export function allowanceWindowLines(commands) {
   const named = (Array.isArray(commands) ? commands : []).filter((c) => typeof c === 'string' && c !== '');
   return [
     '',
-    `Allowing this lets the builder run: ${named.join('; ')}.`,
-    'Each runs whatever the project\'s own files tell it to, and the builder can change those files first.',
+    `Allowing this lets the Crew run: ${named.join('; ')}.`,
+    'Each runs whatever the project\'s own files tell it to, and the Crew member can change those files first.',
     'Once allowed, it can do whatever your account can on this computer.',
     'One run can leave lasting changes, here or anywhere else your account reaches.',
   ];
@@ -143,9 +143,9 @@ export function buildGrants({ views, work, used, computer, proofs }) {
   return grants;
 }
 
-const UNATTENDED_RISK = 'Builders on this computer will run their tests and build steps without asking you, and with nothing to hold them. '
-  + 'A builder writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, '
-  + 'change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and STOP still hold.';
+const UNATTENDED_RISK = 'The Crew on this computer will run their tests and build steps without asking you, and with nothing to hold them. '
+  + 'A Crew member writes the code these steps run, so one that goes wrong, or is misled by something it reads, could read your passwords and sign-ins on this computer, '
+  + 'change Wheelhouse\'s own safety checks, or send your files anywhere, and nothing would ask you first. Reviews, the merge gate and All stop still hold.';
 const GUARDED_SAYS = GUARDED_LINE;
 // Use Guarded on the Unattended card, in fewer words, so the card with all three options and both
 // its lines keeps within the card's length (CARD.chars) beside the design's words on the risk. It
@@ -154,7 +154,7 @@ const GUARDED_SAYS = GUARDED_LINE;
 const guardedShort = (readsHeld) => (readsHeld === true
   ? 'Low integrity: no changes outside the project, the helper\'s keys folder shut, network open.'
   : 'Low integrity: no changes outside the project; network and the helper\'s keys folder open.');
-const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'Builders ask first, as now.' };
+const KEEP_ASKING = { name: 'keep-asking', label: 'Keep asking', says: 'The Crew asks first, as now.' };
 export const USE_GUARDED = 'Use Guarded';
 // The words of the setting event that Use Guarded confirms, which its confirm line quotes and the
 // card's first part names.
@@ -167,15 +167,15 @@ export function UNATTENDED_CARD({ guardedReady, readsHeld } = {}) {
   const offered = guardedReady === true;
   return {
     what: offered
-      ? `Let builders run build steps with no prompt in this project, or ${GUARDED_SETTING_WORDS}.`
-      : 'Let builders on this Windows computer run build steps with no prompt, in this project.',
-    why: 'While you are away, a builder stops at its first build command.',
+      ? `Let the Crew run build steps with no prompt in this project, or ${GUARDED_SETTING_WORDS}.`
+      : 'Let the Crew on this Windows computer run build steps with no prompt, in this project.',
+    why: 'While you are away, a Crew member stops at its first build command.',
     // No reply code answers this card (scripts/mod/reply.js), so it says a click is needed.
-    meanwhile: 'Builders keep asking; answer by a click only.',
+    meanwhile: 'The Crew keeps asking; answer by a click only.',
     risk: UNATTENDED_RISK,
     options: [
       KEEP_ASKING,
-      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Until turned off, builders can do whatever your account can.' },
+      { name: 'turn-on', label: 'Turn on (dangerous)', says: 'Until turned off, the Crew can do whatever your account can.' },
       ...(offered ? [{ name: 'guarded', label: USE_GUARDED, says: guardedShort(readsHeld) }] : []),
     ],
     recommend: offered ? 'guarded' : 'keep-asking',
@@ -194,7 +194,7 @@ export function GUARDED_CARD(selfTest) {
     : 'The self-test found a build could still read the helper\'s keys folder.';
   return {
     what: 'Run build commands on this Windows computer through Wheelhouse\'s runner, at low integrity.',
-    why: 'Builders run their tests and build steps without asking you, and Windows stops them changing files outside the project.',
+    why: 'The Crew runs its tests and build steps without asking you, and Windows stops them changing files outside the project.',
     risk: `The self-test found Windows stopped a build changing files outside the project. ${reads} `
       + 'It is not a sandbox: a build can still use the network, and read files Wheelhouse doesn\'t label. '
       + 'A command that fetches new code, such as npm install, still asks.',
