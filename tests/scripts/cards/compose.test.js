@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -62,6 +62,10 @@ const INPUTS = {
     ...common, recommend: 'Trust it', kind: 'trust', what: 'Your computer 0a1b2c3d put its key in your profile.',
     options: [says('Trust it')], target: { computer: '0a1b2c3d', at: '2026-10-19T22:30:00.000Z', fingerprint: 'abcdef012345' },
   },
+  'take-over': {
+    ...common, recommend: 'Take over here', kind: 'take-over', what: 'Your computer 0a1b2c3d has the front desk and nothing was written there for 3 hours; this one can only look.',
+    options: [says('Take over here'), { label: 'Leave it there', says: 'This computer only shows the board.' }], target: { holder: '0a1b2c3d', counter: 4 },
+  },
   uninstall: {
     ...common, recommend: 'Remove it', kind: 'uninstall', level: 4, checks: 'The checks no longer guard this project.',
     what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.',
@@ -99,6 +103,7 @@ const LINES = {
   'confirm-all': confirmAllLine(DOC, 2),
   baseline: baselineLine(DOC),
   trust: trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345'),
+  'take-over': takeOverLine('0a1b2c3d', 4),
   uninstall: uninstallLine('cafe menu', DOC),
   question: null,
   'keep-control-files': keepControlLine('export-csv', DOC),
@@ -135,7 +140,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage', 'premium']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -201,6 +206,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     'keep-control-files': 'Keep these files as they are?',
     usage: 'Switch to Lean until it resets?',
     premium: 'Allow the premium model at Thorough?',
+    'take-over': 'Take over the front desk here?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));
@@ -366,9 +372,10 @@ test('decision cards offer the deciding label, Suggest a change…, Show me and 
   const offers = (kind) => composeCard(input(kind)).question.options.map((o) => o.label);
   assert.deepEqual(offers('confirm-all'), ['Confirm all', 'Let me correct some', NOT_NOW]);
   assert.deepEqual(offers('trust'), ['Trust it', NOT_NOW]);
+  assert.deepEqual(offers('take-over'), ['Take over here', 'Leave it there']);
   assert.deepEqual(offers('uninstall'), ['Remove it', NOT_NOW]);
   assert.deepEqual(offers('baseline'), ['Record these', NOT_NOW]);
-  for (const kind of ['lift-stop', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall']) {
+  for (const kind of ['lift-stop', 'setup', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall']) {
     assert.ok(!offers(kind).includes(SUGGEST), `${kind} offers no Suggest a change…`);
   }
   for (const kind of CARD_KINDS) assert.ok(!offers(kind).includes('Explain more'), `${kind} offers no Explain more`);
@@ -388,6 +395,8 @@ test('decision cards offer the deciding label, Suggest a change…, Show me and 
   refused({ options: [says('Lift STOP'), { label: SUGGEST }] }, /options.*Suggest a change/, 'lift-stop');
   refused({ options: [says('Go ahead'), { label: 'Explain more' }] }, /options.*Explain more/, 'setup');
   refused({ options: [says('Trust it'), { label: SUGGEST }] }, /options.*Suggest a change/, 'trust');
+  refused({ options: [says('Take over here'), { label: SUGGEST }] }, /options.*Suggest a change/, 'take-over');
+  refused({ what: 'Your computer 1b2c3d4e has the front desk.' }, /must name.*0a1b2c3d/, 'take-over');
   // A put-off or steering button may leave out what it says, or give it.
   assert.equal(composeCard(input('approval', { options: [says('Approve'), { label: SUGGEST, says: 'Say what to change.' }] })).question.options[1].description, 'Say what to change.');
 });

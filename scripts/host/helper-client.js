@@ -120,6 +120,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     lock: {
       take: post('/lock/take'), //   { project } -> { ok, result: { taken, ... } }
       touch: post('/lock/touch'), // { project } -> { ok, result: { touched } }
+      takeOver: post('/lock/take-over'), // { project } -> { ok, result: { taken, ... } }: on this computer's signed Take over here
       read: post('/lock/read'), //   { project } -> { ok, result: the lock, or null }
     },
     // Each runbook request names its project, or gives `cwd`, a full path, and the helper

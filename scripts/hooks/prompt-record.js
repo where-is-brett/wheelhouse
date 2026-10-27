@@ -60,7 +60,7 @@ import {
 } from '../state/card-lines.js';
 import {
   setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
+  TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords,
@@ -289,6 +289,19 @@ function premiumClickOf(project, question, label, shown, now, current) {
   return { made: confirmationFor(target), target };
 }
 
+// The record a click on the take-over card earns (design section 9, "One computer at a time"): the card carries one set
+// line, the take-over card's, naming the computer that holds the lock and its counter, and is the card as it was
+// asked; the label is Take over here. The record is the director's click; the helper acts on it only while the lock
+// still stands as the card named it. Null for anything else, Leave it there among them. `takeOver` tells the caller
+// to ask the helper to take the lock once the record is in.
+function takeOverOf(question, label, shown) {
+  if (label !== TAKEOVER_LABEL || shown?.question !== question) return null;
+  const lines = setLinesOf(question);
+  const m = lines.length === 1 ? TAKEOVER_LINE.exec(lines[0]) : null;
+  if (!m) return null;
+  return { made: { kind: 'action', data: { action: 'take-over', holder: m[1], counter: Number(m[2]), question: lines[0], label } }, takeOver: true };
+}
+
 // The setting a premium card for `project` is offered from now, as the last sync's views hold it (a Yes whose
 // evaluation failed counts as off), or null when they can't be read.
 function premiumNow({ project }) {
@@ -313,6 +326,7 @@ export async function earned({ project, question, label, card, client, now, left
   // `card` is the question as AskUserQuestion was given it; a reply or a pane press has none, so earns nothing here.
   if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, card, now, ready);
   if (setLinesOf(question).some((line) => PREMIUM_LINE.test(line))) return premiumClickOf(project, question, label, card, now, premiumIn);
+  if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];
@@ -617,7 +631,7 @@ function shownFor(project, input, at, stopState = defaultStopState, carrying = n
     // A setup card, setup's card of the rules found, a trust card, uninstall's card, a Keep card, a usage card and the
     // premium model's card have no reply code (rulings R36, R80, R90, P7-31; design section 14.6): only the click on
     // the card itself counts.
-    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
+    if (line === null || SETUP_LINE.test(line) || CONFIRM_ALL_LINE.test(line) || TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || UNINSTALL_LINE.test(line) || KEEP_CONTROL_LINE.test(line) || USAGE_LINE.test(line) || PREMIUM_LINE.test(line)) continue;
     const code = replyCode(line);
     const codes = q.question.split(/\r\n|[\n\r\u2028\u2029]/).filter((l) => l.startsWith('Reply code:'));
     if (codes.length !== 1 || codes[0] !== replyCodeLine(code)) continue;
@@ -665,6 +679,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
   // go first and are dated a millisecond before the clicks, so a record a click earns sorts
   // after its card's shown record and spends the code.
   const queued = [];
+  const takeOvers = [];
   const clock = () => at;
   const shownAt = new Date(at.getTime() - 1);
   queued.push(...keepSetupClicks(input.cwd, out, clock, project));
@@ -688,12 +703,18 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     if (!click.signable || setupAsked.has(click.question)) continue;
     try {
       const got = await earned({ project, ...click, client: api, now: clock, left, stopState, ...(ready === undefined ? {} : { ready }), ...(premiumIn === undefined ? {} : { premiumIn }) });
-      if (got) queued.push(keepEarned(project, got, { now: clock, liftStop }));
+      if (got) {
+        queued.push(keepEarned(project, got, { now: clock, liftStop }));
+        if (got.takeOver) takeOvers.push(queued.at(-1));
+      }
     } catch {
       // One question failing does not stop the rest; a lift that did not happen leaves no record.
     }
   }
-  for (const kept of queued) await sendKept(api, left, kept);
+  const sent = new Map();
+  for (const kept of queued) sent.set(kept, await sendKept(api, left, kept));
+  // A Take over here the helper has the record of: it takes the lock, if the lock still stands as the card named it.
+  if (takeOvers.some((kept) => sent.get(kept) === true)) await left(api.lock.takeOver({ project }));
   // Then the plain answers. What cannot be sent in time is kept.
   for (const { question, label } of out) {
     if (setupAsked.has(question)) continue;

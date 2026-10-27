@@ -28,6 +28,8 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 // the private note's figures back (scripts/measures/baseline.js); the helper composes it, and it
 // is never a card event in the state. A trust card asks to trust another of the director's
 // computers here (ruling R80); the session start composes it, and its click is kept on this computer.
+// A take-over card asks to take the lock from another computer that holds it (design section 9); the session start
+// composes it, and its click is the director's Take over here, which the helper acts on.
 // Uninstall's card asks to remove Wheelhouse from a project (ruling R90); the helper composes it, and
 // its click is kept on this computer, as a setup click is. A keep-control-files card asks to keep a
 // feature's files that steer agents as they are now (ruling P7-31), so the watcher wakes it again. A
@@ -37,7 +39,7 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 // the click on one of its Allow options is the premium setting and the director's confirmation of it.
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
-  'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'uninstall', 'question',
+  'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'question',
   'keep-control-files', 'usage', 'premium',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.

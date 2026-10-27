@@ -1117,6 +1117,20 @@ export async function startHelper({
     }).catch(() => {});
   }
 
+  // The newest Take over here this computer's director clicked in the last ten minutes: a signed `action` event naming
+  // the computer that held the lock and the counter it held it at, as { holder, counter }, or null. The click stands for
+  // the lock as the card showed it only: once the lock moves on, it takes nothing.
+  function takeOverClick(project) {
+    const enrolled = readEnrolled();
+    const nowMs = now().getTime();
+    const found = listEvents(stateDir(project), { report: () => {} }).filter((e) => {
+      const age = nowMs - Date.parse(e.at);
+      return e.kind === 'action' && e.data?.action === 'take-over' && e.computer === computerId() && e.sig?.computer === computerId()
+        && verify(e, enrolled) && age <= CLICK_MS && age >= -60 * 1000;
+    }).sort((x, y) => Date.parse(y.at) - Date.parse(x.at));
+    return found.length === 0 ? null : { holder: found[0].data.holder, counter: found[0].data.counter };
+  }
+
   // Whether this computer's director clicked the card for pushing this exact
   // commit of this branch in the last ten minutes: a signed `action` event.
   function ciClick(project, branch, sha) {
@@ -3569,6 +3583,15 @@ export async function startHelper({
     '/lock/take': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),
+    '/lock/take-over': lockRoute(async ({ project }, ctx) => {
+      const click = takeOverClick(project);
+      if (click === null) {
+        // Nothing to act on: said as a plain take says it, with the lock as it stands.
+        const current = await readLock({ project, env: ctx.gitEnv });
+        return { ok: true, result: current === null || current.computer === computerId() ? { taken: false } : { taken: false, holder: current.computer, since: current.lastWriteAt } };
+      }
+      return { ok: true, result: await takeLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv, over: click }) };
+    }, { write: true }),
     '/lock/touch': lockRoute(async ({ project }, ctx) => ({
       ok: true, result: await touchLock({ project, push: pushFor(project, ctx), now, env: ctx.gitEnv }),
     }), { write: true }),

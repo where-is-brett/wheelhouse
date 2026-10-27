@@ -69,6 +69,8 @@ import { claudeCodeOf } from '../lineage/provenance.js';
 import { MARKETPLACE } from '../lineage/manifest.js';
 import { makeSigningKey, ownKey, readEnrolled, enrol } from '../state/signing.js';
 import { SETUP_STEPS, firstUnfinished, journalTrouble, stepDone } from '../lib/setup-run.js';
+import { composeCard } from '../cards/compose.js';
+import { TAKEOVER_LABEL, LEAVE_LABEL } from '../state/card-lines.js';
 import { agentOfInput } from '../agents/of-input.js';
 import { readAllowance } from '../usage/figures.js';
 import { weeklyOf } from '../routing/nudge.js';
@@ -369,14 +371,60 @@ function lineageCheck(found, input, version, { check, root, claudeHome, now, pin
 // merge gate and every code push check. Kept where this computer holds it already (a touch, which leaves the
 // counter as it is), else taken, which a free lock, a stale one or this computer's own allows. Null when this
 // computer holds it after; else the line that says why not. Nothing else takes it in real use.
-async function keepLock(project, client, left) {
+async function keepLock(project, client, left, seen = {}) {
   if (typeof client?.lock?.take !== 'function') return null;
   const touched = typeof client.lock.touch === 'function' ? await left(client.lock.touch({ project })) : null;
   if (touched?.ok === true && touched.result?.touched === true) return null;
   const took = await left(client.lock.take({ project }));
   if (took?.ok === true && took.result?.taken === true) return null;
+  if (took?.ok === true && took.result?.taken === false) seen.holder = took.result.holder;
   if (took?.ok === true && took.result?.taken === false) return heldElsewhere(took.result.holder ?? 'unknown', took.result.since ?? 'at an unknown time');
   return NO_LOCK;
+}
+
+// The words before the take-over card's AskUserQuestion input, as JSON on the same line.
+export const TAKEOVER_ASK = 'Another computer holds the front desk: show the director the board as it stands, read-only, and ask them this card with AskUserQuestion, exactly as given, as a question of its own: ';
+// Within this long since the other computer last wrote, it counts as in use. (A lock idle two hours is taken at once.)
+const RECENT_MS = 30 * 60 * 1000;
+const agoWords = (ms) => {
+  const minutes = Math.max(0, Math.floor(ms / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  const [hours, rest] = [Math.floor(minutes / 60), minutes % 60];
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'}${rest === 0 ? '' : ` ${rest} ${rest === 1 ? 'minute' : 'minutes'}`} ago`;
+};
+
+// The Take over here card for a lock another computer holds (design section 9), naming the lock as it stands now, read
+// from the helper. No card when the lock can't be read, is this computer's, or is held by something that isn't a
+// computer's id. It informs, so anything that fails gives no line.
+async function takeOverNotes({ client, left, project, now }) {
+  try {
+    if (typeof client?.lock?.read !== 'function') return [];
+    const got = await left(client.lock.read({ project }));
+    const lock = got?.ok === true ? got.result : null;
+    if (!lock || lock.computer === computerId() || !/^[0-9a-f]{8}$/.test(String(lock.computer)) || !Number.isInteger(lock.counter) || lock.counter < 1) return [];
+    const idle = now().getTime() - Date.parse(lock.lastWriteAt);
+    if (!Number.isFinite(idle)) return [];
+    const ago = agoWords(idle);
+    const inUse = idle < RECENT_MS;
+    const { question } = composeCard({
+      kind: 'take-over',
+      level: 3,
+      what: `Your computer ${lock.computer} has the front desk, and last wrote ${ago}; this computer can only look at the board until you take over.`,
+      why: 'Only one computer runs the work at a time, so two never merge or push over each other.',
+      options: [
+        { label: TAKEOVER_LABEL, says: `This computer runs the work from now on, and computer ${lock.computer} can no longer merge or push code.` },
+        { label: LEAVE_LABEL, says: `Computer ${lock.computer} keeps the work, and this one only shows the board.` },
+      ],
+      recommend: inUse ? LEAVE_LABEL : TAKEOVER_LABEL,
+      because: inUse ? `computer ${lock.computer} was in use ${ago}` : `nothing has been written on computer ${lock.computer} since ${ago}`,
+      meanwhile: 'This computer shows the board and changes nothing; its merges and pushes are refused.',
+      target: { holder: lock.computer, counter: lock.counter },
+    });
+    return [`${TAKEOVER_ASK}${JSON.stringify(question)}`];
+  } catch {
+    return [];
+  }
 }
 
 async function ensureWatcher(project, client, { spawn, pluginRoot }) {
@@ -660,6 +708,7 @@ export async function decide(input, deps = {}) {
   // Records what this session is for and starts the usage receiver, alongside the import below.
   const usage = Promise.resolve().then(() => background({ pluginRoot, session: input.session_id, cwd: input.cwd, project, spawn, now })).catch(() => null);
   let views = null;
+  const lockSeen = {};
   if (!up) notes.push(NO_HELPER);
   else {
     const mine = ownVersion(pluginRoot);
@@ -676,7 +725,7 @@ export async function decide(input, deps = {}) {
       ];
       notes.push(...await importNotes(asks, { left }));
     }
-    const lockLine = await keepLock(project, clientNow(), left);
+    const lockLine = await keepLock(project, clientNow(), left, lockSeen);
     if (lockLine !== null) notes.push(lockLine);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
@@ -724,6 +773,8 @@ export async function decide(input, deps = {}) {
       ready = guardedReady({ home, now, platform });
     } catch { /* not ready */ }
   }
+  // The card that offers the lock, when another computer holds it, goes to the front desk only.
+  if (deskSession && lockSeen.holder !== undefined) notes.push(...await takeOverNotes({ client: clientNow(), left, project, now }));
   // The usage card comes last, with whatever time is left; only the front desk's.
   if (deskSession && setupLine === null) notes.push(...await usageNotes({ client: clientNow(), left, up: Boolean(up), project, views, now, allowance: deps.allowance, timeZone: deps.timeZone, ...(deps.columnsReady ? { ready: deps.columnsReady } : {}) }));
   const windows = platform === 'win32' && firstForSession(project, input.session_id, now);

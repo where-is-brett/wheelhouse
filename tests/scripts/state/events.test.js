@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CODE_ALPHABET } from '../../../scripts/state/card-lines.js';
+import { CODE_ALPHABET, takeOverLine, TAKEOVER_LABEL } from '../../../scripts/state/card-lines.js';
 import { PUT_OFF } from '../../../scripts/lib/front-desk.js';
 import { makeEvent, eventPath, writeEvent, listEvents, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS } from '../../../scripts/state/events.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
@@ -42,6 +42,22 @@ test('makeEvent signs protected kinds and leaves the others unsigned', async () 
     const approval = makeEvent({ kind: 'approval', data: { card: 1 }, now: at(5) });
     assert.equal(verify(approval, readEnrolled()), true);
     assert.throws(() => makeEvent({ kind: 'bogus', data: {} }), /kind/);
+  });
+});
+
+test('a take-over action needs the computer that held the lock, its counter, its label and its own set line', async () => {
+  await withHome(() => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const good = { action: 'take-over', holder: '0a1b2c3d', counter: 4, question: takeOverLine('0a1b2c3d', 4), label: TAKEOVER_LABEL };
+    assert.equal(verify(makeEvent({ kind: 'action', data: good, now: at(1) }), readEnrolled()), true);
+    for (const [bad, pattern] of [
+      [{ holder: 'other-mac' }, /id of the computer/],
+      [{ counter: 0 }, /counter/],
+      [{ counter: 5 }, /set line/],
+      [{ label: 'Leave it there' }, /label/],
+      [{ proof: 'x'.repeat(3), sha: 'abc' }, /field/],
+    ]) assert.throws(() => makeEvent({ kind: 'action', data: { ...good, ...bad }, now: at(1) }), pattern, JSON.stringify(bad));
   });
 });
 

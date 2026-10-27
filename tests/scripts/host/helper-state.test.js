@@ -37,6 +37,7 @@ import { questionsStep } from '../../../scripts/setup/questions.js';
 import { findRules } from '../../../scripts/setup/rules.js';
 import { rulesInput } from '../../helpers/rules-card.js';
 import { REAL_USERS } from '../../../scripts/setup/host.js';
+import { takeOverLine, TAKEOVER_LABEL } from '../../../scripts/state/card-lines.js';
 import { composeCard } from '../../../scripts/cards/compose.js';
 import { listHash } from '../../../scripts/lib/setup-writes.js';
 import { listEvents } from '../../../scripts/state/events.js';
@@ -920,4 +921,34 @@ test('a connection\'s own GIT_ALLOW_PROTOCOL never widens an https recorded remo
     assert.ok(values.length > 0, 'git ran');
     assert.deepEqual([...new Set(values)], ['https']);
   } finally { process.env.PATH = pathBefore; await c.close(); fs.rmSync(shimDir, { recursive: true, force: true }); }
+});
+
+test('/lock/take-over takes a live lock only on this computer\'s own signed Take over here for the lock as it stands, and raises the counter', async () => {
+  const repo = await privateRepo();
+  const [a, b] = [await computer(repo), await computer(repo)];
+  try {
+    const holder = await a.as(() => computerId());
+    const askA = (fn) => a.as(() => fn(a.client));
+    const askB = (fn) => b.as(() => fn(b.client));
+    assert.deepEqual(await askA((c) => c.lock.take({ project: PROJECT })), { ok: true, result: { taken: true, counter: 1 } });
+    await askB((c) => c.state.clone({ project: PROJECT }));
+    const clickFor = (counter, ms) => b.as(() => makeEvent({
+      kind: 'action',
+      data: { action: 'take-over', holder, counter, question: takeOverLine(holder, counter), label: TAKEOVER_LABEL },
+      now: at(ms),
+    }));
+    const since = (await askB((c) => c.lock.read({ project: PROJECT }))).result.lastWriteAt;
+    // No click: the live lock is not taken.
+    assert.deepEqual(await askB((c) => c.lock.takeOver({ project: PROJECT })), { ok: true, result: { taken: false, holder, since } });
+    // A click on a card for another counter takes nothing.
+    assert.equal((await askB(async (c) => c.state.record({ project: PROJECT, event: await clickFor(5, 1000) }))).ok, true);
+    assert.equal((await askB((c) => c.lock.takeOver({ project: PROJECT }))).result.taken, false);
+    // The click for the lock as it stands does.
+    assert.equal((await askB(async (c) => c.state.record({ project: PROJECT, event: await clickFor(1, 2000) }))).ok, true);
+    assert.deepEqual(await askB((c) => c.lock.takeOver({ project: PROJECT })), { ok: true, result: { taken: true, counter: 2 } });
+    assert.equal((await askB((c) => c.lock.read({ project: PROJECT }))).result.counter, 2);
+    // The old holder's touch does nothing now.
+    assert.equal((await askA((c) => c.lock.touch({ project: PROJECT }))).result.touched, false);
+    assert.equal(repo.host.refusedCount(), 0);
+  } finally { await a.close(); await b.close(); await repo.cleanup(); }
 });

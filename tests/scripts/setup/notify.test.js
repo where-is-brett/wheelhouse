@@ -119,14 +119,12 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   assert.equal(card.recommend, READY.ready);
   // The phone is optional: skipping says setup carries on, and where to set it up later.
   assert.match(card.options[1].says, /carries on without your phone/);
-  assert.match(card.options[1].says, /front desk to set up phone notifications/);
-  // The plain steps: Remote Control in Desktop, both push options (step 6), the phone's own
-  // permission for Claude's notifications, then the locked screen.
+  assert.match(card.options[1].says, /front desk can set it up later/);
+  // The plain steps: Remote Control in Desktop, both push options, the phone's own permission for
+  // Claude's notifications, then the locked screen.
   assert.match(card.what, /Remote Control/);
   assert.match(card.what, /Claude Desktop/);
-  assert.match(card.what, /Push when Claude decides/);
-  assert.match(card.what, /Push when actions required/);
-  assert.match(card.what, /step 6/);
+  assert.match(card.what, /both push options/);
   assert.match(card.what, /phone/);
   assert.ok(card.what.includes(PHONE_REACHES), 'the card says what reaches the phone');
   assert.match(card.what, /allow/i);
@@ -134,11 +132,16 @@ test('with no answer, step 9 asks the card of plain steps, ending with the scree
   // wait before the push is sent, so it goes out while the screen is still locked.
   assert.ok(PUSH_TEST_LOCK_MS > PUSH_TEST_WAIT_MS);
   assert.equal(PUSH_TEST_LOCK_MS, 3 * 60 * 1000);
-  assert.match(card.what, /Lock your screen, and leave it locked until your phone buzzes, or for three minutes if it doesn't\.$/);
+  assert.match(card.what, /click Ready and lock your screen until your phone buzzes, or for three minutes\.$/);
   assert.doesNotMatch(card.what, /for two minutes/);
   assert.match(card.options[0].says, /two minutes/);
-  // Nor is Skip for now a put-off button the composer would refuse on a question: it is a kept answer.
+  // Short, since it opens with the verdict and the first briefing, and its recommended option reads
+  // as one clean sentence.
   const composed = composeCard({ ...card, kind: 'question', suggest: false }).question;
+  const count = (t) => t.split(/\s+/).filter(Boolean).length;
+  assert.ok(count([composed.question, ...composed.options.flatMap((o) => [o.label, o.description])].join(' ')) <= 105, 'about 100 words');
+  assert.equal(composed.options[0].description, 'Recommended: Setup sends a test two minutes later and asks if it arrived, because it shows now whether your phone works.');
+  // Nor is Skip for now a put-off button the composer would refuse on a question: it is a kept answer.
   assert.deepEqual(composed.options.map((o) => o.label), [READY.ready, READY.skip]);
 });
 
@@ -150,7 +153,7 @@ test('through the helper, the card is a question with no set line, and Ready wai
     assert.equal(asked.ask.step, 9);
     assert.equal(asked.ask.id, READY_ID);
     assert.equal(setLineOf(asked.ask.card.question), null);
-    assert.ok(asked.ask.card.question.includes('leave it locked until your phone buzzes, or for three minutes'));
+    assert.ok(asked.ask.card.question.includes('lock your screen until your phone buzzes, or for three minutes'));
 
     // Ready, kept signed; a minute later, a minute is left.
     await answer(asked.ask.card, READY.ready);

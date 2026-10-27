@@ -117,6 +117,17 @@ export function trustLine(computer, at, fingerprint) {
 }
 export const TRUST_LINE = new RegExp(`^Trust your computer ([0-9a-f]{8}), added ([1-9][0-9]? (?:${MONTHS.join('|')}) [0-9]{4}), key ([0-9a-f]{12})$`);
 
+// The labels on the card that offers to take the lock from another computer (design section 9, "One computer at a time").
+export const TAKEOVER_LABEL = 'Take over here';
+export const LEAVE_LABEL = 'Leave it there';
+
+// The line on that card: the computer that holds the lock and the counter it holds it at, so a click stands for the
+// lock as the card showed it, and no later one.
+export function takeOverLine(holder, counter) {
+  return `Take over the lock from computer ${holder}, counter ${counter}`;
+}
+export const TAKEOVER_LINE = /^Take over the lock from computer ([0-9a-f]{8}), counter ([1-9][0-9]*)$/;
+
 // The label whose click on uninstall's card lets it remove Wheelhouse from a project (ruling R90).
 export const UNINSTALL_LABEL = 'Remove it';
 
@@ -216,7 +227,7 @@ const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // approval, confirmation, lift-STOP, CI-push and runbook lines, the build loop's five:
 // approve work, answer a question, change approved work, end an incident and merge its fix,
 // setup's line for a step, its line for the rules found, the baseline card's line, the trust
-// card's line, uninstall's line, the line keeping a feature's files that steer agents, a usage card's line and the
+// card's line, the take-over card's line, uninstall's line, the line keeping a feature's files that steer agents, a usage card's line and the
 // premium model card's line.
 export const SET_LINES = [
   /^Approve pull request #[1-9][0-9]* at commit [0-9a-f]{12}$/m,
@@ -233,6 +244,7 @@ export const SET_LINES = [
   /^Confirm all [1-9][0-9]* rules? as listed, [0-9a-f]{12}$/m,
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
   new RegExp(TRUST_LINE.source, 'm'),
+  new RegExp(TAKEOVER_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
   new RegExp(KEEP_CONTROL_LINE.source, 'm'),
   new RegExp(USAGE_LINE.source, 'm'),

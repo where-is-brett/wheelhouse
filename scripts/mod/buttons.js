@@ -22,14 +22,14 @@ import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, NOT_NOW, SHOW_ME, WHY } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
-import { setLinesOf, TRUST_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
+import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
 export const CANT_ANSWER = 'This card can\'t be answered here: ask the front desk about it.';
 // A setup card's note: setup asks it in its own chat, and that is where it is answered.
 export const SETUP_ANSWER = 'This card can\'t be answered here: answer it in the chat where setup asked it.';
-// A trust card's note: it is answered only in the chat where it was asked.
+// A trust card's note, and a take-over card's: each is answered only in the chat where it was asked.
 export const TRUST_ANSWER = 'This card can\'t be answered here: answer it in the chat where it was asked.';
 // Uninstall's card's note: it is answered only in the chat where setup's playbook asked it.
 export const UNINSTALL_ANSWER = 'This card can\'t be answered here: answer it in the chat where uninstall asked it.';
@@ -87,10 +87,10 @@ export function isSetupCard(card) {
   return card?.kind === 'setup' || card?.kind === 'confirm-all' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
 }
 
-// Whether a card is a trust card: of kind trust, or carrying a trust card's set line.
+// Whether a card is a trust card or a take-over card: of that kind, or carrying its set line.
 export function isTrustCard(card) {
   const text = typeof card?.question === 'string' ? card.question : '';
-  return card?.kind === 'trust' || setLinesOf(text).some((line) => TRUST_LINE.test(line));
+  return card?.kind === 'trust' || card?.kind === 'take-over' || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line));
 }
 
 // Whether a card is uninstall's: of kind uninstall, or carrying uninstall's set line.
