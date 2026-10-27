@@ -32,6 +32,8 @@ const SESSION = '0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0';
 const OTHER_SESSION = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ALLOWED = ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(node:*)'];
+// The file rules every feature session also gets: installed plugins' files to read, a temporary folder in its worktree.
+const FILE_RULES = ['Read(~/.claude/plugins/**)', 'Edit(/.wheelhouse/tmp/**)'];
 // A flat routing table with no pins runs at Balanced: its models as written, Balanced's efforts.
 const FLAT_COLUMN = [
   'The models and efforts for the subagents you dispatch this wake (Thoroughness: Balanced):',
@@ -431,7 +433,7 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   assert.equal(call.cwd, login);
   assert.deepEqual(call.args, [
     '-p', withColumn(`Wheelhouse: read ${copy}`), '--resume', SESSION,
-    '--permission-mode', 'dontAsk', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED,
+    '--permission-mode', 'dontAsk', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.equal(fs.readFileSync(copy, 'utf8'), fs.readFileSync(record, 'utf8'));
   assert.equal(Object.hasOwn(call.env, 'WHEELHOUSE_ROLE'), false, 'a feature session is not the foreman, whatever the watcher inherited');
@@ -506,7 +508,7 @@ test('startFeature starts a session with an id of the watcher\'s own, in the wor
   assert.equal(call.cwd, dir);
   assert.deepEqual(call.args, [
     '-p', withColumn('Read .wheelhouse/feature/brief.md and follow it.'), '--session-id', started.sessionId,
-    '--permission-mode', 'acceptEdits', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED,
+    '--permission-mode', 'acceptEdits', '--model', 'model-b', '--effort', 'high', '--allowedTools', ...ALLOWED, ...FILE_RULES,
   ]);
   assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile(P, 'login-page'), 'utf8')).sessionId, started.sessionId);
   assert.equal(PROMPTS.start, 'Read .wheelhouse/feature/brief.md and follow it.');
@@ -588,12 +590,23 @@ test('on Windows a feature session gets no build-command allow rules', () => wit
   const fake = fakeRun();
   const w = waker(fake, { platform: 'win32' });
   await w.startFeature({ work: 'login-page', worktree: worktree() });
-  assert.ok(!fake.calls[0].args.includes('--allowedTools'));
+  const given = fake.calls[0].args.slice(fake.calls[0].args.indexOf('--allowedTools') + 1);
+  assert.deepEqual(given, FILE_RULES, 'only the file rules, on every system');
+}));
+
+test('a feature session may read installed plugins and use a temporary folder in its worktree, on every system', () => withHome(async () => {
+  checkout();
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const fake = fakeRun();
+    await waker(fake, { platform }).startFeature({ work: 'login-page', worktree: worktree() });
+    assert.deepEqual(fileRulesOf(fake.calls[0]), FILE_RULES, platform);
+  }
 }));
 
 const runGrant = { questionId: 'q-login-page-1', commands: ['npm test'], scope: 'run' };
 const featureGrant = { questionId: 'q-login-page-2', commands: ['git status'], scope: 'feature' };
-const allowedOf = (call) => (call.args.includes('--allowedTools') ? call.args.slice(call.args.indexOf('--allowedTools') + 1) : []);
+const allowedOf = (call) => (call.args.includes('--allowedTools') ? call.args.slice(call.args.indexOf('--allowedTools') + 1).filter((r) => !FILE_RULES.includes(r)) : []);
+const fileRulesOf = (call) => (call.args.includes('--allowedTools') ? call.args.slice(call.args.indexOf('--allowedTools') + 1).filter((r) => FILE_RULES.includes(r)) : []);
 
 test('allow this time gives the rule for one run only', () => withHome(async () => {
   checkout();
