@@ -168,7 +168,6 @@ test('promptContext gives what the real board context hook gives over the same s
     return out.hookSpecificOutput.additionalContext;
   });
   const mine = promptContext({ views, events: seed, seen: { promptAt: ago(180), briefedAt: null }, at, usage: null, home: tempFolder('prompt-context-real-') });
-  // The real hook's home has no profile backed up, which its health lines say under "To watch:".
   // The blocked pull request is there in both; only the health lines are taken out of the real text.
   const blocked = /^- Pull request #17 for [^\n]* is blocked: [^\n]*$/m;
   assert.match(real, blocked);
@@ -183,10 +182,8 @@ test('promptContext gives what the real board context hook gives over the same s
     assert.match(text, /\n\nOne thing needs you\. Nothing is broken\.\n\n/);
     assert.match(text, /\n\nAsk me anything\. For the full board, type \/wheelhouse:board\./);
   }
-  // On Windows the no-sandbox health line comes first, so at this length the profile's line is among
-  // the ones counted after the blocked pull request.
-  if (process.platform === 'win32') assert.match(block(real, 'To watch'), /\nand 2 more$/);
-  else assert.match(real, /\nTo watch:\n(?:- [^\n]*\n)*- Your profile isn't backed up/);
+  // The settings are kept on this computer (design section 24.2), so no health line asks for a backup of them.
+  assert.doesNotMatch(real, /profile isn't backed up/);
 });
 
 test('the front desk\'s set-up names the model the environment gives the front desk, in both variants, and null when it gives none (design section 8)', async () => {
