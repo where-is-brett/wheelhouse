@@ -22,7 +22,7 @@ import { registerLean, readLean, updateLean, leanState } from '../../../scripts/
 import {
   storeDir, adoptProject, checkAdoptable, mergeApproved, undoMerge, copyNow, keepMain, leanStatus, withLocalLock, testEnv,
   LeanRefusal, OTHER_WINDOW, MAIN_CHECKED_OUT, MAIN_MOVED, NOT_IN_STORE, STOPPED, leanApprovalLine, mainMovedLine,
-  undoLine, undoCard, mainMovedCard,
+  undoLine, undoCard, undoCards, mainMovedCard,
 } from '../../../scripts/lean/store.js';
 
 // No real gh, glab, copilot or curl runs (P5-44): the PATH finds the stand-ins first, and the store's own runs go
@@ -811,4 +811,13 @@ test('adoption\'s checks refuse, changing nothing, what adoption refuses', async
   } finally {
     c.close();
   }
+});
+
+test('the undo card says All stop, and its earlier words still name the same card', () => {
+  const merge = 'e'.repeat(40);
+  const [now, earlier] = undoCards(merge);
+  assert.deepEqual(now, undoCard(merge));
+  assert.match(now.question, /works while All stop is on/);
+  assert.match(earlier.question, /works while STOP is on/);
+  assert.deepEqual({ ...earlier, question: undefined }, { ...now, question: undefined }, 'only the words differ');
 });

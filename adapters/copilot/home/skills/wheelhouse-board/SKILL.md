@@ -1,6 +1,6 @@
 ---
 name: "wheelhouse-board"
-description: "The same as /wheelhouse:logbook. Show Wheelhouse's Logbook."
+description: "The same as /wheelhouse-logbook. Show Wheelhouse's Logbook."
 ---
 <!-- adapters/copilot/home/skills/wheelhouse-board/SKILL.md (built from commands/board.md by npm run copilot-home) -->
 

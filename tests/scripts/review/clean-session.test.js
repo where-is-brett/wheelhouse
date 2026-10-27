@@ -192,7 +192,7 @@ test("the clean check fails on an extra agent, an extra disabled tool or a missi
     assert.ok(check.reasons.some((r) => pattern.test(r)), check.reasons.join('; '));
   };
   const info = ROUTE_B.events[0];
-  fails(routeB({ events: [...ROUTE_B.events, { type: 'session.custom_agents_updated', data: { agents: [{ name: 'reviewer' }, { name: 'claude-reviewer', source: 'project' }] } }] }), /agents besides the reviewer: claude-reviewer/);
+  fails(routeB({ events: [...ROUTE_B.events, { type: 'session.custom_agents_updated', data: { agents: [{ name: 'reviewer' }, { name: 'claude-reviewer', source: 'project' }] } }] }), /agents besides the Lookout: claude-reviewer/);
   fails(routeB({ debugLines: [ROUTE_B.debugLines[0].replace('loaded=1', 'loaded=2')] }), /2 agents were loaded/);
   fails(routeB({ events: [{ ...info, data: { ...info.data, message: `${info.data.message}, lsp` } }, ...ROUTE_B.events.slice(1)] }), /beyond it: lsp/);
   fails(routeB({ events: [{ ...info, data: { ...info.data, message: info.data.message.replace(', task', '') } }, ...ROUTE_B.events.slice(1)] }), /missing: task/);
@@ -492,7 +492,7 @@ test('the route refuses under STOP, while the clean session is switched off, and
       try {
         const client = helperClient({ address: helper.address });
         assert.deepEqual(await client.stop({}), { ok: true });
-        assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: false, refused: 'STOP is on' });
+        assert.deepEqual(await client.review({ project: 'o__p', number: 7 }), { ok: false, refused: 'All stop is on' });
       } finally {
         await helper.close();
       }

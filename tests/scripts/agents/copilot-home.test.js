@@ -21,7 +21,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const HOME_SCRIPT = path.join(ROOT, 'scripts', 'agents', 'copilot', 'home.js');
 const NAMES = ['AskUserQuestion', 'PushNotification', 'ToolSearch', 'SendMessage', 'CLAUDE_PLUGIN_ROOT'];
 const CLAUDE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'NotebookRead', 'LS'];
-const COMMANDS = ['board', 'briefing', 'settings', 'sources', 'stop'];
+const COMMANDS = ['all-stop', 'board', 'briefing', 'logbook', 'settings', 'sources', 'stop'];
 const ALL_COPILOT_TOOLS = new Set(Object.values(tools).flatMap((v) => (Array.isArray(v) ? v : [v])));
 
 // Stand-ins for gh, glab and copilot come first on the PATH; the last test asserts none ran.
@@ -104,11 +104,13 @@ test('the kit holds exactly the files Tasks 2, 3 and 5 build, and Lean\'s shell 
     'hooks/wheelhouse-lean-guard.sh',
     'hooks/wheelhouse.json',
     'instructions/wheelhouse.instructions.md',
+    'skills/wheelhouse-all-stop/SKILL.md',
     'skills/wheelhouse-board/SKILL.md',
     'skills/wheelhouse-briefing/SKILL.md',
     'skills/wheelhouse-front-desk/SKILL.md',
     'skills/wheelhouse-intake/SKILL.md',
     'skills/wheelhouse-lean/SKILL.md',
+    'skills/wheelhouse-logbook/SKILL.md',
     'skills/wheelhouse-settings/SKILL.md',
     'skills/wheelhouse-setup/SKILL.md',
     'skills/wheelhouse-sources/SKILL.md',
@@ -196,20 +198,26 @@ test('the front desk, intake and command skills are the playbooks under Copilot\
     assert.ok(!/wheelhouse:/.test(built.body), `${skill} names a skill with a colon`);
   }
   assert.match(kit.get('skills/wheelhouse-front-desk/SKILL.md'), /goes first through `wheelhouse-intake`/);
-  assert.match(kit.get('skills/wheelhouse-front-desk/SKILL.md'), /The full board is `\/wheelhouse-board`/);
+  assert.match(kit.get('skills/wheelhouse-front-desk/SKILL.md'), /The full Logbook is `\/wheelhouse-logbook`/);
   for (const command of COMMANDS) {
     const source = split(lf(fs.readFileSync(path.join(ROOT, 'commands', `${command}.md`), 'utf8')));
     const built = split(kit.get(`skills/wheelhouse-${command}/SKILL.md`));
     assert.deepEqual(Object.keys(built.front), ['name', 'description']);
     assert.equal(built.front.name, `wheelhouse-${command}`);
-    // The command's description, but for a mention of the pane's build tab, which a chat has none of.
-    assert.ok(source.front.description.startsWith(built.front.description), `${command}'s description is the command's`);
+    // The command's description, but for a mention of the pane's build tab, which a chat has none of, and with the
+    // commands it names under Copilot's names (/wheelhouse-logbook, not /wheelhouse:logbook).
+    assert.ok(source.front.description.replace(/wheelhouse:/g, 'wheelhouse-').startsWith(built.front.description), `${command}'s description is the command's`);
+    assert.ok(!/wheelhouse:/.test(built.front.description), `${command}'s description names a command with a colon`);
     assert.ok(!/build tab/.test(built.front.description));
     assert.ok(built.front.description.length >= 20);
     assert.match(built.body, /wheelhouse-lean/, `${command} points to Lean's playbook`);
     assert.ok(built.body.length < 900, `${command} is short`);
   }
   assert.match(kit.get('skills/wheelhouse-board/SKILL.md'), new RegExp(BOARD_FILE.replace('/', '\\/')));
+  // The Logbook and All stop under their own names, and under the names they had before, which keep working.
+  const rest = (name) => split(kit.get(`skills/wheelhouse-${name}/SKILL.md`)).body.replace(/^<!--.*-->\n/, '');
+  assert.equal(rest('logbook'), rest('board'));
+  assert.equal(rest('all-stop'), rest('stop'));
 });
 
 test('every skill and agent name starts wheelhouse-, and a skill\'s name is its folder', () => {

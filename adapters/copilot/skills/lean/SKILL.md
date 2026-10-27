@@ -323,7 +323,7 @@ After each merge and each undo, push the main version to the copy: `git -c core.
 
 ## All stop
 
-The director says "stop" (or uses `/wheelhouse-stop`). At Lean nothing enforces it: no guard is watching, so you stop because you were told to. Say so plainly, once in a session, the first time All stop goes on: "Stopped. Nothing here makes me stop; I'm following your word. VS Code's stop button ends whatever is running this second."
+The director says "stop" (or uses `/wheelhouse-all-stop`). At Lean nothing enforces it: no guard is watching, so you stop because you were told to. Say so plainly, once in a session, the first time All stop goes on: "Stopped. Nothing here makes me stop; I'm following your word. VS Code's stop button ends whatever is running this second."
 
 - Say in one or two lines what was in progress (the Logbook's "Building now"), write the `stop` line, set All stop to On on the Logbook, and start no building, reviewing or merging until it is lifted. Reading, reporting and the runbook's local steps carry on.
 - **To lift it,** ask the **Lift All stop** card alone, with nothing else beside it. On the click, write the `lift-stop` line and set All stop to Off.

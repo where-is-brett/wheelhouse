@@ -59,7 +59,7 @@ test("the review's home holds only the sign-in keys and the reviewer, whose firs
   const agent = fs.readFileSync(path.join(home, 'agents', 'reviewer.agent.md'), 'utf8');
   assert.match(agent, /^---\nname: "reviewer"\n/);
   assert.match(agent, /^tools: \["view", "glob", "rg"\]$/m);
-  assert.ok(agent.indexOf(firstLineOf(NONCE)) < agent.indexOf('You are an independent reviewer'));
+  assert.ok(agent.indexOf(firstLineOf(NONCE)) < agent.indexOf('You are a Lookout, an independent reviewer'));
   assert.equal(firstLineOf(NONCE), `${FIRST_LINE} ${NONCE}`);
   assert.doesNotMatch(agent, /wheelhouse-reviewer/);
   assert.throws(() => reviewerAgent('not-a-nonce'), /32 hexadecimal/);

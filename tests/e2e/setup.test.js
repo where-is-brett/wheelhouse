@@ -186,10 +186,10 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     assert.deepEqual(two.changes.filter((ch) => ch.step === 2).map((ch) => [ch.kind, ch.after?.tool ?? ch.key?.join('.')]), [['folder', 'gh'], ['json-key', 'permissions.allow']]);
     assert.equal(await a.act(() => toolPath('gh')), path.join(a.home, 'tools', 'gh', 'bin', 'gh'));
 
-    // The board is green, setup's ending ran, and the journal says the run is finished.
+    // The Logbook is green, setup's ending ran, and the journal says the run is finished.
     const { health } = log.find((e) => e.health);
     assert.equal(health.green, true, health.lines.join('\n'));
-    assert.ok(health.lines.slice(0, -1).every((l) => /^(Passed|Board):/.test(l)), health.lines.join('\n'));
+    assert.ok(health.lines.slice(0, -1).every((l) => /^(Passed|Logbook):/.test(l)), health.lines.join('\n'));
     assert.match(health.lines.at(-1), /^All \d+ checks passed\. Wheelhouse is ready\.$/);
     assert.match(health.board, /Wheelhouse's Logbook for a-director__Cafe-Menu/);
     assert.match(health.board, /Phase: before launch/);

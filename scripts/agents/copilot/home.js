@@ -80,12 +80,18 @@ const FOREMAN_SOURCE = 'skills/foreman/SKILL.md';
 // The skills the director calls by name. Each points to Lean's playbook for it, since no Wheelhouse program runs at
 // Lean to give the front desk's own views (the description is the command's).
 const LEAN = '`wheelhouse-lean`';
+// Lean's Logbook and All stop, under their own names and under the names they had before (`board`, `stop`), which
+// keep working.
+const LOGBOOK_SKILL = `Show the director the Logbook: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the Logbook couldn't be read.\n\nLean's playbook (${LEAN}) keeps the Logbook up to date; its section "The Logbook" says how and when. Its parts include "Ideas" and "Rulings", the ideas kept for later and the rulings the director confirmed, with "Nothing" when there are none.`;
+const ALL_STOP_SKILL = `Turn All stop on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "All stop" of ${LEAN}: tell the director once that nothing enforces All stop here, and ask the Lift All stop card alone.`;
 const COMMAND_SKILLS = Object.freeze({
-  board: `Show the director the Logbook: read \`${BOARD_FILE}\` in the project and give it as it is, with nothing added. If it isn't there or can't be read, say only that the Logbook couldn't be read.\n\nLean's playbook (${LEAN}) keeps the Logbook up to date; its section "The Logbook" says how and when. Its parts include "Ideas" and "Rulings", the ideas kept for later and the rulings the director confirmed, with "Nothing" when there are none.`,
+  'all-stop': ALL_STOP_SKILL,
+  board: LOGBOOK_SKILL,
   briefing: `Give the director the briefing now, as ${LEAN} gives it (its section "The briefing"), with nothing added. If you can't build it, say only that the briefing couldn't be read.`,
+  logbook: LOGBOOK_SKILL,
   settings: `Show the director the settings in force, and where each comes from, as ${LEAN} gives them (its section "Settings"), with nothing added: at Lean they are the tier and its lines at the top of the Logbook, and the folder the copy goes to. If they can't be read, say only that the settings couldn't be read.`,
   sources: `Lean has no weekly check of the sources: it is a Wheelhouse program, and none runs here. Say so in one line, as ${LEAN} does (its section "Sources"), and show nothing else.`,
-  stop: `Turn All stop on: start no building, reviewing or merging in this chat until the director lifts it. Only reading, reporting and the runbook carry on. Say in one or two lines what was in progress, then follow the section "All stop" of ${LEAN}: tell the director once that nothing enforces All stop here, and ask the Lift All stop card alone.`,
+  stop: ALL_STOP_SKILL,
 });
 
 // The one line the kit's front desk holds that Claude Code's doesn't: Claude Code has no `wheelhouse-lean` skill, so the
@@ -211,7 +217,7 @@ function commandSkillFrom(root, command) {
   const { front } = parse(readSource(root, source), source);
   const file = `skills/wheelhouse-${command}/SKILL.md`;
   // The pane's build tab is the pane's: "Add "build" to open on the build tab." means nothing in a chat.
-  const description = front.description.replace(/ Add "build" to open on the build tab\.$/, '');
+  const description = renameSkills(front.description.replace(/ Add "build" to open on the build tab\.$/, ''));
   return [file, assemble({ file, source, front: { name: `wheelhouse-${command}`, description }, rest: `\n${COMMAND_SKILLS[command]}\n` })];
 }
 

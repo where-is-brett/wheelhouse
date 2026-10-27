@@ -267,7 +267,7 @@ test('a card not in state, or with another hash, opens no window', async () => {
       [plain, /not one the window confirms/],
       [rulingCard, /not one the window confirms/],
       // Lift All stop while STOP is off.
-      [{ card: 'lift-stop' }, /STOP is not on/],
+      [{ card: 'lift-stop' }, /All stop is not on/],
     ];
     for (const [body, why] of refusals) {
       const got = await c.client.confirm({ project: PROJECT, ...body });
@@ -391,7 +391,7 @@ test('under STOP the window serves only the Lift All stop card', async () => {
     const second = await c.card(runbookCard(2));
     assert.equal((await c.client.stop({})).ok, true);
     // Refused before any window opens.
-    assert.deepEqual(await c.client.confirm({ project: PROJECT, ...first }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ project: PROJECT, ...first }), { ok: false, refused: 'All stop is on' });
     assert.equal(c.windows.length, 0);
     liftStop();
     // STOP set while a card's window is open: the click records nothing.
@@ -401,7 +401,7 @@ test('under STOP the window serves only the Lift All stop card', async () => {
     assert.equal((await c.client.stop({})).ok, true);
     const before = c.events().length;
     open(said('Do it'));
-    assert.deepEqual(await asked, { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await asked, { ok: false, refused: 'All stop is on' });
     assert.equal(c.events().length, before, 'nothing was recorded');
   } finally {
     liftStop();
@@ -419,8 +419,8 @@ test('under STOP a card of a project that isn\'t Lean is refused before it is lo
     });
     assert.equal((await c.client.stop({})).ok, true);
     // Nothing is looked at: not the state, nor the code host's pull request.
-    assert.deepEqual(await c.client.confirm({ project: c.project, ...shown }), { ok: false, refused: 'STOP is on' });
-    assert.deepEqual(await c.client.confirm({ project: c.project, card: '00000000-0000-4000-8000-000000000000', hash: 'a'.repeat(64) }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ project: c.project, ...shown }), { ok: false, refused: 'All stop is on' });
+    assert.deepEqual(await c.client.confirm({ project: c.project, card: '00000000-0000-4000-8000-000000000000', hash: 'a'.repeat(64) }), { ok: false, refused: 'All stop is on' });
     assert.equal(asked, 0, 'the code host was not asked');
     assert.equal(c.windows.length, 0);
   } finally {

@@ -56,7 +56,7 @@ import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.j
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
-  SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCard,
+  SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
 } from '../lean/store.js';
 import { CHAT_PROOFS, CONFIRMED_STEPS } from '../agents/chat-clicks.js';
 import { SIGNED_LABELS, earned } from '../hooks/prompt-record.js';
@@ -2132,7 +2132,7 @@ export async function startHelper({
       const line = one(UNDO_LINE);
       if (line === null) return null;
       const [, merge] = line;
-      if (!sameCard(data, undoCard(merge))) return null;
+      if (!undoCards(merge).some((card) => sameCard(data, card))) return null;
       if (!(await mergeOnMain({ project, merge, run }))) return null;
       const made = { kind: 'action', data: { action: 'undo-merge', merge, question, label } };
       return { made, step: ACTION_STEPS['undo-merge'], lift: false };

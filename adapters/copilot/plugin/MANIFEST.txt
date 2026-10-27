@@ -3,12 +3,14 @@
 a35a5f4afe641aa82edf9f3ca4dadc6ab35a2ccc agents/wheelhouse-reviewer.agent.md
 358896d95d7710861401a68c6d2acac58e03480d agents/wheelhouse-tester.agent.md
 64c902e3d9d79cf268df2de394b47904ba11f53e plugin.json
-8f905da480a2301360796d29b3f129b5d0e63b64 skills/wheelhouse-board/SKILL.md
+2b9f056d81333d3d126210192782cb7f1bdfa73d skills/wheelhouse-all-stop/SKILL.md
+9de53d1764810d7f282ed66dc061a82c2dd312dc skills/wheelhouse-board/SKILL.md
 9b94e142f4743747476fb3c7b77202d883995f19 skills/wheelhouse-briefing/SKILL.md
 8944af901777dbbb1dd510a2b91a3e67753614dc skills/wheelhouse-front-desk/SKILL.md
 5648cc9f050166d09bb61c0de5dc251467887b14 skills/wheelhouse-intake/SKILL.md
-0fec0ea54892bf42389d1b0b8f85de0d4ca4b0db skills/wheelhouse-lean/SKILL.md
+c912c04ca6e5f04f7bb0161c1cd2da1255ab9168 skills/wheelhouse-lean/SKILL.md
+c847ce4a4fa9e627a9d9ad6e9ceecf51141cf9dd skills/wheelhouse-logbook/SKILL.md
 d714ba985f78e3bd1291b8e70007b65d1750c018 skills/wheelhouse-settings/SKILL.md
 7651fb5b8fff264ade3ac175d26cb9906ec9fc12 skills/wheelhouse-setup/SKILL.md
 bfaefc41db3617193650afe629c06a888b81466f skills/wheelhouse-sources/SKILL.md
-13ebdac57fd4ba321581cdcd70652a528290a14b skills/wheelhouse-stop/SKILL.md
+a4fa683338ec5610deb90ec75bfe591b02e3f0f9 skills/wheelhouse-stop/SKILL.md

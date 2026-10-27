@@ -871,7 +871,7 @@ test('the playbook states the dates in the form the project uses', () => {
 // ---- The kit's Lean path ----
 
 test('the Lean path of the kit names no Claude Code tool and no Claude Code', () => {
-  const files = ['lean', 'board', 'stop', 'sources', 'settings', 'briefing'].map((n) => `skills/wheelhouse-${n}/SKILL.md`);
+  const files = ['lean', 'logbook', 'all-stop', 'board', 'stop', 'sources', 'settings', 'briefing'].map((n) => `skills/wheelhouse-${n}/SKILL.md`);
   for (const file of files) {
     assert.ok(kit.has(file), file);
     assert.doesNotMatch(kit.get(file), CLAUDE_CODE_TOOL_WORDS, file);
@@ -894,7 +894,7 @@ test('the kit\'s sources and settings skills send the chat to wheelhouse-lean, a
   assert.match(settings, /wheelhouse-lean/);
   assert.match(settings, /section "Settings"/);
   for (const heading of ['The Logbook', 'Settings', 'Sources', 'The briefing', 'All stop']) assert.ok(section(playbook, heading), heading);
-  for (const command of ['board', 'briefing', 'stop']) assert.match(kit.get(`skills/wheelhouse-${command}/SKILL.md`), /wheelhouse-lean/, command);
+  for (const command of ['logbook', 'all-stop', 'board', 'briefing', 'stop']) assert.match(kit.get(`skills/wheelhouse-${command}/SKILL.md`), /wheelhouse-lean/, command);
 });
 
 test('the Crew member and the Lookout the playbook names are in the kit', () => {

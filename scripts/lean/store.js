@@ -283,13 +283,16 @@ export function mainMovedCard(from, to) {
 }
 
 // The card asking to undo a merge: Undo adds a commit that reverses it, confirmed in the helper's window, and works
-// while STOP is on (a runbook step, spec section 6.4).
-export function undoCard(merge) {
+// while STOP is on (a runbook step, spec section 6.4). `earlier` gives the card in its words before the
+// ship's-crew names (27 October 2026), which a card raised before an update still holds (undoCards).
+const UNDO_WORKS = 'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while All stop is on.';
+const UNDO_WORKS_EARLIER = 'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while STOP is on.';
+export function undoCard(merge, { earlier = false } = {}) {
   const line = undoLine(merge);
   return {
     question: [
       'Take this merge back out of the main version?',
-      'Undo adds a new commit that reverses it: nothing is deleted, and later work stays. It is confirmed in Wheelhouse\'s own window, and it works while STOP is on.',
+      earlier ? UNDO_WORKS_EARLIER : UNDO_WORKS,
       line,
     ].join('\n'),
     header: 'Undo',
@@ -298,6 +301,11 @@ export function undoCard(merge) {
     level: 3,
     line,
   };
+}
+
+// The undo card in each of its wordings, the current one first: a click on either decides it.
+export function undoCards(merge) {
+  return [undoCard(merge), undoCard(merge, { earlier: true })];
 }
 
 export function approvalCard(branch, commit, testCommand) {

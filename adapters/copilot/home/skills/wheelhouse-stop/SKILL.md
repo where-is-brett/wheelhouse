@@ -1,6 +1,6 @@
 ---
 name: "wheelhouse-stop"
-description: "The same as /wheelhouse:all-stop. Turn All stop on. Only reading, reporting and the runbook carry on until you lift it."
+description: "The same as /wheelhouse-all-stop. Turn All stop on. Only reading, reporting and the runbook carry on until you lift it."
 ---
 <!-- adapters/copilot/home/skills/wheelhouse-stop/SKILL.md (built from commands/stop.md by npm run copilot-home) -->
 

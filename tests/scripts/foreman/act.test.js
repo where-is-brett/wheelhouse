@@ -1183,7 +1183,7 @@ test('the Unattended card passes the card check and fits the card, with and with
     assert.deepEqual(data.options, words.options.map((o) => o.label));
     assert.equal(data.question.split('\n').includes(unattendedBuildsLine(setting.id, computer)), true, name);
     // No reply code answers it, so it says a click is needed.
-    assert.ok(data.question.split('\n').includes('Builders keep asking; answer by a click only.'), name);
+    assert.ok(data.question.split('\n').includes('The Crew keeps asking; answer by a click only.'), name);
     assert.doesNotThrow(() => makeEvent({ kind: 'card', data, now: () => new Date(T0) }));
     // A Turn on (dangerous) click on it still confirms the Unattended setting event, with its line.
     const click = await earned({ project: P, question: data.question, label: 'Turn on (dangerous)' });

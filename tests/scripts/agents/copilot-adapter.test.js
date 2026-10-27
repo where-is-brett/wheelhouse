@@ -358,9 +358,9 @@ test('every safety line passes plainWords and is one line', () => {
     assert.ok(line.length <= LINE_CHARS, `${line.length} characters: ${line}`);
     assert.doesNotMatch(line, /\.$/, 'a line is a phrase with no full stop');
     // Plain words: any glossary term in it is explained in place, never left bare under a Terms line.
-    // The director knows Wheelhouse's own names (STOP, Standard, Locked); with those known, no line is rewritten
+    // The director knows Wheelhouse's own names (All stop, Standard, Locked); with those known, no line is rewritten
     // and none carries a Terms footer, so what the director reads is what the adapter says.
-    const out = plainWords(line, glossary, { explanations: 'plain', known: ['STOP', 'Standard', 'Locked'] });
+    const out = plainWords(line, glossary, { explanations: 'plain', known: ['All stop', 'Standard', 'Locked'] });
     assert.equal(out.text, line);
     // Without them, a name is explained in place and the line is still one line.
     assert.doesNotMatch(plainWords(line, glossary, { explanations: 'plain' }).text, /\n|Terms:/, line);
@@ -413,9 +413,9 @@ test('a Claude Code project\'s health line is unchanged', () => {
 test('an agent the board does not know is named in what is missing, and the rest of the board stands', () => {
   const out = board({ agent: 'model-x' });
   assert.deepEqual(out.director.health, [{ level: 'ok', text: 'Protection: Standard' }]);
-  assert.ok(out.missing.includes('The board\'s agent line couldn\'t be built'));
+  assert.ok(out.missing.includes('The Logbook\'s agent line couldn\'t be built'));
   // A tier that is no tier does the same, and never throws.
-  assert.ok(board({ agent: { name: 'copilot', tier: 'gold' } }).missing.includes('The board\'s agent line couldn\'t be built'));
+  assert.ok(board({ agent: { name: 'copilot', tier: 'gold' } }).missing.includes('The Logbook\'s agent line couldn\'t be built'));
 });
 
 // ---- No host program ran ----

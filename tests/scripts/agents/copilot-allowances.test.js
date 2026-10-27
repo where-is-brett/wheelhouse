@@ -107,9 +107,9 @@ test('the front desk\'s confirm posts /confirm for Lift All stop, and for a card
   assert.equal(missing.code, 1);
   assert.match(missing.err, /not in this project's state/);
   assert.deepEqual(none.asked, []);
-  const refused = await desk(['confirm', 'lift-stop'], deskClient({ answer: { ok: false, refused: 'STOP is not on, so there is nothing to lift' } }));
+  const refused = await desk(['confirm', 'lift-stop'], deskClient({ answer: { ok: false, refused: 'All stop is not on, so there is nothing to lift' } }));
   assert.equal(refused.code, 1);
-  assert.equal(refused.err, 'STOP is not on, so there is nothing to lift\n');
+  assert.equal(refused.err, 'All stop is not on, so there is nothing to lift\n');
   assert.equal((await desk(['confirm'], deskClient())).code, 1);
   assert.equal((await desk(['confirm', 'a', 'b'], deskClient())).code, 1);
 });
@@ -343,7 +343,7 @@ test('the window confirms no answer but an Ask allowance on a build question as 
     // Under STOP an allowance isn't served.
     const live = await c.ask(buildQuestion(4));
     assert.equal((await c.client.stop({})).ok, true);
-    assert.deepEqual(await c.client.confirm({ cwd: c.folder, card: live.card, hash: live.hash }), { ok: false, refused: 'STOP is on' });
+    assert.deepEqual(await c.client.confirm({ cwd: c.folder, card: live.card, hash: live.hash }), { ok: false, refused: 'All stop is on' });
   } finally {
     liftStop();
     await c.close();
