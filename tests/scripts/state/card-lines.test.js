@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine,
-  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE,
+  approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE,
   uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine,
 } from '../../../scripts/state/card-lines.js';
 
@@ -63,7 +63,7 @@ test('each line the build loop writes is found by setLineOf, and matches exactly
   const all = [
     ...BUILD_LINES, approvalLine(12, FULL), confirmLine({ kind: 'ruling', id: 'x', data: { words: 'w' } }),
     LIFT_STOP, ciPushLine('main', FULL), runbookLine(1), setupLine(10, FULL), confirmAllLine(FULL, 3), baselineLine(FULL),
-    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), uninstallLine('o__Cafe-Menu', FULL),
+    trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', FULL), takeOverLine('0a1b2c3d', 4), uninstallLine('o__Cafe-Menu', FULL),
     usageLine('lean', '2026-10-26T01:00:00.000Z'), premiumLine('2026-10-26T01:00:00.000Z'),
   ];
   for (const pattern of SET_LINES) assert.ok(all.some((line) => new RegExp(pattern.source, pattern.flags).test(line)), String(pattern));
@@ -84,6 +84,21 @@ test('a trust card\'s line names the computer, the day its key was added and the
     'Trust your computer 0a1b2c3d, added 2026-10-19, key abcdef123456',
     'Trust your computer 0a1b2c3d9, added 19 October 2026, key abcdef123456',
     'Trust your computer 0a1b2c3d, added 19 October 2026, key abcdef123456 now',
+  ]) assert.equal(setLineOf(near), null, near);
+});
+
+test('a take-over card\'s line names the computer that holds the lock and its counter', () => {
+  const line = takeOverLine('0a1b2c3d', 4);
+  assert.equal(line, 'Take over the lock from computer 0a1b2c3d, counter 4');
+  assert.equal(setLineOf(`What this is.\n${line}`), line);
+  assert.equal(SET_LINES.filter((p) => new RegExp(p.source, p.flags).test(line)).length, 1);
+  assert.deepEqual(TAKEOVER_LINE.exec(line).slice(1), ['0a1b2c3d', '4']);
+  for (const near of [
+    'Take over the lock from computer 0A1B2C3D, counter 4',
+    'Take over the lock from computer 0a1b2c3d9, counter 4',
+    'Take over the lock from computer 0a1b2c3d, counter 0',
+    'Take over the lock from computer 0a1b2c3d, counter 04',
+    'Take over the lock from computer 0a1b2c3d, counter 4 now',
   ]) assert.equal(setLineOf(near), null, near);
 });
 

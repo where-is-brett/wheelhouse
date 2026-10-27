@@ -10,7 +10,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere,
+  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere, TAKEOVER_ASK,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
@@ -31,7 +31,7 @@ import { WINDOWS_LINE, UNATTENDED_LINE } from '../../../scripts/lib/platform-lin
 import { helperAddress, keysDir, computerId, stateDir, wheelhouseHome } from '../../../scripts/lib/paths.js';
 import { lowNodeReady, selfTestFile } from '../../../scripts/windows/low.js';
 import { settingKey } from '../../../scripts/protection/windows-builds.js';
-import { unattendedBuildsLine, trustLine, setLineOf } from '../../../scripts/state/card-lines.js';
+import { unattendedBuildsLine, trustLine, takeOverLine, setLineOf } from '../../../scripts/state/card-lines.js';
 import { makeEvent, confirmationFor, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
@@ -178,6 +178,59 @@ test('a lock another computer holds, or one that can\'t be reached, is said in o
     down.client.health = async () => ({ ok: false });
     await run(down);
     assert.deepEqual(downAsked, []);
+  });
+});
+
+// The take-over card a reload hands over, as AskUserQuestion's question, or null.
+const takeOverCard = (out) => {
+  const row = text(out).split('\n').find((l) => l.startsWith(TAKEOVER_ASK));
+  return row === undefined ? null : JSON.parse(row.slice(TAKEOVER_ASK.length));
+};
+const HOLDER = '0a1b2c3d';
+const heldBy = (f, lastWriteAt, over = {}) => {
+  withLock(f, { take: { ok: true, result: { taken: false, holder: HOLDER, since: lastWriteAt } } });
+  f.client.lock.read = async () => ({ ok: true, result: { computer: HOLDER, counter: 4, takenAt: '2026-10-27T00:00:00.000Z', lastWriteAt, ...over } });
+  return f;
+};
+const SOON = (minutes) => () => new Date(Date.parse('2026-10-27T03:00:00.000Z') + minutes * 60000);
+
+test('when another computer holds a live lock, the front desk is handed the Take over here card, the lock as it stands named on it', async () => {
+  await withHome(async () => {
+    const out = await run(heldBy(fake(), '2026-10-27T02:40:00.000Z'), { env: {}, now: SOON(0) });
+    const card = takeOverCard(out);
+    assert.equal(setLineOf(card.question), takeOverLine(HOLDER, 4));
+    assert.deepEqual(card.options.map((o) => o.label), ['Take over here', 'Leave it there']);
+    assert.match(card.question, /20 minutes ago/);
+    assert.match(card.question, /read-only|only look|changes nothing/i);
+    // Last written 20 minutes ago: the other computer is in use, so the card recommends leaving it.
+    assert.ok(card.options.find((o) => o.label === 'Leave it there').description.startsWith('Recommended:'));
+    // The one line of the session start is still there.
+    assert.ok(text(out).includes(heldElsewhere(HOLDER, '2026-10-27T02:40:00.000Z')));
+  });
+});
+
+test('the Take over here card recommends taking over when nothing was written on the other computer for a good while', async () => {
+  await withHome(async () => {
+    const card = takeOverCard(await run(heldBy(fake(), '2026-10-27T01:30:00.000Z'), { env: {}, now: SOON(0) }));
+    assert.match(card.question, /1 hour 30 minutes ago/);
+    assert.ok(card.options.find((o) => o.label === 'Take over here').description.startsWith('Recommended:'));
+  });
+});
+
+test('no Take over here card for a feature session, a lock this computer holds, one that can\'t be read, or a holder that isn\'t a computer id', async () => {
+  await withHome(async () => {
+    const f = heldBy(fake(), '2026-10-27T02:40:00.000Z');
+    assert.equal(takeOverCard(await run(f, { env: { WHEELHOUSE_ROLE: 'foreman' }, now: SOON(0) })), null);
+    const held = fake();
+    withLock(held, { touch: { ok: true, result: { touched: true } } });
+    assert.equal(takeOverCard(await run(held, { env: {}, now: SOON(0) })), null);
+    const unreadable = heldBy(fake(), '2026-10-27T02:40:00.000Z');
+    unreadable.client.lock.read = async () => ({ ok: false, refused: 'the lock can\'t be read' });
+    assert.equal(takeOverCard(await run(unreadable, { env: {}, now: SOON(0) })), null);
+    const odd = fake();
+    withLock(odd, { take: { ok: true, result: { taken: false, holder: 'other-mac', since: '2026-10-27T02:40:00.000Z' } } });
+    odd.client.lock.read = async () => ({ ok: true, result: { computer: 'other-mac', counter: 4, lastWriteAt: '2026-10-27T02:40:00.000Z' } });
+    assert.equal(takeOverCard(await run(odd, { env: {}, now: SOON(0) })), null);
   });
 });
 

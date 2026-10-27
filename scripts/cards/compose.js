@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -38,6 +38,7 @@ export const HEADERS = Object.freeze({
   'confirm-all': 'Rules found',
   baseline: BASELINE_HEADER,
   trust: 'Trust',
+  'take-over': 'Take over',
   uninstall: 'Uninstall',
   question: 'Question',
   'keep-control-files': 'Agent files',
@@ -61,6 +62,7 @@ export const DECIDING = Object.freeze({
   'confirm-all': CONFIRM_ALL_LABEL,
   baseline: BASELINE_LABEL,
   trust: TRUST_LABEL,
+  'take-over': TAKEOVER_LABEL,
   uninstall: UNINSTALL_LABEL,
   'keep-control-files': 'Confirm',
 });
@@ -69,12 +71,13 @@ export const DECIDING = Object.freeze({
 // director's click on the card itself, never on a reply, so a code would make a shown record that
 // is never spent. Setup's card of the rules found (confirm-all, ruling R35) is one too, and so is a
 // trust card (ruling R80): another computer is trusted only by the click on the card itself; and so
+// is the take-over card (design section 9): the lock moves only on the click on the card itself; and so
 // is uninstall's card (ruling R90), which goes ahead only on the click on the card itself.
 // A keep-control-files card (ruling P7-31) is one too: the files are kept only on the click on the card itself.
 // So is a usage card (design section 14.6): its switch is the setting change and the director's confirmation of it at
 // once, so only the click on the card the session start offered counts.
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'uninstall', 'keep-control-files', 'usage', 'premium']);
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). STOP is lifted or it
@@ -89,6 +92,7 @@ const OFFERED_AFTER = Object.freeze({
   'confirm-all': Object.freeze([CORRECT_SOME_LABEL, NOT_NOW]),
   baseline: Object.freeze([NOT_NOW]),
   trust: Object.freeze([NOT_NOW]),
+  'take-over': Object.freeze([LEAVE_LABEL]),
   uninstall: Object.freeze([NOT_NOW]),
   'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
 });
@@ -108,6 +112,7 @@ const PUT_OFF_SAYS = Object.freeze({
   [NOT_NOW]: 'Leave this waiting; nothing changes yet.',
   [SHOW_ME]: 'I show you what it looks like, then ask again.',
   [SUGGEST]: SUGGEST_SAYS,
+  [LEAVE_LABEL]: 'The other computer keeps the lock, and this one only shows the board.',
   [KEEP_AS_IS]: 'Things stay as they are, and this isn\'t asked again for a while.',
 });
 
@@ -124,6 +129,7 @@ const ASKS = Object.freeze({
   'lift-incident': () => 'End the incident?',
   'incident-fix': () => 'Merge this fix?',
   'keep-control-files': () => 'Keep these files as they are?',
+  'take-over': () => 'Take over the front desk here?',
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -231,6 +237,10 @@ function lineFor(kind, target) {
     }
     return trustLine(t.computer, t.at, t.fingerprint);
   }
+  if (kind === 'take-over') {
+    if (typeof t.holder !== 'string' || !/^[0-9a-f]{8}$/.test(t.holder) || !isCount(t.counter)) bad('needs the id of the computer that holds the lock and the counter it holds it at');
+    return takeOverLine(t.holder, t.counter);
+  }
   if (kind === 'uninstall') {
     if (!isLineName(t.project) || !HEX.test(t.hash)) bad('needs the project, on one line, and the hash of the list uninstall puts back');
     return uninstallLine(t.project, t.hash);
@@ -285,6 +295,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'setup') need = [new RegExp(`\\bstep ${target.step}(?![0-9])`, 'i').test(what), `step ${target.step}`];
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
+  if (kind === 'take-over') need = [nameId(target.holder), `the computer ${target.holder}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;
