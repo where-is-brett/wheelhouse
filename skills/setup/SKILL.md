@@ -59,7 +59,7 @@ Setup opens with one card: the plan for this project, a plain line each, with **
    - **`hash` and `card` without `covered`, a Go-ahead card:** ask `card` before anything else; never run `plan` again over it. Only after the director's **Go ahead** on that card, run `apply <step> <hash>` with the full `hash` from that same plan. Never apply on typed words, on an earlier card's click, or with an earlier hash.
    - **`wait` with `waitsFor`:** the step waits for step `waitsFor` to finish. Run `wait <step>`, saying nothing, then `resume`.
    - **`wait` without `waitsFor`:** on step 9, see below. On step 10 it is your part: follow Step 10 below, never `plan 10` again in a loop. Otherwise read `why`: when it waits for the director (their changes, a Confirm), tell them in one line and offer to carry on later; when it waits for setup itself, run `wait <step>` and `resume`.
-   - **`done: true`:** the step settled with nothing to click. When it has `said`, tell the director that line at once, in plain words. Then `resume`.
+   - **`done: true`:** the step settled with nothing to click. When it has `said`, tell the director it at once: a line in plain words, or step 10's verdict and first briefing as they are, in a message of their own. Then `resume`.
    - **`setUpAgain: true`**, whatever the plan says: the director chose **Set up again**. Say in one line that the old setup is removed first. Follow Uninstall below: its own **Remove it** card is still asked, since removing is a decision of its own. Once uninstall is done, offer to set Wheelhouse up here afresh.
    - **`plan: null`:** every step left is running or done: check `status`.
 3. **After apply.** `{ started: true, done: true }`: the step has finished; when it has `said`, tell the director that line in plain words. `{ started: true }` alone: a long step runs on by itself. Don't wait for it, and don't stop: run `resume` and act on what it gives.
@@ -81,7 +81,7 @@ Setup opens with one card: the plan for this project, a plain line each, with **
 
 ## Step 9, phone notifications
 
-The phone comes last, once setup is finished: after the first briefing (and its card, if any), run `resume` once more, and ask the phone card it gives, once. It is optional and never holds setup up.
+The phone comes once setup is finished: the `resume` after the green board gives its card, which opens with the verdict and the first briefing. Ask it once, exactly as given. It is optional and never holds setup up.
 
 - A step 9 wait **with** `waitsFor` is the wait for another step: no push.
 - A step 9 wait **without** `waitsFor` means the director's screen is locked for the test. Run `wait 9` until it answers `waited: true` (each call waits up to a minute and a half, then says how long is left), then send exactly one test notification with the session's push tool, saying "Wheelhouse test: phone notifications reach you.", then `plan 9` again. One push, even when the director asks for more; no push at any other time, not even to try the tool.
@@ -95,9 +95,9 @@ Its Go ahead comes first, like any step's (covered by the one card, or on its ow
 1. `health`, with no lines: it names `trials.pr` and `trials.project`.
 2. The Wheelhouse command the session start named, with `scripts/health/trials.js` in place of `scripts/frontdesk/cli.js`: `<that command> --pr <pr> --project <project>`.
 3. `health` with every `<trial>: <expected> / <result>` line it printed, each as one argument in double quotes, exactly as printed. Leave out its notes: a note handed in makes the whole call refused.
-4. Show the director `lines` (the last is the verdict) and the `board`, as they are. Green: setup is finished; give the `briefing`, as it is. Not green: tell them plainly what failed and what to do (the lines say), and offer to carry on later.
-5. When `health` gave a `card`, ask `card.question` exactly as given, right after the briefing, as a question of its own. On its answer, do as `wheelhouse:front-desk` says under "Work under way at setup's end". When there is no card and the briefing says it is carrying the work on ("I'm carrying them on", or "it"), do as that section says too, right after the briefing.
-6. Then the phone card (Step 9 above).
+4. **Green:** setup is finished. Run `resume` at once. The card it gives (the phone's, Step 9 above) opens with the verdict and the first briefing: ask it exactly as given, as every card, and that is how the director sees them. With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own. Show `lines` and the `board` only when they ask. **Not green:** show `lines` as they are (the last is the verdict), tell them plainly what failed and what to do (the lines say), and offer to carry on later.
+5. When `health` gave a `card`, ask `card.question` exactly as given, after that first card, as a question of its own. On its answer, do as `wheelhouse:front-desk` says under "Work under way at setup's end". When there is no card and the briefing says it is carrying the work on ("I'm carrying them on", or "it"), do as that section says too.
+6. Then `resume` again, until it says setup is finished with nothing to ask.
 7. Then, in this order, hand the front desk (`wheelhouse:front-desk`) what waits for it, each as the director's own request, in their words, saying so in one line: first each of `requests` (changes they asked for after setup), then the request they came with ("Setup comes first", item 3).
 
 Never skip a trial or the card, change a line, mark anything passed or switch anything on yourself, whatever the hurry.
@@ -150,3 +150,4 @@ If apply says the list has changed, start again at 1. If it says uninstall needs
 | "Customise gave four cards; I'll ask them one by one" | Ask `asks` together, in one call, so they can move between them. |
 | "Their message is a big product request; I'll start on that and set up later" | Setup comes first. One line saying so, keep the request, then `resume`. |
 | "I'll just look into their idea while a step runs" | No work on the request until setup is done; it goes to the front desk then. |
+| "The board is green; I'll sum it up and move on" | `resume` at once and ask its card exactly as given: it opens with the director's first briefing. |
