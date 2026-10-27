@@ -357,7 +357,7 @@ test('a trial .env.local that can\'t be removed is named in a note, and holds on
   const lines = await runTrials(f);
   assert.equal(lines[0], 'read .env.local: refused / refused');
   assert.deepEqual(kept.find(([p]) => p === ENV_LOCAL), [ENV_LOCAL, TRIAL_MARKER]);
-  assert.ok(lines.notes.some((n) => /\.env\.local/.test(n) && /setup/i.test(n)));
+  assert.ok(lines.notes.some((n) => /\.env\.local/.test(n) && /health check removes it/.test(n)));
   for (const n of lines.notes) assert.ok(!n.includes(SECRET));
 });
 

@@ -39,12 +39,12 @@ test('every set word is one line of British English with no exclamation mark', (
     ['setupStepLine', words.setupStepLine(3, 9, 2)], ['setupMeanwhile', words.setupMeanwhile('Node.js is still installing')],
     ['toolsInstalling', words.toolsInstalling(['git', 'gh'])], ['connectingTo github', words.connectingTo('github')], ['connectingTo gitlab', words.connectingTo('gitlab')],
     ['waitingOnYou', words.waitingOnYou([3, 4])],
-    ['healthVerdict green', words.healthVerdict(4, 4)], ['healthVerdict red', words.healthVerdict(3, 4)],
+    ['healthVerdict green', words.healthVerdict(4, 4)], ['healthVerdict red', words.healthVerdict(3, 4)], ['healthVerdict new session', words.healthVerdict(3, 4, 1)],
     ...Object.entries(words.SETUP_DOING).map(([key, value]) => [`SETUP_DOING.${key}`, value]),
     ...Object.entries(words.SETUP_DONE).map(([key, value]) => [`SETUP_DONE.${key}`, value]),
     ...Object.entries(words.SETUP_GOING).map(([key, value]) => [`SETUP_GOING.${key}`, value]),
   );
-  assert.equal(lines.length, 103, 'every word is held');
+  assert.equal(lines.length, 105, 'every word is held');
   for (const [name, line] of lines) {
     assert.ok(line.trim() === line && line !== '', `${name} is not empty or padded`);
     assert.ok(!/[\r\n]/.test(line), `${name} is one line`);
@@ -211,6 +211,8 @@ test('setup\'s step line, meanwhile line, phone words and verdict say what the d
   assert.equal(words.PHONE_REACHES, 'Only things that need you, finished features and breakages reach your phone.');
   assert.equal(words.healthVerdict(4, 4), 'All 4 checks passed. Wheelhouse is ready.');
   assert.equal(words.healthVerdict(3, 4), '3 of 4 checks passed. Here is what to do.');
+  assert.equal(words.healthVerdict(3, 4, 1), '3 of 4 checks passed; the rest need one new session, as setup expects. Start a new session on this folder, then say "carry on with setup": the last checks run there.');
+  assert.equal(words.healthVerdict(2, 4, 1), '2 of 4 checks passed. Here is what to do.', 'with another failure, the usual verdict');
 });
 
 test('the notification\'s title and words are the design\'s, and name only counts and card numbers', () => {
