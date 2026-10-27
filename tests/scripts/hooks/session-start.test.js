@@ -10,7 +10,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import {
   decide, toolSheetLines, NO_HELPER, NOT_SYNCED, NO_USAGE, GUARD_FLOOR, OLD_CLAUDE_CODE, FRONT_DESK_LINE, JOURNAL_UNREADABLE, FOREMAN_HELD_NEWER, FOREMAN_HELD_UNREADABLE,
-  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY,
+  TRUST_ASK, MAX_TRUST_CARDS, moreTrust, NOT_SET_UP, partWay, REMOVED, REMOVE_PLUGIN, PLUGIN_KEY, NO_LOCK, heldElsewhere,
 } from '../../../scripts/hooks/session-start.js';
 import { USAGE_ASK } from '../../../scripts/routing/offer.js';
 import { differentKeyLine, fingerprint, keyHash, readShownTrust } from '../../../scripts/lib/trust-clicks.js';
@@ -132,6 +132,52 @@ test('a helper started once setup has made the company\'s certificate gets it fo
     assert.equal(after.calls.spawn[0].opts.env.NODE_EXTRA_CA_CERTS, file);
     assert.equal(searchPathIn(after.calls.spawn[0].opts.env), process.env.PATH);
     assert.equal(after.calls.spawn[0].opts.detached, true);
+  });
+});
+
+// The lock's two routes on a fake client: each answer given, each call kept.
+function withLock(f, { touch = { ok: true, result: { touched: false } }, take = { ok: true, result: { taken: true, counter: 1 } } } = {}) {
+  const asked = [];
+  f.client.health = async () => ({ ok: true });
+  f.client.lock = {
+    touch: async (body) => { asked.push(['touch', body]); return touch; },
+    take: async (body) => { asked.push(['take', body]); return take; },
+  };
+  return asked;
+}
+
+test('the session start keeps the lock this computer holds, and takes it when it doesn\'t, saying nothing either way', async () => {
+  await withHome(async () => {
+    const kept = fake();
+    const keptAsked = withLock(kept, { touch: { ok: true, result: { touched: true } } });
+    const keptOut = await run(kept);
+    assert.deepEqual(keptAsked, [['touch', { project: P }]], 'a lock held is kept, never taken again');
+    assert.doesNotMatch(text(keptOut), /lock/);
+
+    const taken = fake();
+    const takenAsked = withLock(taken);
+    const takenOut = await run(taken);
+    assert.deepEqual(takenAsked, [['touch', { project: P }], ['take', { project: P }]]);
+    assert.doesNotMatch(text(takenOut), /lock/);
+  });
+});
+
+test('a lock another computer holds, or one that can\'t be reached, is said in one line', async () => {
+  await withHome(async () => {
+    const elsewhere = fake();
+    withLock(elsewhere, { take: { ok: true, result: { taken: false, holder: 'other-mac', since: '2026-10-27T01:00:00.000Z' } } });
+    assert.ok(text(await run(elsewhere)).includes(heldElsewhere('other-mac', '2026-10-27T01:00:00.000Z')));
+
+    const unreachable = fake();
+    withLock(unreachable, { touch: { ok: false, refused: 'the lock repository could not be reached' }, take: { ok: false, refused: 'the lock repository could not be reached' } });
+    assert.ok(text(await run(unreachable)).includes(NO_LOCK));
+
+    // With no helper, nothing is asked: the helper's own line says pushes and merges can't happen.
+    const down = fake({ answersAfterStart: false });
+    const downAsked = withLock(down);
+    down.client.health = async () => ({ ok: false });
+    await run(down);
+    assert.deepEqual(downAsked, []);
   });
 });
 

@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startHelper } from '../../scripts/host/helper.js';
 import { helperClient } from '../../scripts/host/helper-client.js';
+import { decide as sessionStart, heldElsewhere } from '../../scripts/hooks/session-start.js';
 import { decide as stopGuard, DENIED } from '../../scripts/hooks/stop-guard.js';
 import { decide as stopWord } from '../../scripts/hooks/stop-word.js';
 import { decide as promptRecord } from '../../scripts/hooks/prompt-record.js';
@@ -165,6 +166,73 @@ function cardAnswer(computer, { question, options, label, echo = label, shown = 
 const eventsOf = (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => e.kind === kind);
 const remoteNames = async (remoteUrl, folder) => (await run('git', ['ls-tree', '-r', '--name-only', 'wheelhouse-state', folder], { cwd: remoteUrl }))
   .stdout.split('\n').filter(Boolean);
+
+// A session start in the computer's project folder, as Claude Code sends it: nothing started, no lineage check.
+async function startSession(c, id) {
+  const said = await sessionStart(
+    { cwd: c.folder, session_id: id, hook_event_name: 'SessionStart', source: 'startup' },
+    {
+      client: c.client, dir: NO_MANAGED, background: async () => ({}), spawn: () => ({ on() {}, unref() {} }),
+      lineage: () => [], refreshLocal: () => {}, env: {},
+    },
+  );
+  return said?.hookSpecificOutput?.additionalContext ?? '';
+}
+
+test('the session start takes the lock, so a reviewed pull request merges with nothing else taking it; another computer is refused', async () => {
+  const undos = [];
+  try {
+    const remote = await makeBareRemote({ repo: 'o/p' });
+    undos.push(() => remote.cleanup());
+    const head = await seedPr(remote.url, { 'src/a.js': 'a\n' });
+    const a = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
+    undos.push(() => a.close());
+    const b = await makeComputer(remote.url, { adapter: fakeAdapter(head) });
+    undos.push(() => b.close());
+    await enrolAll([a, b]);
+    await a.act(async (client) => {
+      a.time(0);
+      // Before any session start, nothing holds the lock: the gate and a code push refuse.
+      assert.deepEqual(await client.push({ project: PROJECT, dir: a.folder, refspec: 'feature' }), { ok: false, refused: LOCK_REASON });
+      const reviewed = await client.state.record({ project: PROJECT, event: makeEvent({ kind: 'review', data: { pr: PR, commit: head, verdict: 'CLEAN' }, now: () => new Date(T0.getTime() + 1000) }) });
+      assert.equal(reviewed.ok, true);
+      const before = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
+      assert.deepEqual(before.reasons, [LOCK_REASON], 'the lock is the only thing in the way');
+
+      // The director opens the front desk: its session start takes the lock, and says nothing about it.
+      const said = await startSession(a, 'session-a1');
+      assert.doesNotMatch(said, /lock/);
+      assert.deepEqual(await client.push({ project: PROJECT, dir: a.folder, refspec: 'feature' }), { ok: true });
+      const merged = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
+      assert.equal(merged.ok, true, JSON.stringify(merged));
+      assert.deepEqual(a.adapter.merges, [{ number: PR, sha: head }]);
+
+      // A later session start keeps the lock without moving its counter.
+      const lockOn = async () => JSON.parse((await run('git', ['show', 'wheelhouse-lock:lock.json'], { cwd: remote.url })).stdout);
+      const first = await lockOn();
+      a.time(10 * MINUTE);
+      assert.doesNotMatch(await startSession(a, 'session-a2'), /lock/);
+      const kept = await lockOn();
+      assert.equal(kept.counter, first.counter);
+      assert.equal(kept.computer, first.computer);
+      assert.ok(Date.parse(kept.lastWriteAt) > Date.parse(first.lastWriteAt), 'the touch wrote the time');
+      assert.deepEqual(await client.push({ project: PROJECT, dir: a.folder, refspec: 'feature' }), { ok: true });
+    });
+    await b.act(async (client) => {
+      b.time(HOUR);
+      // The other computer's session start finds the lock held, fresh, and says so; its pushes and merges stay refused.
+      const said = await startSession(b, 'session-b1');
+      const lock = JSON.parse((await run('git', ['show', 'wheelhouse-lock:lock.json'], { cwd: remote.url })).stdout);
+      assert.match(said, new RegExp(heldElsewhere(lock.computer, lock.lastWriteAt).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.deepEqual(await client.push({ project: PROJECT, dir: b.folder, refspec: 'feature' }), { ok: false, refused: LOCK_REASON });
+      const refused = await client.merge({ project: PROJECT, number: PR, stop: false, bypass: false });
+      assert.ok(refused.reasons.includes(LOCK_REASON), JSON.stringify(refused));
+      assert.deepEqual(b.adapter.merges, []);
+    });
+  } finally {
+    for (const undo of undos.reverse()) await undo();
+  }
+});
 
 // scenario 12
 test('STOP mid-build: writes, pushes, merges and new agents are refused; reading and the runbook carry on', async () => {
