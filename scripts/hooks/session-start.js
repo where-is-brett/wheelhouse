@@ -97,6 +97,8 @@ const LINE_CHARS = 200;
 
 export const NO_HELPER = 'The host helper isn\'t running, so nothing can be pushed or merged';
 export const NOT_SYNCED = 'State was not synced with the host this time';
+export const NO_LOCK = 'The lock couldn\'t be taken this time, so pushes and merges are refused until a later session start takes it';
+export const heldElsewhere = (holder, since) => `Another computer (${oneLine(holder)}) holds this project's lock, last written ${oneLine(since)}, so pushes and merges from this computer are refused`;
 export const NO_USAGE = 'Usage counts couldn\'t start this time';
 // In the project's main folder, for any session that isn't the foreman's: the front desk's playbook.
 export const FRONT_DESK_LINE = 'This is the front desk. Load wheelhouse:front-desk before you write anything, and never announce a skill: the director sees every line.';
@@ -367,6 +369,20 @@ function lineageCheck(found, input, version, { check, root, claudeHome, now, pin
 // In a Shape 1 project, starts the watcher when it isn't running, as the
 // foreman's start script does (ruling R62), once setup has finished there (R44). A watcher found running needs no
 // configuration asked for. It informs, so anything that goes wrong is passed over.
+// The lock (design section 9, "One computer at a time"): which computer holds the front desk and foreman, and the fencing counter the
+// merge gate and every code push check. Kept where this computer holds it already (a touch, which leaves the
+// counter as it is), else taken, which a free lock, a stale one or this computer's own allows. Null when this
+// computer holds it after; else the line that says why not. Nothing else takes it in real use.
+async function keepLock(project, client, left) {
+  if (typeof client?.lock?.take !== 'function') return null;
+  const touched = typeof client.lock.touch === 'function' ? await left(client.lock.touch({ project })) : null;
+  if (touched?.ok === true && touched.result?.touched === true) return null;
+  const took = await left(client.lock.take({ project }));
+  if (took?.ok === true && took.result?.taken === true) return null;
+  if (took?.ok === true && took.result?.taken === false) return heldElsewhere(took.result.holder ?? 'unknown', took.result.since ?? 'at an unknown time');
+  return NO_LOCK;
+}
+
 async function ensureWatcher(project, client, { spawn, pluginRoot }) {
   try {
     if (watcherRunning(project) || typeof client.config !== 'function') return;
@@ -585,6 +601,9 @@ async function readOnlyStart(input, { dir, find, client, helperUp, agent, plugin
       const status = await left(api.lean.status({ project }));
       if (status?.ok === true && status.moved === true) notes.push(MAIN_MOVED);
     }
+    // The helper keeps or takes the lock: a request, so this start still writes nothing itself.
+    const lockLine = await keepLock(project, api, left);
+    if (lockLine !== null) notes.push(lockLine);
     const got = await left(api.state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
   }
@@ -662,6 +681,8 @@ export async function decide(input, deps = {}) {
     await left(sendPending(project, clientNow(), { until: end }));
     const synced = await left(clientNow().state.sync({ project }));
     if (synced?.ok !== true) notes.push(NOT_SYNCED);
+    const lockLine = await keepLock(project, clientNow(), left);
+    if (lockLine !== null) notes.push(lockLine);
     const got = await left(clientNow().state.views({ project }));
     if (got?.ok === true && got.views && typeof got.views === 'object') views = got.views;
     // Starting the foreman is the last thing setup does, once its health check's board is green
