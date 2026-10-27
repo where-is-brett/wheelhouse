@@ -28,7 +28,7 @@
 // unless the director answered that question again since.
 import crypto from 'node:crypto';
 import { canonicalJson } from '../lib/canonical.js';
-import { onRunList, stepDone } from '../lib/setup-run.js';
+import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
 import { LIVE_DATA, PRODUCT, SIGNS_APPS, productName } from './questions.js';
@@ -156,8 +156,17 @@ function describedBy(choice) {
 // how many answers the run holds. `card` is AskUserQuestion's question, ready; `writes` what Go
 // ahead records, as a setup question's writes are kept (scripts/lib/setup-writes.js): the records
 // the choices it stands for make, for those the director hasn't answered themselves.
+// How long what is left of setup takes, as the one card and its heading say it: about a minute
+// when only the health check is left and nothing is to choose, else about 5 minutes.
+export function setupTime(toRun, list = []) {
+  return list.length === 0 && toRun.length > 0 && toRun.every((n) => n === HEALTH_STEP) ? 'about a minute' : 'about 5 minutes';
+}
+
 export function oneCard({ folder, list, product, platform, toRun, count, facts = null }) {
   const name = product?.name ?? productName(folder);
+  // Only the health check left, nothing to choose: a run parked near its end (one v0.1.1 left at
+  // its phone card, carried on after the update), whose card names what is left.
+  const nearlyDone = setupTime(toRun, list) === 'about a minute';
   const lines = [];
   if (toRun.includes(3) && product && product.isNew === false) lines.push(`${name} on ${product.host === 'gitlab' ? 'GitLab' : 'GitHub'}, as it is.`);
   // In the card's order: where it is kept, how agents reach it, its phase and data, Locked, the
@@ -171,10 +180,13 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
   }
   if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
   if (toRun.includes(7)) lines.push('Wheelhouse\'s settings saved to the project, then its main line protected.');
+  // Never a plan with no lines: the health check is named when nothing else is.
+  if (lines.length === 0 && toRun.includes(HEALTH_STEP)) lines.push('A last check that everything is safe.');
   const yours = list.some((c) => c.chosen !== null);
+  const time = setupTime(toRun, list);
   const question = [
-    `Set up Wheelhouse for ${name}?`,
-    yours ? 'Here\'s the plan, with your choices. It takes about 5 minutes.' : 'Here\'s what I recommend. It takes about 5 minutes.',
+    nearlyDone ? `Finish setting up Wheelhouse for ${name}?` : `Set up Wheelhouse for ${name}?`,
+    nearlyDone ? `Setup is nearly done. What's left takes ${time}:` : `${yours ? 'Here\'s the plan, with your choices.' : 'Here\'s what I recommend.'} It takes ${time}.`,
     ...lines.map((l) => `- ${l}`),
     'Nothing runs until you choose.',
     'To know more, just ask.',

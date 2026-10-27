@@ -149,7 +149,10 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     assert.ok(own);
     assert.deepEqual(await a.act(() => readEnrolled().map((e) => e.computer)), [own.computer]);
 
-    const log = await follow(a, { answer: byId(NEW_ANSWERS), phone: true });
+    // The phone card as the session asks it, to read what it opens with.
+    const phoneCards = [];
+    const answers = byId(NEW_ANSWERS);
+    const log = await follow(a, { answer: (id, plan, ask) => { if (id.startsWith('phone')) phoneCards.push(plan.ask.card); return answers(id, plan, ask); }, phone: true });
 
     // The one card first, its Go ahead, then every step in order with no card: each list the Go
     // ahead covers is applied as it comes, and the steps with nothing to click settle on their own.
@@ -194,6 +197,11 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     assert.match(health.board, /Phase: before launch/);
     assert.match(health.started, /watcher is running/);
     assert.equal(typeof health.briefing, 'string');
+    // The first card after the green board, the phone's, opens with the verdict and the first briefing,
+    // so the director sees them as it is asked; the phone card asked again later doesn't.
+    const briefing = [health.lines.at(-1), ...health.briefing.split('\n').filter((l) => l.trim() !== '')];
+    assert.deepEqual(phoneCards[0].question.split('\n').slice(0, briefing.length), briefing);
+    assert.ok(phoneCards.slice(1).every((c) => !c.question.startsWith(health.lines.at(-1))), 'once');
     const run = await a.setupRun();
     assert.equal(healthGreen(run), true);
     assert.equal(firstUnfinished(run), null);

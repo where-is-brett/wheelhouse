@@ -36,8 +36,9 @@
 //                        With no lines it names the pull request and project the trials take
 //                        (`trials: { pr, project }`): run `node "<root>/scripts/health/trials.js"
 //                        --pr <pr> --project <project>`, then `health` with every line it printed
-//                        (not its notes), then show `board`, and `briefing` when there is one, then
-//                        ask `card.question` as it is
+//                        (not its notes); once green, `resume`: the phone's card opens with the
+//                        verdict and the first briefing (with no phone card left, step 10's
+//                        plan gives them as `said`), then ask `card.question` as it is
 //   uninstall plan       uninstall's list worked out by the helper, its card and its level 4
 //                        cards: { hash, card, asks: [{ id, about, card }], last }. Each ask card is
 //                        asked exactly as given, before uninstall's own card. Once an uninstall has

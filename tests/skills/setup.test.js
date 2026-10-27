@@ -125,7 +125,7 @@ test('step 9\'s rule: a wait with waitsFor sends nothing, one without sends one 
   assert.match(skip, /Don't ask the card again/);
   assert.doesNotMatch(section, /don't try step 10/);
   // The phone comes last, once setup is finished, and never holds it up (design section 15.1).
-  assert.match(section, /once setup is finished: after the first briefing/);
+  assert.match(section, /The phone comes once setup is finished: the `resume` after the green board gives its card/);
   assert.match(section, /never holds setup up/);
   // The front desk takes the test when the director asks for it later.
   const desk = read('skills/front-desk/SKILL.md');
@@ -247,4 +247,18 @@ test('the playbook names step 10\'s trials and wait, stops on a refusal twice on
   assert.match(read('commands/uninstall.md'), /password window/);
   assert.ok(UNINSTALL_NEEDS_CLICK.startsWith('uninstall needs the director\'s Remove it'));
   assert.match(uninstall, /If it says uninstall needs the director's Remove it, start again at 1 and ask the card again; never apply without its click/);
+});
+
+// A green board's verdict and first briefing open the next card `resume` gives (the phone's), which the
+// session asks word for word: in every rehearsal run of 27 October 2026 the session went straight on to
+// the phone card or the front desk, and the director never saw the briefing it was told to show.
+test('step 10\'s green board: the playbook runs resume at once and asks its card, which opens with the briefing', () => {
+  const section = playbook.split(`## Step ${HEALTH_STEP}, `)[1]?.split('\n## ')[0] ?? '';
+  assert.ok(section, `a section for step ${HEALTH_STEP}`);
+  const green = section.split('**Green:**')[1]?.split('**Not green:**')[0] ?? '';
+  assert.match(green, /Run `resume` at once\. The card it gives \(the phone's, Step 9 above\) opens with the verdict and the first briefing: ask it exactly as given/);
+  assert.match(green, /With no card left, its plan gives step 10 settled, with them as `said`: show that as it is, in a message of its own/);
+  assert.ok(section.indexOf('**Green:**') < section.indexOf('When `health` gave a `card`'), 'the briefing\'s card before the carry-on card');
+  assert.ok(playbook.includes('| "The board is green; I\'ll sum it up and move on" | `resume` at once'), 'a red flag for it');
+  assert.match(playbook.split(`## Step ${PUSH_TEST_STEP}, `)[1], /opens with the verdict and the first briefing/);
 });

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  oneCard, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
+  oneCard, setupTime, consentHolds, customiseBatch, aboutOf, actedBy, GO_AHEAD, CUSTOMISE, PER_CARD,
 } from '../../../scripts/setup/choices.js';
 import { stepFourDrift, choiceList } from '../../../scripts/setup/redo.js';
 import { NEW_PRODUCT, HOST_LABELS, WAYS, REAL_USERS, STRICTER } from '../../../scripts/setup/host.js';
@@ -48,6 +48,28 @@ test('the one card for a new product on a Mac says the director\'s approved word
   assert.deepEqual(choices.map((c) => [c.key, c.label]), newProductChoices().map((c) => [c.key, c.label]));
   assert.deepEqual(writes, { labels: { [GO_AHEAD]: phase('before-launch') } });
   assert.match(id, /^plan-[0-9a-f]{12}$/);
+});
+
+test('a run with only the health check left gets a short one card naming it, with an honest time and no empty list', () => {
+  // A run v0.1.1 parked at its phone card, carried on after the update (rehearsal of 27 October 2026):
+  // every choice answered, steps 1 to 8 done.
+  const { card } = oneCard({ folder: '/x/Tides', list: [], product: { isNew: false, host: 'github', repo: 'a/Tides', name: 'Tides' }, platform: 'darwin', toRun: [10], count: 7 });
+  assert.equal(card.question, [
+    'Finish setting up Wheelhouse for Tides?',
+    'Setup is nearly done. What\'s left takes about a minute:',
+    '- A last check that everything is safe.',
+    'Nothing runs until you choose.',
+    'To know more, just ask.',
+  ].join('\n'));
+  assert.doesNotMatch(card.question, /5 minutes/);
+  assert.deepEqual(cardProblems(card), []);
+  assert.equal(setupTime([10]), 'about a minute');
+  assert.equal(setupTime([3, 6, 7, 10]), 'about 5 minutes');
+  // Whatever is left, the card lists something: never a plan with no lines.
+  for (const toRun of [[10], [6, 7, 10], [7, 10]]) {
+    const lines = oneCard({ folder: '/x/Tides', list: [], product: null, platform: 'darwin', toRun, count: 7 }).card.question.split('\n').filter((l) => l.startsWith('- '));
+    assert.ok(lines.length > 0, JSON.stringify(toRun));
+  }
 });
 
 test('the one card\'s lines follow what setup finds: Windows, the README\'s words, a project under way, and the director\'s own choices', () => {
