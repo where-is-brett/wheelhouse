@@ -129,7 +129,7 @@ import { projectSettings, localSettings, mergeSettings, directorStatusLine, with
 import { protectionStatus as realProtectionStatus } from '../host/protection.js';
 import { projectPath } from '../host/gitlab-key.js';
 import { DEFAULT_GITLAB, commitEmailOf } from '../host/gitlab-base.js';
-import { MARKETPLACE, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
+import { MARKETPLACE, WHEELHOUSE_REPO, readManifest, checkInstalled, locateInstalled, claudeHome as defaultClaudeHome } from '../lineage/manifest.js';
 import { switchOnAsDirector, directorGitEnv, directorGitlabApi, madeBySetup, STOPPED, launchedIn, REAL_USERS } from './host.js';
 import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
@@ -168,8 +168,36 @@ const EXAMPLE_KEPT = '!.env.example';
 // The only lines setup ever writes to an ignore list for this.
 const OUR_LINES = Object.freeze([...ENV_LINES, EXAMPLE_KEPT]);
 // What step 1's project-scope install writes into the project's shared settings (check 37): the
-// plugin switched on. Setup's commit takes it up with its own keys.
+// plugin switched on, and Wheelhouse's marketplace as the install line added it (installedMarketplace).
+// Setup's commit takes them up with its own keys.
 const STEP_ONE_SETTINGS = Object.freeze({ enabledPlugins: Object.freeze({ [`wheelhouse@${MARKETPLACE}`]: true }) });
+// Wheelhouse's own repository, as the install line's marketplace source names it: by GitHub name, or
+// by git address.
+const WHEELHOUSE_URL = new RegExp(`^(?:https://|git@)github\\.com[/:]${WHEELHOUSE_REPO.replace('/', '\\/')}(?:\\.git)?/?$`, 'i');
+const SOURCE_KEYS = new Set(['source', 'repo', 'url', 'ref']);
+// The entry for Wheelhouse's marketplace in a settings object when it is what `claude plugin
+// marketplace add` wrote for Wheelhouse's own repository, at any release (a new product's setup on
+// 27 October 2026 asked about it as the director's own change); else null.
+export function installedMarketplace(settings) {
+  const entry = settings?.extraKnownMarketplaces?.[MARKETPLACE];
+  if (!isObject(entry) || !isObject(entry.source) || Object.keys(entry).some((k) => k !== 'source' && k !== 'autoUpdate')) return null;
+  const { source } = entry;
+  if (Object.keys(source).some((k) => !SOURCE_KEYS.has(k))) return null;
+  if (source.ref !== undefined && (typeof source.ref !== 'string' || source.ref === '')) return null;
+  const ours = (source.source === 'github' && source.repo === WHEELHOUSE_REPO && source.url === undefined)
+    || (source.source === 'git' && typeof source.url === 'string' && WHEELHOUSE_URL.test(source.url) && source.repo === undefined);
+  return ours ? entry : null;
+}
+
+// The shared settings as committed (`before`, null when there are none) with only what step 1's
+// install wrote in the folder's copy (`work`): the plugin switched on, and the install's own
+// marketplace entry, as it is in the folder.
+function withInstall(before, work) {
+  const out = mergeSettings(before ?? {}, STEP_ONE_SETTINGS);
+  const entry = installedMarketplace(work);
+  if (entry !== null) out.extraKnownMarketplaces = { ...(isObject(out.extraKnownMarketplaces) ? out.extraKnownMarketplaces : {}), [MARKETPLACE]: structuredClone(entry) };
+  return out;
+}
 export const COMPACT_HEADING = '## Compact instructions';
 // What the summary of a compaction keeps (design section 10). The session start after a
 // compaction reloads Wheelhouse's own records, so these are what only the conversation holds.
@@ -1113,7 +1141,7 @@ export function projectFilesStep({
           const value = targets[rel](text);
           return typeof value === 'string' ? value : jsonText(value);
         };
-        const installed = rel === SETTINGS ? [jsonText(mergeSettings(objectIn(SETTINGS, before) ?? {}, STEP_ONE_SETTINGS))] : [];
+        const installed = rel === SETTINGS ? [jsonText(withInstall(objectIn(SETTINGS, before), objectIn(SETTINGS, work)))] : [];
         const ours = sameContent(rel, work, before) || [before, ...installed].some((from) => sameContent(rel, made(work), made(from)));
         if (!ours) {
           const asked = yoursAsk({ rel, text: work, isNew });

@@ -741,6 +741,35 @@ test('step 1\'s install left in the folder, not committed, goes up in setup\'s c
   });
 });
 
+// From a new product's setup on v0.1.2: the folder's .claude/settings.json held only what the two
+// install commands wrote, the plugin switched on and Wheelhouse's marketplace as a git address at
+// the release, and step 7 asked about it as the director's own change.
+test('the install line\'s own marketplace entry, at any release, goes up in setup\'s commit with no question', async () => {
+  for (const ref of ['v0.1.2', 'v9.0.0', undefined]) {
+    await withHome(async () => {
+      const w = await world({ stepOne: 'untracked' });
+      const file = path.join(w.folder, '.claude', 'settings.json');
+      const source = { source: 'git', url: 'https://github.com/where-is-brett/wheelhouse.git', ...(ref ? { ref } : {}) };
+      fs.writeFileSync(file, `${JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source } }, enabledPlugins: STEP_ONE }, null, 2)}\n`);
+      const planned = await w.plan();
+      assert.ok(Array.isArray(planned.changes), `no question: ${planned.ask?.card.what}`);
+      const commit = planned.changes.find((c) => c.kind === 'host' && c.action === 'commit');
+      assert.deepEqual(commit.yours ?? [], [], 'nothing of the director\'s');
+      const done = await w.apply(planned.changes);
+      assert.equal(done.ok, true, done.reason);
+      const committed = JSON.parse(await g(w.bare, 'show', 'main:.claude/settings.json'));
+      assert.equal(committed.enabledPlugins['wheelhouse@wheelhouse'], true);
+    });
+  }
+  // Another repository's address under Wheelhouse's name is not the install's: it is asked about.
+  await withHome(async () => {
+    const w = await world({ stepOne: 'untracked' });
+    const file = path.join(w.folder, '.claude', 'settings.json');
+    fs.writeFileSync(file, `${JSON.stringify({ extraKnownMarketplaces: { wheelhouse: { source: { source: 'git', url: 'https://github.com/someone-else/wheelhouse.git' } } }, enabledPlugins: STEP_ONE }, null, 2)}\n`);
+    assert.match((await w.plan()).ask?.card.what ?? '', /\.claude\/settings\.json has changes of yours/);
+  });
+});
+
 test('a commit, a branch switch or an edit made while the pins install never goes up', async () => {
   const cases = {
     commit: async (w) => {
