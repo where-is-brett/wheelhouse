@@ -76,6 +76,16 @@ test('termMatches gives positions, and the longer term wins an overlap', () => {
 const PLAIN = { explanations: 'plain', known: [] };
 const SOME = { explanations: 'some-terms', known: [] };
 
+test('a term inside a name of capitalised words is the name, not the term', () => {
+  const g = glossaryOf({});
+  assert.deepEqual(termsIn('Apartments in St Leonards, Lane Cove and Chatswood', g), []);
+  assert.deepEqual(termsIn('Lane Cove first, then Smith Lane and Pine Lane Road', g), []);
+  assert.equal(plainWords('Search Lane Cove, then pick a lane', g, PLAIN).text, 'Search Lane Cove, then pick a process level');
+  // A capitalised term on its own, or beside an acronym, is still the term.
+  assert.deepEqual(termsIn('Ready for Review on the branch', g), ['review', 'branch']);
+  assert.deepEqual(termsIn('Lane 2 is quick', g), ['lane']);
+});
+
 test('"The PR\'s CI is red on slice 2" reads in plain words', () => {
   const g = glossaryOf({});
   const out = plainWords("The PR's CI is red on slice 2", g, PLAIN);
