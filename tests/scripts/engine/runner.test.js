@@ -495,6 +495,26 @@ test('Stop on a blocked card ends the work: nothing starts again', async () => {
   }
 });
 
+test('a bug found bigger than a bug goes back to the First Mate in the lane the director picked, and starts nothing again', async () => {
+  const MOVE = [{ id: 'small', label: 'Make it a small change' }, { id: 'feature', label: 'Make it a feature' }, { id: 'stop', label: 'Stop this work' }];
+  for (const [label, lane] of [['Make it a small change', 'a small change'], ['Make it a feature', 'a feature']]) {
+    const started = [];
+    const t = setUp({ recordings: { one: asking('q1', { kind: 'blocked', topic: 'bigger-than-a-bug', recommend: 'small', options: MOVE, context: { question: 'The fix changes 7 files. Should it go on as a small change?' } }) } });
+    t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+    try {
+      const { runId } = await t.ask();
+      t.sign(label);
+      ended(t, runId);
+      await t.runner.tick();
+      await t.runner.tick();
+      assert.equal(acts(t.engine).length, 1, 'the engine has the answer, so the run ends');
+      assert.deepEqual(started, [], 'the bug lane doesn\'t start it again');
+      const notes = t.writes.filter((w) => w.kind === 'note' && w.data.about === 'engine').map((w) => w.data.words);
+      assert.ok(notes.includes(`The sale banner is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${lane} and asks you to approve it.`), notes.join('\n'));
+    } finally { t.cleanup(); }
+  }
+});
+
 test('an answer to a question that isn\'t a blocked exit starts nothing again', async () => {
   const started = [];
   const t = setUp();
