@@ -564,3 +564,14 @@ test('/merge with a fix in its body is not taken as the fix of a red main line',
     });
   } finally { remote.cleanup(); }
 });
+
+test('while the director\'s own incident is open too, the red-main fix is held like any other pull request', () => {
+  const frozen = { id: 'bad-total', what: 'Totals are wrong', at: 'x', fixes: [] };
+  for (const open of [[RED, frozen], [frozen, RED]]) {
+    const views = { incidents: { open } };
+    const fix = fixOfRun({ views, opened: OPENED, call: CALL, headSha: FIX_HEAD });
+    assert.equal(incidentFor(views, 9, { fix }).isFix, false, 'only the director\'s click lets a pull request past their incident');
+  }
+  // The director's named fix still goes through their own incident when only it is open.
+  assert.equal(incidentFor({ incidents: { open: [{ ...frozen, fixes: [9] }] } }, 9).isFix, true);
+});

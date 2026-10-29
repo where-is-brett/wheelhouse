@@ -111,6 +111,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const views = readViews() ?? {};
     const incident = openRedMain(views);
     if (!incident) return;
+    // The director's own incident holds the fix too, until they close it.
+    if (views.incidents.open.some((i) => i !== incident)) return;
     const kept = (state.fixes[incident.id] ??= { carried: [], carded: [], next: null, started: [], asked: {} });
     let green = null;
     try { green = await mainGreen(); } catch { green = null; }

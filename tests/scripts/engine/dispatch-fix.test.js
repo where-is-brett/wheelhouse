@@ -189,3 +189,13 @@ test('the merge queue doesn\'t start while the incident is open', async () => {
   const got = await t.d.tick();
   assert.equal(got.startMergeQueue, false);
 });
+
+test('while the director\'s own incident is open too, no fix run starts', async () => {
+  const t = setUp();
+  t.world.views.incidents.open = [{ id: 'bad-total', what: 'Totals are wrong', at: '2026-10-30T08:00:00.000Z', fixes: [] }, INCIDENT];
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 0);
+  t.world.views.incidents.open = [INCIDENT];
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 1, 'it starts once the director\'s incident is closed');
+});

@@ -402,8 +402,10 @@ export function incidentFor(views, number, { fix = null } = {}) {
   const open = views.incidents?.open;
   if (!Array.isArray(open)) return { open: true, isFix: false };
   if (open.length === 0) return { open: false };
+  // A red-main fix passes only its own incident: while another is open, only the director's click lets it through.
+  const alone = open.length === 1;
   const fixing = open.find((i) => (Array.isArray(i.fixes) && i.fixes.includes(number))
-    || (i.kind === 'red-main' && fix?.incident === i.id && fix.pr === number));
+    || (alone && i.kind === 'red-main' && fix?.incident === i.id && fix.pr === number));
   return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
 }
 

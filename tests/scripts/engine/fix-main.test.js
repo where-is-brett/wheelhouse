@@ -139,3 +139,11 @@ test('changes to CI, .archon policy, agent control files and coverage settings w
 test('a change to source only does not weaken the checks', () => {
   assert.deepEqual(weakensChecks({ paths: ['src/a.js', 'tests/a.test.js'], config: CONFIG, tests: cleanTests }), []);
 });
+
+test('changes to the files that hold the test command or its thresholds weaken the checks', () => {
+  for (const file of ['package.json', 'web/package.json', 'pyproject.toml', 'setup.cfg', 'Makefile', 'tsconfig.json', 'tsconfig.build.json']) {
+    const got = weakensChecks({ paths: ['src/a.js', file], config: CONFIG, tests: cleanTests });
+    assert.equal(got.length, 1, file);
+    assert.match(got[0], new RegExp(file.replace(/[.]/g, '\\.')));
+  }
+});

@@ -106,6 +106,10 @@ export function fixDecision({ incident, runs = [], green = null, stop = false, s
 // mirror; `tests` the run's tests step output ({ clean, findings }) from the engine's own record, which an agent can't
 // write: deleted or skipped tests and fewer assertions. A guardrail path (CI files, `.archon/`, files that steer
 // agents, the project's critical-area checks) and test or coverage settings weaken them too.
+// The files that hold a project's test command or its thresholds: a package manifest, a Python build file, a Makefile,
+// TypeScript's settings. A fix to a red main line has no call to change them.
+const TEST_COMMANDS = /(^|\/)(package\.json|pyproject\.toml|setup\.cfg|(GNU)?[Mm]akefile|tsconfig(\.[\w-]+)?\.json)$/;
+
 export function weakensChecks({ paths = [], config, tests } = {}) {
   const reasons = [];
   if (!isPlain(tests) || typeof tests.clean !== 'boolean') reasons.push('the run\'s tests step left no result, so the fix can\'t be shown to keep every test');
@@ -113,5 +117,8 @@ export function weakensChecks({ paths = [], config, tests } = {}) {
   const { guardrailPaths } = classifyChange({ paths, config });
   for (const file of guardrailPaths) reasons.push(`it changes ${file}, which the checks or the agents' rules rest on`);
   for (const file of paths.filter((f) => isTestSettings(f) && !guardrailPaths.includes(f))) reasons.push(`it changes the test or coverage settings in ${file}`);
+  for (const file of paths.filter((f) => TEST_COMMANDS.test(String(f).replace(/\\/g, '/')) && !guardrailPaths.includes(f) && !isTestSettings(f))) {
+    reasons.push(`it changes ${file}, which holds the test command or its thresholds`);
+  }
   return reasons;
 }
