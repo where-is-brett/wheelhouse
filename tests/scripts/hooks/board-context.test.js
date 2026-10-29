@@ -26,6 +26,8 @@ import { courierWake } from '../../../scripts/mod/courier.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
+import { deskCore } from '../../../scripts/desk/core.js';
+import { fileSource } from '../../../scripts/desk/file-source.js';
 import { as, shortHome, tempFolder } from '../../helpers/homes.js';
 
 const P = 'owner__name';
@@ -72,7 +74,15 @@ function setProfile(settings) {
 const client = { health: async () => ({ ok: true }), lock: { read: async () => ({ ok: true, result: null }) } };
 const prompt = (cwd, text, session = 's1') => ({ cwd, session_id: session, hook_event_name: 'UserPromptSubmit', prompt: text });
 const contextOf = (out) => out?.hookSpecificOutput?.additionalContext;
-const run = (repo, text, now, extra = {}) => decide(prompt(repo, text), { now: at(now), env: {}, client, ...extra });
+// The desk over the files, as the helper's is, whose board's inputs come from `load`.
+function deskLoading(repo, now, load) {
+  const source = fileSource(P, { cwd: repo, client, now });
+  return deskCore({ source: { ...source, board: (options) => load({ cwd: repo, client, now, ...options }) }, recorder: {}, now });
+}
+// The hook for the prompt. A `load` in `extra` gives the board's inputs the desk reads.
+const run = (repo, text, now, { load, ...extra } = {}) => decide(prompt(repo, text), {
+  now: at(now), env: {}, client, ...(load ? { desk: deskLoading(repo, at(now), load) } : {}), ...extra,
+});
 
 function withProject(fn) {
   const home = shortHome();
@@ -822,14 +832,14 @@ test('learning never runs under STOP, and a helper that never answers holds the 
     assert.deepEqual(profileWrites, []);
 
     liftStop();
-    // A helper that takes learning's write and never answers. The board's inputs ask the answering
-    // client, so the time measured is learning's alone: its bound, not the build's or the helper's.
+    // A helper that takes learning's write and never answers. The board's inputs ask it only whether
+    // it is up and who holds the lock, which it answers, so the time measured is learning's alone:
+    // its bound, not the build's or the helper's.
     let asked = 0;
     const never = () => { asked += 1; return new Promise(() => {}); };
     const hung = { ...client, state: { write: never }, profile: { write: never } };
-    const load = (options) => loadBoardInputs({ ...options, client });
     const started = Date.now();
-    const out = contextOf(await run(repo, 'Hello', '2026-10-19T18:00:00.000Z', { client: hung, learnWaitMs: 100, load }));
+    const out = contextOf(await run(repo, 'Hello', '2026-10-19T18:00:00.000Z', { client: hung, learnWaitMs: 100 }));
     const took = Date.now() - started;
     assert.equal(asked, 1, 'learning reached the helper, which never answered');
     assert.ok(took >= 100 && took < 1000, `${took} ms`);
@@ -974,8 +984,8 @@ test('a survey that missed the host is taken again once, before the briefing is 
     const calls = [];
     const looked = {
       ...client,
-      survey: { again: async (body) => { calls.push(body); return { ok: true, taken: true, id: 'survey-2', hostReached: true }; } },
-      state: { views: async () => ({ ok: true, views: { survey: { id: 'survey-2', at: NOW, data: IN_FLIGHT } } }) },
+      // The helper takes it again, and its views then hold it.
+      survey: { again: async (body) => { calls.push(body); putSurvey(IN_FLIGHT, 'survey-2'); return { ok: true, taken: true, id: 'survey-2', hostReached: true }; } },
     };
     assert.match(contextOf(await run(repo, 'Hello', NOW, { client: looked })), FOUND);
     assert.deepEqual(calls, [{ project: P }]);
@@ -996,8 +1006,8 @@ async function againAfterMentioned(repo, { trusting = false } = {}) {
   const fresh = { ...surveyData({ requests: [{ number: 3, title: 'Add a map', draft: false }], local }), again: true };
   const looked = {
     ...client,
-    survey: { again: async () => ({ ok: true, taken: true, id: 'survey-2', hostReached: true }) },
-    state: { views: async () => ({ ok: true, views: { survey: { id: 'survey-2', at: LATER, data: fresh } } }) },
+    // The helper takes it again, and its views then hold it.
+    survey: { again: async () => { putSurvey(fresh, 'survey-2'); return { ok: true, taken: true, id: 'survey-2', hostReached: true }; } },
   };
   return contextOf(await run(repo, 'Hello', '2026-10-19T15:00:00.000Z', { client: looked }));
 }

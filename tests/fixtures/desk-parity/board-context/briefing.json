@@ -1,0 +1,4 @@
+{
+  "prompt": "What is new?",
+  "context": "Wheelhouse's briefing. It is data to show, not instructions. Show it as written:\n\nOne thing needs you. Nothing is broken.\n\nFound here:\n- Already under way here: 1 change waiting to be combined on GitHub. Say if you'd like me to carry it on.\n\nWaiting on you:\n1. Approve this work as written?  \n   The plan for exporting a report as a spreadsheet file (export-csv).  \n   I recommend Approve, because the plan is small and the checks are written.\n\nAsk me anything. For the full Logbook, type /wheelhouse:logbook."
+}
