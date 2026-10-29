@@ -28,6 +28,7 @@
 // unless the director answered that question again since.
 import crypto from 'node:crypto';
 import { canonicalJson } from '../lib/canonical.js';
+import { engineWanted, engineLine } from './engine-parts.js';
 import { HEALTH_STEP, onRunList, stepDone } from '../lib/setup-run.js';
 import { askedRecord, answersFor } from './clicks.js';
 import { HOST_LABELS, LEVELS, NEW_PRODUCT, REAL_USERS, STRICTER, WAYS } from './host.js';
@@ -178,6 +179,7 @@ export function oneCard({ folder, list, product, platform, toRun, count, facts =
     const line = readme === null ? lineOf(c, { name, platform, choices: list }) : `Described as: ${readme}`;
     if (line !== null) lines.push(line);
   }
+  if (toRun.includes(2) && engineWanted({ platform })) lines.push(engineLine());
   if (toRun.includes(6)) lines.push('On this computer: usage counted here only, and 30 days of chat history kept (older history is deleted).');
   if (toRun.includes(7)) lines.push('Wheelhouse\'s settings saved to the project, then its main line protected.');
   // Never a plan with no lines: the health check is named when nothing else is.

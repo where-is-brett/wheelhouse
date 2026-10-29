@@ -77,6 +77,8 @@ import { composeCard } from '../cards/compose.js';
 import { localViews } from '../hooks/session-start.js';
 import { readProfileViews } from '../profile/store.js';
 import { effectiveSettings } from '../settings/effective.js';
+import { engineDir } from '../lib/paths.js';
+import { engineCheck, helloTrial } from '../engine/hello.js';
 
 export { HEALTH_STEP };
 // The trial's branch: one name, so a retry pushes over its own branch and never makes another.
@@ -128,6 +130,24 @@ export const HELPER_CHECKS = Object.freeze({
     failed: 'The installed skills don\'t match Wheelhouse\'s list, so agents would be held',
     todo: 'Run step 7 again, which installs them, then step 10',
     what: 'the installed skills',
+  },
+  // The build engine (Archon design, section 14.4), for a project on it: its health, then the hello trial. Only a
+  // project on the engine has them (`onEngine`), so one off it is green without them.
+  'build engine': {
+    expected: 'ok',
+    onEngine: true,
+    passed: 'The build engine is Wheelhouse\'s patched, pinned build, with its usage reporting off',
+    failed: 'The build engine isn\'t ready, so no run starts on it',
+    todo: 'Run step 2 again, which installs the engine, then step 10; the Logbook says what the engine reported',
+    what: 'the build engine',
+  },
+  'engine trial': {
+    expected: 'refused',
+    onEngine: true,
+    passed: 'In the build engine\'s trial, an agent\'s read of a planted .env was refused',
+    failed: 'In the build engine\'s trial, an agent\'s read of a planted .env was not refused, or the trial couldn\'t run',
+    todo: 'Type "all stop", so no Crew member works, and report it to Wheelhouse before going on: the engine\'s steps must keep Wheelhouse\'s safeguards',
+    what: 'the build engine\'s safeguards',
   },
   'host protection': {
     expected: 'on',
@@ -425,6 +445,17 @@ export async function stopTrial({ script = STOP_GUARD, run = realRun, nodePath =
 }
 
 // The installed skills against Wheelhouse's manifest, for the project's folder: 'match' or 'differ'.
+// The engine's checks for a project whose engine in force is Archon, or null for one on the old engine.
+async function engineChecksNow({ project, kits }) {
+  const { engineForProject, ENGINE_CONFIG } = await import('../host/helper-main.js');
+  const engine = engineForProject()(project);
+  if (!engine) return null;
+  return engineCheck({
+    health: () => engine.health(),
+    trial: async () => (kits ? helloTrial({ packDir: path.join(engineDir(), 'pack'), configFile: ENGINE_CONFIG }) : 'not run'),
+  });
+}
+
 function checkPinsNow({ folder }) {
   return checkInstalled({ manifest: readManifest(), projectDir: folder, claudeHome: claudeHome() }).ok ? 'match' : 'differ';
 }
@@ -454,6 +485,7 @@ export function healthStep({
   trySTOP = () => stopTrial({ run }),
   checkPins = checkPinsNow,
   readProtection = ({ host, repo, realUsers, base }) => readProtectionNow({ host, repo, run, realUsers, base }),
+  engineChecks = engineChecksNow,
 } = {}) {
   return {
     n: HEALTH_STEP,
@@ -537,6 +569,20 @@ export function healthStep({
           pins = await checkPins({ folder: record.folder });
         } catch { /* could not run */ }
         add('installed skills', pins);
+        // The engine's checks, for a project on it, after the skills: a step whose kits don't match is held, so the
+        // trial runs only once they do.
+        let engine = null;
+        try {
+          engine = await engineChecks({ project, kits: pins === 'match' });
+        } catch {
+          engine = { engine: 'could not run', trial: 'could not run', findings: [] };
+        }
+        if (engine !== null) {
+          add('build engine', engine.engine);
+          add('engine trial', engine.trial);
+          for (const line of engine.findings ?? []) ctx.say?.(line);
+        }
+        halt();
         let protection = 'could not run';
         try {
           protection = await readProtection({ host: record.host, repo: record.repo, realUsers: launchedIn(project), ...(record.connection?.baseUrl ? { base: record.connection.baseUrl } : {}) });
@@ -613,8 +659,9 @@ export async function healthCheck({ folder, reported = [], run, load = loadBoard
   const tried = new Map((record?.checks ?? []).map((c) => [c.name, c.result]));
   for (const [name, check] of Object.entries(HELPER_CHECKS)) {
     if (!tried.has(name)) {
-      // With no record, a line above says so for every check, and this one prints nothing.
-      if (record !== null) {
+      // With no record, a line above says so for every check, and this one prints nothing. A project off the engine
+      // has no engine checks to try.
+      if (record !== null && check.onEngine !== true) {
         count(false);
         green = false;
         lines.push(`Failed: setup couldn't try ${check.what} before step 10 stopped. ${RERUN}.`);

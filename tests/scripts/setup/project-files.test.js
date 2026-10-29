@@ -121,6 +121,7 @@ function kits(root) {
 // installed, and `w.gitFails(args)` makes a git call fail.
 async function world({
   defaultBranch = 'main', branch = 'main', claudeMissing = false, release = REF, host = 'github', stepOne = 'committed', gitignore = COVERED, ownStatusLine = null, baseUrl = null,
+  engine = 'wheelhouse',
 } = {}) {
   const w = { calls: [], protection: [], asked: [], gitCalls: [], duringInstall: () => {}, gitFails: () => false, api: [], layout: (o) => JSON.stringify(o), best: BEST_MODEL, mid: MID_MODEL, bestAsked: 0, aliases: [] };
   w.noGlobal = path.join(tempFolder('wh-git-'), 'empty-config');
@@ -222,6 +223,7 @@ async function world({
     gitlab: ({ run, baseUrl: asked }) => { w.asked.push(asked); return directorGitlabApi({ run, fetch: w.fetch, baseUrl: asked }); },
     address: () => ADDRESS, node: NODE, pluginRoot: PLUGIN_ROOT,
     best: async (alias) => { w.bestAsked += 1; w.aliases.push(alias); return alias === MID_SIZED_ALIAS ? w.mid : w.best; },
+    engineOf: () => engine, loginOf: async () => 'ann-oneil',
   });
   w.answers = { '4.live-data': { label: LIVE_DATA.yes, text: null, at: T0.toISOString() } };
   w.ctx = (extra = {}) => ({ folder: w.folder, step: 7, now: () => T0, platform: 'darwin', userHome: w.user, answers: w.answers, ...extra });
@@ -1949,5 +1951,35 @@ test('a setup commit that reorders the .gitignore\'s lines is refused when found
     fs.writeFileSync(path.join(w.folder, '.gitignore'), '!.env.local\n.env*\nnode_modules\n');
     await g(w.folder, 'commit', '-q', '--amend', '--no-edit', '-a');
     await assert.rejects(w.plan(), /commits of your own/);
+  });
+});
+
+test("a new setup's own commit holds the policy file", async () => {
+  const { POLICY_FILE, ARCHON_CONFIG_FILE, mirrorRulesFile } = await import('../../../scripts/setup/engine-parts.js');
+  await withHome(async () => {
+    const w = await world({ engine: 'archon' });
+    const tipBefore = await lsRemote(w.bare, 'main');
+    const planned = await w.plan();
+    assert.ok(Array.isArray(planned.changes), planned.ask?.card.what);
+    const commit = planned.changes.find((c) => c.kind === 'host' && c.action === 'commit');
+    assert.deepEqual(commit.files.slice(-2), [POLICY_FILE, ARCHON_CONFIG_FILE]);
+    assert.match(questionOf(planned.card), /merge policy and settings into \.archon\//);
+    assert.match(questionOf(planned.card), /and \.archon\/ go up/);
+    const done = await w.apply(planned.changes);
+    assert.equal(done.ok, true, done.reason);
+    const tip = await lsRemote(w.bare, 'main');
+    assert.equal(await g(w.bare, 'rev-parse', `${tip}^`), tipBefore, 'in setup\'s one commit');
+    assert.equal(await g(w.bare, 'show', `${tip}:${POLICY_FILE}`), '["ann-oneil"]');
+    assert.match(await g(w.bare, 'show', `${tip}:${ARCHON_CONFIG_FILE}`), /worktree:\n  path: \.wheelhouse\/worktrees/);
+    // The fetch mirror's rule is for a project's https address only; this one's is a folder on the computer.
+    assert.equal(fs.existsSync(mirrorRulesFile()), false);
+    // A project on the old engine gets neither the files nor the rule.
+  });
+  await withHome(async () => {
+    const w = await world();
+    const planned = await w.plan();
+    const commit = planned.changes.find((c) => c.kind === 'host' && c.action === 'commit');
+    assert.ok(!commit.files.some((f) => f.startsWith('.archon/')));
+    assert.ok(!planned.changes.some((c) => c.what === 'mirror'));
   });
 });

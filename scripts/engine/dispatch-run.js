@@ -183,7 +183,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
       : null;
     const decided = dispatch({
-      work: views.work ?? {}, runs: views.runs ?? {}, reports, settings: s, stop: stopped(),
+      work: views.work ?? {}, runs: views.runs ?? {}, reports, features: views.features ?? {}, settings: s, stop: stopped(),
       incident: Array.isArray(views.incidents?.open) && views.incidents.open.length > 0,
       capsReached: false,
       mergeQueue: { running: await mergeQueueRunning(), lastStart: state.lastStart, waiting: waiting.length, newReady },

@@ -380,6 +380,7 @@ export function directorSignIn(host, { platform = process.platform } = {}) {
 const later = (n) => `moves in Task ${n} of the security-gaps plan`;
 export const RAW_GIT_EXCEPTIONS = Object.freeze([
   ['scripts/lineage/upgrade.js', "land: the maintainer's own tool, committing in their checkout with their identity and hooks, on purpose"],
+  ['scripts/engine/hello.js', "the health trial's own scratch repository, made and committed in a temporary folder with hooks off"],
   ['scripts/eval/bare-host.js', later(11)],
   ['scripts/eval/stand-in-helper.js', later(11)],
   ['scripts/eval/feature-project.js', later(11)],

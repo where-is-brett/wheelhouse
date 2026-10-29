@@ -147,3 +147,18 @@ test('step 4 settles again when live data or Apple signing now say otherwise', (
   assert.equal(stepFourDrift({ liveData: true }, live(LIVE_DATA.no)), true);
   assert.equal(stepFourDrift(undefined, live(LIVE_DATA.no)), false);
 });
+
+test('the recommended card gains the engine line and nothing else is asked', async () => {
+  const { engineLine } = await import('../../../scripts/setup/engine-parts.js');
+  const product = { isNew: true, host: null, repo: null, name: 'tide-tables' };
+  const without = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [3, 6, 7, 10], count: 0 });
+  const withEngine = oneCard({ folder: '/x/tide-tables', list: newProductChoices(), product, platform: 'darwin', toRun: [2, 3, 6, 7, 10], count: 0 });
+  const lines = (c) => c.card.question.split('\n');
+  assert.deepEqual(lines(withEngine).filter((l) => !lines(without).includes(l)), [`- ${engineLine()}`]);
+  assert.match(engineLine(), /^Install the build engine, Archon, with its usage reporting off/);
+  assert.deepEqual(withEngine.card.options, without.card.options);
+  assert.deepEqual(withEngine.choices, without.choices);
+  // Windows has no engine yet, so no line.
+  const win = oneCard({ folder: '/x/t', list: [], product: { isNew: true, name: 't' }, platform: 'win32', toRun: [2, 3], count: 1 }).card.question;
+  assert.doesNotMatch(win, /build engine/);
+});

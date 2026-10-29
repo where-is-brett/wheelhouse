@@ -98,7 +98,7 @@
 //     why), and an ask's ids once it is answered. Every recorded change but the answers is in one of
 //     changes, keep, asks or done.
 //     `put` is one of:
-//       'stop' { what: foreman | watcher | receiver | helper }
+//       'stop' { what: engine | foreman | watcher | receiver | helper }
 //       'leave-locked' { project }           leaveLocked, with the director's password
 //       'pull-request' { target, branch, base, archive? }   the uninstall pull request, taking out
 //                                            every 'in-pull-request' entry by its change's `before`;
@@ -121,6 +121,7 @@
 //                                            the folder itself only once nothing else is left
 //       'remove-empty' { target }            a folder of Wheelhouse's own, only once it is empty
 //       'remove-plugin' { line }             the line the director follows in Claude Desktop
+//       'remove-plugin-scope' { change }     `claude plugin uninstall` of the plugin setup added at user scope
 //       'remove-login-start' { kind, target } the sign-in start the helper's install made, while it holds
 //                                            what was written (scripts/lib/login-start.js)
 import crypto from 'node:crypto';
@@ -131,7 +132,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import {
-  wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId,
+  wheelhouseHome, jobFolder, jobsDir, keysDir, profileDir, oldProfileDir, projectsDir, stateDir, oldStateDir, computerId, engineDir, archonHome,
 } from '../lib/paths.js';
 import { projectForFolder, registeredProjects } from '../lib/projects.js';
 import { LEAN_FOLDER, registeredLeanProjects } from '../lean/project.js';
@@ -150,6 +151,7 @@ import { readJournal, heldNow } from './journal.js';
 import { launchVarState } from './telemetry.js';
 import { PROFILE_TARGET, acceptedOwnApp } from './own-app.js';
 import { SETUP_FILES, WHEELHOUSE_LINE, GITIGNORE, ENV_STAYS_LINES } from './project-files.js';
+import { ENGINE_FILES } from './engine-parts.js';
 import { noteAsked, noteUninstallShown, uninstallShownFor, freshUninstallClicks, useClick, releaseClick } from './clicks.js';
 import { admitFolder, SetupRefusal } from './engine.js';
 import { setupGit } from './git.js';
@@ -169,8 +171,8 @@ export const WHAT_CHARS = 500;
 export const PLUGIN_LINE = 'Last, remove the Wheelhouse plugin from this project in Claude Desktop';
 // Said on the card, as step 6's card says (ruling R64).
 const TRANSCRIPTS = `Transcripts removed by the ${RETENTION_DAYS}-day retention can't come back.`;
-// The level 4 cards' order: the product's repository, the project's private record.
-const ASK_ORDER = ['product', 'record'];
+// The level 4 cards' order: the product's repository, the build engine's run history, the project's private record.
+const ASK_ORDER = ['product', 'engine', 'record'];
 // The repository Wheelhouse v0.1.x kept the director's profile in, on their own account.
 const OLD_PROFILE_REPO = 'wheelhouse-profile';
 // Why what Wheelhouse v0.1.x made stays (design section 24.5): nothing of it goes without a card.
@@ -241,7 +243,8 @@ function computerWide(c, run) {
   if (typeof run?.folder === 'string' && path.isAbsolute(c.target) && within(realOr(run.folder), realOr(c.target))) return false;
   if (COMPUTER_STEPS.includes(c.step)) return true;
   if (c.kind === 'file') return samePath(c.target, profileFile());
-  if (c.kind === 'folder') return samePath(c.target, oldProfileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target);
+  if (c.kind === 'folder') return samePath(c.target, oldProfileDir()) || within(path.join(wheelhouseHome(), 'tools'), c.target) || within(engineDir(), c.target);
+  if (c.kind === 'plugin-scope') return true;
   if (c.kind !== 'host') return false;
   if (c.target === 'key github-app' || c.target === PROFILE_TARGET) return true;
   if (/^key gitlab-project-\d+$/.test(c.target)) return repoName(c.after?.project) === OLD_PROFILE_REPO;
@@ -724,7 +727,7 @@ export async function uninstallPlan({
     } else if (refOf(real, `refs/heads/${branch}`) === commitGroup[0].c.before?.sha) settled(idsOf(commitGroup), 'the commit was never made');
     else kept(`setup's commit on ${branch}, never pushed`, NEVER_PUSHED, idsOf(commitGroup));
   }
-  const sharedFile = (target) => [...SETUP_FILES, GITIGNORE].some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
+  const sharedFile = (target) => [...SETUP_FILES, ...ENGINE_FILES, GITIGNORE].some((rel) => samePath(target, path.join(real, ...rel.split('/'))));
   // The project's .wheelhouse/ folder: while it is there, step 7's line keeping it out of git stays
   // (ruling R131).
   const ownFolder = path.join(real, '.wheelhouse');
@@ -755,6 +758,12 @@ export async function uninstallPlan({
         }
         if (slug !== null && within(projectFolder(slug), c.target)) {
           remove(projectFolder(slug), 'last', list, at);
+          break;
+        }
+        // The broker's launcher, in the engine's folder: it goes with the folder. The project's mirror rule there is a
+        // key, put back with the project.
+        if (c.kind === 'file' && within(engineDir(), c.target)) {
+          remove(c.target, 'last', list, at);
           break;
         }
         const inProject = sharedFile(c.target);
@@ -793,7 +802,7 @@ export async function uninstallPlan({
         else if (slug !== null && samePath(c.target, oldStateDir(slug))) kept(shown(c.target, userHome), OLD_STAYS, list);
         else if (slug !== null && within(projectFolder(slug), c.target)) remove(projectFolder(slug), 'last', list, at);
         else if (samePath(c.target, oldProfileDir())) kept(shown(c.target, userHome), OLD_STAYS, list);
-        else if (within(path.join(wheelhouseHome(), 'tools'), c.target) || typeof c.after?.installer === 'string') remove(c.target, 'last', list, at);
+        else if (within(path.join(wheelhouseHome(), 'tools'), c.target) || within(engineDir(), c.target) || typeof c.after?.installer === 'string') remove(c.target, 'last', list, at);
         else if (one.before !== null) settled(list, 'not made by setup');
         else {
           // Gone is put back already; a folder that can't be read is kept, with why.
@@ -895,6 +904,9 @@ export async function uninstallPlan({
         else kept(describe(c, userHome), 'changed since setup', list, brief(c));
         break;
       }
+      case 'plugin-scope':
+        add('computer', at, { put: 'remove-plugin-scope', change: c, ids: list });
+        break;
       case 'locked': {
         const one = asOne(group);
         if (one.before?.exists === true && one.before?.ours !== true) kept(`Locked's file ${c.target}`, 'it is not Wheelhouse\'s, so it is left as it is', list);
@@ -949,6 +961,8 @@ export async function uninstallPlan({
   ] : [];
   if (last) {
     for (const p of HOST_TOOLS.map(toolFolder)) if (exists(p)) remove(p, 'last');
+    // The build engine's folder whole: its Bun, its Archon, the broker and the fetch mirrors.
+    if (exists(engineDir())) remove(engineDir(), 'last');
     if (exists(profileDir())) kept(shown(profileDir(), userHome), 'your settings on this computer: yours, so they stay');
     // Setup's own records are listed whether they are there yet or not: showing uninstall's card
     // and clicking it write them, and the list must be the same before and after.
@@ -983,11 +997,27 @@ export async function uninstallPlan({
     });
   } else settled(recordIds, 'already gone');
   if (slug !== null && exists(oldStateDir(slug))) kept(shown(oldStateDir(slug), userHome), OLD_STAYS);
+  // The build engine's own record on this computer, Archon's run history (its database and its runs' transcripts):
+  // recorded nowhere by setup, as Archon writes it. Kept unless its own card says delete, like the private record.
+  if (last && exists(archonHome())) {
+    asks.push({
+      id: askId(`engine:${archonHome()}`), about: 'engine', phase: 'kept', put: 'delete-engine-history', target: archonHome(), ids: [],
+      card: deleteCard({
+        what: `Delete the build engine's run history on this computer, ${shown(archonHome(), userHome)}: what each of its runs did, and their transcripts?`,
+        why: 'It is kept only on this computer, and once deleted it can\'t be brought back, so it is your call.',
+        keeps: 'The run history stays on this computer, for Wheelhouse set up again.',
+        deletes: 'Wheelhouse deletes the run history from this computer.',
+        because: 'a deleted run history can\'t be brought back',
+      }),
+    });
+  }
   asks.sort((a, b) => ASK_ORDER.indexOf(a.about) - ASK_ORDER.indexOf(b.about));
 
   // In order: the phases, newest first within each; Stop and the line for Desktop around them, and
   // the helper last of all, after its answer.
+  // The engine's runs are cancelled first of all, on the last project, while its folder is there to cancel them.
   const stops = [
+    ...(last && exists(engineDir()) ? ['engine'] : []),
     ...(slug !== null ? ['foreman', 'watcher'] : []),
     ...(last ? ['receiver'] : []),
   ].map((what) => ({ phase: 'stop', put: 'stop', what }));

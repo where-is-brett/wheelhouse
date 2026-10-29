@@ -135,6 +135,9 @@ import { isolated, refuseUnlistedSettings, reaching } from './git.js';
 import { toolsStatus, PLUGIN_ROOT } from './tools.js';
 import { LIVE_DATA, SIGNS_APPS } from './questions.js';
 import { newId, readJournal, SAY_CHARS } from './journal.js';
+import { localViews } from '../hooks/session-start.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { ENGINE_FILES, engineFileTexts, mirrorRulesFile } from './engine-parts.js';
 
 export const COMMIT_MESSAGE = 'Set up Wheelhouse';
 // The setup commit's files, and only these (ruling R42). The adapter holds the list (packaging.js).
@@ -214,6 +217,20 @@ Leave out file contents and command output that can be read again. Wheelhouse's 
 `;
 // How long the step waits, when asked before step 3 has registered the project or step 4 has its answer.
 export const PROJECT_WAIT_MS = 30 * 1000;
+
+// The build engine in force for a project: its settings' `engine`.
+function engineInForce(project) {
+  const views = localViews(project, ['settings'])?.settings;
+  return effectiveSettings({ project: views !== null && typeof views === 'object' && !Array.isArray(views) ? views : {} }).engine?.value;
+}
+
+// The GitHub login of the director's sign-in, which the helper posts its review verdicts as on the Quick connection.
+async function githubLogin({ run }) {
+  const got = await quietly(run, toolPath('gh'), ['api', 'user']);
+  const login = got.code === 0 ? parsed(got.stdout)?.login : null;
+  if (typeof login !== 'string' || !/^[A-Za-z0-9-]+$/.test(login)) throw new Error('Setup could not read who is signed in to GitHub, so the build engine\'s policy names no one: sign in again (step 3), then a fresh Go ahead');
+  return login;
+}
 // Wheelhouse's own branches, which are never the product's default (ruling R34).
 const WHEELHOUSE_BRANCHES = [STATE_BRANCH, 'wheelhouse-lock', PROFILE_BRANCH];
 const NAME = { github: 'GitHub', gitlab: 'GitLab' };
@@ -563,7 +580,7 @@ async function setupCommitOn(git, head, tip, { strict = false, own = new Set(), 
   if ((await git.out(['rev-parse', '-q', '--verify', `${head}^1`])) !== tip) return false;
   if ((await git.out(['log', '-1', '--format=%s', head])) !== COMMIT_MESSAGE) return false;
   const files = ((await git.out(['diff-tree', '--no-commit-id', '--name-only', '-r', head])) ?? '').split('\n').filter(Boolean);
-  if (!files.every((f) => SETUP_FILES.includes(f) || f === GITIGNORE || extra.includes(f) || own.has(head))) return false;
+  if (!files.every((f) => SETUP_FILES.includes(f) || f === GITIGNORE || ENGINE_FILES.includes(f) || extra.includes(f) || own.has(head))) return false;
   // Found again in a later plan (`strict`), the .gitignore the commit holds must be changed by
   // nothing but setup's own lines; a commit setup has just made may hold the director's, as they chose.
   // A commit whose sha the journal recorded as setup's own (it was recorded just before the push)
@@ -927,7 +944,7 @@ async function switchFolder(ctx, c, { git, project, author }) {
 }
 
 export function projectFilesCard({ changes, host, branch, release, joining = false, differ = [], negated = [], frontDesk = null, midSized = null }) {
-  const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined);
+  const files = changes.filter((c) => (c.kind === 'json-key' || c.kind === 'file') && c.line === undefined && c.engine !== true && c.what !== 'mirror');
   // The lines that keep .env files out of git: in the project's .gitignore, or, on a joining
   // computer, in this computer's own list.
   const envLines = changes.filter((c) => c.kind === 'file' && (ENV_LINES.includes(c.line) || c.restate === true));
@@ -950,6 +967,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   if (secrets === 'shared') parts.push(`.env files, which hold secrets, kept out of git by .gitignore${envLines.some((c) => c.restate) ? ' (.env.example stays shared)' : ''}`);
   else if (secrets === 'here') parts.push(negated.length > 0 ? `some .env files, which hold secrets, kept out of git on this computer, but ${NEGATED_PART}` : '.env files, which hold secrets, kept out of git on this computer');
   if (negated.length > 0 && secrets !== 'here') parts.push(NEGATED_PART);
+  if (changes.some((c) => c.engine === true)) parts.push('the build engine\'s merge policy and settings into .archon/, naming the GitHub account Wheelhouse signs reviews as');
+  if (changes.some((c) => c.what === 'mirror')) parts.push('the build engine reads this project from Wheelhouse\'s own copy, so it never holds a key');
   const pins = changes.filter((c) => c.kind === 'process').map((c) => pinName(c.target));
   if (pins.length > 0) parts.push(`${listed(pins)} installed for this project at tested versions`);
   const up = changes.find((c) => c.kind === 'host' && (c.action === 'commit' || c.action === 'push'));
@@ -960,7 +979,8 @@ export function projectFilesCard({ changes, host, branch, release, joining = fal
   const ownNamed = ownFiles.length > OWN_NAMED ? [...ownFiles.slice(0, OWN_NAMED), `${ownFiles.length - OWN_NAMED} more`] : ownFiles;
   const ownPart = ownFiles.length > 0 ? `, with your product's own ${ownFiles.length === 1 ? 'file' : 'files'}, ${listed(ownNamed)}` : '';
   const ignored = up?.action === 'commit' && Array.isArray(up.files) && up.files.includes(GITIGNORE);
-  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''} go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
+  const archon = up?.action === 'commit' && Array.isArray(up.files) && up.files.some((f) => ENGINE_FILES.includes(f));
+  if (up?.action === 'commit') parts.push(`the three shared files${ignored ? ' and .gitignore' : ''}${archon ? ' and .archon/' : ''} go up to ${branch} on ${NAME[host]} in one commit, "${COMMIT_MESSAGE}"${yours}${ownPart}`);
   if (up?.ownLeft === true) parts.push('your product\'s own files stay as they are, too many for setup\'s commit: commit them when you are ready');
   if (up?.action === 'push') parts.push(`setup's commit, "${COMMIT_MESSAGE}", goes up to ${branch} on ${NAME[host]}`);
   const where = host === 'gitlab' ? ' ("pipelines must succeed" once there is a pipeline)' : ', where your plan allows';
@@ -1038,6 +1058,8 @@ export function projectFilesStep({
   switchOn = switchOnAsDirector, protectionStatus = realProtectionStatus,
   address = () => helperAddress(), node = process.execPath, pluginRoot = PLUGIN_ROOT,
   best = (alias) => aliasModel(alias, { run, claude }),
+  // The build engine in force for a project, and the login the helper posts as on GitHub.
+  engineOf = engineInForce, loginOf = githubLogin,
 } = {}) {
   const gitFor = async ({ host, platform, folder, remoteUrl, base }) => {
     const located = await findGit({ platform, run });
@@ -1231,7 +1253,18 @@ export function projectFilesStep({
       }
       const ignoreCommit = ignoreInvolved && !sameContent(GITIGNORE, ignoreMade, ignoreBefore);
       if (ignoreCommit) commit = true;
-      const commitFiles = [...SETUP_FILES, ...(ignoreCommit ? [GITIGNORE] : [])];
+      // A project on the new engine (a Mac's setup starts it there, on GitHub): the merge queue's policy and Archon's
+      // project settings go up in this same commit when the project has neither yet (scripts/setup/engine-parts.js).
+      const engineFiles = [];
+      if (host === 'github' && engineOf(found.project) === 'archon') {
+        const texts = engineFileTexts(await loginOf({ host, run }));
+        for (const rel of ENGINE_FILES) {
+          if (readText(at(rel)) !== null || (await headText(git, rel)) !== null) continue;
+          engineFiles.push({ kind: 'file', target: at(rel), after: texts[rel], engine: true });
+        }
+      }
+      if (engineFiles.length > 0) commit = true;
+      const commitFiles = [...SETUP_FILES, ...(ignoreCommit ? [GITIGNORE] : []), ...engineFiles.map((c) => path.relative(folder, c.target).split(path.sep).join('/'))];
       // A new product's own files go up with setup's first commit (folderOwnFiles).
       const { own, left } = isNew ? await folderOwnFiles(git, folder) : { own: [], left: false };
       if (own.length > 0) commit = true;
@@ -1239,6 +1272,12 @@ export function projectFilesStep({
       const changes = projectFilesChange({ folder, config, release, local: { address: address(), node, pluginRoot, platform, claudeHome: home } });
       // This computer's settings are kept out of git by a line of the folder's own, unless the
       // product already ignores them; then the lines that keep .env files out of git; then the pins.
+      changes.push(...engineFiles);
+      // The fetch mirror's rule for this project, in the engine folder's list (scripts/engine/archon/env.js).
+      if (host === 'github' && engineOf(found.project) === 'archon' && /^https:\/\//.test(record.remoteUrl ?? '')) {
+        const rules = readJson(mirrorRulesFile());
+        if (rules?.[found.project] !== record.remoteUrl) changes.push({ kind: 'json-key', target: mirrorRulesFile(), key: [found.project], after: record.remoteUrl, what: 'mirror' });
+      }
       changes.push(...(await computerParts(git, folder)));
       if (missing.length > 0) {
         const firstPin = changes.findIndex((c) => c.kind === 'process');
@@ -1299,7 +1338,7 @@ export function projectFilesStep({
         }
       }
       // What this apply wrote into the shared files and the .gitignore: the commit takes them only as they are.
-      const wrote = Object.fromEntries([...SETUP_FILES, GITIGNORE].map((rel) => [rel, readText(at(rel))]));
+      const wrote = Object.fromEntries([...SETUP_FILES, GITIGNORE, ...ENGINE_FILES].map((rel) => [rel, readText(at(rel))]));
       halt();
 
       // 2. The pins, then the lineage check. Claude Code writes the project's settings again as it

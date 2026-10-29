@@ -34,6 +34,24 @@ function nodeLink(engine, nodeDir, platform) {
   return dir;
 }
 
+// The fetch mirror's rules (setup's list in <engine>/mirrors/rules.json, { <project>: <its address> }) as git's
+// environment settings: each project's address read from the helper's mirror in the engine folder, so Archon's git
+// needs no key (Archon design, section 12.4). A name or address that isn't plain is left out.
+const SAFE_PROJECT = /^[A-Za-z0-9._-]+$/;
+function mirrorConfig(engine) {
+  let rules;
+  try { rules = JSON.parse(fs.readFileSync(path.join(engine, 'mirrors', 'rules.json'), 'utf8')); } catch { return {}; }
+  if (rules === null || typeof rules !== 'object' || Array.isArray(rules)) return {};
+  const pairs = Object.entries(rules).filter(([project, url]) => SAFE_PROJECT.test(project) && typeof url === 'string' && /^https:\/\/[^\s]+$/.test(url));
+  if (pairs.length === 0) return {};
+  const out = { GIT_CONFIG_COUNT: String(pairs.length) };
+  pairs.forEach(([project, url], i) => {
+    out[`GIT_CONFIG_KEY_${i}`] = `url.${path.join(engine, 'mirrors', `${project}.git`)}.insteadOf`;
+    out[`GIT_CONFIG_VALUE_${i}`] = url;
+  });
+  return out;
+}
+
 // The environment for an Archon command. PATH is the broker's folder, the pinned Bun's, the folder of the Node the
 // plugin's hooks run on (without it Claude Code doesn't load the plugin and Archon's steps fail), then the system
 // folders: never the caller's PATH and never a folder holding a real gh, so a node folder with a gh beside it is
@@ -51,5 +69,6 @@ export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin
   env.WHEELHOUSE_ROOT = root;
   // Wheelhouse's patch (build.js) starts Claude steps in this mode instead of bypass mode, so the sandbox holds.
   env.ARCHON_CLAUDE_PERMISSION_MODE = PERMISSION_MODE;
+  Object.assign(env, mirrorConfig(engine));
   return { ...env, ...TELEMETRY };
 }

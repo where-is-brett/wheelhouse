@@ -499,7 +499,7 @@ test('setup\'s answers record the glossary entry, the phase and the rulings thro
         tool_input: { questions: [card], answers: { [card.question]: label } }, tool_response: { answers: { [card.question]: label } },
       }, { client, now: at(500) });
 
-      const product = await questionsStep().plan({ folder, runId: run.id, answers: { '3.real-users': { label: REAL_USERS.yes, text: null } } });
+      const product = await questionsStep().plan({ folder, runId: run.id, platform: 'linux', answers: { '3.real-users': { label: REAL_USERS.yes, text: null } } });
       const productCard = await ask(4, product, composeCard({ ...product.ask.card, kind: 'question' }).question);
       // Step 5 asks no card; the confirm-all support is driven with one made of the rules found.
       const found = findRules(folder).map((r) => ({ ...r, original: false }));
@@ -518,7 +518,7 @@ test('setup\'s answers record the glossary entry, the phase and the rulings thro
 
       // Kept while the helper was away, the glossary entry and the phase land once sent.
       const away = { state: { write: async () => null, record: async () => null }, profile: { record: async () => null }, prState: async () => null };
-      const again = await questionsStep().plan({ folder, runId: run.id, answers: { '3.real-users': { label: REAL_USERS.no, text: null } } });
+      const again = await questionsStep().plan({ folder, runId: run.id, platform: 'linux', answers: { '3.real-users': { label: REAL_USERS.no, text: null } } });
       const againCard = await ask(4, again, composeCard({ ...again.ask.card, kind: 'question' }).question);
       await click(againCard, 'Describe it later', away);
       assert.equal(fs.readdirSync(pendingDir(PROJECT)).filter((n) => n.endsWith('.json')).length, 1);
