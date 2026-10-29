@@ -1,10 +1,13 @@
 // tests/scripts/lineage/provenance.test.js
+import { packDigest } from '../../../scripts/engine/pack-check.js';
+import { ARCHON_SOURCE } from '../../../scripts/engine/archon/build.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
   BEGIN, END, WHY, bodyProvenance, claudeCodeOf, modelsOf, parseProvenance, provenanceBlock, provenanceMatches, removeProvenance, sessionProvenance, stampProvenance,
+  engineProvenance,
 } from '../../../scripts/lineage/provenance.js';
 import { readManifest } from '../../../scripts/lineage/manifest.js';
 import { lineageFixture } from '../../helpers/lineage.js';
@@ -151,4 +154,10 @@ test('a marker split around another is taken out as well', () => {
   const stamped = stampProvenance(split, PROVENANCE);
   assert.equal(stamped.split(BEGIN).length, 2, 'one block');
   assert.deepEqual(parseProvenance(stamped), PROVENANCE);
+});
+
+test('an engine run\'s provenance names Archon\'s pinned release and the pack it ran', () => {
+  const digest = packDigest();
+  assert.deepEqual(engineProvenance({ packDigest: digest }), { engine: { archon: ARCHON_SOURCE.tag, packDigest: digest } });
+  assert.throws(() => engineProvenance({ packDigest: 'not a digest' }), /pack's digest/);
 });

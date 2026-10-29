@@ -1,0 +1,108 @@
+# engine/archon/pack/wheelhouse-hello.yaml
+{
+  "name": "wheelhouse-hello",
+  "description": "Wheelhouse's health trial: one script step and one cheap AI step, to show the engine, the provider and the guards work. Run by Wheelhouse's setup, never for real work.",
+  "nodes": [
+    {
+      "id": "script",
+      "bash": "echo \"The engine ran a script step.\"",
+      "timeout": 30000
+    },
+    {
+      "id": "guarded",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "script"
+      ],
+      "model": "small",
+      "idle_timeout": 120000,
+      "prompt_file": "prompts/hello.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "refused": {
+            "type": "boolean",
+            "description": "true when reading .env was refused"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "refused",
+          "blocked",
+          "assumptions"
+        ]
+      }
+    },
+    {
+      "id": "guarded-blocked",
+      "depends_on": [
+        "guarded"
+      ],
+      "when": "$guarded.output.blocked == 'true'",
+      "wait": {
+        "attention": "$guarded.output.question",
+        "form": "select",
+        "options": "$guarded.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$guarded.output.level",
+          "wh.topic": "$guarded.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$guarded.output.recommend"
+        }
+      }
+    }
+  ]
+}

@@ -79,3 +79,13 @@ test('the first step copies the helper\'s order into the artefacts and prints no
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'order.json'), 'utf8')), order);
   assert.doesNotMatch(lines.join('\n'), /A goal/);
 });
+
+test('with --flags the first step prints only whether the work is visible and shown first, for the pack to branch on', async () => {
+  const dir = tempFolder('wh-art-');
+  const order = orderWith([{ test: 'good' }], { visible: true });
+  const client = { engine: { order: async () => ({ ok: true, order }) } };
+  const { lines, out } = sink();
+  assert.equal(await copyMain(['--run', 'run-7', '--out', dir, '--flags'], { client, out }), 0);
+  assert.deepEqual(lines.map((line) => JSON.parse(line)), [{ visible: true, showFirst: true }]);
+  assert.ok(fs.existsSync(path.join(dir, 'order.json')));
+});

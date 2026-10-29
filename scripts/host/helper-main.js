@@ -2,13 +2,16 @@
 // The real helper: each project's host, repository and connection come from
 // its record (~/.wheelhouse/projects/<project>/project.json). Run as a script,
 // it starts the helper at the usual address and stays up.
-import { helperAddress } from '../lib/paths.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { helperAddress, engineDir } from '../lib/paths.js';
 import { readProject } from '../lib/projects.js';
 import { run } from '../lib/run.js';
 import { makeAdapter } from './adapter.js';
 import { startHelper, envForConnection } from './helper.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { archonAdapter } from '../engine/archon/adapter.js';
+import { buildPack } from '../engine/pack-build.js';
 import { settingsViews } from '../desk/mod-records.js';
 import { effectiveSettings } from '../settings/effective.js';
 
@@ -18,9 +21,21 @@ function recordOf(project) {
   return record;
 }
 
+// Wheelhouse's run layer for every Archon run (--config).
+export const ENGINE_CONFIG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'engine', 'archon', 'config.yaml');
+
+// The Archon adapter with the pack built from the plugin into <engine>/pack, where --workflow-source reads it. Built
+// once, when the first project on Archon asks; a pack that fails its check leaves the adapter refusing to start runs.
+export function packedArchon({ engine = engineDir(), build = buildPack, adapter = archonAdapter } = {}) {
+  const packDir = path.join(engine, 'pack');
+  let built = true;
+  try { build({ out: packDir }); } catch { built = false; }
+  return adapter({ engine, packDir: built ? packDir : undefined, configFile: ENGINE_CONFIG });
+}
+
 // The engine for a project whose `engine` setting in force is Archon, or null. Every such project shares one Archon
 // adapter: there is one Archon on the computer.
-export function engineForProject({ adapter = () => archonAdapter(), now = () => new Date(), views = settingsViews } = {}) {
+export function engineForProject({ adapter = () => packedArchon(), now = () => new Date(), views = settingsViews } = {}) {
   let shared = null;
   return (project) => {
     const { project: own, profile } = views(project);

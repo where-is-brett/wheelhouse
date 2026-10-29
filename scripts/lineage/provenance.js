@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { readTailEntries } from '../hooks/kit.js';
 import { provenanceFile } from './check.js';
 import { readManifest } from './manifest.js';
+import { ARCHON_SOURCE } from '../engine/archon/build.js';
 
 export const BEGIN = '<!-- wheelhouse-provenance -->';
 export const END = '<!-- /wheelhouse-provenance -->';
@@ -109,6 +110,14 @@ export function sessionProvenance({ project, sessionId, readEntries = (file) => 
     fingerprints: kept.fingerprints,
     ...(agent === null ? {} : Object.fromEntries(AGENT_FIELDS.map((field) => [field, valueOrNull(kept[field])]))),
   };
+}
+
+// What else built an engine run's pull request: Archon's pinned release and the digest of the pack the run ran
+// (packDigest, scripts/engine/pack-check.js). The helper records it with the pull request it opens for the run, and
+// checks the digest before it trusts a run's review or outcome.
+export function engineProvenance({ packDigest, archon = ARCHON_SOURCE.tag } = {}) {
+  if (typeof packDigest !== 'string' || !/^[0-9a-f]{64}$/.test(packDigest)) throw new Error("An engine run's provenance needs the pack's digest");
+  return { engine: { archon, packDigest } };
 }
 
 // The block for `provenance`, one line each.

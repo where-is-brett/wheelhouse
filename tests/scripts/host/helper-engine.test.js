@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { startHelper } from '../../../scripts/host/helper.js';
-import { engineForProject } from '../../../scripts/host/helper-main.js';
+import { engineForProject, packedArchon, ENGINE_CONFIG } from '../../../scripts/host/helper-main.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
@@ -134,4 +134,19 @@ test('the real helper gives Archon only to a project whose engine setting is Arc
   assert.equal(engineFor('o__on').name, 'archon');
   assert.equal(engineFor('o__on'), engineFor('o__on'));
   assert.equal(made.length, 1, 'one adapter for every project');
+});
+
+test("the real helper's Archon reads the pack built into the engine's folder, with Wheelhouse's run layer", () => {
+  const engine = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-engine-'));
+  const seen = [];
+  const adapter = (options) => { seen.push(options); return { name: 'archon' }; };
+  packedArchon({ engine, adapter });
+  assert.equal(seen[0].packDir, path.join(engine, 'pack'));
+  assert.equal(seen[0].configFile, ENGINE_CONFIG);
+  assert.ok(fs.existsSync(path.join(engine, 'pack', '.archon', 'workflows', 'wheelhouse', 'wheelhouse-quick', 'wheelhouse-quick.yaml')));
+  assert.ok(fs.existsSync(ENGINE_CONFIG));
+  // A pack that fails its check gives no pack folder, so the adapter refuses to start runs.
+  packedArchon({ engine, adapter, build: () => { throw new Error('The pack fails its check'); } });
+  assert.equal(seen[1].packDir, undefined);
+  fs.rmSync(engine, { recursive: true, force: true });
 });

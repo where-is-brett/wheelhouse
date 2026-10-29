@@ -46,6 +46,16 @@ test('the order names no model directly, only bindings from the routing table', 
   assert.throws(() => workOrder({ work: { ...WORK, model: 'model-a' }, routing: ROUTING, config: {} }), /names a model/);
 });
 
+test('visible work is shown first unless the work record waives it', () => {
+  assert.equal(workOrder({ work: WORK, routing: {}, config: {} }).showFirst, true);
+  assert.equal(workOrder({ work: { ...WORK, shownFirst: false }, routing: {}, config: {} }).showFirst, false);
+  assert.equal(workOrder({ work: { ...WORK, visible: false }, routing: {}, config: {} }).showFirst, false);
+  const order = workOrder({ work: WORK, routing: {}, config: {} });
+  assert.match(checkOrder({ ...order, showFirst: 'yes' }), /shown first/);
+  const { showFirst, ...older } = order;
+  assert.equal(checkOrder(older), null, 'an order written before the flag is read as not shown first');
+});
+
 test('work with nothing visible has no preview, and a work with no done checks is refused', () => {
   assert.equal(workOrder({ work: { ...WORK, visible: false }, routing: {}, config: {} }).preview, null);
   assert.throws(() => workOrder({ work: { ...WORK, done: [] }, routing: {}, config: {} }), /done check/);

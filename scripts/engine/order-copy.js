@@ -2,7 +2,8 @@
 // Every lane's first step (Archon design, section 7.4): asks the helper for the run's work order and writes it to the
 // run's artefacts as order.json, for the steps to read. It prints none of the order, since a step's output goes into
 // Archon's database and the director's words never do. The copy is for reading only: nothing that guards reads it.
-//   node scripts/engine/order-copy.js --run <run id> --out <artefacts folder>
+// With --flags it prints only { visible, showFirst }, two yes-or-no answers the pack branches on.
+//   node scripts/engine/order-copy.js --run <run id> --out <artefacts folder> [--flags]
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
@@ -23,7 +24,8 @@ export async function main(argv = process.argv.slice(2), { client = helperClient
   }
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'order.json'), `${JSON.stringify(answer.order, null, 2)}\n`);
-  out(`The work order is in order.json, with ${answer.order.done.length} done checks.`);
+  if (argv.includes('--flags')) out(JSON.stringify({ visible: answer.order.preview !== null, showFirst: answer.order.showFirst === true }));
+  else out(`The work order is in order.json, with ${answer.order.done.length} done checks.`);
   return 0;
 }
 
