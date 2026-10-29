@@ -22,13 +22,13 @@ import { fakeEngine } from '../engine/fake.js';
 export const ENGINES = Object.freeze(['fake']);
 export const PROJECT = 'o__p';
 
-// The tools that reach past this computer, or start an agent: none runs in an engine scenario. A call to one is
-// refused and kept, so the scenario can say so; git and the rest run as they are.
-const HOST_TOOLS = Object.freeze(['gh', 'glab', 'copilot', 'claude', 'archon', 'bun', 'curl', 'launchctl', 'osascript', 'open', 'xdg-open', 'security', 'brew', 'sudo']);
+// The tools an engine scenario may run: git and Node.js. Any other (an agent, the code host's tool, a network fetch,
+// the system's) is refused and kept, so the scenario can say so.
+const LOCAL_TOOLS = Object.freeze(['git', 'node']);
 function noHostTools(log) {
   return (file, args = [], options) => {
     const name = String(file).split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|com)$/i, '').toLowerCase();
-    if (!HOST_TOOLS.includes(name)) return realRun(file, args, options);
+    if (LOCAL_TOOLS.includes(name)) return realRun(file, args, options);
     log.push([name, ...args].join(' '));
     return Promise.resolve({ code: 1, stdout: '', stderr: `${name} is not run in an engine scenario` });
   };
