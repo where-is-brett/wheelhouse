@@ -144,6 +144,16 @@ test('the card\'s Undo starts an attempt that undoes the suspect, and Fix it for
   }
 });
 
+test('a first fix whose start is refused is tried again, and the Logbook says why, once', async () => {
+  const t = setUp({ refuse: (n) => (n <= 2 ? "the broker's launcher names a program that is gone" : null) });
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(notes(t).filter((w) => /didn't start/.test(w)).length, 1);
+  assert.match(notes(t).find((w) => /didn't start/.test(w)), /launcher/);
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 3, 'started on the third try');
+});
+
 test("an answer whose start is refused is kept and tried again, and the Logbook says why, once", async () => {
   let refusing = true;
   const t = setUp({ refuse: (n) => (n >= 2 && refusing ? "the engine's copy of the project couldn't be brought up to date" : null) });

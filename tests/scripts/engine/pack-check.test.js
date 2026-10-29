@@ -111,7 +111,7 @@ test('checkPack refuses a step that posts a verdict or calls gh outside the brok
 });
 
 test('checkPack refuses a step that moves the worktree with git before it takes the run\'s overlay out', () => {
-  for (const command of ['git rebase origin/main', 'git pull --ff-only', 'git checkout main', 'git merge origin/main', 'git switch other', 'git reset --hard HEAD~1', 'git stash']) {
+  for (const command of ['git rebase origin/main', 'git pull --ff-only', 'git checkout main', 'git merge origin/main', 'git switch other', 'git reset --hard HEAD~1', 'git stash', 'git -C . rebase main', 'git restore .']) {
     assert.match(problems(packWith((w) => { node(w, 'open-pr').bash = `${command} && ${node(w, 'open-pr').bash}`; })).join('\n'), /open-pr moves the worktree with git/, command);
   }
   const released = 'node "$WHEELHOUSE_ROOT/scripts/engine/order-copy.js" --release && git rebase origin/main';
@@ -119,7 +119,7 @@ test('checkPack refuses a step that moves the worktree with git before it takes 
   // A release after the move is too late.
   assert.match(problems(packWith((w) => { node(w, 'open-pr').bash = `git rebase origin/main && node "$WHEELHOUSE_ROOT/scripts/engine/order-copy.js" --release`; })).join('\n'), /open-pr moves the worktree with git/);
   // Reading git is no move.
-  assert.deepEqual(problems(packWith((w) => { node(w, 'open-pr').bash = `git log --oneline && git diff HEAD~1 && ${node(w, 'open-pr').bash}`; })), []);
+  assert.deepEqual(problems(packWith((w) => { node(w, 'open-pr').bash = `git log --oneline && git diff HEAD~1 && git merge-base HEAD main && ${node(w, 'open-pr').bash}`; })), []);
 });
 
 test('checkPack refuses a prompt without the shared rules', () => {

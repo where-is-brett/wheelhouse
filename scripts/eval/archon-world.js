@@ -356,12 +356,13 @@ export async function runRealScenario({ scenario, open = openArchonWorld, prepar
   const world = await open({ cache });
   try {
     const got = await scenario.engine.real(world, { until: (fn, o) => until(fn, { ms: 6 * 60 * 1000, every: 1000, ...o }) });
-    await count(world);
     if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}`, usage };
     // A pass on another release's guards proves nothing about this checkout.
     const ran = got?.pass === true ? await ranThisCheckout(world) : { ok: true };
     return ran.ok ? { ...got, usage } : { pass: false, why: `not counted: ${ran.why}`, usage };
   } finally {
+    // Counted even when the play throws; the returned usage is the same object, so it carries this world's spend.
+    await count(world);
     await world.close();
   }
 }

@@ -238,6 +238,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(`All stop was on when you answered about ${titled(kept.work)}, so the build didn't get that answer; the question comes back once All stop is lifted.`, { work: kept.work });
         continue;
       }
+      // Stopped at its cap by the director: the record has ended it, so no answer goes back to carry it on.
+      if (state.capped[kept.runId]?.stopped === true) {
+        state.delivered[key] = 'stopped';
+        keep();
+        await note(`Your answer about ${titled(kept.work)} wasn't sent: you stopped it at its cap, so it doesn't carry on.`, { work: kept.work });
+        continue;
+      }
       // Held at its cap: sent once Give it more lifts the hold.
       if (held(kept.runId)) continue;
       if (!answer) {
@@ -309,7 +316,9 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         // it stays paused there, spending nothing; the record ends it, which gives back its build slot.
         state.capped[kept.runId].held = false;
         state.capped[kept.runId].stopped = true;
+        // Its asks not yet shown never become cards.
         state.later = state.later.filter((ask) => ask.runId !== kept.runId);
+        state.waiting = state.waiting.filter((w) => w.runId !== kept.runId);
         keep();
         const records = (viewsNow().runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId);
         const latest = records.at(-1)?.data ?? {};

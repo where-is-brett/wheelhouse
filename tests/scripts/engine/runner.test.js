@@ -472,6 +472,22 @@ test('Stop on a held run ends it in the record, so it gives back its build slot,
   } finally { t.cleanup(); }
 });
 
+test("an answer to a stopped held run's own earlier card never reaches the engine, so it can't spend past the record's end", async () => {
+  const { t, event } = pausedAtCap();
+  try {
+    await t.runner.onAsk(event);
+    const asked = t.writes.filter((w) => w.kind === 'question')[0].data;
+    await t.runner.tick();
+    answerCap(t, 'Stop');
+    await t.runner.tick();
+    t.views.questions[asked.id] = { question: { data: asked }, answer: { label: 'A' } };
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'nothing is sent to the stopped run');
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /you stopped it at its cap/.test(w.data.words ?? '')));
+  } finally { t.cleanup(); }
+});
+
 test('a held run is looked at against its raised cap once Give it more lifts the hold', async () => {
   const { t, runId } = pausedAtCap();
   try {

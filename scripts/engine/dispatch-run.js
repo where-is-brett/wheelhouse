@@ -484,15 +484,18 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         delete kept.refusedSaid;
         keep();
         if (kept.started.length === 1) await write('note', { about: 'engine', words: STARTED_FIX_WORDS });
-      } else if (answered) {
-        // The director's answer is kept, and its start tried again on the next tick; the Logbook says why, once.
-        kept.next = answered;
+      } else {
+        // Tried again on the next tick, the director's answer kept; the Logbook says why, once.
+        if (answered) kept.next = answered;
         const said = kept.refusedSaid === true;
         kept.refusedSaid = true;
         keep();
         if (!said) {
-          const chose = answered.revert === true && incident.suspect ? undoLabel(incident.suspect) : FIX_FORWARD;
-          await write('note', { about: 'engine', words: `You chose ${chose} for the red main line, but the fix didn't start: ${got?.refused ?? 'the build engine didn\'t start it'}. Your answer is kept, and it is tried again.` });
+          const why = got?.refused ?? 'the build engine didn\'t start it';
+          const chose = answered ? (answered.revert === true && incident.suspect ? undoLabel(incident.suspect) : FIX_FORWARD) : null;
+          await write('note', { about: 'engine', words: chose
+            ? `You chose ${chose} for the red main line, but the fix didn't start: ${why}. Your answer is kept, and it is tried again.`
+            : `The fix for the red main line didn't start: ${why}. It is tried again, and other work waits until the main line is green.` });
         }
       }
     } else if (decided.act === 'card') {
