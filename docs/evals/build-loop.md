@@ -418,6 +418,12 @@ The Archon design's new scenarios (`docs/specs/2026-10-29-wheelhouse-on-archon-d
 
 The scenarios found two faults, both put right with a test that failed first: an ask routed while a tick showed cards was written as a card two or three times, and the card budget's day was the UTC day, which in Sydney turned over at 11am.
 
+### For v0.2.0 (30 October 2026)
+
+Run on the fake engine with `npm run eval -- 42 43 44 45 46 47 48 49 50 --engine fake`, at a cost of nothing, since no session starts: all nine passed, each on its one `with` trial.
+
+**Not run: the counted evaluation on Archon itself.** The plan for v0.2.0 runs these and the quick-lane scenarios once on a real, pinned Archon (`--engine archon`). That needs an engine world that installs the pinned build in a scratch home and plays each scenario through real runs, and these scenarios play recorded asks the fake gives on cue, which a real step gives only when its model chooses to. Neither exists yet, so `--engine archon` isn't offered and nothing was spent. The latest run on real Archon is check 75's retry under the patch, on 30 October 2026 (`docs/checks/75-archon-guards.md`): scenarios 6 and 18, the keychain, `.env`, `gh` both ways and `credential-key` refused, and the sandbox holding the network. The engine room's port was not tried in that retry.
+
 ## 60 to 62. Fixing a red main line
 
 The fix-main lane's scenarios (Archon design, sections 7.7 and 18), played the same way as 42 to 55, in the same suite. Answering the merge queue's hold opens a red-main incident; the dispatcher starts one fix-main run for it; the fix is added through the helper's own gate (`/engine/merge-fix`), never Archon's queue, since the queue refuses every merge onto a red base. They are also run by `npm test` (`tests/scripts/eval/scenarios-60-62.test.js`).

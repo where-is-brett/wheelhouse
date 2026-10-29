@@ -18,6 +18,8 @@ import { levelCard, settingCard, writeSetting } from '../frontdesk/cli.js';
 import { profileDir, stateDir } from '../lib/paths.js';
 import { BRIEFING_GAP_HOURS } from '../lib/core-numbers.js';
 import { wordsOf } from './context.js';
+import { readProject } from '../lib/projects.js';
+import { switchDue, SWITCH_SETTING } from '../engine/switch.js';
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -49,7 +51,7 @@ export function gapHours(project, at) {
 // confirm line no card in this project carries gets its card first (rulings F37, F45): one whose
 // card wasn't written, learnt, recorded by the front desk or proposed by the delegation review.
 // Each write that fails is left for the next visit, which works it out again.
-export async function visitLearning({ project, cwd, client, at, boardAsks }) {
+export async function visitLearning({ project, cwd, client, at, boardAsks, platform = process.platform }) {
   const events = listEvents(stateDir(project), { report: () => {} });
   const own = attempt(() => readProfileViews()) ?? {};
   const views = attempt(() => localViews(project, ['settings', 'unconfirmed'])) ?? {};
@@ -86,6 +88,12 @@ export async function visitLearning({ project, cwd, client, at, boardAsks }) {
     ...settingProposals(events, profile, { now: at, outcomes, boardAsks }),
   ];
   for (const data of proposals) await tried(() => writeSetting({ client, cwd, data, words }));
+  // The switch to the new engine, offered once to a project set up before it (scripts/engine/switch.js).
+  const due = attempt(() => switchDue({
+    settings: views.settings, unconfirmed: views.unconfirmed, cards: events.filter((e) => e.kind === 'card').map((e) => e.data),
+    record: readProject(project), folder: readProject(project)?.folder, platform,
+  }), false);
+  if (due) await tried(() => writeSetting({ client, cwd, data: SWITCH_SETTING, words }));
 }
 
 // The survey a second look follows (one taken again after the host was missed), when a briefing or

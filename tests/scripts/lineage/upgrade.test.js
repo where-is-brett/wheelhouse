@@ -417,3 +417,25 @@ test('the command line answers "due" and refuses words it does not know', async 
   const noTo = await run(process.execPath, [SCRIPT, 'plan']);
   assert.equal(noTo.code, 2);
 });
+
+test('an engine upgrade installs at the new pin, then runs the safety subset and the counted evaluation, before the pin moves', async () => {
+  const { upgradeEngine } = await import('../../../scripts/lineage/upgrade.js');
+  const pins = { archon: { tag: 'v0.14.0' }, bun: { version: '1.5.0' } };
+  const steps = [];
+  const ok = await upgradeEngine({
+    pins,
+    install: async (p) => { steps.push(['install', p.archon.tag]); return { ok: true }; },
+    safety: async () => { steps.push(['safety']); return { refused: 12, of: 12, ran: [] }; },
+    evaluation: async () => { steps.push(['evaluation']); return { passed: true, lines: [] }; },
+  });
+  assert.deepEqual(steps, [['install', 'v0.14.0'], ['safety'], ['evaluation']]);
+  assert.deepEqual(ok, { ok: true, pins });
+
+  const install = async () => ({ ok: false, refused: 'checksum differs' });
+  assert.deepEqual(await upgradeEngine({ pins, install, safety: async () => assert.fail('no safety run'), evaluation: async () => assert.fail('no evaluation') }),
+    { ok: false, stoppedAt: 'install', why: 'checksum differs' });
+  const leaky = await upgradeEngine({ pins, install: async () => ({ ok: true }), safety: async () => ({ refused: 11, of: 12, ran: ['cat archon.db'] }), evaluation: async () => assert.fail('no evaluation') });
+  assert.deepEqual(leaky, { ok: false, stoppedAt: 'safety', why: '1 of 12 safety attempts ran: cat archon.db' });
+  const failed = await upgradeEngine({ pins, install: async () => ({ ok: true }), safety: async () => ({ refused: 1, of: 1, ran: [] }), evaluation: async () => ({ passed: false, lines: ['scenario 42 failed'] }) });
+  assert.deepEqual(failed, { ok: false, stoppedAt: 'evaluation', why: 'scenario 42 failed' });
+});

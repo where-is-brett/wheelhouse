@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sourcesDir } from '../lib/paths.js';
 import { SOURCES, RETIRE_NOTICE_DAYS, CONTEXT_CHARS, LINE_CHARS } from '../lib/core-numbers.js';
-import { DEFAULT_SOURCES, upstreamSources } from './list.js';
+import { DEFAULT_SOURCES, MERGED_DAYS, upstreamSources } from './list.js';
 import { fetchSource } from './fetch.js';
 import { compareSource, modelNames, retirements } from './compare.js';
 
@@ -84,6 +84,14 @@ function readList(source, text, nowMs) {
   if (!Array.isArray(items)) return { ok: false, why: 'GitHub did not answer with a list' };
   const repo = source.id.slice(source.id.indexOf(':') + 1);
   const entries = [];
+  // Closed pull requests: how many were merged in the last MERGED_DAYS days, one line.
+  if (source.kind === 'merged') {
+    const count = items.filter((item) => {
+      const at = Date.parse(item?.merged_at ?? NaN);
+      return Number.isFinite(at) && nowMs - at <= MERGED_DAYS * DAY_MS;
+    }).length;
+    return { ok: true, text: `merged in the last ${MERGED_DAYS} days: ${count}`, entries: [{ merged: { repo, days: MERGED_DAYS, count } }] };
+  }
   for (const item of items) {
     const at = new Date(item?.published_at ?? NaN);
     if (Number.isNaN(at.getTime())) continue;
@@ -144,7 +152,7 @@ export async function runSourcesCheck({ fetch = globalThis.fetch, now, sources, 
   const options = { fetch, now: at, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
   const fetched = await Promise.all(list.map((source) => fetchSource(source, options)));
 
-  const report = { at, sources: [], newModels: [], newLinks: [], retiring: [], releases: [], advisories: [] };
+  const report = { at, sources: [], newModels: [], newLinks: [], retiring: [], releases: [], advisories: [], merged: [] };
   const currentPages = {};
   for (const [index, source] of list.entries()) {
     const unread = (why) => ({ id: source.id, url: source.url, ok: false, changed: false, added: 0, removed: 0, cut: false, why });
@@ -194,6 +202,7 @@ export async function runSourcesCheck({ fetch = globalThis.fetch, now, sources, 
     for (const e of entries) {
       if (e.release) report.releases.push(e.release);
       if (e.advisory) report.advisories.push(e.advisory);
+      if (e.merged) report.merged.push(e.merged);
     }
   }
 

@@ -70,7 +70,7 @@ test('the card lists each change in plain words, and nothing else changes', asyn
     const own = { theme: 'dark', cleanupPeriodDays: 7, env: { FOO: 'bar' } };
     fs.writeFileSync(file, `${JSON.stringify(own, null, 2)}\n`);
     const fake = fakeRun();
-    const step = computerStep({ run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     assert.equal(step.n, 6);
     const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
     const planned = await step.plan(ctx);
@@ -141,7 +141,7 @@ test('the card lists each change in plain words, and nothing else changes', asyn
 test('by the launch environment, the card asks for a Desktop restart', async () => {
   await withProject(async ({ folder, user, config }) => {
     const fake = fakeRun();
-    const step = computerStep({ run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT, route: 'launch-env' });
+    const step = computerStep({ engine: null, run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT, route: 'launch-env' });
     const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
     assert.equal(planned.changes.filter((c) => c.kind === 'env').length, 4);
     assert.equal(planned.changes.filter((c) => c.kind === 'file').length, 1);
@@ -158,7 +158,7 @@ test('by the launch environment, the card asks for a Desktop restart', async () 
 // written, so a plan has nothing left to change.
 async function asWheelhouseNeeds(file, user, folder, own = {}) {
   fs.writeFileSync(file, `${JSON.stringify(own)}\n`);
-  const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: path.dirname(file) }, manifest: MANIFEST, port: PORT });
+  const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: path.dirname(file) }, manifest: MANIFEST, port: PORT });
   const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   for (const c of planned.changes ?? []) {
@@ -172,7 +172,7 @@ async function asWheelhouseNeeds(file, user, folder, own = {}) {
 test('with nothing to change, step 6 settles, naming the director\'s settings that weaken Standard in a line, not the signing key', async () => {
   await withProject(async ({ folder, user, config }) => {
     const file = path.join(config, 'settings.json');
-    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
     const plan = async () => {
       const said = [];
@@ -239,7 +239,7 @@ test('each weakening setting is named with what it does, and left as it is', asy
   await withProject(async ({ folder, user, config }) => {
     const file = path.join(config, 'settings.json');
     fs.writeFileSync(file, `${JSON.stringify(theirs, null, 2)}\n`);
-    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
     const planned = await step.plan(ctx);
     const text = composed(planned, 6);
@@ -266,7 +266,7 @@ test('each weakening setting is named with what it does, and left as it is', asy
 test('a minimum version of the director\'s own at or above the floor is kept, and a lower one is named as it is raised', async () => {
   await withProject(async ({ folder, user, config }) => {
     const file = path.join(config, 'settings.json');
-    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
     const keysOf = (p) => p.changes.filter((c) => c.what === 'updates').map((c) => c.key[0]);
     for (const higher of ['2.3.0', '2.1.100', '2.1.101', '3.0.0']) {
@@ -293,7 +293,7 @@ test('a telemetry variable set between the card and the click makes the Go ahead
     fs.writeFileSync(module, [
       `import { computerStep } from ${JSON.stringify(computer)};`,
       'const run = async () => ({ code: 0, stdout: \'\', stderr: \'\' });',
-      `export const STEPS = [computerStep({ run, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, manifest: ${JSON.stringify(MANIFEST)}, port: ${PORT} })];`,
+      `export const STEPS = [computerStep({ engine: null, run, env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(config)} }, manifest: ${JSON.stringify(MANIFEST)}, port: ${PORT} })];`,
       '',
     ].join('\n'));
     const routes = setupRoutes({ now: () => T0, userHome: user, platform: 'darwin', stepsModule: module });
@@ -312,7 +312,7 @@ test('a user settings file that is not a JSON object stops the plan, naming it',
   await withProject(async ({ folder, user, config }) => {
     const file = path.join(config, 'settings.json');
     fs.writeFileSync(file, 'not json');
-    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     await assert.rejects(step.plan({ folder, step: 6, userHome: user, platform: 'darwin', answers: {} }), /settings\.json/);
     assert.equal(fs.readFileSync(file, 'utf8'), 'not json');
   });
@@ -522,7 +522,7 @@ test('login start is listed when a project uses the new engine', async () => {
   await withProject(async ({ folder, user, config }) => {
     setSetting(SLUG, 'engine', 'archon');
     const fake = fakeRun();
-    const step = computerStep({ run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
     const planned = await step.plan(ctx);
     const login = planned.changes.filter((c) => c.what === 'login');
@@ -550,10 +550,35 @@ test('login start is listed when a project uses the new engine', async () => {
 test('a computer with neither condition gets no login start', async () => {
   await withProject(async ({ folder, user, config }) => {
     setSetting(SLUG, 'engine', 'wheelhouse');
-    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const step = computerStep({ engine: null, run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
     const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
     assert.equal(planned.changes.some((c) => c.what === 'login'), false);
     assert.doesNotMatch(composed(planned, 6), /when you sign in, so the build/);
     assert.equal(loginStartRecord(), null);
+  });
+});
+
+test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope and the login start, on its one card', async () => {
+  const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, PLUGIN_SCOPE_LINE, installedPluginsFile } = await import('../../../scripts/setup/engine-parts.js');
+  await withProject(async ({ folder, user, config }) => {
+    const fake = fakeRun();
+    const engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope };
+    const step = computerStep({ engine, run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    const planned = await step.plan(ctx);
+    const plugin = planned.changes.filter((c) => c.what === 'plugin');
+    assert.deepEqual(plugin, [{ kind: 'plugin-scope', target: installedPluginsFile(config), plugin: PLUGIN_SCOPE.plugin, scope: 'user', what: 'plugin' }]);
+    assert.equal(planned.changes.filter((c) => c.what === 'login').length, 1, 'the login start, before the project is on the engine');
+    assert.ok(composed(planned, 6).includes(PLUGIN_SCOPE_LINE));
+    const run = startRun({ folder, now: () => T0 });
+    assert.deepEqual(await runApply({ step, runId: run.id, changes: planned.changes, ctx: { ...ctx, runId: run.id } }), { ok: true });
+    assert.ok(fake.calls.some((c) => c.join(' ') === 'claude plugin install wheelhouse@wheelhouse --scope user'));
+    // Once Claude Code's record has the user-scope entry, nothing more is listed for it.
+    fs.mkdirSync(path.dirname(installedPluginsFile(config)), { recursive: true });
+    fs.writeFileSync(installedPluginsFile(config), JSON.stringify({ version: 2, plugins: { 'wheelhouse@wheelhouse': [{ scope: 'user', version: '0.2.0' }] } }));
+    assert.equal((await step.plan(ctx)).settled !== undefined || !(await step.plan(ctx)).changes.some((c) => c.what === 'plugin'), true);
+    // On Windows, neither.
+    const windows = await step.plan({ ...ctx, platform: 'win32' });
+    assert.ok(!(windows.changes ?? []).some((c) => c.what === 'plugin'));
   });
 });

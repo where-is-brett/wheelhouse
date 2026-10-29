@@ -54,6 +54,7 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { startEngineHost } from '../engine/host.js';
+import { engineRoom } from '../engine/room.js';
 import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
@@ -4190,7 +4191,7 @@ export async function startHelper({
     stopSeen = true;
     engineStopping ??= (async () => {
       const got = await stopEngine({
-        engine: engineHosts[0].engine, processes: engineHosts.flatMap(({ host }) => host.processes()), reason,
+        engine: engineHosts[0].engine, processes: [...engineHosts.flatMap(({ host }) => host.processes()), ...(room?.processes() ?? [])], reason,
         afterSnapshot: () => { for (const { host } of engineHosts) host.check(); }, ...engineStopWith,
       });
       const said = stopWords(got);
@@ -4217,6 +4218,18 @@ export async function startHelper({
     stopSeen = on;
   }
 
+  // The engine room (Archon design, section 5.6): one `archon serve` on this computer only, while a project's Engine room
+  // setting is on and All stop is off. Tended with the dispatcher; the helper's /health names it for the Logbook.
+  let room = null;
+  const roomWanted = () => registeredProjects().some(({ project }) => {
+    try {
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+      return effectiveSettings({ project: views.settings ?? {}, now }).engineRoom?.value === true;
+    } catch {
+      return false;
+    }
+  });
+
   function startEngineHosts() {
     for (const { project } of registeredProjects()) {
       let engine = null;
@@ -4240,7 +4253,15 @@ export async function startHelper({
       watchStop();
       stopWatch = setInterval(watchStop, stopPollMs);
       stopWatch.unref?.();
-      dispatchWatch = setInterval(() => { engineTick().catch(() => {}); }, dispatchMs);
+      const roomEngine = engineHosts[0].engine;
+      if (typeof roomEngine.roomCommand === 'function') {
+        room = engineRoom({ spawn, command: () => roomEngine.roomCommand(), wanted: roomWanted, held: stopped });
+        try { room.tend(); } catch { /* tried again with the dispatcher */ }
+      }
+      dispatchWatch = setInterval(() => {
+        engineTick().catch(() => {});
+        try { room?.tend(); } catch { /* tried again next time */ }
+      }, dispatchMs);
       dispatchWatch.unref?.();
     }
   }
@@ -4316,6 +4337,8 @@ export async function startHelper({
       await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
+      // The engine room's console goes with the helper that keeps it.
+      try { room?.stop(); } catch { /* it has gone */ }
       await new Promise((resolve) => {
         server.close(() => {
           if (!pipe) fs.rmSync(address, { force: true });
@@ -4332,7 +4355,8 @@ export async function startHelper({
     const url = new URL(req.url ?? '/', 'http://helper');
     if (url.pathname === '/health') {
       const away = awayLog.fresh();
-      return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}) });
+      const roomOpen = room?.line() ?? null;
+      return send(res, 200, { ok: true, ...(PLUGIN_VERSION ? { version: PLUGIN_VERSION } : {}), ...(Object.keys(away).length > 0 ? { away } : {}), ...(roomOpen ? { engineRoom: roomOpen } : {}) });
     }
     const route = Object.hasOwn(routes, url.pathname) ? routes[url.pathname] : null;
     if (!route) {

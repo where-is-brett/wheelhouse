@@ -90,7 +90,10 @@ test('the plist runs start-helper with full paths', onMacPaths, async () => {
     await installLoginStart({ entry, run: reg.run, now: () => T0 });
     assert.equal(fs.readFileSync(entry.path, 'utf8'), entry.content);
     assert.deepEqual(reg.calls, [], 'nothing is run to write a launch agent: it loads at the next sign-in');
-    assert.deepEqual(loginStartRecord(), { kind: 'launch-agent', path: entry.path, content: entry.content, at: T0.toISOString() });
+    // `made`: the folders the write made, which removing the agent removes too.
+    const { made, ...kept } = loginStartRecord();
+    assert.deepEqual(kept, { kind: 'launch-agent', path: entry.path, content: entry.content, at: T0.toISOString() });
+    assert.ok(made === undefined || made.every((dir) => entry.path.startsWith(dir)));
   });
   // The start command the playbook gives is the same pair the plist runs.
   assert.equal(startCommand({ node: MAC_NODE, root: MAC_ROOT, platform: 'darwin' }), `"${MAC_NODE}" "${MAC_ROOT}/scripts/agents/copilot/start-helper.js"`);
@@ -258,4 +261,18 @@ test('a computer needs the sign-in start when any project uses the new engine', 
   assert.equal(needsLoginStart({ projects: [{ project: 'a', engine: 'wheelhouse' }, { project: 'b' }] }), false);
   assert.equal(needsLoginStart({ projects: [] }), false);
   assert.equal(needsLoginStart({}), false);
+});
+
+test('removing the launch agent also removes the LaunchAgents and Library folders it made, but never folders already there', onMacPaths, async () => {
+  for (const had of [[], ['Library'], ['Library', 'LaunchAgents']]) {
+    const userHome = fs.mkdtempSync(path.join(shortHome(), 'user-'));
+    if (had.length) fs.mkdirSync(path.join(userHome, ...had), { recursive: true });
+    const entry = loginEntry({ platform: 'darwin', node: MAC_NODE, root: MAC_ROOT, script: START_SCRIPT, home: userHome });
+    await as(shortHome(), async () => {
+      await installLoginStart({ entry, run: fakeReg().run, now: () => T0 });
+      assert.deepEqual(await removeLoginStart({ platform: 'darwin' }), { removed: true });
+      const left = fs.readdirSync(userHome, { recursive: true }).sort();
+      assert.deepEqual(left, had.length === 2 ? ['Library', 'Library/LaunchAgents'] : had.length === 1 ? ['Library'] : [], JSON.stringify(had));
+    });
+  }
 });

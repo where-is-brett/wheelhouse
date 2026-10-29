@@ -22,6 +22,10 @@ import { LIVE_DATA, PRODUCT } from '../../scripts/setup/questions.js';
 import { rulesOf } from '../../scripts/setup/rules.js';
 import { READY, ARRIVED } from '../../scripts/setup/notify.js';
 import { SETUP_FILES, COMMIT_MESSAGE } from '../../scripts/setup/project-files.js';
+import { ENGINE_FILES, engineWanted } from '../../scripts/setup/engine-parts.js';
+
+// The engine's own files go up with setup's on a Mac, where the build engine is set up.
+const COMMITTED = [...SETUP_FILES, ...(engineWanted() ? ENGINE_FILES : [])];
 import { HEALTH_BRANCH } from '../../scripts/setup/health.js';
 import { setupLine, SETUP_TITLES, UNINSTALL_LABEL } from '../../scripts/state/card-lines.js';
 import { NOT_SET_UP, partWay, REMOVED } from '../../scripts/hooks/session-start.js';
@@ -223,7 +227,7 @@ test('a new product: one card, its Go ahead, every step with no more cards, a gr
     const product = host.url({ repo: REPO });
     const tip = await g(product, 'rev-parse', 'main');
     assert.equal(await g(product, 'log', '-1', '--format=%s', tip), COMMIT_MESSAGE);
-    assert.deepEqual((await g(product, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip)).split('\n').sort(), [...SETUP_FILES, '.gitignore'].sort());
+    assert.deepEqual((await g(product, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip)).split('\n').sort(), [...COMMITTED, '.gitignore'].sort());
     assert.equal(await lsRemote(product, `refs/heads/${STATE_BRANCH}`), '');
     assert.equal(await lsRemote(product, `refs/heads/${HEALTH_BRANCH}`), '');
     assert.ok(host.protected.has(REPO));
@@ -565,7 +569,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     assert.equal(pr.state, 'open');
     assert.equal(await g(product, 'rev-parse', 'main'), main, 'main as setup left it, until the director merges');
     const taken = (await g(product, 'diff', '--name-only', `main...${UNINSTALL_BRANCH}`)).split('\n').sort();
-    assert.deepEqual(taken, [...SETUP_FILES].sort());
+    assert.deepEqual(taken, [...COMMITTED].sort());
     assert.ok(host.protected.has(REPO));
 
     // On this computer: the run closed, and the folder's session start says Wheelhouse was removed.
@@ -591,7 +595,7 @@ test('uninstall after setup leaves the home folder as it was, but for what the d
     // and in the user settings the director's own retention, kept, with setup's other keys gone, and
     // the `env` setup made for them (ruling R138).
     const folder = 'Projects/Café Menu/';
-    const checkout = (p) => p === `${folder}.git` || p.startsWith(`${folder}.git/`) || ['README.md', 'CLAUDE.md', '.gitignore', '.claude/wheelhouse.json', '.claude/settings.json'].includes(p.slice(folder.length));
+    const checkout = (p) => p === `${folder}.git` || p.startsWith(`${folder}.git/`) || ['README.md', 'CLAUDE.md', '.gitignore', '.claude/wheelhouse.json', '.claude/settings.json', ...ENGINE_FILES, '.archon', '.archon/sdlc', '.archon/sdlc/policy'].includes(p.slice(folder.length));
     // Anything under Claude Code's plugins folder is Claude Code's own: its record and copies of the
     // kits it installed for the project, which the director removes in Desktop with the plugin.
     const kits = (p) => p === 'claude config/plugins' || p.startsWith('claude config/plugins/');

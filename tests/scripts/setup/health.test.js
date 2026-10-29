@@ -464,6 +464,17 @@ const closer = (closes = []) => (args) => closeOpenTrial({
 const cleaned = (folder, run) => closer()({ setupRun: run, record: (c) => addChanges(run.id, [{ ...c, step: 10 }]) })
   .then(() => readJournal().runs.find((r) => r.id === run.id));
 
+test('a project off the build engine is green without the engine\'s two checks', async () => {
+  await withProject(async ({ folder }) => {
+    const off = GREEN_CHECKS.filter((c) => !['build engine', 'engine trial'].includes(c.name));
+    assert.equal(off.length, GREEN_CHECKS.length - 2);
+    const run = await cleaned(folder, runWith(folder, { checks: off }));
+    const got = await healthCheck({ folder, run, reported: GREEN_LINES, load: OK_BOARD });
+    assert.equal(got.green, true, got.lines.join('\n'));
+    assert.ok(!got.lines.some((l) => /build engine/.test(l)), 'nothing is said of an engine it doesn\'t build on');
+  });
+});
+
 test('a green run gives a green board', async () => {
   await withProject(async ({ folder }) => {
     const run = await cleaned(folder, runWith(folder, { checks: GREEN_CHECKS }));
@@ -1039,4 +1050,36 @@ test('after a green board the phone card opens with the verdict and the briefing
     // the card's answer: after it, nothing opens with the briefing again).
     assert.equal((await routes['/setup/status']({ folder })).ask, 9);
   });
+});
+
+test('step 10 fails closed when the engine reports telemetry on, and runs the hello trial only once the skills match', async () => {
+  const { engineCheck } = await import('../../../scripts/engine/hello.js');
+  for (const [findings, pins, wantEngine, wantTrial] of [
+    [["Archon's usage reporting is on, or it couldn't say; no run starts until it is off"], 'match', 'findings', 'not run'],
+    [[], 'differ', 'ok', 'not run'],
+    [[], 'match', 'ok', 'refused'],
+  ]) {
+    await withProject(async ({ folder }) => {
+      const { remote } = await productOnRemote(folder);
+      const { adapter } = standIn(remote);
+      const { client } = merges(REFUSED);
+      const trials = [];
+      const engineChecks = async ({ kits }) => engineCheck({
+        health: async () => ({ ok: findings.length === 0, findings }),
+        trial: async () => { trials.push(1); return kits ? 'refused' : 'not run'; },
+        node: () => true,
+      });
+      const step = stepWith(adapter, client, { engineChecks, checkPins: () => pins });
+      const { ctx, recorded } = ctxFor(folder, remote);
+      const said = [];
+      ctx.say = (line) => said.push(line);
+      const ran = await step.apply(ctx, (await step.plan({ folder })).changes).then(() => null, (error) => error);
+      const health = recorded.filter((c) => c.after?.health).at(-1).after.health;
+      assert.equal(health.checks.find((c) => c.name === 'build engine').result, wantEngine);
+      assert.equal(health.checks.find((c) => c.name === 'engine trial').result, wantTrial);
+      if (wantTrial !== 'refused') assert.match(ran.message, /engine/);
+      if (findings.length) assert.deepEqual(said, findings);
+      if (findings.length) assert.equal(trials.length, 0, 'no trial on an engine with findings');
+    });
+  }
 });

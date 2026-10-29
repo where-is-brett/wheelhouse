@@ -34,7 +34,7 @@ export function listHash(list) {
 }
 
 // The settings an answer may write: the product's phase (ruling R38).
-export const SETUP_SETTINGS = Object.freeze(['phase']);
+export const SETUP_SETTINGS = Object.freeze(['phase', 'engine', 'engineLanes']);
 // The fields a typed answer may fill.
 const TYPED_INTO = { glossary: 'plain', ruling: 'words' };
 const BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
