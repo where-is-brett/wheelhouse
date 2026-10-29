@@ -3,7 +3,7 @@
 // exits 0, for the pack to branch on:
 //   --gate  { reproduced }: the work already has a reproduction an earlier run kept, whose commit is in this branch,
 //           so the reproduce step is skipped.
-//   --red   { red, commit, check, line }: the reproduce step's check (from the engine's record, through the helper)
+//   --red   { red, line, commit?, check? }: the reproduce step's check (from the engine's record, through the helper)
 //           fails at the branch's head, which is a commit of its own after the base holding only the test files the
 //           step listed, with nothing left uncommitted. A kept reproduction is red as it was kept.
 //   --keep  { kept, line }: the helper keeps the reproduction from the engine's record, and the order copy in the
@@ -57,7 +57,7 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   const kept = await keptHere(found);
   if (mode === '--gate') return said({ reproduced: kept !== null });
 
-  const notRed = (line) => said({ red: false, commit: null, check: null, line });
+  const notRed = (line) => said({ red: false, line });
   if (kept) return said({ red: true, commit: kept.commit, check: kept.check, line: 'The reproduction an earlier run kept stands.' });
   if (found?.ok !== true || !found.given) return notRed('The reproduce step gave no reproduction.');
   const status = await git('status', '--porcelain', '--untracked-files=all');
