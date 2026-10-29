@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { workOrder, checkOrder, orderStore, bindingsOf, LANE_CAPS, DECISION_RULES, ANSWER_CHARS, MOST_ANSWERS } from '../../../scripts/engine/order.js';
+import { workOrder, checkOrder, orderStore, bindingsOf, LANE_CAPS, DECISION_RULES, ANSWER_CHARS, MOST_ANSWERS, DEFAULT_FLAG_FILE } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const WORK = {
@@ -120,4 +120,41 @@ test('only a fix-main order names an incident', async () => {
   assert.equal(check({ ...order, incident: 'red-main-0123456789' }), null);
   assert.match(check({ ...order, incident: 'Has Spaces' }), /incident/);
   assert.match(check({ ...order, lane: 'quick', incident: 'red-main-0123456789' }), /incident/);
+});
+
+const SLICE = { ...WORK, id: 'orders', lane: 'slice', goal: 'List the orders' };
+const FLAG = { name: 'order-history', file: DEFAULT_FLAG_FILE };
+
+test('a slice order carries its slice, flag and demo, and is shown first only when the core says so', () => {
+  const order = workOrder({ work: SLICE, extra: { slice: { n: 1, of: 2, title: 'List' }, flag: FLAG, demo: false, showFirst: false } });
+  assert.deepEqual(order.slice, { n: 1, of: 2, title: 'List' });
+  assert.deepEqual(order.flag, FLAG);
+  assert.equal(order.demo, false);
+  assert.equal(order.showFirst, false, 'a slice of visible work waits only at its demo');
+  assert.equal(DEFAULT_FLAG_FILE, 'config/feature-flags.json');
+  const how = workOrder({ work: SLICE, extra: { slice: { n: 2, of: 2, title: 'Filter' }, flag: { name: 'order-history', how: 'Set ORDERS_V2=1 in .env' }, demo: true, showFirst: true } });
+  assert.equal(how.showFirst, true);
+  assert.equal(checkOrder(how), null);
+});
+
+test('a feature order lists its merged slices', () => {
+  const head = 'a'.repeat(40);
+  const order = workOrder({ work: { ...SLICE, lane: 'feature' }, extra: { flag: FLAG, feature: { slices: [{ n: 1, title: 'List', pr: 70, head }] }, showFirst: true } });
+  assert.deepEqual(order.feature, { slices: [{ n: 1, title: 'List', pr: 70, head }] });
+  assert.equal(order.showFirst, true);
+});
+
+test('a feature field on the wrong lane, or out of shape, is refused', () => {
+  assert.throws(() => workOrder({ work: WORK, extra: { slice: { n: 1, of: 1, title: 'x' } } }), /only a slice order/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { feature: { slices: [] } } }), /only a feature order/i);
+  assert.throws(() => workOrder({ work: WORK, extra: { flag: FLAG } }), /only a slice or feature order/i);
+  assert.throws(() => workOrder({ work: WORK, extra: { demo: true } }), /only a slice order/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { slice: { n: 3, of: 2, title: 'x' } } }), /slice/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { slice: { n: 1, of: 13, title: 'x' } } }), /slice/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { flag: { name: 'x', file: '../x.json' } } }), /flag/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { flag: { name: 'x', file: '/etc/x.json' } } }), /flag/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { flag: { name: 'x', file: 'flags.yaml' } } }), /flag/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { flag: { name: 'Bad Name', file: DEFAULT_FLAG_FILE } } }), /flag/i);
+  assert.throws(() => workOrder({ work: SLICE, extra: { flag: { name: 'x', how: 'y'.repeat(501) } } }), /flag/i);
+  assert.throws(() => workOrder({ work: { ...SLICE, lane: 'feature' }, extra: { feature: { slices: [{ n: 1, title: 'x', pr: 0, head: 'a'.repeat(40) }] } } }), /feature/i);
 });

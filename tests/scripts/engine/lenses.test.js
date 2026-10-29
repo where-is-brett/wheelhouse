@@ -68,7 +68,7 @@ test('the lenses step records the commit the reviews read, and whether the workt
   fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 13;\n');
   git(dir, 'commit', '-qam', 'change');
   const head = git(dir, 'rev-parse', 'HEAD').trim();
-  assert.deepEqual(await lenses(dir), { security: false, design: false, head, clean: true });
+  assert.deepEqual(await lenses(dir), { security: false, design: false, feature: false, head, clean: true });
   fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 14;\n');
   assert.equal((await lenses(dir)).clean, false, 'an uncommitted change isn\'t what the pull request will hold');
   const bare = tempFolder('wh-lens-none-');
@@ -99,4 +99,30 @@ test('after a fix, security and design run again where they held, or where they 
   const plain = repo();
   fs.writeFileSync(path.join(plain, 'src', 'price.js'), 'export const price = () => 13;\n');
   assert.equal((await lenses('security', all, { cwd: plain, preview: null }))[0], false, 'a lens that held but no longer applies doesn\'t run');
+});
+
+test('a change in one of the project\'s critical areas needs the security lens though no word of it matches', async () => {
+  const dir = repo();
+  fs.mkdirSync(path.join(dir, '.claude'));
+  fs.writeFileSync(path.join(dir, '.claude', 'wheelhouse.json'), JSON.stringify({ v: 1, criticalAreas: [{ name: 'prices', paths: ['src/price.js'], checks: [] }], ciFiles: [], mcpServers: [], webDomains: [] }));
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'config');
+  git(dir, 'checkout', '-qb', 'wh/card-2');
+  fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 14;\n');
+  assert.equal((await lenses(dir)).security, true);
+  fs.writeFileSync(path.join(dir, 'src', 'other.js'), 'export const other = 1;\n');
+  git(dir, 'checkout', '-q', 'src/price.js');
+  assert.equal((await lenses(dir)).security, false, 'outside the area, no word matching');
+});
+
+test('the whole-feature lens runs every round of a feature\'s own run, and in no other lane', async () => {
+  const dir = repo();
+  fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 13;\n');
+  const run = async (order) => {
+    const lines = [];
+    await main(['--run', 'run-1', '--base', 'main', '--held', 'standards', '--ran', 'standards,spec,feature'], { client: { engine: { order: async () => ({ ok: true, order }) } }, cwd: dir, out: (l) => lines.push(l) });
+    return JSON.parse(lines[0]);
+  };
+  assert.equal((await run({ lane: 'feature', preview: null })).feature, true);
+  assert.equal((await run({ lane: 'slice', preview: null })).feature, false);
 });

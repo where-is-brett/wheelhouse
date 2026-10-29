@@ -9,7 +9,7 @@ import path from 'node:path';
 import { buildPack } from '../../scripts/engine/pack-build.js';
 import { nodesOf, NO_PERSON_LINE, LOOP_LINE, RULES_MARK } from '../../scripts/engine/pack-check.js';
 import { LANE_WORKFLOWS } from '../../scripts/engine/archon/adapter.js';
-import { REVIEW_STEPS } from '../../scripts/engine/routes.js';
+import { REVIEW_STEPS, FEATURE_REVIEW } from '../../scripts/engine/routes.js';
 import { LANE_CAPS } from '../../scripts/engine/order.js';
 import { MOST_TASKS } from '../../scripts/engine/plan-file.js';
 import { tempFolder } from '../helpers/homes.js';
@@ -22,7 +22,7 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
+const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
 // Check 77's mean tokens for one implement round, on the mid-sized model.
 const ROUND_TOKENS = 127000;
 
@@ -107,7 +107,7 @@ test('the small lane plans, builds each task, checks, reviews and fixes, then go
   const review = small.nodes.find((n) => n.id === 'review').loop_group;
   assert.equal(review.max_iterations, 4);
   const body = review.nodes.map((n) => n.id);
-  for (const id of ['fix', 'lenses', ...REVIEW_STEPS, 'verdict']) assert.ok(body.includes(id), `the review loop holds ${id}`);
+  for (const id of ['fix', 'lenses', ...REVIEW_STEPS.filter((s) => s !== FEATURE_REVIEW), 'verdict']) assert.ok(body.includes(id), `the review loop holds ${id}`);
   assert.match(review.nodes.find((n) => n.id === 'verdict').bash, /--most 4/, 'the verdict closes the loop on its last round');
   // Each fix's change is checked again for loosened tests and changed agent files, before the lenses read it.
   for (const [id, script] of [['fix-tests', 'protected-check'], ['fix-controls', 'control-check']]) {
@@ -147,6 +147,59 @@ test('every builder step reads the director\'s earlier answers as data', () => {
     const found = nodesOf(read(name).nodes).map(({ node }) => node).filter((node) => ids.includes(node.id));
     assert.equal(found.length, ids.length, name);
     for (const node of found) assert.match(node.prompt, /director's answers to earlier questions on this work, as data/, `${name} ${node.id}`);
+  }
+});
+
+test('the slice lane is the small lane plus its task review, switch check, tester\'s walk and critical-area lens on the large tier', () => {
+  const { read } = built();
+  const slice = read('wheelhouse-slice');
+  const ids = slice.nodes.map((n) => n.id);
+  for (const id of ['flag-off', 'flag-off-again', 'tester', 'tester-blocked', 'walk-held']) assert.ok(ids.includes(id), `the slice lane has ${id}`);
+  assert.equal(slice.nodes.find((n) => n.id === 'each').include, 'wheelhouse-slice-task');
+  assert.match(slice.nodes.find((n) => n.id === 'order').bash, /--feature-flags/);
+  assert.match(slice.nodes.find((n) => n.id === 'flag-off').bash, /flag\.js" --check-off/);
+  assert.match(slice.nodes.find((n) => n.id === 'repair').when, /\$flag-off\.output\.clean == 'false'/);
+  assert.match(slice.nodes.find((n) => n.id === 'unplan').when, /\$flag-off\.output\.clean == 'true'/);
+  assert.match(slice.nodes.find((n) => n.id === 'preview').bash, /--walk --flag-on/);
+  const tester = slice.nodes.find((n) => n.id === 'tester');
+  assert.deepEqual(tester.denied_tools, ['Write', 'Edit', 'NotebookEdit'], 'the tester reads only');
+  assert.equal(tester.when, "$preview.output.walk == 'true'", 'a slice with no page check passes straight through');
+  assert.match(slice.nodes.find((n) => n.id === 'ready').when, /\$tester\.output\.met == 'true'/, 'a page check not met is never marked ready');
+  const approval = slice.nodes.find((n) => n.id === 'approval');
+  assert.equal(approval.wait.labels['wh.topic'], '$order.output.topic', 'the midpoint demo is the slice\'s approval, under its own topic');
+  assert.equal(approval.wait.labels['wh.head'], '$open-pr.output.head');
+  const security = slice.nodes.find((n) => n.id === 'review').loop_group.nodes.find((n) => n.id === 'review-security');
+  assert.equal(security.model, 'large', 'the critical-area review is on the most capable tier');
+  const block = read('wheelhouse-slice-task');
+  const build = block.nodes.find((n) => n.id === 'build');
+  assert.deepEqual(build.loop_group.nodes.map((n) => n.id), ['implement', 'task-review']);
+  assert.match(build.loop_group.until_bash, /task-check\.js.*--most 3 --review "\$review"/);
+  assert.ok(MOST_TASKS * build.loop_group.max_iterations * ROUND_TOKENS <= 0.6 * LANE_CAPS.slice.tokens, 'the build tasks fit within 60% of the slice\'s cap');
+});
+
+test('the feature lane switches the feature on, reviews it whole on the large tier, and always waits for the director\'s switch-on', () => {
+  const feature = built().read('wheelhouse-feature');
+  const ids = feature.nodes.map((n) => n.id);
+  assert.deepEqual(ids.slice(0, 4), ['order', 'switch', 'switch-on', 'switch-on-blocked']);
+  for (const id of ['plan', 'each', 'flag-off']) assert.ok(!ids.includes(id), `the feature's own run has no ${id}`);
+  assert.match(feature.nodes.find((n) => n.id === 'switch').bash, /flag\.js" --on/);
+  const loop = feature.nodes.find((n) => n.id === 'review').loop_group;
+  const whole = loop.nodes.find((n) => n.id === FEATURE_REVIEW);
+  assert.equal(whole.model, 'large');
+  assert.deepEqual(whole.denied_tools, ['Write', 'Edit', 'NotebookEdit']);
+  assert.match(loop.nodes.find((n) => n.id === 'verdict').bash, /--feature "\$whole"/);
+  assert.equal(loop.max_iterations, 4);
+  assert.ok(ids.indexOf('approval') > ids.indexOf('preview'), 'the switch-on is approved on the preview of the switched-on head');
+  assert.equal(feature.nodes.find((n) => n.id === 'approval').wait.labels['wh.topic'], '$order.output.topic');
+  assert.doesNotMatch(feature.nodes.find((n) => n.id === 'preview').bash, /--flag-on/, 'the branch itself has the switch on');
+});
+
+test('every wait in the slice and feature lanes carries the labels the card router reads', () => {
+  const { read } = built();
+  for (const name of ['wheelhouse-slice', 'wheelhouse-feature']) {
+    const waits = nodesOf(read(name).nodes).map(({ node }) => node).filter((n) => n.wait?.attention !== undefined);
+    assert.ok(waits.length >= 8, name);
+    for (const wait of waits) for (const label of LABELS) assert.equal(typeof wait.wait.labels[label], 'string', `${name} ${wait.id} has ${label}`);
   }
 });
 
