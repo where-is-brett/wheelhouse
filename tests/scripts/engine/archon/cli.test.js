@@ -1,0 +1,54 @@
+// tests/scripts/engine/archon/cli.test.js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { archonCli, parseJson } from '../../../../scripts/engine/archon/cli.js';
+
+const engine = path.join(path.sep, 'e');
+const home = path.join(path.sep, 'h');
+const seen = [];
+const fakeRun = (result) => async (file, args, options) => { seen.push({ file, args, options }); return result; };
+
+test('archonCli always runs with archonEnv, and takes no environment from the caller', async () => {
+  seen.length = 0;
+  const run = fakeRun({ code: 0, stdout: '{"ok":true}', stderr: '' });
+  await archonCli(['workflow', 'list'], { run, engine, home, nodeDir: '/n', cwd: '/w', env: { ARCHON_TELEMETRY_DISABLED: '0', GH_TOKEN: 't' } });
+  const { file, args, options } = seen[0];
+  assert.equal(file, path.join(engine, 'archon', 'bin', 'archon'));
+  assert.deepEqual(args, ['workflow', 'list']);
+  assert.equal(options.cwd, '/w');
+  assert.deepEqual({ ...options.baseEnv }, {});
+  assert.equal(options.env.ARCHON_TELEMETRY_DISABLED, '1');
+  assert.equal(options.env.DO_NOT_TRACK, '1');
+  assert.equal(options.env.POSTHOG_API_KEY, 'off');
+  assert.equal(options.env.ARCHON_HOME, home);
+  assert.equal(options.env.GH_TOKEN, undefined);
+});
+
+test('archonCli passes the timeout and adds --json only when asked', async () => {
+  seen.length = 0;
+  const run = fakeRun({ code: 0, stdout: '', stderr: '' });
+  await archonCli(['workflow', 'get', 'r1'], { run, engine, home, nodeDir: '/n', timeout: 5000, json: true });
+  await archonCli(['workflow', 'get', 'r1', '--json'], { run, engine, home, nodeDir: '/n', json: true });
+  assert.equal(seen[0].options.timeoutMs, 5000);
+  assert.deepEqual(seen[0].args, ['workflow', 'get', 'r1', '--json']);
+  assert.deepEqual(seen[1].args, ['workflow', 'get', 'r1', '--json']);
+});
+
+test('archonCli parses JSON output and keeps stderr', async () => {
+  const whole = await archonCli(['x'], { run: fakeRun({ code: 0, stdout: '{"a":1}\n', stderr: 'warn' }), engine, home, nodeDir: '/n' });
+  assert.deepEqual(whole, { code: 0, json: { a: 1 }, stdout: '{"a":1}\n', stderr: 'warn' });
+  const last = await archonCli(['x'], { run: fakeRun({ code: 0, stdout: 'starting\n{"a":1}\nnoise\n{"b":2}\n', stderr: '' }), engine, home, nodeDir: '/n' });
+  assert.deepEqual(last.json, { b: 2 });
+  const none = await archonCli(['x'], { run: fakeRun({ code: 1, stdout: 'plain text', stderr: 'boom' }), engine, home, nodeDir: '/n' });
+  assert.equal(none.json, null);
+  assert.equal(none.code, 1);
+  assert.equal(none.stderr, 'boom');
+});
+
+test('parseJson reads a whole document, an array, or nothing', () => {
+  assert.deepEqual(parseJson('[1,2]'), [1, 2]);
+  assert.equal(parseJson(''), null);
+  assert.equal(parseJson(undefined), null);
+  assert.equal(parseJson('5\n6'), null);
+});

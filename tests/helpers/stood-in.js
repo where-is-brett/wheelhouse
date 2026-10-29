@@ -1,7 +1,7 @@
 // tests/helpers/stood-in.js
 // The names of the host programs no test may run, and the `run` that refuses them. Apart from
 // host-stand-ins.js so a helper process that isn't a test can use it (tests/helpers/helper-process.js).
-export const STOOD_IN = Object.freeze(['gh', 'glab', 'copilot', 'claude', 'launchctl', 'osascript', 'open', 'xdg-open', 'security', 'brew', 'sudo', 'installer', 'softwareupdate', 'curl']);
+export const STOOD_IN = Object.freeze(['gh', 'glab', 'copilot', 'claude', 'launchctl', 'osascript', 'open', 'xdg-open', 'security', 'brew', 'sudo', 'installer', 'softwareupdate', 'curl', 'archon', 'bun']);
 
 // A `run` for a test that starts real code (the helper) with real programs it may need, git above
 // all: it refuses, without starting it, any program whose base name (without .exe, .cmd, .bat or .com, whatever its case) is
