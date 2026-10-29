@@ -55,7 +55,7 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 
 const EFFICIENCY_WORDS = { lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' };
 const ENGINE_WORDS = { wheelhouse: 'Wheelhouse', archon: 'Archon' };
-const CAP_NAMES = { quick: 'quick', small: 'small', slice: 'a feature slice', bug: 'bug' };
+const CAP_NAMES = { quick: 'quick', small: 'small', slice: 'a feature piece', bug: 'bug' };
 const PREMIUM_WORDS = { off: 'off', 'within-plan': 'on, within your plan', 'paid-too': 'on, paid credits too' };
 
 export function sayValue(key, value) {
