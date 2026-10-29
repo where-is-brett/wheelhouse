@@ -1,0 +1,189 @@
+# engine/archon/pack/wheelhouse-small-task.yaml
+{
+  "name": "wheelhouse-small-task",
+  "description": "One task of Wheelhouse's small lane, built test first inside the lane's run. Included by wheelhouse-small, once a task; not run on its own.",
+  "inputs": {
+    "task": {
+      "required": true,
+      "description": "The task's number in the plan."
+    }
+  },
+  "returns": "record",
+  "nodes": [
+    {
+      "id": "gate",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/plan-file.js\" --task $INPUTS.task --gate --base \"$BASE_BRANCH\" --artefacts \"$ARTIFACTS_DIR\"",
+      "timeout": 60000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "skip": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "skip"
+        ]
+      }
+    },
+    {
+      "id": "build",
+      "depends_on": [
+        "gate"
+      ],
+      "when": "$gate.output.skip == 'false'",
+      "model": "medium",
+      "timeout": 1200000,
+      "loop_group": {
+        "max_iterations": 2,
+        "fresh_context": true,
+        "until_bash": "blocked=$implement.output.blocked; [ \"$blocked\" = \"true\" ] || node \"$WHEELHOUSE_ROOT/scripts/engine/task-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --task $INPUTS.task --most 2",
+        "nodes": [
+          {
+            "id": "implement",
+            "plugins": [
+              "wheelhouse@wheelhouse"
+            ],
+            "model": "medium",
+            "skills": [
+              "wheelhouse:codebase-design"
+            ],
+            "idle_timeout": 600000,
+            "prompt_file": "prompts/implement-task.md",
+            "output_format": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string"
+                },
+                "blocked": {
+                  "type": "boolean",
+                  "description": "true only for a level 3 or 4 question this step must not settle itself"
+                },
+                "question": {
+                  "type": "string",
+                  "description": "when blocked: the question, in plain words for a product owner"
+                },
+                "options": {
+                  "type": "array",
+                  "description": "when blocked: two to four answers",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label"
+                    ]
+                  }
+                },
+                "recommend": {
+                  "type": "string",
+                  "description": "when blocked: the id of the option you recommend"
+                },
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "3",
+                    "4"
+                  ],
+                  "description": "when blocked: the decision level"
+                },
+                "topic": {
+                  "type": "string",
+                  "description": "when blocked: a short kebab-case slug naming what the question is about"
+                },
+                "assumptions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "every level 1 or 2 choice you made, one line each"
+                }
+              },
+              "required": [
+                "summary",
+                "blocked",
+                "assumptions"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "record",
+      "depends_on": [
+        "gate",
+        "build"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "bash": "out=$build.output; printf '%s' \"$out\" | node \"$WHEELHOUSE_ROOT/scripts/engine/task-record.js\" --artefacts \"$ARTIFACTS_DIR\" --task $INPUTS.task",
+      "timeout": 60000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "task": {
+            "type": "string",
+            "description": "the task number"
+          }
+        },
+        "required": [
+          "blocked",
+          "task"
+        ]
+      }
+    }
+  ]
+}

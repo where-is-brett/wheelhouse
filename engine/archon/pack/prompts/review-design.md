@@ -7,4 +7,6 @@ Check layout at phone and desktop width, contrast, keyboard use, labels, and wor
 
 Grade each finding BLOCKER, HIGH, MEDIUM or LOW, with its file, line, a repro and a fix. The verdict is CLEAN when there is no BLOCKER and no HIGH finding.
 
+If `$ARTIFACTS_DIR/disagreements.md` exists, the builder disputes findings from the round before, with reasons: weigh them against the code, and keep a finding only if it still holds.
+
 {{rules}}

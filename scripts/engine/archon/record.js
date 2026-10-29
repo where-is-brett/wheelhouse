@@ -70,15 +70,21 @@ function totalsOf(metadata) {
   };
 }
 
+const LOOP_BODY = /^[a-z0-9][\w-]*\.([a-z0-9][\w-]*)$/;
+
 // Each finished step's whole output, by its id, from `archon workflow get <run> --json --verbose --events`: the last
 // node_completed row for each step, so a step run again reads as its last run. A step's output is its text, or its
 // structured output as JSON text. A skipped or failed step has none.
 export function readOutputs(json) {
   const outputs = {};
-  for (const row of Array.isArray(json?.events) ? json.events : []) {
-    if (row?.event_type !== 'node_completed' || typeof row.step_name !== 'string') continue;
-    const output = row.data?.node_output;
-    if (typeof output === 'string') outputs[row.step_name] = output;
+  const rows = (Array.isArray(json?.events) ? json.events : [])
+    .filter((row) => row?.event_type === 'node_completed' && typeof row.step_name === 'string' && typeof row.data?.node_output === 'string');
+  for (const row of rows) outputs[row.step_name] = row.data.node_output;
+  // A loop body's step is named `<group>.<step>`, once a round; it is also given under its own id, from its last
+  // round, unless a top-level step has that id.
+  for (const row of rows) {
+    const body = LOOP_BODY.exec(row.step_name)?.[1];
+    if (body && !rows.some((r) => r.step_name === body)) outputs[body] = row.data.node_output;
   }
   return outputs;
 }

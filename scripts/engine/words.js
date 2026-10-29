@@ -37,9 +37,37 @@ export const STEP_WORDS = Object.freeze({
   lesson: 'noting what it learnt',
   'lesson-blocked': 'noting what it learnt',
   'lesson-record': 'noting what it learnt',
+  // The small lane's own steps, and its task block's.
+  'plan-gate': 'looking for its plan',
+  plan: 'planning it',
+  'plan-blocked': 'stopped, with a question about the plan',
+  tasks: 'listing the plan\'s tasks',
+  each: 'building it, a task at a time',
+  gate: 'looking at the next task',
+  record: 'noting how the task went',
+  'tasks-done': 'checking every task is done',
+  'tasks-blocked': 'stopped, with a question about a task',
+  repair: 'putting the tests back',
+  'repair-blocked': 'stopped, with a question about the tests',
+  'tests-again': 'running the tests again',
+  'controls-again': 'checking again that nothing that steers the agents changed',
+  unplan: 'taking the plan out of the change',
+  review: 'checking the whole change',
+  fix: 'fixing what the checks found',
+  'fix-tests': 'checking the fix left the tests alone',
+  'fix-controls': 'checking the fix left the agents\' files alone',
+  verdict: 'weighing what the checks found',
+  'review-blocked': 'stopped, with a question from the checks',
 });
 
-export const stepWords = (step) => (typeof step === 'string' && Object.hasOwn(STEP_WORDS, step) ? STEP_WORDS[step] : 'working on it');
+// Archon names a step inside a loop after its loop (`review.fix`), and one inside a task block after the fan-out
+// instance (`__archon_fan_out__…__gate`); each has its own step's words.
+const ownStep = (step) => step.replace(/^__archon_fan_out__.*__/, '').split('.').at(-1);
+export const stepWords = (step) => {
+  if (typeof step !== 'string') return 'working on it';
+  const own = Object.hasOwn(STEP_WORDS, step) ? step : ownStep(step);
+  return Object.hasOwn(STEP_WORDS, own) ? STEP_WORDS[own] : 'working on it';
+};
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const money = (dollars) => (dollars < 0.005 ? 'less than a cent' : `$${dollars.toFixed(2)}`);

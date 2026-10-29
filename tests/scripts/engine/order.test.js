@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { workOrder, checkOrder, orderStore, bindingsOf, LANE_CAPS, DECISION_RULES } from '../../../scripts/engine/order.js';
+import { workOrder, checkOrder, orderStore, bindingsOf, LANE_CAPS, DECISION_RULES, ANSWER_CHARS, MOST_ANSWERS } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const WORK = {
@@ -98,6 +98,20 @@ test('the column in force becomes the pack\'s tier bindings: large for critical 
   assert.deepEqual(bindingsOf({ builder: { model: 'model-b' }, mechanical: { model: null } }), { tiers: { medium: 'model-b' } });
   assert.deepEqual(bindingsOf({}), {}, 'no models named: the pack\'s own tiers stand');
   assert.deepEqual(bindingsOf(null), {});
+});
+
+test('the order carries the director\'s answers to earlier questions, each capped, the latest kept', () => {
+  assert.deepEqual(workOrder({ work: WORK }).answers, []);
+  const long = 'x'.repeat(ANSWER_CHARS + 50);
+  const answers = Array.from({ length: MOST_ANSWERS + 2 }, (_, i) => ({ question: `Question ${i}?`, answer: `Answer ${i}` }));
+  const order = workOrder({ work: WORK, answers: [...answers, { question: long, answer: long }] });
+  assert.equal(order.answers.length, MOST_ANSWERS);
+  assert.deepEqual(order.answers.at(-1), { question: 'x'.repeat(ANSWER_CHARS), answer: 'x'.repeat(ANSWER_CHARS) });
+  assert.equal(order.answers[0].question, 'Question 3?', 'the oldest go first');
+  assert.equal(checkOrder(order), null);
+  assert.match(checkOrder({ ...order, answers: [{ question: 'Q?' }] }), /answers/);
+  assert.match(checkOrder({ ...order, answers: [{ question: 'Q?', answer: long }] }), /answers/);
+  assert.throws(() => workOrder({ work: WORK, answers: [{ question: 'Q?', answer: 3 }] }), /answers/);
 });
 
 test('only a fix-main order names an incident', async () => {

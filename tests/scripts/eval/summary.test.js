@@ -262,7 +262,7 @@ test('a designed scenario neither written nor covered is a row not run, and the 
     { with: 'not run', without: 'not run', why: 'not written' },
   );
   assert.equal(summary.passed, false);
-  assert.deepEqual(DESIGNED, [...Array.from({ length: 35 }, (_, i) => i + 1), 42, 43, 44, 45, 46, 47, 48, 49, 50]);
+  assert.deepEqual(DESIGNED, [...Array.from({ length: 35 }, (_, i) => i + 1), 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55]);
 });
 
 test('a scenario written in a suite but left out of the run is a row not run', () => {

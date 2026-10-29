@@ -55,8 +55,9 @@ export const NO_TESTS_WORDS = 'Build work waits: Wheelhouse doesn\'t know how to
 export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted requests, and the cap on them is 0, so that work waits until you allow some.';
 
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
-// the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? }.
-export function orderFor(entry, { settings = {}, raised = false, config = {} } = {}) {
+// the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? };
+// `answers` the director's answers to the work's earlier questions, from the helper's own record.
+export function orderFor(entry, { settings = {}, raised = false, config = {}, answers = [] } = {}) {
   const data = entry.work.data;
   const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : [{ command: config.testCommand, expect: 0 }];
   return workOrder({
@@ -64,6 +65,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {} } =
     config,
     routing: config.routing ?? {},
     caps: limitsFor(data.lane, settings, { raised }),
+    answers,
   });
 }
 
@@ -90,13 +92,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
   }
 
-  async function startPiece({ work, lane, branch = null, carryOn = false, raised = false }) {
+  async function startPiece({ work, lane, branch = null, carryOn = false, raised = false, answers = [] }) {
     const views = readViews() ?? {};
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work' };
     if (!isText(config()?.testCommand)) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
     let order;
-    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {} }); } catch (error) { return { ok: false, refused: error.message }; }
+    try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
     return start({ project, order, ...(branch ? { branch } : {}), carryOn });
   }

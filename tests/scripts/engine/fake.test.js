@@ -9,8 +9,8 @@ const recordings = loadRecordings(path.join(import.meta.dirname, '..', '..', 'fi
 const now = () => '2026-10-29T09:00:00.000Z';
 const types = (events) => events.map((e) => e.type);
 
-test('the fixtures are well-formed, and there are three', () => {
-  assert.deepEqual(Object.keys(recordings), ['merge-hold', 'quick-approved', 'quick-blocked', 'quick-lane']);
+test('the fixtures are well-formed, and each is listed', () => {
+  assert.deepEqual(Object.keys(recordings), ['merge-hold', 'quick-approved', 'quick-blocked', 'quick-lane', 'small-lane']);
   for (const events of Object.values(recordings)) for (const e of events) assert.equal(checkEvent(e), null);
 });
 
@@ -124,4 +124,16 @@ test('the fake keeps step outputs, hands work to a merge queue and has an artefa
   assert.deepEqual(engine.handOver({ pr: 1 }), { ok: true });
   assert.deepEqual(engine.calls.at(-1), { call: 'handOver', item: { pr: 1 } });
   assert.deepEqual(engine.outputs('no-such-run'), {});
+});
+
+test('a recording of several runs plays them in turn, one a start, the last again after that', () => {
+  const run = (work, step) => [
+    { type: 'run-started', at: now(), work, lane: 'small', branch: `wh/${work}` },
+    { type: 'step-finished', at: now(), step, role: 'implementer', provider: 'claude', model: 'mid', minutes: 1, spend: { tokens: 1, dollars: 0, source: 'reported' } },
+    { type: 'run-ended', at: now(), outcome: 'completed', pr: null },
+  ];
+  const engine = fakeEngine({ recordings: { 'card-1': [run('card-1', 'first'), run('card-1', 'second')] }, now });
+  const steps = () => engine.watch('0').events.filter((e) => e.type === 'step-finished').map((e) => e.step);
+  for (let i = 0; i < 3; i += 1) assert.equal(engine.start({ work: 'card-1', lane: 'small' }).ok, true);
+  assert.deepEqual(steps(), ['first', 'second', 'second']);
 });

@@ -47,3 +47,13 @@ test('with no test command Wheelhouse can run, no work starts, and the Logbook s
     assert.match(said[0].data.words, /waits/);
   }
 });
+
+test('work started again carries the director\'s answers in its order, and no others', async () => {
+  const t = setUp({ routing: {}, testCommand: 'node --test' });
+  const answers = [{ question: 'Task 2, Show refunds: Should a part refund show as its own line?', answer: 'Its own line' }];
+  assert.equal((await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true, answers })).ok, true);
+  assert.deepEqual(t.starts[0].order.answers, answers);
+  assert.equal(t.starts[0].carryOn, true);
+  await t.d.startAgain({ work: 'card-1', lane: 'quick', branch: 'wh/card-1', carryOn: true });
+  assert.deepEqual(t.starts[1].order.answers, []);
+});

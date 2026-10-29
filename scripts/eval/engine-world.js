@@ -18,6 +18,7 @@ import { dataHash, eventPath, listEvents, makeEvent } from '../state/events.js';
 import { makeSigningKey, enrol, ownKey } from '../state/signing.js';
 import { buildViews } from '../state/views.js';
 import { fakeEngine } from '../engine/fake.js';
+import { engineDirOf } from '../engine/routes.js';
 
 export const ENGINES = Object.freeze(['fake']);
 export const PROJECT = 'o__p';
@@ -75,6 +76,13 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     lift: () => liftStop(),
     starts: () => engine.calls.filter((c) => c.call === 'start'),
     acts: () => engine.calls.filter((c) => c.call === 'act'),
+    // The work orders the helper kept for the runs it started, oldest run first: what a run's steps are served.
+    orders() {
+      const dir = path.join(engineDirOf(stateDir(PROJECT)), 'orders');
+      const names = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
+      return names.map((n) => ({ runId: n.slice(0, -5), ...JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')) }))
+        .sort((a, b) => a.runId.localeCompare(b.runId, 'en', { numeric: true }));
+    },
     async close() {
       try { await helper?.close(); } finally {
         if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;

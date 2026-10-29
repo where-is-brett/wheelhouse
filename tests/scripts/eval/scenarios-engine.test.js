@@ -1,5 +1,5 @@
-// tests/scripts/eval/scenarios-42-50.test.js
-// The engine's scenarios (tests/eval/build-loop/42 to 50, Archon design section 18): each plays on the fake engine and
+// tests/scripts/eval/scenarios-engine.test.js
+// The engine's scenarios (tests/eval/build-loop/42 to 55, Archon design section 18): each plays on the fake engine and
 // the real helper, in a world of its own, and passes; a scenario fails when what it guards gives way; and how
 // `npm run eval` runs them: `--engine fake` plays only the scenarios that have an engine play, and starts no session.
 import { test } from 'node:test';
@@ -7,11 +7,11 @@ import assert from 'node:assert/strict';
 import { main, loadScenario } from '../../../scripts/eval/run.js';
 import { parseArgs } from '../../../scripts/eval/harness.js';
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
-import { asking } from '../../eval/build-loop/engine-recordings.js';
+import { asking, smallBlocked } from '../../eval/build-loop/engine-recordings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 // The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js.
-const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 60, 61, 62];
+const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62];
 
 test('--engine takes the fake, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');
@@ -34,6 +34,13 @@ for (const id of ENGINE_SCENARIOS) {
 test('scenario 49 fails when the main line\'s hold comes to the director as a card', async () => {
   const scenario = await loadScenario(49);
   const got = await runEngineScenario({ scenario: { ...scenario, engine: { ...scenario.engine, recordings: { 'card-49': asking('card-49') } } } });
+  assert.equal(got.pass, false);
+});
+
+test('scenario 52 fails when the task\'s question is answered for the director with no card', async () => {
+  const scenario = await loadScenario(52);
+  const recording = smallBlocked('card-52').map((e) => (e.type === 'ask' ? { ...e, level: 1, card: false, answer: 'rework', line: 'Sent back.' } : e));
+  const got = await runEngineScenario({ scenario: { ...scenario, engine: { ...scenario.engine, recordings: { 'card-52': recording } } } });
   assert.equal(got.pass, false);
 });
 

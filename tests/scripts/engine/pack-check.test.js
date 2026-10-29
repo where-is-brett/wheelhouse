@@ -12,14 +12,16 @@ import { tempFolder } from '../../helpers/homes.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const COPIES = ['codebase-design', 'pr', 'review-standards', 'review-spec', 'frontend-design'];
 
-// A copy of the shipped pack in a scratch folder, with `edit(workflow)` applied to its quick workflow.
-function packWith(edit = () => {}, { prompt } = {}) {
+// A copy of the shipped pack in a scratch folder, with `edit(workflow)` applied to one of its workflows (the quick
+// lane's unless `name` says), and `add` ({ name: workflow }) written beside them.
+function packWith(edit = () => {}, { prompt, name = 'wheelhouse-quick', add = {} } = {}) {
   const dir = tempFolder('wh-pack-');
   fs.cpSync(PACK_DIR, dir, { recursive: true });
-  const file = path.join(dir, 'wheelhouse-quick.yaml');
-  const workflow = readWorkflow(fs.readFileSync(file, 'utf8'));
+  const write = (title, workflow) => fs.writeFileSync(path.join(dir, `${title}.yaml`), `# engine/archon/pack/${title}.yaml\n${JSON.stringify(workflow, null, 2)}\n`);
+  for (const [title, workflow] of Object.entries(add)) write(title, workflow);
+  const workflow = readWorkflow(fs.readFileSync(path.join(dir, `${name}.yaml`), 'utf8'));
   edit(workflow);
-  fs.writeFileSync(file, `# engine/archon/pack/wheelhouse-quick.yaml\n${JSON.stringify(workflow, null, 2)}\n`);
+  write(name, workflow);
   if (prompt) prompt(dir);
   return dir;
 }
@@ -123,4 +125,57 @@ test('packDigest changes when one prompt changes', () => {
   assert.equal(packDigest(dir), before, 'the same files give the same digest');
   fs.appendFileSync(path.join(dir, 'prompts', 'review-spec.md'), '\nOne more line.\n');
   assert.notEqual(packDigest(dir), before);
+});
+
+// A lane that fans a task block out over a list, and the block, whose one AI step's blocked exit the lane waits on
+// after the fan-out.
+const blocked = { type: 'boolean' };
+const trialBlock = () => ({
+  name: 'wheelhouse-trial-task',
+  description: 'One task',
+  inputs: { task: { required: true, description: 'The task' } },
+  returns: 'record',
+  nodes: [
+    { id: 'build', plugins: [WHEELHOUSE_PLUGIN], prompt_file: 'prompts/implement.md', output_format: { type: 'object', properties: { summary: { type: 'string' }, blocked }, required: ['summary', 'blocked'] } },
+    { id: 'record', depends_on: ['build'], bash: 'echo "{}"' },
+  ],
+});
+const trialLane = () => ({
+  name: 'wheelhouse-trial',
+  description: 'A trial lane',
+  inputs: { work: { required: true, description: 'The work' } },
+  nodes: [
+    { id: 'tasks', bash: 'echo \'["1"]\'' },
+    { id: 'each', depends_on: ['tasks'], include: 'wheelhouse-trial-task', fan_out: { items: '$tasks.output', as: 'task', max_parallel: 1 } },
+    { id: 'tasks-done', depends_on: ['each'], bash: 'records=$each.output; echo "{}"', output_format: { type: 'object', properties: { blocked }, required: ['blocked'] } },
+    { id: 'tasks-blocked', depends_on: ['tasks-done'], when: "$tasks-done.output.blocked == 'true'", wait: { attention: 'q', form: 'select', options: [] } },
+  ],
+});
+const withTrial = (edit = () => {}, block = trialBlock()) => packWith(edit, { name: 'wheelhouse-trial', add: { 'wheelhouse-trial': trialLane(), 'wheelhouse-trial-task': block } });
+
+test('checkPack passes a lane whose task block\'s blocked exit is waited on after the fan-out', () => {
+  assert.deepEqual(problems(withTrial()), []);
+});
+
+test('checkPack refuses a task block whose blocked exit no lane waits on', () => {
+  const found = problems(withTrial((w) => { w.nodes = w.nodes.filter((n) => n.id !== 'tasks-blocked'); })).join('\n');
+  assert.match(found, /build has no wait for its blocked exit/);
+});
+
+test('checkPack refuses a lane whose wait after the fan-out isn\'t on the blocked flag', () => {
+  const found = problems(withTrial((w) => { w.nodes[3].when = "$tasks-done.output.clean == 'false'"; })).join('\n');
+  assert.match(found, /build has no wait for its blocked exit/);
+});
+
+test('checkPack refuses a lane whose step after the fan-out doesn\'t read the fan-out\'s output', () => {
+  const found = problems(withTrial((w) => { w.nodes[2].bash = 'cat "$ARTIFACTS_DIR/blocked.json"'; })).join('\n');
+  assert.match(found, /build has no wait for its blocked exit/);
+});
+
+test('checkPack refuses an include of a workflow not in the pack', () => {
+  assert.match(problems(withTrial((w) => { w.nodes[1].include = 'wheelhouse-nothing'; })).join('\n'), /each includes wheelhouse-nothing, which isn't in the pack/);
+});
+
+test('checkPack refuses a fan-out of a block that runs more than one task at a time', () => {
+  assert.match(problems(withTrial((w) => { w.nodes[1].fan_out.max_parallel = 2; })).join('\n'), /each runs its block's instances side by side/);
 });

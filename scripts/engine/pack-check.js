@@ -59,8 +59,9 @@ const filesOf = (dir) => fs.readdirSync(dir, { recursive: true, withFileTypes: t
   .map((entry) => path.relative(dir, path.join(entry.parentPath ?? entry.path, entry.name)).split(path.sep).join('/'))
   .sort();
 
-// The problems with one AI node, as plain lines.
-function aiProblems(node, group, nodes, copies) {
+// The problems with one AI node, as plain lines. `waitedAfter` is true for a step of a task block that a lane waits on
+// after the block's fan-out: a block can't hold a wait, so its blocked exit is the lane's.
+function aiProblems(node, group, nodes, copies, waitedAfter = false) {
   const found = [];
   const id = node.id;
   const plugins = Array.isArray(node.plugins) ? node.plugins : [];
@@ -77,36 +78,57 @@ function aiProblems(node, group, nodes, copies) {
   const owner = group?.id ?? id;
   const exit = `$${owner}.output.blocked == 'true'`;
   const waits = nodes.some(({ node: n }) => n.wait !== undefined && Array.isArray(n.depends_on) && n.depends_on.includes(owner) && String(n.when ?? '').includes(exit));
-  if (!waits) found.push(`${id} has no wait for its blocked exit`);
+  if (!waits && !waitedAfter) found.push(`${id} has no wait for its blocked exit`);
   if (!promptFileOf(node)) found.push(`${id} has no prompt file in prompts/`);
   return found;
 }
 
+// Whether a lane waits, after its `include` node, on a blocked exit: a wait on `$x.output.blocked == 'true'` from a
+// step `x` that comes after the include and reads the include's own output, the blocks' records the helper can see.
+function waitsAfter(nodes, include) {
+  return nodes.some(({ node: x }) => Array.isArray(x.depends_on) && x.depends_on.includes(include) && String(x.bash ?? '').includes(`$${include}.output`) && nodes.some(({ node: n }) => (
+    n.wait !== undefined && Array.isArray(n.depends_on) && n.depends_on.includes(x.id) && String(n.when ?? '').includes(`$${x.id}.output.blocked == 'true'`))));
+}
+
 // The problems with the pack in `dir`, as plain lines; none means it may be built. `skillCopies` are the plain names
-// of the skill copies the plugin carries.
+// of the skill copies the plugin carries. A workflow another one includes is a task block: it takes no work input
+// (it runs inside the lane's run), and its steps' blocked exits are waited on by the lane after the block.
 export function checkPack(dir = PACK_DIR, { skillCopies = SKILL_COPIES } = {}) {
   const found = [];
   const prompts = path.join(dir, 'prompts');
   const names = fs.readdirSync(dir).filter((name) => name.endsWith('.yaml')).sort();
   if (names.length === 0) found.push('the pack holds no workflow');
   const used = new Set();
+  const read = [];
   for (const name of names) {
-    let workflow;
     const text = fs.readFileSync(path.join(dir, name), 'utf8');
     try {
-      workflow = readWorkflow(text);
+      read.push({ name, text, workflow: readWorkflow(text) });
     } catch (error) {
       found.push(`${name} can't be read as YAML's JSON form: ${error.message}`);
-      continue;
     }
+  }
+  const inPack = new Set(read.map(({ workflow }) => workflow.name));
+  // Each block's name, and whether every lane that includes it waits on its blocked exit after it.
+  const blocks = new Map();
+  for (const { workflow } of read) {
+    const nodes = nodesOf(workflow.nodes);
+    for (const { node } of nodes.filter(({ node: n }) => typeof n.include === 'string')) {
+      if (!inPack.has(node.include)) found.push(`${node.id} includes ${node.include}, which isn't in the pack`);
+      if (node.fan_out !== undefined && node.fan_out?.max_parallel !== 1) found.push(`${node.id} runs its block's instances side by side; they share the checkout, so max_parallel is 1`);
+      blocks.set(node.include, (blocks.get(node.include) ?? true) && waitsAfter(nodes, node.id));
+    }
+  }
+  for (const { name, text, workflow } of read) {
     const title = workflow.name ?? name;
+    const block = blocks.has(workflow.name);
     if (`${workflow.name}.yaml` !== name) found.push(`${name} names its workflow ${workflow.name}; the file and the workflow share one name`);
     if (MODEL_WORDS.test(text)) found.push(`${name} names a model`);
-    if (!NOT_LANES.has(workflow.name) && workflow.inputs?.work?.required !== true) found.push(`${title} doesn't take the work input`);
+    if (!NOT_LANES.has(workflow.name) && !block && workflow.inputs?.work?.required !== true) found.push(`${title} doesn't take the work input`);
     const nodes = nodesOf(workflow.nodes);
     if (nodes.length === 0) found.push(`${title} has no steps`);
     for (const { node, group } of nodes) {
-      if (isAI(node)) found.push(...aiProblems(node, group, nodes, skillCopies));
+      if (isAI(node)) found.push(...aiProblems(node, group, nodes, skillCopies, block && blocks.get(workflow.name)));
       if (node.loop_group !== undefined && !(Number.isInteger(node.loop_group?.max_iterations) && node.loop_group.max_iterations >= 1)) found.push(`${node.id} is a loop with no max_iterations`);
       const file = promptFileOf(node);
       if (file) used.add(file);
