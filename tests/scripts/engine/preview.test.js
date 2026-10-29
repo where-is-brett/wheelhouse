@@ -78,6 +78,8 @@ test('pictures are taken at both sizes, for the listed pages and up to five the 
   assert.ok(fs.existsSync(path.join(out, 'about-390x844.png')));
   const notes = JSON.parse(fs.readFileSync(path.join(out, 'notes.json'), 'utf8'));
   assert.deepEqual(notes.pages, pages);
+  assert.equal(notes.taken.length, 12);
+  assert.ok(notes.taken.includes('about-390x844.png'));
   assert.deepEqual(calls.map((c) => c.call), ['find', 'keep'], 'the helper keeps the pictures once they are taken');
 });
 
@@ -157,4 +159,20 @@ test('startCommand waits for the ready line, and stop ends the command', async (
   assert.match(ended.why, /ended with 3 before it was ready/);
   const slow = await startCommand({ preview: { command: `${node} -e "setInterval(() => {}, 1000)"`, port: 1, ready: 'Local:' }, cwd, readyMs: 300 });
   assert.match(slow.why, /didn't say "Local:"/);
+});
+
+test('a preview folder left from before is moved aside, so nothing in it is taken as this run\'s', async () => {
+  const parent = tempFolder('wh-shots-');
+  const out = path.join(parent, 'preview');
+  fs.mkdirSync(out);
+  fs.writeFileSync(path.join(out, 'checkout-1280x800.png'), PNG);
+  const got = await makePreview({
+    runId: 'run-1', out, client: fakeClient({ visible: true, pages: ['/'], url: 'https://pr-14.preview.example.com' }),
+    browser: '/chrome', picture: fakePicture(), changes: async () => [],
+  });
+  assert.equal(got.pictures, 2);
+  assert.deepEqual(fs.readdirSync(out).sort(), ['home-1280x800.png', 'home-390x844.png', 'notes.json']);
+  const aside = fs.readdirSync(parent).filter((n) => n.startsWith('preview.') && n.endsWith('.before'));
+  assert.equal(aside.length, 1);
+  assert.deepEqual(fs.readdirSync(path.join(parent, aside[0])), ['checkout-1280x800.png']);
 });

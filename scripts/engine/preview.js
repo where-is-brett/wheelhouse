@@ -20,9 +20,9 @@ import { publicHttps, isPage } from '../screens/pages.js';
 import { readConfig } from '../gate/guardrails.js';
 import { runArg } from './done-check.js';
 import { changeOf } from './change.js';
+import { MOST_TOUCHED, pictureName } from './preview-names.js';
 
-// How many pages the change touches are photographed beside the order's own.
-export const MOST_TOUCHED = 5;
+export { MOST_TOUCHED, pictureName } from './preview-names.js';
 // How long the project's preview command has to print its ready line.
 const READY_MS = 2 * 60 * 1000;
 // What Chrome's headless mode writes to stderr when the page failed to load or timed out.
@@ -52,12 +52,6 @@ export function touchedPages(changes) {
     if (isPage(page) && !pages.includes(page)) pages.push(page);
   }
   return pages;
-}
-
-// A picture's file name: its page as words, and its size. The helper copies only files named so.
-export function pictureName(page, size) {
-  const words = page.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
-  return `${words || 'home'}-${size.width}x${size.height}.png`;
 }
 
 // The project's own preview, on this computer.
@@ -155,6 +149,8 @@ export async function makePreview({
 }) {
   const found = await client.engine.previewFind({ runId });
   if (found?.ok !== true) throw new Error(found?.refused ?? 'the helper didn\'t answer');
+  // A folder left from before (an earlier round, or anything a step wrote there) is moved aside, never mixed in.
+  if (fs.existsSync(out)) fs.renameSync(out, `${out}.${Date.now()}.before`);
   fs.mkdirSync(out, { recursive: true });
   let changed = [];
   try { changed = await changes(); } catch { changed = []; }
@@ -182,13 +178,17 @@ export async function makePreview({
   }
 
   let pictures = 0;
+  const taken = [];
   const missed = [];
   try {
     if (reason === null) {
       for (const page of pages) {
         for (const size of sizes) {
           const shot = await picture({ browser, url: `${address.replace(/\/$/, '')}${page}`, size, out: path.join(out, pictureName(page, size)), local });
-          if (shot?.ok) pictures += 1;
+          if (shot?.ok) {
+            pictures += 1;
+            taken.push(pictureName(page, size));
+          }
           else missed.push({ page, size: `${size.width}x${size.height}`, why: shot?.why ?? 'no picture' });
         }
       }
@@ -199,7 +199,7 @@ export async function makePreview({
   }
 
   const summary = reason === null ? '' : `${reason} ${line}`;
-  fs.writeFileSync(path.join(out, 'notes.json'), `${JSON.stringify({ head: found.head, pages: reason === null ? pages : [], address: local ? 'local' : address ? 'host' : null, missed, summary: summary || null }, null, 2)}\n`);
+  fs.writeFileSync(path.join(out, 'notes.json'), `${JSON.stringify({ head: found.head, pages: reason === null ? pages : [], taken, address: local ? 'local' : address ? 'host' : null, missed, summary: summary || null }, null, 2)}\n`);
   if (summary) fs.writeFileSync(path.join(out, 'summary.txt'), `${summary}\n`);
   const kept = await client.engine.preview({ runId });
   if (kept?.ok !== true) throw new Error(kept?.refused ?? 'the helper didn\'t keep the preview');

@@ -4,7 +4,7 @@
 // of that head, a merge needs the permit, and anything not on the list is refused with a plain reason.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyCall, brokerDecision, BROKER_ALLOW } from '../../../../scripts/engine/broker/rules.js';
+import { classifyCall, brokerDecision, isOneQuery, BROKER_ALLOW } from '../../../../scripts/engine/broker/rules.js';
 import { makeEvent } from '../../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../../scripts/state/signing.js';
 import { withHome } from '../../../helpers/homes.js';
@@ -127,4 +127,91 @@ test('a merge during an incident is refused unless it is the fix', async () => {
     assert.deepEqual(brokerDecision(call, { ...ctx, incident: { open: true, id: 'inc-1', isFix: true } }), { allow: true });
     assert.match(brokerDecision(call, { ...ctx, stop: true, incident: { open: false } }).reason, /All stop/);
   });
+});
+
+// The review's argv (30 October 2026): spellings gh reads one way that a loose parser read another.
+const V = `<!-- archon-review-report -->\nReviewed commit: \`${HEAD}\`\nVerdict: ready`;
+const OWN = { repo: 'acme/web' };
+const open = { stop: false, lockHeld: true, defaultBranch: 'main' };
+
+test('a call gh would read differently from the broker is never let through', () => {
+  for (const [name, argv, stdin] of [
+    ['two methods', ['api', '-X', 'GET', '-X', 'PUT', '-p', 'repos/acme/web/issues/1/comments', 'repos/acme/web/pulls/5/merge']],
+    ['a preview flag hiding the path', ['api', '-X', 'PATCH', '-p', 'repos/acme/web/issues/comments/1', 'repos/acme/web/git/refs/heads/main', '-f', `sha=${HEAD}`]],
+    ['a glued method', ['api', '-XPUT', 'repos/acme/web/pulls/5/merge']],
+    ['a glued field', ['api', 'repos/acme/web/issues/5/comments', `-fbody=${V}`]],
+    ['an input file', ['api', 'repos/acme/web/issues/5/comments', '--input=c.json']],
+    ['a field from a file', ['api', '-X', 'PATCH', 'repos/acme/web/issues/comments/9', '-F', 'body=@v.md']],
+    ['a comment body from a file', ['pr', 'comment', '5', '--body-file', 'v.md']],
+    ['a short body flag glued to its text', ['pr', 'comment', '5', `-b${V}`]],
+    ['a GraphQL mutation after a query', ['api', 'graphql', '-f', 'query=query A{viewer{login}} mutation B{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}', '-f', 'operationName=B']],
+    ['a GraphQL body from a file', ['api', 'graphql', '-f', 'query=query{viewer{login}}', '--input', 'm.json']],
+    ['a GraphQL operation name', ['api', 'graphql', '-f', 'query=query A{viewer{login}}', '-f', 'operationName=A']],
+    ['two GraphQL operations', ['api', 'graphql', '-f', 'query=query A{viewer{login}} query B{viewer{id}}']],
+    ['a GraphQL query from a file', ['api', 'graphql', '-F', 'query=@q.graphql']],
+    ['a ref path with a query', ['api', '-X', 'PATCH', 'repos/acme/web/git/refs/heads/main?x=1', '-f', `sha=${HEAD}`, '-F', 'force=true']],
+    ['a ref path percent-encoded', ['api', '-X', 'PATCH', 'repos/acme/web/git/refs/heads/%6Dain', '-f', `sha=${HEAD}`]],
+    ['another repository\'s branch', ['api', '-X', 'PATCH', 'repos/evil/x/git/refs/heads/develop', '-f', `sha=${HEAD}`]],
+    ['another repository by flag', ['pr', 'comment', '5', '--repo', 'evil/x', '--body', 'hi']],
+    ['another host', ['pr', 'view', '5', '--hostname', 'evil.example.com']],
+    ['a base retargeted', ['pr', 'edit', '5', '--base', 'release']],
+    ['a merge by admin', ['pr', 'merge', '5', '--admin', '--squash', '--match-head-commit', HEAD]],
+    ['a merge left to auto-merge', ['pr', 'merge', '5', '--auto', '--squash', '--match-head-commit', HEAD]],
+    ['a merge naming two pull requests', ['pr', 'merge', '--subject', '7', '12', '--match-head-commit', HEAD]],
+    ['a pull request opened in a browser', ['pr', 'view', '5', '--web']],
+  ]) {
+    const decision = brokerDecision(classifyCall(argv, { stdin, ...OWN }), open);
+    assert.equal(decision.allow, false, name);
+  }
+});
+
+test('a verdict is found in every body a call can carry', () => {
+  for (const [name, argv, stdin] of [
+    ['a field', ['api', '-X', 'PATCH', 'repos/acme/web/issues/comments/9', '-f', `body=${V}`]],
+    ['standard input', ['pr', 'comment', '5', '--body-file', '-'], V],
+    ['standard input as JSON', ['api', '-X', 'PATCH', 'repos/acme/web/issues/comments/9', '--input', '-'], JSON.stringify({ body: V })],
+    ['a long flag with its value glued', ['pr', 'comment', '5', `--body=${V}`]],
+    ['a pull request\'s text', ['pr', 'edit', '5', '-b', V]],
+  ]) {
+    const call = classifyCall(argv, { stdin, ...OWN });
+    assert.deepEqual([call.kind, call.sha], ['verdict', HEAD], name);
+    assert.match(brokerDecision(call, open).reason, /signed CLEAN review/, name);
+  }
+  const twice = classifyCall(['pr', 'comment', '5', '--body', `${V}\nReviewed commit: \`${OTHER}\``], OWN);
+  assert.match(brokerDecision(twice, open).reason, /names no reviewed commit/, 'a body naming two commits names none');
+});
+
+test('the calls Archon makes still pass, for the project\'s own repository', () => {
+  for (const argv of [
+    ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${QUERY}`, '-f', 'owner=acme', '-F', 'number=14'],
+    ['api', 'graphql', '-f', 'query=fragment F on Repository{name} query{repository(owner:"acme",name:"web"){...F}}'],
+    ['api', 'repos/acme/web/issues/14/comments?per_page=100&page=1', '--include', '--paginate'],
+    ['pr', 'view', '14', '--repo', 'github.com/acme/web', '--json', 'body'],
+    ['pr', 'list', '--repo', 'acme/web', '--state', 'open', '--json', 'number,headRefName'],
+    ['pr', 'checks', '14', '--json', 'name,state'],
+    ['run', 'view', '42', '--repo', 'acme/web', '--json', 'conclusion'],
+    ['issue', 'list', '--repo', 'acme/web', '--label', 'wh', '--json', 'number'],
+    ['repo', 'view', 'acme/web', '--json', 'defaultBranchRef'],
+  ]) {
+    const call = classifyCall(argv, OWN);
+    assert.equal(call.kind, 'read', argv.join(' '));
+  }
+  const ref = classifyCall(['api', '-X', 'PATCH', 'repos/acme/web/git/refs/heads/wh/card-1', '-f', `sha=${HEAD}`], OWN);
+  assert.deepEqual([ref.kind, ref.branch], ['push', 'wh/card-1']);
+  const made = classifyCall(['api', 'repos/acme/web/git/refs', '-f', 'ref=refs/heads/wh/card-2', '-f', `sha=${HEAD}`], OWN);
+  assert.deepEqual([made.kind, made.branch], ['push', 'wh/card-2']);
+  assert.deepEqual(brokerDecision(made, open), { allow: true });
+  const merge = classifyCall(['pr', 'merge', '14', '--squash', '--delete-branch', '--match-head-commit', HEAD], OWN);
+  assert.deepEqual([merge.kind, merge.pr, merge.sha], ['merge', 14, HEAD]);
+  const text = classifyCall(['pr', 'edit', '14', '--title', 'New title', '--body-file', '-'], { stdin: 'Plain body', ...OWN });
+  assert.equal(text.kind, 'comment');
+});
+
+test('isOneQuery takes one query and nothing that could change anything', () => {
+  for (const text of [QUERY, '{ viewer { login } }', 'query A { viewer { login } } fragment F on User { id }', 'query { a(s: "mutation {") }', '# mutation\nquery { a }']) {
+    assert.equal(isOneQuery(text), true, text);
+  }
+  for (const text of ['mutation { x }', 'query { a } mutation { b }', 'query A { a } query B { b }', 'subscription { s }', 'query { a(s: "x) }', 'query { a', '}{', null]) {
+    assert.equal(isOneQuery(text), false, String(text));
+  }
 });

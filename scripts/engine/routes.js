@@ -22,6 +22,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkOrder, orderStore, isRunId } from './order.js';
+import { MOST_TOUCHED, pictureName } from './preview-names.js';
+import { SCREEN_SIZES } from '../lib/front-desk.js';
 
 const NO_ORDER = 'there is no work order for that run';
 
@@ -30,9 +32,23 @@ export const REVIEW_STEPS = Object.freeze(['review-standards', 'review-spec', 'r
 const HOLDS = new Set(['BLOCKER', 'HIGH']);
 const SEVERITIES = new Set(['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']);
 const FULL_SHA = /^[0-9a-f]{40}$/;
-// What the helper copies from a run's preview folder: pictures the step named by page and size, and its notes.
-const PREVIEW_FILE = /^([a-z0-9][a-z0-9-]{0,80}-\d{2,5}x\d{2,5}\.png|notes\.json)$/;
 const MOST_PREVIEW_BYTES = 20 * 1024 * 1024;
+const PAGE = /^\/[^\s\\]*$/;
+
+// A plain file's bytes, read without following a link (where the system can say so), or null.
+function readPlain(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const found = fs.fstatSync(fd);
+    if (!found.isFile() || found.size > MOST_PREVIEW_BYTES || !fs.lstatSync(file).isFile()) return null;
+    return fs.readFileSync(fd);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
 // The longest lesson kept: one or two sentences, as the lesson prompt asks.
 const MOST_LESSON = 600;
 
@@ -101,13 +117,14 @@ export function engineRoutes({
   }
 
   // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
-  // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at } }.
+  // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at }, opened: { [pr]: { runId, head, showFirst, work } },
+  // previews: { [runId]: head } }.
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
     return kept && typeof kept === 'object'
-      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {} }
-      : { runs: {}, comments: {}, ready: {}, lessons: {} };
+      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {} }
+      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -133,6 +150,10 @@ export function engineRoutes({
     if (!found) return { ok: false, refused: 'that review step\'s output isn\'t a review' };
     const opened = readOpened(outputs['open-pr']);
     if (!opened) return { ok: false, refused: 'the run hasn\'t opened its pull request yet' };
+    // The reviews read the commit the lenses step recorded before them; a commit made after them is no one's review.
+    const read = parsed(outputs.lenses);
+    if (!FULL_SHA.test(read?.head ?? '') || read.clean !== true) return { ok: false, refused: 'the run didn\'t record the commit its reviews read, with nothing beside it' };
+    if (read.head !== opened.head) return { ok: false, refused: `the reviews read ${read.head.slice(0, 7)}, not the pull request's head ${opened.head.slice(0, 7)}` };
     const verdict = isClean(found) ? 'CLEAN' : 'FINDINGS';
     await write(run.project, 'review', { pr: opened.pr, commit: opened.head, verdict, findings: found.findings.length, engine: 'archon', runId, step, digest: installed });
 
@@ -164,6 +185,10 @@ export function engineRoutes({
     if (!pushed?.ok) return { ok: false, refused: pushed?.refused ?? 'the branch wasn\'t pushed' };
     await provenance(run.project, { branch: pushed.branch });
     const opened = await host.open(run.project, { branch: pushed.branch, title: title.trim().split('\n')[0], body });
+    // The pull request is the run's from here: the broker's permit reads whether its work is shown first from this.
+    const verdicts = readVerdicts(run.project);
+    verdicts.opened[opened.pr] = { runId, head: opened.head, showFirst: run.order.showFirst === true, work: run.order.work };
+    keepVerdicts(run.project, verdicts);
     return { ok: true, branch: pushed.branch, pr: opened.pr, head: opened.head };
   }
 
@@ -212,7 +237,9 @@ export function engineRoutes({
 
   // Keeps the run's preview: copies the pictures and notes from the run's own artefacts folder, which the helper finds
   // from the run's id (never a folder the step names), into `previews/<work>/<head>/`, so they outlive the engine's
-  // clean-up and can't be planted from another run. Only plain files named as the step names them are copied.
+  // clean-up and can't be planted from another run. Only pictures the step says it took are copied, and only under the
+  // names it gives the run's own pages (the order's, and at most five the change touches) at its two sizes; each is
+  // read without following a link. A run's preview of one head is kept once.
   async function preview({ runId } = {}) {
     const run = runOf(runId);
     if (!run) return { ok: false, refused: NO_ORDER };
@@ -220,23 +247,33 @@ export function engineRoutes({
     if (typeof engine?.artefactsOf !== 'function' || typeof engine?.outputs !== 'function') return { ok: false, refused: 'that project\'s engine keeps no artefacts' };
     const opened = readOpened((await engine.outputs(runId))['open-pr']);
     if (!opened) return { ok: false, refused: 'the run hasn\'t opened its pull request yet' };
+    const verdicts = readVerdicts(run.project);
+    if (verdicts.previews[runId] === opened.head) return { ok: false, refused: 'this run\'s preview of that head is already kept' };
     const artefacts = engine.artefactsOf(runId, host?.repo(run.project));
     const from = artefacts ? path.join(artefacts, 'preview') : null;
-    if (!from || !fs.existsSync(from) || !fs.lstatSync(from).isDirectory()) return { ok: false, refused: 'the run made no preview' };
+    let real = null;
+    try { real = from && fs.lstatSync(from).isDirectory() && fs.realpathSync(from) === path.join(fs.realpathSync(artefacts), 'preview') ? from : null; } catch { real = null; }
+    if (!real) return { ok: false, refused: 'the run made no preview' };
+    const notesBytes = readPlain(path.join(from, 'notes.json'));
+    const notes = notesBytes ? parsed(notesBytes.toString('utf8')) : null;
+    const listed = Array.isArray(notes?.pages) ? notes.pages.filter((p) => typeof p === 'string' && PAGE.test(p)) : [];
+    const own = [...(run.order.preview?.pages ?? [])];
+    const pages = [...own, ...listed.filter((p) => !own.includes(p)).slice(0, MOST_TOUCHED)];
+    const taken = new Set(Array.isArray(notes?.taken) ? notes.taken : []);
+    const names = pages.flatMap((page) => SCREEN_SIZES.map((size) => pictureName(page, size))).filter((name) => taken.has(name));
     const to = path.join(previewsDir(run.project), run.order.work, opened.head);
     fs.mkdirSync(to, { recursive: true, mode: 0o700 });
     let pictures = 0;
-    let notes = null;
-    for (const name of fs.readdirSync(from).filter((n) => PREVIEW_FILE.test(n)).sort()) {
-      const file = path.join(from, name);
-      const found = fs.lstatSync(file);
-      if (!found.isFile() || found.size > MOST_PREVIEW_BYTES) continue;
-      fs.copyFileSync(file, path.join(to, name));
-      if (name === 'notes.json') notes = parsed(fs.readFileSync(file, 'utf8'));
-      else pictures += 1;
+    for (const name of [...new Set(names)]) {
+      const bytes = readPlain(path.join(from, name));
+      if (!bytes) continue;
+      fs.writeFileSync(path.join(to, name), bytes, { mode: 0o600 });
+      pictures += 1;
     }
-    const pages = Array.isArray(notes?.pages) && notes.pages.every((p) => typeof p === 'string') ? notes.pages : [];
-    await write(run.project, 'preview', { work: run.order.work, head: opened.head, folder: to, pages });
+    if (notesBytes) fs.writeFileSync(path.join(to, 'notes.json'), notesBytes, { mode: 0o600 });
+    verdicts.previews[runId] = opened.head;
+    keepVerdicts(run.project, verdicts);
+    await write(run.project, 'preview', { work: run.order.work, head: opened.head, folder: to, pages: pictures > 0 ? pages : [] });
     return { ok: true, folder: to, pictures };
   }
 
@@ -260,10 +297,13 @@ export function engineRoutes({
 
   // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.
   const readyOf = (project, pr) => readVerdicts(project).ready?.[pr] ?? null;
+  // The run that opened a pull request: { runId, head, showFirst, work }, or null for one no run of the helper's opened.
+  const openedOf = (project, pr) => readVerdicts(project).opened?.[pr] ?? null;
 
   return {
     runOf,
     readyOf,
+    openedOf,
     routes: {
       '/engine/start': start,
       '/engine/review': review,

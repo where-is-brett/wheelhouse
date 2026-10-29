@@ -32,7 +32,8 @@ async function lenses(dir, preview = null) {
 test('a plain change needs neither lens', async () => {
   const dir = repo();
   fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 13;\n');
-  assert.deepEqual(await lenses(dir), { security: false, design: false });
+  const got = await lenses(dir);
+  assert.deepEqual([got.security, got.design], [false, false]);
 });
 
 test('a change to a sign-in path or one naming a secret needs the security lens', async () => {
@@ -58,5 +59,20 @@ test('no order means every lens runs', async () => {
   const lines = [];
   const none = { engine: { order: async () => ({ ok: false, refused: 'no order' }) } };
   assert.equal(await main(['--run', 'run-1', '--base', 'main'], { client: none, cwd: dir, out: (l) => lines.push(l) }), 0);
-  assert.deepEqual(JSON.parse(lines[0]), { security: true, design: true });
+  const got = JSON.parse(lines[0]);
+  assert.deepEqual([got.security, got.design], [true, true]);
+});
+
+test('the lenses step records the commit the reviews read, and whether the worktree holds only it', async () => {
+  const dir = repo();
+  fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 13;\n');
+  git(dir, 'commit', '-qam', 'change');
+  const head = git(dir, 'rev-parse', 'HEAD').trim();
+  assert.deepEqual(await lenses(dir), { security: false, design: false, head, clean: true });
+  fs.writeFileSync(path.join(dir, 'src', 'price.js'), 'export const price = () => 14;\n');
+  assert.equal((await lenses(dir)).clean, false, 'an uncommitted change isn\'t what the pull request will hold');
+  const bare = tempFolder('wh-lens-none-');
+  const lines = [];
+  await main(['--run', 'run-1', '--base', 'main'], { client: client(null), cwd: bare, out: (l) => lines.push(l) });
+  assert.deepEqual([JSON.parse(lines[0]).head, JSON.parse(lines[0]).clean], ['', false], 'no commit to name');
 });

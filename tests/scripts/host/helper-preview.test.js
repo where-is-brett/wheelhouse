@@ -66,7 +66,7 @@ test('the helper copies the pictures into the record, so a planted picture in an
   await start();
   plant('run-1', 'home-1280x800.png');
   plant('run-1', 'prices-390x844.png');
-  plant('run-1', 'notes.json', JSON.stringify({ pages: ['/', '/prices'], summary: null }));
+  plant('run-1', 'notes.json', JSON.stringify({ pages: ['/', '/prices'], taken: ['home-1280x800.png', 'prices-390x844.png'], summary: null }));
   plant('run-1', 'run.sh', 'echo not a picture');
   plant('run-2', 'planted-1280x800.png');
   fs.symlinkSync(path.join(dir, 'archon', 'artifacts', 'runs', 'run-2', 'preview', 'planted-1280x800.png'), path.join(dir, 'archon', 'artifacts', 'runs', 'run-1', 'preview', 'linked-1280x800.png'));
@@ -76,6 +76,34 @@ test('the helper copies the pictures into the record, so a planted picture in an
   assert.deepEqual(got, { ok: true, folder: kept, pictures: 2 });
   assert.deepEqual(fs.readdirSync(kept).sort(), ['home-1280x800.png', 'notes.json', 'prices-390x844.png']);
   assert.deepEqual(calls.find((c) => c.kind === 'preview').data, { work: 'card-1', head: HEAD, folder: kept, pages: ['/', '/prices'] });
+});
+
+test('only the pictures the step took, of the run\'s own pages at its two sizes, are kept, and only once', async () => {
+  const { dir, routes, plant, start } = setup();
+  await start();
+  plant('run-1', 'home-1280x800.png');
+  plant('run-1', 'home-390x844.png');
+  plant('run-1', 'checkout-1280x800.png');
+  plant('run-1', 'prices-1280x800.png');
+  plant('run-1', 'home-1024x768.png');
+  const touched = ['/a', '/b', '/c', '/d', '/e', '/f'].map((p) => `${p.slice(1)}-1280x800.png`);
+  for (const name of touched) plant('run-1', name);
+  plant('run-1', 'notes.json', JSON.stringify({
+    pages: ['/', '/prices', '/checkout', '/a', '/b', '/c', '/d', '/e', '/f'],
+    taken: ['home-1280x800.png', 'home-390x844.png', 'checkout-1280x800.png', 'home-1024x768.png', ...touched],
+  }));
+  const got = await routes['/engine/preview']({ runId: 'run-1' });
+  const kept = fs.readdirSync(got.folder).sort();
+  // `prices` is the order's but wasn't taken; touched pages count to five; another size is no picture of the step's.
+  assert.deepEqual(kept, ['a-1280x800.png', 'b-1280x800.png', 'c-1280x800.png', 'checkout-1280x800.png', 'd-1280x800.png', 'home-1280x800.png', 'home-390x844.png', 'notes.json']);
+  assert.match((await routes['/engine/preview']({ runId: 'run-1' })).refused, /already kept/);
+  const linked = setup();
+  await linked.start();
+  linked.plant('run-elsewhere', 'home-1280x800.png');
+  const runs = path.join(linked.dir, 'archon', 'artifacts', 'runs');
+  fs.mkdirSync(path.join(runs, 'run-1'), { recursive: true });
+  fs.symlinkSync(path.join(runs, 'run-elsewhere', 'preview'), path.join(runs, 'run-1', 'preview'));
+  assert.match((await linked.routes['/engine/preview']({ runId: 'run-1' })).refused, /made no preview/, 'a linked preview folder is no preview');
 });
 
 test('a run with no preview folder keeps nothing and says so', async () => {

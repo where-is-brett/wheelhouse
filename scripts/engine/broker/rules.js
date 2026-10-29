@@ -7,130 +7,260 @@
 // is refused, with a plain reason, and never forwarded.
 import { reviewCounts, approvalCounts, incidentReason } from '../../gate/conditions.js';
 
-// gh's global flags that take a value, skipped when finding the command.
-const GLOBAL_WITH_VALUE = new Set(['-R', '--repo', '--hostname']);
 // The merge queue's verdict comment carries this marker (check 76).
 const VERDICT_MARK = '<!-- archon-review-report -->';
 const FULL_SHA = /^[0-9a-f]{40}$/;
+const HOST = 'github.com';
+// A branch name the broker lets a call write to: plain characters, no `..`, never a ref outside refs/heads.
+const BRANCH = /^(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+const NUMBER = /^[1-9]\d{0,9}$/;
 
-// The call's words without gh's global flags and their values.
-function commandOf(argv) {
-  const words = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    const word = String(argv[i]);
-    if (GLOBAL_WITH_VALUE.has(word)) { i += 1; continue; }
-    if (/^--(repo|hostname)=/.test(word)) continue;
-    words.push(word);
-  }
-  return words;
-}
+// The flags each call may carry, and gh's spelling of each: a flag that takes a value, or one that doesn't. The
+// broker reads a call the way gh does, so a flag it doesn't know, a short flag glued to its value, `--` or a repeated
+// flag that isn't a list is refused, never guessed at (review B1 and H1 of part 3b).
+const VALUE = 'value';
+const BOOL = 'bool';
+const LIST = 'list';
+const READ_OUT = { '--json': VALUE, '-q': VALUE, '--jq': VALUE, '-t': VALUE, '--template': VALUE };
+const SPECS = {
+  api: {
+    '-X': VALUE, '--method': VALUE, '-f': LIST, '--raw-field': LIST, '-F': LIST, '--field': LIST, '--input': VALUE,
+    '-H': LIST, '--header': LIST, '-q': VALUE, '--jq': VALUE, '-t': VALUE, '--template': VALUE, '--paginate': BOOL,
+    '--slurp': BOOL, '-i': BOOL, '--include': BOOL, '--silent': BOOL, '--cache': VALUE, '--hostname': VALUE,
+  },
+  'pr view': { ...READ_OUT, '-c': BOOL, '--comments': BOOL },
+  'pr list': { ...READ_OUT, '-s': VALUE, '--state': VALUE, '-H': VALUE, '--head': VALUE, '-B': VALUE, '--base': VALUE, '-L': VALUE, '--limit': VALUE, '-S': VALUE, '--search': VALUE, '-l': LIST, '--label': LIST, '-A': VALUE, '--author': VALUE },
+  'pr checks': { ...READ_OUT, '--required': BOOL, '--watch': BOOL, '-i': VALUE, '--interval': VALUE, '--fail-fast': BOOL },
+  'pr diff': { '--name-only': BOOL, '--patch': BOOL, '--color': VALUE },
+  'pr status': { ...READ_OUT, '-c': BOOL, '--conflict-status': BOOL },
+  'pr create': { '-t': VALUE, '--title': VALUE, '-b': VALUE, '--body': VALUE, '-F': VALUE, '--body-file': VALUE, '-H': VALUE, '--head': VALUE, '-B': VALUE, '--base': VALUE, '-d': BOOL, '--draft': BOOL },
+  'pr edit': { '-t': VALUE, '--title': VALUE, '-b': VALUE, '--body': VALUE, '-F': VALUE, '--body-file': VALUE },
+  'pr comment': { '-b': VALUE, '--body': VALUE, '-F': VALUE, '--body-file': VALUE },
+  'pr merge': { '-s': BOOL, '--squash': BOOL, '-m': BOOL, '--merge': BOOL, '-r': BOOL, '--rebase': BOOL, '--match-head-commit': VALUE, '-d': BOOL, '--delete-branch': BOOL, '-t': VALUE, '--subject': VALUE, '-b': VALUE, '--body': VALUE, '-F': VALUE, '--body-file': VALUE },
+  'run list': { ...READ_OUT, '-b': VALUE, '--branch': VALUE, '-L': VALUE, '--limit': VALUE, '-w': VALUE, '--workflow': VALUE, '-s': VALUE, '--status': VALUE, '-c': VALUE, '--commit': VALUE, '-e': VALUE, '--event': VALUE },
+  'run view': { ...READ_OUT, '--log': BOOL, '--log-failed': BOOL, '-j': VALUE, '--job': VALUE, '-a': VALUE, '--attempt': VALUE, '--exit-status': BOOL, '-v': BOOL, '--verbose': BOOL },
+  'issue view': { ...READ_OUT, '-c': BOOL, '--comments': BOOL },
+  'issue list': { ...READ_OUT, '-s': VALUE, '--state': VALUE, '-L': VALUE, '--limit': VALUE, '-l': LIST, '--label': LIST, '-S': VALUE, '--search': VALUE, '-A': VALUE, '--author': VALUE },
+  'repo view': { ...READ_OUT },
+};
+// Every command but `api` and `repo view` may name its repository; `--hostname` is api's own.
+const REPO_FLAGS = { '-R': VALUE, '--repo': VALUE };
+// Short and long spellings of one flag, so a value given twice under both is seen as given twice.
+const SAME = [
+  ['-X', '--method'], ['-f', '--raw-field'], ['-F', '--field'], ['-H', '--header'], ['-q', '--jq'], ['-t', '--template'],
+  ['-i', '--include'], ['-R', '--repo'], ['-c', '--comments'], ['-s', '--state'], ['-L', '--limit'], ['-S', '--search'],
+  ['-l', '--label'], ['-A', '--author'], ['-b', '--body'], ['-d', '--draft'], ['-m', '--merge'], ['-r', '--rebase'],
+  ['-j', '--job'], ['-a', '--attempt'], ['-v', '--verbose'], ['-w', '--workflow'], ['-e', '--event'],
+];
 
-// The value of a flag given as `--name value` or `--name=value`, or null.
-function flag(words, ...names) {
+// The call's words read against `spec`: { flags: { [long name]: [values] }, positionals }, or null when gh would read
+// them differently. A short name is kept under its long one where `SAME` pairs them for the command.
+function parseWords(words, spec) {
+  const flags = {};
+  const positionals = [];
+  const canonical = (name) => {
+    const pair = SAME.find((p) => p.includes(name) && p.every((n) => spec[n] !== undefined));
+    return pair ? pair[1] : name;
+  };
   for (let i = 0; i < words.length; i += 1) {
-    for (const name of names) {
-      if (words[i] === name) return words[i + 1] ?? null;
-      if (words[i].startsWith(`${name}=`)) return words[i].slice(name.length + 1);
+    const word = words[i];
+    if (word === '--') return null;
+    if (!word.startsWith('-') || word === '-') { positionals.push(word); continue; }
+    let name = word;
+    let value;
+    if (word.startsWith('--') && word.includes('=')) {
+      name = word.slice(0, word.indexOf('='));
+      value = word.slice(word.indexOf('=') + 1);
     }
+    const kind = spec[name];
+    if (kind === undefined) return null;
+    if (kind === BOOL) {
+      if (value !== undefined) return null;
+      value = true;
+    } else if (value === undefined) {
+      if (i + 1 >= words.length) return null;
+      value = words[i += 1];
+    }
+    const key = canonical(name);
+    if (flags[key] && kind !== LIST) return null;
+    (flags[key] ??= []).push(value);
   }
-  return null;
+  return { flags, positionals };
 }
+const one = (parsed, name) => parsed.flags[name]?.[0];
 
-// The fields of a gh api call (-f, -F, --field, --raw-field), as { name: value }.
-function fieldsOf(words) {
+// A repository named as gh takes it (`owner/name`, `host/owner/name` or its address) as `owner/name`, or null.
+function repoOf(text) {
+  const plain = String(text).replace(/^https:\/\//, '').replace(/\.git$/, '');
+  const parts = plain.split('/');
+  if (parts.length === 3 && parts[0].toLowerCase() === HOST) parts.shift();
+  return parts.length === 2 && parts.every((p) => /^[A-Za-z0-9._-]+$/.test(p)) ? parts.join('/') : null;
+}
+const sameRepo = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+
+// The fields of an api call (-f, -F), as { name: value }, or null when one is read from a file (`-F name=@file`), is
+// given twice, or has no name.
+function fieldsOf(parsed) {
   const fields = {};
-  for (let i = 0; i < words.length; i += 1) {
-    const raw = /^(-f|-F|--field|--raw-field)$/.test(words[i]) ? words[i + 1] : /^--(raw-)?field=(.*)$/s.exec(words[i])?.[2];
-    if (typeof raw !== 'string') continue;
-    const at = raw.indexOf('=');
-    if (at > 0) fields[raw.slice(0, at)] = raw.slice(at + 1);
+  for (const [flag, list] of [['--raw-field', parsed.flags['--raw-field'] ?? []], ['--field', parsed.flags['--field'] ?? []]]) {
+    for (const raw of list) {
+      const at = raw.indexOf('=');
+      if (at < 1) return null;
+      const name = raw.slice(0, at);
+      const value = raw.slice(at + 1);
+      if (flag === '--field' && value.startsWith('@')) return null;
+      if (Object.hasOwn(fields, name)) return null;
+      fields[name] = value;
+    }
   }
   return fields;
 }
 
-function apiMethod(words) {
-  const given = flag(words, '-X', '--method');
-  if (given) return given.toUpperCase();
-  const glued = words.find((w) => /^-X[A-Za-z]+$/.test(w));
-  if (glued) return glued.slice(2).toUpperCase();
-  // gh api sends a POST when a field or an input is given and no method is.
-  return words.some((w) => /^(-f|-F|--field|--raw-field|--input)$/.test(w) || /^--(raw-)?field=/.test(w)) ? 'POST' : 'GET';
-}
-
-// The path of a gh api call, without a leading slash or its query.
-function apiPath(words) {
-  const skip = new Set(['-X', '--method', '-f', '-F', '--field', '--raw-field', '--input', '--jq', '-q', '-H', '--header', '--template', '-t', '--cache']);
-  for (let i = 1; i < words.length; i += 1) {
-    if (skip.has(words[i])) { i += 1; continue; }
-    if (!words[i].startsWith('-')) return words[i].replace(/^\//, '');
+// Whether `text` is one GraphQL query and nothing else: no mutation or subscription anywhere, one operation, which
+// is a query (fragments beside it are fine). Strings and comments are taken out first; anything unbalanced is no.
+export function isOneQuery(text) {
+  if (typeof text !== 'string') return false;
+  const bare = text.replace(/"""[\s\S]*?"""/g, '""').replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/#[^\n]*/g, '');
+  if (bare.replace(/""/g, '').includes('"') || /\b(mutation|subscription)\b/.test(bare)) return false;
+  // Each `{` at the top level opens a definition: a fragment's, after its `fragment` keyword, or an operation's.
+  let depth = 0;
+  let operations = 0;
+  let fragment = false;
+  for (const token of bare.match(/[{}]|[A-Za-z_][A-Za-z0-9_]*/g) ?? []) {
+    if (token === '{') {
+      if (depth === 0) {
+        if (fragment) fragment = false;
+        else operations += 1;
+      }
+      depth += 1;
+    } else if (token === '}') {
+      depth -= 1;
+      if (depth < 0) return false;
+    } else if (depth === 0 && token === 'fragment') {
+      fragment = true;
+    }
   }
-  return '';
+  return depth === 0 && operations === 1;
 }
 
-// The commit a verdict comment's body names, or null; '' when the body isn't a verdict.
+// The commit a verdict body names, or null when it names none or more than one; '' when the body isn't a verdict.
 function verdictHead(body) {
   if (typeof body !== 'string' || !body.includes(VERDICT_MARK)) return '';
-  const sha = /Reviewed commit:\s*`?([0-9a-f]{40})`?/.exec(body)?.[1];
-  return sha ?? null;
+  const named = [...body.matchAll(/Reviewed commit:\s*`?([0-9a-fA-F]{7,64})`?/g)].map((m) => m[1]);
+  return named.length === 1 && FULL_SHA.test(named[0]) ? named[0] : null;
 }
 
-const number = (text) => (/^\d+$/.test(String(text ?? '')) ? Number(text) : null);
-const repoPath = String.raw`repos/[^/\s]+/[^/\s]+`;
+// A comment's text from a --body or --body-file flag (only `-`, standard input, is read), or undefined when it has
+// none; null when it names a file.
+function bodyOf(parsed, stdin) {
+  const file = one(parsed, '--body-file') ?? one(parsed, '-F');
+  if (file !== undefined) return file === '-' ? String(stdin ?? '') : null;
+  return one(parsed, '--body');
+}
+// Standard input given to `--input -`, as its JSON body field where it is JSON.
+function inputBody(stdin) {
+  try {
+    const json = JSON.parse(String(stdin ?? ''));
+    return typeof json?.body === 'string' ? json.body : String(stdin ?? '');
+  } catch {
+    return String(stdin ?? '');
+  }
+}
 
-// The allow list: each entry its name, its kind and a test of the call's words (with `api` its method and path).
-// `body(words, ctx)` gives a comment's text where its kind turns on it.
+const repoPath = String.raw`repos/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)`;
+const at = (pattern) => new RegExp(`^${repoPath}/${pattern}$`);
+
+// The allow list: each entry its name, its kind and a test of the call ({ command, parsed, method, path, fields }).
 export const BROKER_ALLOW = Object.freeze([
-  { name: 'GraphQL query', kind: 'read', test: (w) => w[0] === 'api' && apiPath(w) === 'graphql' && /^\s*(query\b|\{)/.test(fieldsOf(w).query ?? '') },
-  { name: 'issue or pull request comments, read', kind: 'read', test: (w, m, p) => w[0] === 'api' && m === 'GET' && new RegExp(`^${repoPath}/issues/\\d+/comments(\\?.*)?$`).test(p) },
-  { name: 'commit checks and status, read', kind: 'read', test: (w, m, p) => w[0] === 'api' && m === 'GET' && new RegExp(`^${repoPath}/commits/[0-9A-Za-z]+/(check-runs|status)(\\?.*)?$`).test(p) },
-  { name: 'pull request, read', kind: 'read', test: (w) => w[0] === 'pr' && ['view', 'list', 'checks', 'diff', 'status'].includes(w[1]) },
-  { name: 'workflow runs, read', kind: 'read', test: (w) => w[0] === 'run' && ['list', 'view'].includes(w[1]) },
-  { name: 'issue, read', kind: 'read', test: (w) => w[0] === 'issue' && ['view', 'list'].includes(w[1]) },
-  { name: 'repository, read', kind: 'read', test: (w) => w[0] === 'repo' && w[1] === 'view' },
-  { name: 'pull request, create', kind: 'create', test: (w) => w[0] === 'pr' && w[1] === 'create' },
-  { name: 'pull request text, edit', kind: 'comment', test: (w) => w[0] === 'pr' && w[1] === 'edit' && w.every((x) => !/^--(add|remove)-(label|reviewer|assignee)/.test(x)) },
-  { name: 'pull request, comment', kind: 'comment', test: (w) => w[0] === 'pr' && w[1] === 'comment' },
-  { name: 'comment, edit', kind: 'comment', test: (w, m, p) => w[0] === 'api' && m === 'PATCH' && new RegExp(`^${repoPath}/issues/comments/\\d+$`).test(p) },
-  { name: 'branch, update', kind: 'push', test: (w, m, p) => w[0] === 'api' && ['PATCH', 'POST'].includes(m) && new RegExp(`^${repoPath}/git/refs(/heads/.+)?$`).test(p) },
-  { name: 'pull request, merge', kind: 'merge', test: (w) => w[0] === 'pr' && w[1] === 'merge' },
-  { name: 'pull request, merge by REST', kind: 'merge', test: (w, m, p) => w[0] === 'api' && m === 'PUT' && new RegExp(`^${repoPath}/pulls/\\d+/merge$`).test(p) },
+  { name: 'GraphQL query', kind: 'read', test: (c) => c.command === 'api' && c.path === 'graphql' && c.method === 'POST' && c.input === undefined && c.fields && !Object.hasOwn(c.fields, 'operationName') && c.parsed.flags['--raw-field']?.some((f) => f.startsWith('query=')) && isOneQuery(c.fields.query) },
+  { name: 'issue or pull request comments, read', kind: 'read', test: (c) => c.command === 'api' && c.method === 'GET' && at(String.raw`issues/\d+/comments`).test(c.path) },
+  { name: 'commit checks and status, read', kind: 'read', test: (c) => c.command === 'api' && c.method === 'GET' && at('commits/[0-9A-Za-z]+/(check-runs|status)').test(c.path) },
+  { name: 'pull request, read', kind: 'read', test: (c) => ['pr view', 'pr checks', 'pr diff'].includes(c.command) ? c.parsed.positionals.length <= 1 : ['pr list', 'pr status'].includes(c.command) && c.parsed.positionals.length === 0 },
+  { name: 'workflow runs, read', kind: 'read', test: (c) => (c.command === 'run view' ? c.parsed.positionals.length <= 1 : c.command === 'run list' && c.parsed.positionals.length === 0) },
+  { name: 'issue, read', kind: 'read', test: (c) => (c.command === 'issue view' ? c.parsed.positionals.length === 1 : c.command === 'issue list' && c.parsed.positionals.length === 0) },
+  { name: 'repository, read', kind: 'read', test: (c) => c.command === 'repo view' && c.parsed.positionals.length <= 1 },
+  { name: 'pull request, create', kind: 'create', test: (c) => c.command === 'pr create' && c.parsed.positionals.length === 0 },
+  { name: 'pull request text, edit', kind: 'comment', test: (c) => c.command === 'pr edit' && c.parsed.positionals.length === 1 && NUMBER.test(c.parsed.positionals[0]) },
+  { name: 'pull request, comment', kind: 'comment', test: (c) => c.command === 'pr comment' && c.parsed.positionals.length === 1 && NUMBER.test(c.parsed.positionals[0]) },
+  { name: 'comment, edit', kind: 'comment', test: (c) => c.command === 'api' && c.method === 'PATCH' && at(String.raw`issues/comments/\d+`).test(c.path) },
+  { name: 'branch, update', kind: 'push', test: (c) => c.command === 'api' && ((c.method === 'PATCH' && at('git/refs/heads/.+').test(c.path)) || (c.method === 'POST' && at('git/refs').test(c.path))) },
+  { name: 'pull request, merge', kind: 'merge', test: (c) => c.command === 'pr merge' && c.parsed.positionals.length === 1 && NUMBER.test(c.parsed.positionals[0]) },
+  { name: 'pull request, merge by REST', kind: 'merge', test: (c) => c.command === 'api' && c.method === 'PUT' && at(String.raw`pulls/\d+/merge`).test(c.path) },
 ]);
 
+const other = (words) => ({ kind: 'other', words: words.slice(0, 3) });
+
+// The call as the allow list reads it, or null when it can't be read the way gh reads it, or names another host or
+// repository than `repo` (the project's, `owner/name`; not checked when not given).
+function readCall(words, { repo }) {
+  const command = words[0] === 'api' ? 'api' : `${words[0]} ${words[1]}`;
+  const spec = SPECS[command];
+  if (!spec) return null;
+  const rest = words.slice(command === 'api' ? 1 : 2);
+  const parsed = parseWords(rest, command === 'api' || command === 'repo view' ? spec : { ...spec, ...REPO_FLAGS });
+  if (!parsed) return null;
+  const host = one(parsed, '--hostname');
+  if (host !== undefined && host !== HOST) return null;
+  const named = one(parsed, '--repo');
+  if (named !== undefined && (repoOf(named) === null || (repo && !sameRepo(repoOf(named), repo)))) return null;
+  if (command === 'repo view' && parsed.positionals[0] !== undefined && (repoOf(parsed.positionals[0]) === null || (repo && !sameRepo(repoOf(parsed.positionals[0]), repo)))) return null;
+  const call = { command, parsed };
+  if (command !== 'api') return call;
+
+  if (parsed.positionals.length !== 1) return null;
+  const input = one(parsed, '--input');
+  if (input !== undefined && input !== '-') return null;
+  const fields = fieldsOf(parsed);
+  if (!fields) return null;
+  const given = one(parsed, '--method');
+  // gh sends a POST when a field or an input is given and no method is.
+  const method = given ? given.toUpperCase() : (Object.keys(fields).length > 0 || input !== undefined ? 'POST' : 'GET');
+  let target = parsed.positionals[0].replace(/^\//, '');
+  if (repo) target = target.replace(/^repos\/\{owner\}\/\{repo\}\//, `repos/${repo}/`);
+  // Only a read may carry a query, and it is no part of what the call is; a write's path is plain.
+  const [route, query] = target.split(/\?(.*)/s);
+  if (/[#%{}\s\\]/.test(route) || (query !== undefined && method !== 'GET')) return null;
+  const owner = /^repos\/([^/]+\/[^/]+)\//.exec(route)?.[1];
+  if (route !== 'graphql' && (!owner || (repo && !sameRepo(owner, repo)))) return null;
+  return { ...call, method, path: route, fields, input };
+}
+
 // What a gh call is: { kind, name?, pr?, sha?, branch? }, with kind read, push, create, comment, verdict, merge or other.
-// `stdin` is the call's standard input, for a body sent that way.
-export function classifyCall(argv, { stdin = '' } = {}) {
-  const words = commandOf(Array.isArray(argv) ? argv : []);
-  const method = words[0] === 'api' ? apiMethod(words) : null;
-  const target = words[0] === 'api' ? apiPath(words) : '';
-  const entry = BROKER_ALLOW.find((e) => e.test(words, method, target));
-  if (!entry) return { kind: 'other', words: words.slice(0, 3) };
+// `stdin` is the call's standard input, for a body sent that way; `repo` the project's repository, `owner/name`.
+export function classifyCall(argv, { stdin = '', repo = null } = {}) {
+  const words = (Array.isArray(argv) ? argv : []).map(String);
+  const read = readCall(words, { repo });
+  const entry = read && BROKER_ALLOW.find((e) => e.test(read));
+  if (!entry) return other(words);
   const call = { kind: entry.kind, name: entry.name };
+  const { parsed } = read;
   if (entry.kind === 'merge') {
-    if (words[0] === 'pr') {
-      call.pr = number(words.slice(2).find((w) => !w.startsWith('-')));
-      call.sha = flag(words, '--match-head-commit');
+    if (read.command === 'pr merge') {
+      if (one(parsed, '--body-file') !== undefined) return other(words);
+      call.pr = Number(parsed.positionals[0]);
+      call.sha = one(parsed, '--match-head-commit') ?? null;
     } else {
-      call.pr = number(/pulls\/(\d+)\/merge$/.exec(target)?.[1]);
-      call.sha = fieldsOf(words).sha ?? null;
+      call.pr = Number(/pulls\/(\d+)\/merge$/.exec(read.path)[1]);
+      call.sha = read.fields.sha ?? null;
     }
   }
-  if (entry.kind === 'create') {
-    call.branch = flag(words, '--head', '-H');
-  }
+  if (entry.kind === 'create') call.branch = one(parsed, '--head') ?? null;
   if (entry.kind === 'push') {
-    call.branch = /git\/refs\/heads\/(.+)$/.exec(target)?.[1] ?? fieldsOf(words).ref?.replace(/^refs\/heads\//, '') ?? null;
+    const fromPath = /git\/refs\/heads\/(.+)$/.exec(read.path)?.[1];
+    const fromField = read.fields.ref?.startsWith('refs/heads/') ? read.fields.ref.slice('refs/heads/'.length) : null;
+    const branch = read.method === 'PATCH' ? fromPath : fromField;
+    call.branch = typeof branch === 'string' && BRANCH.test(branch) ? branch : null;
   }
-  if (entry.kind === 'comment') {
-    let body = flag(words, '--body', '-b');
-    if (body === null && (flag(words, '--body-file', '-F') === '-' || words.includes('--input'))) {
-      body = stdin;
-      try { body = JSON.parse(stdin)?.body ?? stdin; } catch { /* plain text */ }
-    }
+  if (entry.kind === 'comment' || entry.kind === 'create') {
+    let body;
+    if (read.command === 'api') body = read.input === '-' ? inputBody(stdin) : read.fields.body;
+    else body = bodyOf(parsed, stdin);
+    if (body === null) return other(words);
     const head = verdictHead(body);
     if (head !== '') {
       call.kind = 'verdict';
       call.sha = head;
-      call.pr = words[0] === 'pr' ? number(words[2]) : null;
+      call.pr = read.command === 'api' ? null : Number(parsed.positionals[0] ?? NaN) || null;
     }
   }
   return call;

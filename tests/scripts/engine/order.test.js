@@ -54,6 +54,9 @@ test('visible work is shown first unless the work record waives it', () => {
   assert.match(checkOrder({ ...order, showFirst: 'yes' }), /shown first/);
   const { showFirst, ...older } = order;
   assert.equal(checkOrder(older), null, 'an order written before the flag is read as not shown first');
+  for (const work of ['../../x', 'card/1', 'Card-1', '', 'a'.repeat(41)]) {
+    assert.match(checkOrder({ ...order, work }), /needs its work/, `${work}: the work names a folder, so it is a plain slug`);
+  }
 });
 
 test('work with nothing visible has no preview, and a work with no done checks is refused', () => {

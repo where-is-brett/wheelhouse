@@ -3798,8 +3798,10 @@ export async function startHelper({
     } catch (error) {
       if (error instanceof LookRefusal) throw error;
     }
-    const kept = engineRun.readyOf(project, call.pr);
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: kept?.showFirst === true, guardrail, stop: stopped() };
+    // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
+    // opened needs the director's approval, as shown-first work does.
+    const opened = engineRun.openedOf(project, call.pr);
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, guardrail, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,

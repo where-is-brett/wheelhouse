@@ -15,6 +15,7 @@
 // step), not by the done check.
 import fs from 'node:fs';
 import path from 'node:path';
+import { SLUG } from '../lib/build-loop.js';
 
 export const ORDER_VERSION = 1;
 export const ORDER_LANES = Object.freeze(['quick', 'small', 'slice', 'feature', 'bug', 'fix-main']);
@@ -61,7 +62,8 @@ function checkProblem(check) {
 // Why `order` isn't a well-formed order, or null.
 export function checkOrder(order) {
   if (!isObject(order) || order.v !== ORDER_VERSION) return 'a work order must be a version 1 record';
-  if (!isText(order.work)) return 'a work order needs its work';
+  // The work names folders (previews/<work>/), so it is a plain slug.
+  if (typeof order.work !== 'string' || !SLUG.test(order.work)) return 'a work order needs its work, as a short slug';
   if (!ORDER_LANES.includes(order.lane)) return 'a work order needs its lane';
   if (!isText(order.goal)) return 'a work order needs its goal';
   if (!texts(order.notInScope) || !texts(order.rulings) || !texts(order.decisionRules) || !texts(order.protectedFiles)) {

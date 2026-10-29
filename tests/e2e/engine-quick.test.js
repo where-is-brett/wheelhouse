@@ -118,6 +118,8 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
         fs.writeFileSync(path.join(worktree, 'src', 'price.js'), 'export const price = (c) => (c / 100).toFixed(2);\n');
         await g(worktree, 'commit', '-q', '-am', 'Show prices with two decimals');
         const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: worktree })).stdout.trim();
+        // The lenses step records the commit the reviews then read, from the worktree.
+        engine.setOutput(runId, 'lenses', JSON.stringify({ security: false, design: true, head, clean: true }));
 
         // The pull-request step: pushed from the worktree and opened, through the helper.
         const opened = await client.engine.openPr({ runId, cwd: worktree, title: 'Show prices with two decimals', body: 'Prices show two decimals.' });
@@ -143,6 +145,9 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
         assert.deepEqual(JSON.parse(signed.at(-1)), { clean: true });
         assert.equal(host.comments.length, 1);
         assert.match(host.comments[0].body, new RegExp(`Reviewed commit: \`${head}\``));
+        // Signed CLEAN, but shown first: the broker still refuses a merge until the director approves.
+        const signedMerge = await client.broker.gh({ argv: ['pr', 'merge', '1', '--squash', '--match-head-commit', head], cwd: worktree });
+        assert.match(signedMerge.stderr, /director's approval/);
 
         // The preview step: the pictures go to the run's artefacts, and the helper copies them into the record.
         const out = path.join(engine.artefactsOf(runId), 'preview');

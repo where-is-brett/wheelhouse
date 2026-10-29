@@ -22,10 +22,10 @@ function setup({ visible = false, outputs = {}, stop = false } = {}) {
     name: 'archon',
     start: async () => ({ ok: true, runId: 'run-1', branch: 'wh/card-1' }),
     inspect: async () => ({ status: 'running', source: path.join(dir, 'capture') }),
-    outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }), 'review-standards': clean, 'review-spec': clean, ...outputs }),
+    outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }), lenses: JSON.stringify({ security: false, design: false, head: HEAD, clean: true }), 'review-standards': clean, 'review-spec': clean, ...outputs }),
     handOver: async (item) => { calls.push({ call: 'handOver', item }); return { ok: true }; },
   };
-  const { routes, readyOf } = engineRoutes({
+  const { routes, readyOf, openedOf } = engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
     engineFor: () => engine,
     ordersDir: () => path.join(dir, 'orders'),
@@ -43,16 +43,18 @@ function setup({ visible = false, outputs = {}, stop = false } = {}) {
     provenance: async (project, args) => { calls.push({ call: 'provenance', ...args }); },
   });
   const order = workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }], visible } });
-  return { routes, calls, readyOf, setStop: (v) => { stopped = v; }, start: () => routes['/engine/start']({ project: 'p', order }) };
+  return { routes, calls, readyOf, openedOf, setStop: (v) => { stopped = v; }, start: () => routes['/engine/start']({ project: 'p', order }) };
 }
 
 test('the pull request is opened from the worktree, with what built it recorded first', async () => {
-  const { routes, calls, start } = setup();
+  const { routes, calls, start, openedOf } = setup();
   await start();
   const got = await routes['/engine/open-pr']({ runId: 'run-1', cwd: '/p/.worktrees/wh-card-1', title: 'Show prices with two decimals\nmore', body: 'Body' });
   assert.deepEqual(got, { ok: true, branch: 'wh/card-1', pr: 14, head: HEAD });
   assert.deepEqual(calls.filter((c) => c.call !== 'write').map((c) => c.call), ['push', 'provenance', 'open']);
   assert.equal(calls.find((c) => c.call === 'open').title, 'Show prices with two decimals');
+  assert.deepEqual(openedOf('p', 14), { runId: 'run-1', head: HEAD, showFirst: false, work: 'card-1' }, 'the permit reads the work\'s shown-first flag from here');
+  assert.equal(openedOf('p', 15), null);
   assert.match((await routes['/engine/open-pr']({ runId: 'run-1', cwd: '/p', title: '', body: '' })).refused, /title and body/);
 });
 

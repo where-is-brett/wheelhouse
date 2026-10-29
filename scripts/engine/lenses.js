@@ -2,12 +2,15 @@
 // Which review lenses beyond standards and spec apply to a run (Archon design, section 11), as a script step before
 // review. Security applies to a change touching sign-in, permissions, stored data, payments or secrets, by its paths
 // or the lines it adds; design applies to visible work, which the work order (from the helper) says. Without an order
-// every lens runs. It prints { security, design } and exits 0, for the pack to branch on.
+// every lens runs. It also records the commit the reviews will read (`head`) and whether the worktree holds only that
+// commit (`clean`), in Archon's own record, so the helper signs a review only for the head it read. It prints
+// { security, design, head, clean } and exits 0, for the pack to branch on.
 //   node scripts/engine/lenses.js --run <run id> --base <ref>
 import { helperClient } from '../host/helper-client.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 import { changeOf } from './change.js';
+import { run as defaultRun } from '../lib/run.js';
 
 // The words of the critical areas, matched whole within a path or a line, after splitting camelCase and snake_case.
 const SECURITY_WORDS = new Set([
@@ -49,7 +52,12 @@ export async function main(argv = process.argv.slice(2), { client = helperClient
   } catch {
     security = true;
   }
-  out(JSON.stringify({ security, design: order === null || order.preview !== null }));
+  const git = (...args) => (run ?? defaultRun)('git', args, { cwd, timeoutMs: 30000 }).catch(() => ({ code: 1, stdout: '' }));
+  const named = await git('rev-parse', '--verify', '-q', 'HEAD');
+  const head = named.code === 0 ? named.stdout.trim() : '';
+  const status = head ? await git('status', '--porcelain', '--untracked-files=all') : { code: 1, stdout: '' };
+  const clean = head !== '' && status.code === 0 && status.stdout.trim() === '';
+  out(JSON.stringify({ security, design: order === null || order.preview !== null, head, clean }));
   return 0;
 }
 

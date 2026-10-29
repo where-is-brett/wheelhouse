@@ -3,7 +3,8 @@
 // project's repository, and it asks the helper, which answers only for the project's own repository on its host, with
 // the narrow connection's key where there is one. It answers fetches as well as pushes; the branch rules are the
 // helper's push route's and the host's. It stores and erases nothing.
-//   git -c credential.helper='!node <path>/git-credential.js' ...
+// git must name the repository in each request, so it is set with credential.useHttpPath:
+//   git -c credential.useHttpPath=true -c credential.helper='!node <path>/git-credential.js' ...
 import { helperClient } from '../../host/helper-client.js';
 import { startedAsScript } from '../../lib/started-as-script.js';
 

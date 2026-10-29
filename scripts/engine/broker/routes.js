@@ -27,7 +27,8 @@ export function brokerRoutes({ placeOf, permit, forward, credential } = {}) {
     if (!Array.isArray(argv) || !argv.every((a) => typeof a === 'string')) return refused("Wheelhouse's broker was sent a call it can't read.");
     const place = placeOf(cwd);
     if (!place) return refused("Wheelhouse's broker refused this call: it came from a folder that isn't a registered project's.");
-    const call = classifyCall(argv, { stdin });
+    if (typeof place.repo !== 'string' || place.repo === '') return refused("Wheelhouse's broker refused this call: the project's repository isn't known.");
+    const call = classifyCall(argv, { stdin, repo: place.repo });
     const context = call.kind === 'other' || call.kind === 'read' ? {} : await permit(place.project, call);
     const decision = brokerDecision(call, context);
     if (!decision.allow) return refused(decision.reason);
@@ -42,7 +43,9 @@ export function brokerRoutes({ placeOf, permit, forward, credential } = {}) {
     if (!place) return { ok: false, refused: 'the request came from a folder that isn\'t a registered project\'s' };
     const asked = requestOf(request);
     if (asked.protocol !== 'https' || asked.host !== 'github.com') return { ok: false, refused: 'the broker answers only for the project\'s host' };
-    if (asked.path !== undefined && asked.path.replace(/\.git$/, '').toLowerCase() !== String(place.repo).toLowerCase()) {
+    // git names the repository only with credential.useHttpPath, which the helper's git setting turns on; a request
+    // that names none is refused, never answered for whatever repository it is.
+    if (typeof asked.path !== 'string' || asked.path.replace(/\.git$/, '').toLowerCase() !== String(place.repo).toLowerCase()) {
       return { ok: false, refused: 'the broker answers only for the project\'s own repository' };
     }
     const given = await credential(place.project);

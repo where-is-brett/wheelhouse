@@ -34,6 +34,8 @@ test('a refused call never reaches the real gh, and says why as gh\'s error outp
   assert.match(other.stderr, /isn't on Wheelhouse's list/);
   const outside = await routes['/broker/gh']({ argv: ['pr', 'view', '1'], cwd: '/elsewhere' });
   assert.match(outside.stderr, /isn't a registered project's/);
+  const elsewhere = await routes['/broker/gh']({ argv: ['pr', 'view', '1', '--repo', 'other/repo'], cwd: '/p/wt' });
+  assert.match(elsewhere.stderr, /isn't on Wheelhouse's list/, 'a call naming another repository');
   assert.equal(forwarded.length, 0);
 });
 
@@ -43,6 +45,7 @@ test('the credential helper answers only for a request from the project for its 
   assert.deepEqual(ok, { ok: true, username: 'x-access-token', password: 'ghs_FAKE' });
   for (const [cwd, request, action] of [
     ['/p/wt', 'protocol=https\nhost=github.com\npath=other/repo.git\n', 'get'],
+    ['/p/wt', 'protocol=https\nhost=github.com\n', 'get'],
     ['/p/wt', 'protocol=https\nhost=gitlab.com\n', 'get'],
     ['/elsewhere', 'protocol=https\nhost=github.com\n', 'get'],
     ['/p/wt', 'protocol=https\nhost=github.com\n', 'store'],

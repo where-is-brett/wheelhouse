@@ -239,11 +239,19 @@
           },
           "design": {
             "type": "boolean"
+          },
+          "head": {
+            "type": "string"
+          },
+          "clean": {
+            "type": "boolean"
           }
         },
         "required": [
           "security",
-          "design"
+          "design",
+          "head",
+          "clean"
         ]
       }
     },

@@ -24,7 +24,7 @@ function setup({ outputs = {}, captured = DIGEST } = {}) {
     name: 'archon',
     start: async () => ({ ok: true, runId: 'run-1', branch: 'wh/card-1' }),
     inspect: async () => ({ status: 'running', source: path.join(dir, 'capture') }),
-    outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }), ...outputs }),
+    outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }), lenses: JSON.stringify({ security: false, design: false, head: HEAD, clean: true }), ...outputs }),
   };
   const { routes } = engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
@@ -88,7 +88,7 @@ test('the verdict comment is posted only when every lens that ran is CLEAN, and 
   // A new head edits the kept comment.
   const newHead = '2222222a2b3c4d5e6f708192a3b4c5d6e7f80912';
   const older = await engine.outputs();
-  engine.outputs = async () => ({ ...older, 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: newHead }) });
+  engine.outputs = async () => ({ ...older, 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: newHead }), lenses: JSON.stringify({ security: false, design: false, head: newHead, clean: true }) });
   await routes['/engine/review']({ runId: 'run-1', step: 'review-standards' });
   await routes['/engine/review']({ runId: 'run-1', step: 'review-spec' });
   assert.equal(comments.length, 2);
@@ -123,4 +123,27 @@ test('the pack\'s sign step asks for each lens and says clean only once the verd
   assert.deepEqual(JSON.parse(lines[0]), { clean: false });
   const refusing = { engine: { review: async () => ({ ok: false, refused: 'the run\'s pack isn\'t the installed pack' }) } };
   assert.equal(await main(['--run', 'run-1'], { client: refusing, out: () => {} }), 1);
+});
+
+test('a review is signed only for the commit the reviews read', async () => {
+  const before = '2222222a2b3c4d5e6f708192a3b4c5d6e7f80912';
+  for (const [name, lenses, why] of [
+    ['a commit made after the reviews', { security: false, design: false, head: before, clean: true }, /read 2222222, not the pull request's head 1111111/],
+    ['a worktree with changes beside its commit', { security: false, design: false, head: HEAD, clean: false }, /didn't record the commit/],
+    ['no record of the commit', undefined, /didn't record the commit/],
+  ]) {
+    const outputs = { 'review-spec': review('CLEAN'), lenses: lenses === undefined ? undefined : JSON.stringify(lenses) };
+    if (lenses === undefined) delete outputs.lenses;
+    const { routes, written, comments, ready, engine } = setup({ outputs });
+    if (lenses === undefined) {
+      const plain = engine.outputs;
+      engine.outputs = async () => { const all = await plain(); delete all.lenses; return all; };
+    }
+    await ready();
+    const got = await routes['/engine/review']({ runId: 'run-1', step: 'review-spec' });
+    assert.equal(got.ok, false, name);
+    assert.match(got.refused, why, name);
+    assert.equal(written.filter((w) => w.kind === 'review').length, 0, name);
+    assert.equal(comments.length, 0, name);
+  }
 });
