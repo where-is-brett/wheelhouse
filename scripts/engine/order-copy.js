@@ -8,7 +8,10 @@
 // Run in the run's worktree, it also writes the run's own settings overlay there (ownRunRules), which lets the run's
 // Claude steps read their own artefacts and no other run's. Archon gives its Claude steps the project and user settings
 // only, never the local ones, so the overlay is merged into the worktree's .claude/settings.json, over the branch's own.
+// With skip-worktree set, git refuses a rebase, merge, checkout or pull that changes .claude/settings.json, so a step
+// that moves the worktree runs --release first: the branch's own settings go back, and git tracks the file again.
 //   node scripts/engine/order-copy.js --run <run id> --out <artefacts folder> [--flags | --feature-flags]
+//   node scripts/engine/order-copy.js --release
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
@@ -79,6 +82,21 @@ async function writeOverlay(cwd, overlay, run) {
   return null;
 }
 
+// Takes the overlay out of a worktree whose index marks the shared settings skip-worktree: the mark comes off, and the
+// file is the branch's own again, as the index holds it. A worktree with no overlay is left as it is. Gives a refusal,
+// or null.
+export async function releaseOverlay(cwd, run = realRun) {
+  const file = path.join(cwd, SHARED);
+  const git = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
+  const listed = await git(['ls-files', '-v', '--', SHARED]);
+  if (listed.code !== 0) return 'the worktree is not a git checkout';
+  if (!/^S /.test(listed.stdout)) return null;
+  if (!['none', 'file'].includes(kindOf(file))) return `${SHARED} in the worktree is a link or not a plain file`;
+  if ((await git(['update-index', '--no-skip-worktree', '--', SHARED])).code !== 0) return 'git kept the shared settings out of the worktree';
+  if ((await git(['checkout', '--', SHARED])).code !== 0) return 'the branch\'s shared settings couldn\'t be put back';
+  return null;
+}
+
 // The approval a run ends on: the switch-on of a feature, the midpoint demo of a slice, or work shown first.
 export const APPROVAL_WORDS = Object.freeze({
   'switch-on': 'Every slice of this feature is added, behind its switch. Approve it to switch it on for everyone, or reject it to leave it off.',
@@ -91,6 +109,11 @@ export function approvalOf(order) {
 }
 
 export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), run = realRun, out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+  if (argv.includes('--release')) {
+    const refused = await releaseOverlay(cwd, run);
+    out(refused ? `The run's settings overlay wasn't taken out: ${refused}` : "The branch's own shared settings are back.");
+    return refused ? 1 : 0;
+  }
   const client = withTicket(given, argv);
   const runId = runArg(argv);
   const dir = runArg(argv, '--out');
