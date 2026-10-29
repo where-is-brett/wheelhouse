@@ -3,7 +3,7 @@
 // its runs and the pull requests that merged, what it does next, and the orders of its slice runs and its own run.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readSlices, demoSlice, progressOf, featureNext, currentStep, sliceOrder, finishOrder, featureCap, SLICES_FENCE } from '../../../scripts/engine/feature.js';
+import { readSlices, demoSlice, progressOf, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, SLICES_FENCE } from '../../../scripts/engine/feature.js';
 import { DEFAULT_FLAG_FILE, LANE_CAPS } from '../../../scripts/engine/order.js';
 
 const block = (value) => `# Order history\n\nThe design in words.\n\n\`\`\`${SLICES_FENCE}\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
@@ -135,4 +135,21 @@ test('a carry-on takes up the first slice that hasn\'t merged, or the feature\'s
   assert.deepEqual(currentStep({ design, progress: { slices: {}, finish } }), { slice: 1 });
   assert.deepEqual(currentStep({ design, progress: { slices: { 1: { runs: [], merged: true } }, finish } }), { slice: 2 });
   assert.deepEqual(currentStep({ design, progress: { slices: { 1: { merged: true }, 2: { merged: true } }, finish } }), { finish: true });
+});
+
+test('a feature queued again keeps the slices that merged before, by their titles, and carries on the one that hadn\'t', () => {
+  const design = readSlices(block(SLICES));
+  const orders = { r1: { slice: { n: 1, title: 'List the orders' } }, r2: { slice: { n: 2, title: 'Filter them' } }, r0: { slice: { n: 1, title: 'An older slice 1' } } };
+  const before = [
+    run('r0', { lane: 'slice', state: 'ended', outcome: 'completed', pr: 60 }),
+    run('r1', { lane: 'slice', state: 'ended', outcome: 'completed', pr: 70 }),
+    run('r2', { lane: 'slice', state: 'ended', outcome: 'cancelled', branch: 'wh/orders-2' }),
+  ];
+  const got = featureProgress({ design, all: before, now: [], orderOf: (id) => orders[id] ?? null, merged: new Map([[60, null], [70, sha('a')]]) });
+  assert.equal(got.slices[1].merged, true);
+  assert.equal(got.slices[1].head, sha('a'));
+  assert.equal(got.slices[1].pr, 70, 'a slice from another design isn\'t this one');
+  assert.deepEqual(got.slices[2].runs, [], 'no run of slice 2 since it was queued again');
+  assert.equal(got.slices[2].branch, 'wh/orders-2');
+  assert.deepEqual(featureNext({ design, progress: got, live: false }), { act: 'start', slice: 2 });
 });

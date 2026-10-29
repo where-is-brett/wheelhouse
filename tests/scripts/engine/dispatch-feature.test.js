@@ -28,7 +28,7 @@ function setUp({ design = { text: DESIGN } } = {}) {
     starts: [], written: [], orders: {},
   };
   const views = () => ({
-    work: { orders: { work: { id: 'w-1', at: AT, data: { id: 'orders', title: 'Order history', lane: 'feature', visible: false, dependsOn: [] } }, approved: true, since: AT } },
+    work: { orders: { work: { id: 'w-1', at: world.requeued ?? AT, data: { id: 'orders', title: 'Order history', lane: 'feature', visible: false, dependsOn: [] } }, approved: true, since: AT } },
     runs: { orders: world.runs.map((data) => ({ at: '2026-10-29T09:00:00.000Z', data: { work: 'orders', engine: 'archon', ...data } })) },
     costs: { orders: world.costs.map((tokens, i) => ({ at: AT, data: { runId: `c${i}`, work: 'orders', tokens } })) },
     incidents: { open: world.incidents }, questions: world.questions, reports: world.reports,
@@ -178,6 +178,23 @@ test('a carry-on of a cancelled slice 2 starts slice 2 again on its branch, not 
   recordLast({ outcome: 'cancelled', branch: 'wh/orders-2' });
   const got = await d.startAgain({ work: 'orders', lane: 'slice', branch: 'wh/orders-2', carryOn: true });
   assert.equal(got.ok, true);
+  assert.equal(world.starts.length, 3);
+  assert.deepEqual(world.starts[2].order.slice, { n: 2, of: 2, title: 'Filter them' });
+  assert.equal(world.starts[2].branch, 'wh/orders-2');
+  assert.equal(world.starts[2].carryOn, true);
+});
+
+test('the First Mate\'s Carry on, queueing the feature again, skips the slice that merged and carries on the other from its branch', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  await d.tick();
+  recordLast({ outcome: 'cancelled', branch: 'wh/orders-2' });
+  // The work recorded again, after its runs: the dispatcher sees it as queued.
+  const queued = '2026-10-29T09:30:00.000Z';
+  world.requeued = queued;
+  await d.tick();
   assert.equal(world.starts.length, 3);
   assert.deepEqual(world.starts[2].order.slice, { n: 2, of: 2, title: 'Filter them' });
   assert.equal(world.starts[2].branch, 'wh/orders-2');

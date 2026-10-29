@@ -14,7 +14,7 @@ import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
-import { readSlices, progressOf, featureNext, currentStep, sliceOrder, finishOrder, featureCap } from './feature.js';
+import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap } from './feature.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -133,10 +133,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     }
     return { refused: `the feature's design ${problem}` };
   }
-  // The feature's progress from the runs recorded since it was queued, the orders the helper kept and the merges seen.
-  function progressFor(views, work, entry, kept) {
-    const runs = (views.runs?.[work] ?? []).filter((r) => since(r, entry.work));
-    return progressOf({ runs, orderOf, merged: new Map(Object.entries(kept.merged).map(([pr, head]) => [Number(pr), head])) });
+  // The feature's progress from its runs (what merged from all of them, what has run from those since it was queued),
+  // the orders the helper kept and the merges seen.
+  function progressFor(views, work, entry, kept, design) {
+    const all = views.runs?.[work] ?? [];
+    const now = all.filter((r) => since(r, entry.work));
+    return featureProgress({ design, all, now, orderOf, merged: new Map(Object.entries(kept.merged).map(([pr, head]) => [Number(pr), head])) });
   }
   // Starts the feature's next run: slice 1 from the dispatcher, a later slice or its own run from featureTick, or the
   // run under way again on a carry-on (Give it more, or an answer), on its branch.
@@ -145,12 +147,18 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const found = await designFor(work, entry);
     if (found.refused) return { ok: false, refused: found.refused };
     const { design, kept } = found;
-    const progress = progressFor(views, work, entry, kept);
+    const progress = progressFor(views, work, entry, kept, design);
     let step = currentStep({ design, progress });
     if (!carryOn) {
       const next = featureNext({ design, progress, live: false });
       if (next.act !== 'start') return { ok: false, refused: 'the feature has nothing to start now' };
       step = next;
+      // A slice that ran before the work was queued again (the First Mate's Carry on) carries on from its branch.
+      const before = step.slice ? progress.slices[step.slice]?.branch : null;
+      if (before) {
+        branch = before;
+        carryOn = true;
+      }
     }
     let order;
     const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers };
@@ -182,17 +190,17 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const recorded = new Set(runs.map((r) => r?.data?.runId));
       if (kept.started.some((runId) => !recorded.has(runId))) continue;
       const ready = readyOf() ?? {};
-      for (const pr of new Set(runs.map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr)))) {
+      for (const pr of new Set((views.runs?.[work] ?? []).map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr)))) {
         let merged = null;
         try { merged = await prMerged(pr); } catch { merged = null; }
         if (merged !== true) continue;
         kept.merged[pr] = typeof ready[pr]?.head === 'string' ? ready[pr].head : null;
         keep();
-        const n = progressFor(views, work, entry, kept);
+        const n = progressFor(views, work, entry, kept, design);
         const slice = Object.entries(n.slices).find(([, got]) => got.pr === pr);
         if (slice) await write('note', { about: 'engine', words: `Slice ${slice[0]} of ${design.slices.length} of ${entry.work.data.title ?? work} is added, behind its switch.` });
       }
-      const progress = progressFor(views, work, entry, kept);
+      const progress = progressFor(views, work, entry, kept, design);
       const latest = new Map(runs.map((r) => [r.data.runId, r.data]));
       const live = [...latest.values()].some((r) => r.state !== 'ended');
       const next = featureNext({ design, progress, live });

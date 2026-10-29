@@ -86,6 +86,29 @@ export function progressOf({ runs = [], orderOf = () => null, merged = new Map()
   return { slices, finish };
 }
 
+// featureProgress({ design, all, now, orderOf, merged }) -> progressOf's shape, each slice with its `branch` too: what
+// has merged comes from `all` the work's runs, even those before the work was queued again (the First Mate's Carry
+// on), but only for a slice of the same title in the design; what has run comes from `now`, the runs since it was
+// queued; `branch` is the latest branch the slice was built on, for carrying it on.
+export function featureProgress({ design, all = [], now = [], orderOf = () => null, merged = new Map() } = {}) {
+  const titled = (id) => {
+    const order = orderOf(id);
+    const n = order?.slice?.n;
+    return Number.isInteger(n) && design.slices[n - 1]?.title !== order.slice.title ? null : order;
+  };
+  const ever = progressOf({ runs: all, orderOf: titled, merged });
+  const since = progressOf({ runs: now, orderOf: titled, merged });
+  const slices = {};
+  for (let n = 1; n <= design.slices.length; n += 1) {
+    const e = ever.slices[n];
+    const s = since.slices[n];
+    if (!e && !s) continue;
+    const branch = [...(e?.runs ?? [])].reverse().find((r) => typeof r.branch === 'string')?.branch ?? null;
+    slices[n] = { runs: s?.runs ?? [], pr: e?.merged ? e.pr : s?.pr ?? null, head: e?.merged ? e.head : null, merged: e?.merged === true, branch };
+  }
+  return { slices, finish: { ...since.finish, merged: since.finish.merged || ever.finish.merged, pr: ever.finish.merged ? ever.finish.pr : since.finish.pr } };
+}
+
 // featureNext({ design, progress, live }) -> { act: 'wait' } | { act: 'start', slice } | { act: 'start', finish: true }
 //   | { act: 'done', pr }
 // The first slice that hasn't merged starts if it has never run; one that has run waits, for its pull request to
