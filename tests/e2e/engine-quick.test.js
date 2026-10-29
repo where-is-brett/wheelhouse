@@ -1,6 +1,6 @@
 // tests/e2e/engine-quick.test.js
 // The quick lane end to end (Archon design, sections 7.2, 7.5, 9 and 12.4): the quick lane's recording plays through
-// the fake engine and the real helper, with the host and gh stood in. The pack's own steps are run as the pack runs
+// the fake engine and the real helper, with the host stood in and gh refused by the guard, which notes each call. The pack's own steps are run as the pack runs
 // them, against the helper: the order is fetched by the run's id, the pull request is pushed and opened, each review
 // is signed from the engine's record, the broker forwards the pull request's calls and refuses a merge without the
 // permit, the preview is copied into the record, the work is handed to the merge queue once approved, and one lesson
@@ -38,13 +38,6 @@ waitLongerOnTheHelper();
 const P = 'o__p';
 const PNG = Buffer.from('89504e470d0a1a0a', 'hex');
 const recordings = { 'quick-lane': loadRecordings(path.join(import.meta.dirname, '..', 'fixtures', 'engine'))['quick-lane'] };
-
-// gh on the helper's side: each call the broker forwards is kept, and none reaches a real host.
-function standInGh(calls) {
-  return (file, args, options) => (path.basename(String(file)).replace(/\.exe$/, '') === 'gh'
-    ? (calls.push(args), Promise.resolve({ code: 0, stdout: '{}\n', stderr: '' }))
-    : hostGuard(file, args, options));
-}
 
 // The host as the helper's adapter sees it, over the bare repository: pull requests opened from branches it holds.
 function standInHost(remoteUrl) {
@@ -96,7 +89,6 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
 
   const home = shortHome();
   const host = standInHost(remote.url);
-  const forwarded = [];
   const frozen = tempFolder('wh-frozen-');
   const engine = fakeEngine({ recordings, artefacts: tempFolder('wh-artefacts-'), source: frozen });
   try {
@@ -107,7 +99,7 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
       buildPack({ out: path.join(engineDir(), 'pack') });
       buildPack({ out: path.join(frozen, 'project') });
       const helper = await startHelper({
-        run: standInGh(forwarded), address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}),
+        run: hostGuard, address: testAddress(home), adapterFor: async () => host, envFor: async () => ({}),
         spawn: stubSpawn(), engineFor: (project) => (project === P ? engine : null),
       });
       try {
@@ -134,13 +126,16 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
 
         // The broker: the pull request's own calls are forwarded; a merge without the permit never is.
         const view = await client.broker.gh({ argv: ['pr', 'view', '1', '--json', 'body'], cwd: worktree });
-        assert.equal(view.code, 0, view.stderr);
+        assert.doesNotMatch(view.stderr, /broker refused/);
         const edit = await client.broker.gh({ argv: ['pr', 'edit', '1', '--body', 'Prices show two decimals.'], cwd: worktree });
-        assert.equal(edit.code, 0, edit.stderr);
+        assert.doesNotMatch(edit.stderr, /broker refused/);
         const merge = await client.broker.gh({ argv: ['pr', 'merge', '1', '--squash', '--match-head-commit', head], cwd: worktree });
         assert.equal(merge.code, 1);
         assert.match(merge.stderr, /refused/);
-        assert.deepEqual(forwarded.map((args) => args.slice(0, 2).join(' ')), ['pr view', 'pr edit']);
+        // The guard refuses gh and notes each call: the two the broker forwarded, and nothing else. They are taken
+        // off its log, which must end empty.
+        assert.deepEqual(hostLog.map((line) => line.split(' ').slice(0, 3).join(' ')), ['gh pr view', 'gh pr edit']);
+        hostLog.length = 0;
 
         // The sign step: each lens that ran is signed from the engine's record, and the verdict is posted once.
         const signed = [];
