@@ -184,7 +184,7 @@ test("the sweep takes back only the kits a world left installed: a world gone or
   fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: entries }));
   const calls = [];
   const run = async (bin, args, { cwd }) => { calls.push({ bin, args, cwd, there: fs.existsSync(cwd) }); return { code: 0, stdout: '', stderr: '' }; };
-  const taken = await sweepWorldInstalls({ claudeBin: '/c/claude', configDir: config, tmp, run, isAlive: (pid) => pid === process.pid });
+  const taken = await sweepWorldInstalls({ claudeBin: '/c/claude', configDir: config, tmp, runClaude: run, isAlive: (pid) => pid === process.pid });
   assert.deepEqual(calls.map((c) => [c.args.join(' '), c.cwd, c.there]), [
     [`plugin uninstall ${kit} --scope project`, at('wh-aw-gone'), true],
     [`plugin uninstall ${kit} --scope project`, at('wh-aw-left'), true],
@@ -195,7 +195,7 @@ test("the sweep takes back only the kits a world left installed: a world gone or
   // The folder made for a world that was gone goes again; a left-behind world's folder is left as it was found.
   assert.equal(fs.existsSync(path.join(tmp, 'wh-aw-gone')), false);
   assert.equal(fs.existsSync(at('wh-aw-left')), true);
-  assert.deepEqual(await sweepWorldInstalls({ claudeBin: '/c/claude', configDir: path.join(tmp, 'none'), tmp, run }), []);
+  assert.deepEqual(await sweepWorldInstalls({ claudeBin: '/c/claude', configDir: path.join(tmp, 'none'), tmp, runClaude: run }), []);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
