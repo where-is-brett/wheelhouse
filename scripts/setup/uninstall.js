@@ -972,6 +972,10 @@ export async function uninstallPlan({
     // too, Wheelhouse's own (ruling R86).
     for (const p of [clicksDir(), usedDir(), shownDir(), askedDir(), answersDir(), answeredDir(), recordsDir(), trustDir(), seenFile()]) remove(p, 'last');
   } else {
+    // The project's own fetch mirror in the engine folder (the helper makes it before a run starts), which nothing
+    // else reads once the project is gone; the engine and the other projects' mirrors stay.
+    const ownMirror = slug === null ? null : path.join(engineDir(), 'mirrors', `${slug}.git`);
+    if (ownMirror !== null && exists(ownMirror)) remove(ownMirror, 'last');
     kept('Wheelhouse\'s helper, telemetry, tools, your settings and this computer\'s signing key', `another project on this computer, or one being set up, still uses them${deferred > 0 ? ` (${deferred} change${deferred === 1 ? '' : 's'} of this computer's)` : ''}`);
   }
   // The project's folder first in its phase, as the newest, then the others in their order.
