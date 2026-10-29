@@ -61,6 +61,88 @@ const inside = (dir, folder) => {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 };
 
+// The processes of `runs` ([{ id, folder? }]) and of `processes` ([{ pid, name }], those the continuation host
+// started), with their trees: each { pid, pgid, command, name, own }. A run's owner is taken only where
+// `engine.ownsProcess(command)` says it is the engine's; one it doesn't own is named in `leftAlone`.
+async function snapshotOf({ engine, runs = [], processes = [], list, cwds, self }) {
+  const listed = async () => { try { return await list(); } catch { return []; } };
+  const engines = (command) => {
+    try { return engine.ownsProcess?.(command) === true; } catch { return false; }
+  };
+  const leftAlone = [];
+  const owners = [];
+  const folders = [];
+  for (const run of runs) {
+    try {
+      const pid = (await engine.inspect(run.id))?.ownerPid;
+      if (Number.isInteger(pid) && pid > 1) owners.push(pid);
+    } catch { /* a run that can't be read is cancelled all the same */ }
+    if (typeof run.folder === 'string' && run.folder !== '') folders.push(run.folder);
+  }
+  const table = await listed();
+  const byPid = new Map(table.map((p) => [p.pid, p]));
+  const own = byPid.get(self);
+  const kept = new Map();
+  const add = (pid, name) => {
+    const p = byPid.get(pid);
+    if (!p || pid <= 1 || pid === self || kept.has(pid)) return;
+    kept.set(pid, { pid, pgid: p.pgid, command: p.command, name, own: own !== undefined && p.pgid === own.pgid });
+    for (const child of table) if (child.ppid === pid) add(child.pid, `"${short(child.command)}" (process ${child.pid})`);
+  };
+  for (const p of processes) if (Number.isInteger(p?.pid)) add(p.pid, `${p.name ?? 'a process the engine started'} (process ${p.pid})`);
+  for (const pid of owners) {
+    const p = byPid.get(pid);
+    if (!p || kept.has(pid)) continue;
+    if (engines(p.command)) add(pid, `"${short(p.command)}" (process ${pid})`);
+    else leftAlone.push(`"${short(p.command)}" (process ${pid})`);
+  }
+  if (folders.length > 0) {
+    let where = new Map();
+    try { where = await cwds(); } catch { /* no folders to go by */ }
+    for (const p of table) {
+      const cwd = where.get(p.pid);
+      if (p.ppid === 1 && typeof cwd === 'string' && folders.some((folder) => inside(cwd, folder))) {
+        add(p.pid, `"${short(p.command)}" (process ${p.pid}, in the work's folder)`);
+      }
+    }
+  }
+  return { snapshot: [...kept.values()], leftAlone };
+}
+
+// Ends what of `snapshot` is still there after `wait`: SIGTERM, then SIGKILL for what outlives `grace`, each by pid
+// (its process group, where it leads one, never the helper's own). The same pid running the same command counts as
+// still there, so a pid taken since is left alone. -> { ended, survivors }, by name.
+async function endSnapshot(snapshot, { list, kill, wait, grace, sleep }) {
+  const ended = [];
+  const survivors = [];
+  if (snapshot.length === 0) return { ended, survivors };
+  const listed = async () => { try { return await list(); } catch { return []; } };
+  const alive = async () => {
+    const now = new Map((await listed()).map((p) => [p.pid, p]));
+    return snapshot.filter((p) => now.get(p.pid)?.command === p.command);
+  };
+  const end = (targets, signal) => {
+    for (const p of targets) {
+      const pid = p.pgid === p.pid && !p.own ? -p.pid : p.pid;
+      try { kill(pid, signal); } catch { /* it has gone */ }
+    }
+  };
+  if (wait > 0) await sleep(wait);
+  const left = await alive();
+  if (left.length > 0) {
+    end(left, 'SIGTERM');
+    await sleep(grace);
+    const stubborn = await alive();
+    if (stubborn.length > 0) {
+      end(stubborn, 'SIGKILL');
+      await sleep(grace);
+    }
+    const still = new Set((await alive()).map((p) => p.pid));
+    for (const p of left) (still.has(p.pid) ? survivors : ended).push(p.name);
+  }
+  return { ended, survivors };
+}
+
 // stopEngine({ engine, processes, kill, list, cwds, wait, sleep, reason, self, afterSnapshot }) ->
 //   { cancelled, paused, refused, ended, survivors, leftAlone, trouble? }
 // `processes` are those the continuation host started ([{ pid, name }]); `list()` gives [{ pid, ppid, pgid, command }]
@@ -74,58 +156,16 @@ export async function stopEngine({
   engine, processes = [], kill = killByPid, list = listProcesses, cwds = listCwds, wait = STOP_WAIT_MS, grace = KILL_GRACE_MS,
   sleep = delay, reason = 'All stop', self = process.pid, afterSnapshot = () => {},
 } = {}) {
-  const listed = async () => { try { return await list(); } catch { return []; } };
   let snapshot = null;
-  const leftAlone = [];
+  let leftAlone = [];
   let told = false;
   const tell = async () => {
     if (told) return;
     told = true;
     try { await afterSnapshot(); } catch { /* All stop goes on */ }
   };
-  const engines = (command) => {
-    try { return engine.ownsProcess?.(command) === true; } catch { return false; }
-  };
-
-  // The processes to look at again after the cancel, each { pid, pgid, command, name }.
   async function take(runs = []) {
-    const owners = [];
-    const folders = [];
-    for (const run of runs) {
-      try {
-        const pid = (await engine.inspect(run.id))?.ownerPid;
-        if (Number.isInteger(pid) && pid > 1) owners.push(pid);
-      } catch { /* a run that can't be read is cancelled all the same */ }
-      if (typeof run.folder === 'string' && run.folder !== '') folders.push(run.folder);
-    }
-    const table = await listed();
-    const byPid = new Map(table.map((p) => [p.pid, p]));
-    const own = byPid.get(self);
-    const kept = new Map();
-    const add = (pid, name) => {
-      const p = byPid.get(pid);
-      if (!p || pid <= 1 || pid === self || kept.has(pid)) return;
-      kept.set(pid, { pid, pgid: p.pgid, command: p.command, name, own: own !== undefined && p.pgid === own.pgid });
-      for (const child of table) if (child.ppid === pid) add(child.pid, `"${short(child.command)}" (process ${child.pid})`);
-    };
-    for (const p of processes) if (Number.isInteger(p?.pid)) add(p.pid, `${p.name ?? 'a process the engine started'} (process ${p.pid})`);
-    for (const pid of owners) {
-      const p = byPid.get(pid);
-      if (!p || kept.has(pid)) continue;
-      if (engines(p.command)) add(pid, `"${short(p.command)}" (process ${pid})`);
-      else leftAlone.push(`"${short(p.command)}" (process ${pid})`);
-    }
-    if (folders.length > 0) {
-      let where = new Map();
-      try { where = await cwds(); } catch { /* no folders to go by */ }
-      for (const p of table) {
-        const cwd = where.get(p.pid);
-        if (p.ppid === 1 && typeof cwd === 'string' && folders.some((folder) => inside(cwd, folder))) {
-          add(p.pid, `"${short(p.command)}" (process ${p.pid}, in the work's folder)`);
-        }
-      }
-    }
-    snapshot = [...kept.values()];
+    ({ snapshot, leftAlone } = await snapshotOf({ engine, runs, processes, list, cwds, self }));
     await tell();
   }
 
@@ -138,37 +178,7 @@ export async function stopEngine({
   // No run was running (or the engine couldn't say): the host's own processes are still looked at.
   if (snapshot === null) await take([]);
   await tell();
-
-  // The snapshot's processes still there: the same pid running the same command, so a pid taken since is left alone.
-  const alive = async () => {
-    const now = new Map((await listed()).map((p) => [p.pid, p]));
-    return snapshot.filter((p) => now.get(p.pid)?.command === p.command);
-  };
-  const end = (targets, signal) => {
-    for (const p of targets) {
-      // A group is ended only where the process leads it, and never the helper's own.
-      const pid = p.pgid === p.pid && !p.own ? -p.pid : p.pid;
-      try { kill(pid, signal); } catch { /* it has gone */ }
-    }
-  };
-
-  const ended = [];
-  const survivors = [];
-  if (snapshot.length > 0) {
-    await sleep(wait);
-    const left = await alive();
-    if (left.length > 0) {
-      end(left, 'SIGTERM');
-      await sleep(grace);
-      const stubborn = await alive();
-      if (stubborn.length > 0) {
-        end(stubborn, 'SIGKILL');
-        await sleep(grace);
-      }
-      const still = new Set((await alive()).map((p) => p.pid));
-      for (const p of left) (still.has(p.pid) ? survivors : ended).push(p.name);
-    }
-  }
+  const { ended, survivors } = await endSnapshot(snapshot, { list, kill, wait, grace, sleep });
   return {
     cancelled: result?.cancelled ?? [],
     paused: result?.paused ?? [],
@@ -178,6 +188,17 @@ export async function stopEngine({
     leftAlone,
     ...(result?.trouble ? { trouble: result.trouble } : {}),
   };
+}
+
+// endRun({ engine, run: { id, folder? }, kill, list, cwds, grace, sleep, self }) -> { ended, survivors, leftAlone }
+// One run's process tree ended by pid, as All stop ends every run's, for a run the engine wouldn't stop at its cap.
+// No other run is touched, and nothing is cancelled.
+export async function endRun({
+  engine, run, kill = killByPid, list = listProcesses, cwds = listCwds, grace = KILL_GRACE_MS, sleep = delay, self = process.pid,
+} = {}) {
+  const { snapshot, leftAlone } = await snapshotOf({ engine, runs: [run], list, cwds, self });
+  const { ended, survivors } = await endSnapshot(snapshot, { list, kill, wait: 0, grace, sleep });
+  return { ended, survivors, leftAlone };
 }
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

@@ -252,3 +252,12 @@ test('Wheelhouse\'s own configuration reads, and its safety checks need the dire
     assert.equal(classifyChange({ paths: [file], config }).touchesGuardrails, false, file);
   }
 });
+
+test('readConfig: testCommand is one line of text when given, and any other shape can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify(base)).testCommand, undefined);
+  assert.equal(readConfig(JSON.stringify({ ...base, testCommand: 'node --test' })).testCommand, 'node --test');
+  for (const given of ['', '   ', 'npm test\nrm -rf /', 7, ['npm', 'test'], null]) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, testCommand: given })), { message: "The project's Wheelhouse configuration can't be read" }, JSON.stringify(given));
+  }
+});

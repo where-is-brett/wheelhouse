@@ -12,7 +12,8 @@ import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null });
+const isText = (x) => typeof x === 'string' && x.trim() !== '';
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
@@ -32,14 +33,17 @@ function readState(file) {
   }
 }
 
+// The Logbook's line when no work can start because Wheelhouse can't run the project's tests.
+export const NO_TESTS_WORDS = 'Build work waits: Wheelhouse doesn\'t know how to run this project\'s tests, so it couldn\'t tell when a change is done. Setup can add the command.';
+
 // The words of the card for work held for the plan's counted requests, when the engine gives none of its own.
 export const REQUESTS_WORDS = 'Some work would use your AI plan\'s counted requests, and the cap on them is 0, so that work waits until you allow some.';
 
 // The order for one piece of work from its record: the title is its goal; the done checks are the record's own, or
-// the project's tests passing when it has none.
+// the project's tests passing when it has none. `config` is { routing (the pack's bindings), testCommand, pages? }.
 export function orderFor(entry, { settings = {}, raised = false, config = {} } = {}) {
   const data = entry.work.data;
-  const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : [{ command: config.testCommand ?? 'npm test', expect: 0 }];
+  const done = Array.isArray(data.done) && data.done.length > 0 ? data.done : [{ command: config.testCommand, expect: 0 }];
   return workOrder({
     work: { id: data.id ?? entry.work.key, lane: data.lane, goal: data.goal ?? data.title, done, visible: data.visible === true, level: data.level, notInScope: data.notInScope ?? [], protectedFiles: data.protectedFiles ?? [] },
     config,
@@ -72,6 +76,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const views = readViews() ?? {};
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work' };
+    if (!isText(config()?.testCommand)) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
     let order;
     try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {} }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
@@ -96,7 +101,24 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       requests, sentBack: Object.entries(state.sentBack).filter(([work, times]) => state.acted[work] !== times).map(([work, times]) => ({ work, times })), now: now(),
     });
     const started = [];
-    for (const piece of [...decided.requeue.map((r) => ({ ...r, carryOn: true, again: true })), ...decided.start]) {
+    // The project's configuration and test command: without one Wheelhouse can run, nothing starts (a run would have
+    // no done check), and the Logbook says so once.
+    let pieces = [...decided.requeue.map((r) => ({ ...r, carryOn: true, again: true })), ...decided.start];
+    if (pieces.length > 0 && !isText(config()?.testCommand)) {
+      decided.hold.push(...pieces.map((p) => ({ work: p.work, why: 'no-tests' })));
+      decided.start = [];
+      decided.requeue = [];
+      pieces = [];
+      if (!state.noTestsSaid) {
+        state.noTestsSaid = true;
+        keep();
+        await write('note', { about: 'engine', words: NO_TESTS_WORDS });
+      }
+    } else if (state.noTestsSaid && pieces.length > 0) {
+      state.noTestsSaid = false;
+      keep();
+    }
+    for (const piece of pieces) {
       if (stopped()) break;
       const { again, ...args } = piece;
       const got = await startPiece(args);

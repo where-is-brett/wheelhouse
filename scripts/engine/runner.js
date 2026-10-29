@@ -45,12 +45,13 @@ function saveState(file, state) {
 // A title inside a sentence: its first letter small, unless it is a name.
 const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLowerCase() + title.slice(1) : title);
 
-// engineRunner({ engine, file, readViews, write, stopped, now, settings, workOf, titleOf }) -> { onAsk, tick, file }.
+// engineRunner({ engine, file, readViews, write, stopped, now, settings, workOf, titleOf, endRun }) -> { onAsk, tick, file }.
 // - `readViews()` the project's views (questions, approvals, levels), as the helper builds them;
 // - `write(kind, data)` a record in the project's history; `stopped()` whether All stop is on;
 // - `settings()` { cardsPerDay, bundleApprovals }; `workOf(runId)` { work, lane } from the project's run records;
-// - `titleOf(work)` the work's title.
-export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work } = {}) {
+// - `titleOf(work)` the work's title; `endRun(runId)` ends a run's process tree by pid, as All stop does, for a run the
+//   engine wouldn't stop at its cap ({ ended, survivors }).
+export function engineRunner({ engine, file, readViews, write, stopped = () => false, now = () => new Date(), settings = () => ({}), workOf = () => null, titleOf = (work) => work, endRun = async () => ({ ended: [], survivors: [] }) } = {}) {
   let state = readState(file);
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
@@ -222,7 +223,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   }
 
   // The cap card for a run stopped at its cap (or one the engine itself stopped on its budget).
-  async function capped({ runId, work, lane, branch, reached }) {
+  async function capped({ runId, work, lane, branch, reached, stuck = null }) {
     if (state.capped[runId]) return;
     const n = (state.next[work] ?? ENGINE_QUESTIONS) + 1;
     state.next[work] = n;
@@ -233,8 +234,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const amount = reached.cap === 'minutes' ? `${reached.limit} minutes of work` : `${reached.limit.toLocaleString('en-GB')} tokens`;
     await write('question', {
       id, work, level: 3,
-      what: `${titleOf(work)} reached its cap of ${amount}, so it was stopped. What it has done so far is kept.`,
-      why: 'Spending more than the cap allows is yours to decide, at level 3.',
+      what: stuck
+        ? `${titleOf(work)} reached its cap of ${amount}, and the build engine didn't stop it when asked twice, so Wheelhouse ended its processes${stuck.survivors?.length ? `, though some are still running: ${stuck.survivors.join(', ')}` : ''}. What it has done so far is kept.`
+        : `${titleOf(work)} reached its cap of ${amount}, so it was stopped. What it has done so far is kept.`,
+      why: stuck
+        ? 'A run the build engine won\'t stop is yours to look at, and spending more than the cap allows is yours to decide, at level 3.'
+        : 'Spending more than the cap allows is yours to decide, at level 3.',
       options: [
         { label: MORE, says: 'It carries on from what is there, with the cap raised by half, once.' },
         { label: STOP_LABEL, says: 'It stays stopped; the work waits in the queue.' },
@@ -289,8 +294,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
           raised: carried.raised, carried: carriedSpend((v.costs?.[work] ?? []), carried.runs),
         }, { capMinutes, capTokens });
         if (!reached) continue;
-        await safely(() => engine.act(runId, { cancel: { reason: `the run reached its ${reached.cap} cap` } }));
-        await capped({ runId, work, lane: latest.lane, branch: latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null, reached });
+        // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes
+        // ended, as All stop ends them, so it can't spend past its cap unseen.
+        const cancel = () => safely(() => engine.act(runId, { cancel: { reason: `the run reached its ${reached.cap} cap` } }));
+        let stuck = null;
+        if ((await cancel())?.ok !== true && (await cancel())?.ok !== true && (await inspect(runId))?.status !== 'ended') {
+          stuck = (await safely(() => endRun(runId))) ?? { ended: [], survivors: [] };
+        }
+        await capped({ runId, work, lane: latest.lane, branch: latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null, reached, stuck });
       }
     }
   }

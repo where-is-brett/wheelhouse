@@ -43,6 +43,8 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
   const folder = path.join(root, 'project');
   const artefacts = path.join(root, 'art');
   for (const dir of [home, folder, artefacts]) fs.mkdirSync(dir, { recursive: true });
+  // A project whose tests run with `npm test`, so its work can have a done check.
+  fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify({ name: 'p', scripts: { test: 'node --test' } }));
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   const hostCalls = [];

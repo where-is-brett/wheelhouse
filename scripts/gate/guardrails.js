@@ -151,6 +151,10 @@ const previewOk = (p) => isObject(p) && Object.keys(p).every((k) => PREVIEW_KEYS
   && typeof p.command === 'string' && p.command.trim() !== '' && Number.isInteger(p.port) && p.port >= 1 && p.port <= 65535
   && typeof p.ready === 'string' && p.ready !== '';
 
+// The command that runs the project's tests (Archon design, section 7.4): one line, the build engine's done check when
+// a piece of work names none.
+const testCommandOk = (t) => typeof t === 'string' && t.trim() !== '' && !/[\r\n]/.test(t) && t.length <= 500;
+
 function shapeOk(c) {
   if (!isObject(c) || c.v !== 1) return false;
   if (!Array.isArray(c.criticalAreas) || !c.criticalAreas.every((a) => (
@@ -166,6 +170,7 @@ function shapeOk(c) {
   if (c.pages !== undefined && !(Array.isArray(c.pages) && c.pages.length <= MOST_PAGES && c.pages.every(isPage))) return false;
   if (c.signsApps !== undefined && typeof c.signsApps !== 'boolean') return false;
   if (c.preview !== undefined && !previewOk(c.preview)) return false;
+  if (c.testCommand !== undefined && !testCommandOk(c.testCommand)) return false;
   return buildLoopOk(c);
 }
 

@@ -357,11 +357,12 @@ export function archonAdapter({
       return refusedWith('Nothing to do: give an answer, a cancel or a resume');
     },
 
-    // The run's record (record.js), with `ownerPid`, the process that owns the run; status 'unknown' when Archon
-    // has no such run.
+    // The run's record (record.js), with `ownerPid`, the process that owns the run, and `folder`, the worktree it
+    // works in (worktreeOf, or null); status 'unknown' when Archon has no such run.
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
-      return readRecord(result.code === 0 && result.json?.ok !== false ? result.json : null);
+      const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
+      return { ...readRecord(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

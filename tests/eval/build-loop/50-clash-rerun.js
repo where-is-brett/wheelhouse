@@ -24,7 +24,7 @@ export default {
         const starts = [];
         const written = [];
         const d = dispatchRun({
-          engine: world.engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => views,
+          engine: world.engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => views, config: () => ({ routing: {}, testCommand: 'npm test' }),
           start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length + 1}` }; },
           write: async (kind, data) => { written.push({ kind, data }); },
           now: () => new Date('2026-10-29T10:00:00.000Z'),

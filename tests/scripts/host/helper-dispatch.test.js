@@ -42,6 +42,8 @@ async function setUp() {
   const home = shortHome();
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-proj-'));
   const artefacts = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-art-'));
+  // A project whose tests run with `npm test`.
+  fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify({ name: 'p', scripts: { test: 'node --test' } }));
   await as(home, async () => {
     const { computer, publicKey } = makeSigningKey();
     enrol({ computer, publicKey, enrolledAt: '2026-10-29T00:00:00.000Z' });
@@ -154,6 +156,52 @@ test('an ask from the merge queue\'s own run is routed: a red main line\'s hold 
         const held = await until(() => engine.calls.find((c) => c.call === 'act' && c.action?.answer?.choice === 'hold'), { what: 'the hold answered' });
         assert.equal(held.action.answer.ask, 'mq:red:1');
         assert.equal(records('question').length + records('card').length, 0);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('the order carries the project\'s test command and the models of the column in force', async () => {
+  const p = await setUp();
+  fs.mkdirSync(path.join(p.folder, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(p.folder, '.claude', 'wheelhouse.json'), JSON.stringify({
+    v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [], testCommand: 'node --test test/',
+    tiers: { pins: { mostCapable: 'model-top', midSized: 'model-mid' } },
+  }));
+  const engine = fakeEngine({ recordings: { 'quick-approved': recordings['quick-approved'] }, artefacts: p.artefacts });
+  try {
+    await as(p.home, async () => {
+      put('work', { id: 'card-12', title: 'Fix the heading', lane: 'quick', visible: false, dependsOn: [] }, '2026-10-29T08:00:00.000Z');
+      const helper = await helperFor(p, engine);
+      try {
+        await helper.engine.tick();
+        const runId = records('run')[0].data.runId;
+        const order = JSON.parse(fs.readFileSync(path.join(stateDir(P), '..', 'engine', 'orders', `${runId}.json`), 'utf8'));
+        assert.equal(order.testCommand, 'node --test test/');
+        assert.deepEqual(order.done, [{ command: 'node --test test/', expect: 0 }]);
+        assert.deepEqual(order.bindings, { tiers: { large: 'model-top', medium: 'model-top', small: 'model-mid' } }, 'Balanced: building on the most capable, mechanical work on the mid-sized');
+        assert.deepEqual(engine.calls.find((c) => c.call === 'start').order.bindings, order.bindings);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});
+
+test('a project whose tests Wheelhouse can\'t run starts no work, and the Logbook says why', async () => {
+  const p = await setUp();
+  fs.rmSync(path.join(p.folder, 'package.json'));
+  const engine = fakeEngine({ recordings: { 'quick-approved': recordings['quick-approved'] }, artefacts: p.artefacts });
+  try {
+    await as(p.home, async () => {
+      put('work', { id: 'card-12', title: 'Fix the heading', lane: 'quick', visible: false, dependsOn: [] }, '2026-10-29T08:00:00.000Z');
+      const helper = await helperFor(p, engine);
+      try {
+        await helper.engine.tick();
+        assert.equal(engine.calls.filter((c) => c.call === 'start').length, 0);
+        assert.ok(records('note').some((n) => /tests/.test(n.data.words ?? '')));
       } finally {
         await helper.close();
       }

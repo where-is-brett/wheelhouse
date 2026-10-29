@@ -90,6 +90,19 @@ export function checkOrder(order) {
   return null;
 }
 
+// The routing table's column in force ({ role: { model } }, as resolveRouting gives it) as the pack's tier bindings
+// (spec 7.6): `large` for critical building, `medium` for building, `small` for mechanical work. A role with no model
+// names no tier, so the pack's own tier stands for it.
+const TIER_ROLES = Object.freeze({ large: 'builderCritical', medium: 'builder', small: 'mechanical' });
+export function bindingsOf(roles) {
+  const tiers = {};
+  for (const [tier, role] of Object.entries(TIER_ROLES)) {
+    const model = roles?.[role]?.model;
+    if (typeof model === 'string' && model !== '') tiers[tier] = model;
+  }
+  return Object.keys(tiers).length > 0 ? { tiers } : {};
+}
+
 // The order for one run of `work` (a work record: { id, lane, goal, notInScope?, done, protectedFiles?, visible?,
 // shownFirst?, level? }),
 // with `rulings` (text), the routing table's column in force as `routing` ({ tiers?, aliases? }), and the project's

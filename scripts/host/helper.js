@@ -54,7 +54,7 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { startEngineHost } from '../engine/host.js';
-import { stopEngine, stopWords } from '../engine/stop.js';
+import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
@@ -107,6 +107,8 @@ import { runReview } from '../review/clean-session.js';
 import { reviewsFor } from '../agents/reviews.js';
 import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
+import { routingInForce } from '../routing/in-force.js';
+import { bindingsOf } from '../engine/order.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
 
@@ -399,6 +401,17 @@ export function incidentFor(views, number) {
   if (open.length === 0) return { open: false };
   const fixing = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
   return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
+}
+
+// `npm test` when the project in `folder` has a test script of its own in its package.json (not npm's placeholder,
+// which only fails), or null.
+function npmTestOf(folder) {
+  try {
+    const test = JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8'))?.scripts?.test;
+    return typeof test === 'string' && test.trim() !== '' && !/no test specified/.test(test) ? 'npm test' : null;
+  } catch {
+    return null;
+  }
 }
 
 // The keys the merge gate counts: this computer's own alone (design section 24.3 item 1).
@@ -4156,6 +4169,25 @@ export async function startHelper({
     }
   }
 
+  // What a project's work orders take from its configuration (Archon design, sections 7.4 and 7.6): the routing
+  // table's column in force as the pack's bindings (an agent's own column when the project runs on another agent),
+  // the command that runs its tests, and the pages its previews take. Null when the configuration can't be read. The
+  // test command is the configuration's, or `npm test` when the project's package.json has a test script of its own.
+  function engineConfigOf(project, folder) {
+    if (typeof folder !== 'string') return null;
+    let config;
+    try {
+      const file = path.join(folder, ...CONFIG_FILE.split('/'));
+      config = readConfig(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
+    } catch {
+      return null;
+    }
+    const agent = agentOfConfig(config, { computerId: computerId() });
+    const own = agent !== agentOfConfig(null) && config.agentRouting?.[agent];
+    const roles = own ? Object.fromEntries(Object.entries(own).map(([role, model]) => [role, { model }])) : routingInForce(project, config, { now }).roles;
+    return { routing: bindingsOf(roles), testCommand: config.testCommand ?? npmTestOf(folder), pages: config.pages ?? [] };
+  }
+
   // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).
   function engineDesk(project, engine) {
     const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
@@ -4166,6 +4198,7 @@ export async function startHelper({
     const month = () => now().toISOString().slice(0, 7);
     const dispatcher = dispatchRun({
       engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
+      config: () => engineConfigOf(project, folder),
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
       spentThisMonth: () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0),
@@ -4174,6 +4207,7 @@ export async function startHelper({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
       workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
       titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
+      endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
     });
     runner.onStart((args) => dispatcher.startAgain(args));
     return { runner, dispatcher };

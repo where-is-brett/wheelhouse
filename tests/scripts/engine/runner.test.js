@@ -20,7 +20,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false, endRun } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   const writes = [];
@@ -36,6 +36,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     settings: () => ({ cardsPerDay: 3, bundleApprovals: false, ...settings }),
     workOf: () => ({ work: 'sale-banner', lane: 'quick' }),
     titleOf: () => 'The sale banner',
+    ...(endRun ? { endRun } : {}),
   });
   // Starts a run of `name` and hands the runner its open ask, as the host does.
   const ask = async (name = 'one') => {
@@ -326,5 +327,53 @@ test('an engine that says the ask moved on closes the card with one line, and it
     await t.runner.tick();
     assert.equal(acts(t.engine).length, 2, 'the other answer, then this one, once');
     assert.equal(t.writes.filter((w) => w.kind === 'note' && /moved on/.test(w.data.words ?? '')).length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a cancel at the cap that fails is tried once more before the card', async () => {
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+    const real = t.engine.act.bind(t.engine);
+    let fails = 1;
+    t.engine.act = (id, action) => (action.cancel && fails-- > 0 ? { ok: false, unreachable: true, refused: 'timed out' } : real(id, action));
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'the second try reached the engine');
+    assert.match(t.writes.filter((w) => w.kind === 'question').at(-1).data.what, /so it was stopped/);
+  } finally { t.cleanup(); }
+});
+
+test('a run the engine won\'t stop at its cap has its processes ended, and the card says so', async () => {
+  const ended = [];
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, endRun: async (runId) => { ended.push(runId); return { ended: ['"node step" (process 101)'], survivors: [] }; } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+    t.engine.act = (id, action) => (action.cancel ? { ok: false, refused: 'The engine refused to cancel the run' } : { ok: true });
+    await t.runner.tick();
+    assert.deepEqual(ended, [runId]);
+    const q = t.writes.filter((w) => w.kind === 'question').at(-1).data;
+    assert.equal(q.level, 3);
+    assert.match(q.what, /didn't stop it/);
+    assert.match(q.what, /ended its processes/);
+    await t.runner.tick();
+    assert.equal(ended.length, 1, 'once');
+  } finally { t.cleanup(); }
+});
+
+test('a run already over when its cancel fails gets the usual card, and nothing is ended', async () => {
+  const ended = [];
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, endRun: async (runId) => { ended.push(runId); return { ended: [], survivors: [] }; } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+    const inspect = t.engine.inspect.bind(t.engine);
+    let over = false;
+    t.engine.act = (id, action) => { if (action.cancel) { over = true; return { ok: false, refused: 'The run isn\'t running' }; } return { ok: true }; };
+    t.engine.inspect = (id) => ({ ...inspect(id), ...(over ? { status: 'ended' } : {}) });
+    await t.runner.tick();
+    assert.deepEqual(ended, []);
+    assert.match(t.writes.filter((w) => w.kind === 'question').at(-1).data.what, /so it was stopped/);
   } finally { t.cleanup(); }
 });

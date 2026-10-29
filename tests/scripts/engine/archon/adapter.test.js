@@ -135,8 +135,13 @@ test('inspect reads the run record', async () => {
   assert.equal(cli.calls[0].options.json, true);
   assert.equal(record.status, 'ended');
   assert.equal(record.ownerPid, 48213);
+  // The worktree the run works in, so a run the engine won't stop can be ended by its processes; null outside one.
+  assert.equal(record.folder, null);
+  const inBase = await adapter(fakeCli({ 'workflow get': json('get-verbose.json') }), { worktreeBases: ['/Users/director/Projects/web/.worktrees'] }).inspect(RUN);
+  assert.equal(inBase.folder, '/Users/director/Projects/web/.worktrees/wh/card-14');
   const missing = await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false, error: 'not found' }, stdout: '', stderr: '' } })).inspect('nope');
   assert.equal(missing.status, 'unknown');
+  assert.equal(missing.folder, null);
 });
 
 test('outputs reads each step\'s whole output from the run\'s events', async () => {

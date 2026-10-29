@@ -1,0 +1,49 @@
+// tests/scripts/engine/dispatch-run.test.js
+// The dispatcher's runner (scripts/engine/dispatch-run.js): the order each piece starts with carries the project's
+// model bindings and test command; work for a project whose tests Wheelhouse can't run waits, said once.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { dispatchRun } from '../../../scripts/engine/dispatch-run.js';
+import { fakeEngine } from '../../../scripts/engine/fake.js';
+import { tempFolder } from '../../helpers/homes.js';
+
+const views = () => ({
+  work: { 'card-1': { work: { id: 'w-1', at: '2026-10-29T08:00:00.000Z', data: { id: 'card-1', title: 'The sale banner', lane: 'quick', visible: false, dependsOn: [] } }, approved: false, since: '2026-10-29T08:00:00.000Z' } },
+  runs: {}, questions: {},
+});
+
+function setUp(config) {
+  const dir = tempFolder('wh-dr-');
+  const starts = [];
+  const written = [];
+  const d = dispatchRun({
+    engine: fakeEngine(), project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: views, config: () => config,
+    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    write: async (kind, data) => { written.push({ kind, data }); },
+    now: () => new Date('2026-10-29T10:00:00.000Z'),
+  });
+  return { d, starts, written };
+}
+
+test('the order carries the project\'s model bindings and its test command', async () => {
+  const t = setUp({ routing: { tiers: { large: 'model-a', medium: 'model-b' } }, testCommand: 'node --test' });
+  await t.d.tick();
+  assert.equal(t.starts.length, 1);
+  const { order } = t.starts[0];
+  assert.deepEqual(order.bindings, { tiers: { large: 'model-a', medium: 'model-b' } });
+  assert.equal(order.testCommand, 'node --test');
+  assert.deepEqual(order.done, [{ command: 'node --test', expect: 0 }]);
+});
+
+test('with no test command Wheelhouse can run, no work starts, and the Logbook says why once', async () => {
+  for (const config of [{ routing: {} }, null]) {
+    const t = setUp(config);
+    await t.d.tick();
+    await t.d.tick();
+    assert.equal(t.starts.length, 0, JSON.stringify(config));
+    const said = t.written.filter((w) => w.kind === 'note');
+    assert.equal(said.length, 1);
+    assert.match(said[0].data.words, /waits/);
+  }
+});
