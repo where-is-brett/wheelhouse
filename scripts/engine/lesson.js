@@ -3,10 +3,12 @@
 // gave. The helper reads it from the engine's own record, never from this step, and writes at most one a run.
 //   node scripts/engine/lesson.js --run <run id>
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 30000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   if (!runId) {
     out('usage: node scripts/engine/lesson.js --run <run id>');

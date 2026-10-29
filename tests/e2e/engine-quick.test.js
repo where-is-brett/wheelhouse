@@ -20,6 +20,7 @@ import { listEvents } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey } from '../../scripts/state/signing.js';
 import { fakeEngine, loadRecordings } from '../../scripts/engine/fake.js';
 import { workOrder } from '../../scripts/engine/order.js';
+import { withTicket } from '../../scripts/engine/ticket.js';
 import { buildPack } from '../../scripts/engine/pack-build.js';
 import { makePreview } from '../../scripts/engine/preview.js';
 import { main as reviewSign } from '../../scripts/engine/review-sign.js';
@@ -109,8 +110,12 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
 
         // The order step: the run starts, and its order is the helper's, fetched by the run's id.
         const order = workOrder({ work: { id: 'card-20', lane: 'quick', goal: 'Show prices with two decimals', done: [{ test: 'prices' }], visible: true }, config: { pages: ['/'] } });
-        const { runId } = await client.engine.start({ project: P, order });
-        assert.equal((await client.engine.order({ runId })).order.goal, 'Show prices with two decimals');
+        const { runId } = await helper.engine.start({ project: P, order });
+        // The run's steps carry its ticket, from its artefacts folder; a call without it gets nothing.
+        const art = engine.artefactsOf(runId);
+        const steps = withTicket(client, ['--artefacts', art]);
+        assert.equal((await steps.engine.order({ runId })).order.goal, 'Show prices with two decimals');
+        assert.equal((await client.engine.order({ runId })).ok, false);
 
         // The build, in the run's worktree on its own branch.
         const worktree = path.join(checkout, '.worktrees', 'wh-card-20');
@@ -122,7 +127,7 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
         engine.setOutput(runId, 'lenses', JSON.stringify({ security: false, design: true, head, clean: true }));
 
         // The pull-request step: pushed from the worktree and opened, through the helper.
-        const opened = await client.engine.openPr({ runId, cwd: worktree, title: 'Show prices with two decimals', body: 'Prices show two decimals.' });
+        const opened = await steps.engine.openPr({ runId, cwd: worktree, title: 'Show prices with two decimals', body: 'Prices show two decimals.' });
         assert.deepEqual(opened, { ok: true, branch: 'wh/card-20', pr: 1, head });
         engine.setOutput(runId, 'open-pr', JSON.stringify({ branch: opened.branch, pr: opened.pr, head }));
 
@@ -147,7 +152,7 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
 
         // The sign step: each lens that ran is signed from the engine's record, and the verdict is posted once.
         const signed = [];
-        assert.equal(await reviewSign(['--run', runId], { client, out: (line) => signed.push(line) }), 0);
+        assert.equal(await reviewSign(['--run', runId, '--artefacts', art], { client, out: (line) => signed.push(line) }), 0);
         assert.deepEqual(JSON.parse(signed.at(-1)), { clean: true });
         assert.equal(host.comments.length, 1);
         assert.match(host.comments[0].body, new RegExp(`Reviewed commit: \`${head}\``));
@@ -158,7 +163,7 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
         // The preview step: the pictures go to the run's artefacts, and the helper copies them into the record.
         const out = path.join(engine.artefactsOf(runId), 'preview');
         const made = await makePreview({
-          runId, out, cwd: worktree, base: 'main', client, browser: '/chrome',
+          runId, out, cwd: worktree, base: 'main', client: steps, browser: '/chrome',
           picture: async ({ out: file }) => { fs.writeFileSync(file, PNG); return { ok: true }; },
         });
         assert.equal(made.pictures, 2);
@@ -170,16 +175,16 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
 
         // Shown first: not ready until the director approves.
         const early = [];
-        assert.equal(await markReady(['--run', runId], { client, out: (line) => early.push(line) }), 1);
+        assert.equal(await markReady(['--run', runId, '--artefacts', art], { client, out: (line) => early.push(line) }), 1);
         assert.match(early.join('\n'), /shown first/);
         const ask = engine.watch('0').events.find((e) => e.type === 'ask');
         assert.deepEqual(engine.act(runId, { answer: { ask: ask.id, choice: 'approve' } }), { ok: true });
-        assert.equal(await markReady(['--run', runId], { client, out: () => {} }), 0);
+        assert.equal(await markReady(['--run', runId, '--artefacts', art], { client, out: () => {} }), 0);
         assert.deepEqual(engine.calls.find((c) => c.call === 'handOver').item.pr, 1);
 
         // The lesson step: one lesson, however often it is asked.
-        assert.equal(await lessonStep(['--run', runId], { client, out: () => {} }), 0);
-        assert.equal(await lessonStep(['--run', runId], { client, out: () => {} }), 0);
+        assert.equal(await lessonStep(['--run', runId, '--artefacts', art], { client, out: () => {} }), 0);
+        assert.equal(await lessonStep(['--run', runId, '--artefacts', art], { client, out: () => {} }), 0);
         const lessons = records().filter((e) => e.kind === 'lesson');
         assert.equal(lessons.length, 1);
         assert.equal(lessons[0].data.work, 'card-20');

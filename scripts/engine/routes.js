@@ -18,14 +18,17 @@
 //   provenance(project, { branch })   records what built the branch's pull request (the pack's digest and Archon's)
 //   previewsDir(project)  where previews are kept, `previews/<work>/<head>/` under the project's engine files
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
-// started itself, with an order.
+// started itself, with an order. Only the helper starts a run (the dispatcher, through `start`, never a route), and
+// every route asks for the run's ticket (ticket.js), which only that run's steps can read.
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkOrder, orderStore, isRunId } from './order.js';
 import { MOST_TOUCHED, pictureName } from './preview-names.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
+import { newTicket, ticketHash, ticketMatches, writeTicket } from './ticket.js';
 
 const NO_ORDER = 'there is no work order for that run';
+const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
 
 // The pack's review steps (engine/archon/pack/wheelhouse-quick.yaml), and the severities that hold work back.
 export const REVIEW_STEPS = Object.freeze(['review-standards', 'review-spec', 'review-security', 'review-design']);
@@ -98,19 +101,34 @@ export function engineRoutes({
     return null;
   }
 
-  // Starts a run of `order` for `project` and keeps its order under the run's id; writes the run's start in the
-  // project's record, which is how the continuation host knows the run is the project's.
+  // The hash of a run's ticket, kept beside its order.
+  const ticketFile = (project, runId) => path.join(ordersDir(project), `${runId}.ticket`);
+
+  // Starts a run of `order` for `project` and keeps its order under the run's id; writes the run's ticket into the
+  // run's artefacts folder and keeps its hash; writes the run's start in the project's record, which is how the
+  // continuation host knows the run is the project's. The helper's own: no route reaches it.
   async function start({ project, order, branch, carryOn } = {}) {
     if (held()) return { ok: false, refused: 'All stop is on, so no run starts' };
     const found = projects().find((p) => p.project === project);
     if (!found) return { ok: false, refused: 'that project isn\'t registered on this computer' };
     const engine = engineFor(project);
     if (!engine) return { ok: false, refused: 'that project doesn\'t use the build engine' };
+    if (typeof engine.artefactsOf !== 'function') return { ok: false, refused: 'that project\'s engine gives a run no artefacts folder, so its steps can\'t be given their ticket' };
     const problem = checkOrder(order);
     if (problem) return { ok: false, refused: problem };
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
     if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run' };
     storeOf(project).save(started.runId, order);
+    const artefacts = engine.artefactsOf(started.runId, host?.repo?.(project));
+    const ticket = newTicket();
+    try {
+      if (!artefacts) throw new Error('no artefacts folder');
+      fs.writeFileSync(ticketFile(project, started.runId), `${ticketHash(ticket)}\n`, { flag: 'wx', mode: 0o600 });
+      writeTicket(artefacts, ticket);
+    } catch {
+      await engine.act(started.runId, { cancel: { reason: 'the run\'s ticket couldn\'t be written' } });
+      return { ok: false, refused: 'the run\'s ticket couldn\'t be written, so it was stopped' };
+    }
     const runBranch = started.branch ?? branch;
     await write(project, 'run', { work: order.work, lane: order.lane, engine: engine.name ?? 'engine', runId: started.runId, state: 'started', ...(runBranch ? { branch: runBranch } : {}) });
     return { ok: true, runId: started.runId };
@@ -187,7 +205,7 @@ export function engineRoutes({
     const opened = await host.open(run.project, { branch: pushed.branch, title: title.trim().split('\n')[0], body });
     // The pull request is the run's from here: the broker's permit reads whether its work is shown first from this.
     const verdicts = readVerdicts(run.project);
-    verdicts.opened[opened.pr] = { runId, head: opened.head, showFirst: run.order.showFirst === true, work: run.order.work };
+    verdicts.opened[opened.pr] = { runId, head: opened.head, showFirst: run.order.showFirst === true, work: run.order.work, level: run.order.level ?? null };
     keepVerdicts(run.project, verdicts);
     return { ok: true, branch: pushed.branch, pr: opened.pr, head: opened.head };
   }
@@ -300,23 +318,34 @@ export function engineRoutes({
   // The run that opened a pull request: { runId, head, showFirst, work }, or null for one no run of the helper's opened.
   const openedOf = (project, pr) => readVerdicts(project).opened?.[pr] ?? null;
 
+  // A route served only to a call that carries the run's own ticket.
+  const ticketed = (route) => async (body = {}) => {
+    const run = runOf(body?.runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    let hash = null;
+    try { hash = fs.readFileSync(ticketFile(run.project, body.runId), 'utf8').trim(); } catch { hash = null; }
+    if (!ticketMatches(body.ticket, hash)) return { ok: false, refused: NO_TICKET };
+    const { ticket: _ticket, ...rest } = body;
+    return route(rest);
+  };
+
   return {
     runOf,
     readyOf,
     openedOf,
+    start,
     routes: {
-      '/engine/start': start,
-      '/engine/review': review,
-      '/engine/open-pr': openPr,
-      '/engine/ready': ready,
-      '/engine/preview/find': previewFind,
-      '/engine/preview': preview,
-      '/engine/lesson': lesson,
+      '/engine/review': ticketed(review),
+      '/engine/open-pr': ticketed(openPr),
+      '/engine/ready': ticketed(ready),
+      '/engine/preview/find': ticketed(previewFind),
+      '/engine/preview': ticketed(preview),
+      '/engine/lesson': ticketed(lesson),
       // The order the helper keeps for the run, and nothing for any other id.
-      '/engine/order': async ({ runId } = {}) => {
+      '/engine/order': ticketed(async ({ runId } = {}) => {
         const run = runOf(runId);
         return run ? { ok: true, order: run.order } : { ok: false, refused: NO_ORDER };
-      },
+      }),
     },
   };
 }

@@ -6,11 +6,13 @@
 //
 //   Order = { v: 1, work, lane, goal, notInScope: [text], done: [Check], rulings: [text], decisionRules: [text],
 //             caps: { minutes, tokens }, protectedFiles: [path], preview: { pages, styleGuide } | null,
-//             showFirst, testCommand, bindings: { tiers?, aliases? } }
+//             showFirst, level, testCommand, bindings: { tiers?, aliases? } }
 //   Check = { test } | { command, expect } | { page, mustShow }
 // `expect` is the exit code a command must end with (a number), or text its output must hold. A `test` check runs the
 // order's `testCommand` with the test's name added. `showFirst` is the work record's flag: visible work, unless the
 // director waived it, waits for the director's approval before it is marked ready; an order without it isn't shown first.
+// `level` is the work's decision level (main design, section 6), 3 unless the work says otherwise: the broker's permit
+// holds a level-4 change for the director's signed approval.
 // A `page` check is walked in a browser by the tester (the preview
 // step), not by the done check.
 import fs from 'node:fs';
@@ -82,16 +84,18 @@ export function checkOrder(order) {
     return 'a work order\'s preview needs its pages and style guide';
   }
   if (order.showFirst !== undefined && typeof order.showFirst !== 'boolean') return 'a work order says yes or no to being shown first';
+  if (order.level !== undefined && ![1, 2, 3, 4].includes(order.level)) return 'a work order\'s level is 1, 2, 3 or 4';
   if (!isText(order.testCommand)) return 'a work order needs the project\'s test command';
   if (!isObject(order.bindings)) return 'a work order needs its model bindings';
   return null;
 }
 
 // The order for one run of `work` (a work record: { id, lane, goal, notInScope?, done, protectedFiles?, visible?,
-// shownFirst? }),
+// shownFirst?, level? }),
 // with `rulings` (text), the routing table's column in force as `routing` ({ tiers?, aliases? }), and the project's
-// settings as `config` ({ pages?, styleGuide?, testCommand? }). Throws, in plain words, on anything an order can't be.
-export function workOrder({ work, rulings = [], routing = {}, config = {} } = {}) {
+// settings as `config` ({ pages?, styleGuide?, testCommand? }); `caps` ({ minutes, tokens }) in place of the lane's own, as
+// the project's settings give them. Throws, in plain words, on anything an order can't be.
+export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null } = {}) {
   if (!isObject(work)) throw new Error('A work order needs the work it is for');
   if (work.model !== undefined || work.models !== undefined) throw new Error('A work record names a model: the routing table is the one place that does');
   const order = {
@@ -103,10 +107,11 @@ export function workOrder({ work, rulings = [], routing = {}, config = {} } = {}
     done: (work.done ?? []).map((check) => ({ ...check })),
     rulings: [...rulings],
     decisionRules: [...DECISION_RULES],
-    caps: LANE_CAPS[work.lane] ? { ...LANE_CAPS[work.lane] } : null,
+    caps: caps ? { ...caps } : LANE_CAPS[work.lane] ? { ...LANE_CAPS[work.lane] } : null,
     protectedFiles: [...(work.protectedFiles ?? [])],
     preview: work.visible === true ? { pages: [...(config.pages ?? [])], styleGuide: config.styleGuide ?? null } : null,
     showFirst: work.visible === true && work.shownFirst !== false,
+    level: [1, 2, 3, 4].includes(work.level) ? work.level : 3,
     testCommand: config.testCommand ?? DEFAULT_TEST_COMMAND,
     bindings: { ...(routing.tiers ? { tiers: { ...routing.tiers } } : {}), ...(routing.aliases ? { aliases: { ...routing.aliases } } : {}) },
   };

@@ -12,7 +12,7 @@
   "nodes": [
     {
       "id": "order",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/order-copy.js\" --run \"$WORKFLOW_ID\" --out \"$ARTIFACTS_DIR\" --flags",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/order-copy.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --out \"$ARTIFACTS_DIR\" --flags",
       "timeout": 60000,
       "output_format": {
         "type": "object",
@@ -40,7 +40,7 @@
       "loop_group": {
         "max_iterations": 5,
         "fresh_context": true,
-        "until_bash": "blocked=$build.output.blocked; [ \"$blocked\" = \"true\" ] || { node \"$WHEELHOUSE_ROOT/scripts/engine/done-check.js\" --run \"$WORKFLOW_ID\" && node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\"; }",
+        "until_bash": "blocked=$build.output.blocked; [ \"$blocked\" = \"true\" ] || { node \"$WHEELHOUSE_ROOT/scripts/engine/done-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" && node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\"; }",
         "nodes": [
           {
             "id": "build",
@@ -147,7 +147,7 @@
       ],
       "trigger_rule": "none_failed_min_one_success",
       "when": "$implement.output.blocked == 'false'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\" --json",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --json",
       "timeout": 120000,
       "output_format": {
         "type": "object",
@@ -229,7 +229,7 @@
       ],
       "trigger_rule": "none_failed_min_one_success",
       "when": "$tests.output.clean == 'true' && $controls.output.clean == 'true'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/lenses.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/lenses.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\"",
       "timeout": 60000,
       "output_format": {
         "type": "object",
@@ -969,7 +969,7 @@
       ],
       "trigger_rule": "none_failed_min_one_success",
       "when": "$pr-text.output.blocked == 'false'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/open-pr.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\" --dir \"$ARTIFACTS_DIR\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/open-pr.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --dir \"$ARTIFACTS_DIR\"",
       "timeout": 300000,
       "output_format": {
         "type": "object",
@@ -996,7 +996,7 @@
       "depends_on": [
         "open-pr"
       ],
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/review-sign.js\" --run \"$WORKFLOW_ID\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/review-sign.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
       "timeout": 120000,
       "output_format": {
         "type": "object",
@@ -1048,7 +1048,7 @@
       ],
       "trigger_rule": "none_failed_min_one_success",
       "when": "$sign.output.clean == 'true'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/preview.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\" --out \"$ARTIFACTS_DIR/preview\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/preview.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --out \"$ARTIFACTS_DIR/preview\"",
       "timeout": 600000,
       "output_format": {
         "type": "object",
@@ -1107,7 +1107,7 @@
         "rejected"
       ],
       "trigger_rule": "none_failed_min_one_success",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/ready.js\" --run \"$WORKFLOW_ID\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/ready.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
       "timeout": 60000
     },
     {
@@ -1218,7 +1218,7 @@
         "lesson"
       ],
       "when": "$lesson.output.blocked == 'false'",
-      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/lesson.js\" --run \"$WORKFLOW_ID\"",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/lesson.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\"",
       "timeout": 60000
     }
   ]

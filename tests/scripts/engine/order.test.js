@@ -79,3 +79,15 @@ test('the store keeps one order a run and answers nothing for an unknown run id'
   assert.deepEqual(fs.readdirSync(dir), ['run-1.json']);
   assert.equal(fs.statSync(path.join(dir, 'run-1.json')).mode & 0o077, 0);
 });
+
+test('the order carries the work\'s decision level, 3 when the work gives none, for the permit\'s level-4 rule', () => {
+  const work = { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }] };
+  assert.equal(workOrder({ work }).level, 3);
+  assert.equal(workOrder({ work: { ...work, level: 4 } }).level, 4);
+  assert.equal(checkOrder({ ...workOrder({ work }), level: 5 }), 'a work order\'s level is 1, 2, 3 or 4');
+});
+
+test('the order takes the project\'s caps in place of the lane\'s', () => {
+  const work = { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }] };
+  assert.deepEqual(workOrder({ work, caps: { minutes: 30, tokens: 1500000 } }).caps, { minutes: 30, tokens: 1500000 });
+});

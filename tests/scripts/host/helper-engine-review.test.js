@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { engineRoutes, verdictBody, REVIEW_STEPS } from '../../../scripts/engine/routes.js';
+import { ticketedRoutes } from '../../helpers/engine-tickets.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -22,11 +23,12 @@ function setup({ outputs = {}, captured = DIGEST } = {}) {
   const comments = [];
   const engine = {
     name: 'archon',
+    artefactsOf: (runId) => path.join(dir, 'art', runId),
     start: async () => ({ ok: true, runId: 'run-1', branch: 'wh/card-1' }),
     inspect: async () => ({ status: 'running', source: path.join(dir, 'capture') }),
     outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }), lenses: JSON.stringify({ security: false, design: false, head: HEAD, clean: true }), ...outputs }),
   };
-  const { routes } = engineRoutes({
+  const { routes } = ticketedRoutes(engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
     engineFor: () => engine,
     ordersDir: () => path.join(dir, 'orders'),
@@ -34,7 +36,7 @@ function setup({ outputs = {}, captured = DIGEST } = {}) {
     write: async (project, kind, data) => { written.push({ project, kind, data }); },
     digests: { installed: () => DIGEST, captured: (root) => (root === path.join(dir, 'capture') ? captured : null) },
     comment: async (project, args) => { comments.push(args); return { id: 900 + comments.length }; },
-  });
+  }), engine, undefined);
   const order = workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }] } });
   return { dir, routes, written, comments, engine, ready: () => routes['/engine/start']({ project: 'p', order }) };
 }

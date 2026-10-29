@@ -6,6 +6,7 @@
 //   node scripts/engine/done-check.js --run <run id>
 import { run as defaultRun } from '../lib/run.js';
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 const CHECK_MS = 10 * 60 * 1000;
@@ -56,7 +57,8 @@ export function runArg(argv, name = '--run') {
   return at >= 0 && typeof argv[at + 1] === 'string' && argv[at + 1] !== '' ? argv[at + 1] : null;
 }
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run, platform } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run, platform } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   if (!runId) {
     out('usage: node scripts/engine/done-check.js --run <run id>');

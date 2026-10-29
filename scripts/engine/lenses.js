@@ -7,6 +7,7 @@
 // { security, design, head, clean } and exits 0, for the pack to branch on.
 //   node scripts/engine/lenses.js --run <run id> --base <ref>
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 import { changeOf } from './change.js';
@@ -34,7 +35,8 @@ function addedLines(before, after) {
   return String(after ?? '').split('\n').filter((line) => !had.has(line)).join('\n');
 }
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   const base = runArg(argv, '--base');
   if (!runId || !base) {

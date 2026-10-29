@@ -90,7 +90,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
     // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
     engine: {
-      start: post('/engine/start'), // { project, order, branch?, carryOn? } -> { ok, runId }: starts a run of the work order, keeps the order under the run's id and records the start
       order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
       review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
       openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request

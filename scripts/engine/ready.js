@@ -4,10 +4,12 @@
 // and, for work shown first, the director approved it; a refusal prints its reason and exits 1.
 //   node scripts/engine/ready.js --run <run id>
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   if (!runId) {
     out('usage: node scripts/engine/ready.js --run <run id>');
