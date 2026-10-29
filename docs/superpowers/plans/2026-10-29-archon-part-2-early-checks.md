@@ -15,13 +15,14 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file (`<!-- … -->` in Markdown, `// …` in scripts).
 - No words such as "enhanced", "improved" or "fixed" in names or text; no model names in the repository; no AI attribution anywhere.
 - Scripts are Node.js. Don't touch `.github/workflows/ci.yml`.
 - Run only the test files a change touches.
 - **Archon is always run with this environment** (spec 6.3): `ARCHON_HOME` set to the scratch home, `ARCHON_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1`, `POSTHOG_API_KEY=off`, a `PATH` holding the pinned Bun, and `CLAUDE_BIN_PATH` (and `COPILOT_BIN_PATH` for Copilot). No Archon command runs any other way.
 - **Spend:** Claude steps run on the Mac's existing subscription. Copilot steps use **only the plan's included models**; no premium model, and no spend beyond the plan, without the director's own Yes through the main session.
-- **Agents do every step they can.** Only a sign-in, a password or a click goes to the director, and it goes through the main session (`local_1f0bba08-342d-4733-b1dd-c6a30c883aad`), never to the director directly.
+- **Agents do every step they can.** Only a sign-in, a password or a click goes to the director, and it goes through the main session, never to the director directly.
 - Nothing is written to `~/.wheelhouse`, `~/.archon` or the director's own Claude or Copilot settings. Scratch folders are removed afterwards, and each note says what was removed.
 - Each check note uses the headings `tests/docs/checks-format.test.js` requires, in order: `Question`, `Tested on`, `Method`, `Evidence`, `What it means for the design`, `Needs the director`, and an `**Answer:** Yes|No|Partly|Deferred` line. Each gets a row in `docs/checks/README.md`.
 - The design is not edited in this part. A result that changes the design goes to the main session as a card (what it is, why it comes to the director, the options, a recommendation, what happens meanwhile).

@@ -17,6 +17,7 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file (YAML files take `# engine/archon/pack/x.yaml`). No words such as "enhanced", "improved" or "fixed"; **no model names anywhere in the pack**; no AI attribution. Scripts in Node.js. Don't touch `.github/workflows/ci.yml`. Run only the test files a change touches.
 - **Every Claude step names the Wheelhouse plugin and no other** (`plugins: [wheelhouse@wheelhouse]`). No step names the Superpowers plugin.
 - **No person in a step.** Every prompt says: decide within the rules and record an assumption, or take the blocked exit. Loop prompts say earlier rounds' committed code stands and the full suite runs once, at the end. Steps name their skills in the prompt's words.

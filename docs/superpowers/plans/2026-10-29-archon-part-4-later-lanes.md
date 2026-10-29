@@ -13,6 +13,7 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file. No words such as "enhanced", "improved" or "fixed"; no model names in the repository; no AI attribution anywhere. Scripts in Node.js.
 - A lane moves only after its build-loop scenarios pass in the counted evaluation on real Archon (spec 17, step 3).
 - Usage pressure never lowers a level, relaxes a review or skips a check.

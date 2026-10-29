@@ -5,7 +5,7 @@
 
 **Spec:** `docs/specs/2026-10-29-wheelhouse-on-archon-design.md`, approved by the director and merged on 29 October 2026 (pull request #109).
 
-**How to use this plan.** Each part below is a plan file of its own, carried out by a fresh session with nothing but that file, the spec and the repository. Each names what it waits on, its files, its tests, and what done looks like, and ends with a pull request and one message to the main session. One part per fresh context; the main session starts the next.
+**How to use this plan.** Each part below is a plan file of its own, carried out by a fresh session with nothing but that file, the spec and the repository. Each names what it waits on, its files, its tests, and what done looks like, and ends with a pull request and one message to the main session. One part per fresh context; the main session starts the next. The main session is the session that started the part's session; a part replies to it with SendMessage to the `from` id of its first message. Pull requests merge when CI is green on Linux, with macOS running on main after the merge.
 
 ## The parts
 

@@ -15,6 +15,7 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file. No words such as "enhanced", "improved" or "fixed"; no model names; no AI attribution anywhere. Scripts in Node.js, running on macOS and Windows.
 - **Nothing the director sees changes.** Every front end's output is the same text, buttons and cards as before. Each front-end task starts by pinning today's output as a fixture.
 - The vocabulary is exactly spec 5.2's: views `glance`, `briefing`, `logbook` (tab), `waiting`, `card` (id), `work`, `settings`, `usage`, `preview` (card id), `why` (card id), `survey`; commands `answer` (card, option), `suggest` (card, words), `not-now` (card), `request` (words), `set` (setting, value), `all-stop`, `lift-all-stop`, `pair` (client); watch events `card-added`, `card-closed`, `glance-changed`, `work-changed`, `all-stop`, `notice`.
@@ -207,4 +208,4 @@
 - [ ] Bump the version to 0.1.4 in the four files, as `3df86c32` did. Add the desk's request and answer types to `types/index.d.ts`.
 - [ ] Run every test file this part touched.
 - [ ] Commit: `Release v0.1.4: the desk interface`.
-- [ ] Open the pull request `The desk interface (v0.1.4)`. Message the main session with its link; the release tag is the main session's to make once CI is green.
+- [ ] Open the pull request `The desk interface (v0.1.4)`. Message the main session with its link; the release tag is the main session's to make once CI is green on Linux (macOS runs on main after the merge).

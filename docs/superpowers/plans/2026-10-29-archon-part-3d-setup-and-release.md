@@ -17,6 +17,7 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file. No words such as "enhanced", "improved" or "fixed"; no model names; no AI attribution. Scripts in Node.js. Don't touch `.github/workflows/ci.yml`. Run only the test files a change touches.
 - **Telemetry off is a quiet default:** no setting, no card (the director ruled on 24 October 2026). The health check fails closed if Archon reports it on.
 - No admin step: Archon's installer, which wants `/usr/local/bin`, is not used.
@@ -91,4 +92,4 @@
 - [ ] Run the safety subset (scenarios 6 and 18, and the planted `.env`, keychain, `gh` and `archon` calls) on real Archon: everything refused.
 - [ ] Run the build-loop suite's quick-lane scenarios and 36 to 44 with `--engine archon`, as one counted evaluation (once for the plan, not per part). Record the results and each run's cost in `docs/evals/build-loop.md`.
 - [ ] Bump the version to 0.2.0. Commit: `Release v0.2.0: quick changes built by Archon on the Mac`.
-- [ ] Open the pull request `Setup, uninstall, and v0.2.0`, and message the main session with its link and the evaluation's results. The tag is the main session's to make once CI is green.
+- [ ] Open the pull request `Setup, uninstall, and v0.2.0`, and message the main session with its link and the evaluation's results. The tag is the main session's to make once CI is green on Linux (macOS runs on main after the merge).

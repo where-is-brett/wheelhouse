@@ -17,6 +17,7 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file. No words such as "enhanced", "improved" or "fixed"; no model names; no AI attribution anywhere. Scripts in Node.js. Don't touch `.github/workflows/ci.yml`. Run only the test files a change touches.
 - **No module outside `scripts/engine/archon/` knows an Archon word** (workflow, node, attention item, run id format, CLI flag), and no module outside the host adapter knows `gh` (spec 3).
 - **Every Archon command has the same environment** (spec 6.3): `ARCHON_HOME`, `ARCHON_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1`, `POSTHOG_API_KEY=off`, a `PATH` with the pinned Bun and the `gh` broker and **not** the real `gh`, `CLAUDE_BIN_PATH`, and `COPILOT_BIN_PATH` for Copilot. Nothing runs Archon any other way.

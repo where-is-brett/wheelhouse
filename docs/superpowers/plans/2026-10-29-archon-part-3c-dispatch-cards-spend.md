@@ -17,6 +17,7 @@
 
 ## Global Constraints
 
+- **The main session** is the session that started you (reply with SendMessage to the `from` id of your first message). Questions, cards for the director and the hand-over go there, never to the director directly.
 - British English; dates as 29 October 2026; a repository-relative path comment atop every file. No words such as "enhanced", "improved" or "fixed"; no model names; no AI attribution. Scripts in Node.js. Don't touch `.github/workflows/ci.yml`. Run only the test files a change touches.
 - **The director never sees Archon's words:** run ids, node names, "attention item", YAML (spec 2, anti-goals).
 - **Silence is never consent.** The triggers that raise a level (main design, section 6) apply.
