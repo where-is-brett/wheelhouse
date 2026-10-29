@@ -11,7 +11,7 @@ import { startedAsScript } from '../../scripts/lib/started-as-script.js';
 
 // The folders of text nothing reads: the design documents and the build plans. Tests that name
 // docs/specs/ or docs/plans/ make files of their own at those paths in a temporary folder; the
-// rest of docs/ is read by tests (docs/checks/, docs/copilot/, docs/research/, docs/superpowers/).
+// rest of docs/ is read by tests (docs/checks/, docs/research/, docs/superpowers/ and more).
 export const TEXT_ONLY = ['docs/specs/', 'docs/plans/'];
 
 // How many parts each computer splits the tests into (node --test-shard). The parts of one

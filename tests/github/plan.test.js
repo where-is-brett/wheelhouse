@@ -13,8 +13,8 @@ const SCRIPT = path.join(ROOT, '.github', 'scripts', 'plan.js');
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
 
 test('only a change wholly inside the design documents and the build plans is text only', () => {
-  assert.equal(textOnly(['docs/specs/2026-10-17-wheelhouse-design.md']), true);
-  assert.equal(textOnly(['docs/specs/notes/x.md', 'docs/plans/adoption-plan.md']), true);
+  assert.equal(textOnly(['docs/specs/2026-01-01-x-design.md']), true);
+  assert.equal(textOnly(['docs/specs/notes/x.md', 'docs/plans/x-plan.md']), true);
   for (const paths of [
     [],
     ['docs/specs/x.md', 'README.md'],
