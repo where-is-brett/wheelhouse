@@ -34,6 +34,8 @@
 
 ### Stub 4.1: The small lane (`wheelhouse-small`)
 
+**Planned.** The full plan, written 30 October 2026, was kept on the part's branch and taken out before it merged. As built: one task block a task, inside the run (a fan-out of an included workflow, one at a time), not a loop of 30 rounds or child runs, since a child run has no work order or ticket of its own; at most 8 tasks and 2 rounds each; the method in the plan and fix prompts, with no new skill copies; and the plan file taken out of the branch before review, so the pull request never carries it.
+
 **Scope.** Spec 7.2's small lane: read the work order; plan with the adapted `writing-plans` copy and `codebase-design`; a loop group taking the plan's next unfinished task each round (implement with `tdd`, then verify), with a fixed cap of 30 rounds, or one child run per task if the plan chooses; protected-tests check; whole-change review with the standards, spec and other lenses that apply; fix loop with the adapted `receiving-code-review`, at most 3 rounds, closing only on BLOCKER and HIGH; pull request; preview; approval wait if shown first; mark ready; lesson. Caps: 60 minutes, 4M tokens.
 
 **Known files.** `engine/archon/pack/wheelhouse-small.yaml` and its prompts; the plugin's skill copies `writing-plans`, `receiving-code-review` (adapted as spec 7.1 says); `engineLanes` accepting `small`; the build-loop scenarios for the small lane rewritten against the pack.
