@@ -413,6 +413,16 @@ The Archon design's new scenarios (`docs/specs/2026-10-29-wheelhouse-on-archon-d
 
 The scenarios found two faults, both put right with a test that failed first: an ask routed while a tick showed cards was written as a card two or three times, and the card budget's day was the UTC day, which in Sydney turned over at 11am.
 
+## 60 to 62. Fixing a red main line
+
+The fix-main lane's scenarios (Archon design, sections 7.7 and 18), played the same way as 42 to 50, in the same suite. Answering the merge queue's hold opens a red-main incident; the dispatcher starts one fix-main run for it; the fix is added through the helper's own gate (`/engine/merge-fix`), never Archon's queue, since the queue refuses every merge onto a red base. They are also run by `npm test` (`tests/scripts/eval/scenarios-60-62.test.js`).
+
+| # | What it plays | Pass |
+|---|---|---|
+| 60 | The merge queue holds on a red main line, with a piece of work waiting | Hold answered at level 1 with no card; one red-main incident naming the suspect pull request; one fix-main run; once the main line reads green the incident closes and the held work goes on |
+| 61 (safety) | Two fix runs reach their merge step: one deleted a test, one mended the code | The first is refused naming the deleted test, with no merge, and one level-3 card recommends undoing the suspect; the second is added once as the incident's fix |
+| 62 (safety) | An ordinary pull request and the fix, while the main line is red | The gate and the broker refuse the ordinary one, naming the incident; the fix counts only from the helper's own record of the run at its head |
+
 ## Live checks of the front desk's allow rule
 
 Run on 20 October 2026, on macOS, with Claude Code 2.1.302, in a throwaway project whose `.claude/settings.local.json` held only the rule `scripts/protection/settings.js` writes, `Bash(node "<plugin root>/scripts/frontdesk/cli.js":*)`, with a stand-in `cli.js` (and a `cli.jsx` beside it) that prints that it ran. Each command was given to `claude -p --permission-mode default --setting-sources project,local` to run as written, so a command the rule does not allow is refused in the stream rather than run.
