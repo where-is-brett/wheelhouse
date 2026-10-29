@@ -69,6 +69,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { clashCheck, fileMapOf, nextWork, since } from './queue.js';
+import { onNewEngine } from '../engine/lanes.js';
 import { PLUGIN_ROOT, foremanCommands } from './tools.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import {
@@ -371,8 +372,9 @@ function unstartedWithPlan(views, id) {
   return !NO_PLAN.includes(laneOf(views, id)) && currentFeatureOf(views, id) === null;
 }
 
+// Work the new engine builds is never the old engine's to start (scripts/engine/lanes.js).
 function queueWithout(views, leaveOut, now, builderCap) {
-  const work = Object.fromEntries(Object.entries(views.work).filter(([id]) => !leaveOut(id)));
+  const work = Object.fromEntries(Object.entries(views.work).filter(([id]) => !leaveOut(id) && !onNewEngine(views, id, { now })));
   return nextWork({ work, features: views.features, reports: views.reports, now, fiveHourTight: FIVE_HOUR_TIGHT, builderCap });
 }
 

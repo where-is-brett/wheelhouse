@@ -127,3 +127,35 @@ test('the briefing says how many cards wait for another day, and what was answer
   assert.match(got.data.text, /One question waits for another day, to keep to your cards a day\./);
   assert.match(got.data.text, /Answered for you: The build's question was answered as recommended\./);
 }));
+
+// A project switched to the new engine: an old feature still building on the old engine beside a new run.
+function withBoth(fn) {
+  return withRuns(async (ctx) => {
+    const views = viewsDir();
+    put(path.join(views, 'work.json'), {
+      'sale-banner': { work: { id: 'w2', at: '2026-10-29T08:00:00.000Z', data: { title: 'The sale banner', lane: 'quick' } }, approved: true },
+      'menu-photos': { work: { id: 'w3', at: '2026-10-28T08:00:00.000Z', data: { title: 'Photos on the menu', lane: 'quick' } }, approved: true },
+    });
+    put(path.join(views, 'features.json'), { 'menu-photos': { key: 'menu-photos', id: 'f1', at: '2026-10-28T09:00:00.000Z', data: { work: 'menu-photos', step: 'building' } } });
+    put(path.join(views, 'reports.json'), {});
+    put(path.join(views, 'runs.json'), { 'sale-banner': [{ id: 'r1', at: '2026-10-29T09:00:00.000Z', data: { work: 'sale-banner', lane: 'quick', engine: 'archon', runId: ctx.runId, state: 'started' } }] });
+    return fn(ctx);
+  });
+}
+
+test('the Logbook shows an old feature and a new run together', () => withBoth(async ({ source }) => {
+  const work = await readView('work', {}, source, { now });
+  assert.ok(work.lines.some((l) => /^menu-photos: Photos on the menu \(quick work\): running, building/.test(l)), work.lines.join('\n'));
+  assert.ok(work.lines.some((l) => /^sale-banner: The sale banner \(quick work\): running, building on the new engine/.test(l)), work.lines.join('\n'));
+  const logbook = await readView('logbook', { tab: 'build' }, source, { now });
+  assert.match(logbook.data.text, /Photos on the menu/);
+  assert.match(logbook.data.text, /Runs\nThe sale banner/);
+}));
+
+test('the briefing says the line once', () => withRuns(async ({ source }) => {
+  put(path.join(viewsDir(), 'settings.json'), { engine: { key: 'engine', id: 's2', at: '2026-10-29T06:00:00.000Z', value: 'archon', before: null, confirmedAt: '2026-10-29T06:05:00.000Z' } });
+  const first = await readView('briefing', { reserve: 0, since: '2026-10-29T05:00:00.000Z' }, source, { now });
+  assert.equal(first.data.text.split('\n').filter((l) => l === 'New quick changes are built by the new engine.').length, 1);
+  const next = await readView('briefing', { reserve: 0, since: '2026-10-29T07:00:00.000Z' }, source, { now });
+  assert.doesNotMatch(next.data.text, /New quick changes are built by the new engine\./);
+}));

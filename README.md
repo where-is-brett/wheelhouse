@@ -30,6 +30,8 @@ And a briefing opens like this:
 
 **What it protects.** Agents never hold your GitHub or GitLab keys, your clicks are signed so an agent can't approve for you, and on a Mac the agents' commands run fenced off from the rest of your computer. What it doesn't protect you from is in [`SECURITY.md`](SECURITY.md).
 
+**What builds it.** On a Mac, quick changes are built by a build engine, [Archon](https://github.com/coleam00/Archon), which setup installs with its usage reporting off. Larger work is still built by Wheelhouse's own Crew for now. A project set up before is offered the switch once, on a card. How the engine fits, and its fallback, are in [`docs/engine/`](docs/engine/).
+
 **How to take it out again.** Type `/wheelhouse:uninstall` in a conversation on your product. What it removes, and what it keeps, is in [`docs/data.md`](docs/data.md).
 
 ## Install
