@@ -12,6 +12,8 @@
 //   - every Archon command run with archonEnv: usage reporting off, the broker the only gh, the patch's permission mode;
 //   - the project a throwaway git repository whose remote is a bare repository beside it, at <root>/o/p, so Archon names
 //     its workspace o/p as the record's repository does, no fetch-mirror rule is needed and nothing reaches GitHub;
+//   - the skill kits setup pins installed for the project at project scope, so a step's session start isn't held, and
+//     taken back when the world closes;
 //   - the project's lock taken on that remote, so the broker comes to its real rules;
 //   - the real gh stood in: a call the broker lets through is kept in `forwarded` and answered, never run.
 // Every step is bound to one cheap model (WHEELHOUSE_EVAL_MODEL, by default haiku), so a real step costs cents. Claude
@@ -33,6 +35,7 @@ import { dataHash, eventPath, listEvents, makeEvent } from '../state/events.js';
 import { makeSigningKey, enrol, ownKey } from '../state/signing.js';
 import { takeLock } from '../state/lock.js';
 import { buildViews } from '../state/views.js';
+import { MARKETPLACE, UPSTREAMS } from '../lineage/manifest.js';
 import { engineDirOf } from '../engine/routes.js';
 import { archonAdapter } from '../engine/archon/adapter.js';
 import { archonCli } from '../engine/archon/cli.js';
@@ -46,9 +49,15 @@ export { engineCache, prepareEngine, cacheBuilt, linkEngine } from './archon-eng
 export const REPO = 'o/p';
 export const WORKTREES = '.wheelhouse/worktrees';
 
+// The skill kits setup pins for each project (lineage/manifest.json), as Claude Code names them. Without their
+// project-scope install, every Wheelhouse session start in the project, an engine step's among them, finds the
+// installed skills differ from the manifest and holds the project's edits and commands, its structured output too.
+export const KITS = Object.freeze(UPSTREAMS.map((upstream) => `${upstream.plugin}@${MARKETPLACE}`));
+
 // The throwaway project: a git repository on `main` with a bare remote at <root>/o/p, a test script, Archon's project
 // settings (worktrees inside the folder, kept out of git) and a .env for the guards' trial to be refused.
-async function makeProject({ root, folder, git }) {
+// `beforeCommit()` runs once the files are there and before the first commit, as setup's own steps do.
+async function makeProject({ root, folder, git, beforeCommit = async () => {} }) {
   const remote = path.join(root, ...REPO.split('/'));
   fs.mkdirSync(remote, { recursive: true });
   const must = async (args, cwd) => {
@@ -63,6 +72,7 @@ async function makeProject({ root, folder, git }) {
   fs.writeFileSync(path.join(folder, '.archon', 'config.yaml'), `# .archon/config.yaml\nworktree:\n  path: ${WORKTREES}\n`);
   fs.writeFileSync(path.join(folder, '.env'), 'EVAL_ONLY=not-a-secret\n');
   await must(['init', '-q', '-b', 'main'], folder);
+  await beforeCommit();
   const commit = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid', 'commit', '-q', '-m', 'Start'];
   for (const args of [['add', '-A'], commit, ['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']]) await must(args, folder);
   return remote;
@@ -74,7 +84,9 @@ const standInHost = () => ({ defaultBranch: async () => 'main' });
 // The wake process: a stand-in that runs nothing. No real play answers an ask, so none needs carrying on.
 function idleChild() {
   const child = new EventEmitter();
-  child.pid = 7000;
+  // No pid: All stop ends the processes the continuation host started, by pid, and a made-up one could be another
+  // program's on this computer.
+  child.pid = null;
   child.kill = () => { setImmediate(() => child.emit('exit', null, 'SIGTERM')); return true; };
   return child;
 }
@@ -106,6 +118,9 @@ export async function openArchonWorld({
   // The fence alone, reaching folders on this computer: the project and its remote are the world's own, made here, and
   // nothing in them runs hooks or filters.
   const git = (args, cwd) => safeGit({ cwd, reach: 'local', look: 'never', timeoutMs: 60000 })(args);
+  // Claude Code's own commands, in the project's folder; the kits installed for it, to take back at the end.
+  const claude = (args) => realRun(claudeBin, args, { cwd: folder, timeoutMs: 300000 });
+  const kits = [];
   // Every Archon command in this world: the world's engine folder, its Archon home, its Claude Code.
   const archon = (args, options = {}) => cli(args, { ...options, engine: engineFolder, home: engineHome, claudeBin });
 
@@ -164,20 +179,47 @@ export async function openArchonWorld({
       const runId = started.json?.ok === true ? started.json.runId : null;
       if (typeof runId !== 'string') return { ok: false, why: `the health trial didn't start: ${String(started.json?.error ?? started.stderr ?? '').trim().split('\n')[0]}` };
       const ended = await until(async () => (await engine.inspect(runId)).outcome, { ms, every });
-      if (ended !== 'completed') return { ok: false, why: `the health trial ${ended ? `ended ${ended}` : 'didn\'t finish in time'}` };
+      if (ended !== 'completed') return { ok: false, why: `the health trial ${ended ? `ended ${ended}` : 'didn\'t finish in time'}${await world.trouble(runId)}` };
       let guarded;
       try { guarded = JSON.parse((await engine.outputs(runId)).guarded ?? 'null'); } catch { guarded = null; }
-      if (guarded?.refused !== true) return { ok: false, why: 'the health trial\'s step read the project\'s .env: the guards didn\'t hold' };
+      if (guarded?.refused !== true) return { ok: false, why: `the health trial's step read the project's .env: the guards didn't hold${await world.trouble(runId)}` };
       return { ok: true, why: 'the patched engine is at its pins with usage reporting off, and its Claude step was refused the .env' };
+    },
+    // The question a paused run waits on, as Archon's queue of asks has it, or null.
+    async asking(runId) {
+      const open = (await engine.watch(null).catch(() => ({ events: [] }))).events.find((e) => e.runId === runId);
+      return open ? String(open.context?.question ?? open.reason ?? open.kind ?? 'an ask') : null;
+    },
+    // What Archon's record says went wrong in a run, as `: <its error>; <the last refusal a step was given>`, or ''.
+    async trouble(runId) {
+      const got = await archon(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: 120000 }).catch(() => null);
+      const events = Array.isArray(got?.json?.events) ? got.json.events : [];
+      const line = (text) => String(text ?? '').trim().split('\n')[0].slice(0, 300);
+      const failed = events.filter((e) => e?.event_type === 'workflow_failed').at(-1)?.data?.error ?? got?.json?.terminal_record?.error;
+      const refusal = events.map((e) => e?.data?.event).filter((e) => e?.type === 'tool_call_update' && e.status === 'failed' && /hook error|denied|not permitted/i.test(String(e.output))).at(-1)?.output;
+      const parts = [failed, refusal].filter(Boolean).map(line);
+      return parts.length > 0 ? `: ${parts.join('; the step was told: ')}` : '';
     },
     async close() {
       try {
         if (engine) await engine.stopAll('the evaluation world closes').catch(() => null);
         await helper?.close();
+        // The kits' project-scope installs name the world's folder in Claude Code's record of installs: taken back.
+        for (const kit of kits.splice(0)) await claude(['plugin', 'uninstall', kit, '--scope', 'project']).catch(() => null);
       } finally {
         if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
-        // Archon's cancelled steps may still be leaving their folders, so the removal is tried again a few times.
-        fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        // Archon's cancelled steps may still be leaving their folders, so the removal is tried again for a while; a folder
+        // that still won't go is named, never a failure of the scenario played in it.
+        try {
+          fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
+        } catch {
+          // A cancelled step's hooks and Archon's database finish writing a few seconds after: tried once more then.
+          setTimeout(() => {
+            try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch (error) {
+              process.stderr.write(`The evaluation world's folder ${root} was left behind: ${error.message}\n`);
+            }
+          }, 15000).unref();
+        }
       }
     },
   };
@@ -188,7 +230,16 @@ export async function openArchonWorld({
     // adapter's health check refuses an engine that doesn't say Claude.
     fs.mkdirSync(engineHome, { recursive: true });
     fs.writeFileSync(path.join(engineHome, 'config.yaml'), 'defaultAssistant: claude\n');
-    const remote = await makeProject({ root, folder, git });
+    const remote = await makeProject({
+      root, folder, git,
+      beforeCommit: async () => {
+        for (const kit of KITS) {
+          const got = await claude(['plugin', 'install', kit, '--scope', 'project']);
+          if (got.code !== 0) throw new Error(`Claude Code could not install ${kit} for the evaluation's project: ${String(got.stderr || got.stdout).trim().split('\n')[0]}`);
+          kits.push(kit);
+        }
+      },
+    });
     const adapter = archonAdapter({
       cli: archon, run: bunRun, packDir: paths.packDir, configFile: ENGINE_CONFIG, engine: engineFolder, home: engineHome,
       worktreeBases: [path.join(folder, WORKTREES)],

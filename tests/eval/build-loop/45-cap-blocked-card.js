@@ -39,7 +39,11 @@ export default {
       const [run] = world.runs();
       if (!run) return { pass: false, why: `the run didn't start: ${world.starts()[0]?.got?.refused ?? 'nothing was started'}` };
       const cancelled = () => world.acts().find((c) => c.runId === run && c.action?.cancel);
-      if (!await wait(async () => { await world.tick(); return cancelled(); })) return { pass: false, why: `the run went on past its token cap (Archon has it ${await world.status(run)})` };
+      if (!await wait(async () => { await world.tick(); return cancelled() || (await world.status(run)) === 'paused'; }) || !cancelled()) {
+        const status = await world.status(run);
+        const asked = status === 'paused' ? await world.asking(run) : null;
+        return { pass: false, why: asked ? `the run stopped to ask before its cap was reached: ${asked}` : `the run went on past its token cap (Archon has it ${status})` };
+      }
       if (!await wait(async () => (await world.status(run)) === 'cancelled', { ms: 120000 })) return { pass: false, why: `Archon has the run ${await world.status(run)}, not cancelled` };
       const card = await wait(() => world.records('question').find((q) => q.data.options.some((o) => o.label === 'Give it more')), { ms: 120000 });
       if (!card) return { pass: false, why: 'no card came for the reached cap' };
