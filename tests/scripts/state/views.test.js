@@ -732,6 +732,24 @@ test('an incident stays open until a verified lift names it; an unsigned lift ch
   });
 });
 
+test('incident-closed closes a red-main incident, and only a red-main one', async () => {
+  await withHome(() => {
+    const red = ev('incident', 1, { id: 'red-main-0123456789', what: 'The main line is red', kind: 'red-main', suspect: 12, work: 'fix-main-red-main-0123456789' });
+    const declared = ev('incident', 2, { id: 'bad-total', what: 'Totals are wrong' });
+    const closed = (n, incident) => ev('incident-closed', n, { incident, why: 'the main line\'s checks are green' });
+    assert.deepEqual(build([red]).incidents.open, [
+      { id: 'red-main-0123456789', what: 'The main line is red', at: T(1), fixes: [], kind: 'red-main', suspect: 12, work: 'fix-main-red-main-0123456789' },
+    ]);
+    assert.deepEqual(build([red, declared, closed(3, 'red-main-0123456789')]).incidents.open.map((i) => i.id), ['bad-total']);
+    // The director's own incident ends only by their lift.
+    assert.deepEqual(build([declared, closed(3, 'bad-total')]).incidents.open.map((i) => i.id), ['bad-total']);
+    // A close before the incident opened does nothing; one opened again after it closed is open.
+    assert.equal(build([closed(0, 'red-main-0123456789'), red]).incidents.open.length, 1);
+    const again = ev('incident', 4, { id: 'red-main-0123456789', what: 'Red again', kind: 'red-main', suspect: null, work: 'fix-main-red-main-0123456789' });
+    assert.deepEqual(build([red, closed(3, 'red-main-0123456789'), again]).incidents.open.map((i) => i.what), ['Red again']);
+  });
+});
+
 test('an approval counts only for the lane the work is in now', async () => {
   await withHome(() => {
     const w = workEv(1);

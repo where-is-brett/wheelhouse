@@ -19,7 +19,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
-  'run', 'ask', 'cost', 'preview', 'lesson',
+  'run', 'ask', 'cost', 'preview', 'lesson', 'incident-closed',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -38,7 +38,8 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 // evaluation's, through the helper's own writer (/state/column-ready, which reads and checks the evaluation's records
 // itself), so no session can mark a Thoroughness column ready.
 // The engine's records are the helper's too: it writes `run`, `ask`, `cost` and `preview` from what the engine reports.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview'];
+// `incident-closed` is the helper's own reading that a red-main incident is over (the main line's checks green again).
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
@@ -234,7 +235,9 @@ const PLAIN_SHAPES = {
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
   question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
-  incident: { must: ['id', 'what'], may: [] },
+  // A red-main incident (design on Archon, section 7.7) names its kind, the pull request the merge queue suspects
+  // (or null) and the fix's work; the helper opens and closes it, and the director never needs to.
+  incident: { must: ['id', 'what'], may: ['kind', 'suspect', 'work'] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
   // `event`: the id of the record a card without a set line was made from (a lineage hold), so it is made once.
   // `parts`: the card's parts as the composer gives them; `revises`: the id of the card a revised proposal replaces.
@@ -322,7 +325,12 @@ const PLAIN_SHAPES = {
   preview: { must: ['work', 'head', 'folder', 'pages'], may: [] },
   // A lesson a work taught, for the next run to read.
   lesson: { must: ['work', 'text'], may: [] },
+  // The end of a red-main incident: the incident and why it ended.
+  'incident-closed': { must: ['incident', 'why'], may: [] },
 };
+// The lanes a run may be of: the First Mate's, a feature's slices and the helper's own fix for a red main line.
+const RUN_LANES = Object.freeze([...LANES, 'slice', 'fix-main']);
+export const INCIDENT_KINDS = Object.freeze(['red-main']);
 export const RUN_STATES = Object.freeze(['started', 'paused', 'ended']);
 export const ASK_KINDS = Object.freeze(['question', 'approval', 'blocked', 'usage-limit', 'trouble']);
 export const COST_SOURCES = Object.freeze(['reported', 'estimated', 'unknown']);
@@ -427,7 +435,7 @@ function checkPlain(kind, data) {
     }
   } else if (kind === 'run') {
     slug('work');
-    if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
+    if (!RUN_LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature, bug, slice or fix-main');
     for (const k of ['engine', 'runId']) text(k);
     for (const k of ['branch', 'outcome']) optionalText(k);
     if (!RUN_STATES.includes(data.state)) bad('needs its state to be started, paused or ended');
@@ -488,6 +496,12 @@ function checkPlain(kind, data) {
   } else if (kind === 'incident') {
     slug('id');
     text('what');
+    if (data.kind !== undefined && !INCIDENT_KINDS.includes(data.kind)) bad('has a kind that is not red-main');
+    if (data.suspect !== undefined && data.suspect !== null && !(Number.isInteger(data.suspect) && data.suspect >= 1)) bad('has a suspect that is not a pull request\'s number');
+    if (data.work !== undefined) slug('work');
+  } else if (kind === 'incident-closed') {
+    slug('incident');
+    text('why');
   } else if (kind === 'amendment') {
     slug('work');
     text('change');
