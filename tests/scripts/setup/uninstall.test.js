@@ -2964,13 +2964,13 @@ test('uninstall removes the login start', async () => {
 // The engine's parts as setup leaves them on the Mac: step 2's engine folder (its Bun and Archon) and the broker's
 // launcher, step 6's plugin at user scope, step 7's policy file and the project's fetch-mirror rule, and Archon's
 // own run history, which setup never records.
-function engineSetup(world, r) {
+function engineSetup(world, r, { pluginBefore = null } = {}) {
   r.folder(2, path.join(engineDir(), 'bun'), { tool: 'bun', version: '1.4.3' }, { before: null });
   writeText(path.join(engineDir(), 'bun', 'bin', 'bun'), 'program');
   r.folder(2, path.join(engineDir(), 'archon'), { tool: 'archon', version: 'v0.13.0' }, { before: null });
   r.add(2, { kind: 'file', target: brokerLauncher(), before: null, after: { tool: 'broker' } });
   writeText(brokerLauncher(), '#!/bin/sh\n');
-  r.add(6, { kind: 'plugin-scope', target: installedPluginsFile(path.join(world.userHome, '.claude')), before: null, after: { plugin: 'wheelhouse@wheelhouse', scope: 'user' } });
+  r.add(6, { kind: 'plugin-scope', target: installedPluginsFile(path.join(world.userHome, '.claude')), before: pluginBefore, after: { plugin: 'wheelhouse@wheelhouse', scope: 'user', ...(pluginBefore === null ? {} : { version: '0.2.0' }) } });
   r.file(7, path.join(world.folder, ...POLICY_FILE.split('/')), '["o"]\n', { engine: true });
   r.key(7, mirrorRulesFile(), [SLUG], `https://github.com/${REPO}.git`);
   writeText(path.join(archonHome(), 'archon.db'), 'runs');
@@ -2991,6 +2991,23 @@ test('uninstall cancels runs before removing the engine folder', async () => {
       // The plugin at user scope is taken back on the computer's phase; the broker goes with the engine's folder.
       assert.deepEqual(got.changes.filter((c) => c.put === 'remove-plugin-scope').map((c) => c.phase), ['computer']);
       assert.equal(got.keep.some((k) => /gh$|broker|bun|archon$/.test(k.what)), false, 'nothing of the engine is named as kept');
+      assert.deepEqual(accounted(got), recordedIds());
+    } finally {
+      fs.rmSync(archonHome(), { recursive: true, force: true });
+    }
+  });
+});
+
+test('a Wheelhouse setup only brought up to date at user scope stays on uninstall', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    // The plugin was there before setup, at 0.1.2; step 6 only brought it up to date.
+    engineSetup(world, r, { pluginBefore: { version: '0.1.2' } });
+    try {
+      const got = await plan(world);
+      assert.equal(got.changes.some((c) => c.put === 'remove-plugin-scope'), false);
+      assert.ok(got.keep.some((k) => /there before setup, which only brought it up to date/.test(k.why)));
       assert.deepEqual(accounted(got), recordedIds());
     } finally {
       fs.rmSync(archonHome(), { recursive: true, force: true });

@@ -563,7 +563,8 @@ test('an older Wheelhouse at user scope is brought up to date under the same Go 
   assert.equal(olderVersion('0.1.2', '0.2.0'), true);
   assert.equal(olderVersion('0.2.0', '0.2.0'), false);
   assert.equal(olderVersion('0.10.0', '0.9.1'), false);
-  assert.equal(olderVersion('0', '0.2.0'), true);
+  assert.equal(olderVersion('unknown', '0.2.0'), false, 'a version that isn\'t a release is left alone');
+  assert.equal(olderVersion('1234567', '0.2.0'), false);
   await withProject(async ({ folder, user, config }) => {
     // The line on setup's one card says so too, as part of the engine's line.
     assert.equal(engineLine(undefined, { claudeHome: config }), ENGINE_LINE_WITH_PLUGIN);

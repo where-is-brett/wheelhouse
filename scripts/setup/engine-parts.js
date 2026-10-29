@@ -93,11 +93,11 @@ function entryAtScope(claudeHome, scope) {
 // Whether the plugin is installed at the scope PLUGIN_SCOPE names.
 export const pluginAtScope = (claudeHome, scope = PLUGIN_SCOPE) => entryAtScope(claudeHome, scope) !== null;
 
-// The version installed at that scope, or null when none is there; one Claude Code didn't record reads as '0'.
+// The version installed at that scope, or null when none is there; one Claude Code didn't record reads as 'unknown'.
 export function versionAtScope(claudeHome, scope = PLUGIN_SCOPE) {
   const entry = entryAtScope(claudeHome, scope);
   if (entry === null) return null;
-  return typeof entry.version === 'string' && entry.version !== '' ? entry.version : '0';
+  return typeof entry.version === 'string' && entry.version !== '' ? entry.version : 'unknown';
 }
 
 // The version of the Wheelhouse running setup, from its own manifest.
@@ -105,13 +105,14 @@ export function ownVersion(root = PLUGIN_ROOT) {
   try { return String(JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version); } catch { return '0'; }
 }
 
-// Whether version `a` is below `b`, comparing their numbered parts in turn (0.1.2 is below 0.2.0); a part that isn't
-// a number counts as 0, so an unreadable version is below any release.
+// Whether version `a` is below `b`, comparing their three numbered parts in turn (0.1.2 is below 0.2.0). Only plain
+// release versions are compared: either one that isn't (a hash, 'unknown') is taken as not below, so it is left alone.
+const RELEASE = /^(\d+)\.(\d+)\.(\d+)$/;
 export function olderVersion(a, b) {
-  const parts = (v) => String(v).split(/[.+-]/).slice(0, 3).map((p) => (/^\d+$/.test(p) ? Number(p) : 0));
-  const [x, y] = [parts(a), parts(b)];
-  for (let i = 0; i < 3; i += 1) {
-    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  const [x, y] = [RELEASE.exec(String(a)), RELEASE.exec(String(b))];
+  if (x === null || y === null) return false;
+  for (let i = 1; i <= 3; i += 1) {
+    if (Number(x[i]) !== Number(y[i])) return Number(x[i]) < Number(y[i]);
   }
   return false;
 }

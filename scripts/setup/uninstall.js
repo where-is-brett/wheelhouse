@@ -905,7 +905,9 @@ export async function uninstallPlan({
         break;
       }
       case 'plugin-scope':
-        add('computer', at, { put: 'remove-plugin-scope', change: c, ids: list });
+        // One setup only brought up to date was there before it (part 3f): the director's own, so it stays.
+        if ((asOne(group).before ?? null) !== null) kept(describe(c, userHome), 'it was there before setup, which only brought it up to date', list);
+        else add('computer', at, { put: 'remove-plugin-scope', change: c, ids: list });
         break;
       case 'locked': {
         const one = asOne(group);
