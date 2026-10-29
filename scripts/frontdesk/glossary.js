@@ -145,8 +145,6 @@ function spelling(term, word) {
 const WORD = /[\p{L}\p{N}_]/u;
 const wordAt = (text, i) => i >= 0 && i < text.length && WORD.test(text[i]);
 
-// The spans of a text that are quoted: backticks, double and curly quotes, and single quotes that
-// open a quotation (not an apostrophe), then the text the caller asks to keep wherever it appears.
 // A pattern for a name as the director may write it: its words in any case, with hyphens, underscores, dots or
 // spaces between them, and never as part of a longer word. Null for a name too short to be one.
 function namePattern(name) {
@@ -156,6 +154,9 @@ function namePattern(name) {
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped.join('[-_.\\s]+')}(?![\\p{L}\\p{N}])`, 'giu');
 }
 
+// The spans of a text that are quoted: backticks, double and curly quotes, and single quotes that
+// open a quotation (not an apostrophe), then the text the caller asks to keep wherever it appears,
+// and the names it gives (namePattern).
 function protectedRanges(text, protect, names = []) {
   const ranges = [];
   const add = (pattern) => { for (const m of text.matchAll(pattern)) ranges.push([m.index, m.index + m[0].length]); };

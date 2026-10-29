@@ -122,6 +122,22 @@ test('Approve on a card asked in the chat\'s words is signed as a click on the c
   });
 });
 
+test('a kept card whose words don\'t name what its hidden line decides is never signed from its chat copy', async () => {
+  await withHome(async () => {
+    // A card written by hand: harmless plain lines, and a runbook line the chat copy would hide.
+    const line = runbookLine(2);
+    const question = `Tidy up the old branches?\nIt keeps the list short.\nNothing changes meanwhile.\nTo know more, just ask.\n${line}\n${replyCodeLine(replyCode(line))}`;
+    assert.notEqual(chatCopy(question), question);
+    assert.notDeepEqual(cardProblems(question), []);
+    keepEvent(makeEvent({ kind: 'card', data: { question, header: 'Tidy', options: ['Do it', 'Not now'], kind: 'runbook', line, code: replyCode(line), level: 3 }, now: () => NOW }));
+    const c = fake();
+    const shown = { question: chatCopy(question), header: 'Tidy', options: [{ label: 'Do it' }, { label: 'Not now' }], multiSelect: false };
+    await decide(copyClick(shown, 'Do it'), deps(c));
+    assert.ok(!kinds(c).includes('action'), kinds(c).join());
+    assert.equal(storedText(P, shown, { events: listEvents(stateDir(P), { report: () => {} }), waiting: [] }), null);
+  });
+});
+
 test('where two kept cards share the chat\'s words, only the one still waiting is matched, and with none waiting nothing is', () => {
   const older = APPROVE_7('1'.repeat(40));
   const newer = APPROVE_7(FULL);

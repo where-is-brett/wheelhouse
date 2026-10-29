@@ -73,6 +73,7 @@ import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
 import { cardOutcomes } from '../state/views.js';
+import { cardProblems } from './card-check.js';
 import { SUGGEST, WHAT_WOULD_YOU_CHANGE } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
@@ -595,12 +596,14 @@ export { sendPending, BUDGET_MS };
 // The text the state keeps for a card asked in the chat's words (chatCopy, scripts/state/card-lines.js), or null when
 // the question isn't one: a card whose copy is the asked text with the same buttons. Where cards with different texts
 // share those words (the same pull request asked again at a new head, say), only the one card still waiting counts;
-// with none, or several, the question stays as asked, and nothing is signed from it.
+// with none, or several, the question stays as asked, and nothing is signed from it. Only a text whose plain lines pass the
+// card check counts: they name what its set line decides, so a line the director wasn't shown signs only what they read.
 export function storedText(project, q, { events = listEvents(stateDir(project), { report: () => {} }), waiting } = {}) {
   if (typeof q?.question !== 'string' || !Array.isArray(q.options) || setLineOf(q.question) !== null) return null;
   const labels = JSON.stringify(q.options.map((o) => o?.label));
   const texts = [...new Set(events.filter((e) => e.kind === 'card' && typeof e.data?.question === 'string' && e.data.question !== q.question
-    && chatCopy(e.data.question) === q.question && JSON.stringify(e.data.options) === labels).map((e) => e.data.question))];
+    && chatCopy(e.data.question) === q.question && JSON.stringify(e.data.options) === labels).map((e) => e.data.question))]
+    .filter((text) => cardProblems(text).length === 0);
   if (texts.length <= 1) return texts[0] ?? null;
   const live = new Set((waiting ?? localViews(project, ['waiting'])?.waiting ?? []).map((c) => c?.data?.question));
   const left = texts.filter((t) => live.has(t));
