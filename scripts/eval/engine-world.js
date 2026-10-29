@@ -115,7 +115,9 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
 // The wake process: a stand-in that runs nothing.
 function fakeChild() {
   const child = new EventEmitter();
-  child.pid = 7000;
+  // No pid: All stop ends the processes the continuation host started, by pid, and a made-up one could be another
+  // program's on this computer.
+  child.pid = null;
   child.kill = () => { setImmediate(() => child.emit('exit', null, 'SIGTERM')); return true; };
   return child;
 }

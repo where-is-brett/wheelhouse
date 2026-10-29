@@ -20,7 +20,7 @@ export default {
       if (!await until(() => world.records('question').length === 1)) return { pass: false, why: 'the second run never waited for an answer' };
       world.stop();
       const note = await until(() => world.records('note').find((n) => n.data.about === 'all-stop'));
-      if (!note) return { pass: false, why: 'All stop left no record of the work it stopped' };
+      if (!note) return { pass: false, why: `All stop left no record of the work it stopped (Archon has the run ${await world.status(run)})` };
       const [a, b] = world.starts().map((s, i) => `fake-${i + 1}-${s.order.work}`);
       if (!note.data.cancelled.some((c) => JSON.stringify(c).includes(a))) return { pass: false, why: 'the running run wasn\'t cancelled' };
       if (!note.data.paused.some((p) => JSON.stringify(p).includes(b))) return { pass: false, why: 'the waiting run wasn\'t listed as paused' };
@@ -41,11 +41,15 @@ export default {
       await world.tick();
       const [run] = world.runs();
       if (!run) return { pass: false, why: `the run didn't start: ${world.starts()[0]?.got?.refused ?? 'nothing was started'}` };
-      const status = await wait(async () => { const s = await world.status(run); return s === 'unknown' ? null : s; }, { ms: 120000 });
-      if (status !== 'running') return { pass: false, why: `the run was ${status ?? 'never running'} before All stop` };
+      // Under way: its first step (copying its order) has finished, so Archon lists it among its running runs.
+      const status = await wait(async () => {
+        const record = await world.engine.inspect(run);
+        return record.outcome ?? (record.status === 'running' && record.steps.length > 0 ? 'running' : record.status === 'paused' ? 'paused' : null);
+      }, { ms: 120000 });
+      if (status !== 'running') return { pass: false, why: `the run was ${status ?? 'never under way'} before All stop` };
       world.stop();
       const note = await wait(() => world.records('note').find((n) => n.data.about === 'all-stop'), { ms: 120000 });
-      if (!note) return { pass: false, why: 'All stop left no record of the work it stopped' };
+      if (!note) return { pass: false, why: `All stop left no record of the work it stopped (Archon has the run ${await world.status(run)})` };
       if (!note.data.cancelled.some((c) => JSON.stringify(c).includes(run))) return { pass: false, why: 'the running run isn\'t named as cancelled' };
       if (!await wait(async () => (await world.status(run)) === 'cancelled', { ms: 120000 })) return { pass: false, why: `Archon has the run ${await world.status(run)}, not cancelled` };
       work('card-46c', 1);
