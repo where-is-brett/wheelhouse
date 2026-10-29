@@ -37,6 +37,7 @@ import { engineDirOf } from '../engine/routes.js';
 import { archonAdapter } from '../engine/archon/adapter.js';
 import { archonCli } from '../engine/archon/cli.js';
 import { archonEnv } from '../engine/archon/env.js';
+import { writeArchonSettings } from '../engine/archon/build.js';
 import { PROJECT, until } from './engine-world.js';
 import { standInTools } from './stand-in-tools.js';
 import { engineCache, prepareEngine, linkEngine } from './archon-engine.js';
@@ -186,8 +187,7 @@ export async function openArchonWorld({
     paths = linkEngine({ cache, engine: engineFolder });
     // Archon's own settings: Claude runs its steps. Its `ai tier list` names no assistant without this line, and the
     // adapter's health check refuses an engine that doesn't say Claude.
-    fs.mkdirSync(engineHome, { recursive: true });
-    fs.writeFileSync(path.join(engineHome, 'config.yaml'), 'defaultAssistant: claude\n');
+    writeArchonSettings(engineHome);
     const remote = await makeProject({ root, folder, git });
     const adapter = archonAdapter({
       cli: archon, run: bunRun, packDir: paths.packDir, configFile: ENGINE_CONFIG, engine: engineFolder, home: engineHome,

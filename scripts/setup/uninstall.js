@@ -905,7 +905,9 @@ export async function uninstallPlan({
         break;
       }
       case 'plugin-scope':
-        add('computer', at, { put: 'remove-plugin-scope', change: c, ids: list });
+        // One setup only brought up to date was there before it (part 3f): the director's own, so it stays.
+        if ((asOne(group).before ?? null) !== null) kept(describe(c, userHome), 'it was there before setup, which only brought it up to date', list);
+        else add('computer', at, { put: 'remove-plugin-scope', change: c, ids: list });
         break;
       case 'locked': {
         const one = asOne(group);
@@ -1015,9 +1017,11 @@ export async function uninstallPlan({
 
   // In order: the phases, newest first within each; Stop and the line for Desktop around them, and
   // the helper last of all, after its answer.
-  // The engine's runs are cancelled first of all, on the last project, while its folder is there to cancel them.
+  // The engine's runs are cancelled first of all, on the last project, while its folder is there to cancel them. While
+  // other projects stay on it, only this project's own runs are (`engine-runs`).
   const stops = [
     ...(last && exists(engineDir()) ? ['engine'] : []),
+    ...(!last && slug !== null && exists(engineDir()) ? ['engine-runs'] : []),
     ...(slug !== null ? ['foreman', 'watcher'] : []),
     ...(last ? ['receiver'] : []),
   ].map((what) => ({ phase: 'stop', put: 'stop', what }));

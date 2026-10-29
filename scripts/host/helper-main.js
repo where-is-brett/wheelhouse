@@ -14,6 +14,7 @@ import { archonAdapter } from '../engine/archon/adapter.js';
 import { buildPack } from '../engine/pack-build.js';
 import { settingsViews } from '../desk/mod-records.js';
 import { effectiveSettings } from '../settings/effective.js';
+import { engineReady } from '../engine/switch.js';
 
 function recordOf(project) {
   const record = readProject(project);
@@ -33,13 +34,14 @@ export function packedArchon({ engine = engineDir(), build = buildPack, adapter 
   return adapter({ engine, packDir: built ? packDir : undefined, configFile: ENGINE_CONFIG });
 }
 
-// The engine for a project whose `engine` setting in force is Archon, or null. Every such project shares one Archon
-// adapter: there is one Archon on the computer.
-export function engineForProject({ adapter = () => packedArchon(), now = () => new Date(), views = settingsViews } = {}) {
+// The engine for a project whose `engine` setting in force is Archon and which the engine can build (its fetch-mirror
+// rule is in: scripts/engine/switch.js), or null. Every such project shares one Archon adapter: there is one Archon on
+// the computer.
+export function engineForProject({ adapter = () => packedArchon(), now = () => new Date(), views = settingsViews, ready = engineReady } = {}) {
   let shared = null;
   return (project) => {
     const { project: own, profile } = views(project);
-    if (effectiveSettings({ project: own, profile, now })?.engine?.value !== 'archon') return null;
+    if (effectiveSettings({ project: own, profile, now })?.engine?.value !== 'archon' || !ready(project)) return null;
     shared ??= adapter();
     return shared;
   };

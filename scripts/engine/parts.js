@@ -3,6 +3,7 @@
 // computer, whether it is installed, and the names of the project's own files for it. Setup's writers are in
 // scripts/setup/engine-parts.js, which gives these on; the mod's bridge reaches only this file.
 import fs from 'node:fs';
+import path from 'node:path';
 import { engineDir } from '../lib/paths.js';
 import { enginePaths, launcherText, PATCH_MARK } from './archon/build.js';
 
@@ -25,3 +26,9 @@ export const POLICY_FILE = '.archon/sdlc/policy/maintainers.json';
 export const ARCHON_CONFIG_FILE = '.archon/config.yaml';
 export const ENGINE_FILES = Object.freeze([POLICY_FILE, ARCHON_CONFIG_FILE]);
 export const WORKTREE_PATH = '.wheelhouse/worktrees';
+
+// The fetch mirror's rule (3b): Archon's git reads the project's repository from the helper's mirror in the engine
+// folder, so no key reaches Archon. The rule can't go in the project's own git config, which setup's fenced git
+// refuses to work in once it holds a url rule (ruling R112), so it goes in the engine folder's list, which every
+// Archon command reads into its environment (scripts/engine/archon/env.js): { <project>: <its address> }.
+export const mirrorRulesFile = (engine = engineDir()) => path.join(engine, 'mirrors', 'rules.json');
