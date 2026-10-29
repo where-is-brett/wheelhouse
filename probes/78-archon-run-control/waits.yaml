@@ -1,0 +1,23 @@
+# probes/78-archon-run-control/waits.yaml
+# The trial workflow of check 78: two attention waits and a child run with a third, then a short script.
+# No model step, so the trials cost nothing. The harness installs it as `e5-waits` beside child.yaml.
+name: e5-waits
+description: Two attention waits and a child run with a third, then a short script
+nodes:
+  - id: ask-one
+    wait:
+      attention: "First question?"
+      form: select
+      options: [{ id: a }, { id: b }]
+  - id: child
+    depends_on: [ask-one]
+    workflow: e5-child
+  - id: ask-two
+    depends_on: [child]
+    wait:
+      attention: "Second question?"
+      form: select
+      options: [{ id: a }, { id: b }]
+  - id: finish
+    depends_on: [ask-two]
+    bash: echo finished
