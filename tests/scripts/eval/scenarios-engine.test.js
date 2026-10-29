@@ -7,17 +7,19 @@ import assert from 'node:assert/strict';
 import { main, loadScenario } from '../../../scripts/eval/run.js';
 import { parseArgs } from '../../../scripts/eval/harness.js';
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
-import { asking, smallBlocked } from '../../eval/build-loop/engine-recordings.js';
+import { asking, bugBlocked, smallBlocked } from '../../eval/build-loop/engine-recordings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
-// The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js.
-const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62];
+// The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js. So do the bug
+// lane's (63 to 69).
+const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69];
 
-test('--engine takes the fake, and goes with scenario numbers, --all or --suite alone', () => {
+test('--engine takes the fake or real Archon, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');
   assert.equal(parseArgs(['--suite', 'build-loop', '--engine=fake']).engine, 'fake');
   assert.equal(parseArgs(['42']).engine, undefined);
-  assert.throws(() => parseArgs(['42', '--engine', 'archon']), /--engine takes fake, not archon/);
+  assert.equal(parseArgs(['--suite', 'build-loop', '--engine', 'archon']).engine, 'archon');
+  assert.throws(() => parseArgs(['42', '--engine', 'orchestrator']), /--engine takes fake or archon, not orchestrator/);
   assert.throws(() => parseArgs(['--again', '--engine', 'fake']), /give it no --ready, --again, --agent or --level/);
   assert.throws(() => parseArgs(['42', '--engine', 'fake', '--agent', 'copilot']), /give it no/);
 });
@@ -41,6 +43,19 @@ test('scenario 52 fails when the task\'s question is answered for the director w
   const scenario = await loadScenario(52);
   const recording = smallBlocked('card-52').map((e) => (e.type === 'ask' ? { ...e, level: 1, card: false, answer: 'rework', line: 'Sent back.' } : e));
   const got = await runEngineScenario({ scenario: { ...scenario, engine: { ...scenario.engine, recordings: { 'card-52': recording } } } });
+  assert.equal(got.pass, false);
+});
+
+test('scenario 67 fails when the engine\'s record says the planted reproduction went red', async () => {
+  const scenario = await loadScenario(67);
+  const got = await runEngineScenario({ scenario: { ...scenario, engine: { ...scenario.engine, red: { red: true } } } });
+  assert.equal(got.pass, false);
+});
+
+test('scenario 65 fails when the bug lane starts the work again after the director moved it up', async () => {
+  const scenario = await loadScenario(65);
+  const recording = bugBlocked('card-65', 'no-reproduction', 'Not reproduced.');
+  const got = await runEngineScenario({ scenario: { ...scenario, engine: { ...scenario.engine, recordings: { 'card-65': recording } } } });
   assert.equal(got.pass, false);
 });
 

@@ -54,8 +54,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { wheelhouseHome, projectsDir, archonHome } from '../lib/paths.js';
-import { pluginScopeRemoval } from './engine-parts.js';
+import { wheelhouseHome, projectsDir, archonHome, stateDir } from '../lib/paths.js';
+import { PLUGIN_SCOPE, pluginAtScope, pluginScopeRemoval } from './engine-parts.js';
+import { cancelRuns } from '../engine/stop.js';
+import { listEvents } from '../state/events.js';
 import { readProject, registeredProjects } from '../lib/projects.js';
 import { runClosed } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
@@ -79,8 +81,25 @@ async function stopEngineRuns() {
   return { stopped: true };
 }
 
-// `claude plugin uninstall` of the plugin setup added at user scope.
-async function removePluginScope(change, run) {
+// This project's runs of the build engine cancelled, while other projects stay on it (part 3f, M4): the runs its record
+// names, by run id, and what they left running ended by pid. Other projects' runs carry on.
+export async function stopProjectRuns(project, { engine, cancel = cancelRuns } = {}) {
+  const latest = new Map();
+  for (const e of listEvents(stateDir(project), { report: () => {} })) {
+    if (e.kind === 'run' && typeof e.data?.runId === 'string') latest.set(e.data.runId, e.data.state);
+  }
+  const runIds = [...latest].filter(([, state]) => state !== 'ended').map(([id]) => id);
+  if (runIds.length === 0) return { stopped: true };
+  const got = await cancel({ engine: engine ?? (await import('../host/helper-main.js')).packedArchon(), runIds });
+  if (got.refused.length > 0 || got.survivors.length > 0) return { stopped: false, why: `${got.refused.length + got.survivors.length} of its runs or processes are still going` };
+  return { stopped: true };
+}
+
+// `claude plugin uninstall` of the plugin setup added at user scope, unless it is gone already (the director removed it
+// by hand): Claude Code would refuse that, and nothing is left to take back.
+export async function removePluginScope(change, run) {
+  const scope = { plugin: change.after?.plugin ?? PLUGIN_SCOPE.plugin, scope: change.after?.scope ?? PLUGIN_SCOPE.scope };
+  if (typeof change.target === 'string' && !pluginAtScope(path.dirname(path.dirname(change.target)), scope)) return { removed: true, already: true };
   const got = await run('claude', pluginScopeRemoval(change));
   return got.code === 0 ? { removed: true } : { removed: false, why: String(got.stderr || got.stdout || '').trim().slice(0, 200) || 'Claude Code gave no reason' };
 }
@@ -267,6 +286,7 @@ export async function applyUninstall({
     stopWatcher: (project) => stopWatcher(project),
     stopReceiver: () => stopReceiver(),
     stopEngine: () => stopEngineRuns(),
+    stopProjectRuns: (project) => stopProjectRuns(project),
     removePluginScope: (change) => removePluginScope(change, run),
     leaveLocked: (args) => leaveLocked({ ...args, run }),
     putBackOwnApp: (change) => putBackOwnApp(change, ops.profile === undefined ? {} : { profile: ops.profile }),
@@ -493,10 +513,13 @@ export async function applyUninstall({
           }
           const got = entry.what === 'receiver' ? await o.stopReceiver()
             : entry.what === 'engine' ? await o.stopEngine()
-              : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
-          const name = { engine: 'The build engine\'s runs', foreman: 'The Bosun', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
-          // Runs still going would lose their engine underneath them: nothing else is removed until they stop.
-          if (entry.what === 'engine' && !got.stopped) halt(`The build engine's runs did not all stop (${got.why}), so nothing else was removed; ask for uninstall's plan again once they have`);
+              : entry.what === 'engine-runs' ? await o.stopProjectRuns(plan.project)
+                : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
+          const name = {
+            engine: 'The build engine\'s runs', 'engine-runs': 'This project\'s runs of the build engine', foreman: 'The Bosun', watcher: 'The watcher', receiver: 'The usage receiver',
+          }[entry.what];
+          // Runs still going would lose their engine or their worktrees underneath them: nothing else is removed until they stop.
+          if ((entry.what === 'engine' || entry.what === 'engine-runs') && !got.stopped) halt(`The build engine's runs did not all stop (${got.why}), so nothing else was removed; ask for uninstall's plan again once they have`);
           say(got.stopped ? `${name} is stopped.` : `${name}: ${got.why}.`);
           break;
         }
@@ -653,7 +676,7 @@ export async function applyUninstall({
           const got = await o.removePluginScope(entry.change);
           if (!got.removed) halt(`Claude Code didn't remove Wheelhouse from your account (${got.why}), so uninstall stopped here`);
           mark(entry.ids, true);
-          say('Wheelhouse is removed from Claude Code for your account.');
+          say(got.already ? 'Wheelhouse was already removed from Claude Code for your account.' : 'Wheelhouse is removed from Claude Code for your account.');
           break;
         }
         case 'remove-login-start': {

@@ -63,7 +63,7 @@ import { receiverPort } from '../telemetry/main.js';
 import { telemetryChanges, telemetryOn, isObject, readText } from './telemetry.js';
 import { LEVELS, launchedIn, lockedAsk } from './host.js';
 import { newId, SAY_CHARS, readJournal } from './journal.js';
-import { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE_LINE } from './engine-parts.js';
+import { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE_LINE, pluginUpdateLine } from './engine-parts.js';
 
 // ---- Step 6 ----
 
@@ -196,7 +196,8 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
     out.push(`Claude Code on its stable channel at version ${minimum}`);
   }
   if (has('push')) out.push('phone notifications on');
-  if (has('plugin')) out.push(PLUGIN_SCOPE_LINE);
+  const plugin = changes.find((c) => c.what === 'plugin');
+  if (plugin) out.push(plugin.update ? pluginUpdateLine(plugin.update.from, plugin.update.to) : PLUGIN_SCOPE_LINE);
   if (has('login')) out.push('Start Wheelhouse\'s helper when you sign in, so the build carries on with no session open');
   return out;
 }

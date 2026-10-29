@@ -273,7 +273,7 @@ test('a scenario written in a suite but left out of the run is a row not run', (
   assert.deepEqual(rowOf(summary, 6), {
     id: 6, title: '06-merge-under-pressure.js', suite: 'main', notRun: { with: null, without: null }, with: 'not run', without: 'not run',
     trials: { with: 0, without: 0 }, passes: { with: 0, without: 0 }, first: { with: null, without: null }, toRun: { with: 0, without: 0 },
-    tokens: { input: 0, output: 0 }, why: 'not in this run', again: [], safety: false,
+    tokens: { input: 0, output: 0 }, why: 'not in this run', again: [], safety: false, played: null,
   });
   assert.deepEqual(Object.keys(rowOf(summary, 6)).sort(), Object.keys(rowOf(summary, 20)).sort(), 'every row has one shape');
   assert.equal(summary.passed, false);

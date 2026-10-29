@@ -14,7 +14,8 @@ import {
   UNINSTALL_CHANGED, UNINSTALL_NEEDS_CLICK, UNINSTALL_OWN_LIST, UNINSTALL_STOP, UNINSTALL_RUNNING, UNINSTALL_RUN,
   NEVER_PUSHED, FOLDER_NOTE, UNINSTALL_NEW_SESSION, ENV_STAYS, ARCHIVE, ARCHIVE_UNREAD, ARCHIVE_OUTSIDE, ARCHIVE_TWICE, archiveAt, trustDir, seenFile, OLD_STAYS,
 } from '../../../scripts/setup/uninstall.js';
-import { applyUninstall, runUninstall, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
+import { applyUninstall, runUninstall, removePluginScope, stopProjectRuns, UNINSTALL_BRANCH, UNINSTALL_TITLE } from '../../../scripts/setup/uninstall-run.js';
+import { cancelRuns } from '../../../scripts/engine/stop.js';
 import {
   startRun, addChanges, applyJsonKey, markPutBack, markStep, newId, readJournal, reverseChange, journalFile, closeRun,
 } from '../../../scripts/setup/journal.js';
@@ -30,7 +31,7 @@ import { cardProblems } from '../../../scripts/hooks/card-check.js';
 import { CARD } from '../../../scripts/lib/front-desk.js';
 import { uninstallLine, UNINSTALL_LABEL } from '../../../scripts/state/card-lines.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { makeEvent } from '../../../scripts/state/events.js';
+import { makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { keepAnswer, keepUninstallClick, uninstallShownFor, freshUninstallClicks } from '../../../scripts/setup/clicks.js';
 import { madeBySetup, joinedFolder } from '../../../scripts/setup/host.js';
 import { writeKey, readKey } from '../../../scripts/host/keys.js';
@@ -2963,13 +2964,13 @@ test('uninstall removes the login start', async () => {
 // The engine's parts as setup leaves them on the Mac: step 2's engine folder (its Bun and Archon) and the broker's
 // launcher, step 6's plugin at user scope, step 7's policy file and the project's fetch-mirror rule, and Archon's
 // own run history, which setup never records.
-function engineSetup(world, r) {
+function engineSetup(world, r, { pluginBefore = null } = {}) {
   r.folder(2, path.join(engineDir(), 'bun'), { tool: 'bun', version: '1.4.3' }, { before: null });
   writeText(path.join(engineDir(), 'bun', 'bin', 'bun'), 'program');
   r.folder(2, path.join(engineDir(), 'archon'), { tool: 'archon', version: 'v0.13.0' }, { before: null });
   r.add(2, { kind: 'file', target: brokerLauncher(), before: null, after: { tool: 'broker' } });
   writeText(brokerLauncher(), '#!/bin/sh\n');
-  r.add(6, { kind: 'plugin-scope', target: installedPluginsFile(path.join(world.userHome, '.claude')), before: null, after: { plugin: 'wheelhouse@wheelhouse', scope: 'user' } });
+  r.add(6, { kind: 'plugin-scope', target: installedPluginsFile(path.join(world.userHome, '.claude')), before: pluginBefore, after: { plugin: 'wheelhouse@wheelhouse', scope: 'user', ...(pluginBefore === null ? {} : { version: '0.2.0' }) } });
   r.file(7, path.join(world.folder, ...POLICY_FILE.split('/')), '["o"]\n', { engine: true });
   r.key(7, mirrorRulesFile(), [SLUG], `https://github.com/${REPO}.git`);
   writeText(path.join(archonHome(), 'archon.db'), 'runs');
@@ -2997,6 +2998,23 @@ test('uninstall cancels runs before removing the engine folder', async () => {
   });
 });
 
+test('a Wheelhouse setup only brought up to date at user scope stays on uninstall', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    // The plugin was there before setup, at 0.1.2; step 6 only brought it up to date.
+    engineSetup(world, r, { pluginBefore: { version: '0.1.2' } });
+    try {
+      const got = await plan(world);
+      assert.equal(got.changes.some((c) => c.put === 'remove-plugin-scope'), false);
+      assert.ok(got.keep.some((k) => /there before setup, which only brought it up to date/.test(k.why)));
+      assert.deepEqual(accounted(got), recordedIds());
+    } finally {
+      fs.rmSync(archonHome(), { recursive: true, force: true });
+    }
+  });
+});
+
 test('a second project\'s uninstall leaves the engine but takes its own mirror rule back', async () => {
   await withHome(async () => {
     const world = makeWorld();
@@ -3006,6 +3024,8 @@ test('a second project\'s uninstall leaves the engine but takes its own mirror r
     try {
       const got = await plan(world);
       assert.equal(got.last, false);
+      // Only this project's own runs are cancelled, first of all.
+      assert.deepEqual(of(got, 'stop').map((c) => c.what), ['engine-runs', 'foreman', 'watcher']);
       assert.equal(got.changes.some((c) => c.what === 'engine' || c.target === engineDir() || c.put === 'remove-plugin-scope'), false);
       assert.ok(got.changes.some((c) => c.put === 'reverse' && c.change.target === mirrorRulesFile()));
       assert.equal(got.asks.some((a) => a.about === 'engine'), false);
@@ -3085,6 +3105,62 @@ test('uninstall\'s pull request removes the project\'s .archon file, and the eng
   } finally {
     host.cleanup();
   }
+});
+
+// A run's record in a project's state, as what started the run writes it, and its end.
+function runRecord(project, runId, state, ms) {
+  const event = makeEvent({ kind: 'run', data: { work: `w-${runId}`, lane: 'quick', engine: 'archon', runId, state, branch: `wh/${runId}` }, now: () => new Date(Date.UTC(2026, 9, 30, 1, 0, 0, ms)) });
+  const file = path.join(stateDir(project), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+}
+
+test('uninstalling one project cancels its own runs and leaves the others\'', async () => {
+  await withHome(async () => {
+    runRecord('o__a', 'a-1', 'started', 1);
+    runRecord('o__a', 'a-2', 'started', 2);
+    runRecord('o__a', 'a-2', 'ended', 3);
+    runRecord('o__a', 'a-3', 'started', 4);
+    runRecord('o__b', 'b-1', 'started', 5);
+    // The one engine on the computer: a-3 has ended there already, though its record doesn't say so yet.
+    const status = { 'a-1': 'running', 'a-3': 'ended', 'b-1': 'running' };
+    const acts = [];
+    const ends = [];
+    const engine = {
+      inspect: async (id) => ({ status: status[id] ?? 'unknown' }),
+      act: async (id, action) => { acts.push([id, action]); return { ok: true }; },
+    };
+    const cancel = (args) => cancelRuns({ ...args, end: async (run) => { ends.push(run.id); return { ended: [], survivors: [] }; } });
+    assert.deepEqual(await stopProjectRuns('o__a', { engine, cancel }), { stopped: true });
+    assert.deepEqual(acts, [['a-1', { cancel: { reason: 'Uninstall' } }]]);
+    assert.deepEqual(ends, ['a-1']);
+    // One the engine won't cancel, or whose processes outlive it, stops uninstall there.
+    engine.act = async () => ({ ok: false, refused: 'no' });
+    assert.equal((await stopProjectRuns('o__a', { engine, cancel })).stopped, false);
+    const left = (args) => cancelRuns({ ...args, end: async () => ({ ended: [], survivors: ['"claude" (process 9)'] }) });
+    engine.act = async () => ({ ok: true });
+    assert.match((await stopProjectRuns('o__a', { engine, cancel: left })).why, /still going/);
+    // A project with no run going asks nothing of the engine.
+    assert.deepEqual(await stopProjectRuns('o__c', { engine: null }), { stopped: true });
+  });
+});
+
+test('uninstall goes on when the plugin was already removed by hand', async () => {
+  await withHome(async () => {
+    const claudeHome = tempFolder('wh-claude ');
+    const change = { kind: 'plugin-scope', target: installedPluginsFile(claudeHome), after: { plugin: 'wheelhouse@wheelhouse', scope: 'user' } };
+    const ran = [];
+    const run = async (program, args) => { ran.push([program, ...args]); return { code: 1, stdout: '', stderr: 'Plugin "wheelhouse@wheelhouse" is not installed' }; };
+    assert.deepEqual(await removePluginScope(change, run), { removed: true, already: true });
+    // Another scope's entry is not this one.
+    writeText(installedPluginsFile(claudeHome), `${JSON.stringify({ plugins: { 'wheelhouse@wheelhouse': [{ scope: 'project' }] } })}\n`);
+    assert.deepEqual(await removePluginScope(change, run), { removed: true, already: true });
+    assert.deepEqual(ran, []);
+    // Still there: Claude Code takes it back, and its refusal stops uninstall as before.
+    writeText(installedPluginsFile(claudeHome), `${JSON.stringify({ plugins: { 'wheelhouse@wheelhouse': [{ scope: 'user' }] } })}\n`);
+    assert.equal((await removePluginScope(change, run)).removed, false);
+    assert.deepEqual(ran, [['claude', 'plugin', 'uninstall', 'wheelhouse@wheelhouse', '--scope', 'user']]);
+  });
 });
 
 test('uninstall stops, and keeps the engine folder, when the engine\'s runs don\'t stop', async () => {

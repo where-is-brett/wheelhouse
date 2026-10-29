@@ -1,0 +1,6 @@
+{"type": "run-started", "runId": "rec-bug-lane", "at": "2026-10-30T05:00:00.000Z", "work": "video-length", "lane": "bug", "branch": "wh/video-length"}
+{"type": "step-finished", "runId": "rec-bug-lane", "at": "2026-10-30T05:01:00.000Z", "step": "order", "role": "script", "provider": null, "model": null, "minutes": 1, "spend": {"tokens": 0, "dollars": 0.0, "source": "reported"}, "output": "{\"visible\": false, \"showFirst\": false}"}
+{"type": "step-finished", "runId": "rec-bug-lane", "at": "2026-10-30T05:01:00.000Z", "step": "reproduce-gate", "role": "script", "provider": null, "model": null, "minutes": 1, "spend": {"tokens": 0, "dollars": 0.0, "source": "reported"}, "output": "{\"reproduced\": false}"}
+{"type": "step-finished", "runId": "rec-bug-lane", "at": "2026-10-30T05:04:00.000Z", "step": "reproduce", "role": "implementer", "provider": "claude", "model": "medium", "minutes": 3, "spend": {"tokens": 60000, "dollars": 0.1, "source": "reported"}}
+{"type": "step-finished", "runId": "rec-bug-lane", "at": "2026-10-30T05:09:00.000Z", "step": "implement", "role": "implementer", "provider": "claude", "model": "medium", "minutes": 4, "spend": {"tokens": 120000, "dollars": 0.2, "source": "reported"}}
+{"type": "run-ended", "runId": "rec-bug-lane", "at": "2026-10-30T05:15:00.000Z", "outcome": "completed", "branch": "wh/video-length", "pr": null}

@@ -86,6 +86,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     host: {
       facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown', plan?, gaps? } (the last two on GitLab)
     },
+    engineSwitch: post('/engine-switch'), // { project | cwd } -> { ok, step: 'off' | 'on' | 'opened' | 'approve' | 'waiting' | 'closed', pr?, head?, why? }: the switch to the new engine's next step (part 3f)
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
     // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
@@ -95,6 +96,8 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request
       ready: post('/engine/ready'), // { runId } -> { ok, pr, head }: hands the pull request to the engine's merge queue once its head is signed CLEAN (and approved, if shown first)
       mergeFix: post('/engine/merge-fix'), // { runId } -> { ok, pr, head }: adds a fix-main run's own pull request to the main line through the helper's gate, as the open red-main incident's fix
+      reproduction: post('/engine/reproduction'), // { runId } -> { ok, check, commit }: keeps a bug run's reproduction once for its work, from the engine's record
+      reproductionFind: post('/engine/reproduction/find'), // { runId } -> { ok, kept, given }: the work's kept reproduction, and the one the run's reproduce step gave
       previewFind: post('/engine/preview/find'), // { runId } -> { ok, visible, pages, url: address | null, pr, head }: whether the run's work is visible, its pages and the host's preview of the head it opened
       preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
       lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty

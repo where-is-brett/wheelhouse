@@ -1,12 +1,12 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, and 60 to 62), in the fake engine's events: each a run of the quick
-// lane, of the small lane from 51, or of fix-main, that stops where the scenario needs it. Not a scenario file: it has
-// no number.
+// Recordings for the engine scenarios (42 to 55, 60 to 62 and 63 to 69), in the fake engine's events: each a run of the
+// quick lane, of the small lane from 51, of fix-main, or of the bug lane from 63, that stops where the scenario needs
+// it. Not a scenario file: it has no number.
 import { confirmationFor } from '../../../scripts/state/events.js';
 
 const at = (minute) => new Date(Date.UTC(2026, 9, 29, 9, minute)).toISOString();
 const started = (work, lane = 'quick') => ({ type: 'run-started', at: at(0), work, lane, branch: `wh/${work}` });
-const step = (minute, id, spend, extra = {}) => ({ type: 'step-finished', at: at(minute), step: id, role: ['implement', 'plan', 'fix'].includes(id) ? 'implementer' : 'reviewer', provider: 'claude', model: 'mid', minutes: 2, spend, ...extra });
+const step = (minute, id, spend, extra = {}) => ({ type: 'step-finished', at: at(minute), step: id, role: ['implement', 'plan', 'fix', 'reproduce'].includes(id) ? 'implementer' : 'reviewer', provider: 'claude', model: 'mid', minutes: 2, spend, ...extra });
 const ended = (minute, outcome = 'completed', pr = null) => ({ type: 'run-ended', at: at(minute), outcome, pr });
 
 // A run that asks one question of `level`, then finishes once it is answered.
@@ -120,3 +120,51 @@ export function fixing(work, outcome = null) {
   const run = [{ ...started(work), lane: 'fix-main' }, step(2, 'implement', { tokens: 30000, dollars: 0.08, source: 'reported' })];
   return outcome ? [...run, ended(8, outcome)] : run;
 }
+
+// A bug-lane run: the reproduce step, the fix, the reviews and the pull request.
+export function bug(work, { pr = 63 } = {}) {
+  return [
+    started(work, 'bug'),
+    step(1, 'reproduce', { tokens: 60000, dollars: 0.1, source: 'reported' }),
+    step(3, 'implement', { tokens: 120000, dollars: 0.2, source: 'reported' }),
+    step(4, 'review-standards', { tokens: 20000, dollars: 0.05, source: 'reported' }),
+    step(4, 'review-spec', { tokens: 20000, dollars: 0.05, source: 'reported' }),
+    ended(6, 'completed', pr),
+  ];
+}
+
+// The options of the bug lane's two blocked exits of its own (engine/archon/pack/wheelhouse-bug.yaml).
+export const BUG_OPTIONS = Object.freeze({
+  'no-reproduction': [{ id: 'rework', label: 'Try to reproduce it again' }, { id: 'stop', label: 'Stop this work' }],
+  'bigger-than-a-bug': [{ id: 'small', label: 'Make it a small change' }, { id: 'feature', label: 'Make it a feature' }, { id: 'stop', label: 'Stop this work' }],
+});
+
+// A bug-lane run that takes one of its blocked exits: the bug couldn't be reproduced, or its fix proved bigger than a
+// bug's.
+export function bugBlocked(work, topic, question) {
+  const options = BUG_OPTIONS[topic];
+  return [
+    started(work, 'bug'),
+    step(1, 'reproduce', { tokens: 60000, dollars: 0.1, source: 'reported' }),
+    {
+      type: 'ask', at: at(3), id: `${work}:${topic}:1`, kind: 'blocked', level: 3, topic, recommend: options[0].id, card: true, options, context: { question },
+    },
+    { type: 'ask-resolved', at: at(4), id: `${work}:${topic}:1` },
+    ended(6),
+  ];
+}
+
+// What a bug-lane scenario seeds: the bug lane put on the engine, as the director's confirmed setting, and a reported
+// bug, as intake records it. A bug no user would see starts unapproved; one they would is approved and shown first.
+export function bugWork(world, { id, title, visible = false, lanes = ['quick', 'bug'] }) {
+  if (lanes) {
+    const setting = world.put('setting', { key: 'engineLanes', value: lanes });
+    world.put('confirmation', confirmationFor(setting).data);
+  }
+  const hash = id.replace(/\D/g, '').padEnd(64, '6').slice(0, 64);
+  world.put('work', { id, title, lane: 'bug', visible, dependsOn: [], doc: { path: `.wheelhouse/work/${id}.md`, hash } });
+  if (visible) world.put('action', { action: 'approve-work', question: `Approve ${id} (bug lane) as written, and show it to me before it merges`, label: 'Approve', work: id, lane: 'bug', hash, shownFirst: true });
+}
+
+// The work a real play on Archon gives its runs (scripts/eval/archon-world.js): one line, so a real step costs cents.
+export const TINY_GOAL = "Add the line 'Made for the evaluation.' to the end of README.md";

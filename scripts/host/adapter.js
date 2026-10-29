@@ -261,6 +261,8 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
     verdictComment: async ({ number, id, body } = {}) => c.verdictComment({
       number: wholeNumber(number), id: id === undefined || id === null ? undefined : wholeNumber(id), body: text(body, 'body'),
     }),
+    // The login of the account the connection posts as.
+    login: async () => c.login(),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({
         title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),

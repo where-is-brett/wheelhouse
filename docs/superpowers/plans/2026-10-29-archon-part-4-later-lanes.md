@@ -50,6 +50,8 @@
 
 **Done.** A planted bug in a test project is reproduced red, fixed and merged; a too-big bug raises a blocked card with a proposal; the scenarios pass on real Archon.
 
+**Planned.** The full plan is `docs/superpowers/plans/2026-10-30-archon-part-4-2-bug-lane.md`. As built: one run, with the quick lane's steps inline after a reproduce block, as the small lane does; the method in the reproduce and fix prompts, with no `diagnosing-bugs` copy; the reproduction kept by the helper from the engine's record, once a work, and added to the order's done checks; and a lane chosen on the "bigger than a bug" card sent back to the First Mate, never started again in the bug lane. The planted bug is in `tests/eval/build-loop/bug-project.js`, run end to end in `tests/e2e/engine-bug.test.js`; merging it waits for the counted evaluation on real Archon.
+
 ### Stub 4.3: Fix main (`wheelhouse-fix-main`)
 
 **Scope.** Spec 7.7: when Archon's merge gate raises `hold` on a red main line, the card router answers it at level 1, the Logbook shows a line, and the dispatcher starts `wheelhouse-fix-main`. The broker's permit lets the fix merge during an incident.

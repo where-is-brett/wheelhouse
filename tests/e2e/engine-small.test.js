@@ -7,7 +7,6 @@
 // engine's record at the pull request's head.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { guardedRun } from '../helpers/host-stand-ins.js';
@@ -32,6 +31,7 @@ import { makeBareRemote, g } from '../helpers/git-fixture.js';
 import { as, shortHome, tempFolder, testAddress } from '../helpers/homes.js';
 import { writeFiles } from '../helpers/lineage.js';
 import { waitLongerOnTheHelper } from '../helpers/until.js';
+import { standInHost, stubSpawn } from '../helpers/engine-e2e.js';
 
 const hostLog = [];
 const hostGuard = guardedRun(run, { log: hostLog });
@@ -41,40 +41,6 @@ waitLongerOnTheHelper();
 const P = 'o__p';
 const recordings = { 'small-lane': loadRecordings(path.join(import.meta.dirname, '..', 'fixtures', 'engine'))['small-lane'] };
 const CLEAN = JSON.stringify({ verdict: 'CLEAN', findings: [], summary: 'Reads well and matches the order.', blocked: false, assumptions: [] });
-
-// The host as the helper's adapter sees it, over the bare repository: pull requests opened from branches it holds.
-function standInHost(remoteUrl) {
-  const prs = new Map();
-  const comments = [];
-  const headOf = async (branch) => {
-    const found = await run('git', ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], { cwd: remoteUrl });
-    return found.code === 0 ? found.stdout.trim() : null;
-  };
-  return {
-    comments,
-    defaultBranch: async () => 'main',
-    openRequests: async () => [...prs.entries()].map(([number, pr]) => ({ number, branch: pr.head, fork: false })),
-    openPr: async ({ head, base, title, body }) => {
-      prs.set(prs.size + 1, { head, base, title, body });
-      return { number: prs.size };
-    },
-    updatePr: async ({ number }) => ({ number }),
-    branchHead: headOf,
-    prState: async (number) => ({ number, headSha: await headOf(prs.get(number).head), headRef: prs.get(number).head, baseRef: 'main', mergeable: 'yes', state: 'open', body: '' }),
-    verdictComment: async ({ number, id, body }) => { comments.push({ number, id, body }); return { id: id ?? 500 }; },
-    ciState: async (sha) => ({ sha, state: 'pending' }),
-    issue: { create: async () => ({ number: 1 }), update: async () => ({ number: 1 }), list: async () => [] },
-  };
-}
-
-function stubSpawn() {
-  return () => {
-    const child = new EventEmitter();
-    child.pid = 7000;
-    child.kill = () => { setImmediate(() => child.emit('exit', null, 'SIGTERM')); return true; };
-    return child;
-  };
-}
 
 const said = () => {
   const lines = [];

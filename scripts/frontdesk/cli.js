@@ -58,6 +58,7 @@ import { dataHash } from '../state/events.js';
 import { composeCard, answerInput } from '../cards/compose.js';
 import { cardsForVisit, existingCard, cardNumbered, asQuestion } from '../cards/visit.js';
 import { controlFileInput, controlFilesDue, controlFilesNamed, gateAsksDue, gateInput, holdInput, holdsDue, premiumFailuresDue, stillWaits, withPutBack } from '../cards/build-loop.js';
+import { SWITCH_NAME, SWITCH_WORK } from '../engine/switch.js';
 import { failedInput } from '../routing/premium.js';
 import { heldByNotNow, numberedWaiting } from '../board/model.js';
 import { glossaryOf, knownConcepts, plainWords, termPattern } from './glossary.js';
@@ -301,7 +302,8 @@ function answerCard(id, data, views, words) {
 // commit than the set line's).
 function gateCard(entry, views, words) {
   const work = entry.data.work;
-  const title = flat(views.work?.[work]?.work?.data?.title);
+  // The switch to the new engine's pull request is no piece of work (scripts/engine/switch.js), so it is named for what it does.
+  const title = work === SWITCH_WORK ? SWITCH_NAME : flat(views.work?.[work]?.work?.data?.title);
   let refusal = null;
   for (const name of [...new Set([title || work, work, 'this work'])]) {
     try {
