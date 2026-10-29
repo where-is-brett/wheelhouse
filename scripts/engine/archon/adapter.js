@@ -81,8 +81,11 @@ export function cursorKeeper() {
   };
 }
 
-// Lines of a long-running Archon command as they come, through archonCli's onOutput. Ending the read (a `break`, or
-// `signal`) stops the command.
+// How much of a long-running command's output is kept beside the lines read from it.
+export const STREAM_KEEP_BYTES = 64 * 1024;
+
+// Lines of a long-running Archon command's standard output as they come, through archonCli's onStdout; only the
+// newest STREAM_KEEP_BYTES of its output is kept while it runs. Ending the read (a `break`, or `signal`) stops it.
 export function archonStreamer({ cli = archonCli } = {}) {
   return (args, { signal } = {}) => (async function* lines() {
     const stop = new AbortController();
@@ -94,7 +97,8 @@ export function archonStreamer({ cli = archonCli } = {}) {
     const nudge = () => { const w = wake; wake = null; w?.(); };
     const finished = Promise.resolve(cli(args, {
       signal: signals,
-      onOutput: (chunk) => {
+      limit: STREAM_KEEP_BYTES,
+      onStdout: (chunk) => {
         buffer += chunk;
         const parts = buffer.split(/\r?\n/);
         buffer = parts.pop();

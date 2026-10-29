@@ -52,3 +52,13 @@ test('parseJson reads a whole document, an array, or nothing', () => {
   assert.equal(parseJson(undefined), null);
   assert.equal(parseJson('5\n6'), null);
 });
+
+test("archonCli hands on standard output alone as it comes, and keeps no more than `limit` of it", async () => {
+  seen.length = 0;
+  const run = fakeRun({ code: 0, stdout: '', stderr: '' });
+  const onStdout = () => {};
+  await archonCli(['workflow', 'attention', '--watch'], { run, engine, home, nodeDir: '/n', onStdout, limit: 4096 });
+  assert.equal(seen[0].options.onStdout, onStdout);
+  assert.equal(seen[0].options.onOutput, undefined);
+  assert.equal(seen[0].options.limit, 4096);
+});

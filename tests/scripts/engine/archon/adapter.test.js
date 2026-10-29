@@ -190,19 +190,24 @@ test("follow starts the stream again without a cursor when the engine doesn't kn
 
 test("archonStreamer gives a command's output line by line, and stops the command when the read ends", async () => {
   let signal;
+  let given;
   const cli = async (args, options) => {
     signal = options.signal;
-    options.onOutput('{"type":"ready",');
-    options.onOutput('"cursor":"sql:1"}\n{"type":"bookmark","cursor":"sql:2"}\n{"type":"book');
-    options.onOutput('mark","cursor":"sql:3"}');
+    given = options;
+    options.onStdout('{"type":"ready",');
+    options.onStdout('"cursor":"sql:1"}\n{"type":"bookmark","cursor":"sql:2"}\n{"type":"book');
+    options.onStdout('mark","cursor":"sql:3"}');
     return { code: 0, json: null, stdout: '', stderr: '' };
   };
   const lines = [];
   for await (const line of archonStreamer({ cli })(['workflow', 'attention', '--watch'])) lines.push(JSON.parse(line).cursor);
   assert.deepEqual(lines, ['sql:1', 'sql:2', 'sql:3']);
+  // Standard output alone is read, and the command keeps only a little of what it said, however long it runs.
+  assert.equal(given.onOutput, undefined);
+  assert.ok(Number.isFinite(given.limit) && given.limit <= 64 * 1024, `limit ${given.limit}`);
   const endless = (args, options) => {
     signal = options.signal;
-    options.onOutput('{"type":"ready","cursor":"sql:1"}\n');
+    options.onStdout('{"type":"ready","cursor":"sql:1"}\n');
     return new Promise((resolve) => options.signal.addEventListener('abort', () => resolve({ code: 0, stopped: true })));
   };
   for await (const line of archonStreamer({ cli: endless })(['x'])) { assert.ok(line); break; }
