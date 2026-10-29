@@ -50,7 +50,7 @@ function standInArchon({ stepTokens = 25000, refused = true, trialFails = false,
     if (b === 'get') {
       const run = runs.get(c);
       if (!run) return { code: 1, json: { ok: false }, stdout: '', stderr: 'no such run' };
-      const spend = { tokens: { source: 'provider', value: { input: stepTokens, output: 10 } }, costUsd: { source: 'provider', value: 0.01 } };
+      const spend = { tokens: { source: 'provider', value: { input: stepTokens, output: 10, cacheRead: 200, cacheWrite: 100 } }, costUsd: { source: 'provider', value: 0.01 } };
       const nodes = run.hello ? [] : [{ nodeId: 'implement', execution: { binding: { provider: 'claude' }, spend } }];
       const events = !run.hello ? [] : trialFails ? [
         { event_type: 'provider_event', step_name: 'guarded', data: { event: { type: 'tool_call_update', status: 'failed', output: 'PreToolUse:StructuredOutput hook error: Wheelhouse is holding edits and commands' } } },
@@ -254,17 +254,34 @@ test("a real play, or the health trial, that passed on steps not running this ch
   resetProof();
   const real = await scenario('48-unsigned-merge-refused');
   const passing = { ...real, engine: { ...real.engine, real: async () => ({ pass: true, why: 'played' }) } };
-  const worldWith = (check) => async () => ({ prove: async () => ({ ok: true, why: 'sound' }), pluginCheck: check, hostCalls: [], close: async () => {} });
+  const worldWith = (check) => async () => ({ prove: async () => ({ ok: true, why: 'sound' }), pluginCheck: check, hostCalls: [], spend: async () => ({ input: 0, output: 0 }), close: async () => {} });
   const older = () => ({ ok: false, why: 'the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0' });
   assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(older), prepare: async () => '/cache', log: () => {} }),
-    { pass: false, why: 'not played: the health trial didn\'t count: the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0' });
+    { pass: false, why: 'not played: the health trial didn\'t count: the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0', usage: { input: 0, output: 0 } });
   resetProof();
   let calls = 0;
   const thenOlder = () => (calls++ === 0 ? { ok: true, why: 'ours' } : older());
   assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(thenOlder), prepare: async () => '/cache', log: () => {} }),
-    { pass: false, why: 'not counted: the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0' });
+    { pass: false, why: 'not counted: the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0', usage: { input: 0, output: 0 } });
   resetProof();
-  assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(() => ({ ok: true, why: 'ours' })), prepare: async () => '/cache', log: () => {} }), { pass: true, why: 'played' });
+  assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(() => ({ ok: true, why: 'ours' })), prepare: async () => '/cache', log: () => {} }), { pass: true, why: 'played', usage: { input: 0, output: 0 } });
+  resetProof();
+});
+
+test("a real play's tokens are the health trial's, the first time, and its own world's", async () => {
+  resetProof();
+  const real = await scenario('48-unsigned-merge-refused');
+  const passing = { ...real, engine: { ...real.engine, real: async () => ({ pass: true, why: 'played' }) } };
+  const spends = [{ input: 300, output: 20 }, { input: 5000, output: 400 }, { input: 7000, output: 600 }];
+  let n = 0;
+  const open = async () => {
+    const spent = spends[n++];
+    return { prove: async () => ({ ok: true, why: 'sound' }), pluginCheck: () => ({ ok: true }), hostCalls: [], spend: async () => spent, close: async () => {} };
+  };
+  const first = await runRealScenario({ scenario: passing, open, prepare: async () => '/cache', log: () => {} });
+  assert.deepEqual(first.usage, { input: 5300, output: 420 });
+  const second = await runRealScenario({ scenario: passing, open, prepare: async () => '/cache', log: () => {} });
+  assert.deepEqual(second.usage, { input: 7000, output: 600 }, 'the trial runs once, and is counted once');
   resetProof();
 });
 
@@ -353,6 +370,19 @@ test("scenario 45's real play passes when the run is paused at its cap and held,
   }
 });
 
+test("the world's spend adds up what Archon's records say each of its runs' steps spent, cache reads in the input", { skip }, async () => {
+  const archon = standInArchon({ paused: true, stepTokens: 25000 });
+  const world = await open(archon, fakeCache());
+  try {
+    assert.deepEqual(await world.spend(), { input: 0, output: 0 }, 'nothing run, nothing spent');
+    await (await scenario('45-cap-blocked-card')).engine.real(world, { until: wait });
+    assert.equal(world.runs().length, 1);
+    assert.deepEqual(await world.spend(), { input: 25000 + 300, output: 10 });
+  } finally {
+    await world.close();
+  }
+});
+
 test("scenario 48's real play fails when the broker lets the unsigned merge through", { skip }, async () => {
   const world = await open(standInArchon(), fakeCache());
   try {
@@ -382,7 +412,7 @@ test('on archon, a scenario with no real play plays its recording and says so; a
   const real = await scenario('48-unsigned-merge-refused');
   for (let i = 0; i < 2; i += 1) {
     const result = await runRealScenario({ scenario: real, open: failing, prepare: async () => '/cache', log: () => {} });
-    assert.deepEqual(result, { pass: false, why: 'not played: the engine isn\'t sound: no Bun' });
+    assert.deepEqual({ pass: result.pass, why: result.why }, { pass: false, why: 'not played: the engine isn\'t sound: no Bun' });
   }
   assert.equal(opened.length, 1, 'the trial runs once a run');
   resetProof();
