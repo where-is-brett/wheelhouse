@@ -13,7 +13,7 @@
 - the trial's notes, and a reading of Archon's source and documentation at tag v0.13.0 (commit `0d39c1f2`, 28 October 2026);
 - the main design (its section 22 holds the director's past rulings), the build-loop design, `docs/specs/2026-10-20-other-agents-design.md` and `HANDOVER.md`.
 
-**Marks.** *Designer's call* marks a choice the designer made, which the director may override; section 20 lists them. **Decided** marks what the director decided on 29 October 2026, before this design. Section 19 holds the one question that is the director's.
+**Marks.** *Designer's call* marks a choice the designer made, which the director may override; section 20 lists them. **Decided** marks what the director decided on 29 October 2026. Section 19 holds the one question that was the director's, and their ruling on it.
 
 ## 1. Intent
 
@@ -197,7 +197,7 @@ Parts are named as the main design names them, with the crew name the director s
 | Helper and its routes | **Keep** | It gains the desk interface, the engine adapter and the broker. The foreman's routes go |
 | Mirror and test merge | **Drop** | Archon's gate checks mergeability |
 | Quick and narrow connections, the GitHub App, company certificates, cut-access | **Keep** | |
-| The rule that only the helper talks to the host | **Kept, by a broker** (the director's card, section 19) | Archon's `gh` is a Wheelhouse broker that forwards allowed calls through the helper (section 12.4) |
+| The rule that only the helper talks to the host | **Kept, by a broker** (**Decided** 29 October 2026, section 19) | Archon's `gh` is a Wheelhouse broker that forwards allowed calls through the helper (section 12.4) |
 
 ### 4.6 Other agents (Copilot)
 
@@ -531,7 +531,7 @@ The numbers are a starting point. *Designer's call*, to be tuned from the first 
 
 ### 12.4 Only the helper talks to the host: the broker
 
-Archon's merge queue calls `gh` itself, so the rule that only the helper holds the key and talks to the host would break. Section 19 gives the director the options. The design follows the recommendation, **the broker**:
+Archon's merge queue calls `gh` itself, so the rule that only the helper holds the key and talks to the host would break. The director ruled on 29 October 2026 to keep the rule with a go-between, **the broker** (section 19):
 
 - **Archon never holds a GitHub key.** Its `PATH` has no real `gh`, no `GH_TOKEN` is set, and its home has no `gh` sign-in.
 - **The `gh` on Archon's `PATH` is Wheelhouse's broker,** a small Node.js program. It sends the exact command to the helper and passes back the real `gh`'s output unchanged. It interprets nothing, so Archon's parsing never breaks on it.
@@ -614,7 +614,7 @@ Each check is a short trial on the Mac, with an answer note in `docs/checks/`. A
 | **E5, run control** | `wake --watch` and the attention stream survive a restart of the helper, a sleep of the computer, and a missed cursor. A cancelled run resumes, skipping finished steps, with its worktree as it was. Cancelling a feature leaves no child run or process alive | No ask lost or answered twice over 50 trials; resume after cancel works for every lane; nothing survives a cancel | The adapter polls `attention --json` every 15 seconds as a backstop. If resume after cancel fails, caps and All stop end the run, and **Carry on** starts the lane again on the same branch with "carry on from what's there" in the order |
 | **E6, counting spend** | Each step's tokens and cost read from the record. Copilot's premium-request estimate against GitHub's own figure | The estimate is within one request of GitHub's on 20 Copilot steps | Copilot runs only on included models until it is |
 
-E3 needs a throwaway private GitHub repository on the director's account, which only the director can allow (through the main session, when the build plan reaches it).
+E3 no longer waits on a ruling: the director chose the broker on 29 October 2026 (section 19), so E3 tries the merge path through it. It runs on a throwaway private GitHub repository, made through the main session when the build plan reaches it.
 
 ## 16. Risks
 
@@ -622,7 +622,7 @@ E3 needs a throwaway private GitHub repository on the director's account, which 
 |---|---|
 | **Archon is below 1.0.** Minor releases break things: v0.13.0 alone had five breaking changes | Pin v0.13.0 exactly, by checksum. Upgrade on purpose, once a month, only after the counted evaluation passes on the new release, as models are upgraded today. Lineage's hold and undo cover the engine and the pack |
 | **One account writes about 96% of Archon's code** (2,419 of 2,525 commits since 29 July; 83% all time) | The MIT licence lets Wheelhouse fork it, and the fork is kept buildable from source by the monthly upgrade check. Wheelhouse gives its fixes upstream and offers to own the Copilot provider. The weekly sources check counts Archon's merged changes. A fall like the stopped projects' (no release in 90 days) starts the move to the fallback (section 6.5) |
-| **Archon calls `gh` itself,** against the rule that only the helper talks to the host | The broker (section 12.4), subject to the director's card (section 19) |
+| **Archon calls `gh` itself,** against the rule that only the helper talks to the host | The broker (section 12.4), as the director ruled on 29 October 2026 (section 19) |
 | **Bypass mode in Archon's Claude steps** | The guards rest on hooks, deny rules and the sandbox, which E2 tries. The patch is ready if they don't hold (section 12.1) |
 | **Archon's console is open to the network by default** | Not run by default. The engine room binds the computer itself only (section 5.6) |
 | **The Copilot provider is unowned in Archon** | Early check E1, the fallback ladder, and Wheelhouse offering to maintain it (section 13) |
@@ -651,9 +651,11 @@ The first public release is v0.3.0 or later, once the director's measures have h
 - **The counted evaluation runs real Archon.** The build-loop scenarios (20 to 35) are rewritten against the pack. The front-desk and mod scenarios are unchanged, except where they read the build. New scenarios: an ask answered at level 1 without a card; the daily card budget; a preview card; a cap reached and its blocked card; All stop cancelling runs; a planted review in an artefact refused; an unsigned merge refused by the broker; a red main line; a clash re-run.
 - **Each monthly Archon upgrade** runs the safety subset and the counted evaluation before the pin moves, and lists the merge queue's `gh` calls for the broker (section 12.4).
 
-## 19. The director's question
+## 19. The director's question, and their ruling
 
-One card, sent through the main session:
+**Decided 29 October 2026: option 1, "Keep the rule, with a go-between."** Archon never holds a GitHub key. The helper brokers every call Archon makes to GitHub, and refuses a merge without the director's signed approval, where one is needed, and a signed clean review (section 12.4). Early check E3 is unblocked and tries this route (section 15).
+
+The card, as it was put to the director through the main session:
 
 > **What this is:** The new build engine, Archon, talks to GitHub by itself: it reads checks, opens pull requests and merges them. Until now only Wheelhouse's own helper held the key to your GitHub, so no agent or tool could merge without passing Wheelhouse's checks and your approval.
 >
