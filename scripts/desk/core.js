@@ -8,6 +8,7 @@ import { DESK_VERSION, VIEWS, COMMANDS, needsEvidence } from './vocabulary.js';
 import { READERS } from './views.js';
 import { ACTORS } from './acts.js';
 import { sourceVerifier } from './evidence.js';
+import { watchSource } from './watch.js';
 
 const notBuilt = (name) => async () => ({ ok: false, refused: `The desk can't give ${name} yet` });
 
@@ -23,7 +24,7 @@ const failed = (error) => stamp({ ok: false, refused: `Wheelhouse couldn't do th
 // `readers` maps a view to `(args, source, { now }) -> { ok, … }`; `actors` maps a command to
 // `(args, checked, { source, recorder, now }) -> { ok, … }`; `watcher` is
 // `(cursor, source, { now }) -> { ok, events, cursor }`. The defaults are the desk's own.
-export function deskCore({ source, recorder, verifier, now = () => new Date(), readers = READERS, actors = ACTORS, watcher = notBuilt('changes'), clients }) {
+export function deskCore({ source, recorder, verifier, now = () => new Date(), readers = READERS, actors = ACTORS, watcher = watchSource, clients }) {
   verifier ??= sourceVerifier(source, { clients, now });
   return {
     async read(view, args = {}) {
