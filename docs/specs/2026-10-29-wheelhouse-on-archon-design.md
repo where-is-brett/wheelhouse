@@ -58,27 +58,64 @@ The director added one requirement for this redesign: **a UI can be built later 
 
 ## 3. The shape
 
-```
- Front ends                First Mate in Claude Code     Copilot chat (Lean skills)    a later UI
- (clients)                 + the pane, phone codes       + the confirm window
-                                     │                            │                       │
- ═══════════════ the desk interface: read(view) · act(command, evidence) · watch(cursor) ═══════
-                                     │
- Wheelhouse core           records · cards · decisions · work and dispatch · spend meter
- (in the helper)           previews · safety state (All stop, incidents, lock)
-                                     │                            │
- ═══════ the engine interface ═══════╪══════ the host interface (adapter and broker) ══════════
-                                     │                            │
- Engine                    Archon v0.13.0 with Wheelhouse's       GitHub, through the helper only
-                           workflow pack; providers:
-                           Claude Code, Copilot
-```
+![Wheelhouse on Archon, in six layers: front ends, the Wheelhouse core, the engine adapter, Archon, external services and local storage](2026-10-29-wheelhouse-on-archon-architecture.svg)
+
+*The architecture, in six layers.* The two dark bars are the seams: the desk interface between the front ends and the core, and the engine interface between the core and the engine. Every call to GitHub, from Wheelhouse or from Archon, goes through the host broker in the core. The diagram's file is `2026-10-29-wheelhouse-on-archon-architecture.svg`, beside this document.
 
 - **The core lives in the helper,** the local Node.js process that already holds the keys, writes the private record and runs outside every agent's sandbox (main design, section 11). No new process is added. *Designer's call.*
 - **The helper starts at sign-in,** not only at a session's start, so the dispatcher, the continuation host, the caps and the asks keep working while no Claude session is open. The start-at-sign-in route built for Copilot (`scripts/lib/login-start.js`) is reused, listed on setup's card of changes to this computer, and removed by uninstall. As today, work pauses while the computer sleeps and carries on when it wakes. *Designer's call.*
 - **Front ends see only the desk interface.** They never read `~/.wheelhouse`, Archon or the host directly.
 - **The core sees only the engine and host interfaces.** No module outside the engine adapter knows an Archon word (workflow, node, attention item, run id format, CLI flag), and no module outside the host adapter knows `gh`.
 - **The tests cross the same seams.** A fake engine and the existing stand-in host run the whole core in tests, as the stand-in helper does today.
+
+### 3.1 A request, from the director's words to a merged change
+
+How a quick, visible change travels, and how its question comes back as a card. Numbers in the diagram are the order of the steps.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Dir as The director
+  participant FM as First Mate in Claude Code
+  participant Core as Wheelhouse core
+  participant Ad as Archon adapter
+  participant Ar as Archon
+  participant Br as Host broker
+  participant GH as GitHub
+
+  Dir->>FM: "Add a sale banner to the home page"
+  FM->>FM: Intake sorts it, reads it back, writes done checks
+  FM->>Core: act request, record the work
+  Core->>Core: Dispatcher checks pace, clashes, caps, All stop
+  Core->>Ad: start work order, quick lane
+  Ad->>Ar: workflow run --detach
+  Ar->>Core: first step fetches the work order
+  Ar->>Ar: implement loop until the done checks pass
+  Ar->>Ar: protected-tests check, then review lenses
+  Ar->>Core: helper reads the review from the run record and signs it
+  Ar->>Br: gh push branch, open pull request
+  Br->>GH: forwards the allowed call
+  Ar->>Ar: preview step takes pictures, tester walks the checks
+  Ar-->>Ad: attention item, approval wait with labels
+  Ad-->>Core: ask
+  alt level 1 or 2
+    Core->>Ad: router answers from its table, briefing reports it
+  else level 3 or 4
+    Core-->>FM: card with the preview, within three a day
+    FM-->>Dir: Approve, Show me, Suggest a change, Not now
+    Dir->>FM: clicks Approve
+    FM->>Core: act answer with the signed click
+    Core->>Ad: answer
+  end
+  Ad->>Ar: answer, continuation host carries the run on
+  Ar->>Core: mark ready, lesson, cost record
+  Core->>Ad: start the merge queue
+  Ad->>Ar: archon-merge-queue
+  Ar->>Br: gh pr merge pinned to the head
+  Br->>Br: permit checks All stop, lock, signed review, signed approval
+  Br->>GH: merge
+  Core-->>FM: briefing line, shipped, with its cost
+```
 
 ## 4. Part by part: keep, replace, repurpose, drop
 

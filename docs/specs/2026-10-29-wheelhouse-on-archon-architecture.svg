@@ -1,0 +1,179 @@
+<!-- docs/specs/2026-10-29-wheelhouse-on-archon-architecture.svg -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 1150" width="1320" height="1150" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Wheelhouse on Archon: architecture</title>
+<style>
+  .bg { fill: #ffffff; }
+  .band { stroke: #c9d3d8; stroke-width: 1; }
+  .fe { fill: #eef3fb; } .core { fill: #eaf5ee; } .adapter { fill: #f6f1e4; }
+  .archon { fill: #f1edf8; } .ext { fill: #f3f4f5; } .store { fill: #f7efe9; }
+  .bandtitle { font-size: 13px; font-weight: 700; fill: #33424a; letter-spacing: 0.02em; }
+  .box { fill: #ffffff; stroke: #7d8f98; stroke-width: 1.2; }
+  .box.later { stroke-dasharray: 5 4; fill: #fbfcfc; }
+  .box.key { stroke: #1f5f73; stroke-width: 2; }
+  .director { fill: #1f5f73; }
+  .director + .name { fill: #ffffff; }
+  .bar { fill: #1f3a46; }
+  .bartext { font-size: 14px; font-weight: 600; fill: #ffffff; }
+  .name { font-size: 14px; font-weight: 700; fill: #18232b; }
+  .note { font-size: 12px; fill: #4b5b63; }
+  .arrow { fill: none; stroke: #4b5b63; stroke-width: 1.4; }
+  .arrow.dashed { stroke-dasharray: 5 4; }
+  .label { font-size: 11.5px; fill: #1f5f73; paint-order: stroke; stroke: #ffffff; stroke-width: 4px; stroke-linejoin: round; }
+  #head path { fill: #4b5b63; }
+</style>
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+<rect class="bg" x="0" y="0" width="1320" height="1150"/>
+<rect class="director" x="525" y="12" width="180" height="38" rx="19"/>
+<text class="name" x="615" y="36" text-anchor="middle">The director (Captain)</text>
+<rect class="band fe" x="70" y="70" width="1090" height="120" rx="10"/>
+<text class="bandtitle" x="86" y="89">1 · Front ends</text>
+<rect class="box " x="86" y="100" width="340" height="76" rx="7"/>
+<text class="name" x="256" y="126" text-anchor="middle">Claude Code front desk</text>
+<text class="note" x="256" y="143" text-anchor="middle">First Mate, cards in the chat,</text>
+<text class="note" x="256" y="160" text-anchor="middle">side pane, phone reply codes</text>
+<rect class="box " x="445" y="100" width="340" height="76" rx="7"/>
+<text class="name" x="615" y="134.5" text-anchor="middle">Copilot chat in VS Code</text>
+<text class="note" x="615" y="151.5" text-anchor="middle">Lean skills, confirm window</text>
+<rect class="box later" x="804" y="100" width="340" height="76" rx="7"/>
+<text class="name" x="974" y="134.5" text-anchor="middle">A later UI</text>
+<text class="note" x="974" y="151.5" text-anchor="middle">paired by one card</text>
+<rect class="bar" x="86" y="206" width="1058" height="34" rx="6"/>
+<text class="bartext" x="615" y="228" text-anchor="middle">Desk interface: read · act with signed evidence · watch</text>
+<rect class="band core" x="70" y="256" width="1090" height="214" rx="10"/>
+<text class="bandtitle" x="86" y="275">2 · Wheelhouse core, in the helper</text>
+<rect class="box " x="86" y="286" width="250" height="74" rx="7"/>
+<text class="name" x="211" y="311" text-anchor="middle">Checks</text>
+<text class="note" x="211" y="328" text-anchor="middle">done checks, protected tests,</text>
+<text class="note" x="211" y="345" text-anchor="middle">security and design checklists</text>
+<rect class="box " x="355" y="286" width="250" height="74" rx="7"/>
+<text class="name" x="480" y="311" text-anchor="middle">Cards</text>
+<text class="note" x="480" y="328" text-anchor="middle">composer, set lines,</text>
+<text class="note" x="480" y="345" text-anchor="middle">signed answers</text>
+<rect class="box " x="624" y="286" width="250" height="74" rx="7"/>
+<text class="name" x="749" y="311" text-anchor="middle">Safety state</text>
+<text class="note" x="749" y="328" text-anchor="middle">All stop, incidents,</text>
+<text class="note" x="749" y="345" text-anchor="middle">the lock</text>
+<rect class="box " x="894" y="286" width="250" height="74" rx="7"/>
+<text class="name" x="1019" y="311" text-anchor="middle">Preview store</text>
+<text class="note" x="1019" y="328" text-anchor="middle">pictures and tester notes,</text>
+<text class="note" x="1019" y="345" text-anchor="middle">kept in the private record</text>
+<rect class="box " x="86" y="378" width="250" height="74" rx="7"/>
+<text class="name" x="211" y="403" text-anchor="middle">Work and dispatcher</text>
+<text class="note" x="211" y="420" text-anchor="middle">work orders, pace 3,</text>
+<text class="note" x="211" y="437" text-anchor="middle">clash hint</text>
+<rect class="box " x="355" y="378" width="250" height="74" rx="7"/>
+<text class="name" x="480" y="403" text-anchor="middle">Card router</text>
+<text class="note" x="480" y="420" text-anchor="middle">decision levels, rulebook,</text>
+<text class="note" x="480" y="437" text-anchor="middle">three cards a day</text>
+<rect class="box " x="624" y="378" width="250" height="74" rx="7"/>
+<text class="name" x="749" y="403" text-anchor="middle">Spend meter</text>
+<text class="note" x="749" y="420" text-anchor="middle">cost per job, time and</text>
+<text class="note" x="749" y="437" text-anchor="middle">token caps, Copilot requests</text>
+<rect class="box key" x="894" y="378" width="250" height="74" rx="7"/>
+<text class="name" x="1019" y="403" text-anchor="middle">Host broker</text>
+<text class="note" x="1019" y="420" text-anchor="middle">the only route to GitHub:</text>
+<text class="note" x="1019" y="437" text-anchor="middle">allow list, merge permit</text>
+<rect class="bar" x="86" y="486" width="1058" height="34" rx="6"/>
+<text class="bartext" x="615" y="508" text-anchor="middle">Engine interface: health · start · watch · act · inspect · stopAll</text>
+<rect class="band adapter" x="70" y="536" width="1090" height="110" rx="10"/>
+<text class="bandtitle" x="86" y="555">3 · Engine adapter</text>
+<rect class="box " x="86" y="564" width="520" height="68" rx="7"/>
+<text class="name" x="346" y="586" text-anchor="middle">Archon adapter</text>
+<text class="note" x="346" y="603" text-anchor="middle">command line only, continuation host,</text>
+<text class="note" x="346" y="620" text-anchor="middle">telemetry off, pinned v0.13.0</text>
+<rect class="box later" x="624" y="564" width="250" height="68" rx="7"/>
+<text class="name" x="749" y="594.5" text-anchor="middle">Fake engine</text>
+<text class="note" x="749" y="611.5" text-anchor="middle">plays back recorded runs, for tests</text>
+<rect class="box later" x="894" y="564" width="250" height="68" rx="7"/>
+<text class="name" x="1019" y="594.5" text-anchor="middle">Orchestrator.inc adapter</text>
+<text class="note" x="1019" y="611.5" text-anchor="middle">the fallback, not built</text>
+<rect class="band archon" x="70" y="662" width="1090" height="200" rx="10"/>
+<text class="bandtitle" x="86" y="681">4 · Archon</text>
+<rect class="box " x="86" y="692" width="250" height="74" rx="7"/>
+<text class="name" x="211" y="717" text-anchor="middle">Wheelhouse workflow pack</text>
+<text class="note" x="211" y="734" text-anchor="middle">quick, small, slice, feature,</text>
+<text class="note" x="211" y="751" text-anchor="middle">bug, fix-main</text>
+<rect class="box " x="355" y="692" width="250" height="74" rx="7"/>
+<text class="name" x="480" y="717" text-anchor="middle">Workflow steps</text>
+<text class="note" x="480" y="734" text-anchor="middle">plan, implement, checks, review,</text>
+<text class="note" x="480" y="751" text-anchor="middle">pull request, preview, approval</text>
+<rect class="box " x="624" y="692" width="250" height="74" rx="7"/>
+<text class="name" x="749" y="717" text-anchor="middle">Attention queue</text>
+<text class="note" x="749" y="734" text-anchor="middle">labelled waits: questions,</text>
+<text class="note" x="749" y="751" text-anchor="middle">approvals, blocked work</text>
+<rect class="box " x="894" y="692" width="250" height="74" rx="7"/>
+<text class="name" x="1019" y="717" text-anchor="middle">Merge queue and gate</text>
+<text class="note" x="1019" y="734" text-anchor="middle">CI green at the head commit,</text>
+<text class="note" x="1019" y="751" text-anchor="middle">main not red, clean merge</text>
+<rect class="box " x="86" y="782" width="520" height="64" rx="7"/>
+<text class="name" x="346" y="810.5" text-anchor="middle">Claude Code provider</text>
+<text class="note" x="346" y="827.5" text-anchor="middle">with the Wheelhouse plugin and its guards</text>
+<rect class="box " x="624" y="782" width="520" height="64" rx="7"/>
+<text class="name" x="884" y="810.5" text-anchor="middle">Copilot provider</text>
+<text class="note" x="884" y="827.5" text-anchor="middle">Copilot CLI from the clean home, included models</text>
+<rect class="band ext" x="70" y="878" width="1090" height="100" rx="10"/>
+<text class="bandtitle" x="86" y="897">5 · External services</text>
+<rect class="box " x="86" y="906" width="340" height="58" rx="7"/>
+<text class="name" x="256" y="931.5" text-anchor="middle">Anthropic</text>
+<text class="note" x="256" y="948.5" text-anchor="middle">the Claude plan</text>
+<rect class="box " x="445" y="906" width="340" height="58" rx="7"/>
+<text class="name" x="615" y="931.5" text-anchor="middle">GitHub Copilot</text>
+<text class="note" x="615" y="948.5" text-anchor="middle">the Pro plan</text>
+<rect class="box key" x="804" y="906" width="340" height="58" rx="7"/>
+<text class="name" x="974" y="931.5" text-anchor="middle">GitHub</text>
+<text class="note" x="974" y="948.5" text-anchor="middle">pull requests, CI, protected main</text>
+<rect class="band store" x="70" y="994" width="1090" height="100" rx="10"/>
+<text class="bandtitle" x="86" y="1013">6 · Local storage</text>
+<rect class="box " x="86" y="1022" width="340" height="58" rx="7"/>
+<text class="name" x="256" y="1047.5" text-anchor="middle">Private record</text>
+<text class="note" x="256" y="1064.5" text-anchor="middle">~/.wheelhouse: events, signed records, keys</text>
+<rect class="box " x="445" y="1022" width="340" height="58" rx="7"/>
+<text class="name" x="615" y="1047.5" text-anchor="middle">Archon home</text>
+<text class="note" x="615" y="1064.5" text-anchor="middle">run records database, transcripts, artefacts</text>
+<rect class="box " x="804" y="1022" width="340" height="58" rx="7"/>
+<text class="name" x="974" y="1047.5" text-anchor="middle">Project folder</text>
+<text class="note" x="974" y="1064.5" text-anchor="middle">checkout and worktrees</text>
+<path class="arrow " d="M615 50 V62 H256 V98" marker-end="url(#head)"/>
+<path class="arrow " d="M615 50 V98" marker-end="url(#head)"/>
+<path class="arrow dashed" d="M615 50 V62 H974 V98" marker-end="url(#head)"/>
+<path class="arrow " d="M256 176 V204" marker-end="url(#head)"/>
+<path class="arrow " d="M615 176 V204" marker-end="url(#head)"/>
+<path class="arrow dashed" d="M974 176 V204" marker-end="url(#head)"/>
+<path class="arrow " d="M480 286 V242" marker-end="url(#head)"/>
+<text class="label" x="488" y="268" text-anchor="start">cards and views</text>
+<path class="arrow " d="M760 240 V284" marker-end="url(#head)"/>
+<text class="label" x="768" y="268" text-anchor="start">answers, requests, All stop</text>
+<path class="arrow " d="M480 378 V362" marker-end="url(#head)"/>
+<path class="arrow " d="M211 452 V484" marker-end="url(#head)"/>
+<text class="label" x="219" y="474" text-anchor="start">start, answer, cancel</text>
+<path class="arrow " d="M480 486 V454" marker-end="url(#head)"/>
+<text class="label" x="488" y="474" text-anchor="start">asks, outcomes</text>
+<path class="arrow " d="M749 486 V454" marker-end="url(#head)"/>
+<text class="label" x="757" y="474" text-anchor="start">spend per step</text>
+<path class="arrow " d="M346 520 V562" marker-end="url(#head)"/>
+<path class="arrow dashed" d="M749 520 V562" marker-end="url(#head)"/>
+<path class="arrow dashed" d="M1019 520 V562" marker-end="url(#head)"/>
+<path class="arrow " d="M211 632 V690" marker-end="url(#head)"/>
+<text class="label" x="219" y="657" text-anchor="start">run commands</text>
+<path class="arrow " d="M749 692 V652 H520 V634" marker-end="url(#head)"/>
+<text class="label" x="757" y="657" text-anchor="start">attention stream, run records</text>
+<path class="arrow " d="M336 729 H353" marker-end="url(#head)"/>
+<path class="arrow " d="M605 729 H622" marker-end="url(#head)"/>
+<path class="arrow " d="M480 766 V780" marker-end="url(#head)"/>
+<path class="arrow " d="M560 766 V774 H749 V780" marker-end="url(#head)"/>
+<path class="arrow " d="M1144 729 H1196 V400 H1146" marker-end="url(#head)"/>
+<text class="label" x="1204" y="560" text-anchor="start">every gh call</text>
+<text class="label" x="1204" y="576" text-anchor="start">from Archon</text>
+<path class="arrow " d="M1144 430 H1240 V935 H1146" marker-end="url(#head)"/>
+<text class="label" x="1244" y="700" text-anchor="start">allowed</text>
+<text class="label" x="1244" y="716" text-anchor="start">calls only</text>
+<path class="arrow " d="M300 846 V904" marker-end="url(#head)"/>
+<path class="arrow " d="M749 846 V876 H615 V904" marker-end="url(#head)"/>
+<path class="arrow " d="M70 415 H40 V1120 H256 V1082" marker-end="url(#head)"/>
+<text class="label" x="48" y="1112" text-anchor="start">events, signed records</text>
+<path class="arrow " d="M70 760 H56 V1102 H615 V1082" marker-end="url(#head)"/>
+<text class="label" x="400" y="1098" text-anchor="start">runs, artefacts</text>
+<path class="arrow dashed" d="M795 846 V988 H974 V1020" marker-end="url(#head)"/>
+<text class="label" x="984" y="1012" text-anchor="start">agents edit code in worktrees</text>
+<text class="note" x="86" y="1142">Solid: calls and data. Dashed: later, for tests, or the fallback. Dark bars: the two seams.</text>
+</svg>
