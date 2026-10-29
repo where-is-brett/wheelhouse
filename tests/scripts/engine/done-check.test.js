@@ -8,8 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { main, runDoneChecks } from '../../../scripts/engine/done-check.js';
-import { main as copyMain, EXCLUDE_LINE as OVERLAY_LINE } from '../../../scripts/engine/order-copy.js';
-import { EXCLUDE_LINE } from '../../../scripts/setup/project-files.js';
+import { main as copyMain } from '../../../scripts/engine/order-copy.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { ownRunRules } from '../../../scripts/protection/settings.js';
@@ -93,45 +92,93 @@ test('with --flags the first step prints only whether the work is visible and sh
   assert.ok(fs.existsSync(path.join(dir, 'order.json')));
 });
 
-test("the first step writes the run's own settings overlay in its worktree, so its Claude steps can read the order", async () => {
+// The branch's own shared settings, as setup commits them, in a fresh worktree.
+const SHARED = { permissions: { deny: ['Read(**/.env)'] }, sandbox: { enabled: true, allowUnsandboxedCommands: false, filesystem: { denyRead: ['~/.wheelhouse'], denyWrite: ['~/.claude'] } } };
+const git = (args, cwd) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'core.excludesFile=/dev/null', ...args], { cwd, encoding: 'utf8' });
+function sharedWorktree(shared = SHARED) {
+  const worktree = tempFolder('wh-wt-');
+  git(['init', '-q'], worktree);
+  if (shared) {
+    fs.mkdirSync(path.join(worktree, '.claude'));
+    fs.writeFileSync(path.join(worktree, '.claude', 'settings.json'), `${JSON.stringify(shared, null, 2)}\n`);
+    git(['add', '.'], worktree);
+    git(['commit', '-q', '-m', 'shared settings'], worktree);
+  }
+  return worktree;
+}
+const readShared = (worktree) => JSON.parse(fs.readFileSync(path.join(worktree, '.claude', 'settings.json'), 'utf8'));
+
+test("the first step merges the run's own overlay into the worktree's project settings, which Archon's steps read", async () => {
   const ws = tempFolder('wh-ws-');
   const dir = path.join(ws, 'artifacts', 'runs', 'run-7');
-  const worktree = tempFolder('wh-wt-');
-  execFileSync('git', ['init', '-q'], { cwd: worktree });
+  const worktree = sharedWorktree();
   const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
   assert.equal(await copyMain(['--run', 'run-7', '--out', dir, '--flags'], { client, cwd: worktree, out: () => {} }), 0);
-  // Kept out of git, so no commit of the run's can carry it.
-  execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'check-ignore', '-q', '.claude/settings.local.json'], { cwd: worktree });
-  const overlay = JSON.parse(fs.readFileSync(path.join(worktree, '.claude', 'settings.local.json'), 'utf8'));
-  assert.deepEqual(overlay, ownRunRules('run-7', dir));
-  assert.ok(overlay.permissions.allow.some((rule) => rule.startsWith('Read(/') && rule.includes(path.join('artifacts', 'runs', 'run-7').replaceAll('\\', '/'))));
+  const settings = readShared(worktree);
+  const overlay = ownRunRules('run-7', dir);
+  // The shared guards stay, and the run's own lists are added to them.
+  assert.deepEqual(settings.permissions.deny, SHARED.permissions.deny);
+  assert.deepEqual(settings.permissions.allow, overlay.permissions.allow);
+  assert.ok(settings.permissions.allow.some((rule) => rule.startsWith('Read(/') && rule.includes(path.join('artifacts', 'runs', 'run-7').replaceAll('\\', '/'))));
+  assert.equal(settings.sandbox.allowUnsandboxedCommands, false);
+  assert.deepEqual(settings.sandbox.filesystem.denyRead, [...SHARED.sandbox.filesystem.denyRead, ...overlay.sandbox.filesystem.denyRead]);
+  assert.deepEqual(settings.sandbox.filesystem.denyWrite, [...SHARED.sandbox.filesystem.denyWrite, ...overlay.sandbox.filesystem.denyWrite]);
+  assert.deepEqual(settings.sandbox.filesystem.allowRead, overlay.sandbox.filesystem.allowRead);
+  assert.deepEqual(settings.sandbox.filesystem.allowWrite, overlay.sandbox.filesystem.allowWrite);
+  // Archon never reads the local settings, so none is written.
+  assert.equal(fs.existsSync(path.join(worktree, '.claude', 'settings.local.json')), false);
+  // No commit of the run's carries it, whatever it adds.
+  fs.writeFileSync(path.join(worktree, 'work.txt'), 'done\n');
+  assert.equal(git(['status', '--porcelain'], worktree), '?? work.txt\n');
+  git(['add', '-A'], worktree);
+  git(['commit', '-q', '-a', '-m', 'the run\'s work'], worktree);
+  assert.deepEqual(JSON.parse(git(['show', 'HEAD:.claude/settings.json'], worktree)), SHARED);
   // A folder that isn't a run's own gets no overlay.
-  const elsewhere = tempFolder('wh-wt-');
+  const elsewhere = sharedWorktree();
   assert.equal(await copyMain(['--run', 'run-7', '--out', tempFolder('wh-art-')], { client, cwd: elsewhere, out: () => {} }), 0);
-  assert.equal(fs.existsSync(path.join(elsewhere, '.claude', 'settings.local.json')), false);
+  assert.deepEqual(readShared(elsewhere), SHARED);
 });
 
-test("the overlay's exclude line is setup's own", () => {
-  assert.equal(OVERLAY_LINE, EXCLUDE_LINE);
+test("a second run in the same worktree gets its own overlay, never the earlier run's as well", async () => {
+  const ws = tempFolder('wh-ws-');
+  const worktree = sharedWorktree();
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  assert.equal(await copyMain(['--run', 'run-7', '--out', path.join(ws, 'artifacts', 'runs', 'run-7')], { client, cwd: worktree, out: () => {} }), 0);
+  const second = path.join(ws, 'artifacts', 'runs', 'run-8');
+  assert.equal(await copyMain(['--run', 'run-8', '--out', second], { client, cwd: worktree, out: () => {} }), 0);
+  const settings = readShared(worktree);
+  assert.deepEqual(settings.permissions.allow, ownRunRules('run-8', second).permissions.allow);
+  assert.doesNotMatch(JSON.stringify(settings), /run-7/);
+});
+
+test('a branch without shared settings gets no overlay, and the step stops', async () => {
+  const ws = tempFolder('wh-ws-');
+  const worktree = sharedWorktree(null);
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  const { lines, out } = sink();
+  assert.equal(await copyMain(['--run', 'run-7', '--out', path.join(ws, 'artifacts', 'runs', 'run-7')], { client, cwd: worktree, out }), 1);
+  assert.match(lines.join('\n'), /shared settings/);
+  assert.equal(fs.existsSync(path.join(worktree, '.claude', 'settings.json')), false);
 });
 
 test("the overlay is never written through a link a branch holds, and the step stops", async () => {
   const ws = tempFolder('wh-ws-');
   const dir = path.join(ws, 'artifacts', 'runs', 'run-7');
-  const worktree = tempFolder('wh-wt-');
-  execFileSync('git', ['init', '-q'], { cwd: worktree });
   const target = path.join(tempFolder('wh-target-'), 'settings.json');
-  fs.writeFileSync(target, '{"kept":true}\n');
-  fs.mkdirSync(path.join(worktree, '.claude'));
-  fs.symlinkSync(target, path.join(worktree, '.claude', 'settings.local.json'));
+  fs.writeFileSync(target, `${JSON.stringify(SHARED)}\n`);
+  const kept = fs.readFileSync(target, 'utf8');
+  const worktree = sharedWorktree();
+  fs.rmSync(path.join(worktree, '.claude', 'settings.json'));
+  fs.symlinkSync(target, path.join(worktree, '.claude', 'settings.json'));
   const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
   const { lines, out } = sink();
   assert.equal(await copyMain(['--run', 'run-7', '--out', dir], { client, cwd: worktree, out }), 1);
-  assert.equal(fs.readFileSync(target, 'utf8'), '{"kept":true}\n');
+  assert.equal(fs.readFileSync(target, 'utf8'), kept);
   assert.match(lines.join('\n'), /overlay/);
-  const linked = tempFolder('wh-wt-');
-  execFileSync('git', ['init', '-q'], { cwd: linked });
+  const linked = sharedWorktree();
+  fs.rmSync(path.join(linked, '.claude'), { recursive: true });
   fs.symlinkSync(path.dirname(target), path.join(linked, '.claude'));
   assert.equal(await copyMain(['--run', 'run-7', '--out', dir], { client, cwd: linked, out: () => {} }), 1);
+  assert.equal(fs.readFileSync(target, 'utf8'), kept);
   assert.deepEqual(fs.readdirSync(path.dirname(target)), ['settings.json']);
 });

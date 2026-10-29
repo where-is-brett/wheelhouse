@@ -254,13 +254,14 @@ export function readRule(dir) {
   return `Read(/${slashed.replace(/\/+$/, '')}/**)`;
 }
 
-// The run's own settings overlay (check 75): what a run's first step writes as `.claude/settings.local.json` in the
-// run's worktree, before any Claude step. Plain project settings, so they hold once Claude starts in its ordinary mode
-// (the patch, build.js): the sandbox's read list shuts the workspace's logs/, workflow-source/ and every run's
-// artefacts, its write list the first two, and allowRead and allowWrite open the run's own artefacts folder. The shared settings deny
-// writing the overlay (`./.claude/settings.local.json` in the sandbox's list, `Edit(/.claude/settings.local.json)`,
-// and the tool guard), so an agent can't name another run as its own; and the tool guard learns the own run from its
-// environment, not from this file. `artifactsDir` is the run's folder, `<workspace>/artifacts/runs/<runId>`.
+// The run's own settings overlay (check 75): what a run's first step merges into `.claude/settings.json` in the run's
+// worktree, over the branch's own, before any Claude step (Archon gives its steps no local settings). Plain project
+// settings, so they hold once Claude starts in its ordinary mode (the patch, build.js): the sandbox's read list shuts
+// the workspace's logs/, workflow-source/ and every run's artefacts, its write list the first two, and allowRead and
+// allowWrite open the run's own artefacts folder. The shared settings deny writing them (`./.claude/settings.json` in
+// the sandbox's list, `Edit(/.claude/settings.json)`, and the tool guard), so an agent can't name another run as its
+// own; and the tool guard learns the own run from its environment, not from this file. `artifactsDir` is the run's
+// folder, `<workspace>/artifacts/runs/<runId>`.
 export function ownRunRules(runId, artifactsDir) {
   const workspace = workspaceOfRun(artifactsDir, runId);
   const own = path.resolve(artifactsDir);

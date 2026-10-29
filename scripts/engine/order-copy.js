@@ -5,8 +5,9 @@
 // With --flags it prints only { visible, showFirst }, two yes-or-no answers the pack branches on. With --feature-flags,
 // for a feature's slices and its own run, it adds { demo, flagFile, topic, words }: whether this slice is the midpoint
 // demo, whether the switch is kept in a file, and the topic and words of the approval the run ends on.
-// Run in the run's worktree, it also writes the run's own settings overlay there (.claude/settings.local.json,
-// ownRunRules), which lets the run's Claude steps read their own artefacts and no other run's.
+// Run in the run's worktree, it also writes the run's own settings overlay there (ownRunRules), which lets the run's
+// Claude steps read their own artefacts and no other run's. Archon gives its Claude steps the project and user settings
+// only, never the local ones, so the overlay is merged into the worktree's .claude/settings.json, over the branch's own.
 //   node scripts/engine/order-copy.js --run <run id> --out <artefacts folder> [--flags | --feature-flags]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,8 +18,7 @@ import { runArg } from './done-check.js';
 import { ownRunRules } from '../protection/settings.js';
 import { safeGit } from '../lib/safe-git.js';
 import { run as realRun } from '../lib/run.js';
-// The line that keeps this computer's own settings out of git (setup's EXCLUDE_LINE, scripts/setup/project-files.js).
-export const EXCLUDE_LINE = '/.claude/settings.local.json';
+const SHARED = '.claude/settings.json';
 
 // What a path is without following a link: 'none', 'dir', 'file' or 'other' (a link among them).
 function kindOf(file) {
@@ -30,25 +30,38 @@ function kindOf(file) {
   }
 }
 
-// Writes the overlay as the worktree's .claude/settings.local.json, never through a link a branch holds, and keeps it
-// out of git in the worktree's own exclude list, so no commit of the run's carries it. Gives a refusal, or null.
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// The shared settings with the overlay over them: lists are joined, without repeats; objects are merged key by key;
+// the overlay's single values win.
+export function mergeSettings(shared, overlay) {
+  if (Array.isArray(shared) && Array.isArray(overlay)) return [...new Set([...shared, ...overlay])];
+  if (!isPlain(shared) || !isPlain(overlay)) return overlay;
+  const out = { ...shared };
+  for (const [key, value] of Object.entries(overlay)) out[key] = Object.hasOwn(shared, key) ? mergeSettings(shared[key], value) : value;
+  return out;
+}
+
+// Writes the overlay into the worktree's .claude/settings.json, merged over the branch's own shared settings as the
+// index holds them (so a second run in the same worktree never keeps an earlier run's lists), never through a link a
+// branch holds. The worktree's own index marks the file skip-worktree, so no commit of the run's carries it and the
+// director's checkout is untouched. Gives a refusal, or null.
 async function writeOverlay(cwd, overlay, run) {
   const folder = path.join(cwd, '.claude');
-  const file = path.join(folder, 'settings.local.json');
-  if (!['none', 'dir'].includes(kindOf(folder)) || !['none', 'file'].includes(kindOf(file))) return '.claude/settings.local.json in the worktree is a link or not a plain file';
+  const file = path.join(folder, 'settings.json');
+  if (kindOf(folder) !== 'dir' || kindOf(file) !== 'file') return `${SHARED} in the worktree is missing, a link or not a plain file, so the branch has no shared settings to add the run's own to`;
   const git = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
-  const found = await git(['rev-parse', '--git-path', 'info/exclude']);
-  if (found.code !== 0) return 'the worktree is not a git checkout';
-  const exclude = path.resolve(cwd, found.stdout.trim());
-  if (!['none', 'file'].includes(kindOf(exclude))) return 'the worktree\'s exclude list is a link or not a plain file';
-  const kept = kindOf(exclude) === 'file' ? fs.readFileSync(exclude, 'utf8') : '';
-  if (!kept.split(/\r?\n/).includes(EXCLUDE_LINE)) {
-    fs.mkdirSync(path.dirname(exclude), { recursive: true });
-    fs.appendFileSync(exclude, `${kept === '' || kept.endsWith('\n') ? '' : '\n'}${EXCLUDE_LINE}\n`);
-  }
-  fs.mkdirSync(folder, { recursive: true });
-  const temp = path.join(folder, `.settings.local.${process.pid}.tmp`);
-  fs.writeFileSync(temp, `${JSON.stringify(overlay, null, 2)}\n`, { flag: 'wx' });
+  const staged = await git(['ls-files', '--stage', '--', SHARED]);
+  if (staged.code !== 0) return 'the worktree is not a git checkout';
+  if (!/^100644 /.test(staged.stdout)) return `the branch holds no shared settings (${SHARED}) as a plain file`;
+  const held = await git(['show', `:${SHARED}`]);
+  let shared;
+  try { shared = JSON.parse(held.stdout); } catch { shared = null; }
+  if (held.code !== 0 || !isPlain(shared)) return `the branch's shared settings (${SHARED}) couldn't be read`;
+  const kept = await git(['update-index', '--skip-worktree', '--', SHARED]);
+  if (kept.code !== 0) return `the shared settings couldn't be kept out of the run's commits`;
+  const temp = path.join(folder, `.settings.${process.pid}.tmp`);
+  fs.writeFileSync(temp, `${JSON.stringify(mergeSettings(shared, overlay), null, 2)}\n`, { flag: 'wx' });
   fs.renameSync(temp, file);
   return null;
 }
