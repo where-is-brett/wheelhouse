@@ -57,3 +57,15 @@ test('no route hands a token to a caller', async () => {
   const helper = fs.readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'scripts', 'host', 'helper.js'), 'utf8');
   assert.doesNotMatch(helper, /\/broker\/credential/, 'the helper serves no credential route, and scrubs every broker answer');
 });
+
+test('a re-run of the main line\'s failed jobs reaches the real gh only while the main line is red', async () => {
+  const red = setup({ permit: { stop: false, lockHeld: true, defaultBranch: 'main', incident: { open: true, isFix: false }, redMain: true, runBranch: 'main' } });
+  const argv = ['run', 'rerun', '77', '--failed'];
+  assert.equal((await red.routes['/broker/gh']({ argv, cwd: '/p/wt' })).code, 0);
+  assert.deepEqual(red.forwarded.map((f) => f.argv), [argv]);
+  const green = setup({ permit: { stop: false, lockHeld: true, defaultBranch: 'main', incident: { open: false }, redMain: false, runBranch: 'main' } });
+  const got = await green.routes['/broker/gh']({ argv, cwd: '/p/wt' });
+  assert.equal(got.code, 1);
+  assert.match(got.stderr, /red main line/);
+  assert.equal(green.forwarded.length, 0);
+});

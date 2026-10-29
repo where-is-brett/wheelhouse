@@ -17,6 +17,11 @@
 //                           the commit, or null }
 //   provenance(project, { branch })   records what built the branch's pull request (the pack's digest and Archon's)
 //   previewsDir(project)  where previews are kept, `previews/<work>/<head>/` under the project's engine files
+//   incidentOf(project, id)   the open red-main incident of that id, or null
+//   changesOf(project, { pr, head })   the pull request's changed files and the project's configuration,
+//                         { paths, config }, read by the helper from its own mirror, or null when they can't be read
+//   merge(project, { pr, head, incident, runId })   merges the pull request through the helper's own gate as the
+//                         incident's fix, giving { ok } or a refusal
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order. Only the helper starts a run (the dispatcher, through `start`, never a route), and
 // every route asks for the run's ticket (ticket.js), which only that run's steps can read.
@@ -26,6 +31,7 @@ import { checkOrder, orderStore, isRunId } from './order.js';
 import { MOST_TOUCHED, pictureName } from './preview-names.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
 import { newTicket, ticketHash, ticketMatches, writeTicket } from './ticket.js';
+import { FIX_LANE, weakensChecks } from './fix-main.js';
 
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
@@ -88,6 +94,7 @@ export function engineRoutes({
   projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
+  incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -135,14 +142,15 @@ export function engineRoutes({
   }
 
   // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
-  // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at }, opened: { [pr]: { runId, head, showFirst, work } },
-  // previews: { [runId]: head } }.
+  // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at },
+  // opened: { [pr]: { runId, head, showFirst, work, level, lane, incident? } }, previews: { [runId]: head },
+  // fixed: { [runId]: { pr, head, at } } }.
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
     return kept && typeof kept === 'object'
-      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {} }
-      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {} };
+      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {} }
+      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {}, fixed: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -205,7 +213,10 @@ export function engineRoutes({
     const opened = await host.open(run.project, { branch: pushed.branch, title: title.trim().split('\n')[0], body });
     // The pull request is the run's from here: the broker's permit reads whether its work is shown first from this.
     const verdicts = readVerdicts(run.project);
-    verdicts.opened[opened.pr] = { runId, head: opened.head, showFirst: run.order.showFirst === true, work: run.order.work, level: run.order.level ?? null };
+    verdicts.opened[opened.pr] = {
+      runId, head: opened.head, showFirst: run.order.showFirst === true, work: run.order.work, level: run.order.level ?? null, lane: run.order.lane,
+      ...(typeof run.order.incident === 'string' ? { incident: run.order.incident } : {}),
+    };
     keepVerdicts(run.project, verdicts);
     return { ok: true, branch: pushed.branch, pr: opened.pr, head: opened.head };
   }
@@ -235,6 +246,42 @@ export function engineRoutes({
     if (!handed?.ok) return { ok: false, refused: handed?.refused ?? 'the engine didn\'t take the work' };
     verdicts.ready = { ...(verdicts.ready ?? {}), [opened.pr]: { head: opened.head, runId, showFirst: run.order.showFirst === true, work: run.order.work } };
     keepVerdicts(run.project, verdicts);
+    return { ok: true, pr: opened.pr, head: opened.head };
+  }
+
+  // The fix-main lane's merge step (section 7.7): Archon's merge queue holds every merge while the main line is red, so
+  // the fix is added through the helper's own gate, as the open red-main incident's fix. Only for a fix-main run's own
+  // pull request, at the head it opened, for the incident its order names while that incident is open; every lens
+  // that ran signed CLEAN for that head; nothing in it that would make the checks pass by asking less of them; once.
+  async function mergeFix({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    if (held()) return { ok: false, refused: 'All stop is on, so nothing is added' };
+    if (run.order.lane !== FIX_LANE || typeof run.order.incident !== 'string') return { ok: false, refused: 'this run isn\'t a fix for a red main line' };
+    const verdicts = readVerdicts(run.project);
+    if (verdicts.fixed[runId]) return { ok: false, refused: `this run's fix was already added (pull request #${verdicts.fixed[runId].pr})` };
+    if (!incidentOf(run.project, run.order.incident)) return { ok: false, refused: `the incident ${run.order.incident} isn't open, so there is no red main line to fix` };
+    const engine = engineFor(run.project);
+    const outputs = typeof engine?.outputs === 'function' ? await engine.outputs(runId) : {};
+    const opened = readOpened(outputs['open-pr']);
+    const own = opened ? verdicts.opened[opened.pr] : null;
+    if (!opened || own?.runId !== runId || own.head !== opened.head) return { ok: false, refused: 'the run hasn\'t opened its pull request yet' };
+    const kept = verdicts.runs[runId];
+    const ran = REVIEW_STEPS.filter((s) => outputs[s] !== undefined);
+    if (kept?.head !== opened.head || ran.length === 0 || !ran.every((s) => kept.signed[s] === 'CLEAN')) {
+      return { ok: false, refused: `there is no signed CLEAN review of ${opened.head.slice(0, 7)} from every lens that ran` };
+    }
+    let changes = null;
+    try { changes = await changesOf(run.project, { pr: opened.pr, head: opened.head }); } catch { changes = null; }
+    if (!changes || !Array.isArray(changes.paths) || !changes.config) return { ok: false, refused: 'the fix\'s changes couldn\'t be read, so it can\'t be shown to keep the checks' };
+    const weakens = weakensChecks({ paths: changes.paths, config: changes.config, tests: parsed(outputs.tests) });
+    if (weakens.length > 0) return { ok: false, refused: `the fix isn't added: ${weakens.join('; ')}`, weakens };
+    const got = await merge(run.project, { pr: opened.pr, head: opened.head, incident: run.order.incident, runId });
+    if (!got?.ok) return { ok: false, refused: got?.refused ?? 'the helper\'s gate didn\'t add the fix' };
+    const after = readVerdicts(run.project);
+    after.fixed[runId] = { pr: opened.pr, head: opened.head, at: now().toISOString() };
+    keepVerdicts(run.project, after);
+    await write(run.project, 'note', { about: 'engine', words: `The fix for the red main line, pull request #${opened.pr}, was added; work waits until the main line's checks are green.` });
     return { ok: true, pr: opened.pr, head: opened.head };
   }
 
@@ -335,6 +382,8 @@ export function engineRoutes({
     openedOf,
     // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
     readyAll: (project) => readVerdicts(project).ready ?? {},
+    // The fix-main runs whose fix the helper added.
+    fixedRuns: (project) => Object.keys(readVerdicts(project).fixed ?? {}),
     start,
     routes: {
       '/engine/review': ticketed(review),
@@ -343,6 +392,7 @@ export function engineRoutes({
       '/engine/preview/find': ticketed(previewFind),
       '/engine/preview': ticketed(preview),
       '/engine/lesson': ticketed(lesson),
+      '/engine/merge-fix': ticketed(mergeFix),
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': ticketed(async ({ runId } = {}) => {
         const run = runOf(runId);

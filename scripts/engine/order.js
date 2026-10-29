@@ -87,6 +87,8 @@ export function checkOrder(order) {
   if (order.level !== undefined && ![1, 2, 3, 4].includes(order.level)) return 'a work order\'s level is 1, 2, 3 or 4';
   if (!isText(order.testCommand)) return 'a work order needs the project\'s test command';
   if (!isObject(order.bindings)) return 'a work order needs its model bindings';
+  // A fix for a red main line names its incident (section 7.7); no other lane does.
+  if (order.incident !== undefined && !(order.lane === 'fix-main' && typeof order.incident === 'string' && SLUG.test(order.incident))) return 'only a fix-main order names an incident, as a short slug';
   return null;
 }
 

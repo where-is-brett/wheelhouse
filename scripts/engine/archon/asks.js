@@ -3,6 +3,7 @@
 // carries `wh.*` labels and is read from them; Archon's own asks are matched against ARCHON_ASKS; anything else
 // becomes a level-3 ask recommending that the work stop, with the reason in plain words. Nothing is dropped.
 import { ASK_KINDS } from '../contract.js';
+import { RED_MAIN, suspectOf } from '../fix-main.js';
 
 const PACK = 'wh.';
 const PACK_LABELS = ['kind', 'level', 'topic', 'work', 'recommend', 'preview', 'pr', 'head', 'holds'];
@@ -15,13 +16,13 @@ const when = (value) => {
 
 // Archon's own asks, in the order they are tried (spec 8.3). Each row: `test(item)`, then the ask's kind and level,
 // what it recommends, `answer` when the card router answers it itself, `card` (false: a Logbook line only), `holdsAll`
-// when every piece of work waits on it, and
-// `say(item)`, the plain words for the card or the line.
+// when every piece of work waits on it, `opens` when answering it opens an incident of that kind (with the pull
+// request the queue's words suspect), and `say(item)`, the plain words for the card or the line.
 export const ARCHON_ASKS = Object.freeze([
   Object.freeze({
     name: 'main-line-red',
     test: (item) => item.kind === 'attention' && item.labels?.merge === 'base' && optionIds(item).includes('hold'),
-    kind: 'question', level: 1, recommend: 'hold', answer: 'hold', card: false,
+    kind: 'question', level: 1, recommend: 'hold', answer: 'hold', card: false, opens: RED_MAIN,
     say: () => 'The main line is red, so the merge queue holds merges until it is green again.',
   }),
   Object.freeze({
@@ -131,6 +132,10 @@ export function normaliseAsk(item, { now = () => new Date().toISOString() } = {}
     const ask = { ...base, kind: row.kind, level: row.level, work: null, recommend: row.recommend, labels: {}, card: row.card };
     if (row.answer) ask.answer = row.answer;
     if (row.holdsAll) ask.holdsAll = true;
+    if (row.opens) {
+      ask.opens = row.opens;
+      ask.suspect = suspectOf(item.message);
+    }
     if (row.card) ask.reason = words;
     else ask.line = words;
     return ask;

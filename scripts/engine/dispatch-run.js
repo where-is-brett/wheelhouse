@@ -2,18 +2,21 @@
 // The dispatcher's runner, in the helper: reads the record's views, asks `dispatch` what to start, and starts it
 // through the helper's own start (no route starts a run). Each piece gets its work order, with the project's caps and
 // the work's decision level; the merge queue is started from here too, one run at a time. Work held because it would
-// use the plan's counted requests brings one card, once, in the engine's own words. What it keeps (the merge queue's
-// run and when it last started, the pull requests already seen ready, the clashes) is in `file`.
+// use the plan's counted requests brings one card, once, in the engine's own words. A red main line's incident comes
+// first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
+// and one card when a fix didn't make it green. What it keeps (the merge queue's run and when it last started, the
+// pull requests already seen ready, the clashes, the fixes) is in `file`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch } from './dispatcher.js';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
+import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {} });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
@@ -23,6 +26,18 @@ export const TRY_AGAIN = 'Try again';
 export const LEAVE_IT = 'Leave it';
 export const KEEP_OFF = 'Keep it off';
 export const ALLOW_SOME = 'Allow some';
+export const FIX_FORWARD = 'Fix it forward';
+export const LEAVE_RED = 'Leave it';
+export const undoLabel = (pr) => `Undo #${pr}`;
+// The fix card's numbers, after the clash cards' and the requests card's.
+const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
+export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
+export const GREEN_WORDS = 'The main line is green again, so held work goes on.';
+const WHY_FIX = {
+  failed: 'The fix for the red main line stopped without adding a fix.',
+  cancelled: 'The fix for the red main line was stopped before it added a fix (it reached its cap, or was cancelled).',
+  'still-red': 'A fix was added, but the main line\'s checks are still red.',
+};
 
 function readState(file) {
   try {
@@ -52,10 +67,13 @@ export function orderFor(entry, { settings = {}, raised = false, config = {} } =
   });
 }
 
-// dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf }) -> { tick, workOf, startAgain, sentBack }.
+// dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
+//   stoppedRuns, fixedRuns }) -> { tick, workOf, startAgain, sentBack }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
-//   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0 } = {}) {
+//   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
+// - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
+//   still running); `stoppedRuns()` the runs All stop cancelled; `fixedRuns()` the runs whose fix the helper added.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [] } = {}) {
   let state = readState(file);
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -83,7 +101,76 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     return start({ project, order, ...(branch ? { branch } : {}), carryOn });
   }
 
+  // A red main line's incident: its fix, its close and its card (fix-main.js). One at a time.
+  let fixing = null;
+  function fixTick() {
+    fixing ??= fixNow().finally(() => { fixing = null; });
+    return fixing;
+  }
+  async function fixNow() {
+    const views = readViews() ?? {};
+    const incident = openRedMain(views);
+    if (!incident) return;
+    // The director's own incident holds the fix too, until they close it.
+    if (views.incidents.open.some((i) => i !== incident)) return;
+    const kept = (state.fixes[incident.id] ??= { carried: [], carded: [], next: null, started: [], asked: {} });
+    let green = null;
+    try { green = await mainGreen(); } catch { green = null; }
+    const runs = views.runs?.[incident.work] ?? [];
+    const recorded = new Set(runs.map((r) => r?.data?.runId));
+    // A start the record doesn't show yet is still under way.
+    if (kept.started.some((runId) => !recorded.has(runId)) && green !== true) return;
+    answerFixCard(views, incident, kept);
+    const decided = fixDecision({ incident, runs, green, stop: stopped(), stopped: stoppedRuns() ?? [], merged: fixedRuns() ?? [], kept });
+    if (decided.act === 'close') {
+      await write('incident-closed', { incident: incident.id, why: 'the main line\'s checks are green' });
+      await write('note', { about: 'engine', words: GREEN_WORDS });
+      delete state.fixes[incident.id];
+      keep();
+    } else if (decided.act === 'start') {
+      let order;
+      try { order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true }); } catch { return; }
+      kept.next = null;
+      if (decided.after) kept.carried.push(decided.after);
+      keep();
+      const got = await start({ project, order, ...(decided.carryOn ? { branch: decided.branch, carryOn: true } : {}) });
+      if (got?.ok && typeof got.runId === 'string') {
+        kept.started.push(got.runId);
+        keep();
+        if (kept.started.length === 1) await write('note', { about: 'engine', words: STARTED_FIX_WORDS });
+      }
+    } else if (decided.act === 'card') {
+      kept.carded.push(decided.run);
+      const id = `q-${incident.work}-${FIX_QUESTIONS + kept.carded.length}`;
+      kept.asked[id] = decided.run;
+      keep();
+      const options = [
+        ...(incident.suspect ? [{ label: undoLabel(incident.suspect), says: `It undoes pull request #${incident.suspect}, which the merge queue suspects broke the main line, and checks the main line again.` }] : []),
+        { label: FIX_FORWARD, says: 'It tries again to make the main line\'s checks pass, with a fresh run.' },
+        { label: LEAVE_RED, says: 'Nothing more is tried; all other work keeps waiting until the main line is green.' },
+      ];
+      await write('question', {
+        id, work: incident.work, level: 3,
+        what: `${WHY_FIX[decided.why] ?? WHY_FIX.failed} Nothing else is added until the main line is green again.`,
+        why: 'A red main line holds up all work, and how to mend it when the first fix didn\'t is yours to decide, at level 3.',
+        options, recommendation: options[0].label,
+      });
+    }
+  }
+  // The director's answer to a fix card: the next attempt, once.
+  function answerFixCard(views, incident, kept) {
+    for (const id of Object.keys(kept.asked)) {
+      const label = views.questions?.[id]?.answer?.label;
+      if (typeof label !== 'string') continue;
+      delete kept.asked[id];
+      if (label === FIX_FORWARD) kept.next = { revert: false };
+      else if (incident.suspect && label === undoLabel(incident.suspect)) kept.next = { revert: true };
+      keep();
+    }
+  }
+
   async function tick() {
+    await fixTick();
     const views = readViews() ?? {};
     const s = settings() ?? {};
     const ready = readyOf() ?? {};

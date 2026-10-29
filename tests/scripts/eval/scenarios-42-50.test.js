@@ -10,7 +10,8 @@ import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
 import { asking } from '../../eval/build-loop/engine-recordings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
-const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50];
+// The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js.
+const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 60, 61, 62];
 
 test('--engine takes the fake, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');
@@ -52,7 +53,7 @@ test('--engine fake plays only the engine\'s scenarios, and starts no session', 
   assert.equal(code, 1, 'a scenario named and not run is no pass');
 });
 
-test('the build-loop suite on the fake engine is the nine engine scenarios, in their with variant', async () => {
+test('the build-loop suite on the fake engine is the engine scenarios, in their with variant', async () => {
   const played = [];
   const code = await main(['--suite', 'build-loop', '--engine', 'fake'], {
     home: tempFolder('wh-s42-suite-'), print: () => {}, commit: null, version: null,

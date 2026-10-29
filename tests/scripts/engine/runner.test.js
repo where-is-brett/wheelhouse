@@ -125,6 +125,53 @@ test('the table\'s own answer goes to the engine at once, with a Logbook line an
   } finally { t.cleanup(); }
 });
 
+const holding = (id) => asking(id, { level: 1, answer: 'hold', card: false, recommend: 'hold', line: 'The main line is red, so merges wait.', options: [{ id: 'hold', label: 'Hold' }], opens: 'red-main', suspect: 41 });
+
+test('answering the red main line\'s hold writes one red-main incident', async () => {
+  const t = setUp({ recordings: { hold: holding('h1') } });
+  try {
+    await t.ask('hold');
+    const incidents = t.writes.filter((w) => w.kind === 'incident');
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0].data.kind, 'red-main');
+    assert.equal(incidents[0].data.suspect, 41);
+    assert.match(incidents[0].data.work, /^fix-main-red-main-/);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 0, 'no card');
+  } finally { t.cleanup(); }
+});
+
+test('a second hold while a red-main incident is open writes no second incident', async () => {
+  const t = setUp({ recordings: { hold: holding('h1'), again: holding('h2') } });
+  try {
+    await t.ask('hold');
+    const opened = t.writes.find((w) => w.kind === 'incident').data;
+    t.views.incidents = { open: [{ ...opened, at: '2026-10-29T13:00:00.000Z', fixes: [] }] };
+    await t.ask('again');
+    assert.equal(t.writes.filter((w) => w.kind === 'incident').length, 1);
+    assert.equal(acts(t.engine).length, 2, 'the second hold is still answered');
+  } finally { t.cleanup(); }
+});
+
+test('a hold under All stop opens no incident until it is answered after the lift', async () => {
+  const t = setUp({ recordings: { hold: holding('h1') }, stop: true });
+  try {
+    await t.ask('hold');
+    assert.equal(t.writes.filter((w) => w.kind === 'incident').length, 0);
+    t.world.stop = false;
+    await t.runner.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'incident').length, 1);
+  } finally { t.cleanup(); }
+});
+
+test('a hold the engine refuses opens no incident', async () => {
+  const t = setUp({ recordings: { hold: holding('h1') } });
+  try {
+    t.engine.act = () => ({ ok: false, refused: 'moved on' });
+    await t.ask('hold');
+    assert.equal(t.writes.filter((w) => w.kind === 'incident').length, 0);
+  } finally { t.cleanup(); }
+});
+
 test('four level-3 asks in one afternoon: three cards today, the fourth tomorrow, and the count is noted', async () => {
   const recordings = Object.fromEntries([1, 2, 3, 4].map((n) => [`r${n}`, asking(`q${n}`)]));
   const t = setUp({ recordings });
@@ -191,6 +238,20 @@ const spending = (tokens) => [
 function withRun(t, runId, records) {
   t.views.runs = { 'sale-banner': records.map(([at, state, extra = {}]) => ({ at, data: { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state, branch: 'wh/sale-banner', ...extra } })) };
 }
+
+test('a fix-main run at its cap is cancelled with a Logbook line, and its card is the dispatcher\'s', async () => {
+  const t = setUp({ recordings: { big: spending(2500000) } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started', { lane: 'fix-main' }]]);
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 0, 'no cap card');
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /fix for the red main line reached its cap/.test(w.data.words ?? '')));
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'cancelled once');
+  } finally { t.cleanup(); }
+});
 
 test('a cap reached cancels the run and keeps its worktree, and raises a card', async () => {
   const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
