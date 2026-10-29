@@ -36,7 +36,8 @@
 // Two kinds of prompt are left alone, recording no time and adding nothing: the mod's own commands
 // (/wheelhouse-go, /wheelhouse-digest, /wheelhouse), whose answer starts no turn, so a briefing added to one would be
 // lost (a classic hook isn't shown a mod command's typed line, so this is a second line of
-// defence), and the courier's wake (LEADS.courier), which is not the director arriving. A pane
+// defence), and the courier's wake, which is not the director arriving: its line, which brings the wake's
+// instructions as context (courierContext), or a prompt in the earlier form (LEADS.courier). A pane
 // press (LEADS.pane) is the director's, as their press made it, and is handled like any prompt.
 //
 // A command is matched as typed, in any case, with white space around it ignored:
@@ -74,6 +75,7 @@ import { profileDir, stateDir } from '../lib/paths.js';
 import { stopState } from '../lib/stop.js';
 import { CARD } from '../lib/front-desk.js';
 import { LEADS } from '../lib/mod-numbers.js';
+import { courierContext } from '../mod/courier.js';
 import { BRIEFING_GAP_HOURS, BRIEFING_WORDS, CONTEXT_CHARS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { helperGrace } from '../lib/helper-grace.js';
@@ -458,6 +460,10 @@ export async function decide(input, deps = {}) {
     if (role === 'foreman' && first && env?.WHEELHOUSE_ROLE !== 'foreman') return answer.context('UserPromptSubmit', FOREMAN_LINE);
     if (setup !== null && role === 'front-desk') return answer.context('UserPromptSubmit', SETUP_FIRST);
     if (role !== 'front-desk' || featureSlug(input.cwd) !== null) return undefined;
+    // The courier's line (design section 17.1): the director sees one plain line, and its instructions reach the front
+    // desk here, as context, never in the chat.
+    const woke = attempt(() => courierContext({ project: found.project, session: input.session_id, prompt: input.prompt, now }), null);
+    if (woke !== null) return answer.context('UserPromptSubmit', woke);
     if (isOwnPrompt(input.prompt)) return undefined;
     const { project } = found;
     const at = clockOf(now);

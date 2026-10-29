@@ -22,6 +22,7 @@ import { briefingLine } from '../../../scripts/lineage/release.js';
 import { BRIEFING_WORDS, CONTEXT_CHARS } from '../../../scripts/lib/core-numbers.js';
 import { briefingText } from '../../../scripts/briefing/text.js';
 import { LEADS } from '../../../scripts/lib/mod-numbers.js';
+import { courierWake } from '../../../scripts/mod/courier.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
 import { SETUP_STEPS } from '../../../scripts/lib/setup-run.js';
 import { NOT_SET_UP, SETUP_FIRST } from '../../../scripts/hooks/session-start.js';
@@ -703,6 +704,24 @@ test('a courier wake neither restarts the gap nor brings the briefing', async ()
     // The next prompt of the director's is still the first after the gap.
     assert.ok(contextOf(await run(repo, 'Morning', NOW)).includes(HEADINGS.briefing));
     assert.deepEqual(readSeen(P, { now: at(NOW) }), { promptAt: NOW, briefedAt: NOW, weeklyAt: null });
+  });
+});
+
+test('the courier\'s line brings its instructions as context, for its own session, and neither restarts the gap nor brings the briefing', async () => {
+  await withProject(async ({ repo }) => {
+    put(viewFile('waiting'), unasked(2));
+    const seen = { promptAt: '2026-10-19T08:00:00.000Z', briefedAt: '2026-10-18T12:00:00.000Z' };
+    markSeen(P, seen);
+    const ask = { project: P, session: 's1', presence: { value: 'here' }, quiet: null, idle: true };
+    await courierWake({ ...ask, items: [], now: at(NOW) });
+    const woke = await courierWake({ ...ask, items: [{ id: 'card:c-1', kind: 'card', n: 1 }, { id: 'card:c-2', kind: 'card', n: 2 }], now: at(NOW) });
+    assert.equal(woke.submit, 'Wheelhouse: 2 waiting on you: cards 1 and 2.');
+    const out = await run(repo, woke.submit, NOW);
+    assert.equal(contextOf(out), woke.context);
+    assert.ok(woke.context.startsWith(LEADS.courier));
+    assert.deepEqual(readSeen(P, { now: at(NOW) }), { ...seen, weeklyAt: null });
+    // The same words from another session are a prompt like any other.
+    assert.ok(contextOf(await decide(prompt(repo, woke.submit, 's2'), { now: at(NOW), env: {}, client })).includes(HEADINGS.briefing));
   });
 });
 

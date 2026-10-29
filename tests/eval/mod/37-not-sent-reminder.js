@@ -22,8 +22,9 @@ export default {
 
   setup: async (dir, variant) => {
     const made = await seedCards(CARDS);
-    prompt = await reminderPrompt(boardNumbers(made.seed));
-    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: NOT_SENT }), cards: made.cards };
+    const wake = await reminderPrompt(boardNumbers(made.seed));
+    prompt = wake.line;
+    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: NOT_SENT, wake }), cards: made.cards };
   },
 
   // The reminder is made in setup, by the courier's own code, before the session starts.
