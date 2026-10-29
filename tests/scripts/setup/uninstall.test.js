@@ -20,7 +20,8 @@ import {
 } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { loginEntry, installLoginStart, loginStartRecord } from '../../../scripts/lib/login-start.js';
-import { wheelhouseHome, profileDir, oldProfileDir, stateDir, oldStateDir, keysDir } from '../../../scripts/lib/paths.js';
+import { wheelhouseHome, profileDir, oldProfileDir, stateDir, oldStateDir, keysDir, engineDir, archonHome } from '../../../scripts/lib/paths.js';
+import { POLICY_FILE, brokerLauncher, installedPluginsFile, mirrorRulesFile } from '../../../scripts/setup/engine-parts.js';
 import { toolFolder } from '../../../scripts/lib/host-tools.js';
 import { clicksDir, usedDir } from '../../../scripts/lib/setup-clicks.js';
 import { enrolledFile, signingKeyFile } from '../../../scripts/state/signing.js';
@@ -2955,4 +2956,133 @@ test('uninstall removes the login start', async () => {
     assert.deepEqual(of(got, 'computer').filter((c) => c.put === 'remove-login-start'), [{ phase: 'computer', put: 'remove-login-start', kind: 'launch-agent', target: entry.path }]);
     assert.equal(loginStartRecord().path, entry.path);
   });
+});
+
+// ---- The build engine (Archon design, section 14; part 3d) ----
+
+// The engine's parts as setup leaves them on the Mac: step 2's engine folder (its Bun and Archon) and the broker's
+// launcher, step 6's plugin at user scope, step 7's policy file and the project's fetch-mirror rule, and Archon's
+// own run history, which setup never records.
+function engineSetup(world, r) {
+  r.folder(2, path.join(engineDir(), 'bun'), { tool: 'bun', version: '1.4.3' }, { before: null });
+  writeText(path.join(engineDir(), 'bun', 'bin', 'bun'), 'program');
+  r.folder(2, path.join(engineDir(), 'archon'), { tool: 'archon', version: 'v0.13.0' }, { before: null });
+  r.add(2, { kind: 'file', target: brokerLauncher(), before: null, after: { tool: 'broker' } });
+  writeText(brokerLauncher(), '#!/bin/sh\n');
+  r.add(6, { kind: 'plugin-scope', target: installedPluginsFile(path.join(world.userHome, '.claude')), before: null, after: { plugin: 'wheelhouse@wheelhouse', scope: 'user' } });
+  r.file(7, path.join(world.folder, ...POLICY_FILE.split('/')), '["o"]\n', { engine: true });
+  r.key(7, mirrorRulesFile(), [SLUG], `https://github.com/${REPO}.git`);
+  writeText(path.join(archonHome(), 'archon.db'), 'runs');
+}
+const ENGINE_FILE = (world) => path.join(world.folder, ...POLICY_FILE.split('/'));
+
+test('uninstall cancels runs before removing the engine folder', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    engineSetup(world, r);
+    try {
+      const got = await plan(world);
+      assert.deepEqual(of(got, 'stop').map((c) => c.what), ['engine', 'foreman', 'watcher', 'receiver']);
+      const engineAt = got.changes.findIndex((c) => c.put === 'remove' && c.target === engineDir());
+      assert.ok(engineAt > got.changes.findIndex((c) => c.what === 'engine'), 'the engine folder goes after its runs are cancelled');
+      assert.equal(got.changes[engineAt].phase, 'last');
+      // The plugin at user scope is taken back on the computer's phase; the broker goes with the engine's folder.
+      assert.deepEqual(got.changes.filter((c) => c.put === 'remove-plugin-scope').map((c) => c.phase), ['computer']);
+      assert.equal(got.keep.some((k) => /gh$|broker|bun|archon$/.test(k.what)), false, 'nothing of the engine is named as kept');
+      assert.deepEqual(accounted(got), recordedIds());
+    } finally {
+      fs.rmSync(archonHome(), { recursive: true, force: true });
+    }
+  });
+});
+
+test('a second project\'s uninstall leaves the engine but takes its own mirror rule back', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    engineSetup(world, r);
+    writeProject('o__Other', { folder: tempFolder('wh-other '), remoteUrl: 'https://github.com/o/Other.git', host: 'github', repo: 'o/Other', connection: { host: 'github', mode: 'narrow', project: 'o/Other' } });
+    try {
+      const got = await plan(world);
+      assert.equal(got.last, false);
+      assert.equal(got.changes.some((c) => c.what === 'engine' || c.target === engineDir() || c.put === 'remove-plugin-scope'), false);
+      assert.ok(got.changes.some((c) => c.put === 'reverse' && c.change.target === mirrorRulesFile()));
+      assert.equal(got.asks.some((a) => a.about === 'engine'), false);
+    } finally {
+      fs.rmSync(archonHome(), { recursive: true, force: true });
+    }
+  });
+});
+
+test('uninstall\'s run-history card is level 4 with Keep it recommended', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    engineSetup(world, r);
+    try {
+      const got = await plan(world);
+      const ask = got.asks.find((a) => a.about === 'engine');
+      assert.ok(ask, 'a card for the run history');
+      assert.equal(ask.put, 'delete-engine-history');
+      assert.equal(ask.target, archonHome());
+      assert.equal(ask.card.level, 4);
+      assert.equal(ask.card.recommend, 'Keep it');
+      assert.deepEqual(ask.card.options.map((o) => o.label), ['Keep it', 'Delete it']);
+      assert.deepEqual(got.asks.map((a) => a.about), ['product', 'engine', 'record']);
+      const { question } = composeCard(ask.card);
+      assert.ok(question.question.length <= CARD.chars, `${question.question.length}`);
+      assert.deepEqual(cardProblems(question.question), []);
+    } finally {
+      fs.rmSync(archonHome(), { recursive: true, force: true });
+    }
+  });
+});
+
+test('uninstall\'s pull request removes the project\'s .archon file, and the engine goes from this computer', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const made = await (async () => {
+        const world = makeWorld();
+        const { computer, publicKey } = makeSigningKey();
+        enrol({ computer, publicKey, enrolledAt: '2026-10-19T00:00:00.000Z' });
+        world.lockedDir = tempFolder('wh-locked ');
+        writeText(path.join(world.lockedDir, 'managed-settings.json'), '{}\n');
+        world.before = readText(world.settings);
+        const { run, r } = fullSetup(world, { lockedDir: world.lockedDir, trialSha: host.trial });
+        engineSetup(world, r);
+        writeProject(SLUG, { folder: world.folder, remoteUrl: host.product.url, host: 'github', repo: REPO, connection: { host: 'github', mode: 'narrow', project: REPO, installationId: 77 } });
+        writeText(path.join(host.work, ...POLICY_FILE.split('/')), readText(ENGINE_FILE(world)));
+        world.tip = await pushSetupCommit(world, host);
+        return { world, run };
+      })();
+      const { world, run } = made;
+      const f = fakes(world);
+      const scopes = [];
+      const engineStops = [];
+      f.ops.stopEngine = async () => { engineStops.push(fs.existsSync(engineDir())); f.seen.stops.push('engine'); return { stopped: true }; };
+      f.ops.removePluginScope = async (change) => { scopes.push(change.after); return { removed: true }; };
+      try {
+        const routes = uninstallRoutes({ now: READY, userHome: world.userHome, platform: 'darwin', run: f.run, ops: f.ops });
+        const shown = await routes['/setup/uninstall/plan']({ folder: world.folder });
+        answerAsk(run.id, shown.asks.find((a) => a.about === 'engine'), 'Delete it');
+        const { done } = await applyPlan(world, f);
+        assert.equal(done.ok, true, done.refused);
+        assert.deepEqual(f.seen.stops, ['engine', 'foreman', 'watcher', 'receiver']);
+        assert.deepEqual(engineStops, [true], 'runs cancelled while the engine is still there');
+        assert.equal((await filesOn(host.product.url, UNINSTALL_BRANCH)).includes(POLICY_FILE), false);
+        assert.ok((await filesOn(host.product.url, 'main')).includes(POLICY_FILE));
+        assert.equal(fs.existsSync(engineDir()), false);
+        assert.deepEqual(scopes, [{ plugin: 'wheelhouse@wheelhouse', scope: 'user' }]);
+        assert.equal(fs.existsSync(archonHome()), false, 'deleted on its own card\'s Delete it');
+        assert.ok(done.lines.includes('Archon\'s run history is deleted from this computer.'));
+        assert.deepEqual(unmarked(), []);
+      } finally {
+        fs.rmSync(archonHome(), { recursive: true, force: true });
+      }
+    });
+  } finally {
+    host.cleanup();
+  }
 });

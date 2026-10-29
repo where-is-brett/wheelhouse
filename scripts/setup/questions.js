@@ -274,7 +274,9 @@ export function questionsStep() {
       const real = answers['3.real-users'];
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
-      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers, engine: engineWanted({ platform: ctx.platform ?? process.platform }) });
+      // The new engine builds on GitHub only (Archon design, section 16): a GitLab project stays on the old engine.
+      const onGitlab = project?.record?.host === 'gitlab' || answers['3.host']?.label === 'GitLab';
+      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers, engine: !onGitlab && engineWanted({ platform: ctx.platform ?? process.platform }) });
       const product = answers[`4.${asked.id}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];

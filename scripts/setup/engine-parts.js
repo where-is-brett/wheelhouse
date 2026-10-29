@@ -98,3 +98,34 @@ export async function applyPluginScope(change, { run, record, claudeProgram = 'c
 
 // The command uninstall runs to take the plugin's scope back.
 export const pluginScopeRemoval = (change) => ['plugin', 'uninstall', change.after?.plugin ?? PLUGIN_SCOPE.plugin, '--scope', change.after?.scope ?? PLUGIN_SCOPE.scope];
+
+// The project's own files for the engine (spec 14.3 and check 76; 3b): the merge queue's maintainers policy, naming
+// the identity the helper posts its review verdicts as, and Archon's project settings, which put its worktrees inside
+// the project folder, under .wheelhouse/ (kept out of git), where the agents' sandbox already lets them work. A new
+// setup puts both in setup's own commit; a project set up already gets them by the switch's pull request. `.archon/`
+// is a guardrail from then on.
+export const POLICY_FILE = '.archon/sdlc/policy/maintainers.json';
+export const ARCHON_CONFIG_FILE = '.archon/config.yaml';
+export const ENGINE_FILES = Object.freeze([POLICY_FILE, ARCHON_CONFIG_FILE]);
+export const WORKTREE_PATH = '.wheelhouse/worktrees';
+
+export const maintainersText = (logins) => `${JSON.stringify(logins)}\n`;
+export const archonConfigText = () => [
+  `# ${ARCHON_CONFIG_FILE}`,
+  "# Archon's settings for this project, written by Wheelhouse's setup. Its worktrees go inside the project folder,",
+  '# under .wheelhouse/, which git ignores here.',
+  'worktree:',
+  `  path: ${WORKTREE_PATH}`,
+  '',
+].join('\n');
+
+// The text each engine file holds, for the login the helper posts as.
+export function engineFileTexts(login) {
+  return { [POLICY_FILE]: maintainersText([login]), [ARCHON_CONFIG_FILE]: archonConfigText() };
+}
+
+// The fetch mirror's rule (3b): Archon's git reads the project's repository from the helper's mirror in the engine
+// folder, so no key reaches Archon. The rule can't go in the project's own git config, which setup's fenced git
+// refuses to work in once it holds a url rule (ruling R112), so it goes in the engine folder's list, which every
+// Archon command reads into its environment (scripts/engine/archon/env.js): { <project>: <its address> }.
+export const mirrorRulesFile = (engine = engineDir()) => path.join(engine, 'mirrors', 'rules.json');
