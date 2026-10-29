@@ -782,7 +782,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -833,4 +833,45 @@ test('a survey holding a secret is refused by the state, as every event is', asy
       assert.deepEqual(listEvents(stateDir('o__p')), []);
     });
   } finally { remote.cleanup(); }
+});
+
+const RUN = { work: 'login', lane: 'quick', engine: 'archon', runId: 'r-1', state: 'started' };
+const ASK = { id: 'a-1', runId: 'r-1', work: 'login', kind: 'question', level: 3, options: [{ label: 'Yes', says: 'Go on' }] };
+const COST = { runId: 'r-1', work: 'login', tokens: 1200, dollars: null, premiumRequests: null, minutes: 4, source: 'unknown', byRole: {} };
+
+test('a run event with an unknown state is refused', async () => {
+  await withHome(() => {
+    for (const state of ['started', 'paused', 'ended']) assert.equal(makeEvent({ kind: 'run', data: { ...RUN, state } }).data.state, state);
+    assert.deepEqual(makeEvent({ kind: 'run', data: { ...RUN, state: 'ended', branch: 'b', pr: 4, outcome: 'merged' } }).data.pr, 4);
+    assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, state: 'running' } }), /run event/);
+    assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, extra: 1 } }), /should not/);
+    assert.throws(() => makeEvent({ kind: 'run', data: { work: 'login' } }), /needs its/);
+    assert.throws(() => makeEvent({ kind: 'ask', data: { ...ASK, kind: 'chat' } }), /ask event/);
+    assert.throws(() => makeEvent({ kind: 'ask', data: { ...ASK, level: 5 } }), /ask event/);
+    assert.equal(makeEvent({ kind: 'ask', data: { ...ASK, kind: 'usage-limit', topic: 't', recommend: 'Yes', setLine: 'Keep it' } }).data.kind, 'usage-limit');
+    assert.equal(makeEvent({ kind: 'preview', data: { work: 'login', head: 'a'.repeat(40), folder: '/x', pages: ['index.html'] } }).kind, 'preview');
+    assert.equal(makeEvent({ kind: 'lesson', data: { work: 'login', text: 'Check the lock first' } }).kind, 'lesson');
+    assert.throws(() => makeEvent({ kind: 'lesson', data: { work: 'login' } }), /needs its/);
+  });
+});
+
+test('a cost event with source unknown keeps null dollars', async () => {
+  await withHome(() => {
+    assert.deepEqual(makeEvent({ kind: 'cost', data: COST }).data, COST);
+    assert.equal(makeEvent({ kind: 'cost', data: { ...COST, dollars: 0.5, premiumRequests: 2, source: 'reported' } }).data.dollars, 0.5);
+    assert.equal(makeEvent({ kind: 'cost', data: { ...COST, source: 'estimated' } }).data.source, 'estimated');
+    // Unknown is never zero: a figure that is not known cannot be written as 0.
+    assert.throws(() => makeEvent({ kind: 'cost', data: { ...COST, dollars: 0 } }), /cost event/);
+    assert.throws(() => makeEvent({ kind: 'cost', data: { ...COST, premiumRequests: 0 } }), /cost event/);
+    assert.throws(() => makeEvent({ kind: 'cost', data: { ...COST, source: 'guessed' } }), /cost event/);
+  });
+});
+
+test('a run event can\'t be written through /state/write', () => {
+  // The helper refuses any HELPER_ONLY_KINDS kind from a caller (scripts/host/helper.js, /state/write).
+  for (const kind of ['run', 'ask', 'cost', 'preview']) {
+    assert.equal(PLAIN_KINDS.includes(kind), true, kind);
+    assert.equal(HELPER_ONLY_KINDS.includes(kind), true, kind);
+  }
+  for (const kind of ['lesson']) assert.equal(HELPER_ONLY_KINDS.includes(kind), false, kind);
 });

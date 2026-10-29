@@ -27,6 +27,11 @@ const checkSources = (v) => Array.isArray(v) && v.every((u) => {
   if (typeof u !== 'string' || !u.startsWith('https://')) return false;
   try { return new URL(u).protocol === 'https:'; } catch { return false; }
 });
+const ENGINE_LANES = ['quick', 'small', 'bug', 'feature'];
+const checkEngineLanes = (v) => Array.isArray(v) && v.every((lane) => ENGINE_LANES.includes(lane)) && new Set(v).size === v.length;
+// One positive whole number for each kind of work the engine caps: { quick, small, slice, bug }.
+const CAPPED = ['quick', 'small', 'slice', 'bug'];
+const checkCaps = (v) => isObject(v) && Object.keys(v).length === CAPPED.length && CAPPED.every((k) => Number.isInteger(v[k]) && v[k] > 0);
 
 // group: where it shows in the settings list. label: its name there.
 export const SETTINGS = {
@@ -61,6 +66,16 @@ export const SETTINGS = {
   unusualFactor: { label: 'Unusual-use factor', group: 'advanced', check: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 2 && v <= 10, default: UNUSUAL.factor, home: 'project' },
   // The addresses of the official pages, checked weekly beside the upstream repositories.
   sources: { label: 'Sources checked weekly', group: 'advanced', check: checkSources, default: DEFAULT_SOURCES.map((source) => source.url), home: 'project' },
+  // The build engine (design on Archon, sections 4.2 and 8): which engine builds, and which lanes it builds.
+  engine: { label: 'Build engine', group: 'advanced', levels: ['wheelhouse', 'archon'], default: 'wheelhouse', home: 'project' },
+  engineLanes: { label: 'Lanes on the engine', group: 'advanced', check: checkEngineLanes, default: ['quick'], home: 'project' },
+  // How many cards a day the engine's questions may bring the director.
+  cardsPerDay: { label: 'Cards a day', group: 'everyday', check: wholeBetween(1, 10), default: 3, home: 'project' },
+  // The most a run may take before it stops, by kind of work: minutes, and tokens.
+  capMinutes: { label: 'Minutes a run may take', group: 'advanced', check: checkCaps, default: { quick: 20, small: 60, slice: 120, bug: 30 }, home: 'project' },
+  capTokens: { label: 'Tokens a run may use', group: 'advanced', check: checkCaps, default: { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }, home: 'project' },
+  bundleApprovals: { label: 'Bundle approvals', group: 'advanced', levels: [false, true], default: false, home: 'project' },
+  engineRoom: { label: 'Engine room', group: 'advanced', levels: [false, true], default: false, home: 'project' },
 };
 
 // One per concept the director already knows (a plain-words glossary switch).

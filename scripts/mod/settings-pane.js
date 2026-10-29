@@ -73,6 +73,9 @@ const LEVEL_WORDS = {
   explanations: { plain: 'Plain', 'some-terms': 'Some technical terms' },
   boardTab: { director: 'Captain', build: 'Build' },
   phase: { 'before-launch': 'Before launch', launched: 'Launched' },
+  engine: { wheelhouse: 'Wheelhouse', archon: 'Archon' },
+  bundleApprovals: { false: 'Off', true: 'On' },
+  engineRoom: { false: 'Off', true: 'On' },
 };
 const PANE = {
   autonomy: { label: 'Autonomy', kind: 'levels' },
@@ -91,6 +94,7 @@ const PANE = {
   boardTab: { label: 'Logbook opens on', kind: 'levels' },
   hours: { label: 'Working hours', kind: 'none', why: ASK },
   phase: { label: 'Product phase', kind: 'levels' },
+  cardsPerDay: { label: 'Cards a day', kind: 'none', why: ASK },
   protection: { label: 'Protection', kind: 'none', why: ASK },
 };
 
@@ -337,7 +341,7 @@ export function settingsGroups({ effective, changes, now = () => new Date(), tim
       id: 'project',
       title: 'This project',
       note: heldOf(effective, 'efficiency').value === 'lightest' ? `${PROJECT_NOTE} ${LIGHTEST_NOTE}` : PROJECT_NOTE,
-      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumShown ? ['premium'] : []), 'phase'), build, ...pick('budget', 'protection')],
+      rows: [...pick('autonomy', 'showFirst', 'milestones', 'pace', 'efficiency', ...(premiumShown ? ['premium'] : []), 'phase', 'cardsPerDay'), build, ...pick('budget', 'protection')],
     },
     {
       id: 'you',

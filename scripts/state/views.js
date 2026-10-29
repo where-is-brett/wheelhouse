@@ -423,7 +423,16 @@ function buildLoopViews(sorted, enrolled) {
       if (found && Number.isInteger(e.data.pr) && !found.fixes.includes(e.data.pr)) found.fixes.push(e.data.pr);
     }
   }
-  return { work, features, reports, questions, incidents: { open: [...open.values()] } };
+  // The engine's records, each work's in time order, the latest last: runs, asks, costs, previews and lessons.
+  const byWork = (kind) => {
+    const out = {};
+    for (const e of sorted) if (e.kind === kind && isPlainKey(e.data?.work)) (out[e.data.work] ??= []).push(mark(e));
+    return out;
+  };
+  return {
+    work, features, reports, questions, incidents: { open: [...open.values()] },
+    runs: byWork('run'), asks: byWork('ask'), costs: byWork('cost'), previews: byWork('preview'), lessons: byWork('lesson'),
+  };
 }
 
 // `profile` is the profile's events, when these are a project's: a confirm card in the project for a

@@ -87,11 +87,11 @@ test('every everyday setting is a row in the design\'s order, with its current c
   const rows = settingsRows({ effective, now, timeZone: SYDNEY });
   assert.deepEqual(rows.map((r) => r.key), [
     'autonomy', 'showFirst', 'presence', 'milestones', 'efficiency', 'premium', 'budget', 'pace', 'briefing', 'briefingGapHours', 'explanations',
-    'notifications', 'usageMark', 'boardTab', 'hours', 'phase', 'protection',
+    'notifications', 'usageMark', 'boardTab', 'hours', 'phase', 'cardsPerDay', 'protection',
   ]);
   assert.deepEqual(rows.map((r) => r.label), [
     'Autonomy', 'Show before building', 'Availability', 'Feature milestones', 'Thoroughness', 'Premium model', 'Budget', 'Crew at once', 'Briefing length', 'Hours before a new briefing',
-    'Explanations', 'Notifications', 'Usage nudge', 'Logbook opens on', 'Working hours', 'Product phase', 'Protection',
+    'Explanations', 'Notifications', 'Usage nudge', 'Logbook opens on', 'Working hours', 'Product phase', 'Cards a day', 'Protection',
   ]);
 
   const pace = rowOf(rows, 'pace');
@@ -591,7 +591,7 @@ test('the groups come in order, with their notes word for word', () => {
   assert.equal(groups[1].note, 'Only for this project. A pick changes it at once and counts as your confirmation; Undo stays for a minute. Protection and build commands need your password or a careful yes, so the First Mate asks for them.');
   assert.equal(groups[2].note, 'These follow you to every project. Notifications and working hours are changed with the First Mate, which checks them with you.');
   assert.deepEqual(groups[1].rows.map((r) => r.label), [
-    'Autonomy', 'Show before building', 'Feature milestones', 'Crew at once', 'Thoroughness', 'Product phase', 'Build commands on Windows', 'Budget', 'Protection',
+    'Autonomy', 'Show before building', 'Feature milestones', 'Crew at once', 'Thoroughness', 'Product phase', 'Cards a day', 'Build commands on Windows', 'Budget', 'Protection',
   ]);
   assert.deepEqual(groups[2].rows.map((r) => r.label), [
     'Availability', 'Briefing length', 'Hours before a new briefing', 'Explanations', 'Usage nudge', 'Logbook opens on', 'Notifications', 'Working hours',

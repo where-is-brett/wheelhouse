@@ -54,6 +54,8 @@ export function sayTime(iso) {
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const EFFICIENCY_WORDS = { lightest: 'Lightest', lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' };
+const ENGINE_WORDS = { wheelhouse: 'Wheelhouse', archon: 'Archon' };
+const CAP_NAMES = { quick: 'quick', small: 'small', slice: 'a feature slice', bug: 'bug' };
 const PREMIUM_WORDS = { off: 'off', 'within-plan': 'on, within your plan', 'paid-too': 'on, paid credits too' };
 
 export function sayValue(key, value) {
@@ -68,6 +70,12 @@ export function sayValue(key, value) {
   if (key === 'delegationReviewDays') return `${value} days`;
   if (key === 'sources') return value.length ? `${value.length} ${value.length === 1 ? 'address' : 'addresses'}` : 'none yet';
   if (key === 'efficiency') return EFFICIENCY_WORDS[value] ?? String(value);
+  if (key === 'engine') return ENGINE_WORDS[value] ?? String(value);
+  if (key === 'engineLanes') return value.length ? value.join(', ') : 'none';
+  if (key === 'cardsPerDay') return `${value} ${value === 1 ? 'card' : 'cards'} a day`;
+  if (key === 'capMinutes') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k]} minutes`).join(', ');
+  if (key === 'capTokens') return Object.keys(CAP_NAMES).map((k) => `${CAP_NAMES[k]} ${value[k].toLocaleString('en-AU')}`).join(', ');
+  if (key === 'bundleApprovals' || key === 'engineRoom') return value ? 'on' : 'off';
   if (key === 'premium') return PREMIUM_WORDS[value] ?? String(value);
   if (key === 'usageMark') return value === 'off' ? 'off' : `at ${value}%`;
   if (typeof value === 'number') return value.toLocaleString('en-AU');
