@@ -18,6 +18,7 @@ import { composeCard } from '../cards/compose.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
+import { RED_MAIN, redMainIncident, openRedMain } from './fix-main.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {} });
@@ -96,6 +97,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       const got = await answerEngine(ask.runId, { ask: ask.id, ...routed.answer });
       keep();
       await note(got.ok ? routed.line : `The build's question about ${titled(work)} wasn't answered by the standing rule: the build had already moved on.`, { work, level: routed.level ?? 1 });
+      // A red main line's hold opens one red-main incident, which holds other work until the main line is green.
+      if (got.ok && ask.opens === RED_MAIN && !openRedMain(viewsNow())) await write('incident', redMainIncident(ask));
       return;
     }
     if (routed.line) {
