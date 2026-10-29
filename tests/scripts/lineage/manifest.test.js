@@ -11,6 +11,7 @@ import {
   MANIFEST_PATH, MODELS, UPSTREAMS, buildManifest, checkInstalled, claudeHome, fetchUpstream, locateInstalled, readManifest, verifyManifest, writeManifest,
 } from '../../../scripts/lineage/manifest.js';
 import { fingerprintFile, fingerprintTree } from '../../../scripts/lineage/fingerprint.js';
+import { ENGINE_PINS, manifestPins } from '../../../scripts/engine/pins.js';
 import { g } from '../../helpers/git-fixture.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -56,6 +57,7 @@ test('the manifest names each upstream folder and file with its fingerprint, and
     }],
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     agents: { copilot: { cli: COPILOT_VERSION } },
+    engine: manifestPins(),
     models: MODELS,
   });
   assert.equal(CLAUDE_CODE_FLOOR, '2.1.299');
@@ -324,4 +326,20 @@ test('verify fetches each upstream afresh and finds the manifest, the register a
     'the pins in scripts/lineage/manifest.js are not the manifest\'s: write the manifest again',
   ]);
   for (const into of fetched) assert.equal(fs.existsSync(into), false, 'removed afterwards');
+});
+
+test('the manifest carries the engine pins and verifyManifest catches a changed one', async () => {
+  const { dir, root } = verifiable();
+  const copy = async (upstream, into) => fs.cpSync(dir, into, { recursive: true });
+  assert.deepEqual(readManifest(root).engine, manifestPins());
+  assert.equal(readManifest(root).engine.archon.tag, ENGINE_PINS.archon.tag);
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY] })).broken, []);
+  const moved = { ...ENGINE_PINS, bun: { ...ENGINE_PINS.bun, version: '9.9.9' } };
+  assert.deepEqual((await verifyManifest({ root, fetchTo: copy, upstreams: [TINY], engine: moved })).broken, [
+    'the engine\'s pins in scripts/engine/pins.js are not the manifest\'s: write the manifest again',
+  ]);
+});
+
+test('the manifest in the repository carries the engine pins', () => {
+  assert.deepEqual(readManifest().engine, manifestPins());
 });

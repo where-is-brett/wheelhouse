@@ -16,6 +16,7 @@
 //   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
 import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
+import { roomCommand } from '../room.js';
 import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
@@ -243,6 +244,11 @@ export function archonAdapter({
 
     // The continuation host's process (spec 6.3): it carries an answered run on. Given to the host to start, with
     // archonEnv as its whole environment.
+    // The engine room's console (scripts/engine/room.js): `archon serve` on this computer only.
+    roomCommand() {
+      return roomCommand({ engine, home });
+    },
+
     wakeCommand() {
       return archonCommand(['workflow', 'wake', '--watch', '--json'], { engine });
     },

@@ -72,8 +72,12 @@ export function surveyLines(survey) {
 // waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
 // board reads it) waits on them. Work whose feature closed before a `work` event queued it again
 // hasn't started this time.
-function workState(entry, feature, held) {
+function workState(entry, feature, held, run) {
   const { lane, visible } = entry.work?.data ?? {};
+  // The new engine's run for it, since it was queued: its records sit beside the old engine's features.
+  if (isPlain(run?.data) && since(run, entry.work) && !isPlain(feature?.data)) {
+    return run.data.state === 'ended' ? { running: false, state: 'built by the new engine' } : { running: true, state: 'building on the new engine' };
+  }
   const step = isPlain(feature?.data) && !(feature.data.step === 'closed' && !since(feature, entry.work)) ? feature.data.step : null;
   if (step !== null && step !== 'closed' && held) return { running: false, state: 'waiting for the director to allow its build commands' };
   if (step === 'building' || (step === 'started' && NO_PLAN.includes(lane))) return { running: true, state: 'building' };
@@ -86,6 +90,9 @@ function workState(entry, feature, held) {
   const approval = (!STARTS_UNAPPROVED.includes(lane) || visible === true) && entry.approved !== true;
   return { running: false, state: approval ? 'waiting for the director\'s approval' : 'queued, not started yet' };
 }
+
+// The latest record of the new engine's runs for `id`, or undefined.
+const latestRun = (views, id) => (isPlain(views.runs) && Array.isArray(views.runs[id]) ? views.runs[id].at(-1) : undefined);
 
 // What each lane is, in words a sentence takes.
 const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
@@ -108,7 +115,7 @@ export function workLines(views, answers, words) {
   };
   const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
   const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
-    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id)) }))
+    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id), latestRun(views, id)) }))
     .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
       || a.id.localeCompare(b.id));
   if (open.length === 0) return ['No work is open: nothing is running or waiting.'];
@@ -185,9 +192,18 @@ async function engineBriefing(source, { since }) {
   try { views = (await source.views({}))?.views ?? {}; } catch { views = {}; }
   if (!isPlain(views)) return [];
   const waiting = Array.isArray(views.cardsWaiting) ? views.cardsWaiting.length : Number.isInteger(views.cardsWaiting?.count) ? views.cardsWaiting.count : 0;
-  return [...shippedLines(views, { since }), ...answeredLines(views, { since }), ...(waiting > 0 ? [waitingLine(waiting)] : [])];
+  return [...switchedLines(views, { since }), ...shippedLines(views, { since }), ...answeredLines(views, { since }), ...(waiting > 0 ? [waitingLine(waiting)] : [])];
 }
 export const waitingLine = (n) => `${n === 1 ? 'One question waits' : `${n} questions wait`} for another day, to keep to your cards a day.`;
+
+// The briefing's one line for the switch to the new engine (Archon design, section 17, step 2): said in the first
+// briefing after the engine setting took effect, and so once, as the next briefing's `since` is after it.
+export const SWITCHED_LINE = 'New quick changes are built by the new engine.';
+function switchedLines(views, { since }) {
+  const engine = isPlain(views.settings) ? views.settings.engine : undefined;
+  const at = engine?.confirmedAt;
+  return engine?.value === 'archon' && typeof at === 'string' && (!since || at >= since) ? [SWITCHED_LINE] : [];
+}
 
 // One card of the waiting list by its id: its numbered item, the card event, its text and the
 // buttons a press offers, the 12-character hash a pane press names and the sha256 of its data.

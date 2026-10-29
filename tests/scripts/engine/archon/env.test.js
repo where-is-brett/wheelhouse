@@ -90,3 +90,21 @@ test('the stood-in programs include archon and bun', () => {
   assert.ok(STOOD_IN.includes('archon'));
   assert.ok(STOOD_IN.includes('bun'));
 });
+
+test("each project on the engine has its git reads sent to the helper's fetch mirror, by the engine folder's list", async () => {
+  const { archonEnv } = await import('../../../../scripts/engine/archon/env.js');
+  const fs = (await import('node:fs')).default;
+  const os = (await import('node:os')).default;
+  const path = (await import('node:path')).default;
+  const engine = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-env-mirrors-'));
+  const base = { HOME: '/h' };
+  // A Node.js folder with no gh beside it (a Linux runner's /usr/bin has one).
+  const nodeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-env-node-'));
+  assert.equal(archonEnv({ engine, home: '/a', nodeDir, baseEnv: base }).GIT_CONFIG_COUNT, undefined);
+  fs.mkdirSync(path.join(engine, 'mirrors'));
+  fs.writeFileSync(path.join(engine, 'mirrors', 'rules.json'), JSON.stringify({ 'tide-tables': 'https://github.com/a/tide-tables.git', 'bad name': 'https://x', odd: 'line\nbreak' }));
+  const env = archonEnv({ engine, home: '/a', nodeDir, baseEnv: base });
+  assert.equal(env.GIT_CONFIG_COUNT, '1');
+  assert.equal(env.GIT_CONFIG_KEY_0, `url.${path.join(engine, 'mirrors', 'tide-tables.git')}.insteadOf`);
+  assert.equal(env.GIT_CONFIG_VALUE_0, 'https://github.com/a/tide-tables.git');
+});

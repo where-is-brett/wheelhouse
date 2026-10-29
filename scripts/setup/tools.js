@@ -56,6 +56,7 @@ import { composeCard, isTooLong } from '../cards/compose.js';
 import { WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
+import { engineWanted, engineChanges, applyEngine } from './engine-parts.js';
 
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -771,6 +772,10 @@ function cardFor(changes, status, platform) {
       ? 'checked against the checksum the list gives'
       : 'the list gives no checksum, so setup cannot check the file. Setup runs it once to read its version, and after that it is the glab Wheelhouse uses for your GitLab work, including your sign-in. Say Not now if unsure'}`);
   }
+  if (changes.some((c) => c.action === 'engine')) {
+    full.push('the build engine, Archon: built from its pinned source with Wheelhouse\'s safety patch, with the pinned Bun, into Wheelhouse\'s engine folder, each checked against Wheelhouse\'s pins, with its usage reporting off; a few minutes, nothing for you to do');
+  }
+  if (changes.some((c) => c.action === 'broker')) full.push('the engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
   if (rule) full.push(`${ruleWords} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
   const terse = [];
   for (const c of processes) terse.push(c.action === 'wait' ? 'git: waiting for its installer' : 'git: its installer');
@@ -780,6 +785,8 @@ function cardFor(changes, status, platform) {
       ? `${c.tool}: from your company's list at ${shownSource(c.source)}, checked`
       : `${c.tool}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
   }
+  if (changes.some((c) => c.action === 'engine')) terse.push('the build engine, Archon: pinned and checked, usage reporting off');
+  if (changes.some((c) => c.action === 'broker')) terse.push('its broker to GitHub');
   if (rule) terse.push(ruleWords);
   const card = (what) => ({
     kind: 'setup',
@@ -836,6 +843,7 @@ function allowRules(file) {
 export function toolsStep({
   run = realRun, fetch = globalThis.fetch, arch = process.arch, pluginRoot = PLUGIN_ROOT, env = process.env,
   pollMs = POLL_MS, sleep = pause, tempRoot = os.tmpdir(),
+  engine = { wanted: engineWanted, changes: engineChanges, apply: applyEngine },
 } = {}) {
   return {
     n: 2,
@@ -873,6 +881,8 @@ export function toolsStep({
         const missing = rules.filter((rule) => !allow.includes(rule));
         if (missing.length > 0) changes.push({ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [...allow, ...missing], added: missing.length });
       }
+      // The build engine and its broker, where this computer runs it (scripts/setup/engine-parts.js).
+      if (engine?.wanted({ platform })) changes.push(...engine.changes());
       // Nothing to do settles the step, with no Go ahead (ruling R75).
       if (changes.length === 0) return { settled: { record: { nothing: true } } };
       return { changes, card: cardFor(changes, status, platform), director: directorFor(changes, platform) };
@@ -899,7 +909,10 @@ export function toolsStep({
         : fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record })));
       // The rule is written once every installer's start is recorded, so a write that fails can't
       // leave an installer open that the journal doesn't know about.
-      const failed = (await Promise.allSettled([...installs, ...fetches])).find((r) => r.status === 'rejected');
+      const built = engine && changes.some((c) => c.action === 'engine' || c.action === 'broker')
+        ? [engine.apply(changes.filter((c) => c.action === 'engine' || c.action === 'broker'), { record, run, fetch, arch, platform })]
+        : [];
+      const failed = (await Promise.allSettled([...installs, ...fetches, ...built])).find((r) => r.status === 'rejected');
       if (failed) throw failed.reason;
       for (const c of changes.filter((x) => x.kind === 'json-key')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       const waiting = [...new Set(changes.filter((c) => c.kind === 'process').map((c) => c.target))];

@@ -331,7 +331,7 @@ test('Node.js missing or too old stops setup with the README\'s line, and nothin
   for (const node of [undefined, '20.9.0']) {
     const folder = tempFolder('wh-node ');
     const m = machine({ clt: false, paths: { node: node && '/usr/local/bin/node' }, versions: { node } });
-    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     await assert.rejects(step.plan(ctxFor(folder)), (error) => error.message.startsWith(NODE_LINE) && error.message.includes(node ?? 'not found'));
     assert.equal(m.installs, 0);
     assert.ok(!m.calls.some((c) => c.args.includes('--install')));
@@ -361,7 +361,7 @@ test('with everything here, the list is only the allow rule, written by key besi
     fs.mkdirSync(path.dirname(file));
     fs.writeFileSync(file, '{"permissions":{"allow":["Bash(ls:*)"]},"theirs":1}\n');
     const m = machine(everythingHere);
-    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: ['Bash(ls:*)', ...SETUP_RULES], added: SETUP_RULES.length }]);
     assert.match(planned.card.what, /two permission rules/);
@@ -389,7 +389,7 @@ test('a plain rule already in leaves only the flagged rule to add, and the plain
     const file = path.join(folder, '.claude', 'settings.local.json');
     fs.mkdirSync(path.dirname(file));
     fs.writeFileSync(file, JSON.stringify({ permissions: { allow: [SETUP_PLAIN_RULE] } }));
-    const step = toolsStep({ run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const step = toolsStep({ engine: null, run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes, [{ kind: 'json-key', target: file, key: ['permissions', 'allow'], after: [SETUP_PLAIN_RULE, SETUP_FLAGGED_RULE], added: 1 }]);
     assert.match(planned.card.what, /one permission rule/);
@@ -431,7 +431,7 @@ test('git\'s installer starts at once and the step hands back', async () => {
       if (looks === 1) await finished;
       if (looks === 2) m.clt = true;
     };
-    const step = toolsStep({ run: m.run, fetch: net.fetch, arch: 'arm64', pluginRoot: PLUGIN, env: {}, sleep, pollMs: 1 });
+    const step = toolsStep({ engine: null, run: m.run, fetch: net.fetch, arch: 'arm64', pluginRoot: PLUGIN, env: {}, sleep, pollMs: 1 });
     fs.mkdirSync(path.join(folder, '.git'));
     fs.writeFileSync(path.join(folder, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/a-director/product.git\n');
     const planned = await step.plan(ctxFor(folder));
@@ -481,7 +481,7 @@ test('a wait on an open installer starts none, and an installer closed before gi
       clock += 60 * 1000;
       if (looks === 2) m.installerOpen = false; // the director closed it with Not Now
     };
-    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 60 * 1000 });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 60 * 1000 });
     const planned = await step.plan(ctxFor(folder, { runId: run.id }));
     assert.deepEqual(planned.changes.slice(0, 1), [{ kind: 'process', target: 'git', action: 'wait' }]);
     markStep(run.id, 2, 'clickedAt', { now: () => NOW });
@@ -499,7 +499,7 @@ test('STOP while the installer runs ends the step and leaves the installer to fi
   await withHome(async () => {
     const folder = fs.realpathSync.native(tempFolder('wh-proj '));
     const m = machine({ ...everythingHere, clt: false });
-    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep: async () => {}, pollMs: 1 });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep: async () => {}, pollMs: 1 });
     const planned = await step.plan(ctxFor(folder));
     const run = startRun({ folder, now: () => NOW });
     markStep(run.id, 2, 'clickedAt', { now: () => NOW });
@@ -517,7 +517,7 @@ test('the longest list\'s card composes within the card\'s length, on a Mac and 
     for (const [platform, pluginRoot] of [['darwin', PLUGIN], ['win32', 'C:\\Users\\Jo Smith\\AppData\\Roaming\\Claude\\plugins\\wheelhouse']]) {
       const folder = tempFolder('wh-card ');
       const m = machine({ platform, clt: false, paths: { node: '/usr/local/bin/node' }, versions: { node: '22.3.0' } });
-      const planned = await toolsStep({ run: m.run, fetch: noFetch, pluginRoot, env: {} }).plan(ctxFor(folder, { platform }));
+      const planned = await toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot, env: {} }).plan(ctxFor(folder, { platform }));
       assert.deepEqual(planned.changes.map((c) => c.action ?? c.kind), ['install', 'fetch', 'fetch', 'json-key'], platform);
       const { question } = composeCard({ ...planned.card, target: { step: 2, hash: planHash(planned.changes) } });
       assert.ok(question.question.includes('gh and glab'), question.question);
@@ -564,7 +564,7 @@ test('the rule is written only once each installer\'s start is recorded', async 
   await withHome(async () => {
     const folder = fs.realpathSync.native(tempFolder('wh-proj '));
     const m = machine({ ...everythingHere, clt: false });
-    const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep: async () => {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep: async () => {} });
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes.map((c) => c.kind), ['process', 'json-key']);
     const order = [];
@@ -597,7 +597,7 @@ test('on a Mac, an installer window not seen for two minutes of looks fails the 
         if (comesBack && after === 150 * 1000) m.clt = true; // and then finishes
         seen.push(after);
       };
-      const step = toolsStep({ run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 30 * 1000 });
+      const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, pluginRoot: PLUGIN, env: {}, sleep, pollMs: 30 * 1000 });
       const now = () => new Date(clock);
       const planned = await step.plan(ctxFor(folder, { now }));
       const run = startRun({ folder, now });
@@ -613,5 +613,50 @@ test('on a Mac, an installer window not seen for two minutes of looks fails the 
         assert.equal(seen.at(-1), 120 * 1000);
       }
     }
+  });
+});
+
+test('step 2 lists the engine folder and the broker', async () => {
+  const { engineChanges, applyEngine, brokerLauncher, brokerText, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
+  const { engineDir } = await import('../../../scripts/lib/paths.js');
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const file = path.join(folder, '.claude', 'settings.local.json');
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify({ permissions: { allow: SETUP_RULES } }));
+    const installs = [];
+    const engine = {
+      wanted: engineWanted,
+      changes: engineChanges,
+      apply: (changes, opts) => applyEngine(changes, { ...opts, install: async (o) => { installs.push(o.folder); return { ok: true }; } }),
+    };
+    const step = toolsStep({ engine, run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    assert.deepEqual(planned.changes, [
+      { kind: 'folder', target: engineDir(), action: 'engine', tool: 'archon' },
+      { kind: 'file', target: brokerLauncher(), action: 'broker' },
+    ]);
+    assert.match(planned.card.what, /the build engine, Archon/);
+    assert.match(planned.card.what, /usage reporting off/);
+    assert.match(planned.card.what, /broker/);
+    const recorded = [];
+    await step.apply({ ...ctxFor(folder), record: (c) => recorded.push(c), applyJsonKey: () => assert.fail('no rule to write') }, planned.changes);
+    assert.deepEqual(installs, [engineDir()]);
+    assert.equal(fs.readFileSync(brokerLauncher(), 'utf8'), brokerText());
+    assert.deepEqual(recorded.map((c) => [c.kind, c.target, c.before]), [['file', brokerLauncher(), null]]);
+    // On Windows the engine isn't installed yet, so step 2 lists nothing for it.
+    const windows = await step.plan(ctxFor(folder, { platform: 'win32' })).catch((error) => error);
+    assert.ok(!(windows.changes ?? []).some((c) => c.action === 'engine' || c.action === 'broker'));
+  });
+});
+
+test('a refused engine install fails step 2 with its plain reason', async () => {
+  const { engineChanges, applyEngine, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
+  await withHome(async () => {
+    const folder = fs.realpathSync.native(tempFolder('wh-proj '));
+    const engine = { wanted: engineWanted, changes: engineChanges, apply: (changes, opts) => applyEngine(changes, { ...opts, install: async () => ({ ok: false, refused: 'bun-darwin-aarch64.zip: checksum 00 is not the pinned 11' }) }) };
+    const step = toolsStep({ engine, run: machine(everythingHere).run, fetch: noFetch, pluginRoot: PLUGIN, env: {} });
+    const planned = await step.plan(ctxFor(folder));
+    await assert.rejects(step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {} }, planned.changes), /checksum 00 is not the pinned 11/);
   });
 });

@@ -1,0 +1,57 @@
+// scripts/eval/archon-engine.js
+// The engine the counted evaluation's world on real Archon runs (archon-world.js), installed as setup installs it:
+// Archon built from source at its pin with Wheelhouse's patch, once, into a cache outside ~/.wheelhouse, and each
+// world's engine folder laid over that cache with its own launcher, Bun config, broker launcher and pack.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildPack } from '../engine/pack-build.js';
+import { buildFromSource, enginePaths, launcherText } from '../engine/archon/build.js';
+
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// The cache the engine is built into once: never under ~/.wheelhouse, so the director's own engine is never touched.
+export function engineCache(env = process.env) {
+  return env.WHEELHOUSE_EVAL_ARCHON || path.join(os.homedir(), '.wheelhouse-evals', 'engine');
+}
+
+// Whether `cache` holds a finished build: the launcher, the patched source and the pinned Bun.
+export function cacheBuilt(cache) {
+  const p = enginePaths(cache);
+  return fs.existsSync(p.launcher) && fs.existsSync(p.provider) && fs.existsSync(p.bunBin);
+}
+
+// Builds the engine into `cache` unless it is built already (network: Archon's source and its packages, the pinned
+// Bun). A build cut short is moved aside, never removed, since buildFromSource refuses a folder that holds a source.
+export async function prepareEngine({ cache = engineCache(), build = buildFromSource, log = () => {} } = {}) {
+  if (cacheBuilt(cache)) return cache;
+  if (fs.existsSync(cache)) fs.renameSync(cache, `${cache}.unfinished-${Date.now()}`);
+  fs.mkdirSync(cache, { recursive: true });
+  log(`Building Archon from source into ${cache}; this happens once`);
+  await build({ engine: cache });
+  return cache;
+}
+
+// The broker's launcher, as setup writes it: the Node.js running the evaluation, with the broker's script here.
+export const brokerText = ({ node = process.execPath, root = PLUGIN_ROOT } = {}) => `#!/bin/sh\nexec '${node}' '${path.join(root, 'scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`;
+
+// The world's engine folder over the cache: Bun and the source by link, the launcher and Bun config the folder's own
+// (the launcher names its folder's paths), the broker's launcher, and the pack built from this checkout.
+export function linkEngine({ cache, engine }) {
+  const from = enginePaths(cache);
+  const to = enginePaths(engine);
+  fs.mkdirSync(engine, { recursive: true });
+  fs.symlinkSync(path.dirname(from.bunDir), path.dirname(to.bunDir));
+  fs.mkdirSync(path.dirname(to.launcher), { recursive: true });
+  fs.symlinkSync(from.src, to.src);
+  fs.writeFileSync(to.bunfig, '# Empty: Bun reads this in place of a bunfig.toml in the folder Archon starts in.\n');
+  fs.writeFileSync(to.launcher, launcherText(engine));
+  fs.chmodSync(to.launcher, 0o755);
+  const broker = path.join(engine, 'broker', 'bin', 'gh');
+  fs.mkdirSync(path.dirname(broker), { recursive: true });
+  fs.writeFileSync(broker, brokerText());
+  fs.chmodSync(broker, 0o755);
+  buildPack({ out: path.join(engine, 'pack') });
+  return { broker, packDir: path.join(engine, 'pack') };
+}

@@ -30,12 +30,12 @@ const asMac = (step) => (process.platform !== 'win32' ? step : {
 
 const MAKE = {
   1: () => installStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
-  2: () => asMac(toolsStep({ run: quietRun, fetch: nothing, pluginRoot: world().pluginRoot, env: {} })),
+  2: () => asMac(toolsStep({ engine: null, run: quietRun, fetch: nothing, pluginRoot: world().pluginRoot, env: {} })),
   3: () => hostStep({
     run: world().run, appFile: noApp, hostUrl: world().hostUrl, findGit: async () => ({ ok: true, path: 'git' }), gitlab: nothing,
     open: async () => {}, sleep: async () => {},
   }),
-  6: () => computerStep({ run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
+  6: () => computerStep({ engine: null, run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
   7: () => projectFilesStep({
     run: world().run, findGit: async () => ({ ok: true, path: 'git' }), claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => world().manifest, claudeHome: () => world().claudeHome, switchOn: nothing, protectionStatus: nothing,

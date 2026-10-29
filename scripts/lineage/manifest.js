@@ -18,6 +18,7 @@ import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { checkAnchors, checkCarried, readRegister } from './register.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { AGENT_PINS } from '../agents/pins.js';
+import { ENGINE_PINS, manifestPins } from '../engine/pins.js';
 
 export const MANIFEST_PATH = 'lineage/manifest.json';
 export const MODELS = 'the routing table in .claude/wheelhouse.json';
@@ -188,7 +189,7 @@ export async function fetchUpstream(upstream, dir) {
 export const agentPins = (pins = AGENT_PINS) => Object.fromEntries(Object.entries(pins).map(([name, pin]) => [name, { cli: pin.cli }]));
 
 // The manifest for the upstream copies in `roots` (name -> folder), fingerprinted.
-export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AGENT_PINS }) {
+export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AGENT_PINS, engine = ENGINE_PINS }) {
   return {
     v: 1,
     wheelhouse: { version },
@@ -206,6 +207,7 @@ export function buildManifest({ roots, version, upstreams = UPSTREAMS, pins = AG
     }),
     claudeCode: { floor: CLAUDE_CODE_FLOOR },
     agents: agentPins(pins),
+    engine: manifestPins(engine),
     models: MODELS,
   };
 }
@@ -244,9 +246,9 @@ const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 // temporary folder (removed after), and checks: each listed folder's and file's fingerprint
 // is the manifest's; the register's anchors and carried text are found there; the
 // marketplace pins each upstream at the manifest's commit; and the pins in this script
-// (`upstreams`) and the agents' pins (`pins`) are the manifest's. `log` takes a line for each thing found. Resolves with
+// (`upstreams`), the agents' pins (`pins`) and the engine's pins (`engine`) are the manifest's. `log` takes a line for each thing found. Resolves with
 // { ok, broken }.
-export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstream, upstreams = UPSTREAMS, pins = AGENT_PINS, log = () => {} } = {}) {
+export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstream, upstreams = UPSTREAMS, pins = AGENT_PINS, engine = ENGINE_PINS, log = () => {} } = {}) {
   const broken = [];
   const say = (line) => log(line);
   const breaks = (line) => { broken.push(line); say(`broken: ${line}`); };
@@ -307,6 +309,7 @@ export async function verifyManifest({ root = repoRoot(), fetchTo = fetchUpstrea
   const named = (list) => JSON.stringify(list.map(({ name, plugin, repo, ref, sha }) => [name, plugin, repo, ref, sha]));
   if (named(upstreams) !== named(manifest.upstreams)) breaks(`the pins in scripts/lineage/manifest.js are not the manifest's: write the manifest again`);
   if (JSON.stringify(manifest.agents ?? null) !== JSON.stringify(agentPins(pins))) breaks(`the agents' pins in scripts/agents/pins.js are not the manifest's: write the manifest again`);
+  if (JSON.stringify(manifest.engine ?? null) !== JSON.stringify(manifestPins(engine))) breaks(`the engine's pins in scripts/engine/pins.js are not the manifest's: write the manifest again`);
   say(broken.length === 0 ? 'lineage ok' : `lineage broken: ${broken.length}`);
   return { ok: broken.length === 0, broken };
 }

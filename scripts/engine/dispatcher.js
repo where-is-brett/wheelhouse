@@ -8,6 +8,7 @@
 // to bring it up to date; a second clash on the same work raises a card instead.
 import { paceOf, PACE } from '../lib/build-loop.js';
 import { clashCheck, endedBy, since, STARTS_UNAPPROVED } from '../foreman/queue.js';
+import { startedOnOldEngine } from './lanes.js';
 
 export const MERGE_QUEUE_EVERY_MS = 15 * 60 * 1000;
 const FEATURE = 'feature';
@@ -21,16 +22,18 @@ function runsOf(runs, id, entry) {
   return [...byRun.values()];
 }
 
-// dispatch({ work, runs, reports, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, now })
+// dispatch({ work, runs, reports, features, settings, stop, incident, capsReached, mergeQueue, requests?, sentBack?, now })
 //   -> { start: [{ work, lane }], hold: [{ work, why }], startMergeQueue, requeue: [{ work, lane, branch }], clashCards: [{ work }] }
 // `work`, `runs` and `reports` are the record's views; `mergeQueue` is { running, lastStart, waiting, newReady };
 // `requests` is { counts(workId), used, cap, confirmed }: whether a piece's run would use the plan's counted requests,
 // how many this month's runs used, the most the director allows, and whether the engine's count of them is confirmed;
 // `sentBack` is [{ work, times }], the pull requests the merge gate sent back for a clash.
-export function dispatch({ work = {}, runs = {}, reports = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], now = new Date() } = {}) {
+export function dispatch({ work = {}, runs = {}, reports = {}, features: oldFeatures = {}, settings = {}, stop = false, incident = false, capsReached = false, mergeQueue = {}, requests = null, sentBack = [], now = new Date() } = {}) {
   const lanes = Array.isArray(settings.engineLanes) ? settings.engineLanes : ['quick'];
   const pace = paceOf(settings);
-  const entries = Object.entries(isPlain(work) ? work : {}).filter(([, e]) => isPlain(e?.work?.data) && lanes.includes(e.work.data.lane));
+  // A piece the old engine started before the switch finishes there (scripts/engine/lanes.js).
+  const entries = Object.entries(isPlain(work) ? work : {})
+    .filter(([id, e]) => isPlain(e?.work?.data) && lanes.includes(e.work.data.lane) && !startedOnOldEngine(oldFeatures, id, e));
 
   // What holds a slot: a run of the engine's that hasn't ended, and a feature from its first slice until it ends, since
   // its slices run one after another with the dispatcher's runner starting each.

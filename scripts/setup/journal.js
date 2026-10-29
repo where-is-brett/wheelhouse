@@ -45,7 +45,9 @@ import { journalFile, readJournal } from '../lib/setup-run.js';
 // reaching these writers.
 export { journalFile, readJournal };
 
-const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env', 'answer'];
+// plugin-scope: the Wheelhouse plugin added at user scope for the build engine; git-config: a key in a project's own
+// git config (the engine's fetch mirror rule). Their own steps and uninstall take them back.
+const KINDS = ['json-key', 'file', 'folder', 'process', 'host', 'locked', 'env', 'answer', 'plugin-scope', 'git-config'];
 const STEP_FIELDS = ['shownAt', 'clickedAt', 'doneAt', 'failed', 'say', 'reset'];
 // The longest line a running step may say to the director (ruling R40).
 export const SAY_CHARS = 500;

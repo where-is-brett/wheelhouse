@@ -108,6 +108,8 @@ async function helperFacts(project, { client, address, now, offline, clockRead, 
     helperUp: health?.ok === true,
     // The GitLab address, while the helper says it could not lately be reached for this project.
     away: typeof health?.away?.[project] === 'string' ? health.away[project] : undefined,
+    // The engine room's line while the helper keeps it open (scripts/engine/room.js).
+    engineRoom: typeof health?.engineRoom === 'string' ? health.engineRoom : undefined,
     lock: lock !== LATE && lock?.ok === true ? (isRecord(lock.result) ? lock.result : null) : undefined,
     facts,
   };
@@ -159,7 +161,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
   const builds = process.platform === 'win32'
     ? attempt(() => buildsShown({ views, computer: computerId(), locked, guardedReady: guardedReady({ home: wheelhouseHome(), now: clock, platform: process.platform }) }))
     : null;
-  const health = attempt(() => healthLines({
+  const lines = attempt(() => healthLines({
     record,
     locked,
     stop: stopState(),
@@ -179,6 +181,7 @@ async function gather({ cwd, client, address, now = () => new Date(), offline = 
     // The model the front desk last ran on here and the one the main folder's configuration pins.
     frontDeskModel: offline ? null : attempt(() => readFrontDeskModel({ project, folder: record.folder })),
   }));
+  const health = Array.isArray(lines) && typeof known.engineRoom === 'string' ? [...lines, { level: 'watch', text: known.engineRoom }] : lines;
 
   // What is new is counted from the last briefing. The glance counts nothing new, so offline it isn't read.
   const since = offline ? null : attempt(() => readSeen(project, { now: clock }).briefedAt);

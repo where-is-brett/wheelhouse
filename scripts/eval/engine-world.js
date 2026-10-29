@@ -2,8 +2,8 @@
 // The world an engine scenario plays in (Archon design, section 18): a home of its own in a temporary folder, one
 // project registered on the engine with its record open and this computer's key enrolled, the real helper started on
 // it with the engine the run names, and nothing reaching a host tool. A scenario seeds records, ticks the helper's
-// dispatcher and card router, signs the director's answers as their click does, and reads what was written. Only the
-// fake engine is here; the counted evaluation's Archon comes later.
+// dispatcher and card router, signs the director's answers as their click does, and reads what was written. The
+// counted evaluation's real Archon has its own world (archon-world.js).
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,9 +35,11 @@ function noHostTools(log) {
   };
 }
 
-// openWorld({ engine, recordings, now, host }) -> the world, on the project's default settings. `now` is a function the
-// scenario may move on; `host` the code host's stand-in the helper reads (its adapter), which the scenario may change.
-export async function openWorld({ engine: kind = 'fake', recordings = {}, now = () => new Date(), host = {} } = {}) {
+// openWorld({ engine, recordings, now, host, spawn, adapt, seed }) -> the world, on the project's default settings. `now`
+// is a function the scenario may move on; `host` the code host's stand-in the helper reads (its adapter), which the
+// scenario may change. For tests: `spawn` stands in for the helper's processes (a wake by default), `adapt(engine)`
+// adds to the fake engine, and `seed(world)` writes records before the helper starts.
+export async function openWorld({ engine: kind = 'fake', recordings = {}, now = () => new Date(), host = {}, spawn = () => fakeChild(), adapt = (e) => e, seed = () => {} } = {}) {
   if (!ENGINES.includes(kind)) throw new Error(`An engine scenario runs on ${ENGINES.join(', ')}, not ${kind}`);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ew-'));
   const home = path.join(root, 'h');
@@ -49,7 +51,7 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   const hostCalls = [];
-  const engine = fakeEngine({ recordings, artefacts, now: () => now().toISOString() });
+  const engine = adapt(fakeEngine({ recordings, artefacts, now: () => now().toISOString() }));
   let helper = null;
   const records = (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => kind === undefined || e.kind === kind);
   const own = () => { const k = ownKey(); return k ? [{ computer: k.computer, publicKey: k.publicKey }] : []; };
@@ -96,9 +98,10 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     enrol({ computer, publicKey, enrolledAt: now().toISOString() });
     writeProject(PROJECT, { folder, remoteUrl: 'https://example.invalid/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     await openProjectRecord(PROJECT);
+    await seed(world);
     helper = await startHelper({
       run: noHostTools(hostCalls), address: helperAddress({ home }), adapterFor: async () => host, envFor: async () => ({}), now,
-      spawn: () => fakeChild(), engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
+      spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
     });
   } catch (error) {
     await world.close();
@@ -128,8 +131,14 @@ export async function until(fn, { ms = 8000, every = 25 } = {}) {
 
 // Plays one engine scenario in its world and judges it: { pass, why }. A scenario's `engine` is
 // { recordings?, startAt?, host?(), play(world, { now, at }) -> { pass, why } }; `at(iso)` moves the world's clock, and
-// `host()` gives the code host's stand-in for this play.
+// `host()` gives the code host's stand-in for this play. On `archon`, a scenario with `engine.real(world, { until })`
+// plays that on real Archon (archon-world.js); any other plays its recording on the fake engine, and either says which
+// in `played`: 'real' or 'recorded'.
 export async function runEngineScenario({ scenario, engine = 'fake' }) {
+  if (engine === 'archon') {
+    if (typeof scenario.engine.real === 'function') return { ...(await (await import('./archon-world.js')).runRealScenario({ scenario })), played: 'real' };
+    return { ...(await runEngineScenario({ scenario })), played: 'recorded' };
+  }
   // The world's clock starts at the scenario's time and runs on with the real one, so records keep their order;
   // `at` moves it.
   const clock = { base: Date.parse(scenario.engine.startAt ?? '2026-10-29T09:00:00.000Z'), from: Date.now() };

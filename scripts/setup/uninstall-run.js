@@ -54,7 +54,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from '../lib/run.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { wheelhouseHome, projectsDir } from '../lib/paths.js';
+import { wheelhouseHome, projectsDir, archonHome } from '../lib/paths.js';
+import { pluginScopeRemoval } from './engine-parts.js';
 import { readProject, registeredProjects } from '../lib/projects.js';
 import { runClosed } from '../lib/setup-run.js';
 import { toolPath } from '../lib/host-tools.js';
@@ -68,6 +69,21 @@ import { checkBaseUrl, projectPath } from '../host/gitlab-key.js';
 import { GITLAB_URL, appKeys, connectionInstallationPage, installationPages, revokeGitlabKey } from '../host/cut-access.js';
 import { stopForeman, stopWatcher } from '../foreman/start.js';
 import { stopReceiver } from '../telemetry/main.js';
+
+// The build engine's runs cancelled, and what they left running ended by pid, as All stop does (scripts/engine/stop.js).
+async function stopEngineRuns() {
+  const [{ stopEngine }, { packedArchon }] = await Promise.all([import('../engine/stop.js'), import('../host/helper-main.js')]);
+  const got = await stopEngine({ engine: packedArchon(), reason: 'Uninstall' });
+  if (got.trouble) return { stopped: false, why: got.trouble };
+  if (got.survivors.length > 0 || got.refused.length > 0) return { stopped: false, why: `${got.refused.length + got.survivors.length} of its runs or processes are still going` };
+  return { stopped: true };
+}
+
+// `claude plugin uninstall` of the plugin setup added at user scope.
+async function removePluginScope(change, run) {
+  const got = await run('claude', pluginScopeRemoval(change));
+  return got.code === 0 ? { removed: true } : { removed: false, why: String(got.stderr || got.stdout || '').trim().slice(0, 200) || 'Claude Code gave no reason' };
+}
 import { leaveLocked } from '../protection/locked.js';
 import { lockedProjects } from '../protection/managed.js';
 import { readJournal, markPutBack, markOnHost, closeRun, reverseChange, reverseText } from './journal.js';
@@ -250,6 +266,8 @@ export async function applyUninstall({
     stopForeman: (project) => stopForeman(project),
     stopWatcher: (project) => stopWatcher(project),
     stopReceiver: () => stopReceiver(),
+    stopEngine: () => stopEngineRuns(),
+    removePluginScope: (change) => removePluginScope(change, run),
     leaveLocked: (args) => leaveLocked({ ...args, run }),
     putBackOwnApp: (change) => putBackOwnApp(change, ops.profile === undefined ? {} : { profile: ops.profile }),
     revokeGitlabKey: (args) => revokeGitlabKey({ ...args, fetch }),
@@ -319,7 +337,8 @@ export async function applyUninstall({
   const asked = async () => {
     for (const ask of plan.asks) {
       const answer = answers[`${ASK_STEP}.${ask.id}`];
-      const named = ask.put === 'delete-record' ? 'this project\'s private record on this computer' : ask.target.replace(/^(github|gitlab):/, '');
+      const named = ask.put === 'delete-record' ? 'this project\'s private record on this computer'
+        : ask.put === 'delete-engine-history' ? 'Archon\'s run history on this computer' : ask.target.replace(/^(github|gitlab):/, '');
       if (answer?.label !== DELETE_LABEL) {
         mark(ask.ids, false, answer ? 'kept, as its own card said' : 'kept: its own card was not answered Delete it');
         say(`Kept: ${named}${answer ? '' : ', as its own card was not answered'}.`);
@@ -331,6 +350,14 @@ export async function applyUninstall({
         fs.rmSync(ask.target, { recursive: true, force: true });
         mark(ask.ids, true);
         say('This project\'s private record is deleted from this computer.');
+        continue;
+      }
+      if (ask.put === 'delete-engine-history') {
+        // Only the engine's own home is ever deleted here.
+        if (!samePath(ask.target, archonHome())) halt(`${ask.target} is not the build engine's run history, so it was not deleted`);
+        fs.rmSync(ask.target, { recursive: true, force: true });
+        mark(ask.ids, true);
+        say('Archon\'s run history is deleted from this computer.');
         continue;
       }
       const h = hostTarget(ask.target);
@@ -465,8 +492,11 @@ export async function applyUninstall({
             break;
           }
           const got = entry.what === 'receiver' ? await o.stopReceiver()
-            : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
-          const name = { foreman: 'The Bosun', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
+            : entry.what === 'engine' ? await o.stopEngine()
+              : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
+          const name = { engine: 'The build engine\'s runs', foreman: 'The Bosun', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
+          // Runs still going would lose their engine underneath them: nothing else is removed until they stop.
+          if (entry.what === 'engine' && !got.stopped) halt(`The build engine's runs did not all stop (${got.why}), so nothing else was removed; ask for uninstall's plan again once they have`);
           say(got.stopped ? `${name} is stopped.` : `${name}: ${got.why}.`);
           break;
         }
@@ -619,6 +649,13 @@ export async function applyUninstall({
         case 'remove-plugin':
           say(`${entry.line}.`);
           break;
+        case 'remove-plugin-scope': {
+          const got = await o.removePluginScope(entry.change);
+          if (!got.removed) halt(`Claude Code didn't remove Wheelhouse from your account (${got.why}), so uninstall stopped here`);
+          mark(entry.ids, true);
+          say('Wheelhouse is removed from Claude Code for your account.');
+          break;
+        }
         case 'remove-login-start': {
           const got = await removeLoginStart({ run, platform });
           say(got.removed ? 'What starts Wheelhouse\'s helper when you sign in is removed.' : `What starts Wheelhouse's helper when you sign in is not removed: ${got.why}.`);

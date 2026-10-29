@@ -3,7 +3,11 @@
 // ready: an ordinary one, and the fix a fix-main run opened. Pass: the ordinary one is refused by the helper's gate and
 // by the broker's permit, naming the incident; the fix is the incident's fix only from the helper's own record of the
 // run at its head, so a head pushed since, or a caller's say-so, is no fix. Played on the gate's and the broker's
-// rules, in its `with` variant alone.
+// rules, in its `with` variant alone. On real Archon (`real`), the red main line held: with the incident open in the
+// project's record, the broker's own launcher, run as Archon's steps run gh, asks to merge an ordinary pull request and
+// the real helper refuses it, naming the incident. The fix's own leg needs a real fix-main run, so it is the recording's.
+import fs from 'node:fs';
+import path from 'node:path';
 import { incidentFor, fixOfRun } from '../../../scripts/host/helper.js';
 import { incidentReason } from '../../../scripts/gate/conditions.js';
 import { classifyCall, brokerDecision } from '../../../scripts/engine/broker/rules.js';
@@ -33,6 +37,18 @@ export default {
       if (incidentReason(incidentFor(views, 62, { fix: moved })) === null) return { pass: false, why: 'a head pushed since the run opened it was taken as the fix' };
       if (incidentReason(incidentFor(views, 62)) === null) return { pass: false, why: 'the fix\'s number alone, with no record of the run, let it through' };
       return { pass: true, why: 'the ordinary pull request refused by the gate and the broker; the fix only from the helper\'s own record at its head' };
+    },
+    async real(world) {
+      const cwd = path.join(world.folder, '.wheelhouse', 'worktrees', 'wh-card-63');
+      fs.mkdirSync(cwd, { recursive: true });
+      const { id, what, kind, suspect, work } = RED;
+      world.put('incident', { id, what, kind, suspect, work });
+      world.put('review', { pr: 63, commit: OTHER, verdict: 'CLEAN', findings: 0 });
+      world.put('approval', { pr: 63, commit: OTHER });
+      const refused = await world.broker(['pr', 'merge', '63', '--squash', '--match-head-commit', OTHER], { cwd });
+      if (refused.code === 0 || world.forwarded.some((call) => call.startsWith('pr merge'))) return { pass: false, why: 'the real broker let an ordinary merge through while the main line was red' };
+      if (!refused.stderr.includes(RED.id)) return { pass: false, why: `the refusal doesn't name the incident: ${refused.stderr.trim()}` };
+      return { pass: true, why: 'with a red-main incident open, the real broker, run as Archon runs gh, refused an ordinary merge naming it (the fix\'s own leg is the recording\'s)' };
     },
   },
   variants: { with: {} },

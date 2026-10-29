@@ -1,7 +1,7 @@
 {
   "v": 1,
   "wheelhouse": {
-    "version": "0.1.4"
+    "version": "0.2.0"
   },
   "upstreams": [
     {
@@ -121,6 +121,29 @@
   "agents": {
     "copilot": {
       "cli": "1.0.101"
+    }
+  },
+  "engine": {
+    "archon": {
+      "tag": "v0.13.0",
+      "commit": "0d39c1f2d177f804366500a9cda837abed7d103d",
+      "patches": [
+        {
+          "name": "claude-permission-mode.patch",
+          "sha256": "b04c637c86c77431bab733afbbc1cdb5220d3134d81aed6742ed0bcb505b4f14"
+        }
+      ],
+      "built": {
+        "provider": "6632e04131da968911638029569f3fcb190e3f7db0a1f8a5ebd349d6e89840d2",
+        "lockfile": "779687777c6a3e73d8cb1e149c252bdbb85457c698f9c5563424805f2c4c19f1"
+      }
+    },
+    "bun": {
+      "version": "1.4.3",
+      "sums": {
+        "bun-darwin-aarch64.zip": "80afd4c069b46a6fa8f3ec520bebc750a7843e4a8d5b9583d29ad436c00a3403",
+        "bun-darwin-x64.zip": "62660e6438eb872278877acca77e1152d5d031324df368d4a81b428211489d2d"
+      }
     }
   },
   "models": "the routing table in .claude/wheelhouse.json"

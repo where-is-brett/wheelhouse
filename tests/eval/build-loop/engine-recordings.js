@@ -163,3 +163,6 @@ export function featureWork(world, { id, title, count = 2, demo = 'end', design 
 export function mergingHost(merged) {
   return { prState: async (pr) => ({ state: merged.has(Number(pr)) ? 'merged' : 'open' }) };
 }
+
+// The work a real play on Archon gives its runs (scripts/eval/archon-world.js): one line, so a real step costs cents.
+export const TINY_GOAL = "Add the line 'Made for the evaluation.' to the end of README.md";
