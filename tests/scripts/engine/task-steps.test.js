@@ -59,6 +59,19 @@ test('a task passes its check only when it is ticked, the tree is clean and its 
   assert.equal(await check(dir, art, 1), 0);
 });
 
+test('a task\'s check closes its build loop on the last round, leaving the task unticked for the lane to ask about', async () => {
+  const dir = repo('- [ ] **Task 1:** One\n- [ ] **Task 2:** Two\n');
+  const art = artefacts();
+  const lines = [];
+  const last = (n) => taskCheck(['--run', 'run-1', '--artefacts', art, '--base', 'main', '--task', String(n), '--most', '2'], { client, cwd: dir, out: (line) => lines.push(line) });
+  assert.equal(await last(1), 1, 'round 1 of 2: not done, so the loop goes on');
+  assert.equal(await last(1), 0, 'round 2 of 2: the loop closes');
+  assert.match(lines.at(-1), /task 1 isn't ticked.*out of rounds/);
+  assert.equal(await last(2), 1, 'each task counts its own rounds');
+  const got = await done(dir, art, await recordsOf({ blocked: false }, { blocked: false }));
+  assert.equal(got.topic, 'tasks-unfinished');
+});
+
 test('a task with no plan in the tree fails its check', async () => {
   assert.equal(await check(repo(null), artefacts(), 1), 1);
 });

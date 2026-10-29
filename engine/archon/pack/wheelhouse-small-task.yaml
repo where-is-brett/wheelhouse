@@ -37,7 +37,7 @@
       "loop_group": {
         "max_iterations": 2,
         "fresh_context": true,
-        "until_bash": "blocked=$implement.output.blocked; [ \"$blocked\" = \"true\" ] || node \"$WHEELHOUSE_ROOT/scripts/engine/task-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --task $INPUTS.task",
+        "until_bash": "blocked=$implement.output.blocked; [ \"$blocked\" = \"true\" ] || node \"$WHEELHOUSE_ROOT/scripts/engine/task-check.js\" --run \"$WORKFLOW_ID\" --artefacts \"$ARTIFACTS_DIR\" --base \"$BASE_BRANCH\" --task $INPUTS.task --most 2",
         "nodes": [
           {
             "id": "implement",

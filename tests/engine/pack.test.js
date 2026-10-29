@@ -117,7 +117,7 @@ test('the small lane\'s task block builds one task in at most two rounds, and it
   assert.deepEqual(Object.keys(block.inputs), ['task']);
   const build = block.nodes.find((n) => n.id === 'build');
   assert.equal(build.loop_group.max_iterations, 2);
-  assert.match(build.loop_group.until_bash, /task-check\.js/);
+  assert.match(build.loop_group.until_bash, /task-check\.js.*--most 2/, 'the check closes the loop on its last round, since Archon fails a loop that runs out');
   assert.ok(MOST_TASKS * build.loop_group.max_iterations * ROUND_TOKENS <= 0.6 * LANE_CAPS.small.tokens, 'the build tasks fit within 60% of the 4M cap');
 });
 
