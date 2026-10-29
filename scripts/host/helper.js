@@ -56,6 +56,8 @@ import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProje
 import { startEngineHost } from '../engine/host.js';
 import { stopEngine, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
+import { engineRunner } from '../engine/runner.js';
+import { dispatchRun } from '../engine/dispatch-run.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
@@ -961,6 +963,9 @@ export async function startHelper({
   // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
   // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
   engineStopWith = {}, stopPollMs = 2000,
+  // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
+  // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
+  dispatchMs = 60 * 1000,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -4116,6 +4121,7 @@ export async function startHelper({
   }
   // STOP set by anything at all reaches the engine: each time it is seen turned on.
   let stopWatch = null;
+  let dispatchWatch = null;
   function watchStop() {
     const on = stopped();
     if (on && !stopSeen) stopEngines().catch(() => {});
@@ -4134,7 +4140,9 @@ export async function startHelper({
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
           workOf: (runId) => engineRunOf(project, runId),
         });
-        engineHosts.push({ project, engine, host });
+        const { runner, dispatcher } = engineDesk(project, engine);
+        host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
+        engineHosts.push({ project, engine, host, runner, dispatcher });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4143,7 +4151,44 @@ export async function startHelper({
       watchStop();
       stopWatch = setInterval(watchStop, stopPollMs);
       stopWatch.unref?.();
+      dispatchWatch = setInterval(() => { engineTick().catch(() => {}); }, dispatchMs);
+      dispatchWatch.unref?.();
     }
+  }
+
+  // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).
+  function engineDesk(project, engine) {
+    const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+    const settings = () => Object.fromEntries(Object.entries(effectiveSettings({ project: views().settings ?? {}, now })).map(([k, v]) => [k, v.value]));
+    const files = path.join(stateDir(project), '..', 'engine');
+    const write = (kind, data) => engineWrite(project, kind, data);
+    const folder = registeredProjects().find((p) => p.project === project)?.record.folder;
+    const month = () => now().toISOString().slice(0, 7);
+    const dispatcher = dispatchRun({
+      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
+      start: (args) => engineRun.start(args),
+      readyOf: () => engineRun.readyAll(project),
+      spentThisMonth: () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0),
+    });
+    const runner = engineRunner({
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
+      workOf: (runId) => engineRunOf(project, runId),
+      titleOf: (work) => views().work?.[work]?.work?.data?.title ?? work,
+    });
+    runner.onStart((args) => dispatcher.startAgain(args));
+    return { runner, dispatcher };
+  }
+  // One look for every project on the engine, one at a time.
+  let ticking = null;
+  function engineTick() {
+    ticking ??= (async () => {
+      for (const { runner, dispatcher } of engineHosts) {
+        if (closing) break;
+        await runner.tick().catch(() => {});
+        await dispatcher.tick().catch(() => {});
+      }
+    })().finally(() => { ticking = null; });
+    return ticking;
   }
 
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
@@ -4154,6 +4199,8 @@ export async function startHelper({
     closed ??= (async () => {
       closing = true;
       if (stopWatch) clearInterval(stopWatch);
+      if (dispatchWatch) clearInterval(dispatchWatch);
+      await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
       await new Promise((resolve) => {
@@ -4303,5 +4350,5 @@ export async function startHelper({
   startEngineHosts();
 
   // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
-  return { address, close, engine: { start: (args) => engineRun.start(args) } };
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() } };
 }

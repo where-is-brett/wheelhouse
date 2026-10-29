@@ -333,6 +333,8 @@ export function engineRoutes({
     runOf,
     readyOf,
     openedOf,
+    // Every pull request the helper marked ready for the project: { [pr]: { head, runId, showFirst, work } }.
+    readyAll: (project) => readVerdicts(project).ready ?? {},
     start,
     routes: {
       '/engine/review': ticketed(review),

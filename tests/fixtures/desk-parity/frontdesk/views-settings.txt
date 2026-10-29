@@ -26,6 +26,7 @@ Build engine: Wheelhouse (the default)
 Lanes on the engine: quick (the default)
 Minutes a run may take: quick 20 minutes, small 60 minutes, a feature piece 120 minutes, bug 30 minutes (the default)
 Tokens a run may use: quick 1,000,000, small 4,000,000, a feature piece 10,000,000, bug 2,000,000 (the default)
+Plan requests a month: none, so work that would use them waits (the default)
 Bundle approvals: off (the default)
 Engine room: off (the default)
 --- err

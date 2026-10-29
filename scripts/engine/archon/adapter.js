@@ -231,6 +231,13 @@ export function archonAdapter({
 
   return {
     name: 'archon',
+    // Copilot's plan counts each prompt sent (checks 74 and 79): a run routed to it uses the monthly requests. Its
+    // count isn't confirmed against GitHub's own figure yet (check 79's Copilot half), so no such run starts.
+    countsRequests: (routing = {}) => [...Object.values(routing.tiers ?? {}), ...Object.values(routing.aliases ?? {})].some((model) => /^copilot(?:[:/]|$)/i.test(String(model))),
+    requestsConfirmed: false,
+    words: {
+      requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests (about 200 a month), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
+    },
 
     // The continuation host's process (spec 6.3): it carries an answered run on. Given to the host to start, with
     // archonEnv as its whole environment.
