@@ -84,9 +84,9 @@ function aiProblems(node, group, nodes, copies, waitedAfter = false) {
 }
 
 // Whether a lane waits, after its `include` node, on a blocked exit: a wait on `$x.output.blocked == 'true'` from a
-// step `x` that comes after the include.
+// step `x` that comes after the include and reads the include's own output, the blocks' records the helper can see.
 function waitsAfter(nodes, include) {
-  return nodes.some(({ node: x }) => Array.isArray(x.depends_on) && x.depends_on.includes(include) && nodes.some(({ node: n }) => (
+  return nodes.some(({ node: x }) => Array.isArray(x.depends_on) && x.depends_on.includes(include) && String(x.bash ?? '').includes(`$${include}.output`) && nodes.some(({ node: n }) => (
     n.wait !== undefined && Array.isArray(n.depends_on) && n.depends_on.includes(x.id) && String(n.when ?? '').includes(`$${x.id}.output.blocked == 'true'`))));
 }
 

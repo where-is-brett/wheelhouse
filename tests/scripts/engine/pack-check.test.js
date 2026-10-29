@@ -116,7 +116,7 @@ const trialLane = () => ({
   nodes: [
     { id: 'tasks', bash: 'echo \'["1"]\'' },
     { id: 'each', depends_on: ['tasks'], include: 'wheelhouse-trial-task', fan_out: { items: '$tasks.output', as: 'task', max_parallel: 1 } },
-    { id: 'tasks-done', depends_on: ['each'], bash: 'echo "{}"', output_format: { type: 'object', properties: { blocked }, required: ['blocked'] } },
+    { id: 'tasks-done', depends_on: ['each'], bash: 'records=$each.output; echo "{}"', output_format: { type: 'object', properties: { blocked }, required: ['blocked'] } },
     { id: 'tasks-blocked', depends_on: ['tasks-done'], when: "$tasks-done.output.blocked == 'true'", wait: { attention: 'q', form: 'select', options: [] } },
   ],
 });
@@ -128,6 +128,16 @@ test('checkPack passes a lane whose task block\'s blocked exit is waited on afte
 
 test('checkPack refuses a task block whose blocked exit no lane waits on', () => {
   const found = problems(withTrial((w) => { w.nodes = w.nodes.filter((n) => n.id !== 'tasks-blocked'); })).join('\n');
+  assert.match(found, /build has no wait for its blocked exit/);
+});
+
+test('checkPack refuses a lane whose wait after the fan-out isn\'t on the blocked flag', () => {
+  const found = problems(withTrial((w) => { w.nodes[3].when = "$tasks-done.output.clean == 'false'"; })).join('\n');
+  assert.match(found, /build has no wait for its blocked exit/);
+});
+
+test('checkPack refuses a lane whose step after the fan-out doesn\'t read the fan-out\'s output', () => {
+  const found = problems(withTrial((w) => { w.nodes[2].bash = 'cat "$ARTIFACTS_DIR/blocked.json"'; })).join('\n');
   assert.match(found, /build has no wait for its blocked exit/);
 });
 
