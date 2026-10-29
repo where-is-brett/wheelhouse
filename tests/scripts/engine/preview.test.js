@@ -139,7 +139,7 @@ test('main prints the step\'s output as one JSON line, and a refusal exits 1', a
   });
   assert.equal(code, 0);
   const printed = JSON.parse(lines.at(-1));
-  assert.deepEqual(Object.keys(printed).sort(), ['checks', 'folder', 'pictures', 'summary', 'walked']);
+  assert.deepEqual(Object.keys(printed).sort(), ['checks', 'folder', 'pictures', 'summary', 'walk', 'walked']);
   const refused = { engine: { previewFind: async () => ({ ok: false, refused: 'there is no work order for that run' }) } };
   const lines2 = [];
   assert.equal(await main(['--run', 'run-9', '--out', tempFolder('wh-shots-')], { client: refused, out: (l) => lines2.push(l) }), 1);
@@ -193,6 +193,7 @@ test('each page check is walked while the preview is up, and what it showed is s
   assert.deepEqual(events, ['start', 'dump http://127.0.0.1:4173/orders', 'stop']);
   assert.equal(got.walked, 1);
   assert.equal(got.checks, 1);
+  assert.equal(got.walk, true);
   const name = pictureName('/orders', { width: 1280, height: 800 }).replace(/\.png$/, '');
   assert.equal(fs.readFileSync(path.join(out, 'walk', `${name}.html`), 'utf8'), PAGE);
   const text = fs.readFileSync(path.join(out, 'walk', `${name}.txt`), 'utf8');
@@ -246,5 +247,5 @@ test('with nothing visible, nothing is walked, and the step says no check was wa
     walk: [], dump: async () => { dumped += 1; return { ok: true, html: '' }; },
   });
   assert.equal(dumped, 0);
-  assert.deepEqual([got.walked, got.checks], [0, 0]);
+  assert.deepEqual([got.walk, got.walked, got.checks], [false, 0, 0]);
 });

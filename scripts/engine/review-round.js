@@ -44,6 +44,9 @@ function holds(name, text) {
   return output.verdict !== 'CLEAN' || output.findings.some((f) => HOLDS.has(f?.severity));
 }
 
+// Whether one review's output holds the work back: a BLOCKER or HIGH, a verdict other than CLEAN, or no review at all.
+export const reviewHolds = (text) => holds('standards', text);
+
 // The value after a flag, an empty one included (done-check's runArg reads an empty value as missing).
 const valueOf = (argv, name) => {
   const at = argv.indexOf(`--${name}`);

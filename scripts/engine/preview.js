@@ -9,7 +9,8 @@
 // order's page checks' pages, their HTML and the text they show, under walk/, with a short automated accessibility
 // check of each, for the tester step to judge. With --flag-on (a feature's midpoint demo), the switch the order keeps in
 // a file is on in the project's own preview, and the file is put back as it was after; a host's preview shows the
-// switch as the commit has it, off. It prints { folder, pictures, summary, walked, checks } for the pack.
+// switch as the commit has it, off. It prints { folder, pictures, summary, walk, walked, checks } for the pack: `walk`
+// says whether there were page checks for the tester to judge.
 //   node scripts/engine/preview.js --run <run id> --base <ref> --out <folder> [--walk] [--flag-on]
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -342,7 +343,7 @@ export async function makePreview({
   if (summary) fs.writeFileSync(path.join(out, 'summary.txt'), `${summary}\n`);
   const kept = await client.engine.preview({ runId });
   if (kept?.ok !== true) throw new Error(kept?.refused ?? 'the helper didn\'t keep the preview');
-  return { folder: out, pictures, summary, walked: walked.filter((w) => w.saved).length, checks: walked.length };
+  return { folder: out, pictures, summary, walk: walked.length > 0, walked: walked.filter((w) => w.saved).length, checks: walked.length };
 }
 
 export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`), ...rest } = {}) {

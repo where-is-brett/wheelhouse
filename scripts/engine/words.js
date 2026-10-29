@@ -58,6 +58,17 @@ export const STEP_WORDS = Object.freeze({
   'fix-controls': 'checking the fix left the agents\' files alone',
   verdict: 'weighing what the checks found',
   'review-blocked': 'stopped, with a question from the checks',
+  // A feature's slices' own steps, and the feature's own run's.
+  'task-review': 'checking the task',
+  'flag-off': 'checking the feature stays switched off',
+  'flag-off-again': 'checking again that the feature stays switched off',
+  tester: 'trying it out on the preview',
+  'tester-blocked': 'stopped, with a question from trying it out',
+  'walk-held': 'held after trying it out',
+  switch: 'switching the feature on',
+  'switch-on': 'switching the feature on',
+  'switch-on-blocked': 'stopped, with a question about switching it on',
+  'review-feature': 'checking the whole feature',
 });
 
 // Archon names a step inside a loop after its loop (`review.fix`), and one inside a task block after the fan-out
