@@ -1,0 +1,21 @@
+# probes/77-archon-skills/workflows/e4-tdd-original.yaml
+name: e4-tdd-original
+description: Item 2 with the plugin's original tdd skill.
+nodes:
+  - id: implement
+    model: medium
+    idle_timeout: 240000
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:tdd]
+    prompt: |
+      Do the work described in README.md. Follow the tdd skill: open it with the Skill tool first, and write a failing test first.
+      The seam under test is the public function formatPrice exported from src/price.ts; put its tests in test/price.test.ts.
+      Nobody will answer questions in this step. Where a skill says to ask, confirm with or check with the user or a human partner, decide within the rules and record that decision as an assumption in your final report; if you cannot go on without an answer, stop at once and report status "blocked" with the reason. Committed code from earlier rounds stands: never delete it as "code written before a test". Run only the tests in focus while you work, and run the full suite (`bun test`) once, at the end.
+      When the done check (`sh check.sh`) passes, commit your work with git.
+    output_format:
+      type: object
+      properties:
+        status: { type: string, enum: [done, assumption, blocked] }
+        assumptions: { type: string }
+        summary: { type: string }
+      required: [status, assumptions, summary]

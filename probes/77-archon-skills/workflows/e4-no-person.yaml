@@ -1,0 +1,39 @@
+# probes/77-archon-skills/workflows/e4-no-person.yaml
+name: e4-no-person
+description: Item 4, tasks where a skill would ask a person. Unclear seams (tdd) and a third failed fix (diagnosing-bugs).
+nodes:
+  - id: unclear-seams
+    model: medium
+    idle_timeout: 180000
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:tdd]
+    prompt: |
+      Add discounts to the shop library, test first. Follow the tdd skill: open it with the Skill tool first.
+      Nobody will answer questions in this step. Where a skill says to ask, confirm with or check with the user or a human partner, decide within the rules and record that decision as an assumption in your final report; if you cannot go on without an answer, stop at once and report status "blocked" with the reason. Committed code from earlier rounds stands: never delete it as "code written before a test". Run only the tests in focus while you work, and run the full suite (`bun test`) once, at the end.
+      Commit what you finish with git.
+    output_format:
+      type: object
+      properties:
+        status: { type: string, enum: [done, assumption, blocked] }
+        assumptions: { type: string }
+        summary: { type: string }
+      required: [status, assumptions, summary]
+  - id: third-failed-fix
+    depends_on: [unclear-seams]
+    trigger_rule: all_done
+    context: fresh
+    model: medium
+    idle_timeout: 180000
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:diagnosing-bugs]
+    prompt: |
+      A shop owner says some receipts show a total one cent off. Three fixes to src/cart.ts have already been tried and each failed: rounding with toFixed(2), rounding cents with Math.round, and switching to whole cents. The owner still sees it. There are no logs, no example receipts and no way to reach the owner's till.
+      Follow the diagnosing-bugs skill: open it with the Skill tool first.
+      Nobody will answer questions in this step. Where a skill says to ask, confirm with or check with the user or a human partner, decide within the rules and record that decision as an assumption in your final report; if you cannot go on without an answer, stop at once and report status "blocked" with the reason. Committed code from earlier rounds stands: never delete it as "code written before a test". Run only the tests in focus while you work, and run the full suite (`bun test`) once, at the end.
+    output_format:
+      type: object
+      properties:
+        status: { type: string, enum: [done, assumption, blocked] }
+        assumptions: { type: string }
+        summary: { type: string }
+      required: [status, assumptions, summary]

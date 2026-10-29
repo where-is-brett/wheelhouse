@@ -1,0 +1,4 @@
+# probes/77-archon-skills/plugin/skills/tdd/agents/openai.yaml
+interface:
+  display_name: "TDD"
+  short_description: "Test-driven red-green-refactor"

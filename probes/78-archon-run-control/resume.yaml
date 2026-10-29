@@ -1,0 +1,28 @@
+# probes/78-archon-run-control/resume.yaml
+# Cancel-and-resume trial: a finished step, a step cancelled mid-way, and a step after it. Installed as `e5-resume`.
+# The second step leaves a marker in the worktree before it sleeps, so a resume that keeps the worktree finishes it.
+name: e5-resume
+description: Three shell steps; the second is cancelled while it sleeps
+nodes:
+  - id: step-one
+    bash: |
+      echo one > made-by-step-one.txt
+      echo "step-one ran" >> "$ARTIFACTS_DIR/ran.log"
+      date +%s%N > step-one-stamp.txt
+  - id: step-two
+    depends_on: [step-one]
+    bash: |
+      if [ -e .step-two-started ]; then
+        echo "step-two ran again" >> "$ARTIFACTS_DIR/ran.log"
+        echo finished > step-two-done.txt
+      else
+        echo "step-two ran" >> "$ARTIFACTS_DIR/ran.log"
+        touch .step-two-started
+        echo partial > partial.txt
+        sleep 731
+      fi
+  - id: step-three
+    depends_on: [step-two]
+    bash: |
+      echo "step-three ran" >> "$ARTIFACTS_DIR/ran.log"
+      echo three > made-by-step-three.txt

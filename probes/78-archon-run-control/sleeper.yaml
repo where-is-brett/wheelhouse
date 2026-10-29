@@ -1,0 +1,11 @@
+# probes/78-archon-run-control/sleeper.yaml
+# The child run of the cancel-with-a-tree trial: a script step that sleeps. Installed as `e5-sleeper`.
+name: e5-sleeper
+description: A child run whose script step sleeps
+nodes:
+  - id: kid-script
+    script: |
+      await new Promise((resolve) => setTimeout(resolve, 737000));
+    runtime: bun
+  - id: kid-shell
+    bash: sleep 739

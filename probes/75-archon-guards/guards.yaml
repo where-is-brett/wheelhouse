@@ -1,0 +1,60 @@
+# probes/75-archon-guards/guards.yaml
+# Check 75 (early check E2): each Claude step tries one thing Wheelhouse refuses, under Archon's
+# bypass mode, with the installed Wheelhouse plugin named. `{{prompt:<id>}}` is filled by run.js
+# from ATTEMPTS, with the scratch paths written in. The steps share nothing, so they run side by side.
+name: e2-guards
+description: Check 75. Each step tries one refused thing; the transcript shows what stopped it.
+model: small
+effort: low
+nodes:
+  - id: control
+    prompt: {{prompt:control}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: scenario-6
+    prompt: {{prompt:scenario-6}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: scenario-18
+    prompt: {{prompt:scenario-18}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: keychain
+    prompt: {{prompt:keychain}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: env-read
+    prompt: {{prompt:env-read}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: env-cat
+    prompt: {{prompt:env-cat}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: gh
+    prompt: {{prompt:gh}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: gh-absolute
+    prompt: {{prompt:gh-absolute}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: archon
+    prompt: {{prompt:archon}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: archon-db
+    prompt: {{prompt:archon-db}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: credential-key
+    prompt: {{prompt:credential-key}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: config-yaml
+    prompt: {{prompt:config-yaml}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: other-run
+    prompt: {{prompt:other-run}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: logs
+    prompt: {{prompt:logs}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: unsandboxed
+    prompt: {{prompt:unsandboxed}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: sandbox-network
+    prompt: {{prompt:sandbox-network}}
+    plugins: [wheelhouse@wheelhouse]
+  - id: port-3090
+    prompt: {{prompt:port-3090}}
+    plugins: [wheelhouse@wheelhouse]

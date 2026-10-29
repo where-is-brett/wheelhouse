@@ -1,0 +1,19 @@
+# probes/77-archon-skills/workflows/e4-pairing.yaml
+name: e4-pairing
+description: Item 6, tdd calling codebase-design when both are allowed, and the failure when codebase-design is left off.
+nodes:
+  - id: paired
+    model: small
+    skills: [tdd, codebase-design]
+    prompt: &pairprompt |
+      Do not write or change any files; this is planning only.
+      We will add splitBill(total, people) to the shop library (see TASKS.md). The shape of its interface is in question: whether it belongs in src/cart.ts or a new module, and whether it takes cents or dollars.
+      Open the tdd skill with the Skill tool, and do what it says to do when the shape of the interface is in question.
+      Then report: the seams you would test, which skills you opened, and any error the Skill tool gave, word for word.
+      Nobody will answer questions; record assumptions instead.
+  - id: left-off
+    depends_on: [paired]
+    context: fresh
+    model: small
+    skills: [tdd]
+    prompt: *pairprompt
