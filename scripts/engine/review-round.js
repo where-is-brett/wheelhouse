@@ -4,11 +4,19 @@
 // spec and the lenses that held. A lens holds on a BLOCKER or HIGH finding, on a verdict other than CLEAN (the helper
 // signs only CLEAN), or when its output can't be read as a review. Standards and spec run every round, so an empty
 // one holds too, while an empty security or design lens didn't run. A step's blocked exit, the fix step's first,
-// ends the loop with its question.
-// It prints { holds, held, blocked, question, options, recommend, level, topic }; `held` is the lenses that held,
-// comma-joined, or `none`.
-//   node scripts/engine/review-round.js --standards <output> --spec <output> --security <output> --design <output> --fix <output>
+// ends the loop with its question. Archon fails a loop that runs out of rounds, so this step counts them in the run's
+// artefacts and closes the loop on the last (`--most`), leaving a review that still holds to the signing, which raises
+// the card. It leaves the round's findings from the lenses that held in review-findings.json, for the fix step.
+// It prints { holds, held, blocked, question, options, recommend, level, topic, round, last, done }; `held` is the
+// lenses that held, comma-joined, or `none`; `done` closes the loop.
+//   node scripts/engine/review-round.js --artefacts <folder> --most <n> --standards <output> --spec <output>
+//     --security <output> --design <output> --fix <output>
+import fs from 'node:fs';
+import path from 'node:path';
 import { startedAsScript } from '../lib/started-as-script.js';
+
+export const ROUND_FILE = 'review-round.json';
+export const FINDINGS_FILE = 'review-findings.json';
 
 const LENSES = ['standards', 'spec', 'security', 'design'];
 const ALWAYS = new Set(['standards', 'spec']);
@@ -32,14 +40,26 @@ const valueOf = (argv, name) => {
 };
 
 export async function main(argv = process.argv.slice(2), { out = (line) => process.stdout.write(`${line}\n`) } = {}) {
-  if (!argv.includes('--standards') || !argv.includes('--spec')) {
-    out('usage: node scripts/engine/review-round.js --standards <output> --spec <output> --security <output> --design <output> --fix <output>');
+  const artefacts = valueOf(argv, 'artefacts');
+  const most = Number(valueOf(argv, 'most'));
+  if (!argv.includes('--standards') || !argv.includes('--spec') || !path.isAbsolute(artefacts) || !(Number.isInteger(most) && most >= 1)) {
+    out('usage: node scripts/engine/review-round.js --artefacts <folder> --most <n> --standards <output> --spec <output> --security <output> --design <output> --fix <output>');
     return 2;
   }
   const held = LENSES.filter((name) => holds(name, valueOf(argv, name)));
   const asking = ['fix', ...LENSES].map((name) => parsed(valueOf(argv, name))).find((output) => output?.blocked === true);
   const { question = '', options = [], recommend = '', level = '3', topic = '' } = asking ?? {};
-  out(JSON.stringify({ holds: held.length > 0, held: held.length > 0 ? held.join(',') : 'none', blocked: Boolean(asking), question, options, recommend, level, topic }));
+  let round = 1;
+  try { round = JSON.parse(fs.readFileSync(path.join(artefacts, ROUND_FILE), 'utf8')).round + 1; } catch { /* the first round */ }
+  if (!Number.isInteger(round) || round < 1) round = 1;
+  fs.writeFileSync(path.join(artefacts, ROUND_FILE), `${JSON.stringify({ round })}\n`);
+  const findings = Object.fromEntries(held.map((name) => [name, parsed(valueOf(argv, name))?.findings ?? []]));
+  fs.writeFileSync(path.join(artefacts, FINDINGS_FILE), `${JSON.stringify({ round, held, findings }, null, 2)}\n`);
+  const last = round >= most;
+  out(JSON.stringify({
+    holds: held.length > 0, held: held.length > 0 ? held.join(',') : 'none', blocked: Boolean(asking), question, options, recommend, level, topic,
+    round, last, done: held.length === 0 || Boolean(asking) || last,
+  }));
   return 0;
 }
 

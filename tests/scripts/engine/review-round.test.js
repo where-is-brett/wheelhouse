@@ -16,8 +16,8 @@ const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'u
 const clean = JSON.stringify({ verdict: 'CLEAN', findings: [], summary: 'ok', blocked: false, assumptions: [] });
 const finding = (severity, verdict = ['BLOCKER', 'HIGH'].includes(severity) ? 'FINDINGS' : 'CLEAN') => JSON.stringify({ verdict, findings: [{ severity, file: 'src/a.js', repro: 'r', fix: 'f' }], summary: 's', blocked: false, assumptions: [] });
 
-async function verdict(lenses) {
-  const argv = [];
+async function verdict(lenses, { artefacts = tempFolder('wh-round-'), most = 4 } = {}) {
+  const argv = ['--artefacts', artefacts, '--most', String(most)];
   for (const name of ['standards', 'spec', 'security', 'design', 'fix']) argv.push(`--${name}`, lenses[name] ?? '');
   const lines = [];
   assert.equal(await round(argv, { out: (l) => lines.push(l) }), 0);
@@ -54,6 +54,28 @@ test('a blocked step carries its question, the fix step first', async () => {
   assert.equal(fixFirst.question, 'From the fixer?');
   const none = await verdict({ standards: clean, spec: clean });
   assert.deepEqual([none.blocked, none.question, none.options], [false, '', []]);
+});
+
+test('each round is counted, and the last one closes the loop so the review can hold it', async () => {
+  const artefacts = tempFolder('wh-round-');
+  const held = { standards: finding('HIGH'), spec: clean };
+  const first = await verdict(held, { artefacts, most: 2 });
+  assert.deepEqual([first.round, first.last, first.done], [1, false, false]);
+  const second = await verdict(held, { artefacts, most: 2 });
+  assert.deepEqual([second.round, second.last, second.done, second.holds], [2, true, true, true]);
+  const fresh = await verdict({ standards: clean, spec: clean });
+  assert.deepEqual([fresh.round, fresh.done], [1, true], 'nothing held: done in round one');
+  const asked = await verdict({ standards: JSON.stringify({ verdict: 'CLEAN', findings: [], blocked: true, question: 'q', options: [], recommend: '', level: '3', topic: 't' }), spec: clean });
+  assert.equal(asked.done, true, 'a blocked exit ends the loop');
+});
+
+test('the round\'s findings from the lenses that held are left for the fix step', async () => {
+  const artefacts = tempFolder('wh-round-');
+  await verdict({ standards: finding('MEDIUM'), spec: finding('HIGH') }, { artefacts });
+  const left = JSON.parse(fs.readFileSync(path.join(artefacts, 'review-findings.json'), 'utf8'));
+  assert.equal(left.round, 1);
+  assert.deepEqual(Object.keys(left.findings), ['spec']);
+  assert.equal(left.findings.spec[0].severity, 'HIGH');
 });
 
 test('unplan takes the plan out in its own commit, once', async () => {
