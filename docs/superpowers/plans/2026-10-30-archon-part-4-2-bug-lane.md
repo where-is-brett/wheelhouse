@@ -269,3 +269,13 @@
 - [ ] Run every test file touched, and every file under each test folder touched: `tests/scripts/engine/`, `tests/scripts/eval/`, `tests/engine/`, `tests/e2e/engine-*.test.js`, `tests/scripts/state/`, plus `tests/scripts/agents/core-neutral.test.js` and `tests/scripts/frontdesk/desk-parity.test.js`.
 - [ ] Run an independent whole-branch review (`superpowers:requesting-code-review`). Fix each BLOCKER and HIGH finding test first, and list the MEDIUMs in the PR.
 - [ ] Push, open the PR, and get Linux CI green. Don't merge.
+
+## As built (30 October 2026)
+
+- The fix loop's builder has its own prompt, `prompts/fix-bug.md`, in place of `prompts/implement.md`. Its words say the reproduction's test files stay as they were committed, and they offer the `bigger-than-a-bug` exit.
+- A second wait, `keep-held` (topic `no-reproduction`), covers a red reproduction the helper refused to keep. No fix is built until one is kept.
+- The red step prints `{ red: false, line }` when it isn't red, so its output has no null fields.
+- `bug-check.js` exports `fixProblems`, and `bug-size.js` runs it again. The two scripts' tests share `tests/scripts/engine/bug-check.test.js`.
+- Git in the agent's worktree runs behind Wheelhouse's fence (`safeGit`, `look: 'never'`), as the small lane's scripts do.
+- Tests that run the project's own `node --test` use `tests/helpers/outside-tests.js`. The small lane's e2e host stand-in moved to `tests/helpers/engine-e2e.js`, so both lanes' e2e tests share it.
+- The e2e test stops at the signed review, as the small lane's does. The mark-ready hand-over is the quick lane's own route, covered there.
