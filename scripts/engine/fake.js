@@ -35,7 +35,8 @@ export function loadRecordings(dir) {
   return recordings;
 }
 
-// `recordings` is { name: events }; an order picks one with `order.recording` (the only one, when there is one).
+// `recordings` is { name: events }; an order picks one with `order.recording`, else the one named after its work or its
+// lane, else the only one, when there is one.
 export function fakeEngine({ recordings = {}, now = () => new Date().toISOString(), artefacts = null, source = null } = {}) {
   const stream = [];
   const runs = new Map();
@@ -76,7 +77,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
     start(order = {}) {
       calls.push({ call: 'start', order });
       const names = Object.keys(recordings);
-      const name = order.recording ?? (names.length === 1 ? names[0] : undefined);
+      const name = order.recording ?? [order.work, order.lane].find((n) => typeof n === 'string' && Object.hasOwn(recordings, n)) ?? (names.length === 1 ? names[0] : undefined);
       if (!name || !recordings[name]) return { ok: false, refused: `There is no recording named ${name ?? '(none given)'}` };
       const id = `fake-${runs.size + 1}-${name}`;
       const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {} };
