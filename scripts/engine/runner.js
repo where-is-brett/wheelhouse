@@ -6,13 +6,24 @@
 // director's signed answers go back to the engine, once each; one the engine refuses closes with one plain line.
 // Under All stop nothing goes back: an answer signed then never reaches the build, and its question is asked again
 // after the lift. What it did is kept in `file`, so a helper started again routes nothing twice.
+//
+// Each tick also keeps the caps (section 10.2): a running run past its minutes (running time only) or its tokens is
+// cancelled, its worktree kept, and a cap card asks Give it more or Stop. Give it more resumes a run that stopped on
+// a failure, skipping finished steps; a cancelled run can't be resumed (check 78), so it is started again on its
+// branch to carry on from what's there, with the cap raised once and the spend before it carried. A run that ended
+// gets one `cost` record.
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ENGINE_QUESTIONS } from './router.js';
+import { runCost, runningMinutes } from './spend.js';
+import { capReached, carriedSpend } from './caps.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, later: [], next: {}, noted: null });
+const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {} });
+// The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
+export const MORE = 'Give it more';
+export const STOP_LABEL = 'Stop';
 
 function readState(file) {
   try {
@@ -42,6 +53,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   const keep = () => saveState(file, state);
   const note = (words, extra = {}) => write('note', { about: 'engine', words, ...extra });
   const titled = (work) => inSentence(String(titleOf(work) ?? work));
+
+  let startRun = async () => ({ ok: false, refused: 'nothing starts runs here' });
+  const viewsNow = () => {
+    try { return readViews() ?? {}; } catch { return {}; }
+  };
+  const safely = (fn) => Promise.resolve().then(fn).catch(() => null);
+  async function inspect(runId) {
+    try { return (await engine.inspect(runId)) ?? null; } catch { return null; }
+  }
 
   async function answerEngine(runId, answer) {
     try {
@@ -146,7 +166,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       if (state.delivered[id]) continue;
       const answer = views.questions?.[id]?.answer;
       if (!isPlain(answer) || typeof answer.label !== 'string') continue;
-      const engineRef = views.questions[id].question?.data?.engine ?? { ask: kept.ask.id, options: {} };
+      const engineRef = views.questions[id].question?.data?.engine ?? { ask: kept.ask?.id, options: {} };
       answered.push({ key: id, kept, answer: answerFor(engineRef, answer.label, answer.words) });
     }
     for (const [key, kept] of Object.entries(state.approvals)) {
@@ -156,6 +176,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       answered.push({ key, kept, answer: kept.approve ? { ask: kept.ask.id, choice: kept.approve } : null });
     }
     for (const { key, kept, answer } of answered) {
+      if (kept.cap) {
+        if (stopped()) continue;
+        state.delivered[key] = 'answered';
+        keep();
+        await capAnswer(kept, views.questions?.[key]?.answer?.label);
+        continue;
+      }
       if (stopped()) {
         state.delivered[key] = 'stop';
         // The ask is still open in the engine: it comes back as a new card once All stop is lifted.
@@ -176,6 +203,96 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     }
   }
 
+  // The cap card for a run stopped at its cap (or one the engine itself stopped on its budget).
+  async function capped({ runId, work, lane, branch, reached }) {
+    if (state.capped[runId]) return;
+    const n = (state.next[work] ?? ENGINE_QUESTIONS) + 1;
+    state.next[work] = n;
+    const id = `q-${work}-${n}`;
+    state.capped[runId] = { question: id, reached };
+    state.questions[id] = { cap: true, runId, work, lane, branch };
+    keep();
+    const amount = reached.cap === 'minutes' ? `${reached.limit} minutes of work` : `${reached.limit.toLocaleString('en-GB')} tokens`;
+    await write('question', {
+      id, work, level: 3,
+      what: `${titleOf(work)} reached its cap of ${amount}, so it was stopped. What it has done so far is kept.`,
+      why: 'Spending more than the cap allows is yours to decide, at level 3.',
+      options: [
+        { label: MORE, says: 'It carries on from what is there, with the cap raised by half, once.' },
+        { label: STOP_LABEL, says: 'It stays stopped; the work waits in the queue.' },
+      ],
+      recommendation: STOP_LABEL,
+      engine: { runId, ask: `cap:${runId}`, options: { [MORE]: 'more', [STOP_LABEL]: 'stop' } },
+    });
+  }
+
+  async function capAnswer(kept, label) {
+    if (label !== MORE) {
+      await note(`${titleOf(kept.work)} stays stopped, as you chose.`, { work: kept.work });
+      return;
+    }
+    const record = await inspect(kept.runId);
+    if (record?.outcome === 'failed' || record?.status === 'paused') {
+      const got = await safely(() => engine.act(kept.runId, { resume: {} }));
+      if (got?.ok) {
+        state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
+        keep();
+        return;
+      }
+    }
+    const got = await startRun({ work: kept.work, lane: kept.lane, branch: kept.branch ?? null, carryOn: true, raised: true });
+    if (got?.ok && typeof got.runId === 'string') {
+      state.carried[got.runId] = { raised: true, runs: [...(state.carried[kept.runId]?.runs ?? []), kept.runId] };
+      keep();
+    } else {
+      await note(`${titleOf(kept.work)} couldn't be carried on: ${got?.refused ?? 'the build engine didn\'t start it'}.`, { work: kept.work });
+    }
+  }
+
+  // Each running run of the project, against its caps; each ended one, its cost record.
+  async function caps() {
+    const v = viewsNow();
+    const { capMinutes = {}, capTokens = {} } = settings() ?? {};
+    for (const [work, list] of Object.entries(isPlain(v.runs) ? v.runs : {})) {
+      const byRun = new Map();
+      for (const e of Array.isArray(list) ? list : []) if (typeof e?.data?.runId === 'string') (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
+      for (const [runId, records] of byRun) {
+        const latest = records.at(-1).data;
+        if (latest.state === 'ended') {
+          if (!state.costed[runId]) await costOf(runId, work, records);
+          continue;
+        }
+        if (latest.state !== 'started' || state.capped[runId] || stopped()) continue;
+        const record = await inspect(runId);
+        if (!record) continue;
+        const carried = state.carried[runId] ?? { raised: false, runs: [] };
+        const reached = capReached({
+          lane: latest.lane, minutes: runningMinutes(records, now()), tokens: runCost(record).tokens,
+          raised: carried.raised, carried: carriedSpend((v.costs?.[work] ?? []), carried.runs),
+        }, { capMinutes, capTokens });
+        if (!reached) continue;
+        await safely(() => engine.act(runId, { cancel: { reason: `the run reached its ${reached.cap} cap` } }));
+        await capped({ runId, work, lane: latest.lane, branch: latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null, reached });
+      }
+    }
+  }
+
+  async function costOf(runId, work, records) {
+    const record = await inspect(runId);
+    if (!record) return;
+    const cost = runCost(record);
+    state.costed[runId] = true;
+    keep();
+    await write('cost', {
+      runId, work,
+      // A run whose spend is unknown names no tokens it didn't count.
+      tokens: cost.source === 'unknown' && cost.tokens === 0 ? null : cost.tokens,
+      dollars: cost.dollars, floorDollars: cost.floorDollars, premiumRequests: cost.premiumRequests,
+      minutes: cost.minutes > 0 ? cost.minutes : runningMinutes(records, now()), source: cost.source, byRole: cost.byRole,
+      ...(cost.kinds ? { kinds: cost.kinds } : {}),
+    });
+  }
+
   // Asks held while All stop was on are routed again once it is lifted.
   async function again() {
     if (stopped() || state.later.length === 0) return;
@@ -189,10 +306,17 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   return {
     file,
     onAsk,
+    capped,
     async tick() {
       await deliver();
       await again();
+      await caps();
       await show();
     },
+    // How the runner starts a run again (the dispatcher's own start): ({ work, lane, branch, carryOn, raised }) -> { ok, runId }.
+    onStart(fn) { if (typeof fn === 'function') startRun = fn; },
+    // What a run carries: { raised, runs } (the runs before it whose spend counts against its caps).
+    carried: (runId) => state.carried[runId] ?? null,
+    questionOf: (runId) => state.capped[runId]?.question ?? null,
   };
 }

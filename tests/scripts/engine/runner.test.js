@@ -178,3 +178,100 @@ test('the records the runner writes are well formed', async () => {
     for (const { kind, data } of t.writes) assert.doesNotThrow(() => makeEvent({ kind, data }), `${kind} ${JSON.stringify(data)}`);
   } finally { t.cleanup(); }
 });
+
+// --- the caps and the cost record ---
+
+const spending = (tokens) => [
+  ev({ type: 'run-started' }),
+  ev({ type: 'step-finished', step: 'implement', role: 'implement', provider: 'claude', model: 'mid', minutes: 4, spend: { tokens, dollars: 0.3, source: 'reported' } }),
+  ev({ type: 'ask', id: 'later', kind: 'question', level: 3, options: [{ id: 'a', label: 'A' }] }),
+];
+
+function withRun(t, runId, records) {
+  t.views.runs = { 'sale-banner': records.map(([at, state, extra = {}]) => ({ at, data: { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state, branch: 'wh/sale-banner', ...extra } })) };
+}
+
+test('a cap reached cancels the run and keeps its worktree, and raises a card', async () => {
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+    await t.runner.tick();
+    const cancels = acts(t.engine).filter((c) => c.action.cancel);
+    assert.equal(cancels.length, 1);
+    assert.equal(cancels[0].runId, runId);
+    assert.equal(t.engine.calls.filter((c) => c.call === 'abandon').length, 0, 'nothing removes the worktree');
+    const q = t.writes.filter((w) => w.kind === 'question').at(-1).data;
+    assert.deepEqual(q.options.map((o) => o.label), ['Give it more', 'Stop']);
+    assert.match(q.what, /The sale banner reached its cap of 1,000,000 tokens/);
+    assert.equal(q.level, 3);
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'a run is stopped at its cap once');
+  } finally { t.cleanup(); }
+});
+
+test('waiting at an ask does not use up the minutes cap', async () => {
+  const t = setUp({ recordings: { small: spending(1000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
+  try {
+    const { runId } = t.engine.start({ recording: 'small', running: true });
+    withRun(t, runId, [['2026-10-29T09:00:00.000Z', 'started'], ['2026-10-29T09:05:00.000Z', 'paused'], ['2026-10-29T12:55:00.000Z', 'started']]);
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'ten minutes running, four hours waiting: under the cap');
+  } finally { t.cleanup(); }
+});
+
+test('Give it more on a cancelled run starts it again on its branch, with the cap raised once and the spend carried', async () => {
+  const started = [];
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
+  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+    await t.runner.tick();
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'cancelled' }]]);
+    const q = t.writes.filter((w) => w.kind === 'question').at(-1).data;
+    t.views.questions[q.id] = { question: { data: q }, answer: { label: 'Give it more' } };
+    await t.runner.tick();
+    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: true }]);
+    assert.deepEqual(t.runner.carried('again-1'), { raised: true, runs: [runId] });
+  } finally { t.cleanup(); }
+});
+
+test('Give it more on a run that stopped on a failure resumes it, skipping finished steps', async () => {
+  const t = setUp();
+  const calls = [];
+  const engine = { act: async (runId, action) => { calls.push({ runId, action }); return { ok: true }; }, inspect: async () => ({ status: 'ended', outcome: 'failed', steps: [] }) };
+  const runner = engineRunner({ engine, file: path.join(path.dirname(t.runner.file), 'two.json'), readViews: () => t.views, write: async () => {}, now: () => t.world.now, workOf: () => ({ work: 'sale-banner', lane: 'quick' }) });
+  try {
+    await runner.capped({ runId: 'r9', work: 'sale-banner', lane: 'quick', branch: 'wh/x', reached: { cap: 'tokens', used: 2, limit: 1 } });
+    const q = runner.questionOf('r9');
+    t.views.questions[q] = { question: { data: { engine: { runId: 'r9', ask: 'cap:r9', options: { 'Give it more': 'more', Stop: 'stop' } } } }, answer: { label: 'Give it more' } };
+    await runner.tick();
+    assert.deepEqual(calls.map((c) => c.action), [{ resume: {} }]);
+  } finally { t.cleanup(); }
+});
+
+test('a run that ended gets one cost record, with each role\'s share and unknown spend kept as unknown', async () => {
+  const recordings = { done: [
+    ev({ type: 'run-started' }),
+    ev({ type: 'step-finished', step: 'implement', role: 'implement', minutes: 4, spend: { tokens: 100000, dollars: 0.3, source: 'reported' } }),
+    ev({ type: 'step-finished', step: 'review-spec', role: 'review-spec', minutes: 1, spend: { tokens: null, dollars: null, source: 'unknown' } }),
+    ev({ type: 'run-ended', outcome: 'completed' }),
+  ] };
+  const t = setUp({ recordings });
+  try {
+    const { runId } = t.engine.start({ recording: 'done' });
+    withRun(t, runId, [['2026-10-29T12:00:00.000Z', 'started'], ['2026-10-29T12:10:00.000Z', 'ended', { outcome: 'completed' }]]);
+    await t.runner.tick();
+    await t.runner.tick();
+    const costs = t.writes.filter((w) => w.kind === 'cost');
+    assert.equal(costs.length, 1);
+    const c = costs[0].data;
+    assert.equal(c.runId, runId);
+    assert.equal(c.dollars, null);
+    assert.equal(c.floorDollars, 0.3);
+    assert.equal(c.source, 'unknown');
+    assert.deepEqual(Object.keys(c.byRole), ['implement', 'review-spec']);
+    assert.doesNotThrow(() => makeEvent({ kind: 'cost', data: c }));
+  } finally { t.cleanup(); }
+});

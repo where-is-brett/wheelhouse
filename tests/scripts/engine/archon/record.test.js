@@ -33,7 +33,9 @@ test('readRecord reads reported spend from each step, and skips steps that only 
 test('readRecord marks unavailable cost as unknown with null dollars', () => {
   const { steps, totals } = readRecord(fixture());
   const review = steps.find((s) => s.id === 'review');
-  assert.equal(review.source, 'unknown');
+  // A Copilot step: no cost reported, its request counted as an estimate.
+  assert.equal(review.source, 'estimated');
+  assert.equal(review.requests, 1);
   assert.equal(review.dollars, null);
   assert.equal(review.tokens, 20800);
   assert.equal(review.model, 'model-review');
@@ -78,4 +80,22 @@ test('readOutputs gives each finished step\'s whole output, the last time it fin
   assert.equal(outputs['review-security'], undefined, 'a skipped step has no output');
   assert.deepEqual(readOutputs(null), {});
   assert.equal(readRecord(events).source, events.metadata.workflow_source.root);
+});
+
+test('each step keeps its four kinds of token apart (check 79)', () => {
+  const { steps } = readRecord({ status: 'completed', metadata: {}, nodes: [{
+    nodeId: 'implement',
+    execution: { accounting: 'node', binding: { provider: 'claude' }, timing: {}, spend: { tokens: { source: 'provider', value: { input: 22759, output: 18, cacheRead: 21000, cacheWrite: 577 } }, costUsd: { source: 'provider', value: 0.00124 } } },
+  }] });
+  assert.deepEqual(steps[0].kinds, { input: 22759, output: 18, cacheRead: 21000, cacheWrite: 577 });
+  assert.equal(steps[0].requests, 0);
+});
+
+test('a Copilot step counts each prompt it sent as one request at the Auto rate, as an estimate (checks 74, 79)', () => {
+  const copilot = (attempt) => ({
+    nodeId: 'implement',
+    execution: { accounting: 'node', attempt: { id: attempt }, binding: { provider: 'copilot', model: { requested: 'auto' } }, timing: {}, spend: { tokens: { source: 'provider', value: { input: 1000, output: 200 } }, costUsd: { source: 'unavailable', reason: 'not_reported' } } },
+  });
+  const { steps } = readRecord({ status: 'completed', metadata: {}, nodes: [copilot('a1'), copilot('a2')] });
+  assert.deepEqual(steps.map((s) => [s.requests, s.dollars, s.source]), [[1, null, 'estimated'], [1, null, 'estimated']]);
 });

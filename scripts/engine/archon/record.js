@@ -18,16 +18,26 @@ function outcomeOf(json) {
   return null;
 }
 
+// The providers whose plan counts each prompt sent as a request, and the rate each model counts at. The account
+// has no included model (checks 74 and 79), so Copilot's Auto, and any model not listed, counts one a prompt.
+export const REQUEST_RATES = Object.freeze({ copilot: Object.freeze({ auto: 1 }) });
+const rateOf = (provider, model) => REQUEST_RATES[provider]?.[model] ?? 1;
+
 // One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero. Tokens are
-// known only when both the input and the output figure are: a missing one is unknown, not zero.
-function spendOf(spend) {
-  if (noCall(spend?.tokens) && noCall(spend?.costUsd)) return { tokens: 0, dollars: 0, source: 'reported' };
+// known only when both the input and the output figure are: a missing one is unknown, not zero. The four kinds of
+// token are kept apart (check 79). A step on a provider that counts requests counts its prompt at its model's rate,
+// an estimate: the provider reports no cost.
+function spendOf(spend, provider, model) {
+  const counts = Object.hasOwn(REQUEST_RATES, provider);
+  if (noCall(spend?.tokens) && noCall(spend?.costUsd)) return { tokens: 0, dollars: 0, source: 'reported', kinds: null, requests: 0 };
   const counted = reported(spend?.tokens) && isObject(spend.tokens.value) ? spend.tokens.value : {};
   const input = figure(counted.input);
   const output = figure(counted.output);
   const tokens = input === null || output === null ? null : input + output;
-  if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported' };
-  return { tokens, dollars: null, source: 'unknown' };
+  const kinds = reported(spend?.tokens) ? { input, output, cacheRead: figure(counted.cacheRead), cacheWrite: figure(counted.cacheWrite) } : null;
+  const requests = counts ? rateOf(provider, model) : 0;
+  if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported', kinds, requests };
+  return { tokens, dollars: null, source: counts && tokens !== null ? 'estimated' : 'unknown', kinds, requests };
 }
 
 // A step for each node that ran with its own spend. A node whose row restates spend that other rows carry (a loop
@@ -43,7 +53,7 @@ function stepsOf(nodes) {
       role: n.nodeId,
       provider: binding.provider ?? null,
       model,
-      ...spendOf(spend),
+      ...spendOf(spend, binding.provider ?? null, model),
       minutes: duration === null ? null : Math.round(duration / 600) / 100,
     };
   });
