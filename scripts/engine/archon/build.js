@@ -97,7 +97,8 @@ export async function buildFromSource({ engine, run = defaultRun, fetcher = fetc
   for (const patch of PATCHES) await must(run(git, ['-C', p.src, 'apply', path.join(PATCH_DIR, patch)]), `Applying ${patch}`);
 
   const env = { HOME: process.env.HOME, PATH: [p.bunDir, ...SYSTEM_PATH].join(path.delimiter), ...TELEMETRY };
-  await must(run(p.bunBin, ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: p.src, env, baseEnv: {}, timeoutMs: 900000 }), 'Installing Archon\'s dependencies');
+  const install = ['install', '--frozen-lockfile', '--ignore-scripts'];
+  await must(run(p.bunBin, install, { cwd: p.src, env, baseEnv: {}, timeoutMs: 900000 }), 'Installing Archon\'s dependencies');
 
   fs.mkdirSync(path.dirname(p.launcher), { recursive: true });
   const cli = path.join(p.src, 'packages', 'cli', 'src', 'cli.ts');
