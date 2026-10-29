@@ -79,7 +79,13 @@ Do the STOP guard, the tool guard, the deny rules and the sandbox hold under Arc
   - A step that named a plugin was followed by a new user-scope entry for it in `~/.claude/plugins/installed_plugins.json`. `wheelhouse@wheelhouse` appeared here, and `mattpocock-skills@wheelhouse` in check 77.
   - No `claude plugin` command was run, so Archon's plugin overlay, or Claude Code acting on it, wrote them.
   - Check 77 also found that a plugin installed only at another project's scope passes Archon's "installed" test (`claude plugin list --json` lists every scope), then fails the step with "named plugins did not load".
-  - **For part 3a:** the adapter should run Claude steps with a Claude configuration folder of Wheelhouse's own (`CLAUDE_CONFIG_DIR`) holding the Wheelhouse plugin, so that Archon never writes the person's own. Whether the sign-in still works from such a folder was not tried here. Once these entries were found, the remaining probe steps named no plugins. Part 3a tries it first, and setup's design follows from the answer.
+  - **A configuration folder of Wheelhouse's own doesn't work as it stands.** Check 77 ran Archon with `CLAUDE_CONFIG_DIR` pointing at a scratch folder holding the plugin's entries. Archon refused to start the run ("Credential preflight failed for provider 'claude' … no usable login"), since the sign-in belongs to the person's own configuration. Once these entries were found, no further probe step named a plugin.
+  - **For part 3a**, one of these routes:
+    - setup installs the Wheelhouse plugin at user scope on purpose, with the director's go, so Archon has nothing left to write;
+    - or the Claude provider gets a sign-in of its own (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`) and runs with Wheelhouse's own configuration folder;
+    - or the guards reach steps through project settings instead of a named plugin.
+
+    The choice goes to the director as a card.
   - The entries were left in place for the director to decide on.
 - **The STOP guard holds, but steps also obey the notice.** In two of three tries the step stopped on the session start's STOP notice without calling anything, which is the outcome All stop wants; the guard refused the call when one was made.
 

@@ -7,6 +7,7 @@
 - Skills load inside Archon's Claude steps as section 7.1 needs. The allowlist is exact. Test-first shows in the transcripts, with the plugin's original and with Wheelhouse's copy. No step asked a person, and the three-round loop kept its earlier rounds' work. The pairing works, and a misspelt name only warns.
 - Two results change the design's choices, not its shape. **The same rules written into the prompt did as well as the skill** (item 8), so the prompt text carries the method. **A plain name does find a plugin's skill, but it also lets in a project or user skill of the same name**, so Claude steps should keep the prefixed form.
 - Matt Pocock's original `code-review` did not spawn helpers in two runs (item 7). The agent skipped the skill's own process instead.
+- **Archon can't name a plugin without writing the director's Claude settings.** The first step that named `mattpocock-skills@wheelhouse` left a user-scope entry for it in `~/.claude/plugins/installed_plugins.json`. A scratch `CLAUDE_CONFIG_DIR` avoids that write, but it loses the sign-in, so no step can run. The plugin items (1, 2 with the original, 3 with the plugin, 4, 7 and the plain-name runs) were run before this was known, and are not to be run again this way.
 
 ## Question
 
@@ -32,7 +33,7 @@ Do skills inside Archon v0.13.0's Claude steps behave as section 7.1 of the Arch
 - **Item 5:** a `loop:` node with `fresh_context: true`, three rounds and `until_bash: bun run checks/loop.ts`. Each round does the next unticked task in `TASKS.md` with the copy of `tdd`.
 - **Other items:** item 6 plans a change with `[tdd, codebase-design]`, then again with `[tdd]` alone. Item 7 reviews a planted commit with the original `code-review`, once on a 5-line change and once on a 22-line change across three files. Item 9 names `tddd`. Item 10 starts the prompt with `/tdd`. One more run (`e4-collide`) names the plugin and a plain `tdd` in the project that also holds the copy.
 
-**Undo.** Afterwards, `<temporary folder>/wheelhouse-archon-checks/e4/` (projects, remotes, evidence) and the check's folder under the scratch Archon home (`home/workspaces/e4/`: its logs, worktrees and frozen workflow sources) went to the Trash. So did the Claude Code session transcripts that these runs' worktrees left under the user's `.claude/projects/`. The scratch Archon database still lists the two projects. It goes when the shared scratch engine is removed.
+**Undo.** Afterwards, `<temporary folder>/wheelhouse-archon-checks/e4/` (projects, remotes, evidence) and the check's folder under the scratch Archon home (`home/workspaces/e4/`: its logs, worktrees and frozen workflow sources) went to the Trash. So did the Claude Code session transcripts that these runs' worktrees left under the user's `.claude/projects/`. The scratch-config trial's folder (`e4b/`) went too. The user-scope entry that the plugin runs left in `~/.claude/plugins/installed_plugins.json` was left as it is, as the main session asked. The scratch Archon database still lists the projects. It goes when the shared scratch engine is removed.
 
 ## Evidence
 
@@ -68,12 +69,14 @@ Tokens are a step's input plus output, as the run record gives them. Archon's `i
 - Each round's figure above comes from that round's Claude Code session transcript (`sessionTokens`). The three rounds add up to 380,573 tokens, within 1.2% of the record's total of 384,932.
 - Every Claude step started at about 21,300 tokens before any work: the system prompt, the tool list and the user's Claude settings, which load by default.
 
-**Plugins installed at another project's scope.**
+**A named plugin writes the director's Claude settings.**
 
-- The first run of item 1 failed before the model started, with `Claude Code's plugin set does not match the node's plugins: named plugins did not load: mattpocock-skills@wheelhouse`.
-- At that moment the plugin was installed for Claude Code only at the scope of a different project. Its user-scope install is dated four seconds later. Run again after that, the same workflow passed.
-- `claude plugin list --json`, which Archon reads, lists plugins of every scope. So Archon's "is it installed" test passes for a plugin that Claude Code will not load in this project, and the node then fails.
-- The scratch home's logs show check 75's runs failing the same way for `wheelhouse@wheelhouse`, which is installed only at another project's scope.
+- The first run of item 1 failed before the model started, with `Claude Code's plugin set does not match the node's plugins: named plugins did not load: mattpocock-skills@wheelhouse`. Until then the plugin was installed for Claude Code only at the scope of a different project.
+- That run started at 11:23:52 UTC. A user-scope entry for `mattpocock-skills@wheelhouse` in `~/.claude/plugins/installed_plugins.json` is dated 11:23:56 UTC, four seconds later. Nothing else was installing it then. The step that named the plugin is what wrote the entry: Archon turns the plugin on through Claude Code's settings, and Claude Code then records it as installed at user scope. Check 75 saw the same for `wheelhouse@wheelhouse`.
+- Run again after that, the same workflow passed, because the plugin was now installed at user scope.
+- `claude plugin list --json`, which Archon reads, lists plugins of every scope. So a plugin installed only at another project's scope passes Archon's "is it installed" test. The first run then fails, and leaves the plugin installed at user scope behind it.
+- **The scratch-config trial.** One run went through `archonEnv` with `extra: { CLAUDE_CONFIG_DIR: <scratch folder> }`. The scratch folder held a copy of only the plugin's install entry and its marketplace entry. The workflow had a plain step and then a step naming the plugin. Archon refused to start the run with `Credential preflight failed for provider 'claude' (vendor 'anthropic'): no usable login`. The sign-in belongs to the real configuration, so a scratch one has none, and the plugin step was never reached. The file's checksum was the same before and after this trial (`3c1f323e…57a97c`). The entries already written were left as they are.
+- After that trial, no more steps that name a plugin were run.
 
 **Other observations.**
 
@@ -99,9 +102,9 @@ For part 3b:
 - **`code-review`'s Adapt verdict stands, on different evidence.** The original did not spawn helpers. The agent set aside the skill's own process, and noted the missing setup file. Either way, a step cannot rely on the skill as written. Splitting it into the two lens steps keeps what matters and drops what the agent skipped anyway.
 - **Tokens per round for the spend meter.** On the mid-sized model, a small task's implement round costs about 112,000 to 135,000 tokens (about 127,000 on average), or about $0.066 at the provider's figures. 96 to 99% of each round's input is cache reads, and about 21,300 tokens of every step is constant start-up context. The meter can't take per-round figures from Archon's record, which has one total per loop node. It should count per node from the record. Where it needs per-round figures (a round cap, the counted evaluation), it should read them from the rounds' session transcripts, which matched the record within 1.2% here.
 - **No-person rules work as written.** The section 7.1 wording held under the original, unadapted skills: assumptions were recorded within about 30 seconds, and no question was asked. So the adapted copies need no stronger wording for this.
-- **For setup, and for check 75:** a node can name only a plugin that Claude Code loads in that project. Setup must install Wheelhouse's plugin at user scope, or at the scope of the project being run. An install at another project's scope passes Archon's inventory test but fails every node that names it.
+- **Naming a plugin in a node writes the director's Claude settings.** It leaves a user-scope install entry in `~/.claude/plugins/installed_plugins.json`. A scratch `CLAUDE_CONFIG_DIR` avoids the write but loses the sign-in. This touches section 7.1's rule that every Claude node names the Wheelhouse plugin (for the guards, section 12.1), and setup (section 14). Either setup installs Wheelhouse's plugin at user scope on purpose, with the director's go, so naming it writes nothing new; or the guards and skills reach steps another way, as project-level files or the prompt text this check favours. This needs a decision before part 3b names any plugin.
 
-These go to the main session as cards: the prompt text taking over the method, the prefixed form staying, and the plugin scope for setup.
+These go to the main session as cards: the prompt text taking over the method, the prefixed form staying, and naming a plugin writing the director's settings.
 
 ## Needs the director
 
