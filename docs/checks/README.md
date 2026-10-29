@@ -2,7 +2,7 @@
 
 # Design checks
 
-The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), and checks 54 to 72, which are the Copilot design's C1 to C19 (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, "Check numbers"), and check 73, which is the security-gaps plan's (72 belongs to the Copilot plan), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
+The answers to the checks in section 20 of the design, and to checks 24 to 31 in section 16 of the build-loop design (`docs/specs/2026-10-18-build-loop-design.md`), and checks 54 to 72, which are the Copilot design's C1 to C19 (`docs/superpowers/plans/2026-10-21-wheelhouse-copilot.md`, "Check numbers"), and check 73, which is the security-gaps plan's (72 belongs to the Copilot plan), and checks 74 to 79, which are the Archon design's early checks E1 to E6 (`docs/superpowers/plans/2026-10-29-archon-part-2-early-checks.md`), one note per check. Check 26 was not run and is no longer needed: Shape 1 was taken on check 27's Mac half, and Shape 2's wakes come from the mod's timer in the foreman's session, not a plugin monitor (build-loop design, section 11).
 
 | # | Check | Answer | Note |
 |---|---|---|---|
@@ -71,3 +71,9 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 71 | GitLab on the company's own servers | Partly, at Free: a commit status posted with the project key can stand in for a pipeline that never ran; Premium's half Deferred, held for the director (H3) | [71-gitlab-self-managed.md](71-gitlab-self-managed.md) |
 | 72 | The add-on at Lean | Not run yet | None yet |
 | 73 | The keychain: does denying the keychain files stop a sandboxed `security` | Yes on the Mac (the denial holds); Windows waits for check 52 | [73-keychain.md](73-keychain.md) |
+| 74 | E1: Copilot through Archon's compiled binary | Deferred: the account has no included Copilot model, and Copilot spend waits for the director's go in the checking session | [74-archon-copilot.md](74-archon-copilot.md) |
+| 75 | E2: Wheelhouse's guards inside an Archon Claude step | No: the hooks and deny rules hold, but bypass mode turns the sandbox off; the one-line patch is the route | [75-archon-guards.md](75-archon-guards.md) |
+| 76 | E3: the merge path through a broker | Yes, every leg; `--config` cannot carry the maintainers policy | [76-archon-merge.md](76-archon-merge.md) |
+| 77 | E4: skills inside Archon's steps | Partly: nine of eleven; item 7 showed no helpers, item 11 (Copilot) Deferred | [77-archon-skills.md](77-archon-skills.md) |
+| 78 | E5: Archon's run control | Partly: no ask lost or doubled over 50 trials; a cancelled run can't be resumed, and a detached process survived a cancel; sleep not yet run | [78-archon-run-control.md](78-archon-run-control.md) |
+| 79 | E6: counting spend under Archon | Deferred: the Claude half reads; the Copilot half waits for the director's go | [79-archon-spend.md](79-archon-spend.md) |

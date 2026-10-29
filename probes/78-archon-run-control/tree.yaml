@@ -1,0 +1,22 @@
+# probes/78-archon-run-control/tree.yaml
+# Cancel-with-a-tree trial: a child run with a sleeping script, a sleeping shell step and a sleeping script step,
+# all at once. Installed as `e5-tree` beside sleeper.yaml.
+name: e5-tree
+description: A child run and two sleeping steps, to be cancelled together
+nodes:
+  - id: kid
+    workflow: e5-sleeper
+  - id: shell-sleep
+    bash: sleep 733
+  - id: script-sleep
+    script: |
+      await new Promise((resolve) => setTimeout(resolve, 735000));
+    runtime: bun
+  - id: background-sleep
+    bash: |
+      nohup sleep 741 > /dev/null 2>&1 &
+      sleep 743
+  - id: own-session-sleep
+    bash: |
+      perl -MPOSIX -e 'POSIX::setsid(); exec "sleep", "747"' > /dev/null 2>&1 &
+      sleep 749

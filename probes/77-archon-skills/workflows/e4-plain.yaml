@@ -1,0 +1,20 @@
+# probes/77-archon-skills/workflows/e4-plain.yaml
+name: e4-plain
+description: Whether a plain skill name finds a plugin's skill (designer's call 34). Run in the project with no copies.
+nodes:
+  - id: plain-allowlist
+    model: small
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [tdd]
+    prompt: |
+      Do not change any files. 1. List the name of every skill your Skill tool offers you, exactly as listed.
+      2. Call the Skill tool with the name "tdd". Quote the first heading of what it returned, or the error word for word.
+  - id: prefixed-allowlist-plain-call
+    depends_on: [plain-allowlist]
+    context: fresh
+    model: small
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:tdd]
+    prompt: |
+      Do not change any files. Call the Skill tool with the name "tdd" (exactly that, no prefix).
+      Quote the first heading of what it returned, or the error word for word.

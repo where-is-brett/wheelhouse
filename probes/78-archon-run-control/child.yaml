@@ -1,0 +1,13 @@
+# probes/78-archon-run-control/child.yaml
+# The child run of the trial workflow: one attention wait, then a short script. Installed as `e5-child`.
+name: e5-child
+description: A child run with one attention wait
+nodes:
+  - id: child-ask
+    wait:
+      attention: "The child asks: carry on?"
+      form: select
+      options: [{ id: a }, { id: b }]
+  - id: child-done
+    depends_on: [child-ask]
+    bash: echo child done

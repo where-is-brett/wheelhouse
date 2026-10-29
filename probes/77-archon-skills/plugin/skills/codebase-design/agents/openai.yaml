@@ -1,0 +1,4 @@
+# probes/77-archon-skills/plugin/skills/codebase-design/agents/openai.yaml
+interface:
+  display_name: "Codebase Design"
+  short_description: "Vocabulary for deep-module design"

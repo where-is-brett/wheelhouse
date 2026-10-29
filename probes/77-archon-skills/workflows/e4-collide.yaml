@@ -1,0 +1,11 @@
+# probes/77-archon-skills/workflows/e4-collide.yaml
+name: e4-collide
+description: A plain name that matches both a project skill (the copy) and a named plugin's skill. Which one loads?
+nodes:
+  - id: collide
+    model: small
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [tdd]
+    prompt: |
+      Do not change any files. 1. List the name of every skill your Skill tool offers you, exactly as listed.
+      2. Call the Skill tool with the name "tdd". Say whether the text it returned contains an HTML comment naming a path that starts "probes/77-archon-skills", and quote that comment if so.

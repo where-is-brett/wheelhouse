@@ -1,0 +1,53 @@
+# probes/77-archon-skills/workflows/e4-review-large.yaml
+name: e4-review-large
+description: Item 7 again, on a larger change across three files, to see whether the original code-review skill spawns helpers.
+nodes:
+  - id: change
+    bash: |
+      mkdir -p src test
+      cat > src/price.ts <<'TS'
+      // src/price.ts
+      export function formatPrice(a: number) {
+        var neg = a < 0; var x = Math.abs(a); var s = x.toFixed(2); var parts = s.split('.');
+        var whole = parts[0]; var out = '';
+        for (var i = 0; i < whole.length; i++) { if (i > 0 && (whole.length - i) % 3 == 0) out += ','; out += whole[i]; }
+        return (neg ? '-' : '') + '$' + out + '.' + parts[1];
+      }
+      export function parsePrice(t: string) { return parseFloat(t.replace('$', '').replace(/,/g, '')); }
+      TS
+      cat > src/bill.ts <<'TS'
+      // src/bill.ts
+      import { subtotal, Line } from './cart.ts';
+      export function splitBill(total: number, people: number) {
+        var each = Math.floor(total * 100 / people) / 100; var res = [];
+        for (var i = 0; i < people; i++) res.push(each);
+        var left = Math.round((total - each * people) * 100);
+        for (var j = 0; j < left; j++) res[j] = Math.round((res[j] + 0.01) * 100) / 100;
+        return res;
+      }
+      export function splitCart(lines: Line[], people: number) { return splitBill(subtotal(lines), people); }
+      TS
+      cat > test/bill.test.ts <<'TS'
+      // test/bill.test.ts
+      import { test, expect } from 'bun:test';
+      import { splitBill } from '../src/bill.ts';
+      test('splits', () => { expect(splitBill(10, 3)).toEqual([3.34, 3.33, 3.33]); });
+      TS
+      git add -A && git -c user.name=probe -c user.email=probe@example.invalid commit -q -m "Add prices and bill splitting"
+      echo committed
+  - id: review
+    depends_on: [change]
+    model: medium
+    idle_timeout: 240000
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:code-review]
+    prompt: |
+      Review the changes since HEAD~1 with the code-review skill: open it with the Skill tool first and follow it. The spec is TASKS.md.
+      Nobody will answer questions in this step. Where a skill says to ask, confirm with or check with the user or a human partner, decide within the rules and record that decision as an assumption in your final report; if you cannot go on without an answer, stop at once and report status "blocked" with the reason.
+    output_format:
+      type: object
+      properties:
+        status: { type: string, enum: [done, assumption, blocked] }
+        assumptions: { type: string }
+        summary: { type: string }
+      required: [status, assumptions, summary]

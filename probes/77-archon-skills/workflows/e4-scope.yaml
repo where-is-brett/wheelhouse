@@ -1,0 +1,13 @@
+# probes/77-archon-skills/workflows/e4-scope.yaml
+name: e4-scope
+description: Item 1, loading scope. Only the named skill is listed; opening others fails cleanly.
+nodes:
+  - id: scope
+    model: small
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:tdd]
+    prompt: |
+      Do not change any files. Answer in three numbered parts.
+      1. List the name of every skill your Skill tool offers you, exactly as listed, and nothing else.
+      2. Call the Skill tool to open "mattpocock-skills:codebase-design". Quote what it returned, word for word if it is an error.
+      3. Call the Skill tool to open "superpowers:brainstorming". Quote what it returned, word for word if it is an error.

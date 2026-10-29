@@ -1,0 +1,10 @@
+# probes/77-archon-skills/workflows/e4-slash.yaml
+name: e4-slash
+description: Item 10, a prompt starting with /tdd.
+nodes:
+  - id: slash
+    model: small
+    skills: [tdd]
+    prompt: |
+      /tdd
+      Do not call any tool and do not change any files. Say whether the tdd skill's instructions are already in your context, and if so quote their first heading.
