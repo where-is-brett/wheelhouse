@@ -1285,3 +1285,131 @@ test("Copilot's own script started through node is not caught here: the rules' s
     }
   });
 });
+
+// Archon (spec 6.4, 12.2): its program is refused as the agents' own are, and its home is private but for the step's
+// own run's artefacts and its own worktree. The own run comes from the hook's environment.
+const ENGINE = /does not let an agent run or reach the build engine/;
+const ENGINE_FILES = /does not let an agent open the build engine's own files/;
+const engineHome = () => `${path.resolve(process.env.WHEELHOUSE_HOME)}-engine`;
+const engineEnv = (runId) => ({ WHEELHOUSE_ENGINE_RUN: '1', WORKFLOW_ID: runId, ARCHON_NODE_EXECUTION: JSON.stringify({ runId, path: ['a'], invocation: 1, attempt: 1 }) });
+const inEngine = (ctx, input, { env = {}, projectDir = ctx.main, platform = 'darwin' } = {}) => decide(input, { dir: path.join(ctx.base, 'managed'), home: ctx.home, platform, pluginRoot: PLUGIN, env, projectDir });
+
+// An engine home with its private files, two runs' artefacts and a worktree of the project in its workspace.
+function plantEngine(ctx) {
+  const home = engineHome();
+  const ws = path.join(home, 'workspaces', 'owner', 'name');
+  for (const f of ['archon.db', 'archon.db-wal', 'credential-key', 'config.yaml', 'plugins/p/x.json', 'workspaces/owner/name/logs/run-own.jsonl',
+    'workspaces/owner/name/workflow-source/runs/run-own/w.yaml', 'workspaces/owner/name/artifacts/runs/run-own/notes.md',
+    'workspaces/owner/name/artifacts/runs/run-other/notes.md']) {
+    fs.mkdirSync(path.dirname(path.join(home, f)), { recursive: true });
+    fs.writeFileSync(path.join(home, f), 'x');
+  }
+  const tree = path.join(ws, 'worktrees', 'task-1');
+  git(ctx.main, 'worktree', 'add', '-q', '-b', 'task-1', tree);
+  return { home, ws, tree, own: path.join(ws, 'artifacts', 'runs', 'run-own'), other: path.join(ws, 'artifacts', 'runs', 'run-other') };
+}
+
+test('archon is refused as a command', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['archon --version', 'archon workflow approve abc', 'ARCHON run x', '/Users/me/.wheelhouse/engine/archon/bin/archon workflow run x',
+      './archon --version', 'archon.exe x', 'x && archon workflow wake']) {
+      const out = await bash(ctx, command);
+      assert.ok(denied(out), command);
+      assert.match(REASON(out), ENGINE, command);
+    }
+  });
+});
+
+test('archon behind env, npx and a variable is refused', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['env A=1 archon workflow run x', 'npx archon --version', 'npx -y @archon/cli@0.13.0 workflow run x', 'bunx @archon/cli x', 'bun x archon x',
+      'pnpm dlx @archon/cli x', 'npm exec -- archon x', 'sh -c "archon workflow approve x"', 'bash -lc "cd sub && archon x"', 'eval "archon x"',
+      'A=archon; $A workflow approve x', 'archon$X x', 'sudo -u me archon x', 'nohup archon serve', 'timeout 60 archon x', 'echo x | xargs archon',
+      'find . -exec archon {} \;', '$(echo archon) x', 'cmd /c archon x']) {
+      const out = await bash(ctx, command);
+      assert.ok(denied(out), command);
+      assert.match(REASON(out), ENGINE, command);
+    }
+    for (const command of ['grep -rn archon docs', 'git commit -m "Teach the guard archon"', 'cat scripts/engine/archon/env.js', 'echo archon', 'npm install archon-ui']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});
+
+test('reading archon.db is refused', async () => {
+  await inProject(async (ctx) => {
+    const e = plantEngine(ctx);
+    for (const env of [{}, engineEnv('run-own')]) {
+      for (const rel of ['archon.db', 'archon.db-wal', 'credential-key', 'config.yaml', 'plugins/p/x.json', 'workspaces/owner/name/logs/run-own.jsonl',
+        'workspaces/owner/name/workflow-source/runs/run-own/w.yaml', '.env']) {
+        const file = path.join(e.home, ...rel.split('/'));
+        for (const tool of ['Read', 'Edit', 'Write']) assert.ok(denied(await inEngine(ctx, call(ctx.main, tool, { file_path: file }), { env })), `${tool} ${rel}`);
+        assert.ok(denied(await inEngine(ctx, call(ctx.main, 'Bash', { command: `head -c 15 ${file}` }), { env })), `head ${rel}`);
+      }
+      const db = await inEngine(ctx, call(ctx.main, 'Read', { file_path: path.join(e.home, 'archon.db') }), { env });
+      assert.match(REASON(db), ENGINE_FILES);
+      // A search inside the home, or over a folder that holds it, is refused as well.
+      assert.ok(denied(await inEngine(ctx, call(ctx.main, 'Grep', { pattern: 'x', path: e.ws }), { env })));
+      assert.ok(denied(await inEngine(ctx, call(ctx.main, 'Grep', { pattern: 'x', path: path.dirname(e.home) }), { env })));
+      assert.ok(denied(await inEngine(ctx, call(ctx.main, 'Glob', { pattern: `${e.home}/**/*.db` }), { env })));
+      assert.ok(denied(await inEngine(ctx, call(ctx.main, 'Bash', { command: `cp x ${path.join(e.home, 'config.yaml')}` }), { env })));
+      assert.ok(denied(await inEngine(ctx, call(ctx.main, 'Bash', { command: `sqlite3 --readonly=${path.join(e.home, 'archon.db')}` }), { env })));
+    }
+    // From inside the step's worktree, a relative path out of it is refused too.
+    assert.ok(denied(await inEngine(ctx, call(e.tree, 'Bash', { command: 'cat ../../logs/run-own.jsonl' }), { env: engineEnv('run-own'), projectDir: e.tree })));
+    assert.ok(denied(await inEngine(ctx, call(e.tree, 'Bash', { command: 'ls ../../../..' }), { env: engineEnv('run-own'), projectDir: e.tree })));
+  });
+});
+
+test('reading another run\'s artefacts is refused and its own is allowed', async () => {
+  await inProject(async (ctx) => {
+    const e = plantEngine(ctx);
+    const env = engineEnv('run-own');
+    const step = (input) => inEngine(ctx, input, { env, projectDir: e.tree });
+    const ownNote = path.join(e.own, 'notes.md');
+    const otherNote = path.join(e.other, 'notes.md');
+    for (const tool of ['Read', 'Edit', 'Write']) {
+      assert.equal(await step(call(e.tree, tool, { file_path: ownNote })), undefined, `${tool} own`);
+      assert.equal(await step(call(e.tree, tool, { file_path: path.join(e.own, 'new', 'plan.md') })), undefined, `${tool} new own`);
+      assert.ok(denied(await step(call(e.tree, tool, { file_path: otherNote }))), `${tool} other`);
+    }
+    assert.equal(await step(call(e.tree, 'Grep', { pattern: 'x', path: e.own })), undefined);
+    assert.equal(await step(call(e.tree, 'Bash', { command: `cat ${ownNote}` })), undefined);
+    assert.equal(await step(call(e.tree, 'Bash', { command: `echo done > ${path.join(e.own, 'done.md')}` })), undefined);
+    for (const command of [`cat ${otherNote}`, `cat ${path.join(e.ws, 'artifacts', 'runs')}/*/notes.md`, 'cat ../../artifacts/runs/run-other/notes.md', `ls ${path.join(e.ws, 'artifacts', 'runs')}`]) {
+      const out = await step(call(e.tree, 'Bash', { command }));
+      assert.ok(denied(out), command);
+      assert.match(REASON(out), ENGINE_FILES, command);
+    }
+    // The step's own worktree stays readable and writable, by the file tools and the shell.
+    for (const tool of ['Read', 'Edit', 'Write']) assert.equal(await step(call(e.tree, tool, { file_path: path.join(e.tree, 'a.txt') })), undefined, tool);
+    assert.equal(await step(call(e.tree, 'Bash', { command: 'cat a.txt && echo b > b.txt && git status' })), undefined);
+    assert.equal(await step(call(e.tree, 'Grep', { pattern: 'a' })), undefined);
+    // Another worktree in the home is not the step's own.
+    assert.ok(denied(await step(call(e.tree, 'Read', { file_path: path.join(e.ws, 'worktrees', 'task-2', 'a.txt') }))));
+    // Outside an engine step, or with an environment that names no run or two, no run is its own.
+    for (const other of [{}, { ...env, WHEELHOUSE_ENGINE_RUN: undefined }, { ...env, WORKFLOW_ID: 'run-other' }, { WHEELHOUSE_ENGINE_RUN: '1', WORKFLOW_ID: '..' },
+      { WHEELHOUSE_ENGINE_RUN: '1', ARCHON_NODE_EXECUTION: '{' }]) {
+      assert.ok(denied(await inEngine(ctx, call(e.tree, 'Read', { file_path: ownNote }), { env: other, projectDir: e.tree })), JSON.stringify(other));
+    }
+    // A run's overlay names nothing to the guard, and an agent can't write one.
+    fs.mkdirSync(path.join(e.tree, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(e.tree, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { filesystem: { allowRead: [e.other] } } }));
+    assert.ok(denied(await step(call(e.tree, 'Read', { file_path: otherNote }))));
+    for (const tool of ['Edit', 'Write']) assert.ok(denied(await step(call(e.tree, tool, { file_path: path.join(e.tree, '.claude', 'settings.local.json') }))), tool);
+  });
+});
+
+test('the engine room\'s port is refused to the shell; other local ports are not', async () => {
+  await inProject(async (ctx) => {
+    for (const command of ['curl http://127.0.0.1:3090/api/runs', 'curl -s localhost:3090', 'wget http://[::1]:3090/', 'curl 0.0.0.0:3090/x', 'nc 127.0.0.1 3090',
+      'curl -X POST http://LOCALHOST:3090/api/workflows/x/approve']) {
+      const out = await bash(ctx, command);
+      assert.ok(denied(out), command);
+      assert.match(REASON(out), ENGINE, command);
+    }
+    for (const command of ['curl http://localhost:3000', 'curl https://example.com:3090/', 'npm run dev -- --port 3091', 'echo 3090']) {
+      assert.equal(await bash(ctx, command), undefined, command);
+    }
+  });
+});

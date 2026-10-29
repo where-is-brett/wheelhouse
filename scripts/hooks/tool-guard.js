@@ -9,8 +9,10 @@
 // pass unlisted in a session it started), and a coding agent started from the shell (the agents'
 // own programs, scripts/agents/programs.js), and a read of Wheelhouse's own files: an agent runs
 // the plugin's scripts with node, as its playbook names them, and reads none of them, so a gap in a
-// playbook is reported rather than worked round from the code (scenario 27's route leg). It backs
-// up the deny rules and the sandbox; it does not replace them. Any other tool passes untouched.
+// playbook is reported rather than worked round from the code (scenario 27's route leg). And the build
+// engine (spec 12.2): its program, the engine room's port, and its home but for the step's own run's
+// artefacts and its own worktree (scripts/protection/archon.js). It backs up the deny rules and the
+// sandbox; it does not replace them. Any other tool passes untouched.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,12 +21,13 @@ import { answer, runAndExit, projectOf, registeredByPath, beingSetUp, worktreeRo
 import { segmentsWithOperators } from './shell-words.js';
 import { AGENT_CONTROL, CONTROL_FILE, homeControlFolders } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
-import { wheelhouseHome } from '../lib/paths.js';
+import { wheelhouseHome, archonHome } from '../lib/paths.js';
 import { projectForFolder } from '../lib/projects.js';
 import { matchGlob } from '../gate/glob.js';
 import { readConfig } from '../gate/guardrails.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { NESTED_PACKAGES, NESTED_REFUSED } from '../agents/programs.js';
+import { ARCHON_PROGRAMS, ENGINE_ROOM_PORT, ownRun, placeInHome } from '../protection/archon.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -40,6 +43,9 @@ function foldFor(platform) {
 
 const UNREADABLE = 'Wheelhouse could not read this command with certainty. Write it more simply (no comments that hold quotes, backticks or backslashes, no CRLF line endings, no unclosed quotes), or put it in a file: ' + HELPER;
 const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: ${HELPER}`);
+// The build engine (spec 12.2): its program and the engine room's port, and its own files.
+const ENGINE = 'Wheelhouse does not let an agent run or reach the build engine: it answers only to the helper. Say what the work needs instead';
+const ENGINE_FILES = 'Wheelhouse does not let an agent open the build engine\'s own files: only its own run\'s artefacts and its own worktree. Say what the work needs instead';
 const PLUGIN_READ = 'Wheelhouse does not let an agent read its own scripts and files: your playbook names each command and what it takes. '
   + 'Run the command as the playbook gives it; where the playbook doesn\'t say how, tell the director what is missing instead of looking in Wheelhouse\'s code';
 
@@ -174,7 +180,7 @@ function steersAgent(candidates, { roots, folders, platform, fold }) {
   return false;
 }
 
-function fileRefusal(input, { home, platform, pluginRoot, env, roots }) {
+function fileRefusal(input, { home, platform, pluginRoot, env, roots, engine }) {
   const tool = input.tool_name;
   const args = input.tool_input ?? {};
   const fold = foldFor(platform);
@@ -198,6 +204,10 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots }) {
   for (const candidate of [absolute, real]) {
     if (secrets.some((s) => inside(fold, s, candidate))) return refuse('open Wheelhouse\'s keys or the credentials on this computer');
   }
+  // The build engine's home, but for the step's own run's artefacts and its own worktree: by every spelling of the
+  // path (and a Glob pattern's fixed start), and a search over a folder that holds the home.
+  if (reading.some((candidate) => engineRefused(spellings(candidate, input.cwd), engine, fold))) return answer.deny(ENGINE_FILES);
+  if ((tool === 'Grep' || tool === 'Glob') && [absolute, real].some((candidate) => engine.homes.some((h) => inside(fold, candidate, h)))) return answer.deny(ENGINE_FILES);
   // A search over the home folder, or over a folder that holds a guarded one,
   // could read the secrets below it. The deny rules (Task 12) back up the gap
   // that remains: this hook does not look inside what a search returns.
@@ -228,6 +238,69 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots }) {
     if (steersAgent(spellings(given, input.cwd), { roots: places, folders: known, platform, fold })) return answer.deny(CONTROL_FILE);
   }
   return null;
+}
+
+// Whether any spelling of a path lies in the build engine's home (`engine.homes`, every spelling of it) other than in
+// the step's own run's artefacts (`engine.run`, from the hook's environment) or in its own worktree (`engine.worktrees`,
+// every spelling of the worktree the session started in, which counts only where it is one of a workspace's).
+function engineRefused(candidates, engine, fold) {
+  const run = engine.run === null ? null : fold(engine.run);
+  for (const candidate of candidates) {
+    for (const home of engine.homes) {
+      if (!inside(fold, home, candidate)) continue;
+      const parts = fold(candidate).slice(fold(home).length).split(/[\\/]/).filter(Boolean);
+      const place = placeInHome(parts, run);
+      if (place === 'artefacts') continue;
+      if (place === 'worktree' && engine.worktrees.some((w) => inside(fold, w, candidate))) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+// What the guard knows of the build engine for this call: every spelling of its home, the step's own run and every
+// spelling of the worktree the session started in (CLAUDE_PROJECT_DIR, which an agent can't move as it can its
+// shell's folder; the call's folder where that isn't given).
+function engineOf({ engineHome, env, projectDir, cwd }) {
+  const start = typeof projectDir === 'string' && projectDir !== '' ? projectDir : cwd;
+  const tree = worktreeRoot(start);
+  return {
+    homes: spellings(engineHome, path.parse(path.resolve(engineHome)).root),
+    run: ownRun(env),
+    worktrees: tree === null ? [] : spellings(tree, tree),
+  };
+}
+
+// Whether a command line names a place in the build engine's home that engineRefused holds: a word, or an option's
+// value after `=`, as a path from the call's folder. Like the plugin's, this holds only the plain command line: a
+// path made at run time, or one reached after a cd, is the sandbox's and the deny rules' to hold.
+function readsEngine(command, { windows, fold, home, cwd, engine }) {
+  const split = segmentsWithOperators(command, windows);
+  if (split === null) return false;
+  const names = (word) => {
+    let name = expandHome(word, home, windows);
+    if (name === '' || name.startsWith('~')) return false;
+    if (windows && /^\/[A-Za-z]\//.test(name)) name = `${name[1]}:${name.slice(2)}`;
+    if (!absolutePath(name) && typeof cwd !== 'string') return false;
+    try {
+      return engineRefused(spellings(name, cwd ?? path.parse(path.resolve(name)).root), engine, fold);
+    } catch {
+      return true;
+    }
+  };
+  return split.segments.some((seg) => seg.some((w) => names(w) || (w.includes('=') && names(w.slice(w.indexOf('=') + 1)))));
+}
+
+// Whether a command line reaches the engine room's port on this computer: a word naming a local host and the port
+// (`localhost:3090`, `http://127.0.0.1:3090/…`, `[::1]:3090`), or a command with a local host and the port as words
+// of their own (`nc 127.0.0.1 3090`). The sandbox's network list, which never names a local host, holds it too.
+const LOCAL_HOST = '(?:localhost|127(?:\\.\\d{1,3}){3}|0\\.0\\.0\\.0|\\[::1\\]|::1)';
+const LOCAL_PORT = new RegExp(`(?:^|[/@])${LOCAL_HOST}:${ENGINE_ROOM_PORT}(?![0-9])`, 'i');
+const LOCAL_WORD = new RegExp(`^${LOCAL_HOST}$`, 'i');
+function reachesEngineRoom(command, windows) {
+  const split = segmentsWithOperators(command, windows);
+  if (split === null) return false;
+  return split.segments.some((seg) => seg.some((w) => LOCAL_PORT.test(w)) || (seg.some((w) => LOCAL_WORD.test(w)) && seg.includes(String(ENGINE_ROOM_PORT))));
 }
 
 // Whether a Glob pattern or Grep glob names a .env file.
@@ -576,68 +649,85 @@ function bashRefused(command, ctx, depth = 0) {
   // taken off, or named with a variable; behind the wrappers commandAt reads; as the command a runner or a starter
   // runs; or as the package npx, npm exec, pnpm dlx, pnpx, bunx or yarn dlx runs (with any version). An argument to
   // any other command is never refused for naming one. A command word made at run time, in backticks or $( ), is
-  // held as a host tool's is: a line with a substitution and any word naming an agent's program is refused.
+  // held as a host tool's is: a line with a substitution and any word naming an agent's program is refused. The
+  // build engine's program is held the same way (spec 12.2), with its own list.
   const agentName = (w) => fold(lastPart(w)).replace(/\.(exe|cmd|bat|ps1)$/i, '').toLowerCase();
-  const isAgent = (w) => NESTED_REFUSED.some((n) => agentName(w) === n || agentName(w).startsWith(`${n}$`));
-  const isPackage = (w) => {
-    const v = w.replace(/^--package=/i, '').toLowerCase();
-    return NESTED_PACKAGES.some((p) => v === p || v.startsWith(`${p}@`));
-  };
-  const agentVariable = segs.some((seg) => seg.some((w) => ASSIGNMENT.test(w) && isAgent(w.slice(w.indexOf('=') + 1))));
-  const madeAtRunTime = /`|\$\(/.test(command) && segs.some((seg) => seg.some((w) => isAgent(w) || isAgent(w.slice(w.indexOf('=') + 1))));
-  // Whether the command at `k` of `words` starts an agent: its program, or its package through a package runner.
-  const runsAgent = (words, k) => {
-    if (isAgent(words[k]) || (agentVariable && words[k].startsWith('$'))) return true;
-    const manager = agentName(words[k]);
-    let rest = words.slice(k + 1);
-    if (Object.hasOwn(PACKAGE_RUNS, manager)) {
-      const sub = rest.findIndex((w) => !OPTION.test(w));
-      if (sub < 0 || !PACKAGE_RUNS[manager].includes(rest[sub].toLowerCase())) return false;
-      rest = rest.slice(sub + 1);
-    } else if (!PACKAGE_RUNNERS.has(manager)) {
-      return false;
-    }
-    // The package anywhere in its words, whatever option values come before it; the command a --call (or -c)
-    // value runs, read as a shell's -c string; and the agent's program as the first plain word.
-    if (rest.some(isPackage)) return true;
-    for (let i = 0; i < rest.length; i += 1) {
-      const call = /^--call=(.*)$/is.exec(rest[i]);
-      if (call && again(call[1])) return true;
-      if (/^(--call|-c)$/i.test(rest[i]) && i + 1 < rest.length && again(rest[i + 1])) return true;
-    }
-    const first = rest.find((w) => w !== '--' && !OPTION.test(w));
-    return first !== undefined && isAgent(first);
-  };
-  const startsNested = ({ words }) => {
-    const names = words.map(nameOf);
-    const k = commandAt(words, names, ctx);
-    if (k >= words.length) return false;
-    if (runsAgent(words, k)) return true;
-    // The command a runner or a starter runs: its first plain word, past the wrappers before it.
-    const runner = RUNNERS.has(names[k]) || STARTERS.has(names[k].toLowerCase()) ? k : words.findIndex((w) => RUNNER_FLAGS.has(w));
-    if (runner < 0) return false;
-    // xargs's options that take a separate value are read past it, so the value is not taken for the command.
-    let started = -1;
-    for (let j = runner + 1; j < words.length; j += 1) {
-      const w = words[j];
-      if (names[runner] === 'xargs' && XARGS_VALUES.has(w)) {
-        j += 1;
-      } else if (!OPTION.test(w) && !DURATION.test(w) && w !== '{}') {
-        started = j;
-        break;
+  const startsOneOf = ({ programs, packages }) => {
+    const isAgent = (w) => programs.some((n) => agentName(w) === n || agentName(w).startsWith(`${n}$`));
+    const isPackage = (w) => {
+      const v = w.replace(/^--package=/i, '').toLowerCase();
+      return packages.some((p) => v === p || v.startsWith(`${p}@`));
+    };
+    const agentVariable = segs.some((seg) => seg.some((w) => ASSIGNMENT.test(w) && isAgent(w.slice(w.indexOf('=') + 1))));
+    const madeAtRunTime = /`|\$\(/.test(command) && segs.some((seg) => seg.some((w) => isAgent(w) || isAgent(w.slice(w.indexOf('=') + 1))));
+    // Whether the command at `k` of `words` starts one: its program, or its package through a package runner; 'inner'
+    // when a command a runner's --call runs was refused, which answers for itself.
+    const runsAgent = (words, k) => {
+      if (isAgent(words[k]) || (agentVariable && words[k].startsWith('$'))) return true;
+      const manager = agentName(words[k]);
+      let rest = words.slice(k + 1);
+      if (Object.hasOwn(PACKAGE_RUNS, manager)) {
+        const sub = rest.findIndex((w) => !OPTION.test(w));
+        if (sub < 0 || !PACKAGE_RUNS[manager].includes(rest[sub].toLowerCase())) return false;
+        rest = rest.slice(sub + 1);
+      } else if (!PACKAGE_RUNNERS.has(manager)) {
+        return false;
       }
+      // The package anywhere in its words, whatever option values come before it; the command a --call (or -c)
+      // value runs, read as a shell's -c string; and the program as the first plain word.
+      if (rest.some(isPackage)) return true;
+      for (let i = 0; i < rest.length; i += 1) {
+        const call = /^--call=(.*)$/is.exec(rest[i]);
+        if (call && again(call[1])) return 'inner';
+        if (/^(--call|-c)$/i.test(rest[i]) && i + 1 < rest.length && again(rest[i + 1])) return 'inner';
+      }
+      const first = rest.find((w) => w !== '--' && !OPTION.test(w));
+      return first !== undefined && isAgent(first);
+    };
+    const starts = ({ words }) => {
+      const names = words.map(nameOf);
+      const k = commandAt(words, names, ctx);
+      if (k >= words.length) return false;
+      const direct = runsAgent(words, k);
+      if (direct) return direct;
+      // The command a runner or a starter runs: its first plain word, past the wrappers before it.
+      const runner = RUNNERS.has(names[k]) || STARTERS.has(names[k].toLowerCase()) ? k : words.findIndex((w) => RUNNER_FLAGS.has(w));
+      if (runner < 0) return false;
+      // xargs's options that take a separate value are read past it, so the value is not taken for the command.
+      let started = -1;
+      for (let j = runner + 1; j < words.length; j += 1) {
+        const w = words[j];
+        if (names[runner] === 'xargs' && XARGS_VALUES.has(w)) {
+          j += 1;
+        } else if (!OPTION.test(w) && !DURATION.test(w) && w !== '{}') {
+          started = j;
+          break;
+        }
+      }
+      if (started < 0) return false;
+      const inner = words.slice(started);
+      const at = commandAt(inner, inner.map(nameOf), ctx);
+      return at < inner.length && runsAgent(inner, at);
+    };
+    if (madeAtRunTime) return true;
+    for (const check of checks) {
+      const found = starts(check);
+      if (found) return found;
     }
-    if (started < 0) return false;
-    const inner = words.slice(started);
-    const at = commandAt(inner, inner.map(nameOf), ctx);
-    return at < inner.length && runsAgent(inner, at);
+    return false;
   };
   if (checks.some(readsKeychain)) {
     ctx.state.keychain = true;
     return true;
   }
-  if (madeAtRunTime || checks.some(startsNested)) {
-    ctx.state.nested = true;
+  const engine = startsOneOf(ARCHON_PROGRAMS);
+  if (engine) {
+    if (engine !== 'inner') ctx.state.engine = true;
+    return true;
+  }
+  const nested = startsOneOf({ programs: NESTED_REFUSED, packages: NESTED_PACKAGES });
+  if (nested) {
+    if (nested !== 'inner') ctx.state.nested = true;
     return true;
   }
   const counts = new Map();
@@ -820,7 +910,7 @@ function connectorRefusal(input, server, mainFolder, entrypoint, projectDir) {
   return null;
 }
 
-export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env } = {}) {
+export async function decide(input, { dir, projectOf: find = projectOf, home = os.homedir(), platform = process.platform, pluginRoot = PLUGIN_ROOT, entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT, projectDir = process.env.CLAUDE_PROJECT_DIR, env = process.env, engineHome = archonHome() } = {}) {
   const tool = input.tool_name;
   const isConnector = typeof tool === 'string' && (tool.startsWith('mcp__') || RESOURCE_TOOLS.includes(tool));
   if (!isConnector && !SHELL_TOOLS.includes(tool) && !FILE_TOOLS.includes(tool)) return undefined;
@@ -852,10 +942,13 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
     const root = found?.record?.folder ?? setup?.folder ?? cwd;
     // In PowerShell a backtick before a new line continues the command, as a space does.
     const text = tool === 'PowerShell' ? command.replace(/(?<!`)((?:``)*)`\n/g, '$1 ') : command;
-    const state = { unreadable: false, keychain: false, nested: false };
+    const state = { unreadable: false, keychain: false, engine: false, nested: false };
     if (readsPlugin(text, { windows, fold, home, pluginRoots: [path.resolve(pluginRoot), resolveReal(pluginRoot, pluginRoot)] })) return answer.deny(PLUGIN_READ);
+    if (reachesEngineRoom(text, windows)) return answer.deny(ENGINE);
+    if (readsEngine(text, { windows, fold, home, cwd, engine: engineOf({ engineHome, env, projectDir, cwd }) })) return answer.deny(ENGINE_FILES);
     if (!bashRefused(text, { windows, fold, cwd, home, root, state })) return undefined;
     if (state.keychain) return answer.deny(KEYCHAIN);
+    if (state.engine) return answer.deny(ENGINE);
     if (state.nested) return answer.deny(NESTED);
     return state.unreadable ? answer.deny(UNREADABLE) : refuse('run the host tools, push, or read a .env file');
   }
@@ -863,7 +956,7 @@ export async function decide(input, { dir, projectOf: find = projectOf, home = o
   // the session is in.
   const roots = [found?.record?.folder, setup?.folder, worktreeRoot(cwd)].filter((r) => typeof r === 'string' && r !== '');
   try {
-    return fileRefusal(input, { home, platform, pluginRoot, env, roots: [...new Set(roots)] }) ?? undefined;
+    return fileRefusal(input, { home, platform, pluginRoot, env, roots: [...new Set(roots)], engine: engineOf({ engineHome, env, projectDir, cwd }) }) ?? undefined;
   } catch (error) {
     if (error?.message === TOO_MANY) return refuse('use a path with that many links');
     throw error;

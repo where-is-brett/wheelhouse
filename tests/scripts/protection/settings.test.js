@@ -5,10 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, archonDenyRules, ownRunRules, ENGINE_HOME } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
-import { helperAddress } from '../../../scripts/lib/paths.js';
+import { helperAddress, archonHome } from '../../../scripts/lib/paths.js';
 import { WINDOWS_LINE } from '../../../scripts/lib/platform-lines.js';
 import { CLAUDE_CODE_FLOOR } from '../../../scripts/lib/build-loop.js';
 
@@ -478,4 +478,65 @@ test('agents are denied keys/clients.json, the paired apps\' keys, with the rest
   assert.ok(s.permissions.deny.includes('Read(~/.wheelhouse/**)'));
   assert.ok(s.permissions.deny.includes('Edit(~/.wheelhouse/**)'));
   assert.ok(s.sandbox.filesystem.denyRead.includes('~/.wheelhouse'));
+});
+
+// Archon's private files (spec 6.4, 12.2).
+const ENGINE_PRIVATE = ['archon.db', 'archon.db-wal', 'archon.db-shm', 'archon.db-journal', 'credential-key', '.env', 'config.yaml'];
+
+test('the engine\'s private files and its command are denied, by the rules and the sandbox', () => {
+  const rules = archonDenyRules(ENGINE_HOME);
+  assert.equal(ENGINE_HOME, '~/.wheelhouse-engine');
+  for (const rule of ['Bash(archon:*)', 'Bash(npx archon:*)', 'Bash(bunx @archon/cli:*)', 'Bash(npx @archon/cli@*)',
+    ...ENGINE_PRIVATE.map((f) => `Read(~/.wheelhouse-engine/${f})`), 'Read(~/.wheelhouse-engine/plugins/**)',
+    'Read(~/.wheelhouse-engine/workspaces/**/logs/**)', 'Read(~/.wheelhouse-engine/workspaces/**/workflow-source/**)']) assert.ok(rules.deny.includes(rule), rule);
+  const top = [...ENGINE_PRIVATE, 'plugins'].map((f) => `~/.wheelhouse-engine/${f}`);
+  assert.deepEqual(rules.denyRead, top);
+  assert.deepEqual(rules.denyWrite, top);
+  // No sandbox entry holds a wildcard, and no rule names a run's artefacts, which one run's overlay opens again.
+  assert.ok(![...rules.denyRead, ...rules.denyWrite].some((p) => /[*?[\]]/.test(p)));
+  assert.ok(!rules.deny.some((r) => r.includes('artifacts')));
+  // The project's settings carry them all.
+  const s = projectSettings(config);
+  for (const rule of rules.deny) assert.ok(s.permissions.deny.includes(rule), rule);
+  for (const p of top) {
+    assert.ok(s.sandbox.filesystem.denyRead.includes(p), p);
+    assert.ok(s.sandbox.filesystem.denyWrite.includes(p), p);
+  }
+  assert.equal(new Set(s.permissions.deny).size, s.permissions.deny.length);
+});
+
+test('archonDenyRules names the engine\'s home from the home folder, or whole when outside it, and defaults to archonHome', () => {
+  const inside = archonDenyRules(path.join(os.homedir(), '.wheelhouse-engine'));
+  assert.deepEqual(inside, archonDenyRules('~/.wheelhouse-engine'));
+  const outside = archonDenyRules('/srv/eval/wh-engine');
+  assert.ok(outside.deny.includes('Read(//srv/eval/wh-engine/archon.db)'));
+  assert.ok(outside.denyRead.includes('/srv/eval/wh-engine/archon.db'));
+  const own = archonHome();
+  assert.deepEqual(archonDenyRules(), archonDenyRules(own));
+  assert.throws(() => archonDenyRules('relative/home'));
+});
+
+test('a run\'s overlay shuts its workspace\'s transcripts and every run\'s artefacts, and opens its own', () => {
+  const ws = path.join(path.sep, 'h', 'workspaces', 'owner', 'name');
+  const own = path.join(ws, 'artifacts', 'runs', 'run-1');
+  assert.deepEqual(ownRunRules('run-1', own), {
+    sandbox: {
+      enabled: true,
+      allowUnsandboxedCommands: false,
+      filesystem: {
+        denyRead: [path.join(ws, 'logs'), path.join(ws, 'workflow-source'), path.join(ws, 'artifacts', 'runs')],
+        denyWrite: [path.join(ws, 'logs'), path.join(ws, 'workflow-source')],
+        allowRead: [own],
+        allowWrite: [own],
+      },
+    },
+  });
+  for (const [id, dir] of [['run-2', own], ['run-1', path.join(ws, 'runs', 'run-1')], ['..', path.join(ws, 'artifacts', 'runs', '..')], ['run-1', 'artifacts/runs/run-1'], ['run-1', undefined]]) {
+    assert.throws(() => ownRunRules(id, dir), `${id} ${dir}`);
+  }
+});
+
+test('the network list never opens this computer itself, so the engine room\'s port stays shut', () => {
+  const s = projectSettings({ ...config, webDomains: ['localhost', 'LOCALHOST', '127.0.0.1', '127.1.2.3', '0.0.0.0', '*.localhost', 'example.com', 'localhost.example.com'] });
+  assert.deepEqual(s.sandbox.network.allowedDomains, ['registry.npmjs.org', 'example.com', 'localhost.example.com']);
 });

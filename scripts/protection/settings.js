@@ -50,12 +50,15 @@
 // - Package-runner rules: `Bash(x:*)` needs a space after x, so a version form
 //   (`npx wrangler@3 ...`) gets its own `@*` rule.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_BUILD_COMMANDS, isBuildCommand } from '../gate/guardrails.js';
 import { AGENT_CONTROL, controlWritePaths, homeControlPaths } from '../lib/agent-control.js';
 import { credentialPaths } from '../lib/credentials.js';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../lib/front-desk.js';
 import { WINDOWS_LINE } from '../lib/platform-lines.js';
+import { archonHome } from '../lib/paths.js';
+import { ARCHON_PROGRAMS, PRIVATE_FILES, PRIVATE_FOLDERS, WORKSPACE_FOLDERS, workspaceOfRun } from './archon.js';
 import { MARKETPLACE, UPSTREAMS, WHEELHOUSE_REPO } from '../lineage/manifest.js';
 import { GIT_LOCAL, isConfiguredBuildCommand } from './windows-builds.js';
 
@@ -202,10 +205,79 @@ export const ATTRIBUTION_OFF = {
   includeCoAuthoredBy: false,
 };
 
+// The engine's home as the shared project file names it, as `~/.wheelhouse` is named for Wheelhouse's: the default
+// place, from the home folder, so the file names no user's folder.
+export const ENGINE_HOME = '~/.wheelhouse-engine';
+
+// A home as the rules name it: kept when it starts with `~/`, from the home folder when it is inside it, else whole.
+// `rule` is the permission rules' form (`//` before a full path), `sandbox` the sandbox lists' (`/`).
+function homeSpellings(home) {
+  if (typeof home !== 'string' || home === '') throw new Error('The engine\'s home must be a path');
+  if (home === '~' || home.startsWith('~/')) return { rule: home.replace(/\/+$/, ''), sandbox: home.replace(/\/+$/, '') };
+  if (!path.isAbsolute(home) && !/^[A-Za-z]:[\\/]/.test(home)) throw new Error('The engine\'s home must be a full path or start with ~/');
+  const user = os.homedir();
+  const relative = path.relative(user, home);
+  if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    const tilde = `~/${relative.split(path.sep).join('/')}`;
+    return { rule: tilde, sandbox: tilde };
+  }
+  const slashed = path.resolve(home).replaceAll('\\', '/').replace(/\/+$/, '');
+  return { rule: `/${slashed.startsWith('/') ? '' : '/'}${slashed}`, sandbox: slashed };
+}
+
+// Archon's private files, kept from every agent (spec 6.4, 12.2): `archon` as a command, by itself and through the
+// package runners; Read denials (which hold Edit and Write too) for the database and its journal files,
+// credential-key, .env, config.yaml, plugins/ and every workspace's logs/ and workflow-source/; and the sandbox's
+// read and write lists for the files and folders at the top of the home. The sandbox lists name no wildcard (their
+// write lists skip one on Linux and WSL2), so a workspace's folders, and every run's artefacts but the step's own,
+// are shut by the run's own overlay (ownRunRules), which names its workspace, and by the tool guard. A deny rule
+// can't be opened again for one run, so no rule here names the artefacts.
+export function archonDenyRules(home = archonHome()) {
+  const { rule, sandbox } = homeSpellings(home);
+  const names = [...ARCHON_PROGRAMS.programs, ...ARCHON_PROGRAMS.packages];
+  const deny = unique([
+    ...ARCHON_PROGRAMS.programs.map((p) => `Bash(${p}:*)`),
+    ...RUNNERS.flatMap((r) => names.flatMap((n) => [`Bash(${r} ${n}:*)`, `Bash(${r} ${n}@*)`])),
+    ...PRIVATE_FILES.map((f) => `Read(${rule}/${f})`),
+    ...PRIVATE_FOLDERS.flatMap((f) => [`Read(${rule}/${f})`, `Read(${rule}/${f}/**)`]),
+    ...WORKSPACE_FOLDERS.map((f) => `Read(${rule}/workspaces/**/${f}/**)`),
+  ]);
+  const top = [...PRIVATE_FILES, ...PRIVATE_FOLDERS].map((f) => `${sandbox}/${f}`);
+  return { deny, denyRead: top, denyWrite: [...top] };
+}
+
+// The run's own settings overlay (check 75): what a run's first step writes as `.claude/settings.local.json` in the
+// run's worktree, before any Claude step. Plain project settings, so they hold once Claude starts in its ordinary mode
+// (the patch, build.js): the sandbox's read list shuts the workspace's logs/, workflow-source/ and every run's
+// artefacts, its write list the first two, and allowRead and allowWrite open the run's own artefacts folder. The shared settings deny
+// writing the overlay (`./.claude/settings.local.json` in the sandbox's list, `Edit(/.claude/settings.local.json)`,
+// and the tool guard), so an agent can't name another run as its own; and the tool guard learns the own run from its
+// environment, not from this file. `artifactsDir` is the run's folder, `<workspace>/artifacts/runs/<runId>`.
+export function ownRunRules(runId, artifactsDir) {
+  const workspace = workspaceOfRun(artifactsDir, runId);
+  const own = path.resolve(artifactsDir);
+  const folders = WORKSPACE_FOLDERS.map((f) => path.join(workspace, f));
+  // The artefacts are left off the write list: a write outside the worktree is refused unless allowed, and a
+  // denyWrite would win over the own folder's allowWrite.
+  return {
+    sandbox: {
+      enabled: true,
+      allowUnsandboxedCommands: false,
+      filesystem: { denyRead: [...folders, path.join(workspace, 'artifacts', 'runs')], denyWrite: folders, allowRead: [own], allowWrite: [own] },
+    },
+  };
+}
+
+// Host names that reach this computer itself. The sandbox's proxy reaches only the domains listed, by host and not by
+// port, so listing one of these would open every local port to agents, the engine room's among them (spec 12.2).
+// (cleanDomain already drops `::1`, which holds a colon.)
+const LOOPBACK = /^(\*\.)?localhost$|^127(\.\d{1,3}){3}$|^0\.0\.0\.0$/;
+
 // `release` is { ref } when the project follows a Wheelhouse release; without it the
 // marketplace entry carries no ref. Build commands' allow rules are not here: see featureAllowRules.
 export function projectSettings(config, { release = null } = {}) {
   const credentials = allCredentials();
+  const engine = archonDenyRules(ENGINE_HOME);
   const keychainShut = config.signsApps !== true;
   const deny = unique([
     'Read(**/.env)', 'Read(**/.env.*)',
@@ -217,6 +289,7 @@ export function projectSettings(config, { release = null } = {}) {
     'Bash(gh:*)', 'Bash(glab:*)', 'Bash(git push:*)',
     ...HOST_TOOLS.map((t) => `Bash(${t}:*)`),
     ...RUNNERS.flatMap((r) => unique([...HOST_TOOLS, ...PACKAGE_NAMES]).flatMap((t) => [`Bash(${r} ${t}:*)`, `Bash(${r} ${t}@*)`])),
+    ...engine.deny,
   ]);
   return {
     permissions: { deny },
@@ -224,15 +297,15 @@ export function projectSettings(config, { release = null } = {}) {
       enabled: true,
       allowUnsandboxedCommands: false,
       filesystem: {
-        denyRead: unique(['~/.wheelhouse', ...credentials.map((c) => `~/${c}`)]),
-        denyWrite: unique(['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks', ...controlWritePaths(), ...homeControlPaths().map((f) => `~/${f}`)]),
+        denyRead: unique(['~/.wheelhouse', ...credentials.map((c) => `~/${c}`), ...engine.denyRead]),
+        denyWrite: unique(['~/.wheelhouse', '~/.claude', ...OWN_FILES.map((f) => `./${f}`), './.claude/hooks', ...controlWritePaths(), ...homeControlPaths().map((f) => `~/${f}`), ...engine.denyWrite]),
       },
       credentials: {
         // Always a list, empty when open, so a setup run on a project that has lifted it writes the empty list.
         files: keychainShut ? [{ path: KEYCHAINS, mode: 'deny' }] : [],
         envVars: HOST_TOKENS.map((name) => ({ name, mode: 'deny' })),
       },
-      network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null)]) },
+      network: { allowedDomains: unique(['registry.npmjs.org', ...config.webDomains.map(cleanDomain).filter((d) => d !== null && !LOOPBACK.test(d))]) },
     },
     ...pluginSettings(release),
     autoCompactWindow: 300000,

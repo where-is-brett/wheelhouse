@@ -483,6 +483,11 @@ test('a session in bypass mode stops every merge on the computer until it leaves
       const review = await client.state.record({ project: PROJECT, event: makeEvent({ kind: 'review', data: { pr: PR, commit: head, verdict: 'CLEAN' }, now: () => new Date(T0.getTime() + 1000) }) });
       assert.equal(review.ok, true);
 
+      // A step the build engine started is not marked, so pushes and merges carry on (Review Focus 5).
+      const engineStep = input(a, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(a.folder, 'app.txt') }, permission_mode: 'bypassPermissions' });
+      assert.equal(await stopGuard(engineStep, { dir: NO_MANAGED, pluginRoot: PLUGIN_ROOT, env: { WHEELHOUSE_ENGINE_RUN: '1' } }), undefined);
+      assert.equal(bypassActive(), false);
+
       // Any call from a session in bypass mode marks it.
       assert.equal(await guard(a, { tool_name: 'Read', tool_input: { file_path: path.join(a.folder, 'app.txt') }, permission_mode: 'bypassPermissions' }), undefined);
       assert.equal(bypassActive(), true);
