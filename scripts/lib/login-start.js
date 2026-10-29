@@ -111,7 +111,9 @@ function ours(record) {
 export function loginStartRecord() {
   try {
     const record = JSON.parse(fs.readFileSync(loginRecordFile(), 'utf8'));
-    return ours(record) ? { kind: record.kind, path: record.path, content: record.content, at: record.at } : null;
+    if (!ours(record)) return null;
+    const made = Array.isArray(record.made) ? record.made.filter((d) => typeof d === 'string') : [];
+    return { kind: record.kind, path: record.path, content: record.content, at: record.at, ...(made.length ? { made } : {}) };
   } catch {
     return null;
   }
@@ -132,7 +134,9 @@ function writeWhole(file, text) {
 // takes effect at the next sign-in; the install starts the helper now itself. Throws in plain words.
 export async function installLoginStart({ entry, run = realRun, now = () => new Date() } = {}) {
   if (!ours({ ...entry, at: '' })) throw new Error('That is not Wheelhouse\'s sign-in start');
-  writeWhole(loginRecordFile(), `${JSON.stringify({ kind: entry.kind, path: entry.path, content: entry.content, at: now().toISOString() }, null, 2)}\n`);
+  // The LaunchAgents folder, and the Library folder above it, where the write makes them: removing the agent removes them.
+  const made = entry.kind === 'launch-agent' ? [path.dirname(entry.path), path.dirname(path.dirname(entry.path))].filter((dir) => !fs.existsSync(dir)) : [];
+  writeWhole(loginRecordFile(), `${JSON.stringify({ kind: entry.kind, path: entry.path, content: entry.content, at: now().toISOString(), ...(made.length ? { made } : {}) }, null, 2)}\n`);
   if (entry.kind === 'launch-agent') {
     writeWhole(entry.path, entry.content);
     return { written: entry.path };
@@ -171,6 +175,11 @@ export async function removeLoginStart({ run = realRun, platform = process.platf
     }
     if (held !== record.content) return { removed: false, why: 'it was changed since Wheelhouse made it, so it was left' };
     fs.rmSync(record.path, { force: true });
+    // Only the two folders above the agent, and only while empty.
+    const above = [path.dirname(record.path), path.dirname(path.dirname(record.path))];
+    for (const dir of above.filter((d) => Array.isArray(record.made) && record.made.includes(d))) {
+      try { fs.rmdirSync(dir); } catch { /* not empty, or gone */ }
+    }
     forget();
     return { removed: true };
   }

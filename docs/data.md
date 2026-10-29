@@ -34,6 +34,10 @@ On your computer, Wheelhouse also keeps in `~/.wheelhouse` setup's journal of ev
 
 If you set a project up with an earlier Wheelhouse (v0.1.x), its records were on a `wheelhouse-state` branch and your settings in a `wheelhouse-profile` repository. The first session after the update copies them into the private record and settings on this computer. Nothing old is deleted, here or on GitHub or GitLab: that branch and that repository stay where they are until you choose to delete them.
 
+## The build engine
+
+On the Mac, from v0.2.0, Wheelhouse's build engine, Archon, keeps its own records on your computer, in `~/.wheelhouse-engine`: a database of its runs, and each run's transcript, which hold the prompts and code of that run. Its usage reporting is always off. Now and then it asks GitHub for its own release list; it has no switch for that, and the request carries nothing of yours. If you switch on **Engine room**, Archon's console downloads its files from Archon's GitHub release the first time, and it listens on your computer only.
+
 ## Optional channels
 
 ntfy and Telegram stay off unless you switch them on in your settings. They carry a link only, never what a card says, because anyone who guesses a public ntfy topic's name can read it.

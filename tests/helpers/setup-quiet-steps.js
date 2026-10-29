@@ -19,10 +19,10 @@ const world = () => JSON.parse(fs.readFileSync(path.join(wheelhouseHome(), 'quie
 // The fake computer: every tool on the path, at a version good enough (quiet-run.js).
 export { quietRun };
 
-const tools = () => toolsStep({ run: quietRun, fetch: async () => { throw new Error('no fetch in this test'); }, pluginRoot: world().pluginRoot, env: {} });
+const tools = () => toolsStep({ engine: null, run: quietRun, fetch: async () => { throw new Error('no fetch in this test'); }, pluginRoot: world().pluginRoot, env: {} });
 const computer = () => {
   const w = world();
-  return computerStep({ run: quietRun, env: { CLAUDE_CONFIG_DIR: w.config }, manifest: { claudeCode: { floor: w.floor } }, port: w.port });
+  return computerStep({ engine: null, run: quietRun, env: { CLAUDE_CONFIG_DIR: w.config }, manifest: { claudeCode: { floor: w.floor } }, port: w.port });
 };
 
 // A step read afresh from the world on each call.

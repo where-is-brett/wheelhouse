@@ -20,6 +20,7 @@
 //
 // The answers write to the project's records, which step 3 sets up, so until the folder is a
 // registered project with its records in place, the step waits rather than ask.
+import { engineWanted } from './engine-parts.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { SETUP_TITLES } from '../state/card-lines.js';
@@ -174,14 +175,22 @@ export function waitForProject(n) {
 
 const PHASE = { launched: 'launched', before: 'before-launch' };
 
+// The settings a project set up from v0.2.0 on the Mac starts with: the new engine, for quick changes.
+export const ENGINE_WRITES = Object.freeze([
+  { kind: 'setting', data: { key: 'engine', value: 'archon' } },
+  { kind: 'setting', data: { key: 'engineLanes', value: ['quick'] } },
+]);
+
 // The first question: what the product is and who uses it. Its answer records the product's
 // glossary entry and its phase. Its id names the phase, so a real-users answer given again asks
 // it again, and the phase recorded follows the answer (Task 9's review). With no README words to
 // offer, Still taking shape takes their place, so the card always has two options of its own, as
 // AskUserQuestion needs: it records a plain entry saying the product is new.
-function productAsk(name, { described, realUsers }) {
+// On a computer that runs the build engine, the same answer starts the project on it for quick changes (Archon
+// design, section 17, step 2): `engine` is then the settings it records beside the phase.
+function productAsk(name, { described, realUsers, engine = false }) {
   const phase = realUsers ? PHASE.launched : PHASE.before;
-  const phaseWrite = { kind: 'setting', data: { key: 'phase', value: phase } };
+  const settings = [{ kind: 'setting', data: { key: 'phase', value: phase } }, ...(engine ? ENGINE_WRITES : [])];
   const entry = (plain) => ({ kind: 'glossary', data: { term: name, plain } });
   const shaping = 'A new product, still taking shape.';
   const options = [
@@ -202,10 +211,10 @@ function productAsk(name, { described, realUsers }) {
     },
     writes: {
       labels: {
-        ...(described === null ? { [PRODUCT.shaping]: [entry(shaping), phaseWrite] } : { [PRODUCT.readme]: [entry(described), phaseWrite] }),
-        [PRODUCT.later]: [phaseWrite],
+        ...(described === null ? { [PRODUCT.shaping]: [entry(shaping), ...settings] } : { [PRODUCT.readme]: [entry(described), ...settings] }),
+        [PRODUCT.later]: settings,
       },
-      typed: [{ ...entry(''), typedInto: 'plain' }, phaseWrite],
+      typed: [{ ...entry(''), typedInto: 'plain' }, ...settings],
     },
   };
 }
@@ -265,7 +274,7 @@ export function questionsStep() {
       const real = answers['3.real-users'];
       if (!real) return { wait: PROJECT_WAIT_MS, why: 'step 3 has not asked whether the product has real users yet' };
       const realUsers = real.label === REAL_USERS.yes;
-      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers });
+      const asked = productAsk(name, { described: readmeDescription(ctx.folder), realUsers, engine: engineWanted({ platform: ctx.platform ?? process.platform }) });
       const product = answers[`4.${asked.id}`];
       if (!product) return { ask: asked };
       const live = answers['4.live-data'];

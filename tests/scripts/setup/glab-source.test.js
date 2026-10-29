@@ -210,7 +210,7 @@ test('a company source is used when set', async () => {
     const { list } = listFolder();
     const folder = projectWith(`company ${list}`);
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(fetchChange(planned), { kind: 'folder', target: toolFolder('glab'), action: 'fetch', tool: 'glab', from: 'company', source: list, version: '1.200.0', checksum: 'listed' });
     assert.ok(planned.card.what.includes(list), planned.card.what);
@@ -228,7 +228,7 @@ test('a company source is used when set', async () => {
   await withHome(async () => {
     const folder = projectWith();
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const change = fetchChange(await step.plan(ctxFor(folder)));
     assert.deepEqual(change, { kind: 'folder', target: toolFolder('glab'), action: 'fetch', tool: 'glab' });
   });
@@ -241,7 +241,7 @@ test('a company list written as a relative path, or lying inside the project fol
   await withHome(async () => {
     const { dir, list } = listFolder();
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
 
     // A relative path: refused at the plan, and by the fetch.
     const relative = projectWith('company tools/list.json');
@@ -299,7 +299,7 @@ test('a company list reached through the project folder written in a different c
   await withHome(async () => {
     const { dir } = listFolder();
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const folder = projectWith();
     const inFolder = path.join(folder, 'tools');
     fs.cpSync(dir, inFolder, { recursive: true });
@@ -320,7 +320,7 @@ test('a copy with no checksum is named on the card', async () => {
     const { list } = listFolder({ checksums: 'none' });
     const folder = projectWith(`company ${list}`);
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const planned = await step.plan(ctxFor(folder));
     const change = fetchChange(planned);
     assert.equal(change.checksum, 'none');
@@ -354,7 +354,7 @@ test('a copy with no checksum is named on the card', async () => {
     const { list, dir } = listFolder({ checksums: 'none' });
     const folder = projectWith(`company ${list}`);
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const change = fetchChange(await step.plan(ctxFor(folder)));
     fs.writeFileSync(path.join(dir, NAME), 'a different file from the one the card was shown');
     await assert.rejects(step.apply({ ...ctxFor(folder), record: () => {}, applyJsonKey: () => {}, stopped: () => false }, [change]), /not the file the card was shown/);
@@ -369,7 +369,7 @@ test('a copy with no checksum is named on the card', async () => {
     let swapped = false;
     const net = companyNet({ checksums: 'none' });
     const fetch = async (url, init) => (swapped && String(url).endsWith(NAME) ? new Response('swapped') : net.fetch(url, init));
-    const step = toolsStep({ run: m.run, fetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const change = fetchChange(await step.plan(ctxFor(folder)));
     assert.equal(change.pin, sha(archive(NAME)));
     swapped = true;
@@ -381,7 +381,7 @@ test('a copy with no checksum is named on the card', async () => {
     const { list, dir } = listFolder();
     const folder = projectWith(`company ${list}`);
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     const change = fetchChange(await step.plan(ctxFor(folder)));
     assert.equal(change.checksum, 'listed');
     fs.writeFileSync(list, JSON.stringify({ tag_name: 'v1.200.0', assets: { links: [{ name: NAME, direct_asset_url: NAME }] } }));
@@ -401,7 +401,7 @@ test('a copy with no checksum is named on the card', async () => {
     const { list } = listFolder({ checksums: 'inline' });
     const folder = projectWith(`company ${list}`);
     const m = computer();
-    const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
+    const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'arm64', pluginRoot: '/plug', env: {} });
     assert.equal(fetchChange(await step.plan(ctxFor(folder))).checksum, 'listed');
   });
 });
@@ -430,7 +430,7 @@ test('step 2\'s card composes in the worst first run, and the no-checksum warnin
       assert.ok(long.length >= LONG_SOURCE - 10, String(long.length));
       const folder = projectWith(`company ${long}`);
       const m = computer({ present: { node: 'C:\\Program Files\\nodejs\\node.exe' } });
-      const step = toolsStep({ run: m.run, fetch: noFetch, arch: 'x64', pluginRoot: 'C:\\Plugins\\wheelhouse', env: {} });
+      const step = toolsStep({ engine: null, run: m.run, fetch: noFetch, arch: 'x64', pluginRoot: 'C:\\Plugins\\wheelhouse', env: {} });
       const planned = await step.plan({ ...ctxFor(folder), platform: 'win32' });
       assert.ok(planned.changes.some((c) => c.kind === 'process'), 'git is to be installed');
       assert.ok(planned.changes.some((c) => c.tool === 'gh' && c.action === 'fetch'));

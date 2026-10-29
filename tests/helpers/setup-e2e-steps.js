@@ -9,6 +9,7 @@
 // tool in but gh, which it fetches from a stand-in of gh's release page (`toolsRun`, `fetch`); step 6
 // on one where every tool is in (quiet-run.js). Nothing real is installed,
 // signed in to, fetched or pushed beyond those folders.
+import { engineForProject } from '../../scripts/host/helper-main.js';
 import os from 'node:os';
 import path from 'node:path';
 import { wheelhouseHome, helperAddress } from '../../scripts/lib/paths.js';
@@ -45,14 +46,14 @@ const asMac = (step) => (process.platform === 'darwin' ? step : {
 
 const MAKE = {
   1: () => installStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
-  2: () => asMac(toolsStep({ run: world().toolsRun, fetch: world().fetch, env: {} })),
+  2: () => asMac(toolsStep({ engine: null, run: world().toolsRun, fetch: world().fetch, env: {} })),
   3: () => asMac(hostStep({
     run: world().run, fetch: nothing, appFile: noApp, hostUrl: world().hostUrl, findGit: git, gitlab: nothing,
     open: async () => {}, sleep: async () => {},
   })),
   4: () => questionsStep(),
   5: () => rulesStep({ env: { CLAUDE_CONFIG_DIR: world().config } }),
-  6: () => computerStep({ run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
+  6: () => computerStep({ engine: null, run: quietRun, env: { CLAUDE_CONFIG_DIR: world().config }, manifest: { claudeCode: { floor: '2.1.100' } }, port: 14318 }),
   7: () => projectFilesStep({
     run: world().run, findGit: git, gitlab: nothing, claude: () => ({ kind: 'direct', file: 'claude' }),
     manifest: () => world().manifest, claudeHome: () => world().config, switchOn: world().switchOn, protectionStatus: world().protectionStatus,
@@ -65,6 +66,11 @@ const MAKE = {
   10: () => healthStep({
     run: world().run, adapterFor: world().adapterFor, findGit: git,
     checkPins: world().checkPins, readProtection: world().readProtection,
+    // A project on the new engine (a Mac's setup starts it there) gets a stand-in engine that is healthy and refuses
+    // the hello trial's read; nothing of Archon's runs here.
+    engineChecks: async ({ project, kits }) => (engineForProject({ adapter: () => ({}) })(project)
+      ? { engine: 'ok', trial: kits ? 'refused' : 'not run', findings: [] }
+      : null),
   }),
 };
 

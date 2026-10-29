@@ -24,6 +24,7 @@ These protections are switched on quietly, for every project. Setup doesn't ask 
 - your GitHub and GitLab sign-in kept out of the agents' commands;
 - the guards, the helper's rules and the signed clicks;
 - the protection of your main product on GitHub or GitLab, so nothing reaches it except through Wheelhouse's checks.
+- on the Mac, the build engine, Archon, with its usage reporting off and no key of its own: it reaches GitHub only through Wheelhouse's helper.
 
 Setup asks one extra question only if your project looks like an iPhone or Mac app: whether its builds sign the app. Signing needs the keychain, so a Yes opens it for that project's builds.
 
@@ -65,6 +66,8 @@ The protections are defaults, not setup questions (the Captain's ruling of 24 Oc
 - `projectSettings` writes the sandbox, the credential and keychain denials and the token variables for every project, at Standard and Locked, with no card.
 - Setup's step 4 asks whether builds sign Apple apps only when the project looks like it (an `.xcodeproj` or `.xcworkspace`, fastlane, or `codesign` in `package.json`, a Makefile or a Gemfile; `signsAppleApps` in `scripts/setup/questions.js`). Only that Yes writes `signsApps: true`; a `true` in the working copy that you didn't give is set back to `false` at setup. Later, the switch moves by a reviewed pull request with your approval (`.claude/` is a guardrail).
 - The connection: on the Mac, Quick (your `gh` or `glab` sign-in) is the default, since the sandbox denies its files and the keychain; narrow sits behind **Make it stricter**, recommended there for a product with real users. On Windows, and for a Locked or launched project, a narrow way is the recommendation.
+
+- The build engine, Archon (from v0.2.0, on the Mac): built from its pinned source with Wheelhouse's patch, which starts its Claude steps in a mode that keeps the sandbox on, with the pinned Bun, each checked against Wheelhouse's own pins (`scripts/engine/pins.js`). Its usage reporting is always off (`ARCHON_TELEMETRY_DISABLED`, `DO_NOT_TRACK`, `POSTHOG_API_KEY`), and the health check fails closed if Archon reports it on. Archon also asks GitHub for its own release list now and then; it has no switch for that, and the request carries nothing of yours. Its console, **Engine room**, is off; switched on, it listens on this computer only (`127.0.0.1`), the Logbook says so while it is open, and the guards deny its port to agents. Its first start downloads the console's files from Archon's GitHub release.
 
 ### What doesn't, or not yet
 
