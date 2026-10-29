@@ -69,6 +69,10 @@ import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { isOpen, surveyLines, whyNext, workLines } from '../desk/views.js';
+
+// Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
+export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
@@ -561,19 +565,6 @@ export async function why({ client, cwd, n }) {
   return [`Noted that you asked why about card ${n}.`, ...whyNext(views, question, n)];
 }
 
-// The one sentence the front desk says before card n on a Why?, word for word: the everyday example
-// of the first term the card uses that the glossary gives one for, then what the card asks
-// (scenario 36). With no such term, the sentence's form, for the front desk to fill.
-function whyNext(views, question, n) {
-  const glossary = glossaryOf(views.glossary);
-  const term = Object.keys(glossary).find((t) => glossary[t].example && termPattern(t).test(question));
-  const like = term === undefined ? null : glossary[term].example.trim().replace(/^like\s+/i, '').replace(/[.!]+$/, '');
-  const asks = String(question).split('\n')[0].trim();
-  const how = `then card ${n} from \`again ${n}\` in your clickable-question tool, in the same message:`;
-  if (like) return [`Say this one sentence, word for word, and nothing else, ${how}`, `It's like ${like}: card ${n} asks "${asks}"`];
-  return [`Say one sentence and nothing else, ${how}`, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`];
-}
-
 // --- suggest ---
 
 // The one line the front desk says after handing a suggested change to the build.
@@ -714,16 +705,6 @@ function documentHash(cwd, file, given) {
   const hash = briefHash(text);
   if (given !== undefined && given !== hash) throw new CliError(`The hash given for ${file} is not the document's as it stands (${hash.slice(0, 12)}): leave the hash out, and record works it out`);
   return hash;
-}
-
-// Whether `id` names open work, as the queue reads it: no report has ended it, and its feature
-// hasn't closed since it was queued (scripts/foreman/queue.js).
-function isOpen(views, id) {
-  const entry = isPlain(views.work) ? views.work[id] : undefined;
-  if (!isPlain(entry)) return false;
-  const feature = isPlain(views.features) ? views.features[id] : undefined;
-  const closed = feature?.data?.step === 'closed' && since(feature, entry.work);
-  return !closed && !endedBy(views.reports, id, entry.work);
 }
 
 // The line a front desk says for an amendment, from its read-back: the route (intake, step 4) and
@@ -923,43 +904,6 @@ const titleOf = (entry, key) => flat(entry?.data?.title) || flat(entry?.data?.te
 const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
-// The survey taken when setup finished, as short lines: what it counted, the requests by number
-// and title, each piece of unfinished work by its name (for `carry-on --line`), its newest subject
-// and how many changes it holds, the other setup's files, and the rules found, numbered, each with
-// its source, so the front desk can confirm one when it first matters. A part with nothing in it
-// is left out.
-function surveyLines(survey) {
-  const data = isPlain(survey?.data) ? survey.data : null;
-  if (data === null) return ['No survey has been taken.'];
-  const list = (value) => (Array.isArray(value) ? value.filter(isPlain) : []);
-  const count = (label, n, more) => `${label}: ${more ? 'at least ' : ''}${n}`;
-  const requests = list(data.requests);
-  const pushed = list(data.pushed).length;
-  const local = list(data.local).length;
-  const files = Array.isArray(data.instructions?.files) ? data.instructions.files.filter((f) => typeof f === 'string') : [];
-  const sections = list(data.instructions?.sections).length;
-  const rules = list(data.rules);
-  const out = [];
-  if (data.hostReached === false) out.push('The host could not be looked at.');
-  if (requests.length > 0) {
-    out.push(`Changes waiting to be merged: ${requests.length}`);
-    for (const r of requests) out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}`);
-  }
-  const pieces = (items) => items.map((i) => {
-    const saved = Number.isInteger(i.commits) && i.commits > 0 ? ` (${i.commits} ${i.commits === 1 ? 'change' : 'changes'} saved)` : '';
-    return `- ${flat(i.name)}${flat(i.subject) ? `: ${flat(i.subject)}` : ''}${saved}`;
-  });
-  if (pushed > 0) out.push(count('Unfinished work pushed', pushed, data.more?.pushed === true), ...pieces(list(data.pushed)));
-  if (local > 0) out.push(count('Unfinished work on this computer', local, data.more?.local === true), ...pieces(list(data.local)));
-  if (files.length > 0) out.push(`Another agent setup's files: ${files.map(flat).join(', ')}`);
-  if (sections > 0) out.push(`Parts of CLAUDE.md: ${sections}`);
-  if (rules.length > 0) {
-    out.push(`Rules found: ${rules.length}`);
-    rules.forEach((r, i) => out.push(`${i + 1}. ${flat(r.words)} (${flat(r.source?.file)}, line ${r.source?.line})`));
-  }
-  return out.length > 0 ? out : ['The survey found nothing under way, no other instructions and no rules.'];
-}
-
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
@@ -999,69 +943,6 @@ export async function view({ client, cwd, name, now }) {
   const profile = await client.profile.views({});
   const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
-}
-
-// Open work's step or state in words, and whether a feature runs for it: one that is writing its
-// plan or building. A quick or bug feature has no plan, so it builds from its start. A planned one
-// waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
-// board reads it) waits on them. Work whose feature closed before a `work` event queued it again
-// hasn't started this time.
-function workState(entry, feature, held) {
-  const { lane, visible } = entry.work?.data ?? {};
-  const step = isPlain(feature?.data) && !(feature.data.step === 'closed' && !since(feature, entry.work)) ? feature.data.step : null;
-  if (step !== null && step !== 'closed' && held) return { running: false, state: 'waiting for the director to allow its build commands' };
-  if (step === 'building' || (step === 'started' && NO_PLAN.includes(lane))) return { running: true, state: 'building' };
-  if (step === 'started') return { running: true, state: 'writing its plan' };
-  if (step === 'planned') return { running: false, state: 'planned, waiting for the go-ahead to build' };
-  if (step === 'paused') {
-    const why = { director: 'for the director\'s change to it', 'five-hour': 'until the five-hour usage window has room' }[feature.data.pausedFor];
-    return { running: false, state: why ? `paused ${why}` : 'paused' };
-  }
-  const approval = (!STARTS_UNAPPROVED.includes(lane) || visible === true) && entry.approved !== true;
-  return { running: false, state: approval ? 'waiting for the director\'s approval' : 'queued, not started yet' };
-}
-
-// What each lane is, in words a sentence takes.
-const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
-
-// The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
-// runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
-// latest report names, either since the work was queued. `answers` are the card-answer events, for
-// the director's Not now. In the glossary's plain words, but for the titles, kept as written: the
-// front desk reads this to tell the director how things stand.
-function workLines(views, answers, words) {
-  const features = isPlain(views.features) ? views.features : {};
-  const questions = isPlain(views.questions) ? views.questions : {};
-  const reports = Object.values(isPlain(views.reports) ? views.reports : {}).filter((r) => isPlain(r?.data));
-  const held = (id) => {
-    try {
-      return heldByNotNow(id, questions, answers.filter(isPlain), reports);
-    } catch {
-      return false;
-    }
-  };
-  const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
-  const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
-    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id)) }))
-    .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
-      || a.id.localeCompare(b.id));
-  if (open.length === 0) return ['No work is open: nothing is running or waiting.'];
-  const lines = open.map(({ id, entry, running, state }) => {
-    const { title, lane } = entry.work.data;
-    const slice = running ? features[id]?.data?.slice : undefined;
-    const report = views.reports?.[id];
-    const pr = asks.filter((a) => a.data.work === id && since(a, entry.work)).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1)?.data.pr
-      ?? (since(report, entry.work) ? report?.data?.pr : undefined);
-    return [
-      `${id}: ${flat(title) || id}${Object.hasOwn(LANE_WORDS, lane) ? ` (${LANE_WORDS[lane]})` : ''}: ${running ? 'running' : 'not running'}`,
-      state,
-      ...(isPlain(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? [`slice ${slice.n} of ${slice.m}`] : []),
-      ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),
-    ].join(', ');
-  });
-  // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).
-  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
-  return plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
 }
 
 // The decision topics, for a card to reuse one: each level in force, each level waiting for the
