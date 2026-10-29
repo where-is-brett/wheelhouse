@@ -22,7 +22,7 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-const ALL = [LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
+const ALL = [LANE_WORKFLOWS.bug, LANE_WORKFLOWS.feature, LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-slice-task', LANE_WORKFLOWS.slice, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
 // Check 77's mean tokens for one implement round, on the mid-sized model.
 const ROUND_TOKENS = 127000;
 
@@ -142,7 +142,7 @@ test('every wait in the small lane carries the labels the card router reads', ()
 
 test('every builder step reads the director\'s earlier answers as data', () => {
   const { read } = built();
-  const builders = { 'wheelhouse-quick': ['build'], 'wheelhouse-small': ['plan', 'fix'], 'wheelhouse-small-task': ['implement'] };
+  const builders = { 'wheelhouse-quick': ['build'], 'wheelhouse-small': ['plan', 'fix'], 'wheelhouse-small-task': ['implement'], 'wheelhouse-bug': ['reproduce', 'build'] };
   for (const [name, ids] of Object.entries(builders)) {
     const found = nodesOf(read(name).nodes).map(({ node }) => node).filter((node) => ids.includes(node.id));
     assert.equal(found.length, ids.length, name);
@@ -201,4 +201,39 @@ test('every wait in the slice and feature lanes carries the labels the card rout
     assert.ok(waits.length >= 8, name);
     for (const wait of waits) for (const label of LABELS) assert.equal(typeof wait.wait.labels[label], 'string', `${name} ${wait.id} has ${label}`);
   }
+});
+
+test('the bug lane reproduces first, proves it red and keeps it, then fixes it and goes on as the quick lane does', () => {
+  const bug = built().read('wheelhouse-bug');
+  const ids = bug.nodes.map((n) => n.id);
+  const order = ['order', 'reproduce-gate', 'reproduce', 'red', 'reproduced', 'implement', 'size', 'tests', 'lenses', 'review-standards', 'pr-text', 'open-pr', 'sign', 'preview', 'approval', 'ready', 'lesson', 'lesson-record'];
+  assert.deepEqual(ids.filter((id) => order.includes(id)), order);
+  assert.equal(bug.returns, 'open-pr');
+  assert.equal(bug.inputs.work.required, true);
+  const byId = (id) => bug.nodes.find((n) => n.id === id);
+  // The method is the prompt's, naming its skill only in words (check 77).
+  assert.match(byId('reproduce').prompt, /diagnosing-bugs method/);
+  assert.ok(!byId('reproduce').skills.some((s) => /diagnosing/.test(s)));
+  assert.equal(byId('reproduce').when, "$reproduce-gate.output.reproduced == 'false'");
+  assert.deepEqual(byId('reproduce').output_format.required, ['summary', 'blocked', 'assumptions']);
+  for (const field of ['test', 'command', 'files']) assert.ok(byId('reproduce').output_format.properties[field], field);
+  // No fix is built until the reproduction is kept, and the loop closes only on the bug's own check.
+  assert.equal(byId('implement').when, "$reproduced.output.kept == 'true'");
+  assert.equal(byId('implement').loop_group.max_iterations, 5);
+  assert.match(byId('implement').loop_group.until_bash, /bug-check\.js" .*--most 5 --blocked "\$blocked"/);
+  assert.match(byId('implement').loop_group.nodes[0].prompt, /reproduction's test files stay exactly as they were committed/);
+  // A reproduction that isn't red, or isn't kept, asks; so does a fix bigger than a bug.
+  for (const id of ['red-held', 'keep-held']) {
+    assert.equal(byId(id).wait.labels['wh.topic'], 'no-reproduction', id);
+    assert.deepEqual(byId(id).wait.options.map((o) => o.id), ['rework', 'stop'], id);
+  }
+  assert.equal(byId('red-held').when, "$red.output.red == 'false'");
+  assert.equal(byId('size-blocked').when, "$size.output.blocked == 'true'");
+  assert.equal(byId('size-blocked').wait.options, '$size.output.options');
+  for (const id of ['tests', 'controls']) assert.equal(byId(id).when, "$size.output.blocked == 'false'", id);
+  // From the tests on, the quick lane's own steps.
+  const quick = built().read('wheelhouse-quick');
+  const from = (w) => w.nodes.slice(w.nodes.findIndex((n) => n.id === 'lenses'));
+  assert.deepEqual(from(bug), from(quick));
+  assert.deepEqual(LANE_CAPS.bug, { minutes: 30, tokens: 2000000 });
 });

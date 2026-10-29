@@ -31,6 +31,10 @@ export const STOP_LABEL = 'Stop';
 // the director's answer (other than Send it back, which says nothing more) in its order.
 const STOP = 'stop';
 const REWORK = 'rework';
+// The bug lane's proposal when a bug proves bigger than a bug (scripts/engine/bug-size.js): the work stops in the bug
+// lane, and the First Mate records it again in the lane the director picked (intake, route 2).
+const BIGGER = 'bigger-than-a-bug';
+const MOVES = Object.freeze({ small: 'a small change', feature: 'a feature' });
 // The question an ask puts, as the step wrote it.
 const questionOf = (ask) => [ask?.reason, ask?.context?.reason, ask?.context?.question].find((q) => typeof q === 'string' && q !== '') ?? null;
 
@@ -238,6 +242,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
+      const runLane = (views.runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId).at(-1)?.data?.lane ?? workOf(kept.runId)?.lane;
+      const move = got.ok && runLane === 'bug' && kept.ask?.kind === 'blocked' && kept.ask?.topic === BIGGER && Object.hasOwn(MOVES, answer.choice) ? MOVES[answer.choice] : undefined;
+      if (move) {
+        keep();
+        await note(`${titleOf(kept.work)} is bigger than a bug, so it stops in the bug lane; the First Mate records it as ${move} and asks you to approve it.`, { work: kept.work });
+        continue;
+      }
       if (got.ok && kept.ask?.kind === 'blocked' && answer.choice !== STOP) {
         const label = views.questions?.[key]?.answer?.label;
         const said = typeof answer.words === 'string' ? answer.words : label;

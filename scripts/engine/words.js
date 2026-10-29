@@ -69,6 +69,16 @@ export const STEP_WORDS = Object.freeze({
   'switch-on': 'switching the feature on',
   'switch-on-blocked': 'stopped, with a question about switching it on',
   'review-feature': 'checking the whole feature',
+  // The bug lane's own steps.
+  'reproduce-gate': 'looking for its reproduction',
+  reproduce: 'reproducing the bug',
+  'reproduce-blocked': 'stopped, with a question about the bug',
+  red: 'checking the reproduction fails',
+  'red-held': 'stopped: the bug couldn\'t be reproduced',
+  reproduced: 'noting the reproduction',
+  'keep-held': 'stopped: the reproduction couldn\'t be kept',
+  size: 'checking the fix is a bug\'s size',
+  'size-blocked': 'stopped: the fix is bigger than a bug',
 });
 
 // Archon names a step inside a loop after its loop (`review.fix`), and one inside a task block after the fan-out
