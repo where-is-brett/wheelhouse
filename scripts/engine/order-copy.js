@@ -5,8 +5,9 @@
 // With --flags it prints only { visible, showFirst }, two yes-or-no answers the pack branches on. With --feature-flags,
 // for a feature's slices and its own run, it adds { demo, flagFile, topic, words }: whether this slice is the midpoint
 // demo, whether the switch is kept in a file, and the topic and words of the approval the run ends on.
-// Run in the run's worktree, it also writes the run's own settings overlay there (.claude/settings.local.json,
-// ownRunRules), which lets the run's Claude steps read their own artefacts and no other run's.
+// Run in the run's worktree, it also writes the run's own settings overlay there (ownRunRules), which lets the run's
+// Claude steps read their own artefacts and no other run's. Archon gives its Claude steps the project and user settings
+// only, never the local ones, so the overlay is merged into the worktree's .claude/settings.json, over the branch's own.
 //   node scripts/engine/order-copy.js --run <run id> --out <artefacts folder> [--flags | --feature-flags]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,11 +15,12 @@ import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
-import { ownRunRules } from '../protection/settings.js';
+import { ownRunRules, mergeSettings } from '../protection/settings.js';
 import { safeGit } from '../lib/safe-git.js';
 import { run as realRun } from '../lib/run.js';
-// The line that keeps this computer's own settings out of git (setup's EXCLUDE_LINE, scripts/setup/project-files.js).
-export const EXCLUDE_LINE = '/.claude/settings.local.json';
+const SHARED = '.claude/settings.json';
+// The exclude line that keeps the overlay out of git where the branch doesn't track the file.
+export const EXCLUDE_LINE = `/${SHARED}`;
 
 // What a path is without following a link: 'none', 'dir', 'file' or 'other' (a link among them).
 function kindOf(file) {
@@ -30,26 +32,50 @@ function kindOf(file) {
   }
 }
 
-// Writes the overlay as the worktree's .claude/settings.local.json, never through a link a branch holds, and keeps it
-// out of git in the worktree's own exclude list, so no commit of the run's carries it. Gives a refusal, or null.
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+// Writes the overlay into the worktree's .claude/settings.json, never through a link a branch holds. Where the branch
+// tracks the file, the overlay is merged over the branch's own shared settings as the index holds them (so a second run
+// in the same worktree never keeps an earlier run's lists), and the worktree's own index marks it skip-worktree, so no
+// commit of the run's carries it and the director's checkout is untouched. Where it doesn't, the overlay is written
+// alone and kept out of git by the exclude list. Gives a refusal, or null.
 async function writeOverlay(cwd, overlay, run) {
   const folder = path.join(cwd, '.claude');
-  const file = path.join(folder, 'settings.local.json');
-  if (!['none', 'dir'].includes(kindOf(folder)) || !['none', 'file'].includes(kindOf(file))) return '.claude/settings.local.json in the worktree is a link or not a plain file';
+  const file = path.join(folder, 'settings.json');
+  if (!['none', 'dir'].includes(kindOf(folder)) || !['none', 'file'].includes(kindOf(file))) return `${SHARED} in the worktree is a link or not a plain file`;
   const git = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
-  const found = await git(['rev-parse', '--git-path', 'info/exclude']);
-  if (found.code !== 0) return 'the worktree is not a git checkout';
-  const exclude = path.resolve(cwd, found.stdout.trim());
-  if (!['none', 'file'].includes(kindOf(exclude))) return 'the worktree\'s exclude list is a link or not a plain file';
-  const kept = kindOf(exclude) === 'file' ? fs.readFileSync(exclude, 'utf8') : '';
-  if (!kept.split(/\r?\n/).includes(EXCLUDE_LINE)) {
-    fs.mkdirSync(path.dirname(exclude), { recursive: true });
-    fs.appendFileSync(exclude, `${kept === '' || kept.endsWith('\n') ? '' : '\n'}${EXCLUDE_LINE}\n`);
+  const staged = await git(['ls-files', '--stage', '--', SHARED]);
+  if (staged.code !== 0) return 'the worktree is not a git checkout';
+  let settings = overlay;
+  if (staged.stdout.trim() !== '') {
+    if (!/^100644 /.test(staged.stdout) || kindOf(file) !== 'file') return `the branch's shared settings (${SHARED}) aren't a plain file`;
+    const held = await git(['show', `:${SHARED}`]);
+    let shared;
+    try { shared = JSON.parse(held.stdout); } catch { shared = null; }
+    if (held.code !== 0 || !isPlain(shared)) return `the branch's shared settings (${SHARED}) couldn't be read`;
+    const kept = await git(['update-index', '--skip-worktree', '--', SHARED]);
+    if (kept.code !== 0) return 'the shared settings couldn\'t be kept out of the run\'s commits';
+    settings = mergeSettings(shared, overlay);
+  } else {
+    const found = await git(['rev-parse', '--git-path', 'info/exclude']);
+    if (found.code !== 0) return 'the worktree is not a git checkout';
+    const exclude = path.resolve(cwd, found.stdout.trim());
+    if (!['none', 'file'].includes(kindOf(exclude))) return 'the worktree\'s exclude list is a link or not a plain file';
+    const listed = kindOf(exclude) === 'file' ? fs.readFileSync(exclude, 'utf8') : '';
+    if (!listed.split(/\r?\n/).includes(EXCLUDE_LINE)) {
+      fs.mkdirSync(path.dirname(exclude), { recursive: true });
+      fs.appendFileSync(exclude, `${listed === '' || listed.endsWith('\n') ? '' : '\n'}${EXCLUDE_LINE}\n`);
+    }
   }
   fs.mkdirSync(folder, { recursive: true });
-  const temp = path.join(folder, `.settings.local.${process.pid}.tmp`);
-  fs.writeFileSync(temp, `${JSON.stringify(overlay, null, 2)}\n`, { flag: 'wx' });
-  fs.renameSync(temp, file);
+  const temp = path.join(folder, `.settings.${process.pid}.${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(settings, null, 2)}\n`, { flag: 'wx' });
+    fs.renameSync(temp, file);
+  } catch (error) {
+    try { fs.rmSync(temp, { force: true }); } catch { /* nothing left to take away */ }
+    return `the merged settings couldn't be written (${error?.code ?? 'unknown'})`;
+  }
   return null;
 }
 

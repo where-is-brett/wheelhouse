@@ -1,12 +1,29 @@
 // tests/eval/build-loop/45-cap-blocked-card.js
 // Scenario 45 (Archon design, sections 10.2 and 18): a quick run spends past the lane's token cap. Pass: the run is
 // stopped, the director gets one card recommending it stays stopped, and Give it more starts it again on its own
-// branch, carrying on from what is there, with the cap raised once; nothing starts again without that Yes. Played on
+// branch, carrying on from what is there, with the cap raised once; nothing starts again without that Yes. A real run
+// paused when it reaches its cap is held instead of cancelled: nothing goes back to it until Give it more. Played on
 // the engine the run names, in its `with` variant alone. On real Archon (`real`), the quick lane's token cap is set
 // tiny, so a real run's first step passes it.
 import { until } from '../../../scripts/eval/engine-world.js';
 import { confirmationFor } from '../../../scripts/state/events.js';
 import { running, TINY_GOAL } from './engine-recordings.js';
+
+// A run held at its cap while paused: one card recommending it stays stopped, nothing goes back to the run (not even
+// the director's answer to what it asked) and nothing starts, until Give it more lets it carry on.
+async function heldPlay(world, { run, card, wait }) {
+  if (card.data.recommendation !== 'Stop') return { pass: false, why: `the card recommends ${card.data.recommendation}, not staying stopped` };
+  const reached = () => world.acts().filter((c) => c.runId === run && (c.action?.answer || c.action?.resume));
+  const asked = world.records('question').find((q) => q.data.engine?.runId === run && q.data.id !== card.data.id);
+  if (asked) world.answer(asked.data, asked.data.recommendation);
+  for (let i = 0; i < 3; i += 1) await world.tick();
+  if (reached().length > 0) return { pass: false, why: 'the held run was carried on before the director said yes' };
+  if (world.starts().length !== 1) return { pass: false, why: 'the work started again before the director said yes' };
+  world.answer(card.data, 'Give it more');
+  if (!await wait(async () => { await world.tick(); return reached().length > 0; }, { ms: 120000 })) return { pass: false, why: 'Give it more didn\'t carry the held run on' };
+  if (world.starts().length !== 1) return { pass: false, why: 'Give it more started a second run beside the held one' };
+  return { pass: true, why: 'a real run paused at a tiny cap was held, one card, nothing went back to it, and it carried on only after Give it more' };
+}
 
 export default {
   id: 45,
@@ -39,17 +56,21 @@ export default {
       const [run] = world.runs();
       if (!run) return { pass: false, why: `the run didn't start: ${world.starts()[0]?.got?.refused ?? 'nothing was started'}` };
       const cancelled = () => world.acts().find((c) => c.runId === run && c.action?.cancel);
-      if (!await wait(async () => { await world.tick(); return cancelled() || (await world.status(run)) === 'paused'; }) || !cancelled()) {
+      const capCard = () => world.records('question').find((q) => q.data.options.some((o) => o.label === 'Give it more'));
+      // A run paused when it reaches its cap spends nothing and Archon can't cancel it, so the helper holds it instead.
+      const held = () => /holding it/.test(capCard()?.data.what ?? '');
+      if (!await wait(async () => { await world.tick(); return cancelled() || held(); })) {
         const status = await world.status(run);
         const asked = status === 'paused' ? await world.asking(run) : null;
         return { pass: false, why: asked ? `the run stopped to ask before its cap was reached: ${asked}` : `the run went on past its token cap (Archon has it ${status})${status === 'failed' ? await world.trouble(run) : ''}` };
       }
+      if (held()) return heldPlay(world, { run, card: capCard(), wait });
       if (!await wait(async () => (await world.status(run)) === 'cancelled', { ms: 120000 })) {
         const status = await world.status(run);
         const asked = status === 'paused' ? await world.asking(run) : null;
         return { pass: false, why: `Archon has the run ${status}, not cancelled${asked ? `: it stopped to ask ${asked}` : ''}` };
       }
-      const card = await wait(() => world.records('question').find((q) => q.data.options.some((o) => o.label === 'Give it more')), { ms: 120000 });
+      const card = await wait(() => capCard(), { ms: 120000 });
       if (!card) return { pass: false, why: 'no card came for the reached cap' };
       if (card.data.recommendation !== 'Stop') return { pass: false, why: `the card recommends ${card.data.recommendation}, not staying stopped` };
       await world.tick();

@@ -4349,6 +4349,13 @@ export async function startHelper({
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
     return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
   }
+  // The runs the project's record has started and not seen end, for All stop to name to the engine: Archon's list
+  // doesn't show a run started under about a second ago.
+  function engineRunsGoing(project) {
+    const runs = listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'run' && typeof e.data?.runId === 'string');
+    const ended = new Set(runs.filter((e) => e.data.state === 'ended').map((e) => e.data.runId));
+    return [...new Set(runs.map((e) => e.data.runId))].filter((id) => !ended.has(id));
+  }
   // All stop for the engine (design on Archon, section 12.3): stopEngine takes the processes first, the wake process's
   // tree among them, then the wake ends (each host sees STOP) before any run is cancelled, so the steps of a run the
   // wake carried on are in the snapshot. stopEngine cancels every run and ends what the cancel left, and each project's
@@ -4362,6 +4369,7 @@ export async function startHelper({
     engineStopping ??= (async () => {
       const got = await stopEngine({
         engine: engineHosts[0].engine, processes: [...engineHosts.flatMap(({ host }) => host.processes()), ...(room?.processes() ?? [])], reason,
+        known: engineHosts.flatMap(({ project }) => { try { return engineRunsGoing(project); } catch { return []; } }),
         afterSnapshot: () => { for (const { host } of engineHosts) host.check(); }, ...engineStopWith,
       });
       const said = stopWords(got);

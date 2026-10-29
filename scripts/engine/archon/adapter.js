@@ -10,7 +10,8 @@
 //              archon workflow cancel <run> --json; archon workflow resume <run> --detach --json  (never abandon, spec 12.2)
 //   inspect    archon workflow get <run> --verbose --json
 //   outputs    archon workflow get <run> --verbose --events --json
-//   stopAll    archon workflow status --all --json, then cancel each running or pending run   (stop.js ends what is left)
+//   stopAll    archon workflow status --all --json, and workflow get <run> --verbose --json for each known run it left out,
+//              then cancel each running or pending run   (stop.js ends what is left)
 //   health     the launcher and the patch on disk; archon version; bun --version; archon ai tier list --json;
 //              archon telemetry status
 //   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
@@ -407,13 +408,21 @@ export function archonAdapter({
     // its parent; a paused run is doing nothing and Archon cancels only running ones, so it is listed in `paused`. A
     // run whose cancel is refused is a survivor. `beforeCancel(runs)` is awaited with those runs, [{ id, folder }]
     // (the worktree each works in, or null: worktreeOf), before any is cancelled, so All stop can take each run's
-    // process tree while it is still whole (check 78).
-    async stopAll(_reason, { beforeCancel } = {}) {
+    // process tree while it is still whole (check 78). `known` are the runs the helper started and hasn't seen end:
+    // `status --all` doesn't list a run started under about a second ago, so each one it left out is read by itself.
+    async stopAll(_reason, { beforeCancel, known = [] } = {}) {
       const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
       if (!Array.isArray(listed.json?.runs)) {
         return { cancelled: [], survivors: [], paused: [], trouble: "The engine couldn't list its runs, so none was cancelled" };
       }
-      const running = listed.json.runs.filter((r) => r.status === 'running' || r.status === 'pending');
+      const rows = [...listed.json.runs];
+      const seen = new Set(rows.map((r) => r.id));
+      for (const id of new Set(known)) {
+        if (typeof id !== 'string' || seen.has(id)) continue;
+        const got = await cli(['workflow', 'get', id, '--verbose'], { json: true, timeout: CALL_MS });
+        if (got.code === 0 && got.json?.ok !== false && got.json?.id === id) rows.push(got.json);
+      }
+      const running = rows.filter((r) => r.status === 'running' || r.status === 'pending');
       const ids = new Set(running.map((r) => r.id));
       if (beforeCancel) {
         const runs = running.map((r) => ({ id: r.id, folder: worktreeOf(r.working_path, { home, worktreeBases }) }));
@@ -425,7 +434,7 @@ export function archonAdapter({
         const result = await cli(['workflow', 'cancel', runRow.id], { json: true, timeout: CALL_MS });
         (result.json?.ok === true ? cancelled : survivors).push(runRow.id);
       }
-      const paused = listed.json.runs.filter((r) => r.status === 'paused').map((r) => r.id);
+      const paused = rows.filter((r) => r.status === 'paused').map((r) => r.id);
       return { cancelled, survivors, paused };
     },
   };

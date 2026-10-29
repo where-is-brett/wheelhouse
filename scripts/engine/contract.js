@@ -9,7 +9,8 @@
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
 //     (`unreachable: true` beside a refusal when the engine gave no reply at all, so the caller may try again)
 //   inspect(runId) -> { status, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], branch, pr, digest }
-//   stopAll(reason, { beforeCancel(runs: [{ id, folder }]) }?) -> { cancelled: string[], survivors: string[], paused: string[] }
+//   stopAll(reason, { beforeCancel(runs: [{ id, folder }]), known: string[] }?) -> { cancelled: string[], survivors: string[], paused: string[] }
+//     (`known`: the runs the caller started and hasn't seen end, for an engine whose list may not show one yet)
 //
 // Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and
 // wakeCommand() -> { command, args, env }, the process that carries answered runs on; and, for All stop (stop.js),

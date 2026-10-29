@@ -26,7 +26,7 @@ function fakeCache() {
 
 // Archon's command line as the adapter reads it: runs start running, a quick run's first step has spent `stepTokens`,
 // cancel ends one, and the health trial's guarded step reports `refused`.
-function standInArchon({ stepTokens = 25000, refused = true, trialFails = false } = {}) {
+function standInArchon({ stepTokens = 25000, refused = true, trialFails = false, paused = false } = {}) {
   const runs = new Map();
   const seen = [];
   let n = 0;
@@ -42,7 +42,7 @@ function standInArchon({ stepTokens = 25000, refused = true, trialFails = false 
       const id = `run-${++n}`;
       const at = args.indexOf('--branch');
       const hello = c === 'wheelhouse-hello';
-      runs.set(id, { status: hello ? (trialFails ? 'failed' : 'completed') : 'running', hello });
+      runs.set(id, { status: hello ? (trialFails ? 'failed' : 'completed') : paused ? 'paused' : 'running', hello });
       return ok({ ok: true, runId: id, branch: at >= 0 ? args[at + 1] : `wh/${id}` });
     }
     if (b === 'get') {
@@ -61,6 +61,12 @@ function standInArchon({ stepTokens = 25000, refused = true, trialFails = false 
       const run = runs.get(c);
       if (run?.status !== 'running') return { code: 1, json: { ok: false, error: `Cannot cancel run with status '${run?.status}'` }, stdout: '', stderr: '' };
       run.status = 'cancelled';
+      return ok({ ok: true });
+    }
+    if (b === 'resume') {
+      const run = runs.get(c);
+      if (run?.status !== 'paused' && run?.status !== 'failed') return { code: 1, json: { ok: false, error: `Cannot resume run with status '${run?.status}'` }, stdout: '', stderr: '' };
+      run.status = 'running';
       return ok({ ok: true });
     }
     if (b === 'attention' && args.includes('--watch')) {
@@ -229,6 +235,22 @@ for (const name of ['45-cap-blocked-card', '46-all-stop-cancels-runs', '48-unsig
     }
   });
 }
+
+test("scenario 45's real play passes when the run is paused at its cap and held, and carries on only after Give it more", { skip }, async () => {
+  const archon = standInArchon({ paused: true });
+  const world = await open(archon, fakeCache());
+  try {
+    const got = await (await scenario('45-cap-blocked-card')).engine.real(world, { until: wait });
+    assert.equal(got.pass, true, got.why);
+    assert.match(got.why, /held/);
+    const [run] = world.runs();
+    // Held, not cancelled, until Give it more resumes it; past its raised cap after that, it is cancelled as any running run.
+    assert.deepEqual(world.acts().filter((c) => c.runId === run).map((c) => Object.keys(c.action)[0]).slice(0, 1), ['resume']);
+    assert.equal(world.starts().length, 1);
+  } finally {
+    await world.close();
+  }
+});
 
 test("scenario 48's real play fails when the broker lets the unsigned merge through", { skip }, async () => {
   const world = await open(standInArchon(), fakeCache());

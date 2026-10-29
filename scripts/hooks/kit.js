@@ -368,6 +368,8 @@ function failureAnswer(event, reason = 'Wheelhouse\'s check could not run') {
 
 // Whether a guard's answer refuses.
 const refuses = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny' || out?.decision === 'block';
+// Whether a guard's answer allows the call without the agent's own permission prompt.
+const allows = (out) => out?.hookSpecificOutput?.permissionDecision === 'allow';
 
 // A tool the adapter doesn't know, which it translates as `{ unknownTool: name }`.
 class UnknownTool extends Error {
@@ -384,7 +386,8 @@ class UnknownTool extends Error {
 // and informs only in Locked projects.
 //
 // A translation may give several inputs for one call (a patch that changes several files gives one per
-// file): each is decided in turn, and the first refusal is the answer. A translation that names a tool the
+// file): each is decided in turn, and the first refusal is the answer; an allow is the answer only when every
+// input gives it. A translation that names a tool the
 // adapter doesn't know (`{ unknownTool: name }`) is refused by a guard in the adapter's own words, before
 // `decide` runs, and an informing hook says nothing.
 //
@@ -428,14 +431,22 @@ export async function hookMain(decide, { failClosed, event }, io = {}) {
       if (isManagedCopy && !failClosed && !locked) return;
     }
     let out;
+    let allowed = null;
+    let allowing = 0;
     for (const one of inputs) {
       const answered = await decide(one, { event, dir: managed, agent, writeVia: writeVia(agent), ...deps });
       if (refuses(answered)) {
         out = answered;
+        allowing = -1;
         break;
       }
-      if (out === undefined || out === null) out = answered;
+      if (allows(answered)) {
+        allowing += 1;
+        allowed ??= answered;
+      } else if (out === undefined || out === null) out = answered;
     }
+    // An allow stands only when every input gives it: an input the guard only passes leaves the call to the agent's rules.
+    if (allowing === inputs.length) out = allowed;
     const shaped = out === undefined || out === null ? out : adapter.translate.fromGuardAnswer(out, event);
     if (shaped !== undefined && shaped !== null) write(`${JSON.stringify(shaped)}\n`);
   } catch (error) {
