@@ -391,6 +391,79 @@ test('an engine that says the ask moved on closes the card with one line, and it
   } finally { t.cleanup(); }
 });
 
+// A run Archon shows paused (spending recording's ask) past its token cap, its pause not yet in the record.
+function pausedAtCap(extra = {}) {
+  const ended = [];
+  const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } }, endRun: async (runId) => { ended.push(runId); return { ended: [], survivors: [] }; }, ...extra });
+  const { runId } = t.engine.start({ recording: 'big' });
+  withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started']]);
+  const event = t.engine.watch('0').events.filter((e) => e.runId === runId && e.type === 'ask').at(-1);
+  return { t, runId, event, ended };
+}
+const capCard = (t) => t.writes.filter((w) => w.kind === 'question').find((w) => /reached its cap/.test(w.data.what)).data;
+const answerCap = (t, label) => { const q = capCard(t); t.views.questions[q.id] = { question: { data: q }, answer: { label } }; };
+
+test('a paused run at its cap is held, not cancelled: it spends nothing while it waits, and the card says so', async () => {
+  const { t, runId, ended } = pausedAtCap();
+  try {
+    assert.equal(t.engine.inspect(runId).status, 'paused');
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'Archon cancels only running runs, so none is asked for');
+    assert.deepEqual(ended, [], 'a paused run has no processes to end');
+    const q = capCard(t);
+    assert.equal(q.level, 3);
+    assert.match(q.what, /reached its cap of 1,000,000 tokens while it was waiting/);
+    assert.match(q.what, /holding it/);
+    await t.runner.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'one card');
+  } finally { t.cleanup(); }
+});
+
+test("a held run's answers wait: none reaches the build until Give it more, so it can't carry on past its cap", async () => {
+  const { t, runId, event } = pausedAtCap();
+  try {
+    await t.runner.onAsk(event);
+    const asked = t.writes.filter((w) => w.kind === 'question')[0].data;
+    await t.runner.tick();
+    t.views.questions[asked.id] = { question: { data: asked }, answer: { label: 'A' } };
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'held: the answer waits');
+    answerCap(t, 'Give it more');
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action), [{ answer: { ask: 'later', choice: 'a' } }], 'the answer goes once the hold is lifted, and nothing resumes past the open ask');
+    assert.equal(acts(t.engine)[0].runId, runId);
+    assert.deepEqual(t.runner.carried(runId), { raised: true, runs: [] }, 'the cap is raised once');
+  } finally { t.cleanup(); }
+});
+
+test("an ask a held run raises waits for the hold, and Stop keeps it held", async () => {
+  const { t, event } = pausedAtCap();
+  try {
+    await t.runner.tick();
+    await t.runner.onAsk(event);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'no card for a held run\'s ask yet');
+    answerCap(t, 'Stop');
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'still held');
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /stays stopped/.test(w.data.words ?? '')));
+  } finally { t.cleanup(); }
+});
+
+test('Give it more on a held run with no ask open resumes it', async () => {
+  const { t, runId } = pausedAtCap();
+  try {
+    await t.runner.tick();
+    answerCap(t, 'Give it more');
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action), [{ resume: {} }]);
+    assert.equal(acts(t.engine)[0].runId, runId);
+  } finally { t.cleanup(); }
+});
+
 test('a cancel at the cap that fails is tried once more before the card', async () => {
   const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
   try {
