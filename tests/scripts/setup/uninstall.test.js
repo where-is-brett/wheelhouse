@@ -2660,10 +2660,13 @@ async function archiveOnHost(host, options) {
   await commitArchive(host.work, options);
   await g(host.work, 'push', '-q', host.product.url, 'main');
 }
-// The folder's copy of main, fetched from `from` as the folder last saw it.
+// The folder's copy of main, fetched from `from` as the folder last saw it. Without
+// --no-auto-maintenance, fetch leaves a detached `git maintenance run --auto` behind that holds
+// .git/objects/maintenance.lock for a moment, so a snapshot of the folder straight after could
+// catch the lock and the next one miss it.
 async function fetchToFolder(world, from) {
   if (!fs.existsSync(path.join(world.folder, '.git', 'objects'))) await g(world.folder, 'init', '-q', '-b', 'main');
-  await g(world.folder, 'fetch', '-q', from, '+refs/heads/main:refs/remotes/origin/main');
+  await g(world.folder, 'fetch', '-q', '--no-auto-maintenance', from, '+refs/heads/main:refs/remotes/origin/main');
 }
 const planHere = (world, f) => uninstallPlan({ folder: world.folder, userHome: world.userHome, platform: 'darwin', run: f.run, findGit: gitHere });
 const applyHere = async (world, f) => {

@@ -119,9 +119,11 @@ test('on Windows a timed-out command is killed with its children', async () => {
 test('on Windows the answer waits until taskkill has finished, so what the command held can be removed', async () => {
   let finish;
   let finished = false;
-  const killer = () => new Promise((resolve) => { finish = () => { finished = true; resolve(); }; });
+  let called;
+  const killing = new Promise((resolve) => { called = resolve; });
+  const killer = () => new Promise((resolve) => { finish = () => { finished = true; resolve(); }; called(); });
   const answered = run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 100, platform: 'win32', killer });
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await killing;
   setTimeout(() => finish(), 50);
   const result = await answered;
   assert.equal(result.timedOut, true);

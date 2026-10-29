@@ -306,8 +306,10 @@ test('two merges at once run one after the other', async () => {
     // A lock held by a live process makes the next wait, then refuse with OTHER_WINDOW.
     const lock = path.join(c.home, 'projects', PROJECT, 'lean.lock');
     let release;
-    const held = withLocalLock(PROJECT, () => new Promise((resolve) => { release = resolve; }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    let entered;
+    const holding = new Promise((resolve) => { entered = resolve; });
+    const held = withLocalLock(PROJECT, () => new Promise((resolve) => { release = resolve; entered(); }));
+    await holding;
     const inside = JSON.parse(fs.readFileSync(lock, 'utf8'));
     assert.equal(inside.pid, process.pid);
     assert.ok(!Number.isNaN(Date.parse(inside.startedAt)));
