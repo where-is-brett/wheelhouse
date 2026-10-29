@@ -1,6 +1,7 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 54), in the fake engine's events: each a run of the quick lane, or of
-// the small lane from 51, that stops where the scenario needs it. Not a scenario file: it has no number.
+// Recordings for the engine scenarios (42 to 55, and 60 to 62), in the fake engine's events: each a run of the quick
+// lane, of the small lane from 51, or of fix-main, that stops where the scenario needs it. Not a scenario file: it has
+// no number.
 import { confirmationFor } from '../../../scripts/state/events.js';
 
 const at = (minute) => new Date(Date.UTC(2026, 9, 29, 9, minute)).toISOString();
@@ -38,7 +39,7 @@ export function spending(work, tokens) {
 export function redMain(work) {
   return [
     started(work),
-    { type: 'ask', at: at(3), id: `${work}:red:1`, kind: 'question', level: 1, recommend: 'hold', answer: 'hold', card: false, line: 'The main line is red, so the merge queue holds merges until it is green again.', options: [{ id: 'hold', label: 'Hold' }] },
+    { type: 'ask', at: at(3), id: `${work}:red:1`, kind: 'question', level: 1, recommend: 'hold', answer: 'hold', card: false, opens: 'red-main', suspect: 41, line: 'The main line is red, so the merge queue holds merges until it is green again.', options: [{ id: 'hold', label: 'Hold' }] },
     { type: 'ask-resolved', at: at(4), id: `${work}:red:1` },
     ended(6),
   ];
@@ -112,4 +113,10 @@ export function smallWork(world, { id, title, visible = false, lanes = ['quick',
   const hash = id.replace(/\D/g, '').padEnd(64, '5').slice(0, 64);
   world.put('work', { id, title, lane: 'small', visible, dependsOn: [], doc: { path: `docs/work/${id}.md`, hash } });
   world.put('action', { action: 'approve-work', question: `Approve ${id} (small lane) as written`, label: 'Approve', work: id, lane: 'small', hash, shownFirst: visible });
+}
+
+// A fix-main run for a red main line: under way after its first step, or ended with `outcome`.
+export function fixing(work, outcome = null) {
+  const run = [{ ...started(work), lane: 'fix-main' }, step(2, 'implement', { tokens: 30000, dollars: 0.08, source: 'reported' })];
+  return outcome ? [...run, ended(8, outcome)] : run;
 }

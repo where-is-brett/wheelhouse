@@ -22,7 +22,7 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-const ALL = ['wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
+const ALL = [LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick, 'wheelhouse-small-task', LANE_WORKFLOWS.small];
 // Check 77's mean tokens for one implement round, on the mid-sized model.
 const ROUND_TOKENS = 127000;
 

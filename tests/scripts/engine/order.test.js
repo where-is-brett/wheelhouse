@@ -113,3 +113,11 @@ test('the order carries the director\'s answers to earlier questions, each cappe
   assert.match(checkOrder({ ...order, answers: [{ question: 'Q?', answer: long }] }), /answers/);
   assert.throws(() => workOrder({ work: WORK, answers: [{ question: 'Q?', answer: 3 }] }), /answers/);
 });
+
+test('only a fix-main order names an incident', async () => {
+  const { workOrder: make, checkOrder: check } = await import('../../../scripts/engine/order.js');
+  const order = make({ work: { id: 'fix-main-red-main-0123456789', lane: 'fix-main', goal: 'Green again', done: [{ command: 'npm test', expect: 0 }] } });
+  assert.equal(check({ ...order, incident: 'red-main-0123456789' }), null);
+  assert.match(check({ ...order, incident: 'Has Spaces' }), /incident/);
+  assert.match(check({ ...order, lane: 'quick', incident: 'red-main-0123456789' }), /incident/);
+});

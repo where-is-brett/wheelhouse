@@ -412,13 +412,20 @@ function buildLoopViews(sorted, enrolled) {
     }
   }
 
-  // An incident is open from its declaration until a verified lift after it.
+  // An incident is open from its declaration until a verified lift after it; a red-main incident also ends with the
+  // helper's own close.
   const fixes = actions('incident-fix');
   const lifts = actions('lift-incident');
   const open = new Map();
-  for (const e of [...sorted.filter((x) => x.kind === 'incident'), ...fixes, ...lifts].sort(byOrder)) {
+  const closes = sorted.filter((x) => x.kind === 'incident-closed');
+  for (const e of [...sorted.filter((x) => x.kind === 'incident'), ...fixes, ...lifts, ...closes].sort(byOrder)) {
     if (e.kind === 'incident') {
-      if (isPlainKey(e.data?.id) && !open.has(e.data.id)) open.set(e.data.id, { id: e.data.id, what: e.data.what, at: e.at, fixes: [] });
+      if (isPlainKey(e.data?.id) && !open.has(e.data.id)) {
+        const own = Object.fromEntries(['kind', 'suspect', 'work'].filter((k) => e.data[k] !== undefined).map((k) => [k, e.data[k]]));
+        open.set(e.data.id, { id: e.data.id, what: e.data.what, at: e.at, fixes: [], ...own });
+      }
+    } else if (e.kind === 'incident-closed') {
+      if (open.get(e.data?.incident)?.kind === 'red-main') open.delete(e.data.incident);
     } else if (e.data.action === 'lift-incident') {
       open.delete(e.data.incident);
     } else {

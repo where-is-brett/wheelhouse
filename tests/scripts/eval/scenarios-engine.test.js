@@ -10,7 +10,8 @@ import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
 import { asking, smallBlocked } from '../../eval/build-loop/engine-recordings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
-const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55];
+// The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js.
+const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62];
 
 test('--engine takes the fake, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');

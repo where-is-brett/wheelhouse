@@ -38,6 +38,37 @@ test('checkPack passes the shipped pack', () => {
   assert.deepEqual(checkPack(PACK_DIR), [], 'with the plugin\'s own copies');
 });
 
+const fixMain = () => readWorkflow(fs.readFileSync(path.join(PACK_DIR, 'wheelhouse-fix-main.yaml'), 'utf8'));
+
+test('checkPack accepts wheelhouse-fix-main, which takes the work input', () => {
+  assert.equal(fixMain().name, 'wheelhouse-fix-main');
+  assert.equal(fixMain().inputs.work.required, true);
+  assert.deepEqual(problems(PACK_DIR), []);
+});
+
+test('the fix-main lane has no preview, approval or ready step, and its merge comes after the signed review', () => {
+  const ids = fixMain().nodes.map((n) => n.id);
+  for (const gone of ['preview', 'approval', 'rejected', 'ready']) assert.equal(ids.includes(gone), false, gone);
+  const merge = fixMain().nodes.find((n) => n.id === 'merge');
+  assert.match(merge.bash, /scripts\/engine\/merge-fix\.js" --run "\$WORKFLOW_ID" --artefacts "\$ARTIFACTS_DIR"/);
+  assert.equal(merge.when, "$sign.output.clean == 'true'");
+  assert.ok(ids.indexOf('merge') > ids.indexOf('sign'));
+  // After the merge only the lesson, which changes nothing.
+  assert.deepEqual(ids.slice(ids.indexOf('merge') + 1), ['lesson', 'lesson-blocked', 'lesson-record']);
+});
+
+test('the fix-main lane re-runs the main line first, and builds only when that left it red', () => {
+  const nodes = fixMain().nodes;
+  const ids = nodes.map((n) => n.id);
+  assert.deepEqual(ids.slice(0, 3), ['order', 'rerun', 'implement']);
+  assert.match(nodes[1].bash, /scripts\/engine\/fix-rerun\.js" .*--base "\$BASE_BRANCH"/);
+  const implement = nodes.find((n) => n.id === 'implement');
+  assert.equal(implement.when, "$rerun.output.green == 'false'");
+  assert.equal(implement.loop_group.nodes[0].prompt_file, 'prompts/fix-main.md');
+  // The same guards as the quick lane before review: tests and agent files.
+  for (const id of ['tests', 'controls', 'held', 'sign', 'review-held']) assert.ok(ids.includes(id), id);
+});
+
 test('checkPack refuses a Claude step without the Wheelhouse plugin', () => {
   assert.match(problems(packWith((w) => { delete node(w, 'review-spec').plugins; })).join('\n'), /review-spec doesn't name the Wheelhouse plugin/);
   assert.match(problems(packWith((w) => { node(w, 'review-spec').plugins.push('superpowers@claude-plugins-official'); })).join('\n'), /review-spec names a plugin other than Wheelhouse/);
