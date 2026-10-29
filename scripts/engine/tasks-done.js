@@ -39,6 +39,12 @@ const valueOf = (argv, name) => {
   return at >= 0 && typeof argv[at + 1] === 'string' ? argv[at + 1] : '';
 };
 
+const EMPTY = {
+  ...UNFINISHED,
+  question: 'The plan for this work has no tasks, so nothing was built.',
+  topic: 'plan-empty',
+};
+
 export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
   const artefacts = runArg(argv, '--artefacts');
   const base = runArg(argv, '--base');
@@ -58,7 +64,8 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
   }
   const problem = planProblem(tasks);
   if (problem === 'too-many') out(JSON.stringify(TOO_BIG));
-  else if (problem === 'none' || tasks.some((t) => !t.done)) out(JSON.stringify(UNFINISHED));
+  else if (problem === 'none') out(JSON.stringify(EMPTY));
+  else if (tasks.some((t) => !t.done)) out(JSON.stringify(UNFINISHED));
   else out(JSON.stringify(CLEAN));
   return 0;
 }

@@ -152,10 +152,10 @@ test('a plan of more than eight tasks closes with a card for the feature lane', 
 });
 
 test('a plan with no tasks, or tasks left unticked, closes with a card to send it back', async () => {
-  for (const plan of ['# Plan\n', '- [x] **Task 1:** One\n- [ ] **Task 2:** Two\n']) {
+  for (const [plan, topic] of [['# Plan\n', 'plan-empty'], ['- [x] **Task 1:** One\n- [ ] **Task 2:** Two\n', 'tasks-unfinished']]) {
     const got = await done(repo(plan), artefacts());
     assert.equal(got.blocked, true);
-    assert.equal(got.topic, 'tasks-unfinished');
+    assert.equal(got.topic, topic);
     assert.equal(got.recommend, 'rework');
     assert.deepEqual(got.options.map((o) => o.id), ['rework', 'stop']);
   }
