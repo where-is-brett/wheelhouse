@@ -20,7 +20,7 @@ const asking = (id, over = {}) => [
   ev({ type: 'run-ended', outcome: 'completed' }),
 ];
 
-function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false } = {}) {
+function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-10-29T13:00:00.000Z', stop = false, slow = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-runner-'));
   const engine = fakeEngine({ recordings });
   const writes = [];
@@ -30,7 +30,7 @@ function setUp({ recordings = { one: asking('q1') }, settings = {}, at = '2026-1
     engine,
     file: path.join(dir, 'router.json'),
     readViews: () => views,
-    write: async (kind, data) => { writes.push({ kind, data }); },
+    write: async (kind, data) => { if (slow) await new Promise((resolve) => setTimeout(resolve, 5)); writes.push({ kind, data }); },
     stopped: () => world.stop,
     now: () => world.now,
     settings: () => ({ cardsPerDay: 3, bundleApprovals: false, ...settings }),
@@ -133,7 +133,7 @@ test('four level-3 asks in one afternoon: three cards today, the fourth tomorrow
     assert.deepEqual(t.writes.filter((w) => w.kind === 'note' && w.data.about === 'cards-waiting').at(-1).data, { about: 'cards-waiting', count: 1 });
     await t.runner.tick();
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 3, 'still three today');
-    t.world.now = new Date('2026-10-30T07:00:00.000Z');
+    t.world.now = new Date('2026-10-30T21:00:00.000Z');
     await t.runner.tick();
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 4);
     assert.equal(t.writes.filter((w) => w.kind === 'note' && w.data.about === 'cards-waiting').at(-1).data.count, 0);
@@ -273,5 +273,15 @@ test('a run that ended gets one cost record, with each role\'s share and unknown
     assert.equal(c.source, 'unknown');
     assert.deepEqual(Object.keys(c.byRole), ['implement', 'review-spec']);
     assert.doesNotThrow(() => makeEvent({ kind: 'cost', data: c }));
+  } finally { t.cleanup(); }
+});
+
+test('an ask routed while a tick is showing cards is shown once', async () => {
+  const t = setUp({ slow: true });
+  try {
+    const { runId } = t.engine.start({ recording: 'one' });
+    const event = t.engine.watch('0').events.filter((e) => e.runId === runId && e.type === 'ask').at(-1);
+    await Promise.all([t.runner.onAsk(event), t.runner.tick(), t.runner.tick()]);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
   } finally { t.cleanup(); }
 });

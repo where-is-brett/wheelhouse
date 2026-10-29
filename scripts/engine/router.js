@@ -94,8 +94,12 @@ function cardOf(ask, level) {
   };
 }
 
-// The calendar day of `at` (a Date or text), as text, UTC: the budget's day.
-export const dayOf = (at) => new Date(at).toISOString().slice(0, 10);
+// The calendar day of `at` (a Date or text), as text, on this computer's clock: the budget's day, the director's own.
+export function dayOf(at) {
+  const d = new Date(at);
+  const two = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
 
 // Which waiting cards to show now. `cards` are [{ importance, ... }] waiting in the order they came; `shownToday` how
 // many budgeted cards were shown today already. Importance 0 and 2 (All stop or an incident, and what holds up all

@@ -103,8 +103,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     await show();
   }
 
-  // Writes the waiting cards the day's budget has room for, and notes how many wait.
-  async function show() {
+  // Writes the waiting cards the day's budget has room for, and notes how many wait. One showing at a time: an ask
+  // routed while a tick shows cards waits for it, so no card is written twice.
+  let showing = Promise.resolve();
+  function show() {
+    showing = showing.then(showNow, showNow);
+    return showing;
+  }
+  async function showNow() {
     const today = dayOf(now());
     if (state.shown.day !== today) state.shown = { day: today, count: 0 };
     const { cardsPerDay = 3, bundleApprovals: bundling = false } = settings() ?? {};

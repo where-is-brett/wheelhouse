@@ -1,7 +1,7 @@
 // tests/scripts/engine/router.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeAsk, cardBudget, bundleApprovals, answerFor, SUGGEST_LABEL } from '../../../scripts/engine/router.js';
+import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, SUGGEST_LABEL } from '../../../scripts/engine/router.js';
 
 const HEAD = 'a'.repeat(40);
 const ask = (over = {}) => ({
@@ -82,4 +82,15 @@ test('a label answers with its option, Suggest a change with the director\'s wor
   assert.deepEqual(answerFor(engine, 'Keep it small'), { ask: 'run-1:ask:1', choice: 'a' });
   assert.deepEqual(answerFor(engine, SUGGEST_LABEL, ' Only the header '), { ask: 'run-1:ask:1', words: 'Only the header' });
   assert.equal(answerFor(engine, 'Not now'), null);
+});
+
+test('the card budget\'s day is the director\'s own, on this computer\'s clock', () => {
+  const before = process.env.TZ;
+  process.env.TZ = 'Australia/Sydney';
+  try {
+    assert.equal(dayOf('2026-10-29T12:00:00.000Z'), '2026-10-29', '11pm in Sydney');
+    assert.equal(dayOf('2026-10-29T14:00:00.000Z'), '2026-10-30', '1am the next morning in Sydney');
+  } finally {
+    if (before === undefined) delete process.env.TZ; else process.env.TZ = before;
+  }
 });
