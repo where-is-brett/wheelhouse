@@ -1,8 +1,12 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, 60 to 62 and 63 to 69), in the fake engine's events: each a run of the
-// quick lane, of the small lane from 51, of fix-main, or of the bug lane from 63, that stops where the scenario needs
-// it. Not a scenario file: it has no number.
+// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69 and 70 to 75), in the fake engine's events: each a
+// run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a feature's slices and
+// its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
+import fs from 'node:fs';
+import path from 'node:path';
 import { confirmationFor } from '../../../scripts/state/events.js';
+import { SLICES_FENCE } from '../../../scripts/engine/feature.js';
+import { briefHash } from '../../../scripts/feature/files.js';
 
 const at = (minute) => new Date(Date.UTC(2026, 9, 29, 9, minute)).toISOString();
 const started = (work, lane = 'quick') => ({ type: 'run-started', at: at(0), work, lane, branch: `wh/${work}` });
@@ -119,6 +123,45 @@ export function smallWork(world, { id, title, visible = false, lanes = ['quick',
 export function fixing(work, outcome = null) {
   const run = [{ ...started(work), lane: 'fix-main' }, step(2, 'implement', { tokens: 30000, dollars: 0.08, source: 'reported' })];
   return outcome ? [...run, ended(8, outcome)] : run;
+}
+
+// A slice-lane run of a feature that builds its slice behind the switch and opens pull request `pr` (scenarios 70 to
+// 75), or, with no `pr`, is still under way after its first step.
+export function sliceRun(work, { pr = null, tokens = 60000 } = {}) {
+  const run = [started(work, 'slice'), step(2, 'implement', { tokens, dollars: 0.2, source: 'reported' })];
+  return pr === null ? run : [...run, ended(6, 'completed', pr)];
+}
+
+// The feature's own run: the whole-feature review, the switch turned on, and the director's switch-on approval of
+// pull request `pr` at `head`.
+export function finishRun(work, { pr, head }) {
+  return approving(work, { pr, head }).map((e) => (e.type === 'run-started' ? { ...e, lane: 'feature' } : e));
+}
+
+// The design a feature scenario's director approved: its slices block, `count` slices behind one switch.
+export function featureDesign({ title, count = 2, demo = 'end' }) {
+  const slices = Array.from({ length: count }, (_, i) => ({ title: `Part ${i + 1} of ${title}`, goal: `Part ${i + 1} works`, done: [{ test: `part ${i + 1}` }] }));
+  const block = JSON.stringify({ goal: `${title} works`, flag: { name: 'new-orders' }, demo, slices }, null, 2);
+  return `# ${title}\n\nThe design in words.\n\n\`\`\`${SLICES_FENCE}\n${block}\n\`\`\`\n`;
+}
+
+// What a feature scenario seeds: the feature lane put on the engine, as the director's confirmed setting, the design
+// written into the project's checkout, and the feature work with the director's approval of that design.
+export function featureWork(world, { id, title, count = 2, demo = 'end', design = featureDesign({ title, count, demo }), place } = {}) {
+  const setting = world.put('setting', { key: 'engineLanes', value: ['quick', 'feature'] });
+  world.put('confirmation', confirmationFor(setting).data);
+  const doc = `docs/designs/${id}.md`;
+  fs.mkdirSync(path.join(world.folder, 'docs', 'designs'), { recursive: true });
+  fs.writeFileSync(path.join(world.folder, doc), design);
+  const hash = briefHash(design);
+  world.put('work', { id, title, lane: 'feature', visible: false, dependsOn: [], doc: { path: doc, hash }, ...(place === undefined ? {} : { place }) });
+  world.put('action', { action: 'approve-work', question: `Approve ${id} (feature lane) as written`, label: 'Approve', work: id, lane: 'feature', hash, shownFirst: false });
+  return { doc, hash };
+}
+
+// The code host's stand-in for a feature scenario: the pull requests in `merged` read merged, every other open.
+export function mergingHost(merged) {
+  return { prState: async (pr) => ({ state: merged.has(Number(pr)) ? 'merged' : 'open' }) };
 }
 
 // A bug-lane run: the reproduce step, the fix, the reviews and the pull request.

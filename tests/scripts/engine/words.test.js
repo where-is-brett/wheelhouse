@@ -6,7 +6,7 @@ import path from 'node:path';
 import { STEP_WORDS, stepWords, costWords, runLine, shippedLine, buildLines, shippedLines, runningLines } from '../../../scripts/engine/words.js';
 
 const PACK = path.join(import.meta.dirname, '..', '..', '..', 'engine', 'archon', 'pack');
-const LANES = ['wheelhouse-quick.yaml', 'wheelhouse-small.yaml', 'wheelhouse-small-task.yaml', 'wheelhouse-bug.yaml'];
+const LANES = ['wheelhouse-quick.yaml', 'wheelhouse-small.yaml', 'wheelhouse-small-task.yaml', 'wheelhouse-bug.yaml', 'wheelhouse-slice.yaml', 'wheelhouse-slice-task.yaml', 'wheelhouse-feature.yaml'];
 const RUN_ID = '7f3c2a10-1111-4222-8333-444455556666';
 
 const run = (over = {}) => ({ work: 'sale-banner', title: 'The sale banner', runId: RUN_ID, state: 'started', step: 'review-spec', minutes: 12, ...over });

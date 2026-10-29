@@ -6,7 +6,11 @@
 //
 //   Order = { v: 1, work, lane, goal, notInScope: [text], done: [Check], rulings: [text], decisionRules: [text],
 //             caps: { minutes, tokens }, protectedFiles: [path], preview: { pages, styleGuide } | null,
-//             showFirst, level, testCommand, bindings: { tiers?, aliases? } }
+//             showFirst, level, testCommand, bindings: { tiers?, aliases? },
+//             slice?: { n, of, title }, flag?: { name, file } | { name, how }, demo?, feature?: { slices: [Slice] } }
+//   Slice = { n, title, pr, head }: a slice of the feature that merged (its head null when the host didn't say), for the feature's own run (its whole-feature
+//   review and switch-on). `slice` and `demo` are a feature's slice run's; `flag` is the switch a feature's work sits
+//   behind, in a file the core can flip or in the project's own way, given in words.
 //   Check = { test } | { command, expect } | { page, mustShow }
 // `expect` is the exit code a command must end with (a number), or text its output must hold. A `test` check runs the
 // order's `testCommand` with the test's name added. `showFirst` is the work record's flag: visible work, unless the
@@ -43,12 +47,56 @@ export const DECISION_RULES = Object.freeze([
 // The project's test command when its settings name none: the test's name goes after it.
 export const DEFAULT_TEST_COMMAND = 'npm test --';
 
+// The file a feature's switch is kept in when the project has no way of its own: one JSON key a switch.
+export const DEFAULT_FLAG_FILE = 'config/feature-flags.json';
+// The most slices a feature has, and the longest the words saying how to set a project's own switch.
+export const MOST_SLICES = 12;
+const HOW_CHARS = 500;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const isCount = (n) => Number.isInteger(n) && n >= 1;
+
+// Why `flag` isn't a feature's switch, or null. A file is a JSON file inside the repository.
+function flagProblem(flag) {
+  if (!isObject(flag) || typeof flag.name !== 'string' || !SLUG.test(flag.name)) return 'a feature\'s flag needs its name, as a short slug';
+  const keys = Object.keys(flag).sort().join(',');
+  if (keys === 'file,name') {
+    const parts = typeof flag.file === 'string' ? flag.file.split('/') : [];
+    const inside = parts.length > 0 && parts.every((p) => p !== '' && p !== '.' && p !== '..' && !p.includes('\\')) && !/^[A-Za-z]:/.test(flag.file);
+    return inside && flag.file.endsWith('.json') ? null : 'a feature\'s flag file is a JSON file inside the repository';
+  }
+  if (keys === 'how,name') return isText(flag.how) && flag.how.length <= HOW_CHARS ? null : 'a feature\'s flag is set as the words say, in short text';
+  return 'a feature\'s flag is kept in a file, or set as the words say';
+}
+
+// Why the feature fields of `order` don't fit its lane, or null.
+function featureProblem(order) {
+  if (order.slice !== undefined) {
+    if (order.lane !== 'slice') return 'only a slice order names its slice';
+    const { n, of, title } = isObject(order.slice) ? order.slice : {};
+    if (!isCount(n) || !isCount(of) || n > of || of > MOST_SLICES || !isText(title)) return `a slice is one of at most ${MOST_SLICES}, with its title`;
+  }
+  if (order.demo !== undefined && (order.lane !== 'slice' || typeof order.demo !== 'boolean')) return 'only a slice order says yes or no to a demo';
+  if (order.flag !== undefined) {
+    if (!['slice', 'feature'].includes(order.lane)) return 'only a slice or feature order names a flag';
+    const problem = flagProblem(order.flag);
+    if (problem) return problem;
+  }
+  if (order.feature !== undefined) {
+    if (order.lane !== 'feature') return 'only a feature order lists its slices';
+    const slices = isObject(order.feature) ? order.feature.slices : null;
+    const ok = Array.isArray(slices) && slices.length >= 1 && slices.length <= MOST_SLICES
+      && slices.every((s) => isObject(s) && isCount(s.n) && isText(s.title) && isCount(s.pr) && (s.head === null || FULL_SHA.test(s.head ?? '')));
+    if (!ok) return 'a feature order lists each merged slice with its pull request and head';
+  }
+  return null;
+}
+
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const texts = (value) => Array.isArray(value) && value.every(isText);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // Why `check` isn't a done check, or null.
-function checkProblem(check) {
+export function checkProblem(check) {
   if (!isObject(check)) return 'a done check must be a record';
   const keys = Object.keys(check).sort().join(',');
   if (keys === 'test') return isText(check.test) ? null : 'a test check needs the test';
@@ -99,7 +147,7 @@ export function checkOrder(order) {
   }
   // A fix for a red main line names its incident (section 7.7); no other lane does.
   if (order.incident !== undefined && !(order.lane === 'fix-main' && typeof order.incident === 'string' && SLUG.test(order.incident))) return 'only a fix-main order names an incident, as a short slug';
-  return null;
+  return featureProblem(order);
 }
 
 // The routing table's column in force ({ role: { model } }, as resolveRouting gives it) as the pack's tier bindings
@@ -120,8 +168,10 @@ export function bindingsOf(roles) {
 // with `rulings` (text), the routing table's column in force as `routing` ({ tiers?, aliases? }), and the project's
 // settings as `config` ({ pages?, styleGuide?, testCommand? }); `caps` ({ minutes, tokens }) in place of the lane's own, as
 // the project's settings give them; `answers` ([{ question, answer }]) the director's answers to the work's earlier
-// questions, from the helper's own record. Throws, in plain words, on anything an order can't be.
-export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null, answers = [] } = {}) {
+// questions, from the helper's own record; `extra` a feature's fields ({ slice, flag, demo, feature, showFirst }), from
+// the core's reading of the approved design, with `showFirst` in place of the work's own. Throws, in plain words, on
+// anything an order can't be.
+export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null, answers = [], extra = {} } = {}) {
   if (!isObject(work)) throw new Error('A work order needs the work it is for');
   if (work.model !== undefined || work.models !== undefined) throw new Error('A work record names a model: the routing table is the one place that does');
   const order = {
@@ -145,6 +195,8 @@ export function workOrder({ work, rulings = [], routing = {}, config = {}, caps 
       answer: typeof a?.answer === 'string' ? a.answer.slice(0, ANSWER_CHARS) : a?.answer,
     })),
   };
+  for (const key of ['slice', 'flag', 'demo', 'feature']) if (extra?.[key] !== undefined) order[key] = structuredClone(extra[key]);
+  if (typeof extra?.showFirst === 'boolean') order.showFirst = extra.showFirst;
   const problem = checkOrder(order);
   if (problem) throw new Error(problem.charAt(0).toUpperCase() + problem.slice(1));
   return order;
