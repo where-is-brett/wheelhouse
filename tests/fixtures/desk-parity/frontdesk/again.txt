@@ -1,0 +1,34 @@
+exit 0
+--- out
+{
+  "questions": [
+    {
+      "question": "Put pull request #7 live?\nPull request #7 changes the wording on the sign-in page.\nIt changes what users see.\nNothing is released.\nTo know more, just ask.",
+      "header": "Approval",
+      "options": [
+        {
+          "label": "Approve",
+          "description": "Recommended: It approves and goes ahead, because the checks passed."
+        },
+        {
+          "label": "Suggest a change…",
+          "description": "Tell me what you'd change; I'll come back with a new proposal."
+        },
+        {
+          "label": "Show me",
+          "description": "I show you what it looks like, then ask again."
+        },
+        {
+          "label": "Not now",
+          "description": "Leave this waiting; nothing changes yet."
+        }
+      ],
+      "multiSelect": false
+    }
+  ],
+  "id": "<id-1>",
+  "inReply": [
+    "Put pull request #7 live?\nPull request #7 changes the wording on the sign-in page.\nIt changes what users see.\nNothing is released.\nTo know more, just ask.\nApprove pull request #7 at commit abcdef123456\nReply code: GSQ5"
+  ]
+}
+--- err

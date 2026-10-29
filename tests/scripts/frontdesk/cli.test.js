@@ -15,6 +15,7 @@ import { composeCard } from '../../../scripts/cards/compose.js';
 import { buildViews } from '../../../scripts/state/views.js';
 import { makeEvent, dataHash, listEvents, confirmationFor, PROTECTED_KINDS } from '../../../scripts/state/events.js';
 import { delegationReview } from '../../../scripts/frontdesk/learning.js';
+import { deskCore } from '../../../scripts/desk/core.js';
 import { levelWords } from '../../../scripts/settings/effective.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { startHelper } from '../../../scripts/host/helper.js';
@@ -65,7 +66,7 @@ async function inHome(fn) {
 // does (a signed kind is refused) and the views are built from what is held. Under `stop` (true, or
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
-// made at `writeAt(n)`, the nth write's time.
+// made at `writeAt(n)`, the nth write's time. The desk's reads are the real desk's, over what is held.
 function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
@@ -78,21 +79,34 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
     held.push(event);
     return { ok: true, id: event.id, pushed: true };
   };
+  // The views as the helper gives them, with the card events, the card answers and the review when asked.
+  const viewsAnswer = (body) => {
+    const built = views();
+    return {
+      ok: true,
+      views: built,
+      ...(names === undefined ? {} : { names }),
+      ...(stopped() ? { stop: true } : {}),
+      ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
+      ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
+      ...(body.review === true ? { review: delegationReview(held, { now: NOW, enrolled: readEnrolled(), views: built }) } : {}),
+    };
+  };
+  const source = {
+    project: 'o__p',
+    events: () => held,
+    enrolled: () => readEnrolled(),
+    views: async (body = {}) => viewsAnswer(body),
+    profile: async () => ({ settings: profile }),
+  };
   const client = {
-    state: {
-      views: async (body) => {
-        calls.push(['views', body]);
-        const built = views();
-        return {
-          ok: true,
-          views: built,
-          ...(names === undefined ? {} : { names }),
-          ...(stopped() ? { stop: true } : {}),
-          ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
-          ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
-          ...(body.review === true ? { review: delegationReview(held, { now: NOW, enrolled: readEnrolled(), views: built }) } : {}),
-        };
+    desk: {
+      read: async (body) => {
+        calls.push(['desk.read', { cwd: body.cwd, view: body.view, args: body.args }]);
+        return deskCore({ source, recorder: {}, now: () => NOW }).read(body.view, body.args);
       },
+    },
+    state: {
       write: async (body) => {
         calls.push(['write', body]);
         if (stopped()) return STOP;
@@ -104,10 +118,6 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
       write: async (body) => {
         calls.push(['profile.write', body]);
         return stopped() ? STOP : { ok: true, id: 'p-1', pushed: true };
-      },
-      views: async (body) => {
-        calls.push(['profile.views', body]);
-        return { ok: true, views: { settings: profile } };
       },
     },
     prState: async (body) => {
@@ -173,7 +183,7 @@ test('cards gives at most four questions and says how many are left', async () =
     assert.equal(helper.writes().length, 2, 'nothing handed out, nothing recorded');
     // Every request to the state names the folder, for the helper to place the project; the
     // director's profile, read for the explanations setting, has none to place.
-    assert.ok(helper.calls.every(([name, body]) => body.cwd === CWD || name === 'profile.views'));
+    assert.ok(helper.calls.every(([name, body]) => body.cwd === CWD));
   });
 });
 
@@ -1053,7 +1063,7 @@ test('review asks each proposal as a confirm card for a level, and records the r
       return JSON.parse(out);
     };
     const first = await review();
-    assert.deepEqual(helper.calls[0], ['views', { cwd: CWD, review: true }]);
+    assert.deepEqual(helper.calls[0], ['desk.read', { cwd: CWD, view: 'waiting', args: { review: true } }]);
     const writes = helper.writes();
     assert.deepEqual(writes.map((w) => w.kind), ['level', 'card', 'level', 'card', 'asked', 'note']);
     // Each proposal is a level event under the id its card was composed with, with its words and its reason.
@@ -1207,7 +1217,7 @@ test('again gives the card the board numbers n, with its id, and records it as a
     assert.equal(out.code, 0, out.err);
     assert.deepEqual(out.json.questions.map((q) => q.question), [one.data.question]);
     assert.equal(out.json.id, one.id, 'again names the card it gives by its id');
-    assert.deepEqual(helper.calls.map(([name, body]) => [name, body.cards ?? body.data?.cards]), [['views', true], ['write', [one.id]]]);
+    assert.deepEqual(helper.calls.map(([name, body]) => [name, body.view ?? body.data?.cards]), [['desk.read', 'waiting'], ['write', [one.id]]]);
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [one.id] } }]);
     for (const bad of [['again', '9'], ['again', '0'], ['again', 'x'], ['again'], ['again', '1', '2']]) {
       assert.equal((await run(helper, bad)).code, 1, bad.join(' '));
@@ -1841,7 +1851,7 @@ test('an unknown command, or a helper that can\'t be reached, is one line on sta
     const unknown = await run(helper, ['show', '7']);
     assert.equal(unknown.code, 1);
     assert.match(unknown.err, /^Commands: cards, card, again, why, suggest, record, similar, views, explain, review, preview, carry-on, archive, restore, confirm, premium-card, premium-check\n$/);
-    const away = { client: { state: { views: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
+    const away = { client: { desk: { read: async () => ({ ok: false, refused: 'the host helper could not be reached: is it running?' }) } } };
     const out = await run(away, ['cards']);
     assert.equal(out.code, 1);
     assert.equal(out.err, 'the host helper could not be reached: is it running?\n');

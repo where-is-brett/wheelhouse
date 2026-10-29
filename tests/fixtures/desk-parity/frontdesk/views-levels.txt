@@ -1,0 +1,4 @@
+exit 0
+--- out
+No decision topics yet.
+--- err

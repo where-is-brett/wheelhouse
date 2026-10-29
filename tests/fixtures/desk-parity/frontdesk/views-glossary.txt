@@ -1,0 +1,22 @@
+exit 0
+--- out
+pull request: a proposed change to the product, set aside for checking before it joins the real thing
+CI: the automatic checks that run on every change
+merge: to join a checked change into the real product
+branch: a separate copy of the work where a change is made without touching the real product
+commit: one saved step of the work, with a short note on what changed
+review: a second, independent agent reading a change closely and signing off that it is clean; no change joins the product without one
+slice: one finished piece of a bigger feature, sent up as its own pull request and kept hidden behind a feature flag until you switch it on
+lane: how much process a piece of work goes through (quick, small, feature or bug); the bigger the lane, the more planning and checking
+feature flag: a switch that keeps finished work hidden from users until you decide to turn it on
+preview: a private copy of the product with the change in it, so you can look before it goes live
+worktree: a separate working folder where one agent builds one piece of work without getting in the way of the others
+All stop: the big red button: every agent stops until you lift it
+Standard: the normal protection level, and the default: it guards against agents' mistakes and against being misled by what they read, and asks nothing extra of you
+Locked: the optional stronger protection level, set up once with your computer's password: it stops an agent getting round the safety checks even if it tries, because the checks sit where only an administrator can change them
+the helper: a small program on your computer, outside the agents' sandbox, that alone holds the keys to your code host and the signing key; agents can only ask it to act, and its checks apply to every request
+the Bosun: the agent that runs a project's building: it queues work, writes briefs, starts and closes the Crew's sessions, checks for clashes, passes questions to you and merges through the gate, but never builds
+the gate: the last checks a change must pass at the moment it merges: tests green on exactly that version, a clean signed review, and still fitting with the latest product
+appetite: how much effort a piece of work is worth, set when you approve it; if the work runs past it, it pauses and comes back to you with what was learnt
+the done contract: the list, agreed before building starts, of what must be true for the work to count as finished; it is turned into tests before any code is written
+--- err

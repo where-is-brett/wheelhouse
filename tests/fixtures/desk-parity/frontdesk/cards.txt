@@ -1,0 +1,74 @@
+exit 0
+--- out
+{
+  "questions": [
+    {
+      "question": "Put pull request #7 live?\nPull request #7 changes the wording on the sign-in page.\nIt changes what users see.\nNothing is released.\nTo know more, just ask.",
+      "header": "Approval",
+      "options": [
+        {
+          "label": "Approve",
+          "description": "Recommended: It approves and goes ahead, because the checks passed."
+        },
+        {
+          "label": "Suggest a change…",
+          "description": "Tell me what you'd change; I'll come back with a new proposal."
+        },
+        {
+          "label": "Show me",
+          "description": "I show you what it looks like, then ask again."
+        },
+        {
+          "label": "Not now",
+          "description": "Leave this waiting; nothing changes yet."
+        }
+      ],
+      "multiSelect": false
+    },
+    {
+      "question": "Which name suits the order page?\nIt is the wording users see.\nThe page keeps its old name.\nTo know more, just ask.",
+      "header": "Question",
+      "options": [
+        {
+          "label": "Plain",
+          "description": "Recommended: It plains and goes ahead, because it reads quickest."
+        },
+        {
+          "label": "Playful",
+          "description": "It playfuls and goes ahead."
+        },
+        {
+          "label": "Suggest a change…",
+          "description": "Tell me what you'd change; I'll come back with a new proposal."
+        }
+      ],
+      "multiSelect": false
+    },
+    {
+      "question": "The export needs to know which separator to use.\nIt changes the file people download.\nMeanwhile that work waits, and the rest carries on.\nTo know more, just ask.",
+      "header": "Question",
+      "options": [
+        {
+          "label": "Comma",
+          "description": "Commas between values; opens in any spreadsheet."
+        },
+        {
+          "label": "Tab",
+          "description": "Recommended: Tabs between values, because the session building Export a report as a spreadsheet recommends it."
+        },
+        {
+          "label": "Suggest a change…",
+          "description": "Tell me what you'd change; I'll come back with a new proposal."
+        }
+      ],
+      "multiSelect": false
+    }
+  ],
+  "left": 0,
+  "inReply": [
+    "Put pull request #7 live?\nPull request #7 changes the wording on the sign-in page.\nIt changes what users see.\nNothing is released.\nTo know more, just ask.\nApprove pull request #7 at commit abcdef123456\nReply code: GSQ5",
+    "Which name suits the order page?\nIt is the wording users see.\nThe page keeps its old name.\nTo know more, just ask.",
+    "The export needs to know which separator to use.\nIt changes the file people download.\nMeanwhile that work waits, and the rest carries on.\nTo know more, just ask.\nAnswer question q-export-csv-1\nReply code: 67HJ"
+  ]
+}
+--- err

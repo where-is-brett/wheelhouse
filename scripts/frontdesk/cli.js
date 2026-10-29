@@ -42,7 +42,8 @@
 //                   helper's answer, `"recorded":true` when the click was recorded (ruling P8-7). For
 //                   an agent whose chat clicks can't bind: Claude Code's front desk never needs it
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
-// a request to the helper, naming this folder for the helper to place the project. Nothing here
+// a request to the helper, naming this folder for the helper to place the project: it reads through
+// the desk (scripts/desk/), and writes through the helper's own routes. Nothing here
 // writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
 // decides nothing): `record` takes only the plain kinds the front desk decides, never a card, a
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
@@ -70,6 +71,7 @@ import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { isOpen, surveyLines, whyNext, workLines } from '../desk/views.js';
+import { deskClient } from '../desk/client.js';
 
 // Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
 export { surveyLines, workLines };
@@ -133,14 +135,36 @@ function readyIn(cwd) {
 
 // --- Asking the helper ---
 
+// The desk for the project `cwd` is in, asked through the command's own helper client. The front
+// desk is in the sandbox, where ~/.wheelhouse can't be read, so the desk's local core never runs here.
+const deskOf = (client, cwd) => deskClient({ cwd, client, local: 'never' });
+
+// The record as the desk's waiting view gives it (the helper's views, its card events and whether
+// STOP is on), with `review` the delegation review and `answers` the card-answer events; or the
+// helper's refusal, thrown as it said it.
+async function recordOf(client, cwd, { answers = false, review = false } = {}) {
+  const got = await deskOf(client, cwd).read('waiting', { ...(answers ? { answers: true } : {}), ...(review ? { review: true } : {}) });
+  if (got?.ok !== true || !isPlain(got.data?.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  return got.data;
+}
+
 // The views, whether STOP is on, with `cards` the card events the board numbers its list from, and
 // with `answers` the card-answer events.
 async function viewsOf(client, cwd, { cards = false, answers = false } = {}) {
-  const got = await client.state.views({ cwd, ...(cards ? { cards: true } : {}), ...(answers ? { answers: true } : {}) });
-  if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  const got = await recordOf(client, cwd, { answers });
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
   return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], names: namesIn(got) };
+}
+
+// The director's own settings view, as the desk's settings view gives it; none when it can't be read.
+async function ownSettings(client, cwd) {
+  try {
+    const got = await deskOf(client, cwd).read('settings');
+    return got?.ok === true && isPlain(got.data?.profile) ? got.data.profile : {};
+  } catch {
+    return {};
+  }
 }
 
 // The names the project goes by, as the helper's views give them (its repository's own name and its folder's), for
@@ -188,14 +212,8 @@ const TERMS = '\n\nTerms: ';
 // views, the explanations setting and the concepts the director knows from the settings in force,
 // and what stays as written: the settings' names, the titles of the work and the `names` the project goes by
 // (namesIn). A profile that can't be read gives the defaults.
-async function wordsOf(client, views, now, names = []) {
-  let own = {};
-  try {
-    const got = await client.profile?.views?.({});
-    if (got?.ok === true && isPlain(got.views?.settings)) own = got.views.settings;
-  } catch {
-    // The project's settings and the defaults still hold.
-  }
+async function wordsOf(client, cwd, views, now, names = []) {
+  const own = await ownSettings(client, cwd);
   const settings = effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now });
   const titles = Object.values(isPlain(views.work) ? views.work : {}).map((w) => flat(w?.work?.data?.title)).filter((t) => typeof t === 'string' && t !== '');
   return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles], names };
@@ -410,7 +428,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 export async function cards({ client, cwd, now }) {
   const problems = [];
   let { views, stop, names } = await viewsOf(client, cwd);
-  const words = await wordsOf(client, views, now, names);
+  const words = await wordsOf(client, cwd, views, now, names);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   let made = 0;
@@ -484,7 +502,7 @@ export async function card({ client, cwd, input, now }) {
   if (input.kind === 'approve-work' && isPlain(target) && views.work?.[target.work]?.work?.data?.visible === true) {
     target = { ...target, shownFirst: true };
   }
-  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now, names));
+  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, cwd, views, now, names));
   // The card revised must wait now, or have been closed only by a later head of its pull request or
   // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same
   // pull request or branch, or the waiting view would close nothing.
@@ -763,7 +781,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }),
       // The time of the usage card whose pick this is, which the card's line gives; it ties a return card to this switch.
       ...(typeof input.usageCard === 'string' && !Number.isNaN(Date.parse(input.usageCard)) ? { usageCard: input.usageCard } : {}) };
-    const words = countsAtOnce({ kind: 'setting', data }) ? null : await viewsOf(client, cwd).then((v) => wordsOf(client, v.views, now, v.names));
+    const words = countsAtOnce({ kind: 'setting', data }) ? null : await viewsOf(client, cwd).then((v) => wordsOf(client, cwd, v.views, now, v.names));
     const got = await writeSetting({ client, cwd, data, words, makeId, ready: ready ?? readyIn(cwd) });
     if (got.card === undefined) return got;
     return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
@@ -793,7 +811,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
   if (typeof words !== 'string' || words.trim() === '' || BREAK.test(words)) throw new CliError('A ruling needs its words, on one line, as the director gave them');
   const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, views, now, names));
+  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, cwd, views, now, names));
   const got = await write(client, cwd, 'ruling', input, id);
   if (got.id !== id) throw new CliError(`The ruling was recorded as ${got.id}, not under the id its confirm card names`);
   let made;
@@ -839,11 +857,10 @@ export function levelCard(event, words) {
 // recorded: otherwise it stays due, and a level whose card wasn't written gets it from the
 // board-context hook on the next visit. Under STOP nothing is written, so it is refused.
 export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
-  const got = await client.state.views({ cwd, review: true });
-  if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  const got = await recordOf(client, cwd, { review: true });
   if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
   if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
-  const words = await wordsOf(client, got.views, now, namesIn(got));
+  const words = await wordsOf(client, cwd, got.views, now, namesIn(got));
   const problems = [];
   const made = [];
   for (const proposal of got.review.proposals) {
@@ -938,10 +955,9 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
   if (name === 'survey') return surveyLines(views.survey);
-  if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now, names));
+  if (name === 'work') return workLines(views, answers, await wordsOf(client, cwd, views, now, names));
   // settings: the project's over the director's own, over the defaults
-  const profile = await client.profile.views({});
-  const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
+  const own = await ownSettings(client, cwd);
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
 }
 

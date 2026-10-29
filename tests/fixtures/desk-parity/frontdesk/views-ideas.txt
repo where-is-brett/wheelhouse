@@ -1,0 +1,4 @@
+exit 0
+--- out
+- A dark theme for the shop
+--- err

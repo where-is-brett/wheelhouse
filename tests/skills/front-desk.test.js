@@ -67,8 +67,8 @@ function helper() {
   return {
     writes,
     client: {
+      desk: { read: async () => ({ ok: true, v: 'desk/1', data: { ok: true, views: { waiting: [], glossary: {} }, cards: [] } }) },
       state: {
-        views: async () => ({ ok: true, views: { waiting: [], glossary: {} } }),
         write: async (body) => { writes.push(body); return { ok: true, id: body.id ?? `e-${writes.length}`, pushed: true }; },
       },
       prState: async () => ({ ok: true, result: { headSha: HEAD, state: 'open' } }),

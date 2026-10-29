@@ -1,0 +1,4 @@
+exit 0
+--- out
+https://preview.host.invalid/pull/7
+--- err

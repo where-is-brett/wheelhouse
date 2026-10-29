@@ -77,7 +77,7 @@ function deskClient({ cards = [], answer = { ok: true, recorded: true, choice: '
   const asked = [];
   return {
     asked,
-    state: { views: async (body) => ({ ok: true, views: {}, stop: true, ...(body.cards ? { cards } : {}) }) },
+    desk: { read: async () => ({ ok: true, v: 'desk/1', data: { ok: true, views: {}, stop: true, cards } }) },
     confirm: async (body) => { asked.push(body); return answer; },
   };
 }
