@@ -66,6 +66,15 @@ function windowsQuoted(value) {
   return `"${value}"`;
 }
 
+// needsLoginStart({ projects }) -> boolean
+//   projects  [{ project, engine, agent }]: each project's effective `engine` setting ('wheelhouse' or 'archon') and,
+//             for a Lean project, the agent it runs on
+// Whether this computer needs the helper started at sign-in: a project builds on the Archon engine, which carries
+// on with no session open, or one runs on Copilot, whose helper nothing else starts.
+export function needsLoginStart({ projects = [] } = {}) {
+  return projects.some((p) => p?.engine === 'archon' || p?.agent === 'copilot');
+}
+
 const agentsFolder = (home) => path.join(home, 'Library', 'LaunchAgents');
 
 // loginEntry({ platform, node, root, script, home }) -> { kind, path, content } | null

@@ -30,6 +30,7 @@ import { LEVELS, REAL_USERS } from '../../../scripts/setup/host.js';
 import { withProject, SLUG, REPO, T0 } from '../../helpers/setup-answers.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { fileURLToPath } from 'node:url';
+import { loginStartRecord } from '../../../scripts/lib/login-start.js';
 
 const PORT = 14318;
 const QUIET_STEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'helpers', 'setup-quiet-steps.js');
@@ -505,5 +506,54 @@ test('on a joining Mac, step 8 asks Locked itself when the project is launched, 
     assert.equal(JSON.parse(made[1].before).connection.locked, undefined);
     // Asked again, the record already says Locked: nothing more to mark.
     assert.equal((await step.plan(ctxOf('darwin', locked))).changes[0].mark, undefined);
+  });
+});
+
+// The project's settings view as the helper writes it, holding one setting.
+function setSetting(slug, key, value) {
+  const file = path.join(stateDir(slug), '..', 'views', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ [key]: { key, value } })}\n`);
+}
+
+const LOGIN_LINE = 'Start Wheelhouse\'s helper when you sign in, so the build carries on with no session open';
+
+test('login start is listed when a project uses the new engine', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    setSetting(SLUG, 'engine', 'archon');
+    const fake = fakeRun();
+    const step = computerStep({ run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    const planned = await step.plan(ctx);
+    const login = planned.changes.filter((c) => c.what === 'login');
+    assert.equal(login.length, 1);
+    assert.equal(login[0].kind, 'login-start');
+    assert.equal(login[0].target, path.join(user, 'Library', 'LaunchAgents', 'dev.wheelhouse.helper.plist'));
+    assert.ok(composed(planned, 6).includes(LOGIN_LINE), 'one line on the card');
+    assert.equal(composed(planned, 6).split(LOGIN_LINE).length, 2, 'once');
+
+    // Applied: the launch agent and its record, in the scratch folders only; the helper is started by the
+    // person's next sign-in, so no host program runs here.
+    const run = startRun({ folder, now: () => T0 });
+    const done = await runApply({ step, runId: run.id, changes: planned.changes, ctx: { ...ctx, runId: run.id } });
+    assert.deepEqual(done, { ok: true });
+    assert.equal(fs.existsSync(login[0].target), true);
+    assert.equal(loginStartRecord().path, login[0].target);
+    assert.ok(fake.calls.every((c) => c[0] === 'launchctl' && c[1] === 'getenv'), 'it only reads the launch environment');
+
+    // Already made: nothing more is listed, and the step settles.
+    const again = await step.plan(ctx);
+    assert.ok(again.settled, 'nothing left to change');
+  });
+});
+
+test('a computer with neither condition gets no login start', async () => {
+  await withProject(async ({ folder, user, config }) => {
+    setSetting(SLUG, 'engine', 'wheelhouse');
+    const step = computerStep({ run: fakeRun().run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const planned = await step.plan({ folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} });
+    assert.equal(planned.changes.some((c) => c.what === 'login'), false);
+    assert.doesNotMatch(composed(planned, 6), /when you sign in, so the build/);
+    assert.equal(loginStartRecord(), null);
   });
 });
