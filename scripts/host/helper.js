@@ -4115,7 +4115,7 @@ export async function startHelper({
     stopSeen = true;
     engineStopping ??= (async () => {
       const got = await stopEngine({
-        engine: engineHosts[0].engine, processes: engineHosts.flatMap(({ host }) => host.processes()), reason,
+        engine: engineHosts[0].engine, processes: [...engineHosts.flatMap(({ host }) => host.processes()), ...(room?.processes() ?? [])], reason,
         afterSnapshot: () => { for (const { host } of engineHosts) host.check(); }, ...engineStopWith,
       });
       const said = stopWords(got);
@@ -4258,6 +4258,8 @@ export async function startHelper({
       await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
+      // The engine room's console goes with the helper that keeps it.
+      try { room?.stop(); } catch { /* it has gone */ }
       await new Promise((resolve) => {
         server.close(() => {
           if (!pipe) fs.rmSync(address, { force: true });

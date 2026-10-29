@@ -34,9 +34,10 @@ function noHostTools(log) {
   };
 }
 
-// openWorld({ engine, recordings, now }) -> the world, on the project's default settings. `now` is a function the
-// scenario may move on.
-export async function openWorld({ engine: kind = 'fake', recordings = {}, now = () => new Date() } = {}) {
+// openWorld({ engine, recordings, now, spawn, adapt, seed }) -> the world, on the project's default settings. `now` is a
+// function the scenario may move on. For tests: `spawn` stands in for the helper's processes (a wake by default),
+// `adapt(engine)` adds to the fake engine, and `seed(world)` writes records before the helper starts.
+export async function openWorld({ engine: kind = 'fake', recordings = {}, now = () => new Date(), spawn = () => fakeChild(), adapt = (e) => e, seed = () => {} } = {}) {
   if (!ENGINES.includes(kind)) throw new Error(`An engine scenario runs on ${ENGINES.join(', ')}, not ${kind}`);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ew-'));
   const home = path.join(root, 'h');
@@ -48,7 +49,7 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
   const before = process.env.WHEELHOUSE_HOME;
   process.env.WHEELHOUSE_HOME = home;
   const hostCalls = [];
-  const engine = fakeEngine({ recordings, artefacts, now: () => now().toISOString() });
+  const engine = adapt(fakeEngine({ recordings, artefacts, now: () => now().toISOString() }));
   let helper = null;
   const records = (kind) => listEvents(stateDir(PROJECT), { report: () => {} }).filter((e) => kind === undefined || e.kind === kind);
   const own = () => { const k = ownKey(); return k ? [{ computer: k.computer, publicKey: k.publicKey }] : []; };
@@ -88,9 +89,10 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     enrol({ computer, publicKey, enrolledAt: now().toISOString() });
     writeProject(PROJECT, { folder, remoteUrl: 'https://example.invalid/o/p.git', host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' } });
     await openProjectRecord(PROJECT);
+    await seed(world);
     helper = await startHelper({
       run: noHostTools(hostCalls), address: helperAddress({ home }), adapterFor: async () => ({}), envFor: async () => ({}), now,
-      spawn: () => fakeChild(), engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
+      spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
     });
   } catch (error) {
     await world.close();

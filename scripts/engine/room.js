@@ -20,12 +20,18 @@ export const roomLine = () => `The engine room is on: Archon's console at http:/
 
 // engineRoom({ spawn, command, wanted, held }) -> { tend, line, stop, processes }
 // `tend()` starts the console when `wanted()` and not `held()` (All stop), and ends it otherwise; the helper calls it
-// on a timer. `line()` is the Logbook's line while it runs, else null.
+// on a timer, and `stop()` when it closes. `line()` is the Logbook's line while it runs, else null.
 export function engineRoom({ spawn, command, wanted, held = () => false }) {
   let child = null;
   let entry = null;
+  // The console is detached, so it leads a process group of its own: the group is ended, with what it started.
   const end = () => {
-    try { child?.kill('SIGTERM'); } catch { /* it has gone */ }
+    if (!child) return;
+    const group = child.detachedGroup === true && Number.isInteger(child.pid) && child.pid > 0;
+    try {
+      if (group) process.kill(-child.pid, 'SIGTERM');
+      else child.kill('SIGTERM');
+    } catch { /* it has gone */ }
   };
   return {
     tend() {
@@ -33,7 +39,10 @@ export function engineRoom({ spawn, command, wanted, held = () => false }) {
       if (!on) { end(); return; }
       if (child) return;
       const c = command();
-      const started = spawn(c.command, c.args, { env: c.env, stdio: 'ignore', detached: process.platform !== 'win32', windowsHide: true });
+      const detached = process.platform !== 'win32';
+      const started = spawn(c.command, c.args, { env: c.env, stdio: 'ignore', detached, windowsHide: true });
+      // Only a real child process leads its own group; a stand-in's pid is nobody's.
+      started.detachedGroup = detached && typeof started.spawnfile === 'string';
       child = started;
       entry = { pid: started.pid, name: ROOM_NAME, command: [c.command, ...c.args].join(' '), ended: false };
       const gone = () => {

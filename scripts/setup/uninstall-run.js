@@ -495,6 +495,8 @@ export async function applyUninstall({
             : entry.what === 'engine' ? await o.stopEngine()
               : await (entry.what === 'foreman' ? o.stopForeman(plan.project) : o.stopWatcher(plan.project));
           const name = { engine: 'The build engine\'s runs', foreman: 'The Bosun', watcher: 'The watcher', receiver: 'The usage receiver' }[entry.what];
+          // Runs still going would lose their engine underneath them: nothing else is removed until they stop.
+          if (entry.what === 'engine' && !got.stopped) halt(`The build engine's runs did not all stop (${got.why}), so nothing else was removed; ask for uninstall's plan again once they have`);
           say(got.stopped ? `${name} is stopped.` : `${name}: ${got.why}.`);
           break;
         }

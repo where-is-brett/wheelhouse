@@ -64,3 +64,32 @@ test('the engine room is closed under All stop, and a console that ends is start
   assert.equal(children[1].child.killed, true);
   room.stop();
 });
+
+// The engine room's console as a real process of its own, detached as the helper starts it: the helper's close ends it.
+test('the engine room ends when the helper closes', { skip: process.platform === 'win32' }, async () => {
+  const { openWorld, until } = await import('../../../scripts/eval/engine-world.js');
+  const { confirmationFor } = await import('../../../scripts/state/events.js');
+  const { spawn: realSpawn } = await import('node:child_process');
+  let consolePid = null;
+  const spawn = (command, args, options) => {
+    if (args?.[0] !== 'serve') return stubSpawn().spawn(command, args, options);
+    const child = realSpawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { ...options, env: process.env });
+    consolePid = child.pid;
+    return child;
+  };
+  const world = await openWorld({
+    spawn,
+    adapt: (engine) => Object.assign(engine, { roomCommand: () => ({ command: 'archon', args: ['serve'], env: {} }) }),
+    seed: (w) => {
+      const setting = w.put('setting', { key: 'engineRoom', value: true, words: 'Engine room: on' });
+      w.put('confirmation', confirmationFor(setting).data);
+    },
+  });
+  const alive = () => { try { process.kill(consolePid, 0); return true; } catch { return false; } };
+  try {
+    assert.ok(await until(() => consolePid !== null && alive()), 'the console started');
+  } finally {
+    await world.close();
+  }
+  assert.ok(await until(() => !alive()), 'the console ended with the helper');
+});

@@ -3086,3 +3086,27 @@ test('uninstall\'s pull request removes the project\'s .archon file, and the eng
     host.cleanup();
   }
 });
+
+test('uninstall stops, and keeps the engine folder, when the engine\'s runs don\'t stop', async () => {
+  const host = await standIn();
+  try {
+    await withHome(async () => {
+      const { world, r } = await applyWorld({ host });
+      engineSetup(world, r);
+      const f = fakes(world);
+      f.ops.stopEngine = async () => ({ stopped: false, why: '1 of its runs or processes are still going' });
+      f.ops.removePluginScope = async () => ({ removed: true });
+      try {
+        const { done } = await applyPlan(world, f);
+        assert.equal(done.ok, false);
+        assert.match(done.refused, /still going/);
+        assert.ok(fs.existsSync(engineDir()), 'the engine stays while its runs do');
+        assert.deepEqual(f.seen.stops, [], 'nothing else was stopped or removed');
+      } finally {
+        fs.rmSync(archonHome(), { recursive: true, force: true });
+      }
+    });
+  } finally {
+    host.cleanup();
+  }
+});
