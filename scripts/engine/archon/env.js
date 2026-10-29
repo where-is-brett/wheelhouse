@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { engineDir, archonHome } from '../../lib/paths.js';
+import { PERMISSION_MODE } from './build.js';
 
 // The switches that keep Archon's usage reporting off. They are applied last, so nothing overrides them.
 export const TELEMETRY = Object.freeze({ ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' });
@@ -41,5 +42,7 @@ export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin
   if (claudeBin) env.CLAUDE_BIN_PATH = claudeBin;
   if (copilotBin) env.COPILOT_BIN_PATH = copilotBin;
   env.WHEELHOUSE_ENGINE_RUN = '1';
+  // Wheelhouse's patch (build.js) starts Claude steps in this mode instead of bypass mode, so the sandbox holds.
+  env.ARCHON_CLAUDE_PERMISSION_MODE = PERMISSION_MODE;
   return { ...env, ...TELEMETRY };
 }

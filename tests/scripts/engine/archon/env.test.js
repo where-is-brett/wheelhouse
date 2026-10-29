@@ -25,6 +25,8 @@ test('archonEnv sets the three telemetry switches, after anything the caller had
   assert.equal(env.DO_NOT_TRACK, '1');
   assert.equal(env.POSTHOG_API_KEY, 'off');
   assert.equal(env.WHEELHOUSE_ENGINE_RUN, '1');
+  // Check 75: in bypass mode Claude Code applies no sandbox, so the patched engine is told to start steps in acceptEdits.
+  assert.equal(env.ARCHON_CLAUDE_PERMISSION_MODE, 'acceptEdits');
 });
 
 test("archonEnv's PATH has the broker before anything and no folder holding a real gh", () => {
