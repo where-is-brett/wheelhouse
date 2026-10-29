@@ -110,3 +110,32 @@ test('fixDecision: an answer to the card starts the next attempt', () => {
   assert.deepEqual(decide({ runs, kept: { carded: ['r1'], next: { revert: true } } }), { act: 'start', revert: true });
   assert.deepEqual(decide({ runs, kept: { carded: ['r1'], next: { revert: false } } }), { act: 'start', revert: false });
 });
+
+import { weakensChecks } from '../../../scripts/engine/fix-main.js';
+
+const CONFIG = { ciFiles: [], criticalAreas: [], plugin: false };
+const cleanTests = { clean: true, findings: '' };
+
+test('a deleted test weakens the checks, from the run\'s own tests step', () => {
+  const got = weakensChecks({ paths: ['src/a.js'], config: CONFIG, tests: { clean: false, findings: 'deletes the test tests/a.test.js' } });
+  assert.equal(got.length, 1);
+  assert.match(got[0], /deletes the test tests\/a\.test\.js/);
+});
+
+test('a missing tests step weakens the checks', () => {
+  assert.match(weakensChecks({ paths: ['src/a.js'], config: CONFIG, tests: null })[0], /tests step/);
+});
+
+test('changes to CI, .archon policy, agent control files and coverage settings weaken the checks', () => {
+  for (const file of ['.github/workflows/ci.yml', '.archon/sdlc/policy/maintainers.json', 'CLAUDE.md', '.claude/settings.json', 'vitest.config.ts', '.nycrc']) {
+    const got = weakensChecks({ paths: ['src/a.js', file], config: CONFIG, tests: cleanTests });
+    assert.equal(got.length, 1, file);
+    assert.match(got[0], new RegExp(file.replace(/[.]/g, '\\.')));
+  }
+  // The project's own CI files and critical-area checks count too.
+  assert.equal(weakensChecks({ paths: ['ops/pipeline.yml'], config: { ...CONFIG, ciFiles: ['ops/**'] }, tests: cleanTests }).length, 1);
+});
+
+test('a change to source only does not weaken the checks', () => {
+  assert.deepEqual(weakensChecks({ paths: ['src/a.js', 'tests/a.test.js'], config: CONFIG, tests: cleanTests }), []);
+});

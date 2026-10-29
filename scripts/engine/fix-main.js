@@ -7,6 +7,8 @@
 import crypto from 'node:crypto';
 import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
+import { isTestSettings } from './test-guard.js';
+import { classifyChange } from '../gate/guardrails.js';
 
 export const RED_MAIN = 'red-main';
 export const FIX_LANE = 'fix-main';
@@ -97,4 +99,19 @@ export function fixDecision({ incident, runs = [], green = null, stop = false, s
   if (latest.outcome === 'cancelled') return { act: 'card', run: latest.runId, why: 'cancelled' };
   if (green === null) return { act: 'wait', why: 'unknown' };
   return { act: 'card', run: latest.runId, why: 'failed' };
+}
+
+// What would make the main line green by asking less of its checks, as plain reasons (none: the fix may be added).
+// `paths` the fix's changed files and `config` the project's configuration, both read by the helper from its own
+// mirror; `tests` the run's tests step output ({ clean, findings }) from the engine's own record, which an agent can't
+// write: deleted or skipped tests and fewer assertions. A guardrail path (CI files, `.archon/`, files that steer
+// agents, the project's critical-area checks) and test or coverage settings weaken them too.
+export function weakensChecks({ paths = [], config, tests } = {}) {
+  const reasons = [];
+  if (!isPlain(tests) || typeof tests.clean !== 'boolean') reasons.push('the run\'s tests step left no result, so the fix can\'t be shown to keep every test');
+  else if (tests.clean !== true) reasons.push(`it weakens the tests: ${String(tests.findings ?? '').trim() || 'the tests step found a problem'}`);
+  const { guardrailPaths } = classifyChange({ paths, config });
+  for (const file of guardrailPaths) reasons.push(`it changes ${file}, which the checks or the agents' rules rest on`);
+  for (const file of paths.filter((f) => isTestSettings(f) && !guardrailPaths.includes(f))) reasons.push(`it changes the test or coverage settings in ${file}`);
+  return reasons;
 }

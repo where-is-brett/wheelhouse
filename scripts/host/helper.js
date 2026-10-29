@@ -395,12 +395,28 @@ const touchesCi = (paths, config) => paths.some((file) => ciPatterns(config).som
 // is `{ open: false }`. With any open, it is a fix when a verified `incident-fix` of any open
 // incident names this pull request (the fix the director clicked is the point); otherwise the id
 // is an open incident's, so the reason names one.
-export function incidentFor(views, number) {
+// `fix` is a red-main incident's fix as fixOfRun found it, from the helper's own record of a fix-main run: the pull
+// request it names is that incident's fix too (Archon design, section 7.7). No caller's word gives one.
+export function incidentFor(views, number, { fix = null } = {}) {
   const open = views.incidents?.open;
   if (!Array.isArray(open)) return { open: true, isFix: false };
   if (open.length === 0) return { open: false };
-  const fixing = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
+  const fixing = open.find((i) => (Array.isArray(i.fixes) && i.fixes.includes(number))
+    || (i.kind === 'red-main' && fix?.incident === i.id && fix.pr === number));
   return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
+}
+
+// A red-main incident's fix (section 7.7): `call` is the fix-main lane's merge step's { runId, pr, head, incident };
+// `opened` the helper's own record of the run that opened the pull request (routes.js openedOf); `headSha` the pull
+// request's head on the host now. The fix is { incident, pr, head } only when that run, of the fix-main lane, opened
+// that pull request at that head for that incident, the head hasn't moved, and that red-main incident is open;
+// otherwise null, and the pull request meets the gate as any other does.
+export function fixOfRun({ views, opened, call, headSha } = {}) {
+  if (!opened || !call || typeof call.runId !== 'string' || !/^[0-9a-f]{40}$/.test(call.head ?? '')) return null;
+  if (opened.lane !== 'fix-main' || opened.runId !== call.runId || opened.incident !== call.incident || opened.head !== call.head || headSha !== call.head) return null;
+  const open = Array.isArray(views?.incidents?.open) ? views.incidents.open : [];
+  if (!open.some((i) => i?.kind === 'red-main' && i.id === call.incident)) return null;
+  return { incident: call.incident, pr: call.pr, head: call.head };
 }
 
 // `npm test` when the project in `folder` has a test script of its own in its package.json (not npm's placeholder,
@@ -3127,9 +3143,10 @@ export async function startHelper({
     return commit.stdout.trim();
   }
 
-  async function doMerge(body, ctx) {
+  // `fixCall` only from the fix-main lane's merge route, inside the helper (engineRun's `merge`): /merge never gives it.
+  async function doMerge(body, ctx, { fixCall = null } = {}) {
     try {
-      return await mergeAnswer(body, ctx);
+      return await mergeAnswer(body, ctx, { fixCall });
     } finally {
       if (typeof body?.project === 'string') {
         await oneAtATime(`mirror:${body.project}`, () => dropRequestRefs(body.project, ctx));
@@ -3138,7 +3155,7 @@ export async function startHelper({
     }
   }
 
-  async function mergeAnswer(body, ctx) {
+  async function mergeAnswer(body, ctx, { fixCall = null } = {}) {
     const { project, number } = body;
     if (!Number.isInteger(number) || number < 1) refuse('the pull request number must be a whole number from 1');
     // The private record and the mirror are looked at before any git runs in either; a refusal answers here.
@@ -3235,7 +3252,7 @@ export async function startHelper({
       approval,
       enrolled,
       upToDate,
-      incident: incidentFor(views, number),
+      incident: incidentFor(views, number, { fix: fixCall ? fixOfRun({ views, opened: engineRun.openedOf(project, number), call: fixCall, headSha }) : null }),
       // What /pr/open recorded built the pull request's branch, from the signed state, against this
       // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
       // verified restore has none: it puts back a release that merged before (Ruling 105).
@@ -3789,7 +3806,50 @@ export async function startHelper({
     },
     // What built an engine run's pull request: Archon's pinned release and the installed pack's digest.
     provenance: (project, { branch }) => engineWrite(project, 'provenance', { branch, provenance: engineProvenance({ packDigest: packTreeDigest(path.join(engineDir(), 'pack')) }) }),
+    // A red main line's fix (section 7.7): the open red-main incident, the fix's changes from the helper's own mirror,
+    // and its merge through the helper's own gate as that incident's fix.
+    incidentOf: (project, id) => {
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+      return (views.incidents?.open ?? []).find((i) => i.kind === 'red-main' && i.id === id) ?? null;
+    },
+    changesOf: async (project, { pr, head }) => {
+      const ctx = await contextFor(project);
+      const defaultBranch = await defaultBranchOf(project, await ctx.adapter());
+      const changes = await readChanges({ project, number: pr, headSha: head, defaultBranch }, ctx);
+      return changes ? { paths: changes.paths, config: changes.config } : null;
+    },
+    merge: async (project, call) => {
+      try {
+        const ctx = await contextFor(project);
+        return await oneAtATime(`merge:${project}`, () => doMerge({ project, number: call.pr, stop: false, bypass: false }, ctx, { fixCall: call }));
+      } catch (error) {
+        return { ok: false, refused: error instanceof Error ? error.message : 'the helper\'s gate didn\'t add the fix' };
+      }
+    },
   });
+
+  // Whether the project's main line reads green: its default branch's head's checks, from the host (true, false, or
+  // null when they can't be read or are still running). A red-main incident ends only on a true.
+  async function mainGreen(project) {
+    try {
+      const adapter = await (await contextFor(project)).adapter();
+      const head = await adapter.branchHead(await defaultBranchOf(project, adapter));
+      const { state } = await adapter.ciState(head);
+      return state === 'success' ? true : state === 'failure' ? false : null;
+    } catch {
+      return null;
+    }
+  }
+  // The runs All stop cancelled, from its notes in the project's record.
+  function stoppedRunsOf(project) {
+    try {
+      return listEvents(stateDir(project), { report: () => {} })
+        .filter((e) => e.kind === 'note' && e.data?.about === 'all-stop' && Array.isArray(e.data.cancelled))
+        .flatMap((e) => e.data.cancelled.map((c) => c?.runId).filter((id) => typeof id === 'string'));
+    } catch {
+      return [];
+    }
+  }
 
   // The engine's fetch mirror (Archon design, section 12.4, as check 76 ran it): no GitHub key ever leaves the helper,
   // so Archon's git reads come from a bare mirror in the engine's folder, which the project's `url.<mirror>.insteadOf`
@@ -4202,6 +4262,9 @@ export async function startHelper({
       start: (args) => engineRun.start(args),
       readyOf: () => engineRun.readyAll(project),
       spentThisMonth: () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0),
+      mainGreen: () => mainGreen(project),
+      stoppedRuns: () => stoppedRunsOf(project),
+      fixedRuns: () => engineRun.fixedRuns(project),
     });
     const runner = engineRunner({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
