@@ -107,3 +107,13 @@ test('a pull request sent back for a clash is started again to bring it up to da
   assert.deepEqual(got.clashCards, [{ work: 'b' }]);
   assert.deepEqual(got.start, []);
 });
+
+test('a feature between slices still holds the feature lane and a slot, so a second feature waits for pace', () => {
+  const work = Object.fromEntries([piece('f1', { lane: 'feature', approved: true, place: 0 }), piece('f2', { lane: 'feature', approved: true, place: 1 }), piece('q', { place: 2 })]);
+  const runs = { f1: [runOf('f1', 'ended', { lane: 'slice', outcome: 'completed', pr: 70 })] };
+  const got = dispatch(base({ work, runs, settings: { engineLanes: ['quick', 'feature'] } }));
+  assert.deepEqual(got.start.map((s) => s.work), ['q']);
+  assert.deepEqual(got.hold, [{ work: 'f2', why: 'pace' }]);
+  const ended = dispatch(base({ work, runs, reports: { f1: { at: '2026-10-29T11:00:00.000Z', data: { work: 'f1', outcome: 'merged' } } } }));
+  assert.ok(ended.start.some((s) => s.work === 'f2'), 'a feature that merged holds nothing');
+});

@@ -32,8 +32,13 @@ export function dispatch({ work = {}, runs = {}, reports = {}, settings = {}, st
   const pace = paceOf(settings);
   const entries = Object.entries(isPlain(work) ? work : {}).filter(([, e]) => isPlain(e?.work?.data) && lanes.includes(e.work.data.lane));
 
-  // What holds a slot: a run of the engine's that hasn't ended.
-  const live = entries.filter(([id, e]) => runsOf(runs, id, e.work).some((r) => r.data.state !== 'ended'));
+  // What holds a slot: a run of the engine's that hasn't ended, and a feature from its first slice until it ends, since
+  // its slices run one after another with the dispatcher's runner starting each.
+  const live = entries.filter(([id, e]) => {
+    const own = runsOf(runs, id, e.work);
+    if (e.work.data.lane === FEATURE && own.length > 0) return !endedBy(reports, id, e.work);
+    return own.some((r) => r.data.state !== 'ended');
+  });
   let building = live.length;
   let features = live.filter(([, e]) => e.work.data.lane === FEATURE).length;
   const running = live.map(([id, e]) => ({ work: id, files: e.files ?? [] }));
@@ -43,7 +48,7 @@ export function dispatch({ work = {}, runs = {}, reports = {}, settings = {}, st
   const clashCards = [];
   for (const [id, e] of entries) {
     const times = sent.get(id);
-    if (!times || live.some(([l]) => l === id)) continue;
+    if (!times || runsOf(runs, id, e.work).some((r) => r.data.state !== 'ended')) continue;
     if (times >= 2) clashCards.push({ work: id });
     else {
       const last = runsOf(runs, id, e.work).at(-1);

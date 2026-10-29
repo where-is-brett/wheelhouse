@@ -96,7 +96,7 @@ const texts = (value) => Array.isArray(value) && value.every(isText);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // Why `check` isn't a done check, or null.
-function checkProblem(check) {
+export function checkProblem(check) {
   if (!isObject(check)) return 'a done check must be a record';
   const keys = Object.keys(check).sort().join(',');
   if (keys === 'test') return isText(check.test) ? null : 'a test check needs the test';
