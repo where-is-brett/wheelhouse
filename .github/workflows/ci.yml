@@ -1,5 +1,7 @@
 # .github/workflows/ci.yml
-# Runs the tests on Linux, and on macOS once a pull request is out of draft or on main.
+# Runs the tests on Linux, and on macOS once a pull request is out of draft or on main, each split
+# into parts that run side by side. A pull request that changes only the design documents or the
+# build plans passes the test jobs without running the tests (.github/scripts/plan.js).
 # While the Mac version comes first, Windows runs only when started by hand (Actions, CI,
 # Run workflow, with Windows ticked). Checks the mod (validator, source, bridge imports and
 # the mod's tests), and checks the lineage manifest against fresh copies of the upstream skills.
@@ -27,28 +29,57 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        # A macOS minute costs about ten Linux minutes, and the tests run on the Mac
-        # before every push, so a draft pull request leaves macOS out. Windows only on a run
-        # started by hand with Windows ticked.
-        os: ${{ fromJSON(inputs.windows && '["ubuntu-latest", "windows-latest", "macos-latest"]' || github.event.pull_request.draft && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
-    runs-on: ${{ matrix.os }}
-    # The tests take a few minutes on Linux, longer on GitHub's busier macOS runners, and up to most of an hour on Windows, where
-    # starting a process is slow; a hung run stops here, not at GitHub's six hours.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 30 || 15 }}
+  # Plans the test jobs (.github/scripts/plan.js): the computers, how many parts each splits the
+  # tests into, and whether a pull request that changes only text no test reads skips the tests.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tests: ${{ steps.plan.outputs.tests }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
+      # The merge of the pull request and its first parent, the base as it is now.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - if: matrix.os != 'windows-latest'
-        run: npm test
+      - id: plan
+        run: node .github/scripts/plan.js
+
+  test:
+    needs: plan
+    name: test (${{ matrix.os }}, ${{ matrix.part }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux always; macOS once a pull request is out of draft, as a macOS minute costs about
+        # ten Linux minutes and the tests run on the Mac before every push; Windows only on a run
+        # started by hand with Windows ticked. Linux splits the tests into two parts and macOS into
+        # three, each part a job of its own (node --test-shard); any part failing fails the run.
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    # Each part takes a few minutes on Linux, longer on GitHub's busier macOS runners, and the
+    # whole suite up to most of an hour on Windows, where starting a process is slow; a hung run
+    # stops here, not at GitHub's six hours.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 30 || 15 }}
+    steps:
+      # A pull request that changes only text no test reads: the job passes without the tests.
+      - if: needs.plan.outputs.tests == 'skip'
+        run: echo "Only text no test reads changed, so the tests are skipped."
+      - if: needs.plan.outputs.tests == 'run'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: needs.plan.outputs.tests == 'run'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # npm test's command with this job's part; npm test with no arguments runs the whole suite.
+      - if: needs.plan.outputs.tests == 'run' && matrix.os != 'windows-latest'
+        run: node --test --test-shard=${{ matrix.part }} --import ./tests/helpers/test-home.js --test-timeout=480000 "tests/**/*.test.js"
       # npm test with a longer limit per test file: on Windows the end-to-end build loop's file
       # runs past npm test's eight minutes, as each of its tests takes a minute or more there.
-      - if: matrix.os == 'windows-latest'
+      - if: needs.plan.outputs.tests == 'run' && matrix.os == 'windows-latest'
         run: node --test --import ./tests/helpers/test-home.js --test-timeout=1500000 "tests/**/*.test.js"
 
   validate:
