@@ -46,6 +46,7 @@ const refuse = (what) => answer.deny(`Wheelhouse does not let an agent ${what}: 
 // The build engine (spec 12.2): its program and the engine room's port, and its own files.
 const ENGINE = 'Wheelhouse does not let an agent run or reach the build engine: it answers only to the helper. Say what the work needs instead';
 const ENGINE_FILES = 'Wheelhouse does not let an agent open the build engine\'s own files: only its own run\'s artefacts and its own worktree. Say what the work needs instead';
+const OWN_ARTEFACTS = 'The step\'s own run\'s artefacts';
 const PLUGIN_READ = 'Wheelhouse does not let an agent read its own scripts and files: your playbook names each command and what it takes. '
   + 'Run the command as the playbook gives it; where the playbook doesn\'t say how, tell the director what is missing instead of looking in Wheelhouse\'s code';
 
@@ -237,7 +238,22 @@ function fileRefusal(input, { home, platform, pluginRoot, env, roots, engine }) 
     const places = [...roots, ...roots.flatMap((r) => spellings(r, r))];
     if (steersAgent(spellings(given, input.cwd), { roots: places, folders: known, platform, fold })) return answer.deny(CONTROL_FILE);
   }
+  // The step's own run's artefacts lie outside its worktree, so Claude Code would ask about each use and no one answers
+  // in a run. A project setting's allow rule isn't read there: Archon's worktrees come from the engine's mirror, whose
+  // folder is never trusted. So a call wholly in them (by every spelling; a Glob by its pattern's fixed start) is allowed.
+  const places = fixedStart === null ? [absolute, real] : [path.resolve(fixedStart)];
+  if (engine.run !== null && places.every((candidate) => ownArtefacts(spellings(candidate, input.cwd), engine, fold))) return answer.allow(OWN_ARTEFACTS);
   return null;
+}
+
+// Whether every spelling of a path lies in the engine's home, in the step's own run's artefacts.
+function ownArtefacts(candidates, engine, fold) {
+  const run = engine.run === null ? null : fold(engine.run);
+  return candidates.length > 0 && candidates.every((candidate) => engine.homes.some((home) => {
+    if (!inside(fold, home, candidate)) return false;
+    const parts = fold(candidate).slice(fold(home).length).split(/[\\/]/).filter(Boolean);
+    return parts.length >= 6 && placeInHome(parts, run) === 'artefacts';
+  }));
 }
 
 // Whether any spelling of a path lies in the build engine's home (`engine.homes`, every spelling of it) other than in

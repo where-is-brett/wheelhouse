@@ -103,3 +103,13 @@ Run at the start of part 3b, on the scratch source checkout of v0.13.0 (commit 0
 
 Nothing to do. One thing for the main session to know, not a click: the first Archon step that named the Wheelhouse plugin coincided with a new user-scope entry for `wheelhouse@wheelhouse` (version 0.1.2, not enabled) appearing in Claude Code's record of installed plugins (`~/.claude/plugins/installed_plugins.json`), at the second that step started; another check's run left one for its own plugin the same way. The probe ran no `claude plugin` command, so Archon's plugin overlay, or Claude Code acting on it, wrote it. It was left in place.
 
+
+## Later: the overlay's home (30 October 2026)
+
+The overlay in `.claude/settings.local.json` did nothing because Archon v0.13.0 gives its Claude steps the `project` and `user` setting sources only, and its config and node schema refuse `local`. A node's `sandbox:` passes through, but it is the same for every run of a workflow, so it can't name one run's artefacts. Part 4.6 moved the overlay into the worktree's `.claude/settings.json`, merged over the branch's own shared settings and kept out of the run's commits with `git update-index --skip-worktree` (each worktree has its own index). No Archon patch was needed.
+
+A probe ran Claude Code as Archon starts it (`--setting-sources project`, `acceptEdits`, one cheap model, $0.01 in all) in a worktree with the merged settings:
+
+- The sandbox lists held: `cat` of another run's artefact was refused (`Operation not permitted`), and `cat` of the run's own `order.json` worked without a prompt.
+- The `permissions.allow` rule for the run's own artefacts, and `permissions.additionalDirectories` in its place, were ignored: Claude Code reads neither from project settings until the folder is trusted ("this workspace has not been trusted"). Archon's worktrees come from the engine's mirror, which is never trusted, so a project rule can't open the Read tool there.
+- A plugin's `PreToolUse` hook answering `allow` did open it, in the same untrusted worktree. So the tool guard now allows a file tool call that lies wholly in the step's own run's artefacts.

@@ -48,6 +48,7 @@ function makeProject(config) {
 const PLUGIN = path.join(os.tmpdir(), 'wh-plugin-root');
 const call = (cwd, tool, tool_input = {}) => ({ cwd, session_id: 's', hook_event_name: 'PreToolUse', permission_mode: 'default', tool_name: tool, tool_input });
 const denied = (out) => out?.hookSpecificOutput?.permissionDecision === 'deny';
+const allowed = (out) => out?.hookSpecificOutput?.permissionDecision === 'allow';
 const run = (base, home, input, platform = process.platform) => decide(input, { dir: path.join(base, 'managed'), home, platform, pluginRoot: PLUGIN });
 
 const FILE_TOOLS = ['Read', 'Edit', 'Write', 'MultiEdit'];
@@ -1368,12 +1369,21 @@ test('reading another run\'s artefacts is refused and its own is allowed', async
     const step = (input) => inEngine(ctx, input, { env, projectDir: e.tree });
     const ownNote = path.join(e.own, 'notes.md');
     const otherNote = path.join(e.other, 'notes.md');
+    // The own artefacts are outside the step's worktree, so Claude Code would ask about each use, and no one answers in
+    // a run; Archon's worktrees come from the engine's mirror, whose folder is never trusted, so a project setting's
+    // allow rule isn't read. The guard allows them itself.
     for (const tool of ['Read', 'Edit', 'Write']) {
-      assert.equal(await step(call(e.tree, tool, { file_path: ownNote })), undefined, `${tool} own`);
-      assert.equal(await step(call(e.tree, tool, { file_path: path.join(e.own, 'new', 'plan.md') })), undefined, `${tool} new own`);
+      assert.ok(allowed(await step(call(e.tree, tool, { file_path: ownNote }))), `${tool} own`);
+      assert.ok(allowed(await step(call(e.tree, tool, { file_path: path.join(e.own, 'new', 'plan.md') }))), `${tool} new own`);
       assert.ok(denied(await step(call(e.tree, tool, { file_path: otherNote }))), `${tool} other`);
     }
-    assert.equal(await step(call(e.tree, 'Grep', { pattern: 'x', path: e.own })), undefined);
+    assert.ok(allowed(await step(call(e.tree, 'Grep', { pattern: 'x', path: e.own }))));
+    assert.ok(allowed(await step(call(e.tree, 'Glob', { pattern: `${e.own}/**/*.md` }))));
+    // Only a call wholly in the own artefacts is allowed: one over their workspace is refused, and one in the
+    // worktree is left to Claude Code's own rules.
+    assert.ok(denied(await step(call(e.tree, 'Glob', { pattern: `${path.join(e.ws, 'artifacts')}/**/*.md` }))));
+    assert.ok(denied(await step(call(e.tree, 'Read', { file_path: path.join(e.own, '.env') }))));
+    assert.ok(denied(await step(call(e.tree, 'Write', { file_path: path.join(e.own, '.claude', 'settings.json') }))));
     assert.equal(await step(call(e.tree, 'Bash', { command: `cat ${ownNote}` })), undefined);
     assert.equal(await step(call(e.tree, 'Bash', { command: `echo done > ${path.join(e.own, 'done.md')}` })), undefined);
     for (const command of [`cat ${otherNote}`, `cat ${path.join(e.ws, 'artifacts', 'runs')}/*/notes.md`, 'cat ../../artifacts/runs/run-other/notes.md', `ls ${path.join(e.ws, 'artifacts', 'runs')}`]) {
@@ -1394,9 +1404,11 @@ test('reading another run\'s artefacts is refused and its own is allowed', async
     }
     // A run's overlay names nothing to the guard, and an agent can't write one.
     fs.mkdirSync(path.join(e.tree, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(e.tree, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { filesystem: { allowRead: [e.other] } } }));
+    fs.writeFileSync(path.join(e.tree, '.claude', 'settings.json'), JSON.stringify({ sandbox: { filesystem: { allowRead: [e.other] } } }));
     assert.ok(denied(await step(call(e.tree, 'Read', { file_path: otherNote }))));
-    for (const tool of ['Edit', 'Write']) assert.ok(denied(await step(call(e.tree, tool, { file_path: path.join(e.tree, '.claude', 'settings.local.json') }))), tool);
+    for (const file of ['settings.json', 'settings.local.json']) {
+      for (const tool of ['Edit', 'Write']) assert.ok(denied(await step(call(e.tree, tool, { file_path: path.join(e.tree, '.claude', file) }))), `${tool} ${file}`);
+    }
   });
 });
 
