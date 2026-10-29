@@ -402,3 +402,50 @@ test('the feature\'s merged report is tried again when its write fails', async (
   await d.tick();
   assert.equal(world.written.filter((w) => w.kind === 'report' && w.data.outcome === 'merged').length, 1);
 });
+
+test('a carry-on held at the feature\'s cap goes on after Keep going, and ends after Stop here', async () => {
+  for (const label of [KEEP_GOING, STOP_HERE]) {
+    const { d, world, recordLast } = setUp();
+    await d.tick();
+    recordLast({ pr: 70, branch: 'wh/orders-1' });
+    world.closed.add(70);
+    await d.tick();
+    world.costs.push(featureCap(readSlices(DESIGN), {}));
+    world.questions[asked(world)[0].id] = { answer: { label: BUILD_AGAIN } };
+    await d.tick();
+    assert.equal(world.starts.length, 1, `${label}: the cap holds Build it again`);
+    const cap = asked(world).find((q) => q.options.some((o) => o.label === KEEP_GOING));
+    assert.ok(cap, `${label}: the cap card came`);
+    world.questions[cap.id] = { answer: { label } };
+    await d.tick();
+    await d.tick();
+    if (label === KEEP_GOING) {
+      assert.equal(world.starts.length, 2);
+      assert.equal(world.starts[1].branch, 'wh/orders-1');
+      assert.equal(world.starts[1].carryOn, true);
+    } else {
+      assert.equal(world.starts.length, 1);
+      assert.equal(closedReports(world).length, 1);
+    }
+  }
+});
+
+test('a rejected demo brings its card even when the run asked an earlier question that was answered', async () => {
+  const demo = DESIGN.replace('"demo":"end"', '"demo":"midpoint"');
+  const { d, world, recordLast } = setUp({ design: { text: demo } });
+  await d.tick();
+  world.questions['q-orders-500001'] = { question: { data: { id: 'q-orders-500001', engine: { runId: 'run-1', ask: 'run-1:ask:1', options: {} } } }, answer: { label: 'Its own line' } };
+  recordLast({ pr: 70, outcome: 'cancelled' });
+  await d.tick();
+  assert.equal(asked(world).length, 1);
+});
+
+test('the merge queue isn\'t started for a ready pull request whose work has ended closed', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  world.reports.orders = { at: '2026-10-29T10:00:00.000Z', data: { work: 'orders', outcome: 'closed' } };
+  const got = await d.tick();
+  assert.equal(got.startMergeQueue, false);
+});

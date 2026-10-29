@@ -142,7 +142,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // those of the new queueing.
     const queued = entry?.work?.at ?? null;
     if (kept.queued !== queued) {
-      Object.assign(kept, { queued, started: [], asked: null, raised: false, stopped: false, reported: false, ended: false, stalls: {}, cards: (kept.cards ?? 0) + (kept.asked ? 1 : 0) });
+      Object.assign(kept, { queued, started: [], asked: null, raised: false, reported: false, ended: false, stalls: {}, carry: null, cards: (kept.cards ?? 0) + (kept.asked ? 1 : 0) });
       keep();
     }
     let design = null;
@@ -179,6 +179,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const s = settings() ?? {};
     const spent = (views.costs?.[work] ?? []).reduce((n, c) => n + (Number.isFinite(c?.data?.tokens) ? c.data.tokens : 0), 0);
     if (spent >= featureCap(design, s, { raised: kept.raised }) && !(await featureCapAnswered(views, work, entry, kept, spent, design, s))) {
+      // A carry-on held here (Build it again, Give it more, a rework) goes on once the director says Keep going.
+      if (carryOn) {
+        kept.carry = { branch: branch ?? null };
+        keep();
+      }
       return { ok: false, refused: 'the feature has used the tokens set aside for it' };
     }
     const progress = progressFor(views, work, entry, kept, design);
@@ -252,6 +257,19 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         }
         continue;
       }
+      // The cap card's answer, whatever start it held: Stop here ends the feature; Keep going carries on a held carry-on.
+      const capLabel = kept.asked ? views.questions?.[kept.asked]?.answer?.label : null;
+      if (!live && capLabel === STOP_HERE) {
+        await endFeature(work, kept, `${entry.work.data.title ?? work} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
+        continue;
+      }
+      if (!live && capLabel === KEEP_GOING && kept.carry && !stopped() && (views.incidents?.open?.length ?? 0) === 0) {
+        const { branch } = kept.carry;
+        kept.carry = null;
+        keep();
+        await startPiece({ work, lane: 'feature', branch, carryOn: true });
+        continue;
+      }
       if (!live && next.act === 'wait') {
         await heldUp({ views, work, entry, kept, design, progress });
         continue;
@@ -270,9 +288,8 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         keep();
       }
       if (label === STOP_HERE) await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
-      if (kept.raised && spent >= featureCap(design, s, { raised: true }) && !kept.stopped) {
-        kept.stopped = true;
-        keep();
+      // endFeature writes its report once a queueing, so a write that fails is tried again on the next tick.
+      if (kept.raised && spent >= featureCap(design, s, { raised: true })) {
         await endFeature(work, kept, `${title} has stopped: it has used its raised cap too, so its next slice doesn't start. The First Mate's Carry on asks you again.`);
       }
       return kept.raised && spent < featureCap(design, s, { raised: true });
@@ -318,9 +335,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const label = views.questions?.[held.id]?.answer?.label;
       if (held.done || typeof label !== 'string') return;
       if (label === STOP_HERE) {
+        await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
         held.done = true;
         keep();
-        await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
       } else if (label === BUILD_AGAIN && !stopped() && (views.incidents?.open?.length ?? 0) === 0) {
         held.done = true;
         keep();
@@ -338,8 +355,6 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (!why) return;
     kept.stallCards = (kept.stallCards ?? 0) + 1;
     const id = `q-${work}-${STALL_QUESTIONS + kept.stallCards}`;
-    kept.stalls[run.runId] = { id, done: false };
-    keep();
     const demo = !step.finish && demoSlice(design) === step.slice;
     const happened = why === 'closed'
       ? `Pull request #${run.pr} for ${what} of ${title} was closed without being added, so the feature waits.`
@@ -359,10 +374,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       options,
       recommendation: why === 'closed' ? STOP_HERE : BUILD_AGAIN,
     });
+    kept.stalls[run.runId] = { id, done: false };
+    keep();
   }
-  // Whether a question already asks the director about this run (its cap card, a blocked exit).
+  // Whether a card already speaks for this run's end: the runner's cap card for it, or a question about it still
+  // waiting for the director. A question answered earlier in the run doesn't.
   function namedByCard(views, runId) {
-    return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => q?.question?.data?.engine?.runId === runId);
+    return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => {
+      const engineRef = q?.question?.data?.engine;
+      return engineRef?.runId === runId && (engineRef.ask === `cap:${runId}` || !isPlain(q.answer));
+    });
   }
 
   // Quick, small and bug work whose run's pull request merged: its `merged` report, once (the briefing's shipped line,
@@ -470,7 +491,10 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const s = settings() ?? {};
     const ready = readyOf() ?? {};
     const reports = isPlain(views.reports) ? views.reports : {};
-    const waiting = Object.entries(ready).filter(([, r]) => reports[r.work]?.data?.outcome !== 'merged');
+    // A pull request whose work has ended, or one seen closed, no longer waits for the merge queue.
+    const closedPrs = new Set([...state.closedPrs, ...Object.values(state.features).flatMap((f) => Object.keys(f?.closed ?? {}).map(Number))]);
+    const ended = (work) => reports[work]?.data?.outcome === 'merged' || endedBy(reports, work, views.work?.[work]?.work);
+    const waiting = Object.entries(ready).filter(([pr, r]) => !ended(r.work) && !closedPrs.has(Number(pr)));
     const newReady = waiting.some(([pr]) => !state.seenReady.includes(pr));
     const requests = typeof engine.countsRequests === 'function'
       ? { counts: () => engine.countsRequests(config()?.routing ?? {}) === true, used: spentThisMonth(), cap: Number.isFinite(s.capRequests) ? s.capRequests : 0, confirmed: engine.requestsConfirmed === true }
