@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { dispatchRun, KEEP_GOING, STOP_HERE } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, KEEP_GOING, STOP_HERE, BUILD_AGAIN } from '../../../scripts/engine/dispatch-run.js';
 import { SLICES_FENCE, featureCap, readSlices } from '../../../scripts/engine/feature.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -25,7 +25,7 @@ function setUp({ design = { text: DESIGN } } = {}) {
   const dir = tempFolder('wh-df-');
   const world = {
     runs: [], merged: new Set(), ready: {}, costs: [], incidents: [], questions: {}, stop: false, reports: {},
-    starts: [], written: [], orders: {},
+    starts: [], written: [], orders: {}, closed: new Set(), asked: [], stoppedRuns: [],
   };
   const views = () => ({
     work: { orders: { work: { id: 'w-1', at: world.requeued ?? AT, data: { id: 'orders', title: 'Order history', lane: 'feature', visible: false, dependsOn: [] } }, approved: true, since: AT } },
@@ -45,7 +45,11 @@ function setUp({ design = { text: DESIGN } } = {}) {
     },
     write: async (kind, data) => { world.written.push({ kind, data }); },
     readyOf: () => world.ready,
-    prMerged: async (pr) => world.merged.has(pr),
+    prState: async (pr) => {
+      world.asked.push(pr);
+      return world.merged.has(pr) ? 'merged' : world.closed.has(pr) ? 'closed' : 'open';
+    },
+    stoppedRuns: () => world.stoppedRuns,
     designOf: () => design,
     orderOf: (runId) => world.orders[runId] ?? null,
     now: () => new Date('2026-10-29T10:00:00.000Z'),
@@ -128,7 +132,7 @@ test('nothing starts between slices under All stop or an open incident', async (
   }
 });
 
-test('a slice whose pull request closed unmerged, or never came, holds the feature', async () => {
+test('a slice whose pull request never came holds the feature', async () => {
   const { d, world, recordLast } = setUp();
   await d.tick();
   recordLast({ outcome: 'cancelled' });
@@ -244,4 +248,157 @@ test('a feature queued again after Stop here at its cap asks again, and a raised
   assert.ok(notes(world).some((w) => /stopped/.test(w) && /raised/.test(w)), notes(world).join(' | '));
   await d.tick();
   assert.equal(notes(world).filter((w) => /stopped/.test(w) && /raised/.test(w)).length, 1);
+});
+
+const asked = (world) => world.written.filter((w) => w.kind === 'question').map((w) => w.data);
+const closedReports = (world) => world.written.filter((w) => w.kind === 'report' && w.data.outcome === 'closed').map((w) => w.data);
+
+test('a slice\'s pull request closed unmerged brings one card, and the host isn\'t asked about it again', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.closed.add(70);
+  await d.tick();
+  await d.tick();
+  const cards = asked(world);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].level, 3);
+  assert.match(cards[0].what, /Pull request #70/);
+  assert.match(cards[0].what, /closed/);
+  assert.deepEqual(cards[0].options.map((o) => o.label), [BUILD_AGAIN, STOP_HERE]);
+  assert.equal(cards[0].recommendation, STOP_HERE);
+  assert.match(cards[0].what, /Nothing more of it starts/);
+  assert.equal(world.asked.filter((pr) => pr === 70).length, 1, 'a closed pull request is asked about once');
+  assert.equal(world.starts.length, 1);
+});
+
+test('Build it again on the closed card carries the slice on from its branch, once', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70, branch: 'wh/orders-1' });
+  world.closed.add(70);
+  await d.tick();
+  world.questions[asked(world)[0].id] = { answer: { label: BUILD_AGAIN } };
+  await d.tick();
+  assert.equal(world.starts.length, 2);
+  assert.deepEqual(world.starts[1].order.slice, { n: 1, of: 2, title: 'List the orders' });
+  assert.equal(world.starts[1].branch, 'wh/orders-1');
+  assert.equal(world.starts[1].carryOn, true);
+  await d.tick();
+  assert.equal(world.starts.length, 2, 'started once');
+  assert.equal(asked(world).length, 1);
+});
+
+test('Stop here on the closed card ends the feature with a closed report and a Logbook line, so the lane is free', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.closed.add(70);
+  await d.tick();
+  world.questions[asked(world)[0].id] = { answer: { label: STOP_HERE } };
+  await d.tick();
+  await d.tick();
+  assert.equal(closedReports(world).length, 1);
+  assert.equal(closedReports(world)[0].work, 'orders');
+  assert.ok(notes(world).some((w) => /Order history stops here/.test(w)), notes(world).join(' | '));
+  assert.equal(world.starts.length, 1);
+});
+
+test('Stop here on the cap card ends the feature with a closed report and a Logbook line, and asks nothing more', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  world.costs.push(featureCap(readSlices(DESIGN), {}));
+  await d.tick();
+  world.questions[asked(world)[0].id] = { answer: { label: STOP_HERE } };
+  await d.tick();
+  await d.tick();
+  assert.equal(closedReports(world).length, 1);
+  assert.ok(notes(world).some((w) => /Order history stops here, as you chose/.test(w)), notes(world).join(' | '));
+  assert.equal(asked(world).length, 1);
+  assert.equal(world.starts.length, 1);
+});
+
+test('a raised cap spent too ends the feature with a closed report', async () => {
+  const { d, world, recordLast } = setUp();
+  const cap = featureCap(readSlices(DESIGN), {});
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  world.costs.push(cap);
+  await d.tick();
+  world.questions[asked(world)[0].id] = { answer: { label: KEEP_GOING } };
+  world.costs.push(cap);
+  await d.tick();
+  await d.tick();
+  assert.equal(closedReports(world).length, 1);
+});
+
+test('a midpoint demo the director rejected brings one card that names the demo and recommends building it again', async () => {
+  const demo = DESIGN.replace('"demo":"end"', '"demo":"midpoint"');
+  const { d, world, recordLast } = setUp({ design: { text: demo } });
+  await d.tick();
+  recordLast({ pr: 70, outcome: 'cancelled' });
+  await d.tick();
+  await d.tick();
+  const cards = asked(world);
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].what, /demo/);
+  assert.equal(cards[0].recommendation, BUILD_AGAIN);
+  assert.equal(world.starts.length, 1);
+});
+
+test('a switch-on the director rejected brings one card that names the switch-on', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  await d.tick();
+  recordLast({ pr: 71 });
+  world.merged.add(71);
+  await d.tick();
+  recordLast({ pr: 72, outcome: 'cancelled' });
+  await d.tick();
+  const cards = asked(world);
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].what, /switch/);
+});
+
+test('a run cancelled by All stop, or one a card already names (its cap), brings no card of the feature\'s', async () => {
+  const stopped = setUp();
+  await stopped.d.tick();
+  stopped.recordLast({ outcome: 'cancelled' });
+  stopped.world.stoppedRuns.push('run-1');
+  await stopped.d.tick();
+  assert.equal(asked(stopped.world).length, 0);
+
+  const capped = setUp();
+  await capped.d.tick();
+  capped.recordLast({ outcome: 'cancelled' });
+  capped.world.questions['q-orders-90001'] = { question: { data: { id: 'q-orders-90001', engine: { runId: 'run-1', ask: 'cap:run-1', options: {} } } } };
+  await capped.d.tick();
+  assert.equal(asked(capped.world).length, 0);
+});
+
+test('the feature\'s merged report is tried again when its write fails', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  await d.tick();
+  recordLast({ pr: 71 });
+  world.merged.add(71);
+  await d.tick();
+  recordLast({ pr: 72 });
+  world.merged.add(72);
+  const write = world.written.push.bind(world.written);
+  let fail = true;
+  world.written.push = (item) => {
+    if (fail && item.kind === 'report') { fail = false; throw new Error('the record could not be written'); }
+    return write(item);
+  };
+  await d.tick().catch(() => {});
+  await d.tick();
+  assert.equal(world.written.filter((w) => w.kind === 'report' && w.data.outcome === 'merged').length, 1);
 });

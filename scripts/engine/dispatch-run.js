@@ -5,8 +5,11 @@
 // use the plan's counted requests brings one card, once, in the engine's own words. A red main line's incident comes
 // first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
 // and one card when a fix didn't make it green. A feature runs its slices one after another (feature.js): each next one
-// starts once the slice before has merged, and the feature's own run once every slice has. What it keeps (the merge queue's run and when it last started, the
-// pull requests already seen ready, the clashes, the fixes) is in `file`.
+// starts once the slice before has merged, and the feature's own run once every slice has. A feature held up with
+// nothing to move it on (a pull request closed unmerged, a run rejected or cancelled with no card of its own) brings one
+// card; Stop here ends it with a `closed` report, which frees its place. Other work whose run's pull request merged
+// gets its `merged` report. What it keeps (the merge queue's run and when it last started, the pull requests already
+// seen ready, the clashes, the fixes) is in `file`.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dispatch } from './dispatcher.js';
@@ -14,12 +17,12 @@ import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
-import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap } from './feature.js';
+import { readSlices, featureProgress, featureNext, currentStep, sliceOrder, finishOrder, featureCap, demoSlice } from './feature.js';
 import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {} });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {}, shipped: {}, closedPrs: [] });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
@@ -37,6 +40,12 @@ export const STOP_HERE = 'Stop here';
 // The feature cap card's numbers, after the fix cards'.
 const FEATURE_QUESTIONS = OWN_QUESTIONS + 7000;
 export const FEATURE_DONE = 'Switched on, with every slice added.';
+export const BUILD_AGAIN = 'Build it again';
+// The cards for a feature held up with nothing to move it on, after the cap cards'.
+const STALL_QUESTIONS = FEATURE_QUESTIONS + 500;
+export const FEATURE_STOPPED = 'Stopped before it was switched on; the slices already added stay behind their switch.';
+// The summary of the report for quick, small and bug work whose pull request merged.
+export const MERGED_WORDS = 'Added to the main line.';
 // The fix card's numbers, after the clash cards' and the requests card's.
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
 export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
@@ -84,13 +93,25 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
 //   still running); `stoppedRuns()` the runs All stop cancelled; `fixedRuns()` the runs whose fix the helper added;
 // - `prMerged(pr)` whether the host says a pull request merged (null when it can't say); `designOf(work)` the work's
-//   approved design, { text } or { problem } (or null when it names none); `orderOf(runId)` the order a run was given.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, designOf = () => null, orderOf = () => null } = {}) {
+//   approved design, { text } or { problem } (or null when it names none); `orderOf(runId)` the order a run was given;
+// - `prState(pr)` what the host says of a pull request, 'merged', 'open' or 'closed' (null when it can't say); without
+//   it, `prMerged` gives merged or open.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, prState = null, designOf = () => null, orderOf = () => null } = {}) {
   let state = readState(file);
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   };
+
+  async function stateOf(pr) {
+    try {
+      if (typeof prState === 'function') return await prState(pr);
+      const merged = await prMerged(pr);
+      return merged === true ? 'merged' : merged === false ? 'open' : null;
+    } catch {
+      return null;
+    }
+  }
 
   async function mergeQueueRunning() {
     if (!state.mergeRun) return false;
@@ -121,7 +142,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     // those of the new queueing.
     const queued = entry?.work?.at ?? null;
     if (kept.queued !== queued) {
-      Object.assign(kept, { queued, started: [], asked: null, raised: false, stopped: false, reported: false, cards: (kept.cards ?? 0) + (kept.asked ? 1 : 0) });
+      Object.assign(kept, { queued, started: [], asked: null, raised: false, stopped: false, reported: false, ended: false, stalls: {}, cards: (kept.cards ?? 0) + (kept.asked ? 1 : 0) });
       keep();
     }
     let design = null;
@@ -203,10 +224,15 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const recorded = new Set(runs.map((r) => r?.data?.runId));
       if (kept.started.some((runId) => !recorded.has(runId))) continue;
       const ready = readyOf() ?? {};
-      for (const pr of new Set((views.runs?.[work] ?? []).map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr)))) {
-        let merged = null;
-        try { merged = await prMerged(pr); } catch { merged = null; }
-        if (merged !== true) continue;
+      // A pull request seen closed isn't asked about again.
+      kept.closed ??= {};
+      for (const pr of new Set((views.runs?.[work] ?? []).map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr) && !kept.closed[pr]))) {
+        const got = await stateOf(pr);
+        if (got === 'closed') {
+          kept.closed[pr] = true;
+          keep();
+        }
+        if (got !== 'merged') continue;
         kept.merged[pr] = typeof ready[pr]?.head === 'string' ? ready[pr].head : null;
         keep();
         const n = progressFor(views, work, entry, kept, design);
@@ -218,11 +244,16 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const live = [...latest.values()].some((r) => r.state !== 'ended');
       const next = featureNext({ design, progress, live });
       if (next.act === 'done') {
+        // Written before it is marked, so a write that fails is tried again on the next tick.
         if (!kept.reported) {
+          await write('report', { work, outcome: 'merged', pr: next.pr, summary: FEATURE_DONE, rulings: [] });
           kept.reported = true;
           keep();
-          await write('report', { work, outcome: 'merged', pr: next.pr, summary: FEATURE_DONE, rulings: [] });
         }
+        continue;
+      }
+      if (!live && next.act === 'wait') {
+        await heldUp({ views, work, entry, kept, design, progress });
         continue;
       }
       if (next.act !== 'start' || stopped() || (views.incidents?.open?.length ?? 0) > 0) continue;
@@ -238,10 +269,11 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         kept.raised = true;
         keep();
       }
+      if (label === STOP_HERE) await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
       if (kept.raised && spent >= featureCap(design, s, { raised: true }) && !kept.stopped) {
         kept.stopped = true;
         keep();
-        await write('note', { about: 'engine', words: `${title} has stopped: it has used its raised cap too, so its next slice doesn't start. The First Mate's Carry on asks you again.` });
+        await endFeature(work, kept, `${title} has stopped: it has used its raised cap too, so its next slice doesn't start. The First Mate's Carry on asks you again.`);
       }
       return kept.raised && spent < featureCap(design, s, { raised: true });
     }
@@ -258,6 +290,108 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       recommendation: STOP_HERE,
     });
     return false;
+  }
+
+  // Ends a feature before its switch-on: a `closed` report, which frees its place in the feature lane, and `words` on the
+  // Logbook. Once for each queueing.
+  async function endFeature(work, kept, words) {
+    if (kept.ended) return;
+    await write('report', { work, outcome: 'closed', summary: FEATURE_STOPPED, rulings: [] });
+    kept.ended = true;
+    keep();
+    await write('note', { about: 'engine', words });
+  }
+
+  // A feature whose current step's latest run ended and nothing moves it on: its pull request was closed unmerged, or
+  // the run was cancelled (a rejected demo or switch-on, or a cancel in the engine itself) with no card of its own and
+  // not by All stop. One card for that run; Build it again carries the step on from its branch, Stop here ends the
+  // feature.
+  async function heldUp({ views, work, entry, kept, design, progress }) {
+    const step = currentStep({ design, progress });
+    const runs = step.finish ? progress.finish?.runs ?? [] : progress.slices?.[step.slice]?.runs ?? [];
+    const run = runs.at(-1);
+    if (run?.state !== 'ended' || typeof run.runId !== 'string') return;
+    kept.stalls ??= {};
+    const title = entry.work.data.title ?? work;
+    const held = kept.stalls[run.runId];
+    if (held) {
+      const label = views.questions?.[held.id]?.answer?.label;
+      if (held.done || typeof label !== 'string') return;
+      if (label === STOP_HERE) {
+        held.done = true;
+        keep();
+        await endFeature(work, kept, `${title} stops here, as you chose: the slices already added stay behind their switch, and the feature's place is free for other work. The First Mate's Carry on takes it up again.`);
+      } else if (label === BUILD_AGAIN && !stopped() && (views.incidents?.open?.length ?? 0) === 0) {
+        held.done = true;
+        keep();
+        const branch = step.finish ? run.branch ?? null : progress.slices[step.slice]?.branch ?? run.branch ?? null;
+        const got = await startPiece({ work, lane: 'feature', branch, carryOn: true });
+        if (!got?.ok) await write('note', { about: 'engine', words: `${title} couldn't be built again: ${got?.refused ?? 'the build engine didn\'t start it'}.` });
+      }
+      return;
+    }
+    if (stopped()) return;
+    const what = step.finish ? 'its switch-on run' : `slice ${step.slice} of ${design.slices.length}`;
+    let why = null;
+    if (Number.isInteger(run.pr) && kept.closed?.[run.pr]) why = 'closed';
+    else if (run.outcome === 'cancelled' && !(stoppedRuns() ?? []).includes(run.runId) && !namedByCard(views, run.runId)) why = 'cancelled';
+    if (!why) return;
+    kept.stallCards = (kept.stallCards ?? 0) + 1;
+    const id = `q-${work}-${STALL_QUESTIONS + kept.stallCards}`;
+    kept.stalls[run.runId] = { id, done: false };
+    keep();
+    const demo = !step.finish && demoSlice(design) === step.slice;
+    const happened = why === 'closed'
+      ? `Pull request #${run.pr} for ${what} of ${title} was closed without being added, so the feature waits.`
+      : step.finish
+        ? `${title}'s switch-on wasn't approved, so the feature stays off and waits.`
+        : demo
+          ? `The midpoint demo of ${title} (${what}) wasn't approved, so the feature waits.`
+          : `The run building ${what} of ${title} was stopped before it was added, so the feature waits.`;
+    const options = [
+      { label: BUILD_AGAIN, says: `It builds ${what} again from its branch, with a new pull request${step.finish || demo ? ', and shows it to you again' : ''}.` },
+      { label: STOP_HERE, says: 'The feature ends here; the slices already added stay behind their switch, and its place is free for other work.' },
+    ];
+    await write('question', {
+      id, work, level: 3,
+      what: `${happened} Nothing more of it starts until you say.`,
+      why: 'Whether a feature goes on when one of its steps was turned down is yours to decide, at level 3.',
+      options,
+      recommendation: why === 'closed' ? STOP_HERE : BUILD_AGAIN,
+    });
+  }
+  // Whether a question already asks the director about this run (its cap card, a blocked exit).
+  function namedByCard(views, runId) {
+    return Object.values(isPlain(views.questions) ? views.questions : {}).some((q) => q?.question?.data?.engine?.runId === runId);
+  }
+
+  // Quick, small and bug work whose run's pull request merged: its `merged` report, once (the briefing's shipped line,
+  // the board and dependent work read it). A feature has its own (featureTick); a pull request seen closed isn't asked
+  // about again.
+  async function mergedTick() {
+    const views = readViews() ?? {};
+    const reports = isPlain(views.reports) ? views.reports : {};
+    for (const [work, entry] of Object.entries(isPlain(views.work) ? views.work : {})) {
+      const lane = entry?.work?.data?.lane;
+      if (!isText(lane) || lane === 'feature' || endedBy(reports, work, entry.work)) continue;
+      const queued = entry.work.at ?? null;
+      if (Object.hasOwn(state.shipped, work) && state.shipped[work] === queued) continue;
+      const latest = new Map();
+      for (const r of views.runs?.[work] ?? []) if (isPlain(r?.data) && since(r, entry.work)) latest.set(r.data.runId, r.data);
+      const prs = [...new Set([...latest.values()].filter((r) => r.state === 'ended' && Number.isInteger(r.pr)).map((r) => r.pr))];
+      for (const pr of prs.filter((n) => !state.closedPrs.includes(n)).reverse()) {
+        const got = await stateOf(pr);
+        if (got === 'closed') {
+          state.closedPrs = [...state.closedPrs, pr].slice(-200);
+          keep();
+        }
+        if (got !== 'merged') continue;
+        await write('report', { work, outcome: 'merged', pr, summary: MERGED_WORDS, rulings: [] });
+        state.shipped[work] = queued;
+        keep();
+        break;
+      }
+    }
   }
 
   // A red main line's incident: its fix, its close and its card (fix-main.js). One at a time.
@@ -331,6 +465,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   async function tick() {
     await fixTick();
     await featureTick();
+    await mergedTick();
     const views = readViews() ?? {};
     const s = settings() ?? {};
     const ready = readyOf() ?? {};
