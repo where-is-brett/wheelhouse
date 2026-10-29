@@ -5,14 +5,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { STEP_WORDS, stepWords, costWords, runLine, shippedLine, buildLines, shippedLines, runningLines } from '../../../scripts/engine/words.js';
 
-const PACK = path.join(import.meta.dirname, '..', '..', '..', 'engine', 'archon', 'pack', 'wheelhouse-quick.yaml');
+const PACK = path.join(import.meta.dirname, '..', '..', '..', 'engine', 'archon', 'pack');
+const LANES = ['wheelhouse-quick.yaml', 'wheelhouse-small.yaml', 'wheelhouse-small-task.yaml'];
 const RUN_ID = '7f3c2a10-1111-4222-8333-444455556666';
 
 const run = (over = {}) => ({ work: 'sale-banner', title: 'The sale banner', runId: RUN_ID, state: 'started', step: 'review-spec', minutes: 12, ...over });
 const cost = (over = {}) => ({ runId: RUN_ID, work: 'sale-banner', tokens: 120000, dollars: 0.4, floorDollars: 0.4, premiumRequests: 0, minutes: 12, source: 'reported', byRole: { implement: { dollars: 0.3 }, 'review-spec': { dollars: 0.1 } }, ...over });
 
-test('every step of the pack has plain words', () => {
-  const ids = [...new Set([...fs.readFileSync(PACK, 'utf8').matchAll(/"id": "([a-z-]+)"/g)].map((m) => m[1]))];
+test('every step of each lane in the pack has plain words', () => {
+  const ids = [...new Set(LANES.flatMap((lane) => [...fs.readFileSync(path.join(PACK, lane), 'utf8').matchAll(/"id": "([a-z-]+)"/g)].map((m) => m[1])))];
   assert.ok(ids.length > 10);
   for (const id of ids) assert.ok(Object.hasOwn(STEP_WORDS, id), `${id} has no words`);
   assert.equal(STEP_WORDS.implement, 'building it');
@@ -89,4 +90,12 @@ test('the work view gains each running run\'s state', () => {
     ] },
   };
   assert.deepEqual(runningLines(views, { now: new Date('2026-10-29T09:30:00.000Z') }), ['The sale banner: waiting for you. 10 minutes so far.']);
+});
+
+test('a step inside a loop, or inside a task block, has its own step\'s words', () => {
+  assert.equal(stepWords('review.fix'), 'fixing what the checks found');
+  assert.equal(stepWords('build.implement'), 'building it');
+  assert.equal(stepWords('__archon_fan_out__each__root__ca978112ca1bbdca__each__ca978112ca1bbdca__gate'), 'looking at the next task');
+  assert.equal(stepWords('__archon_fan_out__each__root__ca978112ca1bbdca__each__ca978112ca1bbdca__build.implement'), 'building it');
+  assert.equal(stepWords('review.unknown'), 'working on it');
 });
