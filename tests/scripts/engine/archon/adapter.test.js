@@ -218,10 +218,12 @@ test('cursorKeeper saves a bookmark at once, and any other line once a later cur
   assert.equal(keeper.see({ type: 'attention', cursor: 'd' }), null);
 });
 
+const WORKTREES = '/Users/director/Projects/web/.worktrees';
+
 test('stopAll cancels every running run, leaving child runs to their parent', async () => {
   const cli = fakeCli({ 'workflow status': json('status-all.json'), 'workflow cancel': json('cancel-ok.json') });
   const seen = [];
-  const result = await adapter(cli).stopAll('All stop', { beforeCancel: async (runs) => { seen.push({ runs, calls: cli.calls.length }); } });
+  const result = await adapter(cli, { worktreeBases: [WORKTREES] }).stopAll('All stop', { beforeCancel: async (runs) => { seen.push({ runs, calls: cli.calls.length }); } });
   assert.deepEqual(cli.calls[0].args, ['workflow', 'status', '--all']);
   assert.deepEqual(cli.calls.slice(1).map((c) => c.args), [['workflow', 'cancel', RUN]]);
   assert.deepEqual(result, { cancelled: [RUN], survivors: [], paused: ['0a1b2c3d4e5f60718293a4b5c6d7e8f9'] });
@@ -229,6 +231,57 @@ test('stopAll cancels every running run, leaving child runs to their parent', as
   assert.equal(seen.length, 1);
   assert.equal(seen[0].calls, 1);
   assert.deepEqual(seen[0].runs[0], { id: RUN, folder: '/Users/director/Projects/web/.worktrees/wh/card-14' });
+});
+
+const row = (id, status, working_path) => ({ id, workflow_name: 'wheelhouse-quick', status, parent_run_id: null, working_path });
+const status = (...runs) => ({ code: 0, json: { runs }, stdout: '', stderr: '' });
+
+test('stopAll cancels a pending run as it does a running one, and a refused cancel is a survivor', async () => {
+  const cli = fakeCli({
+    'workflow status': status(row('run-a', 'pending', null), row('run-b', 'running', null), row('run-c', 'pending', null)),
+    'workflow cancel': (args) => (args[2] === 'run-c' ? refusal('resume-cancelled.json') : json('cancel-ok.json')),
+  });
+  let handed = null;
+  const result = await adapter(cli).stopAll('All stop', { beforeCancel: (runs) => { handed = runs.map((r) => r.id); } });
+  assert.deepEqual(handed, ['run-a', 'run-b', 'run-c']);
+  assert.deepEqual(cli.calls.slice(1).map((c) => c.args[2]), ['run-a', 'run-b', 'run-c']);
+  assert.deepEqual(result, { cancelled: ['run-a', 'run-b'], survivors: ['run-c'], paused: [] });
+});
+
+test("stopAll hands over only a run's worktree folder, never the project folder or anything broader", async () => {
+  const home = path.join(path.sep, 'wh-engine-home');
+  const cli = fakeCli({
+    'workflow status': status(
+      row('in-home', 'running', path.join(home, 'workspaces', 'o', 'web', 'worktrees', 'card-1')),
+      row('home-base', 'running', path.join(home, 'workspaces', 'o', 'web', 'worktrees')),
+      row('home-other', 'running', path.join(home, 'workspaces', 'o', 'web', 'logs')),
+      row('in-project', 'running', `${WORKTREES}/wh/card-2`),
+      row('project', 'running', '/Users/director/Projects/web'),
+      row('base', 'running', WORKTREES),
+      row('elsewhere', 'running', '/Users/director'),
+    ),
+    'workflow cancel': json('cancel-ok.json'),
+  });
+  let handed = null;
+  await adapter(cli, { home, worktreeBases: [WORKTREES] }).stopAll('All stop', { beforeCancel: (runs) => { handed = runs; } });
+  assert.deepEqual(Object.fromEntries(handed.map((r) => [r.id, r.folder])), {
+    'in-home': path.join(home, 'workspaces', 'o', 'web', 'worktrees', 'card-1'), 'home-base': null, 'home-other': null,
+    'in-project': `${WORKTREES}/wh/card-2`, project: null, base: null, elsewhere: null,
+  });
+});
+
+test("ownsProcess knows the pinned Bun and the launcher under the engine's folder, and nothing else", () => {
+  const engine = path.join(path.sep, 'wh-engine');
+  const owns = archonAdapter({ engine }).ownsProcess;
+  const bun = path.join(engine, 'bun', 'bin', 'bun');
+  const launcher = path.join(engine, 'archon', 'bin', 'archon');
+  assert.equal(owns(`${bun} --no-env-file ${engine}/archon/src/packages/cli/src/cli.ts workflow run wheelhouse-quick`), true);
+  assert.equal(owns(`/bin/sh ${launcher} workflow wake --watch --json`), true);
+  assert.equal(owns(`${launcher} workflow get x`), true);
+  assert.equal(owns('/opt/homebrew/bin/bun archon workflow run'), false);
+  assert.equal(owns(`${bun}x something`), false);
+  assert.equal(owns('/Applications/Editor.app/Contents/MacOS/Editor'), false);
+  assert.equal(owns(undefined), false);
 });
 
 test('wakeCommand is the continuation host, with archonEnv as its whole environment', () => {

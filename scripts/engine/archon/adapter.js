@@ -9,14 +9,15 @@
 //   act        archon workflow answer <run> --occurrence <o> --choose <c> --text <w> --json;
 //              archon workflow cancel <run> --json; archon workflow resume <run> --detach --json  (never abandon, spec 12.2)
 //   inspect    archon workflow get <run> --verbose --json
-//   stopAll    archon workflow status --all --json, then cancel each running run   (stop.js ends what is left)
+//   stopAll    archon workflow status --all --json, then cancel each running or pending run   (stop.js ends what is left)
 //   health     archon version; bun --version; archon ai tier list --json; archon telemetry status
 //   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
 import { archonCli, archonCommand } from './cli.js';
 import { ARCHON_SOURCE, BUN_PIN, enginePaths } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord } from './record.js';
-import { engineDir } from '../../lib/paths.js';
+import path from 'node:path';
+import { engineDir, archonHome } from '../../lib/paths.js';
 import { run as defaultRun } from '../../lib/run.js';
 
 // The pack's workflow for each lane (spec 7.2); the merge lane is Archon's own queue, as it ships.
@@ -130,6 +131,23 @@ const parseLine = (text) => {
 
 const refusedWith = (refused) => ({ ok: false, refused });
 
+// The segments of `folder` below `base`, or null when it isn't strictly inside it.
+function below(folder, base) {
+  const relative = path.relative(base, folder);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return relative.split(path.sep);
+}
+
+// A run's folder for All stop to look in, or null: only a worktree, under Archon's own
+// <home>/workspaces/<owner>/<repo>/worktrees/ or strictly inside a configured worktree base (`worktree.path`, spec
+// 6.3), and never that base or the project folder itself, where the director's own processes work.
+function worktreeOf(folder, { home, worktreeBases }) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) return null;
+  const inHome = below(folder, path.join(home, 'workspaces'));
+  if (inHome && inHome.length >= 4 && inHome[2] === 'worktrees') return folder;
+  return worktreeBases.some((base) => typeof base === 'string' && path.isAbsolute(base) && below(folder, base)) ? folder : null;
+}
+
 // Archon's refusal as plain words for the core.
 function refusal(action, result) {
   const error = String(result?.json?.error ?? result?.stderr ?? '').trim();
@@ -144,9 +162,10 @@ function refusal(action, result) {
 }
 
 // `cli` is archonCli or a stand-in; `streamer(args, { signal })` gives a long command's lines (archonStreamer);
-// `run` runs Bun's version check; `pins` are the pinned Archon and Bun (build.js); `now` gives the time.
+// `run` runs Bun's version check; `pins` are the pinned Archon and Bun (build.js); `now` gives the time; `home` is
+// ARCHON_HOME and `worktreeBases` the absolute folders the config's `worktree.path` places worktrees in.
 export function archonAdapter({
-  cli = archonCli, streamer, run = defaultRun, packDir, configFile, engine = engineDir(),
+  cli = archonCli, streamer, run = defaultRun, packDir, configFile, engine = engineDir(), home = archonHome(), worktreeBases = [],
   pins = { archon: ARCHON_SOURCE, bun: BUN_PIN }, now = () => new Date().toISOString(),
 } = {}) {
   const stream = streamer ?? archonStreamer({ cli });
@@ -209,6 +228,16 @@ export function archonAdapter({
     // archonEnv as its whole environment.
     wakeCommand() {
       return archonCommand(['workflow', 'wake', '--watch', '--json'], { engine });
+    },
+
+    // Whether a process, by its command as `ps` lists it, is Archon's: the pinned Bun or the launcher under the
+    // engine's folder (the launcher run by sh, before its exec, too). All stop ends only a run owner that is.
+    ownsProcess(command) {
+      if (typeof command !== 'string') return false;
+      const { bunBin, launcher } = enginePaths(engine);
+      const starts = (program, text) => text === program || text.startsWith(`${program} `);
+      const program = command.replace(/^(\/bin\/)?sh /, '');
+      return starts(bunBin, command) || starts(launcher, program);
     },
 
     async health() {
@@ -310,19 +339,20 @@ export function archonAdapter({
       return readRecord(result.code === 0 && result.json?.ok !== false ? result.json : null);
     },
 
-    // Cancels every running run. A child run is cancelled with its parent; a paused run is doing nothing and Archon
-    // cancels only running ones, so it is listed in `paused`. A run whose cancel is refused is a survivor.
-    // `beforeCancel(runs)` is awaited with the running runs, [{ id, folder }] (the folder each works in), before any
-    // is cancelled, so All stop can take each run's process tree while it is still whole (check 78).
+    // Cancels every running run, and every pending one (just started with --detach). A child run is cancelled with
+    // its parent; a paused run is doing nothing and Archon cancels only running ones, so it is listed in `paused`. A
+    // run whose cancel is refused is a survivor. `beforeCancel(runs)` is awaited with those runs, [{ id, folder }]
+    // (the worktree each works in, or null: worktreeOf), before any is cancelled, so All stop can take each run's
+    // process tree while it is still whole (check 78).
     async stopAll(_reason, { beforeCancel } = {}) {
       const listed = await cli(['workflow', 'status', '--all'], { json: true, timeout: CALL_MS });
       if (!Array.isArray(listed.json?.runs)) {
         return { cancelled: [], survivors: [], paused: [], trouble: "The engine couldn't list its runs, so none was cancelled" };
       }
-      const running = listed.json.runs.filter((r) => r.status === 'running');
+      const running = listed.json.runs.filter((r) => r.status === 'running' || r.status === 'pending');
       const ids = new Set(running.map((r) => r.id));
       if (beforeCancel) {
-        const runs = running.map((r) => ({ id: r.id, folder: typeof r.working_path === 'string' ? r.working_path : null }));
+        const runs = running.map((r) => ({ id: r.id, folder: worktreeOf(r.working_path, { home, worktreeBases }) }));
         try { await beforeCancel(runs); } catch { /* the cancel goes ahead all the same */ }
       }
       const cancelled = [];
