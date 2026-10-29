@@ -5,13 +5,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { helloTrial, engineCheck, nodeOnPath } from '../../../scripts/engine/hello.js';
+import { decide } from '../../../scripts/hooks/tool-guard.js';
+import { withHome } from '../../helpers/homes.js';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'wh-hello-'));
-const okGit = async () => ({ code: 0, stdout: '', stderr: '' });
+const gitCalls = new Map();
+const okGit = async (command, args, { cwd } = {}) => {
+  (gitCalls.get(cwd) ?? gitCalls.set(cwd, []).get(cwd)).push(args);
+  return { code: 0, stdout: '', stderr: '' };
+};
+const okGitCalls = (folder) => gitCalls.get(folder) ?? [];
 
 // A stood-in Archon, as v0.13.0 answers: a project with no git remote can't have a worktree, a run without --detach
 // prints its steps and no run id, and `workflow get` shows the run going until it ends, then the guarded step's output, given --events.
-function archon({ refused = true, runCode = 0, polls = 2, end = 'completed' } = {}) {
+const GUARD_WORDS = 'Wheelhouse does not let an agent read a .env file: ask the helper';
+function archon({ refused = true, refusal = refused ? GUARD_WORDS : undefined, runCode = 0, polls = 2, end = 'completed' } = {}) {
   const calls = [];
   let gets = 0;
   const cli = async (args, opts = {}) => {
@@ -25,7 +33,7 @@ function archon({ refused = true, runCode = 0, polls = 2, end = 'completed' } = 
       gets += 1;
       if (gets <= polls) return { code: 0, json: { status: 'running', events: [] } };
       if (!args.includes('--events')) return { code: 0, json: { status: end } };
-      return { code: 0, json: { status: end, events: [{ event_type: 'node_completed', step_name: 'guarded', data: { node_output: JSON.stringify({ refused }) } }] } };
+      return { code: 0, json: { status: end, events: [{ event_type: 'node_completed', step_name: 'guarded', data: { node_output: JSON.stringify({ refused, ...(refusal == null ? {} : { refusal }) }) } }] } };
     }
     return { code: 1, json: null };
   };
@@ -46,13 +54,30 @@ test("the hello trial's planted .env read is refused", async () => {
   assert.ok(run.args.includes('--workflow-source') && run.args.includes('/pack'));
   assert.ok(run.args.includes('--config') && run.args.includes('/config.yaml'));
   assert.equal(run.args[run.args.indexOf('--cwd') + 1], folder);
-  // The scratch project: a planted .env that is no secret, and Standard's project settings, which deny reading it.
+  // The scratch project: a planted .env that is no secret, and Standard's project settings without their own .env
+  // rules, so only Wheelhouse's tool guard can refuse the read, and a refusal proves the plugin's hooks loaded.
   assert.match(fs.readFileSync(path.join(folder, '.env'), 'utf8'), /planted/);
   const settings = JSON.parse(fs.readFileSync(path.join(folder, '.claude', 'settings.json'), 'utf8'));
-  assert.ok(settings.permissions.deny.some((rule) => rule.includes('.env')));
+  assert.ok(settings.permissions.deny.length > 0, "Standard's other rules stay");
+  assert.doesNotMatch(JSON.stringify(settings), /\*\*\/\.env/);
+  // The .env is committed, so a checkout of the trial project holds it.
+  assert.ok(okGitCalls(folder).some((args) => args.includes('add') && args.includes('.env')));
   assert.equal(await helloTrial({ cli: archon({ refused: false }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'read');
+  // A refusal that isn't the tool guard's (Claude Code's own rule, say) doesn't show the hooks loaded.
+  assert.equal(await helloTrial({ cli: archon({ refusal: 'Permission to read .env was denied' }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
+  assert.equal(await helloTrial({ cli: archon({ refusal: null }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
   assert.equal(await helloTrial({ cli: archon({ runCode: 1 }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
   assert.equal(await helloTrial({ cli: archon({ end: 'failed' }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
+});
+
+test("in the trial's project, Wheelhouse's tool guard itself refuses the .env read", async () => {
+  const folder = scratch();
+  await helloTrial({ cli: archon().cli, run: okGit, folder, packDir: '/pack', configFile: '/c', ...quick });
+  await withHome(async () => {
+    const got = await decide({ tool_name: 'Read', cwd: folder, tool_input: { file_path: path.join(folder, '.env') } });
+    assert.equal(got?.hookSpecificOutput?.permissionDecision ?? got?.decision, 'deny');
+    assert.match(JSON.stringify(got), /Wheelhouse does not let an agent read a \.env file/);
+  });
 });
 
 test('a hello trial that never ends, or waits on an ask, could not run, and is cancelled so it spends no more', async () => {

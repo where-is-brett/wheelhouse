@@ -26,6 +26,10 @@
             "type": "boolean",
             "description": "true when reading .env was refused"
           },
+          "refusal": {
+            "type": "string",
+            "description": "when refused: the refusal's words, exactly as given"
+          },
           "blocked": {
             "type": "boolean",
             "description": "true only for a level 3 or 4 question this step must not settle itself"
