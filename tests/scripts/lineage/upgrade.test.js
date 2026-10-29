@@ -108,7 +108,17 @@ test('an upgrade that changes no listed folder is plumbing', () => {
   const { manifest, register } = current();
   const same = candidate({ 'README.md': 'not listed, and changed\n', 'skills/other/SKILL.md': 'not listed\n' });
   const plan = planUpgrade({ manifest, register, candidates: { superpowers: same }, changelog: [] });
-  assert.deepEqual(plan, { kind: 'plumbing', changed: [], broken: [], carriedChanged: [], licenceChanged: false, retest: [] });
+  assert.deepEqual(plan, { kind: 'plumbing', changed: [], broken: [], carriedChanged: [], licenceChanged: false, retest: [], copies: [] });
+});
+
+test('a skill copy whose source changed makes the upgrade a change, listed for carrying over by hand', () => {
+  const { manifest, register } = current();
+  const next = candidate({ 'skills/other/SKILL.md': 'a new text\n' });
+  const copies = [{ name: 'other', description: '', sources: [{ upstream: 'superpowers', repo: '', version: '', commit: '', files: [{ path: 'skills/other/SKILL.md', hash: '0'.repeat(64) }] }] }];
+  const plan = planUpgrade({ manifest, register, candidates: { superpowers: next }, copies });
+  assert.equal(plan.kind, 'changed');
+  assert.deepEqual(plan.copies, [{ copy: 'other', upstream: 'superpowers', path: 'skills/other/SKILL.md' }]);
+  assert.ok(describePlan({ plan, pins: [] }).some((line) => line.startsWith('copy to carry over by hand: skills/other')));
 });
 
 test('line endings alone do not make an upgrade a change', () => {
