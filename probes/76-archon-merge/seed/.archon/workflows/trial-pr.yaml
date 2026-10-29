@@ -1,0 +1,24 @@
+# probes/76-archon-merge/seed/.archon/workflows/trial-pr.yaml
+# Check 76's trial lane: a check step, then a pull request for the checked-out branch through the broker (the only
+# `gh` on Archon's PATH). The check step stops a branch that deletes a test file, so no pull request is opened for it.
+# The helper pushed the branch before the run; this workflow never pushes.
+name: trial-pr
+description: Check 76. Check the branch, then open its pull request through the broker.
+nodes:
+  - id: check
+    bash: |
+      set -e
+      git fetch -q origin main
+      deleted=$(git diff --name-only --diff-filter=D origin/main...HEAD -- tests)
+      if [ -n "$deleted" ]; then
+        echo "Check step: this branch deletes test files: $deleted" >&2
+        exit 1
+      fi
+      echo "Check step: no test file deleted"
+  - id: pr
+    depends_on: [check]
+    bash: |
+      set -e
+      branch=$(git branch --show-current)
+      gh pr create --repo where-is-brett/wheelhouse-merge-trial --base main --head "$branch" \
+        --title "Trial: $branch" --body "A throwaway pull request for Wheelhouse's check 76."

@@ -1,0 +1,31 @@
+# probes/76-archon-merge/seed/.archon/workflows/trial-update.yaml
+# Check 76's lane re-run after a clash: merge the main line into the checked-out branch with a normal merge commit,
+# let one step on the small model resolve any conflict, then run the check step again. The helper pushes afterwards.
+name: trial-update
+description: Check 76. Bring the branch up to date with the main line, resolving a clash.
+model: small
+effort: low
+nodes:
+  - id: merge
+    bash: |
+      git fetch -q origin main
+      if git merge --no-edit origin/main >&2; then echo clean; else echo conflict; fi
+  - id: resolve
+    depends_on: [merge]
+    when: "$merge.output == 'conflict'"
+    prompt: |
+      This branch has an unfinished merge of the main line with a conflict in src/add.js. Resolve it: keep one
+      `export const greeting` line whose string carries the intent of both sides, remove every conflict marker,
+      then run `git add -A` and `git commit --no-edit`. Do nothing else: don't push, don't run gh, don't touch
+      other files.
+  - id: check
+    depends_on: [merge, resolve]
+    trigger_rule: none_failed_min_one_success
+    bash: |
+      set -e
+      if grep -rnE '^(<<<<<<<|>>>>>>>|=======$)' src tests; then echo "Check step: conflict markers left" >&2; exit 1; fi
+      if [ -n "$(git status --porcelain)" ]; then echo "Check step: uncommitted changes" >&2; exit 1; fi
+      git merge-base --is-ancestor origin/main HEAD || { echo "Check step: the main line is not merged in" >&2; exit 1; }
+      deleted=$(git diff --name-only --diff-filter=D origin/main...HEAD -- tests)
+      if [ -n "$deleted" ]; then echo "Check step: this branch deletes test files: $deleted" >&2; exit 1; fi
+      echo "Check step: up to date, no markers, no test deleted"
