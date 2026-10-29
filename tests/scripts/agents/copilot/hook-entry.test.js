@@ -121,6 +121,23 @@ test('the stop word sets All stop through the helper, as the director\'s, and sa
   }
 });
 
+test("a guard's allow stands only when it allows every file of a patch", async () => {
+  const c = await computer();
+  try {
+    const files = [path.join(c.folder, 'a.txt'), path.join(c.folder, 'b.txt')];
+    const patch = `*** Begin Patch\n*** Add File: ${files[0]}\n+a\n*** Add File: ${files[1]}\n+b\n*** End Patch\n`;
+    const entry = (allowed) => runEntry('preToolUse', {
+      stdin: Readable.from([JSON.stringify({ sessionId: 's1', timestamp: 0, cwd: c.folder, toolName: 'apply_patch', toolArgs: patch })]),
+      env: COPILOT_ENV,
+      deps: { client: c.away, steps: { stopGuard: async () => undefined, lineageHold: async () => undefined, toolGuard: async (input) => (allowed.includes(input.tool_input.file_path) ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'own' } } : undefined) } },
+    });
+    assert.deepEqual(await entry([files[0]]), { text: '', code: 0 });
+    assert.deepEqual(await entry(files), { text: `${JSON.stringify({ permissionDecision: 'allow', permissionDecisionReason: 'own' })}\n`, code: 0 });
+  } finally {
+    await c.close();
+  }
+});
+
 test('every case matches the pinned output', () => {
   if (process.env.DESK_PARITY_WRITE === '1') {
     fs.mkdirSync(path.dirname(FIXTURE), { recursive: true });

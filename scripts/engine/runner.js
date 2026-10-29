@@ -306,7 +306,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       return;
     }
     if (held(kept.runId)) {
-      state.capped[kept.runId].held = false;
+      // The hold is lifted and the run is looked at against its raised cap again from now on.
+      delete state.capped[kept.runId];
       state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
       keep();
       // A run paused on an ask carries on once it is answered; one paused on nothing the runner knows is resumed.
@@ -321,6 +322,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     if (record?.outcome === 'failed' || record?.status === 'paused') {
       const got = await safely(() => engine.act(kept.runId, { resume: {} }));
       if (got?.ok) {
+        delete state.capped[kept.runId];
         state.carried[kept.runId] = { raised: true, runs: state.carried[kept.runId]?.runs ?? [] };
         keep();
         return;
@@ -333,6 +335,16 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     } else {
       await note(`${titleOf(kept.work)} couldn't be carried on: ${got?.refused ?? 'the build engine didn\'t start it'}.`, { work: kept.work });
     }
+  }
+
+  // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes ended, as
+  // All stop ends them, so it can't spend past its cap unseen. Gives what was ended ({ ended, survivors }), or null.
+  async function stopAtCap(runId, reached) {
+    const cancel = () => safely(() => engine.act(runId, { cancel: { reason: `the run reached its ${reached.cap} cap` } }));
+    if ((await cancel())?.ok !== true && (await cancel())?.ok !== true && (await inspect(runId))?.status !== 'ended') {
+      return (await safely(() => endRun(runId))) ?? { ended: [], survivors: [] };
+    }
+    return null;
   }
 
   // Each running run of the project, against its caps; each ended one, its cost record.
@@ -348,6 +360,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
           if (!state.costed[runId]) await costOf(runId, work, records);
           continue;
         }
+        if (held(runId) && !stopped()) {
+          // An answer that went back just before the hold was set can carry a held run on: it is stopped then.
+          if ((await inspect(runId))?.status !== 'running') continue;
+          state.capped[runId].held = false;
+          keep();
+          const stuck = await stopAtCap(runId, state.capped[runId].reached);
+          await note(`${titleOf(work)} carried on past its cap while it was held, so it was stopped${stuck ? ' and its processes ended' : ''}.`, { work });
+          continue;
+        }
         if (latest.state !== 'started' || state.capped[runId] || stopped()) continue;
         const record = await inspect(runId);
         if (!record) continue;
@@ -361,13 +382,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
           await capped({ runId, work, lane: latest.lane, branch: latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null, reached, paused: true });
           continue;
         }
-        // Cancelled, tried once more if the engine didn't take it; a run still going after that has its processes
-        // ended, as All stop ends them, so it can't spend past its cap unseen.
-        const cancel = () => safely(() => engine.act(runId, { cancel: { reason: `the run reached its ${reached.cap} cap` } }));
-        let stuck = null;
-        if ((await cancel())?.ok !== true && (await cancel())?.ok !== true && (await inspect(runId))?.status !== 'ended') {
-          stuck = (await safely(() => endRun(runId))) ?? { ended: [], survivors: [] };
-        }
+        const stuck = await stopAtCap(runId, reached);
         // A fix for a red main line asks no cap card: the dispatcher's card for a fix that didn't make it green asks
         // what next (dispatch-run.js).
         if (latest.lane === FIX_LANE) {

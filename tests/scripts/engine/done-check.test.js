@@ -161,6 +161,19 @@ test('a branch without shared settings gets no overlay, and the step stops', asy
   assert.equal(fs.existsSync(path.join(worktree, '.claude', 'settings.json')), false);
 });
 
+test("a merged settings file that can't be written stops the step with a plain refusal", { skip: process.platform === 'win32' }, async () => {
+  const ws = tempFolder('wh-ws-');
+  const worktree = sharedWorktree();
+  fs.chmodSync(path.join(worktree, '.claude'), 0o555);
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  const { lines, out } = sink();
+  try {
+    assert.equal(await copyMain(['--run', 'run-7', '--out', path.join(ws, 'artifacts', 'runs', 'run-7')], { client, cwd: worktree, out }), 1);
+  } finally { fs.chmodSync(path.join(worktree, '.claude'), 0o755); }
+  assert.match(lines.join('\n'), /couldn't be written/);
+  assert.deepEqual(fs.readdirSync(path.join(worktree, '.claude')), ['settings.json']);
+});
+
 test("the overlay is never written through a link a branch holds, and the step stops", async () => {
   const ws = tempFolder('wh-ws-');
   const dir = path.join(ws, 'artifacts', 'runs', 'run-7');

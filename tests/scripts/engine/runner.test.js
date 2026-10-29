@@ -453,6 +453,36 @@ test("an ask a held run raises waits for the hold, and Stop keeps it held", asyn
   } finally { t.cleanup(); }
 });
 
+test('a held run is looked at against its raised cap once Give it more lifts the hold', async () => {
+  const { t, runId } = pausedAtCap();
+  try {
+    await t.runner.tick();
+    answerCap(t, 'Give it more');
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => Object.keys(c.action)[0]), ['resume']);
+    // It carries on and spends past the raised cap (1.5 million tokens).
+    const inspect = t.engine.inspect.bind(t.engine);
+    t.engine.inspect = (id) => { const r = inspect(id); return { ...r, status: 'running', steps: [...r.steps, { ...r.steps[0], id: 'more', tokens: 600000 }] }; };
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'stopped at the raised cap');
+    assert.equal(t.writes.filter((w) => w.kind === 'question' && /reached its cap/.test(w.data.what)).length, 2);
+  } finally { t.cleanup(); }
+});
+
+test('a held run that carries on all the same is stopped', async () => {
+  const { t, runId } = pausedAtCap();
+  try {
+    await t.runner.tick();
+    const inspect = t.engine.inspect.bind(t.engine);
+    t.engine.inspect = (id) => ({ ...inspect(id), status: 'running' });
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).filter((c) => c.action.cancel).map((c) => c.runId), [runId]);
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /carried on past its cap while it was held, so it was stopped/.test(w.data.words ?? '')));
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'once');
+  } finally { t.cleanup(); }
+});
+
 test('Give it more on a held run with no ask open resumes it', async () => {
   const { t, runId } = pausedAtCap();
   try {

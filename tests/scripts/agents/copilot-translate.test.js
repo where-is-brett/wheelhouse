@@ -279,6 +279,14 @@ test('apply_patch\'s paths are read from its patch, and one refused path refuses
   await hookMain((input) => { seen.push(input.tool_input.file_path); return seen.length === 2 ? answer.deny('second') : undefined; }, { failClosed: true, event: 'PreToolUse' }, h.io);
   assert.deepEqual(seen, [`${MAIN}/new.txt`, `${MAIN}/README.md`]);
   assert.deepEqual(written(h), [copilotDeny('second')]);
+  // An allow stands only when every path gives it: one path the guard only passes leaves the call to Copilot's rules.
+  const allowing = async (allowed) => {
+    const one = harness(call('apply_patch', patch));
+    await hookMain((input) => (allowed.includes(input.tool_input.file_path) ? answer.allow('own') : undefined), { failClosed: true, event: 'PreToolUse' }, one.io);
+    return written(one);
+  };
+  assert.deepEqual(await allowing([`${MAIN}/new.txt`]), []);
+  assert.deepEqual(await allowing(patchPaths(patch)), [{ permissionDecision: 'allow', permissionDecisionReason: 'own' }]);
 });
 
 test('multi_tool_use.parallel is refused until the open question is settled', async () => {

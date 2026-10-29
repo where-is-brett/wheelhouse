@@ -86,22 +86,31 @@ function inWheelhouse(cwd, { find, dir }) {
 const refusal = (event, reason) => (event === GUARD_EVENT ? answer.deny(reason) : undefined);
 
 // Runs the steps named, in order, on each input; the first refusal is the answer. Text for the agent from more
-// than one step is joined, so every line reaches it.
+// than one step is joined, so every line reaches it. A step's allow is the answer only when it allows every input
+// it is given, and nothing else answers.
 async function runSteps(names, inputs, { event, steps, stepDeps, dir }) {
   const context = [];
   let other;
+  let allowed;
   for (const [name, list] of names) {
     const decide = steps?.[name] ?? (await STEP_MODULES[name]()).decide;
-    for (const input of list(inputs)) {
+    const given = list(inputs);
+    let allows = 0;
+    let first;
+    for (const input of given) {
       const out = await decide(input, { event: EVENT_NAMES[event], dir, ...EXTRA_DEPS[name], ...stepDeps?.[name] });
       if (refuses(out)) return out;
       const text = out?.hookSpecificOutput?.additionalContext;
-      if (typeof text === 'string' && text !== '') context.push(text);
+      if (out?.hookSpecificOutput?.permissionDecision === 'allow') {
+        allows += 1;
+        first ??= out;
+      } else if (typeof text === 'string' && text !== '') context.push(text);
       else if (isObject(out) && other === undefined) other = out;
     }
+    if (given.length > 0 && allows === given.length) allowed ??= first;
   }
   if (context.length > 0) return answer.context(EVENT_NAMES[event], context.join('\n\n'));
-  return other;
+  return other ?? allowed;
 }
 
 const first = (inputs) => inputs.slice(0, 1);

@@ -15,7 +15,7 @@ import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
-import { ownRunRules } from '../protection/settings.js';
+import { ownRunRules, mergeSettings } from '../protection/settings.js';
 import { safeGit } from '../lib/safe-git.js';
 import { run as realRun } from '../lib/run.js';
 const SHARED = '.claude/settings.json';
@@ -31,16 +31,6 @@ function kindOf(file) {
 }
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-
-// The shared settings with the overlay over them: lists are joined, without repeats; objects are merged key by key;
-// the overlay's single values win.
-export function mergeSettings(shared, overlay) {
-  if (Array.isArray(shared) && Array.isArray(overlay)) return [...new Set([...shared, ...overlay])];
-  if (!isPlain(shared) || !isPlain(overlay)) return overlay;
-  const out = { ...shared };
-  for (const [key, value] of Object.entries(overlay)) out[key] = Object.hasOwn(shared, key) ? mergeSettings(shared[key], value) : value;
-  return out;
-}
 
 // Writes the overlay into the worktree's .claude/settings.json, merged over the branch's own shared settings as the
 // index holds them (so a second run in the same worktree never keeps an earlier run's lists), never through a link a
@@ -60,9 +50,14 @@ async function writeOverlay(cwd, overlay, run) {
   if (held.code !== 0 || !isPlain(shared)) return `the branch's shared settings (${SHARED}) couldn't be read`;
   const kept = await git(['update-index', '--skip-worktree', '--', SHARED]);
   if (kept.code !== 0) return `the shared settings couldn't be kept out of the run's commits`;
-  const temp = path.join(folder, `.settings.${process.pid}.tmp`);
-  fs.writeFileSync(temp, `${JSON.stringify(mergeSettings(shared, overlay), null, 2)}\n`, { flag: 'wx' });
-  fs.renameSync(temp, file);
+  const temp = path.join(folder, `.settings.${process.pid}.${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(mergeSettings(shared, overlay), null, 2)}\n`, { flag: 'wx' });
+    fs.renameSync(temp, file);
+  } catch (error) {
+    try { fs.rmSync(temp, { force: true }); } catch { /* nothing left to take away */ }
+    return `the merged settings couldn't be written (${error?.code ?? 'unknown'})`;
+  }
   return null;
 }
 
