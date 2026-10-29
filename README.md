@@ -6,7 +6,7 @@
 
 Wheelhouse is for a product owner who isn't a developer. You say what you want in plain words. Your First Mate asks you short questions about what is yours to decide, each with buttons to click. Behind it, the Crew builds the work and Lookouts check it, and nothing reaches the main version of your product until it has passed checks the agents can't skip. You make the product decisions; the agents do the building.
 
-`v0.1.2` is an early release for trying Wheelhouse out. It hasn't yet been used from start to finish on a real product.
+`v0.1.3` is an early release for trying Wheelhouse out. It hasn't yet been used from start to finish on a real product.
 
 ## How it works
 
@@ -42,11 +42,11 @@ You need **Node.js** (a free program; [download the version marked LTS](https://
 
    ```text
    Please run these two commands in this folder, one after the other, and tell me when both have finished:
-   claude plugin marketplace add "where-is-brett/wheelhouse#v0.1.2" --scope project
+   claude plugin marketplace add "where-is-brett/wheelhouse#v0.1.3" --scope project
    claude plugin install wheelhouse@wheelhouse --scope project
    ```
 
-   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.1.2`; the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's releases page, goes in place of `v0.1.2`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
+   Claude asks before it runs each one: allow it. The first adds Wheelhouse's own catalogue, at release `v0.1.3`; the second installs Wheelhouse from that catalogue, for this project only. Both name Wheelhouse's catalogue, so nothing else with a similar name can be installed by mistake. (A later release, from Wheelhouse's releases page, goes in place of `v0.1.3`.) If you prefer a terminal, the same two commands work there, run in the product's folder.
 4. **Start a new session on the same folder.** Wheelhouse loads, and setup starts.
 5. **If the commands don't work,** use the plugin browser instead: click the **+** button beside the message box, then **Add plugins** (or **Plugins**, then **Browse plugins**). Add the catalogue `where-is-brett/wheelhouse`, choose **Wheelhouse** from it, choose **this project** when asked where, then start a new session on the folder.
 
@@ -60,12 +60,12 @@ What Wheelhouse protects you from, what it doesn't, and how to report a problem 
 
 Wheelhouse also runs in VS Code with GitHub Copilot, with nothing else installed. This is its lean tier ("Lean"): you need VS Code with Copilot, and git. You don't need Node.js, a code host, administrator rights or anything else, and Wheelhouse installs nothing. Everything stays on your computer, and Copilot builds in your own chat, one feature at a time.
 
-**Status:** `v0.1.2` is an early release for trying Wheelhouse out. Where this page says `v0.1.2`, use the latest release's name.
+**Status:** `v0.1.3` is an early release for trying Wheelhouse out. Where this page says `v0.1.3`, use the latest release's name.
 
 Open your product's folder in VS Code, open Copilot's chat in agent mode, and paste this line:
 
 ```text
-Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.1.2
+Set up Wheelhouse from https://github.com/where-is-brett/wheelhouse at release v0.1.3
 ```
 
 Copilot asks you before it runs each command, as it always does. What the line does, one step at a time:
@@ -83,4 +83,4 @@ Then the chat follows Wheelhouse's own playbook for Lean: the record, the Logboo
 
 ## For developers
 
-**Status:** `v0.1.2` is an early release for trying Wheelhouse out, with its tests passing. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`, and where the work stands is in `HANDOVER.md`.
+**Status:** `v0.1.3` is an early release for trying Wheelhouse out, with its tests passing. The design is in `docs/specs/2026-10-17-wheelhouse-design.md`, and where the work stands is in `HANDOVER.md`.
