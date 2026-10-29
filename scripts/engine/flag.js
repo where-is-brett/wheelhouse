@@ -20,16 +20,22 @@ export const switchMessage = (name) => `Switch on ${name}`;
 const MOST_BYTES = 256 * 1024;
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
+// Whether a folder between the worktree `cwd` and the file `full` inside it is a link (a folder not made yet isn't).
+export function linkedOnTheWay(cwd, full) {
+  for (let dir = path.dirname(full); dir !== path.resolve(cwd) && dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    try { if (fs.lstatSync(dir).isSymbolicLink()) return true; } catch { /* not made yet */ }
+  }
+  return false;
+}
+
 // The switches in `file` under `cwd`: { flags } ({} when there is no file yet), or { why } when it can't be used.
 function readFlags(cwd, file) {
   const full = path.resolve(cwd, ...file.split('/'));
   if (!full.startsWith(path.resolve(cwd) + path.sep)) return { why: 'the flags file is outside the worktree' };
+  if (linkedOnTheWay(cwd, full)) return { why: 'the flags file is reached through a link' };
   let found;
   try { found = fs.lstatSync(full); } catch { return { flags: {} }; }
   if (!found.isFile() || found.size > MOST_BYTES) return { why: 'the flags file isn\'t a plain file' };
-  for (let dir = path.dirname(full); dir !== path.resolve(cwd); dir = path.dirname(dir)) {
-    if (fs.lstatSync(dir).isSymbolicLink()) return { why: 'the flags file is reached through a link' };
-  }
   try {
     const flags = JSON.parse(fs.readFileSync(full, 'utf8'));
     return isPlain(flags) ? { flags, full } : { why: 'the flags file isn\'t a record of switches' };

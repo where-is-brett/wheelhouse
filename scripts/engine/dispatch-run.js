@@ -117,6 +117,13 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
   // A feature's approved design read into its slices, or { refused }, said on the Logbook once for each problem.
   async function designFor(work, entry) {
     const kept = (state.features[work] ??= { merged: {}, started: [], said: null, asked: null, raised: false, reported: false });
+    // Queued again (the First Mate's Carry on): the merges seen stay; the starts, the cap's card and its answer are
+    // those of the new queueing.
+    const queued = entry?.work?.at ?? null;
+    if (kept.queued !== queued) {
+      Object.assign(kept, { queued, started: [], asked: null, raised: false, stopped: false, reported: false, cards: (kept.cards ?? 0) + (kept.asked ? 1 : 0) });
+      keep();
+    }
     let design = null;
     let problem = null;
     const got = designOf(work);
@@ -147,6 +154,12 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const found = await designFor(work, entry);
     if (found.refused) return { ok: false, refused: found.refused };
     const { design, kept } = found;
+    // Past the feature's cap, nothing more starts without the director's say, however the start came.
+    const s = settings() ?? {};
+    const spent = (views.costs?.[work] ?? []).reduce((n, c) => n + (Number.isFinite(c?.data?.tokens) ? c.data.tokens : 0), 0);
+    if (spent >= featureCap(design, s, { raised: kept.raised }) && !(await featureCapAnswered(views, work, entry, kept, spent, design, s))) {
+      return { ok: false, refused: 'the feature has used the tokens set aside for it' };
+    }
     const progress = progressFor(views, work, entry, kept, design);
     let step = currentStep({ design, progress });
     if (!carryOn) {
@@ -213,27 +226,27 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         continue;
       }
       if (next.act !== 'start' || stopped() || (views.incidents?.open?.length ?? 0) > 0) continue;
-      const spent = (views.costs?.[work] ?? []).reduce((n, c) => n + (Number.isFinite(c?.data?.tokens) ? c.data.tokens : 0), 0);
-      if (spent >= featureCap(design, s, { raised: kept.raised })) {
-        if (!(await featureCapAnswered(views, work, entry, kept, spent, design, s))) continue;
-      }
       await startPiece({ work, lane: 'feature' });
     }
   }
   // The feature's cap card: asked once; Keep going raises the cap by half, once. Gives whether the next run may start.
   async function featureCapAnswered(views, work, entry, kept, spent, design, s) {
+    const title = entry.work.data.title ?? work;
     if (kept.asked) {
       const label = views.questions?.[kept.asked]?.answer?.label;
       if (label === KEEP_GOING && !kept.raised) {
         kept.raised = true;
         keep();
-        return spent < featureCap(design, s, { raised: true });
       }
-      return false;
+      if (kept.raised && spent >= featureCap(design, s, { raised: true }) && !kept.stopped) {
+        kept.stopped = true;
+        keep();
+        await write('note', { about: 'engine', words: `${title} has stopped: it has used its raised cap too, so its next slice doesn't start. The First Mate's Carry on asks you again.` });
+      }
+      return kept.raised && spent < featureCap(design, s, { raised: true });
     }
-    kept.asked = `q-${work}-${FEATURE_QUESTIONS}`;
+    kept.asked = `q-${work}-${FEATURE_QUESTIONS + (kept.cards ?? 0)}`;
     keep();
-    const title = entry.work.data.title ?? work;
     await write('question', {
       id: kept.asked, work, level: 3,
       what: `${title} has used the tokens set aside for the whole feature, so its next slice waits.`,

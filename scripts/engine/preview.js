@@ -27,6 +27,7 @@ import { readConfig } from '../gate/guardrails.js';
 import { runArg } from './done-check.js';
 import { changeOf } from './change.js';
 import { MOST_TOUCHED, pictureName } from './preview-names.js';
+import { linkedOnTheWay } from './flag.js';
 
 export { MOST_TOUCHED, pictureName } from './preview-names.js';
 // How long the project's preview command has to print its ready line.
@@ -139,6 +140,7 @@ export async function dumpPage({ browser, url, local = null, run = runProgram, t
 function switchOn(cwd, flag) {
   const full = path.resolve(cwd, ...flag.file.split('/'));
   if (!full.startsWith(path.resolve(cwd) + path.sep)) return { why: 'the switch\'s file is outside the worktree' };
+  if (linkedOnTheWay(cwd, full)) return { why: 'the switch\'s file is reached through a link' };
   let before;
   try {
     if (!fs.lstatSync(full).isFile()) return { why: 'the switch\'s file isn\'t a plain file' };

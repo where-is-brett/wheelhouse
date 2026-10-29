@@ -29,7 +29,7 @@ function setUp({ design = { text: DESIGN } } = {}) {
   };
   const views = () => ({
     work: { orders: { work: { id: 'w-1', at: world.requeued ?? AT, data: { id: 'orders', title: 'Order history', lane: 'feature', visible: false, dependsOn: [] } }, approved: true, since: AT } },
-    runs: { orders: world.runs.map((data) => ({ at: '2026-10-29T09:00:00.000Z', data: { work: 'orders', engine: 'archon', ...data } })) },
+    runs: { orders: world.runs.map(({ at = '2026-10-29T09:00:00.000Z', ...data }) => ({ at, data: { work: 'orders', engine: 'archon', ...data } })) },
     costs: { orders: world.costs.map((tokens, i) => ({ at: AT, data: { runId: `c${i}`, work: 'orders', tokens } })) },
     incidents: { open: world.incidents }, questions: world.questions, reports: world.reports,
   });
@@ -51,9 +51,9 @@ function setUp({ design = { text: DESIGN } } = {}) {
     now: () => new Date('2026-10-29T10:00:00.000Z'),
   });
   // The run the last start began, recorded as the helper records it, ended with `pr` or still going.
-  const recordLast = ({ pr = null, state = 'ended', outcome = 'completed', branch = `wh/orders-${world.starts.length}` } = {}) => {
+  const recordLast = ({ pr = null, state = 'ended', outcome = 'completed', branch = `wh/orders-${world.starts.length}`, at } = {}) => {
     const runId = `run-${world.starts.length}`;
-    world.runs.push({ runId, lane: world.starts.at(-1).order.lane, state, branch, ...(state === 'ended' ? { outcome } : {}), ...(pr ? { pr } : {}) });
+    world.runs.push({ ...(at ? { at } : {}), runId, lane: world.starts.at(-1).order.lane, state, branch, ...(state === 'ended' ? { outcome } : {}), ...(pr ? { pr } : {}) });
     if (pr) world.ready[pr] = { work: 'orders', head: sha(String(pr % 10)) };
   };
   return { d, world, recordLast };
@@ -199,4 +199,49 @@ test('the First Mate\'s Carry on, queueing the feature again, skips the slice th
   assert.deepEqual(world.starts[2].order.slice, { n: 2, of: 2, title: 'Filter them' });
   assert.equal(world.starts[2].branch, 'wh/orders-2');
   assert.equal(world.starts[2].carryOn, true);
+});
+
+test('a feature queued again goes on past its carried-on slice to its own run and its report', async () => {
+  const { d, world, recordLast } = setUp();
+  await d.tick();
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  await d.tick();
+  recordLast({ outcome: 'cancelled', branch: 'wh/orders-2' });
+  world.requeued = '2026-10-29T09:30:00.000Z';
+  await d.tick();
+  assert.equal(world.starts.length, 3);
+  recordLast({ pr: 71, at: '2026-10-29T09:40:00.000Z' });
+  world.merged.add(71);
+  await d.tick();
+  assert.equal(world.starts.length, 4, 'the feature\'s own run starts once the carried-on slice merged');
+  assert.equal(world.starts[3].order.lane, 'feature');
+  recordLast({ pr: 72, at: '2026-10-29T09:50:00.000Z' });
+  world.merged.add(72);
+  await d.tick();
+  assert.equal(world.written.filter((w) => w.kind === 'report').length, 1);
+});
+
+test('a feature queued again after Stop here at its cap asks again, and a raised cap spent says the feature has stopped', async () => {
+  const { d, world, recordLast } = setUp();
+  const cap = featureCap(readSlices(DESIGN), {});
+  await d.tick();
+  world.costs.push(cap);
+  recordLast({ pr: 70 });
+  world.merged.add(70);
+  await d.tick();
+  const asked = () => world.written.filter((w) => w.kind === 'question');
+  assert.equal(asked().length, 1);
+  world.questions[asked()[0].data.id] = { answer: { label: STOP_HERE } };
+  await d.tick();
+  world.requeued = '2026-10-29T09:30:00.000Z';
+  await d.tick();
+  assert.equal(asked().length, 2, 'the feature queued again asks again');
+  world.questions[asked()[1].data.id] = { answer: { label: KEEP_GOING } };
+  world.costs.push(cap);
+  await d.tick();
+  assert.equal(world.starts.length, 1);
+  assert.ok(notes(world).some((w) => /stopped/.test(w) && /raised/.test(w)), notes(world).join(' | '));
+  await d.tick();
+  assert.equal(notes(world).filter((w) => /stopped/.test(w) && /raised/.test(w)).length, 1);
 });

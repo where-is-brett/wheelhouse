@@ -239,6 +239,24 @@ test('the switch is on only while the local preview runs, and the file is put ba
   assert.match(JSON.parse(fs.readFileSync(path.join(host.folder, 'notes.json'), 'utf8')).flag, /stays off on the host's preview/);
 });
 
+test('a switch file reached through a linked folder is left alone, and the notes say why', async () => {
+  const out = tempFolder('wh-walk-');
+  const cwd = tempFolder('wh-wt-');
+  const outside = tempFolder('wh-out-');
+  const before = '{\n  "order-history": false\n}\n';
+  fs.writeFileSync(path.join(outside, 'feature-flags.json'), before);
+  fs.symlinkSync(outside, path.join(cwd, 'config'));
+  let during = null;
+  const got = await makePreview({
+    runId: 'run-1', out, cwd, client: fakeClient({ visible: true, pages: ['/'], url: null }),
+    browser: '/chrome', picture: fakePicture(), changes: async () => [], config: () => LOCAL,
+    startCommand: async () => { during = fs.readFileSync(path.join(outside, 'feature-flags.json'), 'utf8'); return { ok: true, stop: async () => {} }; },
+    flagOn: { name: 'order-history', file: 'config/feature-flags.json' },
+  });
+  assert.equal(during, before);
+  assert.match(JSON.parse(fs.readFileSync(path.join(got.folder, 'notes.json'), 'utf8')).flag, /link/);
+});
+
 test('with nothing visible, nothing is walked, and the step says no check was walked', async () => {
   const out = tempFolder('wh-walk-');
   let dumped = 0;

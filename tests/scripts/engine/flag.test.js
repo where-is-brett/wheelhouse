@@ -92,3 +92,20 @@ test('the first step says which approval a run ends on, and whether its switch i
   const plain = await flags({ lane: 'slice', preview: null, showFirst: false, demo: false, flag: FILE_FLAG, done: [] });
   assert.equal(plain.topic, 'shown-first');
 });
+
+test('a flags file reached through a linked folder is never read or written, made or not', async () => {
+  for (const made of [false, true]) {
+    const dir = repo();
+    const outside = tempFolder('wh-flag-out-');
+    if (made) fs.writeFileSync(path.join(outside, 'feature-flags.json'), '{}');
+    fs.symlinkSync(outside, path.join(dir, 'config'));
+    const said = [];
+    const code = await flag(['--on', '--run', 'r1'], { client: clientFor({ lane: 'feature', flag: FILE_FLAG }), cwd: dir, out: (l) => said.push(l) });
+    assert.equal(code, 1, `made: ${made}`);
+    assert.match(said.join('\n'), /through a link/);
+    assert.deepEqual(fs.readdirSync(outside), made ? ['feature-flags.json'] : [], 'nothing is written outside the worktree');
+    if (made) assert.equal(fs.readFileSync(path.join(outside, 'feature-flags.json'), 'utf8'), '{}');
+    const off = await play(['--check-off', '--run', 'r1'], { order: { lane: 'slice', flag: FILE_FLAG }, cwd: dir });
+    assert.equal(off.got.clean, false);
+  }
+});
