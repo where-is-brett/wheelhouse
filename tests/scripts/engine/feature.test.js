@@ -3,7 +3,7 @@
 // its runs and the pull requests that merged, what it does next, and the orders of its slice runs and its own run.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readSlices, demoSlice, progressOf, featureNext, sliceOrder, finishOrder, featureCap, SLICES_FENCE } from '../../../scripts/engine/feature.js';
+import { readSlices, demoSlice, progressOf, featureNext, currentStep, sliceOrder, finishOrder, featureCap, SLICES_FENCE } from '../../../scripts/engine/feature.js';
 import { DEFAULT_FLAG_FILE, LANE_CAPS } from '../../../scripts/engine/order.js';
 
 const block = (value) => `# Order history\n\nThe design in words.\n\n\`\`\`${SLICES_FENCE}\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
@@ -127,4 +127,12 @@ test('a feature\'s overall cap is a slice\'s tokens for each slice and one more'
   const design = readSlices(block(SLICES));
   assert.equal(featureCap(design, {}), 3 * LANE_CAPS.slice.tokens);
   assert.equal(featureCap(design, { capTokens: { slice: 1000 } }), 3000);
+});
+
+test('a carry-on takes up the first slice that hasn\'t merged, or the feature\'s own run', () => {
+  const design = readSlices(block(SLICES));
+  const finish = { runs: [], pr: null, merged: false };
+  assert.deepEqual(currentStep({ design, progress: { slices: {}, finish } }), { slice: 1 });
+  assert.deepEqual(currentStep({ design, progress: { slices: { 1: { runs: [], merged: true } }, finish } }), { slice: 2 });
+  assert.deepEqual(currentStep({ design, progress: { slices: { 1: { merged: true }, 2: { merged: true } }, finish } }), { finish: true });
 });

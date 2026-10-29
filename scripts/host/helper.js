@@ -109,7 +109,8 @@ import { reviewsFor } from '../agents/reviews.js';
 import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
 import { routingInForce } from '../routing/in-force.js';
-import { bindingsOf } from '../engine/order.js';
+import { bindingsOf, orderStore } from '../engine/order.js';
+import { approvedDocument } from '../feature/approved.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
 
@@ -4281,6 +4282,16 @@ export async function startHelper({
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
       fixedRuns: () => engineRun.fixedRuns(project),
+      prMerged: async (pr) => {
+        try {
+          const adapter = await (await contextFor(project)).adapter();
+          return (await adapter.prState(pr)).state === 'merged';
+        } catch {
+          return null;
+        }
+      },
+      designOf: (work) => (typeof folder === 'string' ? approvedDocument({ checkout: folder, views: views(), work }) : null),
+      orderOf: (runId) => orderStore(path.join(engineDirOf(stateDir(project)), 'orders')).load(runId),
     });
     const runner = engineRunner({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,

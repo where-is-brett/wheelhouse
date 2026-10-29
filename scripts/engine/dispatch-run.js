@@ -4,7 +4,8 @@
 // the work's decision level; the merge queue is started from here too, one run at a time. Work held because it would
 // use the plan's counted requests brings one card, once, in the engine's own words. A red main line's incident comes
 // first each tick (section 7.7, fix-main.js): one fix run for it, the incident closed once the main line reads green,
-// and one card when a fix didn't make it green. What it keeps (the merge queue's run and when it last started, the
+// and one card when a fix didn't make it green. A feature runs its slices one after another (feature.js): each next one
+// starts once the slice before has merged, and the feature's own run once every slice has. What it keeps (the merge queue's run and when it last started, the
 // pull requests already seen ready, the clashes, the fixes) is in `file`.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,10 +14,12 @@ import { workOrder } from './order.js';
 import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 import { openRedMain, fixDecision, fixOrder } from './fix-main.js';
+import { readSlices, progressOf, featureNext, currentStep, sliceOrder, finishOrder, featureCap } from './feature.js';
+import { since, endedBy } from '../foreman/queue.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isText = (x) => typeof x === 'string' && x.trim() !== '';
-const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {} });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null, noTestsSaid: false, fixes: {}, features: {} });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
 // The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
@@ -29,6 +32,11 @@ export const ALLOW_SOME = 'Allow some';
 export const FIX_FORWARD = 'Fix it forward';
 export const LEAVE_RED = 'Leave it';
 export const undoLabel = (pr) => `Undo #${pr}`;
+export const KEEP_GOING = 'Keep going';
+export const STOP_HERE = 'Stop here';
+// The feature cap card's numbers, after the fix cards'.
+const FEATURE_QUESTIONS = OWN_QUESTIONS + 7000;
+export const FEATURE_DONE = 'Switched on, with every slice added.';
 // The fix card's numbers, after the clash cards' and the requests card's.
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
 export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
@@ -70,12 +78,14 @@ export function orderFor(entry, { settings = {}, raised = false, config = {}, an
 }
 
 // dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf, mainGreen,
-//   stoppedRuns, fixedRuns }) -> { tick, workOf, startAgain, sentBack }.
+//   stoppedRuns, fixedRuns, prMerged, designOf, orderOf }) -> { tick, workOf, startAgain, sentBack }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record;
 // - `mainGreen()` whether the main line's checks read green: true, false, or null when they can't be read (or are
-//   still running); `stoppedRuns()` the runs All stop cancelled; `fixedRuns()` the runs whose fix the helper added.
-export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [] } = {}) {
+//   still running); `stoppedRuns()` the runs All stop cancelled; `fixedRuns()` the runs whose fix the helper added;
+// - `prMerged(pr)` whether the host says a pull request merged (null when it can't say); `designOf(work)` the work's
+//   approved design, { text } or { problem } (or null when it names none); `orderOf(runId)` the order a run was given.
+export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0, mainGreen = async () => null, stoppedRuns = () => [], fixedRuns = () => [], prMerged = async () => null, designOf = () => null, orderOf = () => null } = {}) {
   let state = readState(file);
   const keep = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -97,10 +107,136 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     const entry = views.work?.[work];
     if (!isPlain(entry?.work?.data)) return { ok: false, refused: 'there is no such work' };
     if (!isText(config()?.testCommand)) return { ok: false, refused: 'Wheelhouse doesn\'t know how to run the project\'s tests' };
+    if (entry.work.data.lane === 'feature') return startFeature({ views, entry, work, lane, branch, carryOn, raised, answers });
     let order;
     try { order = orderFor({ ...entry, work: { ...entry.work, key: work } }, { settings: settings() ?? {}, raised, config: config() ?? {}, answers }); } catch (error) { return { ok: false, refused: error.message }; }
     if (order.lane !== lane) return { ok: false, refused: 'the work\'s lane changed' };
     return start({ project, order, ...(branch ? { branch } : {}), carryOn });
+  }
+
+  // A feature's approved design read into its slices, or { refused }, said on the Logbook once for each problem.
+  async function designFor(work, entry) {
+    const kept = (state.features[work] ??= { merged: {}, started: [], said: null, asked: null, raised: false, reported: false });
+    let design = null;
+    let problem = null;
+    const got = designOf(work);
+    if (!got) problem = 'names no document';
+    else if (got.problem) problem = got.problem;
+    else {
+      try { design = readSlices(got.text); } catch (error) { problem = `can't be built from: ${error.message.charAt(0).toLowerCase()}${error.message.slice(1)}`; }
+    }
+    if (design) return { design, kept };
+    if (kept.said !== problem) {
+      kept.said = problem;
+      keep();
+      await write('note', { about: 'engine', words: `${entry.work.data.title ?? work} waits: its approved design ${problem}, so it needs approving again.` });
+    }
+    return { refused: `the feature's design ${problem}` };
+  }
+  // The feature's progress from the runs recorded since it was queued, the orders the helper kept and the merges seen.
+  function progressFor(views, work, entry, kept) {
+    const runs = (views.runs?.[work] ?? []).filter((r) => since(r, entry.work));
+    return progressOf({ runs, orderOf, merged: new Map(Object.entries(kept.merged).map(([pr, head]) => [Number(pr), head])) });
+  }
+  // Starts the feature's next run: slice 1 from the dispatcher, a later slice or its own run from featureTick, or the
+  // run under way again on a carry-on (Give it more, or an answer), on its branch.
+  async function startFeature({ views, entry, work, lane, branch, carryOn, raised, answers }) {
+    if (!['feature', 'slice'].includes(lane)) return { ok: false, refused: 'the work\'s lane changed' };
+    const found = await designFor(work, entry);
+    if (found.refused) return { ok: false, refused: found.refused };
+    const { design, kept } = found;
+    const progress = progressFor(views, work, entry, kept);
+    let step = currentStep({ design, progress });
+    if (!carryOn) {
+      const next = featureNext({ design, progress, live: false });
+      if (next.act !== 'start') return { ok: false, refused: 'the feature has nothing to start now' };
+      step = next;
+    }
+    let order;
+    const args = { entry: { ...entry, work: { ...entry.work, key: work } }, design, config: config() ?? {}, settings: settings() ?? {}, raised, answers };
+    try { order = step.finish ? finishOrder({ ...args, progress }) : sliceOrder({ ...args, n: step.slice }); } catch (error) { return { ok: false, refused: error.message }; }
+    const got = await start({ project, order, ...(branch ? { branch } : {}), carryOn });
+    if (got?.ok && typeof got.runId === 'string') {
+      kept.started.push(got.runId);
+      keep();
+    }
+    return got;
+  }
+
+  // Each feature under way: the merges of its runs' pull requests, a line for each slice added, its next run once the
+  // one before merged, one card when its spend reaches the feature's cap, and its report once it is switched on.
+  async function featureTick() {
+    const views = readViews() ?? {};
+    const s = settings() ?? {};
+    const lanes = Array.isArray(s.engineLanes) ? s.engineLanes : ['quick'];
+    if (!lanes.includes('feature')) return;
+    const reports = isPlain(views.reports) ? views.reports : {};
+    for (const [work, entry] of Object.entries(isPlain(views.work) ? views.work : {})) {
+      if (entry?.work?.data?.lane !== 'feature' || endedBy(reports, work, entry.work)) continue;
+      const runs = (views.runs?.[work] ?? []).filter((r) => since(r, entry.work));
+      if (runs.length === 0) continue;
+      const found = await designFor(work, entry);
+      if (found.refused) continue;
+      const { design, kept } = found;
+      // A start the record doesn't show yet is still under way.
+      const recorded = new Set(runs.map((r) => r?.data?.runId));
+      if (kept.started.some((runId) => !recorded.has(runId))) continue;
+      const ready = readyOf() ?? {};
+      for (const pr of new Set(runs.map((r) => r?.data?.pr).filter((pr) => Number.isInteger(pr) && !Object.hasOwn(kept.merged, pr)))) {
+        let merged = null;
+        try { merged = await prMerged(pr); } catch { merged = null; }
+        if (merged !== true) continue;
+        kept.merged[pr] = typeof ready[pr]?.head === 'string' ? ready[pr].head : null;
+        keep();
+        const n = progressFor(views, work, entry, kept);
+        const slice = Object.entries(n.slices).find(([, got]) => got.pr === pr);
+        if (slice) await write('note', { about: 'engine', words: `Slice ${slice[0]} of ${design.slices.length} of ${entry.work.data.title ?? work} is added, behind its switch.` });
+      }
+      const progress = progressFor(views, work, entry, kept);
+      const latest = new Map(runs.map((r) => [r.data.runId, r.data]));
+      const live = [...latest.values()].some((r) => r.state !== 'ended');
+      const next = featureNext({ design, progress, live });
+      if (next.act === 'done') {
+        if (!kept.reported) {
+          kept.reported = true;
+          keep();
+          await write('report', { work, outcome: 'merged', pr: next.pr, summary: FEATURE_DONE, rulings: [] });
+        }
+        continue;
+      }
+      if (next.act !== 'start' || stopped() || (views.incidents?.open?.length ?? 0) > 0) continue;
+      const spent = (views.costs?.[work] ?? []).reduce((n, c) => n + (Number.isFinite(c?.data?.tokens) ? c.data.tokens : 0), 0);
+      if (spent >= featureCap(design, s, { raised: kept.raised })) {
+        if (!(await featureCapAnswered(views, work, entry, kept, spent, design, s))) continue;
+      }
+      await startPiece({ work, lane: 'feature' });
+    }
+  }
+  // The feature's cap card: asked once; Keep going raises the cap by half, once. Gives whether the next run may start.
+  async function featureCapAnswered(views, work, entry, kept, spent, design, s) {
+    if (kept.asked) {
+      const label = views.questions?.[kept.asked]?.answer?.label;
+      if (label === KEEP_GOING && !kept.raised) {
+        kept.raised = true;
+        keep();
+        return spent < featureCap(design, s, { raised: true });
+      }
+      return false;
+    }
+    kept.asked = `q-${work}-${FEATURE_QUESTIONS}`;
+    keep();
+    const title = entry.work.data.title ?? work;
+    await write('question', {
+      id: kept.asked, work, level: 3,
+      what: `${title} has used the tokens set aside for the whole feature, so its next slice waits.`,
+      why: 'Spending more on a feature than was set aside for it is yours to decide, at level 3.',
+      options: [
+        { label: KEEP_GOING, says: 'The next slice starts, with the feature\'s cap raised by half, once.' },
+        { label: STOP_HERE, says: 'Nothing more starts; the slices already added stay, behind their switch.' },
+      ],
+      recommendation: STOP_HERE,
+    });
+    return false;
   }
 
   // A red main line's incident: its fix, its close and its card (fix-main.js). One at a time.
@@ -173,6 +309,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   async function tick() {
     await fixTick();
+    await featureTick();
     const views = readViews() ?? {};
     const s = settings() ?? {};
     const ready = readyOf() ?? {};

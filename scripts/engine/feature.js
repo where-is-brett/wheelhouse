@@ -104,6 +104,12 @@ export function featureNext({ design, progress, live = false } = {}) {
   return finish.runs.length > 0 ? { act: 'wait' } : { act: 'start', finish: true };
 }
 
+// The step a carry-on of the feature takes up again: the first slice that hasn't merged, or the feature's own run.
+export function currentStep({ design, progress } = {}) {
+  for (let n = 1; n <= design.slices.length; n += 1) if (!progress.slices?.[n]?.merged) return { slice: n };
+  return { finish: true };
+}
+
 // The order for one run of the feature `entry` (the work's view): its goal, checks and lists, and the feature's fields.
 function orderOf({ entry, lane, goal, done, notInScope = [], protectedFiles = [], extra, config = {}, settings = {}, raised = false, answers = [] }) {
   const data = entry.work.data;
