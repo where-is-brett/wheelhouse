@@ -10,7 +10,7 @@
 //        npm run eval -- --ready lean|lightest --project <project>
 //        npm run eval -- <id…> --variant with --trials 3 --level premium --project <project>
 //        npm run eval -- --ready premium --project <project>
-//        npm run eval -- <id…> | --all | --suite <name> --engine fake
+//        npm run eval -- <id…> | --all | --suite <name> --engine fake|archon
 // A scenario is a file `<number>-<name>.js` in a suite; anything else there is
 // not one. A number names one scenario in one suite. A scenario whose pass has
 // more than one leg has a file per leg in its suite, each named `<number>-…`;
@@ -697,7 +697,8 @@ export async function main(argv, {
         if (scenario.engine !== undefined) {
           const got = await engineRun({ scenario, variant, trial, engine: args.engine ?? 'fake' });
           const why = got?.why ?? 'it said nothing';
-          outcome = { pass: got?.pass === true, handled: true, why, file: null, usage: { input: 0, output: 0 }, line: `${scenarioName(scenario)} ${variant}: ${got?.pass === true ? 'pass' : 'fail'} (${why})` };
+          const played = got?.played ? ` [${got.played}]` : '';
+          outcome = { pass: got?.pass === true, handled: true, why, file: null, usage: { input: 0, output: 0 }, ...(got?.played ? { played: got.played } : {}), line: `${scenarioName(scenario)} ${variant}: ${got?.pass === true ? 'pass' : 'fail'}${played} (${why})` };
         } else {
           outcome = await run({ scenario, variant, trial, home, date, column, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
         }
@@ -723,6 +724,8 @@ export async function main(argv, {
         why: outcome.why,
         usage: outcome.usage ?? { input: 0, output: 0 },
         file: outcome.file,
+        // On real Archon, whether the scenario played for real or its recording.
+        ...(outcome.played ? { played: outcome.played } : {}),
         ...(column !== null ? { level: column.level, pins: { ...column.pins }, sha256: hashOf(outcome.file) } : {}),
       });
       save();
@@ -737,7 +740,8 @@ export async function main(argv, {
   print(`  run record: ${recordFile}`);
   if (column?.level === PREMIUM_LEVEL && failed > 0) await reportPremiumFailure({ project: args.project, helper, print });
 
-  if (args.all || args.again) {
+  // A run on real Archon is the counted evaluation's engine half: its report says which scenarios played for real.
+  if (args.all || args.again || args.engine === 'archon') {
     const summary = summarise(record, { root, e2eDir, designed });
     const text = summaryText(summary);
     const reportFile = recordFile.replace(/\.json$/, '.md');
