@@ -12,6 +12,7 @@ import { cardTextOf, hashOf } from '../mod/status.js';
 import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
 import { contextText } from './context.js';
+import { paneFrom } from './mod-pane.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
@@ -188,7 +189,14 @@ function cardOf(got, id, preview) {
 }
 
 const VIEWS = {
+  // With `pane` (and `helperUp`, `at`, `timeZone`), data.pane is the mod's pane model (mod-pane.js), built
+  // at `at` (now without one), whose glance is the view's line; it is given even when the inputs can't be read.
   async glance(args, source, { now }) {
+    if (args.pane === true) {
+      const at = typeof args.at === 'string' && Number.isFinite(Date.parse(args.at)) ? new Date(args.at) : now();
+      const pane = await paneFrom(source, { now: () => at, helperUp: typeof args.helperUp === 'boolean' ? args.helperUp : undefined, timeZone: args.timeZone });
+      return { ok: true, data: { glance: pane.glance, pane }, lines: [pane.glance] };
+    }
     const inputs = await boardOf(source, { offline: true });
     if (inputs.refused) return { ok: false, refused: inputs.refused };
     const glance = glanceLine(inputs.model);

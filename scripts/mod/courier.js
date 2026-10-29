@@ -12,6 +12,12 @@
 // the chat ("Wheelhouse: 1 waiting on you: card 2."); the instructions for the front desk are kept in
 // courier.json beside it, and board-context.js hands them to the front desk as hidden context when
 // that line arrives (courierContext), so no agent is spoken to in front of the director.
+//
+// courier.json also keeps the desk's watch cursor beside the sent ids (courierCursor): each tick the
+// bridge asks the desk for the changes since it (a card added, All stop, a notice) and the wake keeps
+// the cursor the desk gave back. What wakes is still decided from the pane's model and the sent ids,
+// which also carry what a change alone doesn't: a card's number, whether it blocks or was asked, a
+// wake held back by a running turn or the gap, and a reminder that comes due with no change at all.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
@@ -29,6 +35,8 @@ export const SESSIONS_KEPT = 20;
 const BUSY = 'The courier is busy in another session';
 // A courier.json larger than this reads as nothing sent.
 const FILE_BYTES = 1024 * 1024;
+// A watch cursor longer than this isn't kept.
+const CURSOR_CHARS = 64 * 1024;
 // The notification first, in its exact words and title: in Desktop the cards wait for the
 // director's answer, so a notification sent after them would reach the phone only once the
 // director had answered.
@@ -141,23 +149,30 @@ function readKept(project) {
   try {
     const file = courierFile(project);
     const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > FILE_BYTES) return { sent: [], lastWakeAt: null, sessions: [], wakes: [] };
+    if (!stat.isFile() || stat.size > FILE_BYTES) return { sent: [], lastWakeAt: null, sessions: [], wakes: [], cursor: null };
     const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
     return {
       sent: list(kept?.sent).filter((s) => typeof s.id === 'string'),
       lastWakeAt: typeof kept?.lastWakeAt === 'string' ? kept.lastWakeAt : null,
       sessions: list(kept?.sessions).filter((s) => isSession(s.id) && typeof s.at === 'string'),
       wakes: list(kept?.wakes).filter((w) => isSession(w.session) && typeof w.at === 'string' && typeof w.line === 'string' && typeof w.context === 'string'),
+      cursor: typeof kept?.cursor === 'string' && kept.cursor.length <= CURSOR_CHARS ? kept.cursor : null,
     };
   } catch {
-    return { sent: [], lastWakeAt: null, sessions: [], wakes: [] };
+    return { sent: [], lastWakeAt: null, sessions: [], wakes: [], cursor: null };
   }
+}
+
+// courierCursor(project) -> the desk's watch cursor courier.json keeps, or null. Read without the
+// lock: courier.json is replaced whole, and a cursor read twice gives its changes again, never fewer.
+export function courierCursor(project) {
+  return readKept(project).cursor;
 }
 
 // Writes courier.json whole through a temporary file. The sent ids keep their order, each once,
 // cut to the last SENT_KEPT, except that every id still among the current items is kept, so a
 // long-standing item (a feature finished long ago) never wakes again.
-function writeKept(project, { sent, lastWakeAt, sessions, wakes = [] }, current) {
+function writeKept(project, { sent, lastWakeAt, sessions, wakes = [], cursor = null }, current) {
   const latest = new Map();
   for (const entry of sent) {
     latest.delete(entry.id);
@@ -169,7 +184,7 @@ function writeKept(project, { sent, lastWakeAt, sessions, wakes = [] }, current)
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(temp, `${JSON.stringify({ sent: kept, lastWakeAt, sessions, wakes: wakes.slice(-WAKES_KEPT) })}\n`);
+    fs.writeFileSync(temp, `${JSON.stringify({ sent: kept, lastWakeAt, sessions, wakes: wakes.slice(-WAKES_KEPT), ...(typeof cursor === 'string' && cursor.length <= CURSOR_CHARS ? { cursor } : {}) })}\n`);
     fs.renameSync(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -221,11 +236,12 @@ function lineOf(items) {
 
 const NOTHING = Object.freeze({ submit: null, sent: [] });
 
-// courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, context?, sent, at? }.
+// courierWake({ project, session, items, presence, quiet, idle, now, timeZone, cursor }) -> { submit, context?, sent, at? }.
 // `submit` is the line the director sees; `context` the front desk's instructions, kept with it in courier.json.
 // `session` is the ticking session's id; `items` are needsYou's; `presence` the effective
 // presence ({ value, until }); `quiet` the notifications' quiet hours ({ from, to }); `idle` false
-// while a turn runs; `timeZone` the computer's own.
+// while a turn runs; `timeZone` the computer's own; `cursor` the desk's watch cursor this tick's changes
+// came with, kept in courier.json in place of the last (the one kept stays when none is given).
 //
 // A session's first tick (an id courier.json hasn't seen) is its opening: the director has just
 // opened it, and the visit asks what waits, so nothing wakes. It marks every item sent, unless
@@ -247,7 +263,7 @@ const NOTHING = Object.freeze({ submit: null, sent: [] });
 // lastWakeAt before it, so courierUnsent can put them back. Another session holding courier.json
 // past LOCK_WAIT_MS is a quiet wait for the next tick. Throws when courier.json can't be kept, so
 // nothing is lost.
-export async function courierWake({ project, session, items, presence, quiet, idle, now = () => new Date(), timeZone } = {}) {
+export async function courierWake({ project, session, items, presence, quiet, idle, now = () => new Date(), timeZone, cursor } = {}) {
   const t = instantOf(now);
   if (!Number.isFinite(t) || !isSession(session)) return NOTHING;
   const found = list(items).filter((i) => typeof i.id === 'string');
@@ -277,6 +293,7 @@ export async function courierWake({ project, session, items, presence, quiet, id
     }).map(({ item, id }) => ({ id, kind: 'remind', n: item.n, blocking: item.blocking }));
     const mark = (marked, lastWakeAt, woke = {}, wake = null) => writeKept(project, {
       sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp, ...woke }))], lastWakeAt, sessions, wakes: wake === null ? kept.wakes : [...kept.wakes, wake],
+      cursor: typeof cursor === 'string' ? cursor : kept.cursor,
     }, current);
 
     if (opening) {
@@ -333,7 +350,7 @@ export async function courierUnsent({ project, session, ids, at } = {}) {
     const before = typeof undoing[0].before === 'string' ? undoing[0].before : null;
     // Every other id stays, however many: the undo cuts nothing.
     const sent = kept.sent.filter((entry) => !out.has(entry.id));
-    writeKept(project, { sent, lastWakeAt: kept.lastWakeAt === at ? before : kept.lastWakeAt, sessions: kept.sessions, wakes: kept.wakes }, new Set(sent.map((entry) => entry.id)));
+    writeKept(project, { sent, lastWakeAt: kept.lastWakeAt === at ? before : kept.lastWakeAt, sessions: kept.sessions, wakes: kept.wakes, cursor: kept.cursor }, new Set(sent.map((entry) => entry.id)));
     return { unsent: [...out] };
   } finally {
     release();

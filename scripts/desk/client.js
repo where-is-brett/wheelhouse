@@ -33,9 +33,10 @@ function homeReadable() {
   }
 }
 
-// deskClient({ address, cwd, project, local, timeout, client, now }) -> { read, act, watch }. `client`
-// is a helper client to ask instead of one made here (a test's, or a front end's own).
-export function deskClient({ address, cwd, project, local = 'auto', timeout, client, now = () => new Date() } = {}) {
+// deskClient({ address, cwd, project, local, timeout, client, now, waitMs }) -> { read, act, watch }. `client`
+// is a helper client to ask instead of one made here (a test's, or a front end's own); `waitMs` is how long
+// the local core's board inputs wait on the helper.
+export function deskClient({ address, cwd, project, local = 'auto', timeout, client, now = () => new Date(), waitMs } = {}) {
   const helper = client ?? helperClient({ ...(address ? { address } : {}), ...(timeout ? { timeout } : {}) });
   const where = project ? { project } : { cwd };
 
@@ -60,7 +61,7 @@ export function deskClient({ address, cwd, project, local = 'auto', timeout, cli
       chatClick: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
       confirm: async () => ({ ok: false, refused: HELPER_NOT_RUNNING }),
     };
-    core = deskCore({ source: fileSource(found.project, { cwd: cwd ?? found.record?.folder, client: helper, now }), recorder, now });
+    core = deskCore({ source: fileSource(found.project, { cwd: cwd ?? found.record?.folder, client: helper, now, waitMs }), recorder, now });
     return core;
   };
 

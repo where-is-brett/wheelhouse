@@ -18,13 +18,16 @@ import { stopState } from '../lib/stop.js';
 
 const APPROVAL_LINE = /^Approve pull request #([1-9][0-9]*) at commit ([0-9a-f]{12})$/;
 
-// fileSource(project, { cwd, client, now, fresh }) -> source. `cwd` is a folder of the project, for
-// the board's inputs; `client` the helper client the board and previews ask (the helper's own, inside it).
-export function fileSource(project, { cwd, client, now = () => new Date(), fresh = false } = {}) {
+// fileSource(project, { cwd, client, now, fresh, waitMs }) -> source. `cwd` is a folder of the project, for
+// the board's inputs; `client` the helper client the board and previews ask (the helper's own, inside it);
+// `waitMs` how long the board's inputs wait on the helper (loadBoardInputs' own limit when not given).
+export function fileSource(project, { cwd, client, now = () => new Date(), fresh = false, waitMs } = {}) {
   const events = () => listEvents(stateDir(project), { report: () => {} });
   return {
     project,
     cwd,
+    // The helper client the board and previews ask, which the pane asks for an approval's preview.
+    client,
     events,
     enrolled: () => readEnrolled(),
     async views({ cards = false, answers = false, review = false } = {}) {
@@ -44,8 +47,9 @@ export function fileSource(project, { cwd, client, now = () => new Date(), fresh
     async profile() {
       return fresh ? writeProfileViews({ now }) : readProfileViews();
     },
-    async board({ offline = false } = {}) {
-      return loadBoardInputs({ cwd, client, now, offline });
+    // `now` is the clock the board is read at, when not the source's (the pane's, which is the caller's).
+    async board({ offline = false, now: at } = {}) {
+      return loadBoardInputs({ cwd, client, now: typeof at === 'function' ? at : now, offline, ...(waitMs === undefined ? {} : { waitMs }) });
     },
     async usage() {
       return { figures: usageFigures({ project, now }), week: weeklyShare({ now }) };

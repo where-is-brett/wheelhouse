@@ -196,7 +196,7 @@ function deskOf({ cwd, client, at }) {
       },
     },
   };
-  return deskClient({ cwd, client: helper, local: 'auto', now: () => at });
+  return deskClient({ cwd, client: helper, local: 'auto', now: () => at, waitMs: INPUTS_WAIT_MS + helperGrace() });
 }
 
 // The addition for `want`, as the desk's view gives it, and the unusual items it showed. Throws
