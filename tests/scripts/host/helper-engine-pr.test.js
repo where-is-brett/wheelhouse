@@ -55,7 +55,7 @@ test('the pull request is opened from the worktree, with what built it recorded 
   assert.deepEqual(got, { ok: true, branch: 'wh/card-1', pr: 14, head: HEAD });
   assert.deepEqual(calls.filter((c) => c.call !== 'write').map((c) => c.call), ['push', 'provenance', 'open']);
   assert.equal(calls.find((c) => c.call === 'open').title, 'Show prices with two decimals');
-  assert.deepEqual(openedOf('p', 14), { runId: 'run-1', head: HEAD, showFirst: false, work: 'card-1', level: 3 }, 'the permit reads the work\'s shown-first flag and its level from here');
+  assert.deepEqual(openedOf('p', 14), { runId: 'run-1', head: HEAD, showFirst: false, work: 'card-1', level: 3, lane: 'quick' }, 'the permit reads the work\'s shown-first flag and its level from here');
   assert.equal(openedOf('p', 15), null);
   assert.match((await routes['/engine/open-pr']({ runId: 'run-1', cwd: '/p', title: '', body: '' })).refused, /title and body/);
 });

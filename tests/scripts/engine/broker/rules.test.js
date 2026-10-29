@@ -47,7 +47,8 @@ test('a push to the default branch is refused', () => {
 });
 
 test('a call not on the list is refused with a plain reason', () => {
-  for (const argv of [['repo', 'delete', 'acme/web', '--yes'], ['secret', 'set', 'X'], ['run', 'rerun', '5', '--failed'], ['api', '-X', 'DELETE', 'repos/acme/web']]) {
+  // A re-run of failed jobs is on the list, but only for a red main line (below); one of every job is not.
+  for (const argv of [['repo', 'delete', 'acme/web', '--yes'], ['secret', 'set', 'X'], ['run', 'rerun', '5'], ['api', '-X', 'DELETE', 'repos/acme/web']]) {
     const decision = brokerDecision(classifyCall(argv), { stop: false, lockHeld: true });
     assert.equal(decision.allow, false);
     assert.match(decision.reason, /isn't on Wheelhouse's list/);
@@ -213,5 +214,40 @@ test('isOneQuery takes one query and nothing that could change anything', () => 
   }
   for (const text of ['mutation { x }', 'query { a } mutation { b }', 'query A { a } query B { b }', 'subscription { s }', 'query { a(s: "x) }', 'query { a', '}{', null]) {
     assert.equal(isOneQuery(text), false, String(text));
+  }
+});
+
+// The fix-main lane's cheapest fix (Archon design, section 7.7): the main line's failed jobs run again, only for a run
+// of the default branch while a red-main incident is open.
+const RERUN_CTX = { stop: false, lockHeld: true, defaultBranch: 'main', redMain: true, runBranch: 'main' };
+
+test('run rerun --failed is classed rerun, naming the run', () => {
+  assert.deepEqual(classifyCall(['run', 'rerun', '77', '--failed']), { kind: 'rerun', name: 'workflow run, failed jobs again', run: 77 });
+  assert.equal(classifyCall(['run', 'rerun', '77', '--failed', '--repo', 'acme/web'], { repo: 'acme/web' }).kind, 'rerun');
+});
+
+test('a rerun passes on the default branch while main is red', () => {
+  assert.deepEqual(brokerDecision(classifyCall(['run', 'rerun', '77', '--failed']), RERUN_CTX), { allow: true });
+});
+
+test('a rerun is refused with no red-main incident', () => {
+  assert.match(brokerDecision(classifyCall(['run', 'rerun', '77', '--failed']), { ...RERUN_CTX, redMain: false }).reason, /red main line/);
+});
+
+test('a rerun is refused for a feature branch\'s run, or one whose branch can\'t be read', () => {
+  for (const runBranch of ['wh/card-1', null, undefined]) {
+    assert.match(brokerDecision(classifyCall(['run', 'rerun', '77', '--failed']), { ...RERUN_CTX, runBranch }).reason, /default branch/, String(runBranch));
+  }
+});
+
+test('a rerun is refused under All stop or without the lock', () => {
+  const call = classifyCall(['run', 'rerun', '77', '--failed']);
+  assert.match(brokerDecision(call, { ...RERUN_CTX, stop: true }).reason, /All stop/);
+  assert.match(brokerDecision(call, { ...RERUN_CTX, lockHeld: false }).reason, /lock/);
+});
+
+test('a rerun without --failed, of every job, or of another repository is refused', () => {
+  for (const argv of [['run', 'rerun', '77'], ['run', 'rerun', '77', '--failed', '--job', '5'], ['run', 'rerun', '--failed'], ['run', 'rerun', 'x7', '--failed'], ['run', 'rerun', '77', '--failed', '--repo', 'other/repo']]) {
+    assert.equal(classifyCall(argv, { repo: 'acme/web' }).kind, 'other', argv.join(' '));
   }
 });

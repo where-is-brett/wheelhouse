@@ -10,7 +10,7 @@ import { run as realRun } from '../../../scripts/lib/run.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startHelper, incidentFor, shownFirstNeeded } from '../../../scripts/host/helper.js';
+import { startHelper, incidentFor, fixOfRun, shownFirstNeeded } from '../../../scripts/host/helper.js';
 import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir, oldStateDir } from '../../../scripts/lib/paths.js';
 import { openRecord } from '../../../scripts/state/record.js';
@@ -513,6 +513,81 @@ test('feature work that is not shown first merges without approval, flag files o
     await as(home, () => approveWork({ lane: 'feature', shownFirst: false }));
     await withHelper(home, adapter, async (client) => {
       assert.equal((await merge(client, 7)).ok, true);
+    });
+  } finally { remote.cleanup(); }
+});
+
+// A red main line's incident (Archon design, section 7.7): its fix is the pull request the helper itself recorded a
+// fix-main run opening, for that incident, at that head; nothing a caller says makes a pull request the fix.
+const RED = { id: 'red-main-0123456789', what: 'red', at: 'x', fixes: [], kind: 'red-main', suspect: 7, work: 'fix-main-red-main-0123456789' };
+const FIX_HEAD = 'f'.repeat(40);
+const OPENED = { runId: 'run-9', head: FIX_HEAD, showFirst: false, work: RED.work, level: 1, lane: 'fix-main', incident: RED.id };
+const CALL = { runId: 'run-9', pr: 9, head: FIX_HEAD, incident: RED.id };
+
+test('the fix of a red-main incident is the helper\'s own record of the run, at its head', () => {
+  const views = { incidents: { open: [RED] } };
+  const fix = fixOfRun({ views, opened: OPENED, call: CALL, headSha: FIX_HEAD });
+  assert.deepEqual(fix, { incident: RED.id, pr: 9, head: FIX_HEAD });
+  assert.deepEqual(incidentFor(views, 9, { fix }), { open: true, id: RED.id, isFix: true });
+  // Another pull request is refused while the red-main incident is open, fix or no fix.
+  assert.deepEqual(incidentFor(views, 8, { fix }), { open: true, id: RED.id, isFix: false });
+  assert.deepEqual(incidentFor(views, 8), { open: true, id: RED.id, isFix: false });
+});
+
+test('a fix whose head moved since the run opened it, or that another run opened, is not the fix', () => {
+  const views = { incidents: { open: [RED] } };
+  assert.equal(fixOfRun({ views, opened: OPENED, call: CALL, headSha: 'e'.repeat(40) }), null, 'the head moved');
+  assert.equal(fixOfRun({ views, opened: { ...OPENED, head: 'e'.repeat(40) }, call: CALL, headSha: FIX_HEAD }), null);
+  assert.equal(fixOfRun({ views, opened: { ...OPENED, runId: 'run-8' }, call: CALL, headSha: FIX_HEAD }), null, 'another run');
+  assert.equal(fixOfRun({ views, opened: { ...OPENED, lane: 'quick' }, call: CALL, headSha: FIX_HEAD }), null, 'not a fix-main run');
+  assert.equal(fixOfRun({ views, opened: { ...OPENED, incident: 'red-main-9999999999' }, call: CALL, headSha: FIX_HEAD }), null, 'another incident');
+  assert.equal(fixOfRun({ views, opened: null, call: CALL, headSha: FIX_HEAD }), null, 'no run of the helper\'s opened it');
+  assert.equal(fixOfRun({ views: { incidents: { open: [] } }, opened: OPENED, call: CALL, headSha: FIX_HEAD }), null, 'the incident is closed');
+  assert.equal(fixOfRun({ views: { incidents: { open: [{ ...RED, kind: undefined }] } }, opened: OPENED, call: CALL, headSha: FIX_HEAD }), null, 'the director\'s own incident is fixed only by their click');
+  // A fix that names another incident than the open one is no fix of it.
+  assert.deepEqual(incidentFor({ incidents: { open: [RED] } }, 9, { fix: { incident: 'bad-total', pr: 9, head: FIX_HEAD } }), { open: true, id: RED.id, isFix: false });
+});
+
+test('/merge with a fix in its body is not taken as the fix of a red main line', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    const a = await readyPr(home, remote, 9, 'wh/fix', { 'a.txt': 'a\n' });
+    const adapter = fakeAdapter({ 9: a });
+    await as(home, () => record('incident', { id: RED.id, what: 'red', kind: 'red-main', suspect: 7, work: RED.work }));
+    await withHelper(home, adapter, async (client) => {
+      for (const extra of [{}, { fix: { incident: RED.id, pr: 9, head: a.headSha } }, { fixCall: { runId: 'run-9', pr: 9, head: a.headSha, incident: RED.id } }]) {
+        const answer = await merge(client, 9, extra);
+        assert.deepEqual([answer.ok, answer.reasons], [false, [frozen(RED.id)]], JSON.stringify(extra));
+      }
+      assert.deepEqual(adapter.merges, []);
+    });
+  } finally { remote.cleanup(); }
+});
+
+test('while the director\'s own incident is open too, the red-main fix is held like any other pull request', () => {
+  const frozen = { id: 'bad-total', what: 'Totals are wrong', at: 'x', fixes: [] };
+  for (const open of [[RED, frozen], [frozen, RED]]) {
+    const views = { incidents: { open } };
+    const fix = fixOfRun({ views, opened: OPENED, call: CALL, headSha: FIX_HEAD });
+    assert.equal(incidentFor(views, 9, { fix }).isFix, false, 'only the director\'s click lets a pull request past their incident');
+  }
+  // The director's named fix still goes through their own incident when only it is open.
+  assert.equal(incidentFor({ incidents: { open: [{ ...frozen, fixes: [9] }] } }, 9).isFix, true);
+});
+
+test('/state/write refuses a red-main incident: only the helper\'s card router opens one', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    await withHelper(home, fakeAdapter({}), async (client) => {
+      for (const extra of [{ kind: 'red-main' }, { suspect: 7 }, { work: RED.work }, { kind: 'red-main', suspect: 7, work: RED.work }]) {
+        const forged = await client.state.write({ project: 'o__p', kind: 'incident', data: { id: 'red-main-0000000000', what: 'red', ...extra } });
+        assert.equal(forged.ok, false, JSON.stringify(extra));
+        assert.match(forged.refused, /red main line/);
+      }
+      // The director's own incident is written as before.
+      assert.equal((await client.state.write({ project: 'o__p', kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' } })).ok, true);
     });
   } finally { remote.cleanup(); }
 });

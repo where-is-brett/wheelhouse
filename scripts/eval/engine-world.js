@@ -34,10 +34,11 @@ function noHostTools(log) {
   };
 }
 
-// openWorld({ engine, recordings, now, spawn, adapt, seed }) -> the world, on the project's default settings. `now` is a
-// function the scenario may move on. For tests: `spawn` stands in for the helper's processes (a wake by default),
-// `adapt(engine)` adds to the fake engine, and `seed(world)` writes records before the helper starts.
-export async function openWorld({ engine: kind = 'fake', recordings = {}, now = () => new Date(), spawn = () => fakeChild(), adapt = (e) => e, seed = () => {} } = {}) {
+// openWorld({ engine, recordings, now, host, spawn, adapt, seed }) -> the world, on the project's default settings. `now`
+// is a function the scenario may move on; `host` the code host's stand-in the helper reads (its adapter), which the
+// scenario may change. For tests: `spawn` stands in for the helper's processes (a wake by default), `adapt(engine)`
+// adds to the fake engine, and `seed(world)` writes records before the helper starts.
+export async function openWorld({ engine: kind = 'fake', recordings = {}, now = () => new Date(), host = {}, spawn = () => fakeChild(), adapt = (e) => e, seed = () => {} } = {}) {
   if (!ENGINES.includes(kind)) throw new Error(`An engine scenario runs on ${ENGINES.join(', ')}, not ${kind}`);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-ew-'));
   const home = path.join(root, 'h');
@@ -55,7 +56,7 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
   const own = () => { const k = ownKey(); return k ? [{ computer: k.computer, publicKey: k.publicKey }] : []; };
 
   const world = {
-    engine, home, folder, artefacts, hostCalls,
+    engine, home, folder, artefacts, hostCalls, host,
     // A record in the project's history, as the First Mate or the director's click writes it.
     put(kind, data, { unsigned = false } = {}) {
       const event = makeEvent({ kind, data, now });
@@ -91,7 +92,7 @@ export async function openWorld({ engine: kind = 'fake', recordings = {}, now = 
     await openProjectRecord(PROJECT);
     await seed(world);
     helper = await startHelper({
-      run: noHostTools(hostCalls), address: helperAddress({ home }), adapterFor: async () => ({}), envFor: async () => ({}), now,
+      run: noHostTools(hostCalls), address: helperAddress({ home }), adapterFor: async () => host, envFor: async () => ({}), now,
       spawn, engineFor: () => engine, dispatchMs: 60 * 60 * 1000, stopPollMs: 50,
     });
   } catch (error) {
@@ -121,13 +122,14 @@ export async function until(fn, { ms = 8000, every = 25 } = {}) {
 }
 
 // Plays one engine scenario in its world and judges it: { pass, why }. A scenario's `engine` is
-// { recordings?, startAt?, play(world, { now, at }) -> { pass, why } }; `at(iso)` moves the world's clock.
+// { recordings?, startAt?, host?(), play(world, { now, at }) -> { pass, why } }; `at(iso)` moves the world's clock, and
+// `host()` gives the code host's stand-in for this play.
 export async function runEngineScenario({ scenario, engine = 'fake' }) {
   // The world's clock starts at the scenario's time and runs on with the real one, so records keep their order;
   // `at` moves it.
   const clock = { base: Date.parse(scenario.engine.startAt ?? '2026-10-29T09:00:00.000Z'), from: Date.now() };
   const now = () => new Date(clock.base + (Date.now() - clock.from));
-  const world = await openWorld({ engine, recordings: scenario.engine.recordings ?? {}, now });
+  const world = await openWorld({ engine, recordings: scenario.engine.recordings ?? {}, now, host: typeof scenario.engine.host === 'function' ? scenario.engine.host() : {} });
   try {
     const got = await scenario.engine.play(world, { now, at: (iso) => { clock.base = Date.parse(iso); clock.from = Date.now(); } });
     if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}` };

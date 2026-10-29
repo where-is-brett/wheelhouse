@@ -794,7 +794,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -864,6 +864,34 @@ test('a run event with an unknown state is refused', async () => {
     assert.equal(makeEvent({ kind: 'preview', data: { work: 'login', head: 'a'.repeat(40), folder: '/x', pages: ['index.html'] } }).kind, 'preview');
     assert.equal(makeEvent({ kind: 'lesson', data: { work: 'login', text: 'Check the lock first' } }).kind, 'lesson');
     assert.throws(() => makeEvent({ kind: 'lesson', data: { work: 'login' } }), /needs its/);
+  });
+});
+
+test('a run of the fix-main lane is recorded', async () => {
+  await withHome(() => {
+    assert.equal(makeEvent({ kind: 'run', data: { ...RUN, lane: 'fix-main' } }).data.lane, 'fix-main');
+    assert.throws(() => makeEvent({ kind: 'run', data: { ...RUN, lane: 'merge' } }), /run event/);
+  });
+});
+
+test('an incident may carry its kind, suspect and work', async () => {
+  await withHome(() => {
+    const data = { id: 'red-main-0123456789', what: 'The main line is red', kind: 'red-main', suspect: 12, work: 'fix-main-red-main-0123456789' };
+    assert.deepEqual(makeEvent({ kind: 'incident', data }).data, data);
+    assert.equal(makeEvent({ kind: 'incident', data: { ...data, suspect: null } }).data.suspect, null);
+    assert.throws(() => makeEvent({ kind: 'incident', data: { ...data, kind: 'outage' } }), /incident event/);
+    assert.throws(() => makeEvent({ kind: 'incident', data: { ...data, suspect: '12' } }), /incident event/);
+    assert.throws(() => makeEvent({ kind: 'incident', data: { ...data, work: 'Has Spaces' } }), /incident event/);
+  });
+});
+
+test('incident-closed is the helper\'s own record', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('incident-closed'), true);
+    assert.equal(HELPER_ONLY_KINDS.includes('incident-closed'), true);
+    assert.deepEqual(makeEvent({ kind: 'incident-closed', data: { incident: 'red-main-0123456789', why: 'green' } }).data.why, 'green');
+    assert.throws(() => makeEvent({ kind: 'incident-closed', data: { incident: 'Has Spaces', why: 'green' } }), /incident-closed event/);
+    assert.throws(() => makeEvent({ kind: 'incident-closed', data: { incident: 'red-main-1' } }), /needs its/);
   });
 });
 

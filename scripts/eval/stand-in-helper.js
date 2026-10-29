@@ -33,7 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, confirmationFor, makeEvent, carriesBaseline } from '../state/events.js';
+import { PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN, confirmationFor, makeEvent, carriesBaseline } from '../state/events.js';
 import { buildViews, latestFor } from '../state/views.js';
 import { gateDecision } from '../gate/conditions.js';
 import { makeSigningKey } from '../state/signing.js';
@@ -310,6 +310,7 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       let refused = null;
       if (PROTECTED_KINDS.includes(kind)) refused = 'a signed kind is recorded through /state/record, never written here';
       else if (HELPER_ONLY_KINDS.includes(kind)) refused = 'only the helper itself records that kind';
+      else if (kind === 'incident' && plain && RED_MAIN_FIELDS.some((k) => Object.hasOwn(data, k))) refused = RED_MAIN_OWN;
       else if (!PLAIN_KINDS.includes(kind)) refused = 'that kind of event is not known';
       else if (!plain) refused = 'the event\'s data must be an object';
       else if (id !== undefined && (typeof id !== 'string' || !RANDOM_UUID.test(id))) refused = 'an id given with a record must be a random UUID in lower case';

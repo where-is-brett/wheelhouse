@@ -99,3 +99,11 @@ test('the column in force becomes the pack\'s tier bindings: large for critical 
   assert.deepEqual(bindingsOf({}), {}, 'no models named: the pack\'s own tiers stand');
   assert.deepEqual(bindingsOf(null), {});
 });
+
+test('only a fix-main order names an incident', async () => {
+  const { workOrder: make, checkOrder: check } = await import('../../../scripts/engine/order.js');
+  const order = make({ work: { id: 'fix-main-red-main-0123456789', lane: 'fix-main', goal: 'Green again', done: [{ command: 'npm test', expect: 0 }] } });
+  assert.equal(check({ ...order, incident: 'red-main-0123456789' }), null);
+  assert.match(check({ ...order, incident: 'Has Spaces' }), /incident/);
+  assert.match(check({ ...order, lane: 'quick', incident: 'red-main-0123456789' }), /incident/);
+});

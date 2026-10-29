@@ -50,6 +50,14 @@ test('hold on a red main line is level 1 with answer hold', () => {
   assert.match(ask.line, /main line is red/);
 });
 
+test('the red main line\'s hold opens a red-main incident, naming the pull request the queue suspects', () => {
+  const ask = normaliseAsk(items.mergeBase, { now });
+  assert.equal(ask.opens, 'red-main');
+  assert.equal(ask.suspect, 41);
+  assert.equal(normaliseAsk({ ...items.mergeBase, message: 'Merge queue: the default branch is red' }, { now }).suspect, null);
+  assert.equal(normaliseAsk(items.pack, { now }).opens, undefined);
+});
+
 test("the merge queue's question about a pull request, and rounds ended, are level 3", () => {
   const pr = normaliseAsk(items.mergePr, { now });
   assert.equal(pr.level, 3);
