@@ -17,8 +17,14 @@ test('CLAUDE.md in any folder, .mcp.json, workflows and GitLab CI files touch th
   const paths = ['CLAUDE.md', 'docs/CLAUDE.md', '.mcp.json', '.github/workflows/ci.yml', '.github/actions/x/action.yml', '.gitlab-ci.yml', '.gitlab/ci/a.yml'];
   assert.deepEqual(classifyChange({ paths, config: empty }).guardrailPaths, paths);
   assert.equal(classifyChange({ paths: ['docs/CLAUDE.md.bak', 'src/.mcp.json'], config: empty }).touchesGuardrails, false);
-  assert.deepEqual(GUARDRAILS, ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL]);
+  assert.deepEqual(GUARDRAILS, ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL, '.archon/**', 'engine/archon/pack/**']);
   assert.deepEqual(CI_FILES, ['.github/workflows/**', '.github/actions/**', '.gitlab-ci.yml', '.gitlab/**']);
+});
+
+test('a change to .archon/config.yaml is a guardrail', () => {
+  // A project's own Archon settings and Wheelhouse's pack of workflows steer the engine's runs (spec 12.2).
+  const paths = ['.archon/config.yaml', '.archon/workflows/quick.yaml', 'engine/archon/pack/workflows/quick.yaml', 'engine/archon/pack/README.md'];
+  assert.deepEqual(classifyChange({ paths: [...paths, 'src/archon.js', 'docs/archon/config.yaml', 'engine/archon/build.js'], config: empty }).guardrailPaths, paths);
 });
 
 test('the configuration\'s ciFiles are guardrails too', () => {

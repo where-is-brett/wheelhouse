@@ -40,13 +40,19 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { run as realRun } from '../lib/run.js';
 import { RETENTION_DAYS, TELEMETRY_ROUTE } from '../lib/setup-numbers.js';
 import { SETUP_TITLES, SETUP_LABEL } from '../state/card-lines.js';
 import { composeCard } from '../cards/compose.js';
 import { CARD } from '../lib/front-desk.js';
 import { ownKey } from '../state/signing.js';
-import { projectForFolder, writeProject } from '../lib/projects.js';
+import { projectForFolder, writeProject, registeredProjects } from '../lib/projects.js';
+import { registeredLeanProjects } from '../lean/project.js';
+import { effectiveSettings } from '../settings/effective.js';
+import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
+import { HELPER_START_SCRIPT } from '../agents/index.js';
+import { localViews } from '../hooks/session-start.js';
 import { stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
 import { claudeCodeSettings } from '../protection/settings.js';
@@ -140,6 +146,27 @@ export function computerChanges({ userSettings, manifest, file, telemetry = [] }
   ];
 }
 
+// The Wheelhouse folder, which the sign-in start runs the helper's start command from.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// Each project on this computer with the build engine in force for it: [{ project, engine }].
+function projectEngines(now) {
+  return [...registeredProjects(), ...registeredLeanProjects()].map(({ project }) => {
+    const views = localViews(project, ['settings'])?.settings;
+    const settings = effectiveSettings({ project: views !== null && typeof views === 'object' && !Array.isArray(views) ? views : {}, now });
+    return { project, engine: settings.engine?.value };
+  });
+}
+
+// The sign-in start the helper needs for the new engine, as a change of this computer's: none when no project uses
+// the engine, when one is already made, or on a system with no sign-in start known. An agent whose install makes its
+// own is not asked about here (nor is a work computer, which that install leaves alone and setup can't tell).
+function loginChanges({ platform, userHome, now }) {
+  if (!needsLoginStart({ projects: projectEngines(now) }) || loginStartRecord() !== null) return [];
+  const entry = loginEntry({ platform, root: ROOT, script: HELPER_START_SCRIPT, home: userHome });
+  return entry === null ? [] : [{ kind: 'login-start', target: entry.path, entry, what: 'login' }];
+}
+
 const RESTART = 'then quit and reopen Claude Desktop';
 
 // " (now <value>)" for a value of the director's that setup changes; nothing when there was none.
@@ -168,6 +195,7 @@ function lines({ changes, userSettings, kept, route, platform, floor }) {
     out.push(`Claude Code on its stable channel at version ${minimum}`);
   }
   if (has('push')) out.push('phone notifications on');
+  if (has('login')) out.push('Start Wheelhouse\'s helper when you sign in, so the build carries on with no session open');
   return out;
 }
 
@@ -236,7 +264,7 @@ export function computerStep({ run = realRun, env = process.env, route = TELEMET
     const floor = (manifest ?? readManifest()).claudeCode?.floor;
     const telemetry = await telemetryChanges({ port: port ?? receiverPort(), route, platform, run, userSettings, file, userHome, environment: env });
     const changes = computerChanges({ userSettings, manifest: { claudeCode: { floor } }, file, telemetry: telemetry.changes });
-    return { platform, userSettings, floor, kept: telemetry.kept, changes };
+    return { platform, userSettings, floor, kept: telemetry.kept, changes: [...changes, ...loginChanges({ platform, userHome, now: ctx.now ?? (() => new Date()) })] };
   };
   return {
     n: 6,
@@ -258,7 +286,9 @@ export function computerStep({ run = realRun, env = process.env, route = TELEMET
     async apply(ctx, changes) {
       const platform = ctx.platform ?? process.platform;
       await telemetryOn({ changes: changes.filter((c) => c.what === 'telemetry'), platform, run, applyJsonKey: ctx.applyJsonKey, record: ctx.record });
-      for (const c of changes.filter((x) => x.what !== 'telemetry')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
+      // The sign-in start keeps its own record in Wheelhouse's home, which uninstall reads (scripts/lib/login-start.js).
+      for (const c of changes.filter((x) => x.what === 'login')) await installLoginStart({ entry: c.entry, run, now: ctx.now });
+      for (const c of changes.filter((x) => x.what !== 'telemetry' && x.what !== 'login')) ctx.applyJsonKey({ file: c.target, key: c.key, value: c.after });
       // The director's own settings that weaken Standard, said in one line as the step finishes,
       // since a Go ahead on the one card shows no step 6 card (design section 15.1).
       const weak = weakeningSentence(weakening((await world(ctx)).userSettings), (line) => line.length <= SAY_CHARS);

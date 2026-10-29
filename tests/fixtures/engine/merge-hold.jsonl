@@ -1,0 +1,5 @@
+{"type":"run-started","runId":"rec-hold-1","at":"2026-10-29T03:00:00.000Z","work":"card-14","lane":"quick","branch":"wh/card-14"}
+{"type":"step-finished","runId":"rec-hold-1","at":"2026-10-29T03:05:00.000Z","step":"implement","role":"implementer","provider":"claude","model":"mid","minutes":5,"spend":{"tokens":70000,"dollars":0.18,"source":"estimated"}}
+{"type":"ask","runId":"rec-hold-1","at":"2026-10-29T03:06:00.000Z","id":"rec-hold-1:approve:1","kind":"approval","labels":{"work":"card-14"},"options":[{"id":"approve","label":"Merge it"},{"id":"hold","label":"Hold it for now"}],"context":{"branch":"wh/card-14","summary":"Ready to merge."}}
+{"type":"ask-resolved","runId":"rec-hold-1","at":"2026-10-29T03:30:00.000Z","id":"rec-hold-1:approve:1"}
+{"type":"run-ended","runId":"rec-hold-1","at":"2026-10-29T03:30:05.000Z","outcome":"held","branch":"wh/card-14","pr":"https://example.test/pull/14"}

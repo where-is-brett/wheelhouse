@@ -66,6 +66,14 @@ function windowsQuoted(value) {
   return `"${value}"`;
 }
 
+// needsLoginStart({ projects }) -> boolean
+//   projects  [{ project, engine }]: each project's effective `engine` setting ('wheelhouse' or 'archon')
+// Whether this computer needs the helper started at sign-in for the engine: a project builds on Archon, which
+// carries on with no session open. An agent whose install makes its own sign-in start isn't asked about here.
+export function needsLoginStart({ projects = [] } = {}) {
+  return projects.some((p) => p?.engine === 'archon');
+}
+
 const agentsFolder = (home) => path.join(home, 'Library', 'LaunchAgents');
 
 // loginEntry({ platform, node, root, script, home }) -> { kind, path, content } | null

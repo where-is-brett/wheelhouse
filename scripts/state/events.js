@@ -19,6 +19,7 @@ export const PLAIN_KINDS = [
   'setting', 'dispatch', 'merge', 'note', 'blocker', 'risk', 'decision',
   'work', 'feature', 'question', 'report', 'incident', 'amendment', 'reversal', 'asked', 'gate-asks',
   'lineage-hold', 'lineage-lift', 'activity', 'control-file-lift', 'survey', 'column-ready', 'premium-rest',
+  'run', 'ask', 'cost', 'preview', 'lesson',
 ];
 // `control-file` is the watcher's own finding (ruling P7-33): signed, so no session can write one. So is `usage-card`,
 // the front desk's session start's offer (design section 14.6): a click on its card's switch is the director's
@@ -36,7 +37,8 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
 // evaluation's, through the helper's own writer (/state/column-ready, which reads and checks the evaluation's records
 // itself), so no session can mark a Thoroughness column ready.
-export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
+// The engine's records are the helper's too: it writes `run`, `ask`, `cost` and `preview` from what the engine reports.
+export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
 const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
@@ -308,7 +310,22 @@ const PLAIN_SHAPES = {
   // watcher read its output: why (`limit` or `billing`), when, until when the premium model rests, and the feature
   // whose wake it was. Its wake runs again on the most capable model, and the board says so in one line meanwhile.
   'premium-rest': { must: ['why', 'at', 'until'], may: ['work'] },
+  // The engine's records (design on Archon, sections 4.2 and 10). A run of a work on an engine: its state
+  // (`started`, `paused` or `ended`), and when it ended, its branch, pull request and outcome.
+  run: { must: ['work', 'lane', 'engine', 'runId', 'state'], may: ['branch', 'pr', 'outcome'] },
+  // An ask a run raised: `id` is stable, so the same ask seen again is not written twice. `kind` says what sort of
+  // ask it is, `level` which of the decision levels it comes at.
+  ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine'] },
+  // What a run cost. `dollars` and `premiumRequests` are null when not known; unknown is never written as 0.
+  cost: { must: ['runId', 'work', 'tokens', 'dollars', 'premiumRequests', 'minutes', 'source', 'byRole'], may: [] },
+  // A preview of a work's head: the folder it was made in and its pages.
+  preview: { must: ['work', 'head', 'folder', 'pages'], may: [] },
+  // A lesson a work taught, for the next run to read.
+  lesson: { must: ['work', 'text'], may: [] },
 };
+export const RUN_STATES = Object.freeze(['started', 'paused', 'ended']);
+export const ASK_KINDS = Object.freeze(['question', 'approval', 'blocked', 'usage-limit', 'trouble']);
+export const COST_SOURCES = Object.freeze(['reported', 'estimated', 'unknown']);
 // The most trials a premium-failed record names.
 export const FAILED_NAMED = 10;
 // The columns a column-ready record may name, the pins it may carry, and the most records it lists.
@@ -406,6 +423,37 @@ function checkPlain(kind, data) {
       const s = data.slice;
       if (!(isPlain(s) && Object.keys(s).length === 2 && Number.isInteger(s.n) && Number.isInteger(s.m) && s.n >= 1 && s.n <= s.m)) bad('has a slice that is not n of m');
     }
+  } else if (kind === 'run') {
+    slug('work');
+    if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
+    for (const k of ['engine', 'runId']) text(k);
+    for (const k of ['branch', 'outcome']) optionalText(k);
+    if (!RUN_STATES.includes(data.state)) bad('needs its state to be started, paused or ended');
+    pr();
+  } else if (kind === 'ask') {
+    slug('work');
+    for (const k of ['id', 'runId']) text(k);
+    if (!ASK_KINDS.includes(data.kind)) bad('needs its kind to be question, approval, blocked, usage-limit or trouble');
+    if (![1, 2, 3, 4].includes(data.level)) bad('needs its level to be 1, 2, 3 or 4');
+    for (const k of ['topic', 'recommend', 'setLine']) optionalText(k);
+    if (!Array.isArray(data.options) || !data.options.every((o) => isPlain(o) && isText(o.label) && (o.says === undefined || typeof o.says === 'string'))) bad('needs options, each with a label');
+    if (data.preview !== undefined && !(isPlain(data.preview) || isText(data.preview))) bad('has a preview that is not text or a record');
+  } else if (kind === 'cost') {
+    slug('work');
+    text('runId');
+    if (!COST_SOURCES.includes(data.source)) bad('needs its source to be reported, estimated or unknown');
+    const figure = (k, whole) => data[k] === null || (typeof data[k] === 'number' && Number.isFinite(data[k]) && data[k] >= 0 && (!whole || Number.isInteger(data[k])));
+    if (!figure('tokens', true) || !figure('dollars') || !figure('premiumRequests', true) || !figure('minutes')) bad('needs tokens, dollars, premiumRequests and minutes to be a number or null');
+    // A figure that is not known stays null; it is never written as 0.
+    if (data.source === 'unknown' && (data.dollars !== null || data.premiumRequests !== null || data.tokens === 0)) bad('has a source that is unknown, so its dollars and premiumRequests must be null and its tokens not 0');
+    if (!isPlain(data.byRole)) bad('needs byRole to be a record');
+  } else if (kind === 'preview') {
+    slug('work');
+    for (const k of ['head', 'folder']) text(k);
+    if (!Array.isArray(data.pages) || !data.pages.every(isText)) bad('needs pages to be a list of paths');
+  } else if (kind === 'lesson') {
+    slug('work');
+    text('text');
   } else if (kind === 'question') {
     slug('work');
     const named = typeof data.id === 'string' ? questionIdOf(data.id) : null;

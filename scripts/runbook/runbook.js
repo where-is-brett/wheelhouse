@@ -6,7 +6,7 @@
 // needs the director's click on its card (a signed `action` event), which the
 // helper looks for; this script cannot supply one.
 //
-//   node runbook.js 1                  turn STOP on
+//   node runbook.js 1                  turn STOP on, and cancel every run of the build engine
 //   node runbook.js 2                  cut the agents' access to the host
 //   node runbook.js 3 <commit>         open the pull request that puts the product back to that release
 //   node runbook.js 3 merge <number>   merge that pull request (STOP lets only this one through)
@@ -76,8 +76,11 @@ export async function runbook({ argv, cwd = path.resolve(process.cwd()), client 
   if (!args.ok) return { code: 1, text: USAGE };
   try {
     if (args.step === 1) {
-      const answer = await client.stop({});
-      return { code: answer?.ok === true ? 0 : 1, text: answer?.ok === true ? 'All stop is on. Nothing more is written to the host until the director lifts it.' : said(answer) };
+      // STOP first; the helper then cancels every run of the build engine and ends what the cancel left, and says so.
+      const answer = await client.stop({ by: 'runbook', wait: true });
+      if (answer?.ok !== true) return { code: 1, text: said(answer) };
+      const engine = typeof answer.engine?.said === 'string' ? `\n${answer.engine.said}` : '';
+      return { code: 0, text: `All stop is on. Nothing more is written to the host until the director lifts it.${engine}` };
     }
     // Inside the sandbox ~/.wheelhouse cannot be read, so the helper places the project from the folder.
     const base = { cwd };

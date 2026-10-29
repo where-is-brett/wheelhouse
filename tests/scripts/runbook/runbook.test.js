@@ -21,6 +21,8 @@ import { eventPath, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, sign } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { parseArgs, runbook, USAGE } from '../../../scripts/runbook/runbook.js';
+import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
+import { EventEmitter } from 'node:events';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
 import { approvalLine, runbookLine } from '../../../scripts/state/card-lines.js';
 import { listEvents } from '../../../scripts/state/events.js';
@@ -519,6 +521,25 @@ test('runbook.js asks the helper and prints its plain answer', async () => {
       assert.equal((await as(s.home, () => runbook({ argv: ['1'], cwd: path.join(s.home, 'work'), client }))).code, 0);
       assert.equal(await as(s.home, () => stopState().on), true, 'the helper set it');
     });
+  } finally { s.cleanup(); }
+});
+
+test("the runbook's first step cancels every run", async () => {
+  const s = await scenario();
+  const engine = fakeEngine({ recordings: loadRecordings(path.join(import.meta.dirname, '..', '..', 'fixtures', 'engine')) });
+  const { runId } = engine.start({ recording: 'quick-approved', running: true });
+  // The wake process is a stand-in that runs nothing; no process is listed, so nothing is ended or waited on.
+  const spawn = () => Object.assign(new EventEmitter(), { pid: 7000, kill() { setImmediate(() => this.emit('exit', null, 'SIGTERM')); return true; } });
+  const engineStopWith = { list: async () => [], cwds: async () => new Map(), kill: () => assert.fail('nothing to end'), sleep: async () => {} };
+  try {
+    await viaHelper(s, fakeAdapter(), async (client) => {
+      const out = await as(s.home, () => runbook({ argv: ['1'], cwd: path.join(s.home, 'work'), client }));
+      assert.equal(out.code, 0);
+      assert.match(out.text, /^All stop is on\. Nothing more is written to the host until the director lifts it\.\nAll stop cancelled 1 run of the engine\./);
+      assert.deepEqual(await as(s.home, () => stopState()), { on: true, by: 'runbook', at: NOW.toISOString() });
+      assert.deepEqual(engine.calls.filter((c) => c.call === 'stopAll').length, 1);
+      assert.equal(engine.inspect(runId).status, 'ended');
+    }, { engineFor: () => engine, spawn, engineStopWith });
   } finally { s.cleanup(); }
 });
 

@@ -32,10 +32,11 @@ export function withoutGitVars(env = process.env) {
 // bytes of each stream are kept while it runs. With `windowsVerbatimArguments` (Windows only), the
 // arguments are passed to the program as they are, without Node's quoting, for `cmd.exe /c`. With `encoding: 'buffer'`,
 // stdout comes back as a Buffer of the bytes the program wrote. With `onOutput(text)`, each piece of output, from either
-// stream, is also given as it comes, for a program that shows something to read before it finishes (a sign-in code).
+// stream, is also given as it comes, for a program that shows something to read before it finishes (a sign-in code);
+// with `onStdout(text)`, each piece of standard output alone, for a program whose output is read as it comes.
 // Resolves with the exit code and the collected
 // output; rejects only if the program cannot be started.
-export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, encoding = 'utf8', onOutput, signal } = {}) {
+export function run(file, args = [], { cwd, env, input, baseEnv = process.env, timeoutMs, limit, platform = process.platform, killer = taskkill, windowsVerbatimArguments = false, encoding = 'utf8', onOutput, onStdout, signal } = {}) {
   return new Promise((resolve, reject) => {
     const merged = { ...baseEnv, ...env };
     for (const name of Object.keys(merged)) if (merged[name] === undefined || merged[name] === null) delete merged[name];
@@ -75,11 +76,12 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
     };
     const onAbort = () => end({ stopped: true });
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) timer = setTimeout(() => end({ timedOut: true }), timeoutMs);
-    const keep = (chunks) => {
+    const keep = (chunks, own) => {
       let size = 0;
       return (d) => {
-        if (typeof onOutput === 'function') {
-          try { onOutput(d.toString('utf8')); } catch { /* the caller's reading never stops the program */ }
+        for (const reader of [onOutput, own]) {
+          if (typeof reader !== 'function') continue;
+          try { reader(d.toString('utf8')); } catch { /* the caller's reading never stops the program */ }
         }
         chunks.push(d);
         size += d.length;
@@ -87,7 +89,7 @@ export function run(file, args = [], { cwd, env, input, baseEnv = process.env, t
         while (Number.isFinite(limit) && chunks.length > 1 && size - chunks[0].length >= limit) size -= chunks.shift().length;
       };
     };
-    child.stdout.on('data', keep(out));
+    child.stdout.on('data', keep(out, onStdout));
     child.stderr.on('data', keep(err));
     child.on('error', (error) => {
       clearTimeout(timer);

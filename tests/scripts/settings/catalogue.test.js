@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS, WINDOWS_BUILD_COMMANDS, checkSetting, definitionOf } from '../../../scripts/settings/catalogue.js';
+import { PACE, paceOf } from '../../../scripts/lib/build-loop.js';
 import { BRIEFING_GAP_HOURS, UNUSUAL } from '../../../scripts/lib/core-numbers.js';
 import { DEFAULT_SOURCES } from '../../../scripts/sources/list.js';
 
@@ -28,6 +29,13 @@ test('every setting in design section 14 is in the catalogue, with its default',
     delegationReviewDays: ['project', 14],
     unusualFactor: ['project', UNUSUAL.factor],
     sources: ['project', DEFAULT_SOURCES.map((source) => source.url)],
+    engine: ['project', 'wheelhouse'],
+    engineLanes: ['project', ['quick']],
+    cardsPerDay: ['project', 3],
+    capMinutes: ['project', { quick: 20, small: 60, slice: 120, bug: 30 }],
+    capTokens: ['project', { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }],
+    bundleApprovals: ['project', false],
+    engineRoom: ['project', false],
   };
   assert.deepEqual(Object.keys(SETTINGS).sort(), Object.keys(expected).sort());
   for (const [key, [home, def]] of Object.entries(expected)) {
@@ -120,4 +128,41 @@ test('Thoroughness has four levels, Premium model three and Usage nudge five', (
   assert.doesNotThrow(() => checkSetting('usageMark', 90));
   assert.throws(() => checkSetting('usageMark', 80));
   assert.throws(() => checkSetting('premium', 'on'));
+});
+
+test('engine accepts wheelhouse and archon only', () => {
+  assert.deepEqual(SETTINGS.engine.levels, ['wheelhouse', 'archon']);
+  assert.equal(SETTINGS.engine.group, 'advanced');
+  for (const value of ['wheelhouse', 'archon']) assert.doesNotThrow(() => checkSetting('engine', value));
+  assert.throws(() => checkSetting('engine', 'bun'), /engine can't be bun/);
+});
+
+test('engineLanes refuses an unknown lane', () => {
+  assert.doesNotThrow(() => checkSetting('engineLanes', []));
+  assert.doesNotThrow(() => checkSetting('engineLanes', ['quick', 'small', 'bug', 'feature']));
+  assert.throws(() => checkSetting('engineLanes', ['quick', 'huge']), /engineLanes can't be/);
+  assert.throws(() => checkSetting('engineLanes', 'quick'), /engineLanes can't be quick/);
+});
+
+test('cardsPerDay refuses 0 and 11', () => {
+  assert.equal(SETTINGS.cardsPerDay.group, 'everyday');
+  for (const value of [1, 10]) assert.doesNotThrow(() => checkSetting('cardsPerDay', value));
+  for (const value of [0, 11, 2.5, '3']) assert.throws(() => checkSetting('cardsPerDay', value), /cardsPerDay can't be/);
+});
+
+test('the caps take positive whole numbers for each kind of work and nothing else', () => {
+  assert.doesNotThrow(() => checkSetting('capMinutes', { quick: 1, small: 2, slice: 3, bug: 4 }));
+  assert.throws(() => checkSetting('capMinutes', { quick: 0, small: 60, slice: 120, bug: 30 }), /capMinutes can't be/);
+  assert.throws(() => checkSetting('capMinutes', { quick: 20, small: 60, slice: 120 }), /capMinutes can't be/);
+  assert.throws(() => checkSetting('capTokens', { quick: 1, small: 2, slice: 3, bug: 4, feature: 5 }), /capTokens can't be/);
+  assert.throws(() => checkSetting('capTokens', { quick: 1.5, small: 2, slice: 3, bug: 4 }), /capTokens can't be/);
+  assert.throws(() => checkSetting('bundleApprovals', 'yes'), /bundleApprovals can't be yes/);
+  assert.throws(() => checkSetting('engineRoom', 1), /engineRoom can't be 1/);
+});
+
+test('paceOf reads the pace setting and falls back to three', () => {
+  assert.deepEqual(paceOf({ pace: { value: 2 } }), { building: 2, featureLane: PACE.featureLane });
+  assert.deepEqual(paceOf({ pace: { value: 1 } }), { building: 1, featureLane: 1 });
+  for (const settings of [undefined, null, {}, { pace: { value: 7 } }, { pace: { value: 'many' } }]) assert.deepEqual(paceOf(settings), PACE);
+  assert.equal(PACE.building, 3);
 });

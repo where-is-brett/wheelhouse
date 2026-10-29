@@ -11,7 +11,7 @@ import { guardedRun, standInTools } from '../../helpers/host-stand-ins.js';
 import { as, shortHome } from '../../helpers/homes.js';
 import { run, withoutGitVars } from '../../../scripts/lib/run.js';
 import {
-  loginEntry, installLoginStart, removeLoginStart, loginStartRecord, LAUNCH_AGENT_LABEL, RUN_KEY, RUN_NAME,
+  loginEntry, installLoginStart, removeLoginStart, loginStartRecord, needsLoginStart, LAUNCH_AGENT_LABEL, RUN_KEY, RUN_NAME,
 } from '../../../scripts/lib/login-start.js';
 import { uninstallPlan } from '../../../scripts/setup/uninstall.js';
 import { applyUninstall } from '../../../scripts/setup/uninstall-run.js';
@@ -251,4 +251,11 @@ test('uninstall removes the entry it made and nothing else', onMacPaths, async (
     assert.ok(done.lines.some((l) => /when you sign in/.test(l) && /removed/.test(l)), done.lines.join('\n'));
     assert.equal(fs.existsSync(entry.path), false);
   });
+});
+
+test('a computer needs the sign-in start when any project uses the new engine', () => {
+  assert.equal(needsLoginStart({ projects: [{ project: 'a', engine: 'wheelhouse' }, { project: 'b', engine: 'archon' }] }), true);
+  assert.equal(needsLoginStart({ projects: [{ project: 'a', engine: 'wheelhouse' }, { project: 'b' }] }), false);
+  assert.equal(needsLoginStart({ projects: [] }), false);
+  assert.equal(needsLoginStart({}), false);
 });

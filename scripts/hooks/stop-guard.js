@@ -169,9 +169,14 @@ export { pluginRoots };
 // On an agent whose hooks only read (`writeVia: 'helper'`, or `bypass: false`), the bypass marker is neither
 // written nor cleared. `helperUp: false` says the helper isn't answering there (ruling P5-22): everything STOP
 // holds is held, with NO_HELPER_STOP, since nothing a write needs can reach the helper.
+//
+// A step the build engine started (WHEELHOUSE_ENGINE_RUN in `env`, which the adapter sets for every engine command and
+// its steps inherit) is never marked: the engine may start its steps in bypass mode, behind the guards, and a marker
+// would make the helper refuse every push and merge on the computer for as long as it stood. Such a call clears the
+// session's marker as a call in another mode does. STOP holds there as anywhere.
 export async function decide(input, {
   dir, projectOf: find = projectOf, pluginRoot = PLUGIN_ROOT, self = SELF, platform = process.platform,
-  readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS, bypass = true, writeVia = 'self', helperUp,
+  readTools = READ_TOOLS, haltTools = HALT_TOOLS, notifyTools = NOTIFY_TOOLS, bypass = true, writeVia = 'self', helperUp, env = process.env,
 } = {}) {
   const cwd = input.cwd;
   const found = find(cwd, { dir });
@@ -183,7 +188,7 @@ export async function decide(input, {
       clearBypass(input.session_id);
       return undefined;
     }
-    if (input.permission_mode === 'bypassPermissions') markBypass(input.session_id);
+    if (input.permission_mode === 'bypassPermissions' && env?.WHEELHOUSE_ENGINE_RUN !== '1') markBypass(input.session_id);
     else clearBypass(input.session_id);
   }
   if (sessionEnd) return undefined;

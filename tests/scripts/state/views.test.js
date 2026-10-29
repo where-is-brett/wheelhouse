@@ -17,7 +17,7 @@ import { SUGGEST, WHY } from '../../../scripts/lib/calm-words.js';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'state');
 const T = (n) => `2026-10-18T02:00:${String(n).padStart(2, '0')}.000Z`;
 const at = (n) => () => new Date(T(n));
-const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures'];
+const VIEW_NAMES = ['rulebook', 'levels', 'settings', 'glossary', 'ideas', 'rejections', 'waiting', 'approvals', 'reviews', 'provenance', 'unconfirmed', 'damaged', 'codeClashes', 'status', 'blockers', 'risks', 'decisions', 'shown', 'work', 'features', 'reports', 'questions', 'incidents', 'keptAsIs', 'gateAsks', 'lineageHolds', 'outdated', 'controlFiles', 'survey', 'columnsReady', 'usageCards', 'premium', 'premiumFailures', 'runs', 'asks', 'costs', 'previews', 'lessons'];
 const now = () => new Date('2026-10-18T09:00:00.000Z');
 
 async function withHome(fn) {
@@ -1360,5 +1360,28 @@ test('at Lean a ruling\'s card closes on its first chat click, whatever it is, a
       // Not now leaves a Claude Code card waiting, as it always has.
       if (label === 'Not now') assert.deepEqual(build(r.events).waiting.map((c) => c.id), [r.card.id]);
     }
+  });
+});
+
+test('views gather runs by work, latest state last', async () => {
+  await withHome(() => {
+    const run = (n, work, state, extra = {}) => ev('run', n, { work, lane: 'quick', engine: 'archon', runId: `r-${work}`, state, ...extra });
+    const events = [
+      run(1, 'login', 'started'), run(2, 'search', 'started'), run(3, 'login', 'paused'), run(4, 'login', 'ended', { outcome: 'merged' }),
+      ev('ask', 5, { id: 'a-1', runId: 'r-login', work: 'login', kind: 'blocked', level: 3, options: [] }),
+      ev('cost', 6, { runId: 'r-login', work: 'login', tokens: 10, dollars: null, premiumRequests: null, minutes: 1, source: 'unknown', byRole: {} }),
+      ev('preview', 7, { work: 'login', head: 'a'.repeat(40), folder: '/p', pages: [] }),
+      ev('lesson', 8, { work: 'login', text: 'Lock first' }),
+    ];
+    const views = build(events);
+    assert.deepEqual(Object.keys(views.runs).sort(), ['login', 'search']);
+    assert.deepEqual(views.runs.login.map((r) => r.data.state), ['started', 'paused', 'ended']);
+    assert.equal(views.runs.login.at(-1).data.outcome, 'merged');
+    assert.equal(views.runs.search.length, 1);
+    assert.equal(views.asks.login.length, 1);
+    assert.equal(views.costs.login[0].data.dollars, null);
+    assert.equal(views.previews.login.at(-1).data.head, 'a'.repeat(40));
+    assert.equal(views.lessons.login[0].data.text, 'Lock first');
+    assert.deepEqual(build([]).runs, {});
   });
 });

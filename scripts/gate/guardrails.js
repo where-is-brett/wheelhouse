@@ -64,8 +64,9 @@ import { AGENTS } from '../agents/names.js';
 
 // The Claude Code settings, the Wheelhouse configuration inside .claude/,
 // CLAUDE.md, and .mcp.json (it names the connectors agents get), then every file that steers an
-// agent (scripts/lib/agent-control.js), in any project.
-export const GUARDRAILS = ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL];
+// agent (scripts/lib/agent-control.js), in any project. Then what steers the build engine's runs (spec 12.2): a
+// project's own Archon folder, `.archon/` (its settings and workflows), and Wheelhouse's pack of workflows.
+export const GUARDRAILS = ['.claude/**', '**/CLAUDE.md', '.mcp.json', ...AGENT_CONTROL, '.archon/**', 'engine/archon/pack/**'];
 export const CI_FILES = ['.github/workflows/**', '.github/actions/**', '.gitlab-ci.yml', '.gitlab/**'];
 // A project that is itself a Claude Code plugin (its default branch holds .claude-plugin/plugin.json,
 // as Wheelhouse's own repository does) ships these files to every session that installs it: its

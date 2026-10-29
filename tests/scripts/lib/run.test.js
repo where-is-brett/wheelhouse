@@ -30,6 +30,14 @@ test('run gives each piece of output to onOutput as it comes, and still collects
   assert.match(seen.join(''), /code: AB12-CD34\n[\s\S]*done/);
 });
 
+test('run gives only standard output to onStdout', async () => {
+  const seen = [];
+  const got = await run(process.execPath, ['-e', 'process.stderr.write("warning\\n"); console.log("{\\"a\\":1}")'], { onStdout: (text) => seen.push(text) });
+  assert.equal(got.code, 0);
+  assert.equal(seen.join(''), '{"a":1}\n');
+  assert.equal(got.stderr, 'warning\n');
+});
+
 test('run merges env over process.env', async () => {
   process.env.WH_RUN_TEST_KEPT = 'kept';
   try {

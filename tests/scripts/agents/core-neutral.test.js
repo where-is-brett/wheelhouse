@@ -7,8 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-// Folders that may name Copilot: the adapters, the agents' folder, the editor add-on, the probes, the tests and the docs.
-const ALLOWED_FOLDERS = ['adapters/', 'scripts/agents/', 'vscode/', 'probes/', 'tests/', 'docs/'];
+// Folders that may name Copilot: the adapters, the agents' folder, the editor add-on, the probes, the tests and the docs,
+// and the Archon engine's adapter, which hands Archon the Copilot CLI's path as a provider adapter does.
+const ALLOWED_FOLDERS = ['adapters/', 'scripts/agents/', 'scripts/engine/archon/', 'vscode/', 'probes/', 'tests/', 'docs/'];
 // Tooling folders that are not the product.
 const TOOLING_FOLDERS = ['node_modules/', '.git/', '.superpowers/', '.claude/'];
 // Core files that name Copilot, each with why.

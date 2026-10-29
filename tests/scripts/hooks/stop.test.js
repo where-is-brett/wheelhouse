@@ -387,6 +387,33 @@ test('a call in bypass mode marks the session; the next call in another mode cle
   });
 });
 
+test('the STOP guard marks no bypass inside an engine step', async () => {
+  // Archon starts its Claude steps in bypass mode unless Wheelhouse's patch is in place; a marker would make the
+  // helper refuse every push and merge on the computer (Review Focus 5). The adapter's steps carry WHEELHOUSE_ENGINE_RUN.
+  await withHome(async () => {
+    const { base, main } = makeProject();
+    try {
+      const marker = path.join(bypassDir(), 'sess-1');
+      const engine = { ...deps(base), env: { WHEELHOUSE_ENGINE_RUN: '1' } };
+      assert.equal(await guard(call(main, 'Read', { permission_mode: 'bypassPermissions' }), engine), undefined);
+      assert.equal(fs.existsSync(marker), false);
+      // A marker left from before is cleared, as a call in another mode clears it.
+      await guard(call(main, 'Read', { permission_mode: 'bypassPermissions' }), deps(base));
+      assert.equal(fs.existsSync(marker), true);
+      await guard(call(main, 'Read', { permission_mode: 'bypassPermissions' }), engine);
+      assert.equal(fs.existsSync(marker), false);
+      // Any other value is not an engine step.
+      await guard(call(main, 'Read', { permission_mode: 'bypassPermissions' }), { ...deps(base), env: { WHEELHOUSE_ENGINE_RUN: '0' } });
+      assert.equal(fs.existsSync(marker), true);
+      // STOP still holds in an engine step.
+      setStop({ by: 'prompt' });
+      assert.ok(denied(await guard(call(main, 'Write', { permission_mode: 'bypassPermissions' }), engine)));
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 test('outside a Wheelhouse project neither hook does anything', async () => {
   await withHome(async () => {
     const stranger = temp('wh-stop-out-');

@@ -73,6 +73,8 @@ import { NOT_RECORDED } from '../lib/calm-words.js';
 export const BRIDGE_MS = 5000;
 // How long the helper is waited for, inside BRIDGE_MS.
 export const HELPER_MS = 3000;
+// How long a phoned or pressed STOP waits on the desk once STOP is set here.
+export const STOP_DESK_MS = 2000;
 // The waits as kept: each with the time a test on a loaded computer adds (helper-grace.js).
 const helperMs = () => HELPER_MS + helperGrace();
 const bridgeMs = () => BRIDGE_MS + helperGrace();
@@ -137,6 +139,7 @@ const DEFAULTS = {
   stopState: defaultStopState,
   setStop: defaultSetStop,
   liftStop: defaultLiftStop,
+  stopDeskMs: STOP_DESK_MS,
   sessionRole: defaultSessionRole,
   beingSetUp: defaultBeingSetUp,
   journalTrouble: defaultJournalTrouble,
@@ -348,13 +351,20 @@ async function go(req, d) {
   return { ok: true, says: `All stop is off. ${await inProgress(project, req.cwd, d)}` };
 }
 
-// A typed "stop" is the stop-word hook's; a phoned one or STOP on the pane sets it here, through the
-// desk, which sets it itself when the helper isn't running. When the desk can't set it (no project
-// to name, or no way to the files), it is set here all the same.
+// A typed "stop" is the stop-word hook's; a phoned one or STOP on the pane sets it here first, then
+// tells the desk, whose helper stops the build engine's runs. The desk is waited on for STOP_DESK_MS
+// at most, so a helper that doesn't answer never holds All stop up. Only when STOP can't be set here
+// is the desk waited on, and when it can't set it either, it is tried here once more.
 async function stop(req, d) {
   if (req.origin !== 'bridge' && req.origin !== PANE) return no(SAYS.stopNotPhone);
-  const set = await deskOf(placeOf(req.cwd, d), req.cwd, d).act('all-stop', { by: 'mod' });
-  if (set?.ok !== true) d.setStop({ by: 'mod', now: d.now });
+  let here = true;
+  try { d.setStop({ by: 'mod', now: d.now }); } catch { here = false; }
+  const told = (async () => deskOf(placeOf(req.cwd, d), req.cwd, d).act('all-stop', { by: 'mod' }))().catch(() => null);
+  if (here) {
+    let timer;
+    await Promise.race([told, new Promise((resolve) => { timer = setTimeout(resolve, d.stopDeskMs); })]);
+    clearTimeout(timer);
+  } else if ((await told)?.ok !== true) d.setStop({ by: 'mod', now: d.now });
   return { ok: true, says: SAYS.stopOn };
 }
 

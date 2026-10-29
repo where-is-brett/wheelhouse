@@ -1,0 +1,19 @@
+# scripts/engine/archon/patch/claude-permission-mode.patch
+# Starts Archon's Claude steps in acceptEdits mode when ARCHON_CLAUDE_PERMISSION_MODE=acceptEdits, so Claude Code applies
+# the project's sandbox (check 75: bypass mode turns it off). Without the variable Archon behaves as released.
+# Applied with `git apply` to Archon v0.13.0 (commit 0d39c1f2); see docs/engine/archon-upstream-note.md.
+diff --git a/packages/providers/src/claude/provider.ts b/packages/providers/src/claude/provider.ts
+index d1ac6a1..037f5e2 100644
+--- a/packages/providers/src/claude/provider.ts
++++ b/packages/providers/src/claude/provider.ts
+@@ -333,8 +333,8 @@ function buildBaseClaudeOptions(
+     ...(requestOptions?.forkSession !== undefined
+       ? { forkSession: requestOptions.forkSession }
+       : {}),
+-    permissionMode: 'bypassPermissions',
+-    allowDangerouslySkipPermissions: true,
++    permissionMode: process.env.ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits' ? 'acceptEdits' : 'bypassPermissions',
++    allowDangerouslySkipPermissions: process.env.ARCHON_CLAUDE_PERMISSION_MODE !== 'acceptEdits',
+     systemPrompt: requestOptions?.systemPrompt ?? {
+       type: 'preset',
+       preset: 'claude_code',

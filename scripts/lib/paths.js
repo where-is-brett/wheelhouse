@@ -11,6 +11,21 @@ export function wheelhouseHome() {
   return process.env.WHEELHOUSE_HOME || path.join(os.homedir(), '.wheelhouse');
 }
 
+// Where the build engine's own programs live: its Archon binary, the pinned Bun and the gh broker.
+export function engineDir() {
+  return path.join(wheelhouseHome(), 'engine');
+}
+
+// The engine's own home (ARCHON_HOME), outside the Wheelhouse home so Archon's database and logs never
+// sit in the record's folder. By default `.wheelhouse-engine` in the user's home folder; where a
+// WHEELHOUSE_HOME is given (an evaluation run, a test) it is a sibling of that home, so such a run never
+// reaches the real one.
+export function archonHome() {
+  return process.env.WHEELHOUSE_HOME
+    ? `${path.resolve(process.env.WHEELHOUSE_HOME)}-engine`
+    : path.join(os.homedir(), '.wheelhouse-engine');
+}
+
 // An eight-hex-character ID for this computer, made once and then kept.
 // Events carry this, never the computer's name.
 export function computerId() {

@@ -1,0 +1,5 @@
+Archon CLI v0.13.0
+  Platform: darwin-arm64
+  Build: source (bun)
+  Database: sqlite
+  Git commit: unknown

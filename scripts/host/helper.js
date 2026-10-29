@@ -52,7 +52,9 @@ import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
-import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
+import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
+import { startEngineHost } from '../engine/host.js';
+import { stopEngine, stopWords } from '../engine/stop.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
@@ -947,6 +949,14 @@ export async function startHelper({
   premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
   // What its most capable alias stands for, asked in the same check to tell the premium model from it.
   mostCapableAlias = () => aliasModel(FRONT_DESK_ALIAS, { run }),
+  // The build engine (scripts/engine/contract.js) for a registered project whose `engine` setting is the new engine,
+  // or null (design on Archon, section 6.3): the helper keeps its continuation host. None by default; the real helper
+  // (helper-main.js) gives Archon's adapter. Its wake process is started with `spawn`.
+  engineFor = () => null,
+  // What All stop's ending of the engine's processes uses (scripts/engine/stop.js): `kill`, `list`, `cwds`, `wait` and
+  // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
+  // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
+  engineStopWith = {}, stopPollMs = 2000,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -3678,7 +3688,11 @@ export async function startHelper({
         ? profileRoute(doProfileRecord)({ event }, await profileContext())
         : doRecord({ project, event, ...(target === undefined ? {} : { target }) }, ctx))),
       write: tried(({ kind, data }) => doWrite({ project, kind, data }, ctx, { own: data?.proof !== undefined })),
-      setStop: tried(async ({ by }) => { setStop({ by: STOP_SETTERS.includes(by) ? by : 'helper', now }); return { ok: true }; }),
+      setStop: tried(async ({ by }) => {
+        setStop({ by: STOP_SETTERS.includes(by) ? by : 'helper', now });
+        stopEngines().catch(() => {});
+        return { ok: true };
+      }),
       liftStop: tried(async () => { liftStop(); return { ok: true }; }),
       chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
       confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
@@ -3923,6 +3937,89 @@ export async function startHelper({
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
   };
 
+  // --- the build engine's continuation host (design on Archon, section 6.3) ---
+  // One host for each registered project on the new engine, started once the helper listens and stopped as it closes.
+  // Only the first keeps the wake process, since the engine's wake carries on every project's answered runs. Each
+  // writes its project's `run` and `ask` records, and keeps the stream's cursor beside the record.
+  const engineHosts = [];
+  const engineCtx = () => ({ lean: false, mode: 'quick', env: {}, signedOut: false, looked: new Map(), gitEnv: {}, secrets: [] });
+  function engineWrite(project, kind, data) {
+    return oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, engineCtx());
+      await writeEvent({ project, event: makeEvent({ kind, data, now }), now });
+      await freshViews(() => writeViews(project, { now }));
+    });
+  }
+  // The work a run is for, from the project's `run` records (the first names its work, lane and branch), or null for
+  // a run the project doesn't hold.
+  function engineRunOf(project, runId) {
+    const first = listEvents(stateDir(project), { report: () => {} })
+      .filter((e) => e.kind === 'run' && e.data?.runId === runId)
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
+    return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
+  }
+  // All stop for the engine (design on Archon, section 12.3): stopEngine takes the processes first, the wake process's
+  // tree among them, then the wake ends (each host sees STOP) before any run is cancelled, so the steps of a run the
+  // wake carried on are in the snapshot. stopEngine cancels every run and ends what the cancel left, and each project's
+  // record gets a note listing its cancelled work and its paused runs, for the First Mate's Carry on, and any process
+  // ended or left. One at a time: a second All stop while one runs shares it. Lifting All stop starts no run; the wake starts again by itself.
+  let engineStopping = null;
+  let stopSeen = false;
+  function stopEngines(reason = 'All stop') {
+    if (engineHosts.length === 0) return Promise.resolve(null);
+    stopSeen = true;
+    engineStopping ??= (async () => {
+      const got = await stopEngine({
+        engine: engineHosts[0].engine, processes: engineHosts.flatMap(({ host }) => host.processes()), reason,
+        afterSnapshot: () => { for (const { host } of engineHosts) host.check(); }, ...engineStopWith,
+      });
+      const said = stopWords(got);
+      for (const { project } of engineHosts) {
+        const theirs = (ids) => ids.flatMap((runId) => {
+          const run = engineRunOf(project, runId);
+          return run ? [{ runId, ...run }] : [];
+        });
+        const cancelled = theirs(got.cancelled);
+        const paused = theirs(got.paused);
+        if (cancelled.length + paused.length + got.ended.length + got.survivors.length + got.leftAlone.length === 0 && !got.trouble) continue;
+        await engineWrite(project, 'note', { about: 'all-stop', words: said, cancelled, paused, ended: got.ended, survivors: got.survivors, leftAlone: got.leftAlone }).catch(() => {});
+      }
+      return { ...got, said };
+    })().finally(() => { engineStopping = null; });
+    return engineStopping;
+  }
+  // STOP set by anything at all reaches the engine: each time it is seen turned on.
+  let stopWatch = null;
+  function watchStop() {
+    const on = stopped();
+    if (on && !stopSeen) stopEngines().catch(() => {});
+    stopSeen = on;
+  }
+
+  function startEngineHosts() {
+    for (const { project } of registeredProjects()) {
+      let engine = null;
+      try { engine = engineFor(project); } catch { engine = null; }
+      if (!engine) continue;
+      try {
+        const host = startEngineHost({
+          engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
+          write: (kind, data) => engineWrite(project, kind, data),
+          cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
+          workOf: (runId) => engineRunOf(project, runId),
+        });
+        engineHosts.push({ project, engine, host });
+      } catch {
+        // An engine that can't be followed gets no host; the other projects' hosts start all the same.
+      }
+    }
+    if (engineHosts.length > 0) {
+      watchStop();
+      stopWatch = setInterval(watchStop, stopPollMs);
+      stopWatch.unref?.();
+    }
+  }
+
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
   // a git process is working in can't be removed. Photographing and comparing stop after the
   // picture under way.
@@ -3930,6 +4027,9 @@ export async function startHelper({
   function close() {
     closed ??= (async () => {
       closing = true;
+      if (stopWatch) clearInterval(stopWatch);
+      await engineStopping?.catch(() => {});
+      await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
       await new Promise((resolve) => {
         server.close(() => {
           if (!pipe) fs.rmSync(address, { force: true });
@@ -3970,10 +4070,17 @@ export async function startHelper({
     }
     if (url.pathname === '/stop/set') {
       // Anyone may set STOP: a false alarm costs only a pause. No route lifts it but /confirm, on the director's click in the helper's own window. `by: 'prompt'` records that
-      // the director's STOP word set it, from a hook that only reads (ruling P5-18); anything else is the helper.
+      // the director's STOP word set it, from a hook that only reads (ruling P5-18), and `by: 'runbook'` the runbook's first
+      // step; anything else is the helper.
+      // The engine's runs are cancelled after STOP is set, never before: by default the answer doesn't wait for it;
+      // `wait: true` (the runbook's first step) waits and says what was cancelled.
       try {
-        setStop({ by: body.by === 'prompt' ? 'prompt' : 'helper', now });
-        return send(res, 200, { ok: true });
+        setStop({ by: body.by === 'prompt' || body.by === 'runbook' ? body.by : 'helper', now });
+        const stopping = stopEngines();
+        stopping.catch(() => {});
+        if (body.wait !== true) return send(res, 200, { ok: true });
+        const engine = await stopping.catch(() => null);
+        return send(res, 200, engine ? { ok: true, engine: { said: engine.said, cancelled: engine.cancelled, paused: engine.paused, ended: engine.ended, survivors: engine.survivors } } : { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'All stop could not be recorded' });
       }
@@ -4058,6 +4165,7 @@ export async function startHelper({
   } finally {
     releaseStart();
   }
+  startEngineHosts();
 
   return { address, close };
 }

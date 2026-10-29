@@ -8,11 +8,26 @@ import { run } from '../lib/run.js';
 import { makeAdapter } from './adapter.js';
 import { startHelper, envForConnection } from './helper.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { archonAdapter } from '../engine/archon/adapter.js';
+import { settingsViews } from '../desk/mod-records.js';
+import { effectiveSettings } from '../settings/effective.js';
 
 function recordOf(project) {
   const record = readProject(project);
   if (!record) throw new Error('The project has not been set up on this computer');
   return record;
+}
+
+// The engine for a project whose `engine` setting in force is Archon, or null. Every such project shares one Archon
+// adapter: there is one Archon on the computer.
+export function engineForProject({ adapter = () => archonAdapter(), now = () => new Date(), views = settingsViews } = {}) {
+  let shared = null;
+  return (project) => {
+    const { project: own, profile } = views(project);
+    if (effectiveSettings({ project: own, profile, now })?.engine?.value !== 'archon') return null;
+    shared ??= adapter();
+    return shared;
+  };
 }
 
 // `onStop` is what the helper does once the last uninstall's answer, saying it stops, has been sent
@@ -30,6 +45,7 @@ export function startRealHelper({
       return makeAdapter({ host: record.host, repo: record.repo, run, env, base: record.connection?.baseUrl });
     },
     envFor: envForConnection((project) => recordOf(project).connection, { fetch, now }),
+    engineFor: engineForProject({ now }),
   });
 }
 

@@ -44,7 +44,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
   const post = (path) => (args = {}) => ask(address, 'POST', path, args, timeout);
   return {
     health: () => ask(address, 'GET', '/health', undefined, timeout),
-    stop: post('/stop/set'), //      { by? } -> { ok }: turns STOP on; nothing here lifts it. `by: 'prompt'` records that the director's word set it
+    stop: post('/stop/set'), //      { by?, wait? } -> { ok, engine? }: turns STOP on, then the engine's runs are cancelled; nothing here lifts it. `by: 'prompt'` records that the director's word set it, `by: 'runbook'` the runbook; `wait: true` waits for the engine and gives what it cancelled
     session: {
       mark: post('/session/mark'), // { project | cwd, mark, data } -> { ok, id }: a session's mark, as a plain note: 'unknown-tool' ({ name }), 'compaction' ({ trigger }) or 'deadline' ({ event })
     },

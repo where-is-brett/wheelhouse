@@ -19,6 +19,7 @@ import {
   startRun, addChanges, applyJsonKey, markPutBack, markStep, newId, readJournal, reverseChange, journalFile, closeRun,
 } from '../../../scripts/setup/journal.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
+import { loginEntry, installLoginStart, loginStartRecord } from '../../../scripts/lib/login-start.js';
 import { wheelhouseHome, profileDir, oldProfileDir, stateDir, oldStateDir, keysDir } from '../../../scripts/lib/paths.js';
 import { toolFolder } from '../../../scripts/lib/host-tools.js';
 import { clicksDir, usedDir } from '../../../scripts/lib/setup-clicks.js';
@@ -2941,5 +2942,17 @@ test('a shared project leaves the archive as it is, and names it', async () => {
     assert.equal(got.changes.some((c) => c.put === 'pull-request'), false);
     assert.ok(got.keep.some((k) => /\.wheelhouse-archive\//.test(k.what) && /other computers/.test(k.why)));
     assert.deepEqual(snapshot(world), before, 'the plan changed nothing');
+  });
+});
+
+test('uninstall removes the login start', async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    fullSetup(world, { through: 6 });
+    const entry = loginEntry({ platform: 'darwin', node: '/usr/local/bin/node', root: '/opt/wheelhouse', script: 'scripts/agents/copilot/start-helper.js', home: world.userHome });
+    await installLoginStart({ entry, run: async () => ({ code: 1, stdout: '', stderr: 'not run' }), now: NOW });
+    const got = await plan(world);
+    assert.deepEqual(of(got, 'computer').filter((c) => c.put === 'remove-login-start'), [{ phase: 'computer', put: 'remove-login-start', kind: 'launch-agent', target: entry.path }]);
+    assert.equal(loginStartRecord().path, entry.path);
   });
 });
