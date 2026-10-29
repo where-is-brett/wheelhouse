@@ -65,6 +65,9 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
     // The continuation host's process: a stand-in, which a test's own `spawn` is handed and never runs.
     wakeCommand() { return { command: 'fake-engine-wake', args: ['--watch'], env: {} }; },
 
+    // Whether a listed process is the engine's own: a test's processes whose command starts with `fake-engine`.
+    ownsProcess(command) { return typeof command === 'string' && command.startsWith('fake-engine'); },
+
     health() { return { ok: true, findings: [] }; },
 
     start(order = {}) {

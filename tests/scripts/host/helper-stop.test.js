@@ -388,14 +388,14 @@ test('close waits for the mirror tidy queued after an answer', async () => {
 
 const recordings = loadRecordings(path.join(import.meta.dirname, '..', '..', 'fixtures', 'engine'));
 
-// A spawn whose children are stand-ins that run nothing and end when killed.
-function stubSpawn() {
+// A spawn whose children are stand-ins that run nothing and end when killed; `onKill(child)` is told first.
+function stubSpawn({ onKill = () => {} } = {}) {
   const children = [];
   const spawn = () => {
     const child = new EventEmitter();
     child.pid = 8000 + children.length;
     child.killed = false;
-    child.kill = (signal = 'SIGTERM') => { child.killed = signal; setImmediate(() => child.emit('exit', null, signal)); return true; };
+    child.kill = (signal = 'SIGTERM') => { onKill(child); child.killed = signal; setImmediate(() => child.emit('exit', null, signal)); return true; };
     children.push(child);
     return child;
   };
@@ -403,13 +403,23 @@ function stubSpawn() {
 }
 
 // The computer's processes for stopEngine: a run's owner with a step that moved itself into its own session (the
-// survivor check 78 found), the helper's own process, and whatever `kill` hasn't taken away.
+// survivor check 78 found), the wake process (8000) with a step of a run it carried on (8001, in its own session),
+// the helper's own process, and whatever `kill` hasn't taken away. `wakeEnds` takes the wake away and hands its step
+// to the system, as ending it does.
 function computer() {
-  let table = [{ pid: process.pid, ppid: 1, pgid: process.pid, command: 'node helper' }, { pid: 700, ppid: 1, pgid: 700, command: 'archon run owner' }, { pid: 701, ppid: 700, pgid: 701, command: 'sleep 747' }];
+  let table = [
+    { pid: process.pid, ppid: 1, pgid: process.pid, command: 'node helper' }, { pid: 700, ppid: 1, pgid: 700, command: 'fake-engine run owner' },
+    { pid: 701, ppid: 700, pgid: 701, command: 'sleep 747' },
+    { pid: 8000, ppid: process.pid, pgid: 8000, command: 'fake-engine-wake --watch' }, { pid: 8001, ppid: 8000, pgid: 8001, command: 'bun resumed step' },
+  ];
   const kills = [];
   return {
     kills,
     cancelEnds: () => { table = table.filter((p) => p.pid !== 700); },
+    wakeEnds: (child) => {
+      if (child.pid !== 8000) return;
+      table = table.filter((p) => p.pid !== 8000).map((p) => (p.ppid === 8000 ? { ...p, ppid: 1 } : p));
+    },
     with: {
       list: async () => table.map((p) => ({ ...p })),
       cwds: async () => new Map(),
@@ -430,7 +440,7 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
   const pc = computer();
   const stopAll = engine.stopAll.bind(engine);
   engine.stopAll = async (reason, options) => { const got = await stopAll(reason, options); pc.cancelEnds(); return got; };
-  const { spawn, children } = stubSpawn();
+  const { spawn, children } = stubSpawn({ onKill: pc.wakeEnds });
   try {
     await as(p.home, async () => {
       await withHelper(fakeAdapter(), async (client) => {
@@ -443,10 +453,11 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
         const note = notes()[0].data;
         assert.deepEqual(note.cancelled, [{ runId: running, work: 'card-12', lane: 'quick', branch: 'wh/card-12' }]);
         assert.deepEqual(note.paused, [{ runId: paused, work: 'card-13', lane: 'quick', branch: 'wh/card-13' }]);
-        assert.deepEqual(note.ended, ['"sleep 747" (process 701)']);
+        // The wake's step is in the snapshot, taken before the wake was ended.
+        assert.deepEqual(note.ended, ['"bun resumed step" (process 8001)', '"sleep 747" (process 701)']);
         assert.deepEqual(note.survivors, []);
-        assert.match(note.words, /cancelled 1 run.*1 run waiting on an answer stays paused.*ended 1 process the engine left running: "sleep 747" \(process 701\)/);
-        assert.deepEqual(pc.kills, [[-701, 'SIGTERM']]);
+        assert.match(note.words, /cancelled 1 run.*1 run waiting on an answer stays paused.*ended 2 processes the engine left running/);
+        assert.deepEqual(pc.kills.sort(), [[-701, 'SIGTERM'], [-8001, 'SIGTERM']]);
         assert.ok(pc.kills.every(([pid]) => Math.abs(pid) !== process.pid), "the helper's own process is never ended");
         assert.equal(engine.inspect(running).status, 'ended');
         assert.equal(engine.inspect(paused).status, 'paused', 'a paused run stays paused');

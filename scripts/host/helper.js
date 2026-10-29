@@ -3958,18 +3958,21 @@ export async function startHelper({
       .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
     return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
   }
-  // All stop for the engine (design on Archon, section 12.3): the wake process ends at once (each host sees STOP), then
-  // stopEngine cancels every run and ends what the cancel left, and each project's record gets a note listing its
-  // cancelled work and its paused runs, for the First Mate's Carry on, and any process ended or left. One at a time:
-  // a second All stop while one runs shares it. Lifting All stop starts no run; the wake starts again by itself.
+  // All stop for the engine (design on Archon, section 12.3): stopEngine takes the processes first, the wake process's
+  // tree among them, then the wake ends (each host sees STOP) before any run is cancelled, so the steps of a run the
+  // wake carried on are in the snapshot. stopEngine cancels every run and ends what the cancel left, and each project's
+  // record gets a note listing its cancelled work and its paused runs, for the First Mate's Carry on, and any process
+  // ended or left. One at a time: a second All stop while one runs shares it. Lifting All stop starts no run; the wake starts again by itself.
   let engineStopping = null;
   let stopSeen = false;
   function stopEngines(reason = 'All stop') {
     if (engineHosts.length === 0) return Promise.resolve(null);
     stopSeen = true;
     engineStopping ??= (async () => {
-      for (const { host } of engineHosts) host.check();
-      const got = await stopEngine({ engine: engineHosts[0].engine, processes: engineHosts.flatMap(({ host }) => host.processes()), reason, ...engineStopWith });
+      const got = await stopEngine({
+        engine: engineHosts[0].engine, processes: engineHosts.flatMap(({ host }) => host.processes()), reason,
+        afterSnapshot: () => { for (const { host } of engineHosts) host.check(); }, ...engineStopWith,
+      });
       const said = stopWords(got);
       for (const { project } of engineHosts) {
         const theirs = (ids) => ids.flatMap((runId) => {
@@ -3978,8 +3981,8 @@ export async function startHelper({
         });
         const cancelled = theirs(got.cancelled);
         const paused = theirs(got.paused);
-        if (cancelled.length + paused.length + got.ended.length + got.survivors.length === 0 && !got.trouble) continue;
-        await engineWrite(project, 'note', { about: 'all-stop', words: said, cancelled, paused, ended: got.ended, survivors: got.survivors }).catch(() => {});
+        if (cancelled.length + paused.length + got.ended.length + got.survivors.length + got.leftAlone.length === 0 && !got.trouble) continue;
+        await engineWrite(project, 'note', { about: 'all-stop', words: said, cancelled, paused, ended: got.ended, survivors: got.survivors, leftAlone: got.leftAlone }).catch(() => {});
       }
       return { ...got, said };
     })().finally(() => { engineStopping = null; });

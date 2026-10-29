@@ -2,7 +2,9 @@
 // All stop for the build engine (spec 12.3). Cancelling isn't trusted to be complete: check 78 found a process that
 // had moved itself into its own session alive after a cancel that reported success. So before anything is cancelled,
 // the process tree of each running run's owner is taken, with every process the continuation host started and any
-// process already moved to the system that works in a run's folder; then the engine cancels its runs, and after
+// process already moved to the system that works in a run's folder. An owner is taken only where the engine says the
+// process is its own: a pid the record names may since belong to another program, which is left alone and reported.
+// Then the engine cancels its runs, and after
 // `wait` whatever of that snapshot is still there is ended by its pid (its process group, where it leads one), and
 // looked for once more. Nothing is ended by name, only by pid, and never the helper's own process or group.
 // It knows only the engine interface (contract.js).
@@ -59,19 +61,31 @@ const inside = (dir, folder) => {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 };
 
-// stopEngine({ engine, processes, kill, list, cwds, wait, sleep, reason, self }) ->
-//   { cancelled, paused, refused, ended, survivors, trouble? }
+// stopEngine({ engine, processes, kill, list, cwds, wait, sleep, reason, self, afterSnapshot }) ->
+//   { cancelled, paused, refused, ended, survivors, leftAlone, trouble? }
 // `processes` are those the continuation host started ([{ pid, name }]); `list()` gives [{ pid, ppid, pgid, command }]
 // and `cwds()` a Map of pid to working folder (ps and lsof by default); `kill(pid, signal)` ends one (a negative pid,
 // its group); `self` is the helper's own pid. `ended` and `survivors` are the processes ended and those still left,
 // by name; `refused` the runs whose cancel the engine refused; `paused` the runs waiting on an answer, which the
-// engine doesn't cancel and which stay paused.
+// engine doesn't cancel and which stay paused; `leftAlone` the processes named as a run's owner that
+// `engine.ownsProcess(command)` doesn't own. `afterSnapshot()` is awaited once the processes are taken and before any
+// run is cancelled (or once the engine has failed), so what it ends (the continuation host's wake) is in the snapshot.
 export async function stopEngine({
   engine, processes = [], kill = killByPid, list = listProcesses, cwds = listCwds, wait = STOP_WAIT_MS, grace = KILL_GRACE_MS,
-  sleep = delay, reason = 'All stop', self = process.pid,
+  sleep = delay, reason = 'All stop', self = process.pid, afterSnapshot = () => {},
 } = {}) {
   const listed = async () => { try { return await list(); } catch { return []; } };
   let snapshot = null;
+  const leftAlone = [];
+  let told = false;
+  const tell = async () => {
+    if (told) return;
+    told = true;
+    try { await afterSnapshot(); } catch { /* All stop goes on */ }
+  };
+  const engines = (command) => {
+    try { return engine.ownsProcess?.(command) === true; } catch { return false; }
+  };
 
   // The processes to look at again after the cancel, each { pid, pgid, command, name }.
   async function take(runs = []) {
@@ -95,7 +109,12 @@ export async function stopEngine({
       for (const child of table) if (child.ppid === pid) add(child.pid, `"${short(child.command)}" (process ${child.pid})`);
     };
     for (const p of processes) if (Number.isInteger(p?.pid)) add(p.pid, `${p.name ?? 'a process the engine started'} (process ${p.pid})`);
-    for (const pid of owners) add(pid, `"${short(byPid.get(pid)?.command ?? 'the run')}" (process ${pid})`);
+    for (const pid of owners) {
+      const p = byPid.get(pid);
+      if (!p || kept.has(pid)) continue;
+      if (engines(p.command)) add(pid, `"${short(p.command)}" (process ${pid})`);
+      else leftAlone.push(`"${short(p.command)}" (process ${pid})`);
+    }
     if (folders.length > 0) {
       let where = new Map();
       try { where = await cwds(); } catch { /* no folders to go by */ }
@@ -107,6 +126,7 @@ export async function stopEngine({
       }
     }
     snapshot = [...kept.values()];
+    await tell();
   }
 
   let result;
@@ -117,6 +137,7 @@ export async function stopEngine({
   }
   // No run was running (or the engine couldn't say): the host's own processes are still looked at.
   if (snapshot === null) await take([]);
+  await tell();
 
   // The snapshot's processes still there: the same pid running the same command, so a pid taken since is left alone.
   const alive = async () => {
@@ -154,6 +175,7 @@ export async function stopEngine({
     refused: result?.survivors ?? [],
     ended,
     survivors,
+    leftAlone,
     ...(result?.trouble ? { trouble: result.trouble } : {}),
   };
 }
@@ -161,13 +183,14 @@ export async function stopEngine({
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // What All stop did to the engine, in plain words for the Logbook.
-export function stopWords({ cancelled = [], paused = [], refused = [], ended = [], survivors = [], trouble } = {}) {
+export function stopWords({ cancelled = [], paused = [], refused = [], ended = [], survivors = [], leftAlone = [], trouble } = {}) {
   const lines = [];
   if (trouble) lines.push(`${trouble}.`);
   lines.push(cancelled.length > 0 ? `All stop cancelled ${plural(cancelled.length, 'run')} of the engine.` : 'All stop found no engine run under way to cancel.');
   if (paused.length > 0) lines.push(`${plural(paused.length, 'run')} waiting on an answer ${paused.length === 1 ? 'stays' : 'stay'} paused, and nothing carries ${paused.length === 1 ? 'it' : 'them'} on while All stop is on.`);
   if (refused.length > 0) lines.push(`The engine wouldn't cancel ${plural(refused.length, 'run')}.`);
   if (ended.length > 0) lines.push(`Wheelhouse ended ${plural(ended.length, 'process', 'processes')} the engine left running: ${ended.join(', ')}.`);
+  if (leftAlone.length > 0) lines.push(`Wheelhouse left ${plural(leftAlone.length, 'process', 'processes')} alone that the engine's record gave as a run's owner but that ${leftAlone.length === 1 ? "isn't" : "aren't"} the engine's: ${leftAlone.join(', ')}.`);
   if (survivors.length > 0) lines.push(`${plural(survivors.length, 'process is', 'processes are')} still running after All stop: ${survivors.join(', ')}. Wheelhouse couldn't end ${survivors.length === 1 ? 'it' : 'them'}.`);
   return lines.join(' ');
 }

@@ -57,7 +57,7 @@ test('a process left after ten seconds is ended and named; the tree is taken bef
   const runId = engine.start({ recording: 'quick-approved', running: true, ownerPid: 100 }).runId;
   const pc = computer([
     ...base,
-    [100, 1, 100, 'bun archon workflow run'],
+    [100, 1, 100, 'fake-engine workflow run'],
     [101, 100, 100, '/bin/sh -c step'],
     [102, 101, 102, 'sleep 747'], // moved itself into its own session (setsid)
     [103, 101, 100, 'sleep 731'],
@@ -78,7 +78,7 @@ test('a process left after ten seconds is ended and named; the tree is taken bef
 test('a process that ignores the first ending gets the second, and one that outlives both is named as left', async () => {
   const engine = fakeEngine({ recordings });
   engine.start({ recording: 'quick-approved', running: true, ownerPid: 200 });
-  const pc = computer([...base, [200, 1, 200, 'archon owner'], [201, 200, 200, 'stubborn script'], [202, 200, 200, 'undying script']], { stubborn: [201], undying: [202] });
+  const pc = computer([...base, [200, 1, 200, 'fake-engine owner'], [201, 200, 200, 'stubborn script'], [202, 200, 200, 'undying script']], { stubborn: [201], undying: [202] });
   const got = await stopEngine({ engine, ...pc, self: SELF });
   assert.deepEqual(pc.kills, [[-200, 'SIGTERM'], [201, 'SIGTERM'], [202, 'SIGTERM'], [201, 'SIGKILL'], [202, 'SIGKILL']]);
   assert.deepEqual(got.survivors, ['"undying script" (process 202)']);
@@ -122,7 +122,7 @@ test("an engine that can't list its runs still has the host's processes ended, a
 test('a process whose pid was taken by another program meanwhile is left alone', async () => {
   const engine = fakeEngine({ recordings });
   engine.start({ recording: 'quick-approved', running: true, ownerPid: 600 });
-  const pc = computer([...base, [600, 1, 600, 'archon owner']]);
+  const pc = computer([...base, [600, 1, 600, 'fake-engine owner']]);
   const stopAll = engine.stopAll.bind(engine);
   engine.stopAll = async (reason, options) => {
     const got = await stopAll(reason, options);
@@ -135,6 +135,48 @@ test('a process whose pid was taken by another program meanwhile is left alone',
   const got = await stopEngine({ engine, ...pc, list: async () => { calls += 1; return calls === 1 ? list() : [...(await list()), { pid: 600, ppid: 1, pgid: 600, command: 'other program' }]; }, self: SELF });
   assert.deepEqual(pc.kills, []);
   assert.deepEqual(got.ended, []);
+});
+
+test("an owner pid whose process isn't the engine's is left alone and reported, with its tree", async () => {
+  const engine = fakeEngine({ recordings });
+  // The run's owner died and its pid was taken by the director's editor; the run is still recorded as running.
+  engine.start({ recording: 'quick-approved', running: true, ownerPid: 650 });
+  const pc = computer([...base, [650, 1, 650, '/Applications/Editor.app/Contents/MacOS/Editor'], [651, 650, 650, 'editor helper']]);
+  const got = await stopEngine({ engine, ...pc, self: SELF });
+  assert.deepEqual(pc.kills, []);
+  assert.deepEqual(got.ended, []);
+  assert.deepEqual(got.leftAlone, ['"/Applications/Editor.app/Contents/MacOS/Editor" (process 650)']);
+  assert.match(stopWords(got), /left 1 process alone.*isn't the engine's: "\/Applications\/Editor\.app\/Contents\/MacOS\/Editor" \(process 650\)/);
+});
+
+test('afterSnapshot is told once the processes are taken and before any run is cancelled, so a process it ends is still in the snapshot', async () => {
+  const engine = fakeEngine({ recordings });
+  engine.start({ recording: 'quick-approved', running: true });
+  // The wake (300) has carried a run on; its step (301) is in its own session. Ending the wake hands the step to the system.
+  const pc = computer([...base, [300, SELF, 300, 'fake-engine wake'], [301, 300, 301, 'bun resumed step']]);
+  const order = [];
+  const stopAll = engine.stopAll.bind(engine);
+  engine.stopAll = async (reason, options) => stopAll(reason, { beforeCancel: async (runs) => { await options.beforeCancel(runs); order.push('cancel'); } });
+  const list = pc.list;
+  const afterSnapshot = async () => {
+    order.push('after snapshot');
+    pc.kill(300, 'SIGTERM');
+    pc.kills.length = 0;
+  };
+  const got = await stopEngine({ engine, ...pc, list: async () => { order.push('list'); return list(); }, afterSnapshot, self: SELF, processes: [{ pid: 300, name: "the engine's continuation process" }] });
+  assert.deepEqual(order.slice(0, 3), ['list', 'after snapshot', 'cancel']);
+  assert.deepEqual(pc.kills, [[-301, 'SIGTERM']]);
+  assert.deepEqual(got.ended, ['"bun resumed step" (process 301)']);
+});
+
+test('afterSnapshot is told even when the engine refuses before it lists its runs', async () => {
+  const engine = fakeEngine({ recordings });
+  engine.stopAll = async () => { throw new Error('no engine'); };
+  let told = 0;
+  const pc = computer(base);
+  const got = await stopEngine({ engine, ...pc, self: SELF, afterSnapshot: () => { told += 1; } });
+  assert.equal(told, 1);
+  assert.match(got.trouble, /no engine/);
 });
 
 test('parsePs and parseLsof read the listings', () => {

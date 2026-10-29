@@ -11,7 +11,8 @@
 //   stopAll(reason, { beforeCancel(runs: [{ id, folder }]) }?) -> { cancelled: string[], survivors: string[], paused: string[] }
 //
 // Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and
-// wakeCommand() -> { command, args, env }, the process that carries answered runs on.
+// wakeCommand() -> { command, args, env }, the process that carries answered runs on; and, for All stop (stop.js),
+// ownsProcess(command) -> boolean, whether a process as `ps` lists it is the engine's own.
 
 export const METHODS = Object.freeze(['health', 'start', 'watch', 'act', 'inspect', 'stopAll']);
 export const ENGINE_EVENTS = Object.freeze(['run-started', 'step-finished', 'ask', 'ask-resolved', 'run-ended']);
