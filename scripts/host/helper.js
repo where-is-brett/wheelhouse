@@ -55,6 +55,7 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { startEngineHost } from '../engine/host.js';
 import { stopEngine, stopWords } from '../engine/stop.js';
+import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
@@ -3722,10 +3723,24 @@ export async function startHelper({
     return inQueue(() => (held() ? { ...STOP_REFUSAL, v: DESK_VERSION } : core.act(command, args, evidence)));
   };
 
+  // The build engine's runs (scripts/engine/routes.js): served under /engine/ and /broker/, outside any one
+  // project's context, since a step knows its run and not its project; each route finds the project from the run.
+  const engineRun = engineRoutes({
+    projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
+    engineFor: (project) => {
+      try { return engineFor(project); } catch { return null; }
+    },
+    ordersDir: (project) => path.join(engineDirOf(stateDir(project)), 'orders'),
+    write: (project, kind, data) => engineWrite(project, kind, data),
+    held: stopped,
+    now,
+  });
+
   const routes = {
     ...setup,
     ...measures,
     ...uninstall,
+    ...engineRun.routes,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -4083,6 +4098,15 @@ export async function startHelper({
         return send(res, 200, engine ? { ok: true, engine: { said: engine.said, cancelled: engine.cancelled, paused: engine.paused, ended: engine.ended, survivors: engine.survivors } } : { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'All stop could not be recorded' });
+      }
+    }
+    if (url.pathname.startsWith('/engine/') || url.pathname.startsWith('/broker/')) {
+      // A run's steps know the run, not the project: each route finds the project from the run itself.
+      try {
+        onArrive(url.pathname);
+        return send(res, 200, cleanDeep(await route(body), []));
+      } catch (error) {
+        return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
       }
     }
     if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/')) {

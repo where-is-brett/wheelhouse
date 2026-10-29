@@ -88,6 +88,11 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
+    // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
+    engine: {
+      start: post('/engine/start'), // { project, order, branch?, carryOn? } -> { ok, runId }: starts a run of the work order, keeps the order under the run's id and records the start
+      order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
+    },
     // The desk (scripts/desk/, spec 5): every front end's one way in. Each body names `v: 'desk/1'` and `project` or `cwd`.
     desk: {
       read: post('/desk/read'), //   { v, project | cwd, view, args } -> { ok, v, view, data, lines }: a view, finished
