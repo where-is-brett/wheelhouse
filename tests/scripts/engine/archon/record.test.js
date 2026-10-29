@@ -55,3 +55,17 @@ test('readRecord copes with a run that has no record yet', () => {
   const bare = readRecord({ id: 'r1', status: 'pending', metadata: {}, terminal_record: null });
   assert.deepEqual(bare, { status: 'running', outcome: null, steps: [], branch: null, pr: null, head: null, digest: null, ownerPid: null, totals: { dollars: null, tokens: null } });
 });
+
+test('a step whose token count lacks the input or the output figure has unknown tokens, never a part counted as zero', () => {
+  const node = (value, cost) => ({
+    nodeId: 'implement',
+    execution: { accounting: 'node', binding: { provider: 'claude' }, timing: {}, spend: { tokens: { source: 'provider', value }, costUsd: cost } },
+  });
+  const unavailable = { source: 'unavailable', reason: 'not_reported' };
+  const { steps } = readRecord({ status: 'completed', metadata: {}, nodes: [
+    node({ input: 1200 }, unavailable),
+    node({ output: 300 }, { source: 'provider', value: 0.02 }),
+    node({ input: 1200, output: 300 }, unavailable),
+  ] });
+  assert.deepEqual(steps.map((s) => [s.tokens, s.dollars, s.source]), [[null, null, 'unknown'], [null, 0.02, 'reported'], [1500, null, 'unknown']]);
+});

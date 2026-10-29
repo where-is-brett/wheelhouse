@@ -18,11 +18,14 @@ function outcomeOf(json) {
   return null;
 }
 
-// One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero.
+// One node's spend. A node that called no provider (a shell step) spent nothing, which is a known zero. Tokens are
+// known only when both the input and the output figure are: a missing one is unknown, not zero.
 function spendOf(spend) {
   if (noCall(spend?.tokens) && noCall(spend?.costUsd)) return { tokens: 0, dollars: 0, source: 'reported' };
-  const counted = reported(spend?.tokens) ? spend.tokens.value : null;
-  const tokens = counted ? (figure(counted.input) ?? 0) + (figure(counted.output) ?? 0) : null;
+  const counted = reported(spend?.tokens) && isObject(spend.tokens.value) ? spend.tokens.value : {};
+  const input = figure(counted.input);
+  const output = figure(counted.output);
+  const tokens = input === null || output === null ? null : input + output;
   if (reported(spend?.costUsd) && figure(spend.costUsd.value) !== null) return { tokens, dollars: spend.costUsd.value, source: 'reported' };
   return { tokens, dollars: null, source: 'unknown' };
 }
