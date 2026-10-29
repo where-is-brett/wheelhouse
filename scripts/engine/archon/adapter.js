@@ -19,6 +19,7 @@ import { archonCli, archonCommand } from './cli.js';
 import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
+import { readyWorkItem } from './work-item.js';
 import path from 'node:path';
 import { engineDir, archonHome } from '../../lib/paths.js';
 import { run as defaultRun } from '../../lib/run.js';
@@ -359,6 +360,20 @@ export function archonAdapter({
     async outputs(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: CALL_MS });
       return readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null);
+    },
+
+    // Hands a pull request to Archon's merge queue (check 76; ruling 9 of part 3b): writes its `work/<n>` document in
+    // the project's state store, marked ready, over whatever revision is there. `item`: { project (its folder), repo,
+    // pr, url, runId, at }. Not one of the interface's methods: only this engine has a merge queue.
+    async handOver({ project, repo, pr, url, runId, at = now() } = {}) {
+      if (!project || !Number.isInteger(pr) || pr < 1) return refusedWith('A hand-over needs the project and the pull request');
+      const name = `work/${pr}`;
+      const current = await cli(['state', 'get', name], { json: true, cwd: project, timeout: CALL_MS });
+      const revision = Number.isInteger(current.json?.revision) ? current.json.revision : 0;
+      const value = readyWorkItem({ repo, pr, url, at, runId });
+      const put = await cli(['state', 'put', name, '--if-revision', String(revision)], { json: true, cwd: project, input: JSON.stringify(value), timeout: CALL_MS });
+      if (put.code === 0 && put.json?.ok !== false) return { ok: true };
+      return refusedWith(refusal('take the pull request into its merge queue', put));
     },
 
     // Cancels every running run, and every pending one (just started with --detach). A child run is cancelled with

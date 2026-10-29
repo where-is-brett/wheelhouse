@@ -93,6 +93,13 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       start: post('/engine/start'), // { project, order, branch?, carryOn? } -> { ok, runId }: starts a run of the work order, keeps the order under the run's id and records the start
       order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
       review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
+      openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request
+      ready: post('/engine/ready'), // { runId } -> { ok, pr, head }: hands the pull request to the engine's merge queue once its head is signed CLEAN (and approved, if shown first)
+    },
+    // The broker (scripts/engine/broker/): every gh call Archon makes, and git's credential requests in its runs.
+    broker: {
+      gh: post('/broker/gh'), // { argv, cwd, stdin } -> { ok, code, stdout, stderr }: the real gh's answer, or a refusal as gh's own error output
+      credential: post('/broker/credential'), // { cwd, action, request } -> { ok, username, password }: only for the project's own repository
     },
     // The desk (scripts/desk/, spec 5): every front end's one way in. Each body names `v: 'desk/1'` and `project` or `cwd`.
     desk: {

@@ -87,7 +87,9 @@ import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
 import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
-import { checkProvenance, removeProvenance, sessionProvenance } from '../lineage/provenance.js';
+import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
+import { brokerRoutes } from '../engine/broker/routes.js';
+import { toolPath } from '../lib/host-tools.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
@@ -3739,6 +3741,69 @@ export async function startHelper({
     // copy Archon froze for the run, under its `project` folder.
     digests: { installed: () => packTreeDigest(path.join(engineDir(), 'pack')), captured: (root) => packTreeDigest(path.join(root, 'project')) },
     comment: async (project, args) => (await (await contextFor(project)).adapter()).verdictComment(args),
+    host: {
+      // The run's worktree is inside the project's folder; its own branch is the one sent, as a session's push is.
+      push: async (project, { dir }) => {
+        try {
+          const branch = typeof dir === 'string' ? branchOf(dir) : null;
+          if (!branch) return { ok: false, refused: 'the worktree has no branch of its own' };
+          const pushed = await oneAtATime(`push:${project}`, async () => doPush({ project, dir, refspec: branch, byFolder: true }, await contextFor(project)));
+          return pushed.ok ? { ok: true, branch } : pushed;
+        } catch (error) {
+          return { ok: false, refused: error instanceof Error ? error.message : 'the branch wasn\'t pushed' };
+        }
+      },
+      // Opens the branch's pull request, or updates the open one, and gives its number, address and head.
+      open: async (project, { branch, title, body }) => {
+        const adapter = await (await contextFor(project)).adapter();
+        const open = (await adapter.openRequests()).find((r) => r.branch === branch && !r.fork);
+        let number = open?.number;
+        if (number) await adapter.updatePr({ number, title, body: removeProvenance(body) });
+        else number = (await adapter.openPr({ head: branch, base: await defaultBranchOf(project, adapter), title, body: removeProvenance(body) })).number;
+        return { pr: number, url: `https://github.com/${recordOf(project).repo}/pull/${number}`, head: await adapter.branchHead(branch) };
+      },
+      repo: (project) => recordOf(project).repo,
+    },
+    // What built an engine run's pull request: Archon's pinned release and the installed pack's digest.
+    provenance: (project, { branch }) => engineWrite(project, 'provenance', { branch, provenance: engineProvenance({ packDigest: packTreeDigest(path.join(engineDir(), 'pack')) }) }),
+  });
+
+  // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from.
+  const placeEngineCall = (cwd) => {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
+    const found = registeredProjects().find(({ record }) => typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd));
+    return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo } : null;
+  };
+  // The rules' context for a call (rules.js brokerDecision): the push rules for every call, and for a verdict or a
+  // merge the signed review and approval of its head, the incident and whether the work needs the director's approval.
+  async function brokerPermit(project, call) {
+    const ctx = await contextFor(project);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const base = { stop: stopped(), lockHeld: await lockHeld(project, ctx), defaultBranch };
+    if ((call.kind !== 'merge' && call.kind !== 'verdict') || !Number.isInteger(call.pr) || typeof call.sha !== 'string') return base;
+    await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
+    const enrolled = ownKeyOnly();
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), enrolled, { now });
+    const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
+    let guardrail = true;
+    try {
+      const changes = await readChanges({ project, number: call.pr, headSha: call.sha, defaultBranch }, ctx);
+      guardrail = classifyChange({ paths: changes.paths, config: changes.config }).touchesGuardrails;
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+    }
+    const kept = engineRun.readyOf(project, call.pr);
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: kept?.showFirst === true, guardrail, stop: stopped() };
+  }
+  const broker = brokerRoutes({
+    placeOf: placeEngineCall,
+    permit: brokerPermit,
+    forward: async (project, argv, { cwd, stdin }) => run(toolPath('gh'), argv, { env: (await contextFor(project)).env, input: stdin, cwd }),
+    credential: async (project) => {
+      const { env } = await contextFor(project);
+      return typeof env?.GH_TOKEN === 'string' && env.GH_TOKEN !== '' ? { username: 'x-access-token', password: env.GH_TOKEN } : null;
+    },
   });
 
   const routes = {
@@ -3746,6 +3811,7 @@ export async function startHelper({
     ...measures,
     ...uninstall,
     ...engineRun.routes,
+    ...broker,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -4109,6 +4175,8 @@ export async function startHelper({
       // A run's steps know the run, not the project: each route finds the project from the run itself.
       try {
         onArrive(url.pathname);
+        // git's credential answer carries the connection's key by design, so it is the one answer not scrubbed.
+        if (url.pathname === '/broker/credential') return send(res, 200, await route(body));
         return send(res, 200, cleanDeep(await route(body), []));
       } catch (error) {
         return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });

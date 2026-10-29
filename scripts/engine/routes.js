@@ -11,6 +11,10 @@
 //   filesDir(project)     the folder of the project's engine files, the helper's own
 //   digests               { installed(): the installed pack's digest, captured(root): the digest of the pack a run froze }
 //   comment(project, { number, id, body })   posts or edits the merge queue's verdict comment, giving { id }
+//   host                  { push(project, { dir }) -> { ok, branch } | refusal: pushes the folder's own branch;
+//                           open(project, { branch, title, body }) -> { pr, url, head }: opens or updates its pull
+//                           request; repo(project) -> 'owner/name' }
+//   provenance(project, { branch })   records what built the branch's pull request (the pack's digest and Archon's)
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
 // started itself, with an order.
 import fs from 'node:fs';
@@ -57,6 +61,7 @@ function readOpened(text) {
 export function engineRoutes({
   projects, engineFor, ordersDir, write, held = () => false, now = () => new Date(),
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
+  host, provenance,
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -92,7 +97,7 @@ export function engineRoutes({
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
-    return kept && typeof kept === 'object' ? { runs: kept.runs ?? {}, comments: kept.comments ?? {} } : { runs: {}, comments: {} };
+    return kept && typeof kept === 'object' ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {} } : { runs: {}, comments: {}, ready: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -137,11 +142,60 @@ export function engineRoutes({
     return { ok: true, ran: true, verdict, posted };
   }
 
+  // The pack's pull-request step: pushes the run's worktree's own branch from the helper's side and opens (or updates)
+  // its pull request with the text the step wrote, recording first what built it. Gives { branch, pr, head }.
+  async function openPr({ runId, cwd, title, body } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    if (held()) return { ok: false, refused: 'All stop is on, so nothing is pushed' };
+    if (!host) return { ok: false, refused: 'the helper can\'t reach the project\'s host' };
+    if (typeof title !== 'string' || title.trim() === '' || typeof body !== 'string') return { ok: false, refused: 'the pull request needs its title and body' };
+    const pushed = await host.push(run.project, { dir: cwd });
+    if (!pushed?.ok) return { ok: false, refused: pushed?.refused ?? 'the branch wasn\'t pushed' };
+    await provenance(run.project, { branch: pushed.branch });
+    const opened = await host.open(run.project, { branch: pushed.branch, title: title.trim().split('\n')[0], body });
+    return { ok: true, branch: pushed.branch, pr: opened.pr, head: opened.head };
+  }
+
+  // The pack's mark-ready step: hands the pull request to the engine's merge queue once every lens that ran is signed
+  // CLEAN for its head, and, for work shown first, the director approved it. The broker's permit still checks both.
+  async function ready({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    if (held()) return { ok: false, refused: 'All stop is on, so nothing is marked ready' };
+    const engine = engineFor(run.project);
+    if (typeof engine?.handOver !== 'function') return { ok: false, refused: 'that project\'s engine has no merge queue to hand the work to' };
+    const outputs = await engine.outputs(runId);
+    const opened = readOpened(outputs['open-pr']);
+    if (!opened) return { ok: false, refused: 'the run hasn\'t opened its pull request yet' };
+    const verdicts = readVerdicts(run.project);
+    const kept = verdicts.runs[runId];
+    const ran = REVIEW_STEPS.filter((s) => outputs[s] !== undefined);
+    if (kept?.head !== opened.head || ran.length === 0 || !ran.every((s) => kept.signed[s] === 'CLEAN')) {
+      return { ok: false, refused: `there is no signed CLEAN review of ${opened.head.slice(0, 7)} from every lens that ran` };
+    }
+    if (run.order.showFirst === true && parsed(outputs.approval)?.decision !== 'approve') {
+      return { ok: false, refused: 'this work is shown first, and the director hasn\'t approved it' };
+    }
+    const repo = host?.repo(run.project);
+    const handed = await engine.handOver({ project: run.folder, repo, pr: opened.pr, url: `https://github.com/${repo}/pull/${opened.pr}`, runId, at: now().toISOString() });
+    if (!handed?.ok) return { ok: false, refused: handed?.refused ?? 'the engine didn\'t take the work' };
+    verdicts.ready = { ...(verdicts.ready ?? {}), [opened.pr]: { head: opened.head, runId, showFirst: run.order.showFirst === true, work: run.order.work } };
+    keepVerdicts(run.project, verdicts);
+    return { ok: true, pr: opened.pr, head: opened.head };
+  }
+
+  // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.
+  const readyOf = (project, pr) => readVerdicts(project).ready?.[pr] ?? null;
+
   return {
     runOf,
+    readyOf,
     routes: {
       '/engine/start': start,
       '/engine/review': review,
+      '/engine/open-pr': openPr,
+      '/engine/ready': ready,
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': async ({ runId } = {}) => {
         const run = runOf(runId);

@@ -31,13 +31,13 @@ export function archonCommand(args, { engine = engineDir(), home, claudeBin, cop
 
 // Runs `archon <args>` in `cwd`. `json: true` adds --json when the arguments lack it. `engine`, `home`, `claudeBin`,
 // `copilotBin` and `nodeDir` choose folders and programs for archonEnv (tests use them); none of them is an environment.
-// `onStdout(text)` is given standard output as it comes, and `limit` (bytes) caps what is kept of each stream, for a
+// `input` is written to the command's standard input. `onStdout(text)` is given standard output as it comes, and `limit` (bytes) caps what is kept of each stream, for a
 // command that runs on (the attention stream). Resolves with { code, json, stdout, stderr }, plus `timedOut` or
 // `stopped` when the run ended that way.
-export async function archonCli(args, { run = defaultRun, cwd, timeout, signal, onStdout, limit, json = false, engine = engineDir(), home, claudeBin, copilotBin, nodeDir } = {}) {
+export async function archonCli(args, { run = defaultRun, cwd, input, timeout, signal, onStdout, limit, json = false, engine = engineDir(), home, claudeBin, copilotBin, nodeDir } = {}) {
   const full = json && !args.includes('--json') ? [...args, '--json'] : [...args];
   const { command, env } = archonCommand(full, { engine, home, claudeBin, copilotBin, nodeDir });
-  const result = await run(command, full, { cwd, env, baseEnv: {}, timeoutMs: timeout, signal, onStdout, limit });
+  const result = await run(command, full, { cwd, env, input, baseEnv: {}, timeoutMs: timeout, signal, onStdout, limit });
   const out = { code: result.code, json: parseJson(result.stdout), stdout: result.stdout, stderr: result.stderr };
   if (result.timedOut) out.timedOut = true;
   if (result.stopped) out.stopped = true;

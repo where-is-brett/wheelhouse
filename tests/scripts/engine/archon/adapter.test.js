@@ -378,3 +378,15 @@ test('bindingsFor turns tiers and aliases into model bindings, and refuses a bad
   assert.throws(() => bindingsFor({ tiers: { huge: 'model-x' } }), /tier/);
   assert.throws(() => bindingsFor({ aliases: { implementer: 'two words' } }), /model/);
 });
+
+test('handOver writes the pull request\'s ready work item over the revision there', async () => {
+  const cli = fakeCli({ 'state get': { code: 0, json: { revision: 3 }, stdout: '', stderr: '' }, 'state put': { code: 0, json: { ok: true }, stdout: '', stderr: '' } });
+  const done = await adapter(cli).handOver({ project: '/p', repo: 'acme/web', pr: 14, url: 'https://github.com/acme/web/pull/14', runId: RUN, at: '2026-10-30T00:00:00.000Z' });
+  assert.deepEqual(done, { ok: true });
+  assert.deepEqual(cli.calls[1].args, ['state', 'put', 'work/14', '--if-revision', '3']);
+  assert.equal(cli.calls[1].options.cwd, '/p');
+  const item = JSON.parse(cli.calls[1].options.input);
+  assert.equal(item.facts.build.status, 'ready');
+  assert.deepEqual(item.subject, { repo: 'acme/web', number: 14 });
+  assert.equal((await adapter(cli).handOver({ project: '/p' })).ok, false);
+});
