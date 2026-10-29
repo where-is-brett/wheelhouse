@@ -55,6 +55,17 @@ export const UPSTREAMS = Object.freeze([
   },
 ]);
 
+// The sources of skill copies (skills/*/SOURCE.md) that aren't among the kits above, pinned the same way. A copy
+// taken from a kit is pinned by the kit's own entry. These are never installed or fingerprinted for a project.
+export const COPY_SOURCES = Object.freeze([
+  {
+    name: 'frontend-design',
+    repo: 'https://github.com/anthropics/claude-plugins-official.git',
+    ref: '1.1.1',
+    sha: 'f8c5e7a1dcb71b10cb74586224b5401f3de5db28',
+  },
+]);
+
 const repoRoot = () => path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // --- Reading ---

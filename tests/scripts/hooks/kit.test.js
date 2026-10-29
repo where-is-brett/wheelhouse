@@ -292,6 +292,7 @@ test('hooks.json names a script that exists for every hook', () => {
       PreToolUse: [
         { matcher: '*', hooks: [{ ...cmd('stop-guard'), onFailure: 'block' }, { ...cmd('lineage-hold'), onFailure: 'block' }] },
         { matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob|Bash|PowerShell|Monitor|WebFetch|ListMcpResourcesTool|ReadMcpResourceTool|mcp__.*', hooks: [{ ...cmd('tool-guard'), onFailure: 'block' }] },
+        { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell', hooks: [{ ...cmd('protected-tests'), onFailure: 'block' }] },
         { matcher: 'AskUserQuestion', hooks: [cmd('card-check')] },
       ],
       PostToolUse: [{ matcher: 'AskUserQuestion', hooks: [cmd('prompt-record')] }, { matcher: '*', hooks: [cmd('feature-status')] }],

@@ -1,0 +1,60 @@
+{
+  "id": "5f3a9c1e8b2d4f6a9e0c7b1d2a3f4e5c",
+  "workflow_name": "wheelhouse-quick",
+  "status": "running",
+  "outcome": null,
+  "metadata": {
+    "workflow_source": {
+      "version": 1,
+      "root": "/Users/director/.wheelhouse-engine/workspaces/acme/web/workflow-source/runs/5f3a9c1e8b2d4f6a9e0c7b1d2a3f4e5c",
+      "digest": "sha256:3b0c9f2e7d1a4c6b8e5f0a9d2c7b1e4f6a3d8c0b5e2f7a1c9d4b6e8f0a2c5d7e"
+    }
+  },
+  "events": [
+    {
+      "event_type": "workflow_started",
+      "step_name": null,
+      "data": {}
+    },
+    {
+      "event_type": "node_completed",
+      "step_name": "order",
+      "data": {
+        "node_output": "{\"visible\":false,\"showFirst\":false}"
+      }
+    },
+    {
+      "event_type": "node_completed",
+      "step_name": "review-standards",
+      "data": {
+        "node_output": "{\"verdict\":\"FINDINGS\",\"findings\":[{\"severity\":\"HIGH\",\"file\":\"src/a.js\",\"line\":3,\"repro\":\"r\",\"fix\":\"f\"}],\"summary\":\"Looked at the change.\",\"blocked\":false,\"assumptions\":[]}"
+      }
+    },
+    {
+      "event_type": "node_completed",
+      "step_name": "review-standards",
+      "data": {
+        "node_output": "{\"verdict\":\"CLEAN\",\"findings\":[],\"summary\":\"Looked at the change.\",\"blocked\":false,\"assumptions\":[]}"
+      }
+    },
+    {
+      "event_type": "node_completed",
+      "step_name": "review-spec",
+      "data": {
+        "node_output": "{\"verdict\":\"CLEAN\",\"findings\":[{\"severity\":\"LOW\",\"file\":\"src/a.js\",\"line\":4,\"repro\":\"r\",\"fix\":\"f\"}],\"summary\":\"Looked at the change.\",\"blocked\":false,\"assumptions\":[]}"
+      }
+    },
+    {
+      "event_type": "node_skipped",
+      "step_name": "review-security",
+      "data": {}
+    },
+    {
+      "event_type": "node_completed",
+      "step_name": "open-pr",
+      "data": {
+        "node_output": "{\"branch\":\"wh/card-14\",\"pr\":14,\"head\":\"1111111a2b3c4d5e6f708192a3b4c5d6e7f80912\"}"
+      }
+    }
+  ]
+}

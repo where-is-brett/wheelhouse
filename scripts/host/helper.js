@@ -19,7 +19,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome } from '../lib/paths.js';
+import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -55,6 +55,8 @@ import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { startEngineHost } from '../engine/host.js';
 import { stopEngine, stopWords } from '../engine/stop.js';
+import { engineRoutes, engineDirOf } from '../engine/routes.js';
+import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
@@ -85,7 +87,9 @@ import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
 import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
-import { checkProvenance, removeProvenance, sessionProvenance } from '../lineage/provenance.js';
+import { checkProvenance, removeProvenance, sessionProvenance, engineProvenance } from '../lineage/provenance.js';
+import { brokerRoutes } from '../engine/broker/routes.js';
+import { toolPath } from '../lib/host-tools.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
@@ -3722,10 +3726,132 @@ export async function startHelper({
     return inQueue(() => (held() ? { ...STOP_REFUSAL, v: DESK_VERSION } : core.act(command, args, evidence)));
   };
 
+  // The build engine's runs (scripts/engine/routes.js): served under /engine/ and /broker/, outside any one
+  // project's context, since a step knows its run and not its project; each route finds the project from the run.
+  const engineRun = engineRoutes({
+    projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
+    engineFor: (project) => {
+      try { return engineFor(project); } catch { return null; }
+    },
+    ordersDir: (project) => path.join(engineDirOf(stateDir(project)), 'orders'),
+    write: (project, kind, data) => engineWrite(project, kind, data),
+    held: stopped,
+    now,
+    // A run's review is trusted only from the installed pack: the one built into the engine's folder, against the
+    // copy Archon froze for the run, under its `project` folder.
+    digests: { installed: () => packTreeDigest(path.join(engineDir(), 'pack')), captured: (root) => packTreeDigest(path.join(root, 'project')) },
+    comment: async (project, args) => (await (await contextFor(project)).adapter()).verdictComment(args),
+    host: {
+      // The run's worktree is inside the project's folder; its own branch is the one sent, as a session's push is.
+      push: async (project, { dir }) => {
+        try {
+          const branch = typeof dir === 'string' ? branchOf(dir) : null;
+          if (!branch) return { ok: false, refused: 'the worktree has no branch of its own' };
+          const pushed = await oneAtATime(`push:${project}`, async () => doPush({ project, dir, refspec: branch, byFolder: true }, await contextFor(project)));
+          return pushed.ok ? { ok: true, branch } : pushed;
+        } catch (error) {
+          return { ok: false, refused: error instanceof Error ? error.message : 'the branch wasn\'t pushed' };
+        }
+      },
+      // Opens the branch's pull request, or updates the open one, and gives its number, address and head.
+      open: async (project, { branch, title, body }) => {
+        const adapter = await (await contextFor(project)).adapter();
+        const open = (await adapter.openRequests()).find((r) => r.branch === branch && !r.fork);
+        let number = open?.number;
+        if (number) await adapter.updatePr({ number, title, body: removeProvenance(body) });
+        else number = (await adapter.openPr({ head: branch, base: await defaultBranchOf(project, adapter), title, body: removeProvenance(body) })).number;
+        return { pr: number, url: `https://github.com/${recordOf(project).repo}/pull/${number}`, head: await adapter.branchHead(branch) };
+      },
+      repo: (project) => recordOf(project).repo,
+      // The host's preview of the commit, or null.
+      previewUrl: async (project, sha) => {
+        const url = await (await (await contextFor(project)).adapter()).previewUrl(sha);
+        return typeof url === 'string' ? url : null;
+      },
+    },
+    // What built an engine run's pull request: Archon's pinned release and the installed pack's digest.
+    provenance: (project, { branch }) => engineWrite(project, 'provenance', { branch, provenance: engineProvenance({ packDigest: packTreeDigest(path.join(engineDir(), 'pack')) }) }),
+  });
+
+  // The engine's fetch mirror (Archon design, section 12.4, as check 76 ran it): no GitHub key ever leaves the helper,
+  // so Archon's git reads come from a bare mirror in the engine's folder, which the project's `url.<mirror>.insteadOf`
+  // rule points git at. The helper fetches the host's branches and pull-request heads into its own mirror with the
+  // connection's key, then copies them into the engine's mirror with no key. The engine's mirror names no remote.
+  const fetchMirrorOf = (project) => path.join(engineDir(), 'mirrors', `${project}.git`);
+  async function refreshFetchMirror(project) {
+    const ctx = await contextFor(project);
+    const pulls = recordOf(project).host === 'gitlab' ? 'refs/merge-requests/*/head' : 'refs/pull/*/head';
+    const into = fetchMirrorOf(project);
+    try {
+      return await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
+        const refusal = await mirrorRefusal(mirror, keyed);
+        if (refusal) return { ok: false, refused: refusal };
+        const fetched = await keyed('git', [
+          ...NO_HOOKS, 'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--prune', REMOTE,
+          '+refs/heads/*:refs/wheelhouse/engine/heads/*', `+${pulls}:refs/wheelhouse/engine/pull/*/head`,
+        ], { cwd: mirror, input: '' });
+        if (fetched.code !== 0) return { ok: false, refused: 'the host\'s branches could not be fetched' };
+        const copy = local(into);
+        if (!fs.existsSync(path.join(into, 'HEAD'))) {
+          fs.mkdirSync(into, { recursive: true, mode: 0o700 });
+          if ((await copy([...NO_HOOKS, 'init', '-q', '--bare'])).code !== 0) return { ok: false, refused: 'the fetch mirror could not be made' };
+        }
+        // From the helper's own mirror on this computer, read strictly, as a folder's push is.
+        const copied = await gitIn({ GIT_NO_LAZY_FETCH: '1', GIT_ATTR_NOSYSTEM: '1' }, FOLDER_MS, 'local')('git', [
+          ...NO_HOOKS, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always',
+          'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--prune', '--upload-pack=git upload-pack --strict', mirror,
+          '+refs/wheelhouse/engine/heads/*:refs/heads/*', '+refs/wheelhouse/engine/pull/*:refs/pull/*',
+        ], { cwd: into });
+        return copied.code === 0 ? { ok: true } : { ok: false, refused: 'the fetch mirror could not be brought up to date' };
+      }));
+    } finally {
+      tidyAfterAnswer(project, ctx);
+    }
+  }
+
+  // The broker (scripts/engine/broker/): every gh call Archon makes, placed by the folder it came from.
+  const placeEngineCall = (cwd) => {
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return null;
+    const found = registeredProjects().find(({ record }) => typeof record?.folder === 'string' && isInsideFolder(record.folder, cwd));
+    return found ? { project: found.project, folder: found.record.folder, repo: found.record.repo } : null;
+  };
+  // The rules' context for a call (rules.js brokerDecision): the push rules for every call, and for a verdict or a
+  // merge the signed review and approval of its head, the incident and whether the work needs the director's approval.
+  async function brokerPermit(project, call) {
+    const ctx = await contextFor(project);
+    const adapter = await ctx.adapter();
+    const defaultBranch = await defaultBranchOf(project, adapter);
+    const base = { stop: stopped(), lockHeld: await lockHeld(project, ctx), defaultBranch };
+    if ((call.kind !== 'merge' && call.kind !== 'verdict') || !Number.isInteger(call.pr) || typeof call.sha !== 'string') return base;
+    await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
+    const enrolled = ownKeyOnly();
+    const views = buildViews(listEvents(stateDir(project), { report: () => {} }), enrolled, { now });
+    const { review, approval } = await gateRecords({ project, number: call.pr, headSha: call.sha, views, adapter, compare: true }, ctx);
+    let guardrail = true;
+    try {
+      const changes = await readChanges({ project, number: call.pr, headSha: call.sha, defaultBranch }, ctx);
+      guardrail = classifyChange({ paths: changes.paths, config: changes.config }).touchesGuardrails;
+    } catch (error) {
+      if (error instanceof LookRefusal) throw error;
+    }
+    // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
+    // opened needs the director's approval, as shown-first work does.
+    const opened = engineRun.openedOf(project, call.pr);
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, guardrail, stop: stopped() };
+  }
+  const broker = brokerRoutes({
+    placeOf: placeEngineCall,
+    permit: brokerPermit,
+    forward: async (project, argv, { cwd, stdin }) => run(toolPath('gh'), argv, { env: (await contextFor(project)).env, input: stdin, cwd }),
+    refresh: (project) => refreshFetchMirror(project),
+  });
+
   const routes = {
     ...setup,
     ...measures,
     ...uninstall,
+    ...engineRun.routes,
+    ...broker,
     // A placeholder so the route exists: /stop/set is handled in `handle`, before the project lookup.
     '/stop/set': () => ({ ok: true }),
     '/runbook/cut-access': signedIn(clicked(2, doCutAccess)),
@@ -4083,6 +4209,15 @@ export async function startHelper({
         return send(res, 200, engine ? { ok: true, engine: { said: engine.said, cancelled: engine.cancelled, paused: engine.paused, ended: engine.ended, survivors: engine.survivors } } : { ok: true });
       } catch {
         return send(res, 200, { ok: false, refused: 'All stop could not be recorded' });
+      }
+    }
+    if (url.pathname.startsWith('/engine/') || url.pathname.startsWith('/broker/')) {
+      // A run's steps know the run, not the project: each route finds the project from the run itself.
+      try {
+        onArrive(url.pathname);
+        return send(res, 200, cleanDeep(await route(body), []));
+      } catch (error) {
+        return send(res, 200, { ok: false, refused: clean(error instanceof Error ? error.message : '', []) || 'the request failed' });
       }
     }
     if (url.pathname.startsWith('/setup/') || url.pathname.startsWith('/measures/')) {

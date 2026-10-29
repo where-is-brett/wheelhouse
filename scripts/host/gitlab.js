@@ -217,6 +217,11 @@ export function gitlabCommands({ call, attempt, json, repo, fromAddress, refusal
     // The name under which the host keeps a merge request's head, whoever's copy it came from.
     pullRef: (number) => `refs/merge-requests/${number}/head`,
 
+    // Archon's merge queue reads its verdict from a GitHub comment; there is none to post on GitLab.
+    async verdictComment() {
+      throw new Error('The merge queue\'s verdict comment is for GitHub only');
+    },
+
     issue: {
       async create({ title, body, labels }) {
         const args = ['issue', 'create', ...R, `--title=${title}`, '--description-file', '-', ...labels.map((l) => `--label=${l}`), '--yes'];

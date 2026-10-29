@@ -714,3 +714,22 @@ test('an adapter for a company GitLab tells glab its host; the default address a
   const { run } = fakeRun({ code: 1, stderr: 'ERROR Get "https://git.example.org:8443/api/v4/x": 500' });
   await assert.rejects(makeAdapter({ host: 'gitlab', repo: REPO, run, env: {}, base: COMPANY }).defaultBranch(), /git\.example\.org:8443/);
 });
+
+test('GitHub verdict comment: posted once, then edited in place for a new head', async () => {
+  const first = adapter('github', { stdout: JSON.stringify({ id: 901, body: 'x' }) });
+  assert.deepEqual(await first.a.verdictComment({ number: 14, body: 'Verdict: ready' }), { id: 901 });
+  assert.deepEqual(first.calls[0].args, ['api', '--method', 'POST', `repos/${REPO}/issues/14/comments`, '--input', '-']);
+  assert.deepEqual(JSON.parse(first.calls[0].input), { body: 'Verdict: ready' });
+  const again = adapter('github', { stdout: JSON.stringify({ id: 901 }) });
+  assert.deepEqual(await again.a.verdictComment({ number: 14, id: 901, body: 'Verdict: ready' }), { id: 901 });
+  assert.deepEqual(again.calls[0].args, ['api', '--method', 'PATCH', `repos/${REPO}/issues/comments/901`, '--input', '-']);
+  // A comment someone deleted is posted again.
+  const gone = adapter('github', { code: 1, stderr: 'gh: Not Found (HTTP 404)' }, { stdout: JSON.stringify({ id: 950 }) });
+  assert.deepEqual(await gone.a.verdictComment({ number: 14, id: 901, body: 'Verdict: ready' }), { id: 950 });
+  assert.equal(gone.calls[1].args[2], 'POST');
+});
+
+test('GitLab has no merge-queue verdict comment', async () => {
+  const { a } = adapter('gitlab');
+  await assert.rejects(a.verdictComment({ number: 1, body: 'x' }), /GitHub only/);
+});

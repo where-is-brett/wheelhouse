@@ -6,7 +6,7 @@ import { verify } from '../state/signing.js';
 // of an earlier commit that the caller has already judged still counts (the
 // feature's own changes did not move), so it need not name the head.
 // With `kinds` an array (ruling P7-15), the record's `data.reviewKind` must be one of them too.
-function reviewCounts(entry, headSha, enrolled, kinds = null) {
+export function reviewCounts(entry, headSha, enrolled, kinds = null) {
   const carried = entry?.carried === true;
   const record = carried ? entry.record : entry;
   return record?.kind === 'review'
@@ -28,7 +28,7 @@ function reviewKindsOf(i) {
 
 // An approval counts only if it verifies and names the head commit, or is the
 // carried form, as for a review.
-function approvalCounts(entry, headSha, enrolled) {
+export function approvalCounts(entry, headSha, enrolled) {
   const carried = entry?.carried === true;
   const record = carried ? entry.record : entry;
   return record?.kind === 'approval'
@@ -88,7 +88,7 @@ function provenanceWhy(provenance) {
 
 // The incident condition passes when none is open, or when this merge is the
 // open incident's fix. Anything else, malformed input included, refuses.
-function incidentReason(incident) {
+export function incidentReason(incident) {
   if (incident?.open === false) return null;
   if (incident?.open === true && incident.isFix === true) return null;
   const id = incident?.open === true && typeof incident.id === 'string' && incident.id !== '' ? incident.id : '';

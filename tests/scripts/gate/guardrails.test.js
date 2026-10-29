@@ -127,6 +127,21 @@ test('readConfig: signsApps is true or false when given, and any other value can
   }
 });
 
+test('readConfig: preview is a command, a port and a ready line when given, and any other shape can\'t be read', () => {
+  const base = { v: 1, criticalAreas: [], ciFiles: [], mcpServers: [], webDomains: [] };
+  assert.equal(readConfig(JSON.stringify(base)).preview, undefined, 'left out: the host preview, or none');
+  const preview = { command: 'npm run preview', port: 4173, ready: 'Local:' };
+  assert.deepEqual(readConfig(JSON.stringify({ ...base, preview })).preview, preview);
+  const bad = [
+    null, 'npm run preview', [], {}, { ...preview, command: '' }, { ...preview, command: ['npm'] }, { ...preview, port: 0 },
+    { ...preview, port: 70000 }, { ...preview, port: '4173' }, { ...preview, port: 41.5 }, { ...preview, ready: '' },
+    { ...preview, ready: 7 }, { ...preview, extra: true },
+  ];
+  for (const given of bad) {
+    assert.throws(() => readConfig(JSON.stringify({ ...base, preview: given })), { message: "The project's Wheelhouse configuration can't be read" }, JSON.stringify(given));
+  }
+});
+
 test('classification ignores case, for every kind of pattern', () => {
   const paths = ['.Claude/settings.json', 'claude.md', 'docs/Claude.md', '.MCP.json', '.GitHub/workflows/x.yml', 'CI/run.sh', 'Tests/Money/a.js', 'SRC/Money/b.js'];
   const config = readConfig(JSON.stringify({

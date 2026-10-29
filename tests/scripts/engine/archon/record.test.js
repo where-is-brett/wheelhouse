@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { readRecord } from '../../../../scripts/engine/archon/record.js';
+import { readRecord, readOutputs } from '../../../../scripts/engine/archon/record.js';
 
 const fixture = () => JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'fixtures', 'archon', 'get-verbose.json'), 'utf8'));
 
@@ -53,7 +53,7 @@ test('readRecord maps the run states the engine reports', () => {
 
 test('readRecord copes with a run that has no record yet', () => {
   const bare = readRecord({ id: 'r1', status: 'pending', metadata: {}, terminal_record: null });
-  assert.deepEqual(bare, { status: 'running', outcome: null, steps: [], branch: null, pr: null, head: null, digest: null, ownerPid: null, totals: { dollars: null, tokens: null } });
+  assert.deepEqual(bare, { status: 'running', outcome: null, steps: [], branch: null, pr: null, head: null, digest: null, source: null, ownerPid: null, totals: { dollars: null, tokens: null } });
 });
 
 test('a step whose token count lacks the input or the output figure has unknown tokens, never a part counted as zero', () => {
@@ -68,4 +68,14 @@ test('a step whose token count lacks the input or the output figure has unknown 
     node({ input: 1200, output: 300 }, unavailable),
   ] });
   assert.deepEqual(steps.map((s) => [s.tokens, s.dollars, s.source]), [[null, null, 'unknown'], [null, 0.02, 'reported'], [1500, null, 'unknown']]);
+});
+
+test('readOutputs gives each finished step\'s whole output, the last time it finished', () => {
+  const events = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'fixtures', 'archon', 'get-events.json'), 'utf8'));
+  const outputs = readOutputs(events);
+  assert.equal(JSON.parse(outputs['review-standards']).verdict, 'CLEAN', 'a step run again reads as its last run');
+  assert.equal(JSON.parse(outputs['open-pr']).pr, 14);
+  assert.equal(outputs['review-security'], undefined, 'a skipped step has no output');
+  assert.deepEqual(readOutputs(null), {});
+  assert.equal(readRecord(events).source, events.metadata.workflow_source.root);
 });

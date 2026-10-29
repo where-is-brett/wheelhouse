@@ -139,6 +139,14 @@ test('inspect reads the run record', async () => {
   assert.equal(missing.status, 'unknown');
 });
 
+test('outputs reads each step\'s whole output from the run\'s events', async () => {
+  const cli = fakeCli({ 'workflow get': json('get-events.json') });
+  const outputs = await adapter(cli).outputs(RUN);
+  assert.deepEqual(cli.calls[0].args, ['workflow', 'get', RUN, '--verbose', '--events']);
+  assert.equal(JSON.parse(outputs['review-spec']).verdict, 'CLEAN');
+  assert.deepEqual(await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false }, stdout: '', stderr: '' } })).outputs('nope'), {});
+});
+
 test("watch reads the queue once, through normaliseAsk, and keeps the cursor it was given", async () => {
   const cli = fakeCli({ 'workflow attention': json('attention-list.json') });
   const { events, cursor } = await adapter(cli).watch('sql:99');
@@ -369,4 +377,25 @@ test('bindingsFor turns tiers and aliases into model bindings, and refuses a bad
   assert.deepEqual(bindingsFor(undefined), []);
   assert.throws(() => bindingsFor({ tiers: { huge: 'model-x' } }), /tier/);
   assert.throws(() => bindingsFor({ aliases: { implementer: 'two words' } }), /model/);
+});
+
+test('handOver writes the pull request\'s ready work item over the revision there', async () => {
+  const cli = fakeCli({ 'state get': { code: 0, json: { revision: 3 }, stdout: '', stderr: '' }, 'state put': { code: 0, json: { ok: true }, stdout: '', stderr: '' } });
+  const done = await adapter(cli).handOver({ project: '/p', repo: 'acme/web', pr: 14, url: 'https://github.com/acme/web/pull/14', runId: RUN, at: '2026-10-30T00:00:00.000Z' });
+  assert.deepEqual(done, { ok: true });
+  assert.deepEqual(cli.calls[1].args, ['state', 'put', 'work/14', '--if-revision', '3']);
+  assert.equal(cli.calls[1].options.cwd, '/p');
+  const item = JSON.parse(cli.calls[1].options.input);
+  assert.equal(item.facts.build.status, 'ready');
+  assert.deepEqual(item.subject, { repo: 'acme/web', number: 14 });
+  assert.equal((await adapter(cli).handOver({ project: '/p' })).ok, false);
+});
+
+test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and nothing for a name that isn\'t one', () => {
+  const home = '/engine/home';
+  const a = adapter(fakeCli({}), { home });
+  assert.equal(a.artefactsOf(RUN, 'acme/web'), path.join(home, 'workspaces', 'acme', 'web', 'artifacts', 'runs', RUN));
+  for (const [runId, repo] of [['../x', 'acme/web'], [RUN, '../web'], [RUN, 'acme'], [RUN, 'acme/web/x'], [RUN, null], ['', 'acme/web']]) {
+    assert.equal(a.artefactsOf(runId, repo), null, `${runId} ${repo}`);
+  }
 });

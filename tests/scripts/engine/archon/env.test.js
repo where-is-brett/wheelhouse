@@ -27,6 +27,9 @@ test('archonEnv sets the three telemetry switches, after anything the caller had
   assert.equal(env.WHEELHOUSE_ENGINE_RUN, '1');
   // Check 75: in bypass mode Claude Code applies no sandbox, so the patched engine is told to start steps in acceptEdits.
   assert.equal(env.ARCHON_CLAUDE_PERMISSION_MODE, 'acceptEdits');
+  // The pack's script steps run Wheelhouse's own scripts from the plugin's folder.
+  assert.ok(fs.existsSync(path.join(env.WHEELHOUSE_ROOT, 'scripts', 'engine', 'order-copy.js')));
+  assert.equal(archonEnv({ engine, home, nodeDir, root: '/plugin' }).WHEELHOUSE_ROOT, '/plugin');
 });
 
 test("archonEnv's PATH has the broker before anything and no folder holding a real gh", () => {

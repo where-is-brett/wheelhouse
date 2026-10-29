@@ -1,0 +1,1225 @@
+# engine/archon/pack/wheelhouse-quick.yaml
+{
+  "name": "wheelhouse-quick",
+  "description": "Wheelhouse's quick lane: one small, well-understood change from a work order to a pull request ready for the merge queue. Started by Wheelhouse with the work's id; not for work that needs a plan.",
+  "inputs": {
+    "work": {
+      "required": true,
+      "description": "The work's id. The order itself comes from Wheelhouse's helper, never through Archon."
+    }
+  },
+  "returns": "open-pr",
+  "nodes": [
+    {
+      "id": "order",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/order-copy.js\" --run \"$WORKFLOW_ID\" --out \"$ARTIFACTS_DIR\" --flags",
+      "timeout": 60000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "visible": {
+            "type": "boolean"
+          },
+          "showFirst": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "visible",
+          "showFirst"
+        ]
+      }
+    },
+    {
+      "id": "implement",
+      "depends_on": [
+        "order"
+      ],
+      "model": "medium",
+      "timeout": 900000,
+      "loop_group": {
+        "max_iterations": 5,
+        "fresh_context": true,
+        "until_bash": "blocked=$build.output.blocked; [ \"$blocked\" = \"true\" ] || { node \"$WHEELHOUSE_ROOT/scripts/engine/done-check.js\" --run \"$WORKFLOW_ID\" && node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\"; }",
+        "nodes": [
+          {
+            "id": "build",
+            "plugins": [
+              "wheelhouse@wheelhouse"
+            ],
+            "skills": [
+              "wheelhouse:codebase-design"
+            ],
+            "idle_timeout": 600000,
+            "prompt_file": "prompts/implement.md",
+            "output_format": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string"
+                },
+                "blocked": {
+                  "type": "boolean",
+                  "description": "true only for a level 3 or 4 question this step must not settle itself"
+                },
+                "question": {
+                  "type": "string",
+                  "description": "when blocked: the question, in plain words for a product owner"
+                },
+                "options": {
+                  "type": "array",
+                  "description": "when blocked: two to four answers",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label"
+                    ]
+                  }
+                },
+                "recommend": {
+                  "type": "string",
+                  "description": "when blocked: the id of the option you recommend"
+                },
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "3",
+                    "4"
+                  ],
+                  "description": "when blocked: the decision level"
+                },
+                "topic": {
+                  "type": "string",
+                  "description": "when blocked: a short kebab-case slug naming what the question is about"
+                },
+                "assumptions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "every level 1 or 2 choice you made, one line each"
+                }
+              },
+              "required": [
+                "summary",
+                "blocked",
+                "assumptions"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "implement-blocked",
+      "depends_on": [
+        "implement"
+      ],
+      "when": "$implement.output.blocked == 'true'",
+      "wait": {
+        "attention": "$implement.output.question",
+        "form": "select",
+        "options": "$implement.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$implement.output.level",
+          "wh.topic": "$implement.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$implement.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "tests",
+      "depends_on": [
+        "implement",
+        "implement-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$implement.output.blocked == 'false'",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/protected-check.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\" --json",
+      "timeout": 120000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "clean": {
+            "type": "boolean"
+          },
+          "findings": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "clean",
+          "findings"
+        ]
+      }
+    },
+    {
+      "id": "controls",
+      "depends_on": [
+        "implement",
+        "implement-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$implement.output.blocked == 'false'",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/control-check.js\" --base \"$BASE_BRANCH\" --json",
+      "timeout": 120000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "clean": {
+            "type": "boolean"
+          },
+          "paths": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "clean",
+          "paths"
+        ]
+      }
+    },
+    {
+      "id": "held",
+      "depends_on": [
+        "tests",
+        "controls"
+      ],
+      "when": "$tests.output.clean == 'false' || $controls.output.clean == 'false'",
+      "wait": {
+        "attention": "The change still deletes, skips or loosens a test, or changes a file that steers agents, so it stops here.",
+        "form": "select",
+        "options": [
+          {
+            "id": "stop",
+            "label": "Stop this work"
+          },
+          {
+            "id": "rework",
+            "label": "Send it back for a fresh run"
+          }
+        ],
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "3",
+          "wh.topic": "tests-or-agent-files",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "stop"
+        }
+      }
+    },
+    {
+      "id": "lenses",
+      "depends_on": [
+        "tests",
+        "controls",
+        "held"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$tests.output.clean == 'true' && $controls.output.clean == 'true'",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/lenses.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\"",
+      "timeout": 60000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "security": {
+            "type": "boolean"
+          },
+          "design": {
+            "type": "boolean"
+          },
+          "head": {
+            "type": "string"
+          },
+          "clean": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "security",
+          "design",
+          "head",
+          "clean"
+        ]
+      }
+    },
+    {
+      "id": "review-standards",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "lenses"
+      ],
+      "context": "fresh",
+      "model": "medium",
+      "denied_tools": [
+        "Write",
+        "Edit",
+        "NotebookEdit"
+      ],
+      "idle_timeout": 600000,
+      "prompt_file": "prompts/review-standards.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "CLEAN",
+              "FINDINGS"
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "BLOCKER",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW"
+                  ]
+                },
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "repro": {
+                  "type": "string"
+                },
+                "fix": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "severity",
+                "file",
+                "repro",
+                "fix"
+              ]
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "summary",
+          "blocked",
+          "assumptions"
+        ]
+      },
+      "skills": [
+        "wheelhouse:review-standards"
+      ]
+    },
+    {
+      "id": "review-standards-blocked",
+      "depends_on": [
+        "review-standards"
+      ],
+      "when": "$review-standards.output.blocked == 'true'",
+      "wait": {
+        "attention": "$review-standards.output.question",
+        "form": "select",
+        "options": "$review-standards.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$review-standards.output.level",
+          "wh.topic": "$review-standards.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$review-standards.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "review-spec",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "lenses"
+      ],
+      "context": "fresh",
+      "model": "medium",
+      "denied_tools": [
+        "Write",
+        "Edit",
+        "NotebookEdit"
+      ],
+      "idle_timeout": 600000,
+      "prompt_file": "prompts/review-spec.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "CLEAN",
+              "FINDINGS"
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "BLOCKER",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW"
+                  ]
+                },
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "repro": {
+                  "type": "string"
+                },
+                "fix": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "severity",
+                "file",
+                "repro",
+                "fix"
+              ]
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "summary",
+          "blocked",
+          "assumptions"
+        ]
+      },
+      "skills": [
+        "wheelhouse:review-spec"
+      ]
+    },
+    {
+      "id": "review-spec-blocked",
+      "depends_on": [
+        "review-spec",
+        "review-standards-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$review-spec.output.blocked == 'true'",
+      "wait": {
+        "attention": "$review-spec.output.question",
+        "form": "select",
+        "options": "$review-spec.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$review-spec.output.level",
+          "wh.topic": "$review-spec.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$review-spec.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "review-security",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "lenses"
+      ],
+      "context": "fresh",
+      "model": "large",
+      "denied_tools": [
+        "Write",
+        "Edit",
+        "NotebookEdit"
+      ],
+      "idle_timeout": 600000,
+      "prompt_file": "prompts/review-security.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "CLEAN",
+              "FINDINGS"
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "BLOCKER",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW"
+                  ]
+                },
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "repro": {
+                  "type": "string"
+                },
+                "fix": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "severity",
+                "file",
+                "repro",
+                "fix"
+              ]
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "summary",
+          "blocked",
+          "assumptions"
+        ]
+      },
+      "when": "$lenses.output.security == 'true'"
+    },
+    {
+      "id": "review-security-blocked",
+      "depends_on": [
+        "review-security",
+        "review-spec-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$review-security.output.blocked == 'true'",
+      "wait": {
+        "attention": "$review-security.output.question",
+        "form": "select",
+        "options": "$review-security.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$review-security.output.level",
+          "wh.topic": "$review-security.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$review-security.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "review-design",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "lenses"
+      ],
+      "context": "fresh",
+      "model": "medium",
+      "denied_tools": [
+        "Write",
+        "Edit",
+        "NotebookEdit"
+      ],
+      "idle_timeout": 600000,
+      "prompt_file": "prompts/review-design.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "CLEAN",
+              "FINDINGS"
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "BLOCKER",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW"
+                  ]
+                },
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "repro": {
+                  "type": "string"
+                },
+                "fix": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "severity",
+                "file",
+                "repro",
+                "fix"
+              ]
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "verdict",
+          "findings",
+          "summary",
+          "blocked",
+          "assumptions"
+        ]
+      },
+      "when": "$lenses.output.design == 'true'",
+      "skills": [
+        "wheelhouse:frontend-design"
+      ]
+    },
+    {
+      "id": "review-design-blocked",
+      "depends_on": [
+        "review-design",
+        "review-security-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$review-design.output.blocked == 'true'",
+      "wait": {
+        "attention": "$review-design.output.question",
+        "form": "select",
+        "options": "$review-design.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$review-design.output.level",
+          "wh.topic": "$review-design.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$review-design.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "pr-text",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "review-standards",
+        "review-spec",
+        "review-security",
+        "review-design",
+        "review-design-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$review-standards.output.blocked == 'false' && $review-spec.output.blocked == 'false'",
+      "context": "fresh",
+      "model": "medium",
+      "skills": [
+        "wheelhouse:pr"
+      ],
+      "denied_tools": [
+        "Edit",
+        "NotebookEdit"
+      ],
+      "idle_timeout": 600000,
+      "prompt_file": "prompts/pull-request.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "title",
+          "blocked",
+          "assumptions"
+        ]
+      }
+    },
+    {
+      "id": "pr-text-blocked",
+      "depends_on": [
+        "pr-text"
+      ],
+      "when": "$pr-text.output.blocked == 'true'",
+      "wait": {
+        "attention": "$pr-text.output.question",
+        "form": "select",
+        "options": "$pr-text.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$pr-text.output.level",
+          "wh.topic": "$pr-text.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$pr-text.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "open-pr",
+      "depends_on": [
+        "pr-text",
+        "pr-text-blocked"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$pr-text.output.blocked == 'false'",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/open-pr.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\" --dir \"$ARTIFACTS_DIR\"",
+      "timeout": 300000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "pr": {
+            "type": "integer"
+          },
+          "head": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "branch",
+          "pr",
+          "head"
+        ]
+      }
+    },
+    {
+      "id": "sign",
+      "depends_on": [
+        "open-pr"
+      ],
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/review-sign.js\" --run \"$WORKFLOW_ID\"",
+      "timeout": 120000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "clean": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "clean"
+        ]
+      }
+    },
+    {
+      "id": "review-held",
+      "depends_on": [
+        "sign"
+      ],
+      "when": "$sign.output.clean == 'false'",
+      "wait": {
+        "attention": "A review found a BLOCKER or HIGH problem in this change, so it is not marked ready.",
+        "form": "select",
+        "options": [
+          {
+            "id": "stop",
+            "label": "Stop this work"
+          },
+          {
+            "id": "rework",
+            "label": "Send it back for a fresh run"
+          }
+        ],
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "3",
+          "wh.topic": "review-findings",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "rework",
+          "wh.pr": "$open-pr.output.pr",
+          "wh.head": "$open-pr.output.head"
+        }
+      }
+    },
+    {
+      "id": "preview",
+      "depends_on": [
+        "sign",
+        "review-held"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "when": "$sign.output.clean == 'true'",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/preview.js\" --run \"$WORKFLOW_ID\" --base \"$BASE_BRANCH\" --out \"$ARTIFACTS_DIR/preview\"",
+      "timeout": 600000,
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "type": "string"
+          },
+          "pictures": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "folder",
+          "pictures",
+          "summary"
+        ]
+      }
+    },
+    {
+      "id": "approval",
+      "depends_on": [
+        "preview"
+      ],
+      "when": "$order.output.showFirst == 'true'",
+      "wait": {
+        "attention": "This change is shown to you first. Approve it to send it to the merge queue, or reject it.",
+        "form": "approval",
+        "labels": {
+          "wh.kind": "approval",
+          "wh.level": "3",
+          "wh.topic": "shown-first",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "approve",
+          "wh.preview": "$preview.output.folder",
+          "wh.pr": "$open-pr.output.pr",
+          "wh.head": "$open-pr.output.head"
+        }
+      }
+    },
+    {
+      "id": "rejected",
+      "depends_on": [
+        "approval"
+      ],
+      "when": "$approval.output.decision == 'reject'",
+      "cancel": "The change wasn't approved, so it isn't sent to the merge queue."
+    },
+    {
+      "id": "ready",
+      "depends_on": [
+        "preview",
+        "approval",
+        "rejected"
+      ],
+      "trigger_rule": "none_failed_min_one_success",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/ready.js\" --run \"$WORKFLOW_ID\"",
+      "timeout": 60000
+    },
+    {
+      "id": "lesson",
+      "plugins": [
+        "wheelhouse@wheelhouse"
+      ],
+      "depends_on": [
+        "ready"
+      ],
+      "context": "fresh",
+      "model": "medium",
+      "denied_tools": [
+        "Write",
+        "Edit",
+        "NotebookEdit"
+      ],
+      "idle_timeout": 300000,
+      "prompt_file": "prompts/lesson.md",
+      "output_format": {
+        "type": "object",
+        "properties": {
+          "lesson": {
+            "type": "string",
+            "description": "one lasting lesson, or empty when the code already shows it"
+          },
+          "blocked": {
+            "type": "boolean",
+            "description": "true only for a level 3 or 4 question this step must not settle itself"
+          },
+          "question": {
+            "type": "string",
+            "description": "when blocked: the question, in plain words for a product owner"
+          },
+          "options": {
+            "type": "array",
+            "description": "when blocked: two to four answers",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "recommend": {
+            "type": "string",
+            "description": "when blocked: the id of the option you recommend"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "3",
+              "4"
+            ],
+            "description": "when blocked: the decision level"
+          },
+          "topic": {
+            "type": "string",
+            "description": "when blocked: a short kebab-case slug naming what the question is about"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "every level 1 or 2 choice you made, one line each"
+          }
+        },
+        "required": [
+          "lesson",
+          "blocked",
+          "assumptions"
+        ]
+      }
+    },
+    {
+      "id": "lesson-blocked",
+      "depends_on": [
+        "lesson"
+      ],
+      "when": "$lesson.output.blocked == 'true'",
+      "wait": {
+        "attention": "$lesson.output.question",
+        "form": "select",
+        "options": "$lesson.output.options",
+        "labels": {
+          "wh.kind": "blocked",
+          "wh.level": "$lesson.output.level",
+          "wh.topic": "$lesson.output.topic",
+          "wh.work": "$INPUTS.work",
+          "wh.recommend": "$lesson.output.recommend"
+        }
+      }
+    },
+    {
+      "id": "lesson-record",
+      "depends_on": [
+        "lesson"
+      ],
+      "when": "$lesson.output.blocked == 'false'",
+      "bash": "node \"$WHEELHOUSE_ROOT/scripts/engine/lesson.js\" --run \"$WORKFLOW_ID\"",
+      "timeout": 60000
+    }
+  ]
+}

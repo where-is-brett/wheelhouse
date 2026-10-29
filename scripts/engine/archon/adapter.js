@@ -9,6 +9,7 @@
 //   act        archon workflow answer <run> --occurrence <o> --choose <c> --text <w> --json;
 //              archon workflow cancel <run> --json; archon workflow resume <run> --detach --json  (never abandon, spec 12.2)
 //   inspect    archon workflow get <run> --verbose --json
+//   outputs    archon workflow get <run> --verbose --events --json
 //   stopAll    archon workflow status --all --json, then cancel each running or pending run   (stop.js ends what is left)
 //   health     the launcher and the patch on disk; archon version; bun --version; archon ai tier list --json;
 //              archon telemetry status
@@ -17,7 +18,8 @@ import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
 import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
-import { readRecord } from './record.js';
+import { readRecord, readOutputs } from './record.js';
+import { readyWorkItem } from './work-item.js';
 import path from 'node:path';
 import { engineDir, archonHome } from '../../lib/paths.js';
 import { run as defaultRun } from '../../lib/run.js';
@@ -351,6 +353,37 @@ export function archonAdapter({
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       return readRecord(result.code === 0 && result.json?.ok !== false ? result.json : null);
+    },
+
+    // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own
+    // record; none when Archon has no such run. Not one of the interface's methods: only this engine has step outputs.
+    async outputs(runId) {
+      const result = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: CALL_MS });
+      return readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null);
+    },
+
+    // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
+    // <home>/workspaces/<owner>/<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
+    // Not one of the interface's methods: the helper copies a run's preview from here.
+    artefactsOf(runId, repo) {
+      const parts = typeof repo === 'string' ? repo.split('/') : [];
+      const plain = (name) => typeof name === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(name) && !/^\.+$/.test(name);
+      if (!plain(runId) || parts.length !== 2 || !parts.every(plain)) return null;
+      return path.join(home, 'workspaces', parts[0], parts[1], 'artifacts', 'runs', runId);
+    },
+
+    // Hands a pull request to Archon's merge queue (check 76; ruling 9 of part 3b): writes its `work/<n>` document in
+    // the project's state store, marked ready, over whatever revision is there. `item`: { project (its folder), repo,
+    // pr, url, runId, at }. Not one of the interface's methods: only this engine has a merge queue.
+    async handOver({ project, repo, pr, url, runId, at = now() } = {}) {
+      if (!project || !Number.isInteger(pr) || pr < 1) return refusedWith('A hand-over needs the project and the pull request');
+      const name = `work/${pr}`;
+      const current = await cli(['state', 'get', name], { json: true, cwd: project, timeout: CALL_MS });
+      const revision = Number.isInteger(current.json?.revision) ? current.json.revision : 0;
+      const value = readyWorkItem({ repo, pr, url, at, runId });
+      const put = await cli(['state', 'put', name, '--if-revision', String(revision)], { json: true, cwd: project, input: JSON.stringify(value), timeout: CALL_MS });
+      if (put.code === 0 && put.json?.ok !== false) return { ok: true };
+      return refusedWith(refusal('take the pull request into its merge queue', put));
     },
 
     // Cancels every running run, and every pending one (just started with --detach). A child run is cancelled with

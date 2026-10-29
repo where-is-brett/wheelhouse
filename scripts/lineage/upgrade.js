@@ -16,6 +16,7 @@ import { reachFor, safeGit } from '../lib/safe-git.js';
 import { fingerprintFile, fingerprintTree } from './fingerprint.js';
 import { MANIFEST_PATH, MARKETPLACE_PATH, buildManifest, fetchUpstream, readManifest } from './manifest.js';
 import { REGISTER_PATH, checkAnchors, checkCarried, readRegister } from './register.js';
+import { changedCopies, readCopies } from './copies.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,8 +77,9 @@ function hashIn(dir, relative, hasher) {
 //   stopped   an anchor sentence is gone, or carried text's source changed: nothing lands
 // `licenceChanged` is true when a licence file among the manifest's listed files changed or went; the card comes
 // for it, so it makes the upgrade `changed`, never `plumbing`. `retest` lists the assumptions whose
-// `feature` any `changelog` line mentions, case-insensitively.
-export function planUpgrade({ manifest, register, candidates, changelog = [] }) {
+// `feature` any `changelog` line mentions, case-insensitively. `copies` (readCopies) are the skill copies: `copies` in
+// the plan lists each copy source file that changed, for carrying over by hand, and makes the upgrade `changed`.
+export function planUpgrade({ manifest, register, candidates, changelog = [], copies = [] }) {
   const known = new Set(manifest.upstreams.map((u) => u.name));
   for (const name of Object.keys(candidates)) if (!known.has(name)) throw new Error(`${name} is not an upstream in the manifest`);
   const changed = [];
@@ -101,10 +103,11 @@ export function planUpgrade({ manifest, register, candidates, changelog = [] }) 
   const retest = register.assumptions
     .filter((assumption) => lines.some((line) => line.includes(assumption.feature.toLowerCase())))
     .map((assumption) => assumption.id);
+  const copiesChanged = changedCopies({ copies, candidates });
   let kind = 'changed';
   if (broken.length > 0 || carriedChanged.length > 0) kind = 'stopped';
-  else if (changed.length === 0) kind = 'plumbing';
-  return { kind, changed, broken, carriedChanged, licenceChanged, retest };
+  else if (changed.length === 0 && copiesChanged.length === 0) kind = 'plumbing';
+  return { kind, changed, broken, carriedChanged, licenceChanged, retest, copies: copiesChanged };
 }
 
 // --- Resolving and fetching the candidates ---
@@ -189,7 +192,7 @@ export async function withCandidates(pins, fetchTo, work) {
 export async function planFromPins({ root = repoRoot(), pins, changelog = [], fetchTo = fetchUpstream }) {
   const manifest = readManifest(root);
   const register = readRegister(root);
-  return withCandidates(pins, fetchTo, (candidates) => planUpgrade({ manifest, register, candidates, changelog }));
+  return withCandidates(pins, fetchTo, (candidates) => planUpgrade({ manifest, register, candidates, changelog, copies: readCopies(root) }));
 }
 
 // --- Landing (step 5) ---
@@ -285,7 +288,7 @@ export async function land({ root = repoRoot(), pins, changelog = [], fetchTo = 
   if (taken.code === 0) throw new Error(`the branch ${branch} already exists`);
 
   return withCandidates(pins, fetchTo, async (candidates) => {
-    const plan = planUpgrade({ manifest, register, candidates, changelog });
+    const plan = planUpgrade({ manifest, register, candidates, changelog, copies: readCopies(root) });
     if (plan.kind === 'stopped') throw new UpgradeStopped(plan, pins);
     const files = {
       [MARKETPLACE_PATH]: repinMarketplace(read(MARKETPLACE_PATH), pins),
@@ -318,6 +321,7 @@ export function describePlan({ plan, pins, assumptions = [] }) {
   const lines = [];
   for (const pin of pins) lines.push(`${pin.name}: ${pin.ref} (${pin.sha})`);
   for (const item of plan.changed) lines.push(`changed: ${item.upstream} ${item.path}`);
+  for (const item of plan.copies ?? []) lines.push(`copy to carry over by hand: skills/${item.copy} (${item.upstream} ${item.path}); the copy is left as it is`);
   lines.push(...stopReasons(plan));
   if (plan.licenceChanged) lines.push('a licence file changed: you get a card');
   for (const id of plan.retest) {

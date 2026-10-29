@@ -140,6 +140,20 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
     // The name under which the host keeps a pull request's head, whoever's copy it came from.
     pullRef: (number) => `refs/pull/${number}/head`,
 
+    // The merge queue's verdict comment on a pull request (check 76; ruling 6 of part 3b): posted once, its id kept,
+    // and edited in place for a new head. A kept comment that is gone is posted again. Gives { id }.
+    async verdictComment({ number, id, body }) {
+      const input = JSON.stringify({ body });
+      if (Number.isInteger(id) && id > 0) {
+        const edited = await attempt(['api', '--method', 'PATCH', `repos/${owner}/${name}/issues/comments/${id}`, '--input', '-'], input);
+        if (edited.code === 0) return { id };
+        if (!/\b404\b|Not Found/.test(String(edited.stderr))) throw new Error('GitHub did not edit the verdict comment');
+      }
+      const posted = await ask(['api', '--method', 'POST', `repos/${owner}/${name}/issues/${number}/comments`, '--input', '-'], input);
+      if (!Number.isInteger(posted?.id)) throw new Error('GitHub did not say which comment it posted');
+      return { id: posted.id };
+    },
+
     issue: {
       async create({ title, body, labels }) {
         const args = ['issue', 'create', ...R, `--title=${title}`, '--body-file', '-', ...labels.map((l) => `--label=${l}`)];

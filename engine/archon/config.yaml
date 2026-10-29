@@ -1,0 +1,6 @@
+# engine/archon/config.yaml
+# Wheelhouse's run layer for every Archon run (--config). A run layer may set only what applies after dispatch, so
+# where worktrees go is in the project's own .archon/config.yaml, which setup writes, and usage reporting is switched
+# off by the environment every Archon command runs in (scripts/engine/archon/env.js). No model is named here: the
+# routing table binds the tiers per run.
+defaultAssistant: claude

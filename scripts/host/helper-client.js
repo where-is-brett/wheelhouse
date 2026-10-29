@@ -88,6 +88,22 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
+    // The build engine's runs (scripts/engine/routes.js). A step names its run, never its project.
+    engine: {
+      start: post('/engine/start'), // { project, order, branch?, carryOn? } -> { ok, runId }: starts a run of the work order, keeps the order under the run's id and records the start
+      order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
+      review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
+      openPr: post('/engine/open-pr'), // { runId, cwd, title, body } -> { ok, branch, pr, head }: pushes the run's worktree's own branch and opens or updates its pull request
+      ready: post('/engine/ready'), // { runId } -> { ok, pr, head }: hands the pull request to the engine's merge queue once its head is signed CLEAN (and approved, if shown first)
+      previewFind: post('/engine/preview/find'), // { runId } -> { ok, visible, pages, url: address | null, pr, head }: whether the run's work is visible, its pages and the host's preview of the head it opened
+      preview: post('/engine/preview'), // { runId } -> { ok, folder, pictures }: copies the run's pictures and notes from its own artefacts into previews/<work>/<head>/ and records a preview
+      lesson: post('/engine/lesson'), // { runId } -> { ok, written }: writes the lesson the run's lesson step gave, read from the engine's record; at most one a run, none when it is empty
+    },
+    // The broker (scripts/engine/broker/): every gh call Archon makes, and the fetch mirror Archon's git reads.
+    broker: {
+      gh: post('/broker/gh'), // { argv, cwd, stdin } -> { ok, code, stdout, stderr }: the real gh's answer, or a refusal as gh's own error output
+      refresh: post('/broker/refresh'), // { cwd } -> { ok } or a refusal: the helper brings the project's fetch mirror up to date with its own key; no key is ever answered
+    },
     // The desk (scripts/desk/, spec 5): every front end's one way in. Each body names `v: 'desk/1'` and `project` or `cwd`.
     desk: {
       read: post('/desk/read'), //   { v, project | cwd, view, args } -> { ok, v, view, data, lines }: a view, finished

@@ -2,6 +2,7 @@
 // The one environment every Archon command runs in (spec 6.3). Nothing starts Archon any other way.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { engineDir, archonHome } from '../../lib/paths.js';
 import { PERMISSION_MODE } from './build.js';
 
@@ -13,6 +14,9 @@ const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 // The few variables kept from the caller's environment. No token or host variable passes. WHEELHOUSE_HOME, where set
 // (an evaluation's home), is kept so a step's hooks use the same Wheelhouse home as the helper.
 const KEPT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'TERM', 'WHEELHOUSE_HOME'];
+
+// The plugin's own folder, where the pack's script steps find Wheelhouse's scripts.
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const holdsGh = (dir) => ['gh', 'gh.exe', 'gh.cmd', 'gh.bat'].some((name) => fs.existsSync(path.join(dir, name)));
 
@@ -33,8 +37,9 @@ function nodeLink(engine, nodeDir, platform) {
 // The environment for an Archon command. PATH is the broker's folder, the pinned Bun's, the folder of the Node the
 // plugin's hooks run on (without it Claude Code doesn't load the plugin and Archon's steps fail), then the system
 // folders: never the caller's PATH and never a folder holding a real gh, so a node folder with a gh beside it is
-// swapped for a `node` link of Wheelhouse's own under <engine>/node/bin. `baseEnv`, `platform` and `nodeDir` are for tests.
-export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin, copilotBin, nodeDir = path.dirname(process.execPath), baseEnv = process.env, platform = process.platform } = {}) {
+// swapped for a `node` link of Wheelhouse's own under <engine>/node/bin. WHEELHOUSE_ROOT is the plugin's folder, for the
+// pack's script steps. `baseEnv`, `platform`, `nodeDir` and `root` are for tests.
+export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin, copilotBin, nodeDir = path.dirname(process.execPath), baseEnv = process.env, platform = process.platform, root = PLUGIN_ROOT } = {}) {
   const env = {};
   for (const name of KEPT) if (baseEnv[name] !== undefined) env[name] = baseEnv[name];
   const node = holdsGh(nodeDir) ? nodeLink(engine, nodeDir, platform) : nodeDir;
@@ -43,6 +48,7 @@ export function archonEnv({ engine = engineDir(), home = archonHome(), claudeBin
   if (claudeBin) env.CLAUDE_BIN_PATH = claudeBin;
   if (copilotBin) env.COPILOT_BIN_PATH = copilotBin;
   env.WHEELHOUSE_ENGINE_RUN = '1';
+  env.WHEELHOUSE_ROOT = root;
   // Wheelhouse's patch (build.js) starts Claude steps in this mode instead of bypass mode, so the sandbox holds.
   env.ARCHON_CLAUDE_PERMISSION_MODE = PERMISSION_MODE;
   return { ...env, ...TELEMETRY };
