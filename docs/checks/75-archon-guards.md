@@ -77,6 +77,18 @@ Run at the start of part 3b, on the scratch source checkout of v0.13.0 (commit 0
 - **The per-run overlay still does nothing.** With `.claude/settings.local.json` written by a first `bash` step (the `sandbox.filesystem` shape that `ownRunRules` also writes), the step read its own artefact, another run's and `archon.db` alike. The network list in the same settings held. So the shape `ownRunRules` writes does not close another run's artefacts or the database; the tool guard and deny rules for those paths (part 3a's) are what stand there. This is for part 3a's follow-up.
 - `~/.claude/plugins/installed_plugins.json` was unchanged (checksum `3c1f323e…`). The runs' session transcripts under `~/.claude/projects/` were moved to the Trash.
 
+### The overlay's home (30 October 2026)
+
+The overlay in `.claude/settings.local.json` did nothing because Archon v0.13.0 gives its Claude steps the `project` and `user` setting sources only, and its config and node schema refuse `local`. A node's `sandbox:` passes through, but it is the same for every run of a workflow, so it can't name one run's artefacts. Part 4.6 moved the overlay into the worktree's `.claude/settings.json`, merged over the branch's own shared settings and kept out of the run's commits with `git update-index --skip-worktree` (each worktree has its own index). No Archon patch was needed.
+
+A probe ran Claude Code as Archon starts it (`--setting-sources project`, `acceptEdits`, one cheap model, $0.01 in all) in a worktree with the merged settings:
+
+- The sandbox lists held: `cat` of another run's artefact was refused (`Operation not permitted`), and `cat` of the run's own `order.json` worked without a prompt.
+- The `permissions.allow` rule for the run's own artefacts, and `permissions.additionalDirectories` in its place, were ignored: Claude Code reads neither from project settings until the folder is trusted ("this workspace has not been trusted"). Archon's worktrees come from the engine's mirror, which is never trusted, so a project rule can't open the Read tool there.
+- A plugin's `PreToolUse` hook answering `allow` did open it, in the same untrusted worktree. So the tool guard now allows a file tool call that lies wholly in the step's own run's artefacts.
+- A second probe ($0.008) merged the overlay over the full shared settings setup writes, then asked the step to rewrite `.claude/settings.json`. The shell write was refused by the sandbox (`operation not permitted`), the Write tool by the deny rule, and the file was unchanged. In a real run the tool guard refuses the Write too.
+- Where a branch doesn't track `.claude/settings.json`, the overlay is written alone and kept out of git by the exclude list (`/.claude/settings.json`). That list is shared with the director's checkout, where setup adds the file with `git add -f`, so the line doesn't get in its way.
+
 ## What it means for the design
 
 - **Spec 12.1's three-part case doesn't hold as written.** Hooks fire in bypass mode (shown, for the STOP guard, the lineage hold and the tool guard), and deny rules hold (shown for `.env`), but "the sandbox holds commands" does not: in bypass mode Claude Code does not apply the project's sandbox, so every shell command runs unsandboxed and `allowUnsandboxedCommands: false` has nothing to hold. What stands between an agent and the machine in an Archon step today is the tool guard and the deny rules alone, and the deny rules cover only the commands they name (`gh`, `git push` and the like), not a `cat` or a `head` of any file. Per spec 12.1, this failure takes **the one-line patch** as the route, for part 3a: start Claude in its ordinary mode. The plain session's result supports it: out of bypass mode the same project's sandbox refused the same command. The patch's step would need a mode that asks nothing in a headless run while keeping the sandbox, and part 3a should check that against this probe before building on it.
@@ -102,16 +114,3 @@ Run at the start of part 3b, on the scratch source checkout of v0.13.0 (commit 0
 ## Needs the director
 
 Nothing to do. One thing for the main session to know, not a click: the first Archon step that named the Wheelhouse plugin coincided with a new user-scope entry for `wheelhouse@wheelhouse` (version 0.1.2, not enabled) appearing in Claude Code's record of installed plugins (`~/.claude/plugins/installed_plugins.json`), at the second that step started; another check's run left one for its own plugin the same way. The probe ran no `claude plugin` command, so Archon's plugin overlay, or Claude Code acting on it, wrote it. It was left in place.
-
-
-## Later: the overlay's home (30 October 2026)
-
-The overlay in `.claude/settings.local.json` did nothing because Archon v0.13.0 gives its Claude steps the `project` and `user` setting sources only, and its config and node schema refuse `local`. A node's `sandbox:` passes through, but it is the same for every run of a workflow, so it can't name one run's artefacts. Part 4.6 moved the overlay into the worktree's `.claude/settings.json`, merged over the branch's own shared settings and kept out of the run's commits with `git update-index --skip-worktree` (each worktree has its own index). No Archon patch was needed.
-
-A probe ran Claude Code as Archon starts it (`--setting-sources project`, `acceptEdits`, one cheap model, $0.01 in all) in a worktree with the merged settings:
-
-- The sandbox lists held: `cat` of another run's artefact was refused (`Operation not permitted`), and `cat` of the run's own `order.json` worked without a prompt.
-- The `permissions.allow` rule for the run's own artefacts, and `permissions.additionalDirectories` in its place, were ignored: Claude Code reads neither from project settings until the folder is trusted ("this workspace has not been trusted"). Archon's worktrees come from the engine's mirror, which is never trusted, so a project rule can't open the Read tool there.
-- A plugin's `PreToolUse` hook answering `allow` did open it, in the same untrusted worktree. So the tool guard now allows a file tool call that lies wholly in the step's own run's artefacts.
-- A second probe ($0.008) merged the overlay over the full shared settings setup writes, then asked the step to rewrite `.claude/settings.json`. The shell write was refused by the sandbox (`operation not permitted`), the Write tool by the deny rule, and the file was unchanged. In a real run the tool guard refuses the Write too.
-- Where a branch doesn't track `.claude/settings.json`, the overlay is written alone and kept out of git by the exclude list (`/.claude/settings.json`). That list is shared with the director's checkout, where setup adds the file with `git add -f`, so the line doesn't get in its way.

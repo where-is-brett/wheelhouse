@@ -11,7 +11,7 @@ Archon v0.13.0 gives Claude steps `settingSources` of `project` and `user` only,
 - Kept out of commits with `git update-index --skip-worktree .claude/settings.json`, which is per worktree (each worktree has its own index), so the director's checkout is untouched.
 - A branch with no shared settings is refused: the run's guards live in them, so a run there would be unguarded. The old `settings.local.json` overlay is no longer written.
 - Tests: the merged file holds both the shared deny rules and the run's allow and sandbox lists; `git status` and `git add -A` leave it out; a second write replaces the run's lists rather than adding to them; a link is refused; no shared settings is refused.
-- Real check: a cheap probe of Claude Code started as Archon starts it. It showed the sandbox lists hold, but a project setting's allow rule isn't read in an untrusted folder, and Archon's worktrees come from the engine's never-trusted mirror. So the tool guard also answers `allow` for a file tool call wholly in the step's own run's artefacts, which a plugin hook can do in an untrusted folder (check 75, "Later").
+- Real check: a cheap probe of Claude Code started as Archon starts it. It showed the sandbox lists hold, but a project setting's allow rule isn't read in an untrusted folder, and Archon's worktrees come from the engine's never-trusted mirror. So the tool guard also answers `allow` for a file tool call wholly in the step's own run's artefacts, which a plugin hook can do in an untrusted folder (check 75, "The overlay's home").
 
 ## 2. All stop reaches a just-started run
 
