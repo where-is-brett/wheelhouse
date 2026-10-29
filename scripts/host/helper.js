@@ -1006,6 +1006,9 @@ export async function startHelper({
   // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
   // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
   dispatchMs = 60 * 1000,
+  // How the engine's fetch mirror of a project is brought up to date before a run starts: the helper's own, from the
+  // host with the connection's key, unless a test whose engine reads no mirror gives its own.
+  refreshMirror = null,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -3927,6 +3930,7 @@ export async function startHelper({
   // The build engine's runs (scripts/engine/routes.js): served under /engine/ and /broker/, outside any one
   // project's context, since a step knows its run and not its project; each route finds the project from the run.
   const engineRun = engineRoutes({
+    refresh: (project) => (refreshMirror ?? refreshFetchMirror)(project),
     projects: () => registeredProjects().map(({ project, record }) => ({ project, folder: record.folder })),
     engineFor: (project) => {
       try { return engineFor(project); } catch { return null; }
@@ -4043,7 +4047,12 @@ export async function startHelper({
           'fetch', '-q', '--no-tags', '--no-recurse-submodules', '--no-write-fetch-head', '--prune', '--upload-pack=git upload-pack --strict', mirror,
           '+refs/wheelhouse/engine/heads/*:refs/heads/*', '+refs/wheelhouse/engine/pull/*:refs/pull/*',
         ], { cwd: into });
-        return copied.code === 0 ? { ok: true } : { ok: false, refused: 'the fetch mirror could not be brought up to date' };
+        if (copied.code !== 0) return { ok: false, refused: 'the fetch mirror could not be brought up to date' };
+        // Its HEAD names the host's default branch, which Archon takes as the base of a run's worktree.
+        const base = await (await ctx.adapter()).defaultBranch();
+        if (typeof base !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(base) || base.includes('..')) return { ok: false, refused: 'the host\'s default branch could not be read' };
+        const headed = await copy([...NO_HOOKS, 'symbolic-ref', 'HEAD', `refs/heads/${base}`]);
+        return headed.code === 0 ? { ok: true } : { ok: false, refused: 'the fetch mirror\'s default branch could not be set' };
       }));
     } finally {
       tidyAfterAnswer(project, ctx);

@@ -25,6 +25,8 @@ import { setStop } from '../../../scripts/lib/stop.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 
+// The fake engine reads no fetch mirror.
+const noMirror = async () => ({ ok: true });
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
@@ -65,7 +67,7 @@ test('only the helper starts a run: no route starts one', async () => {
     await as(p.home, async () => {
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-        spawn: stubSpawn(), engineFor: () => engine,
+        spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine,
       });
       try {
         const client = helperClient({ address: testAddress(p.home) });
@@ -94,7 +96,7 @@ test('a run the helper started gets its order back with its own ticket, and noth
     await as(p.home, async () => {
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-        spawn: stubSpawn(), engineFor: () => engine,
+        spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine,
       });
       try {
         const client = helperClient({ address: testAddress(p.home) });
@@ -134,7 +136,7 @@ test('no run starts under All stop', async () => {
     await as(p.home, async () => {
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-        spawn: stubSpawn(), engineFor: () => engine,
+        spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine,
       });
       try {
         setStop({ by: 'helper' });

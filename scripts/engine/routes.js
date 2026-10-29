@@ -20,6 +20,7 @@
 //   incidentOf(project, id)   the open red-main incident of that id, or null
 //   changesOf(project, { pr, head })   the pull request's changed files and the project's configuration,
 //                         { paths, config }, read by the helper from its own mirror, or null when they can't be read
+//   refresh(project)      brings the project's fetch mirror, the engine's only copy of it, up to date: { ok } or a refusal
 //   merge(project, { pr, head, incident, runId })   merges the pull request through the helper's own gate as the
 //                         incident's fix, giving { ok } or a refusal
 // A run is found by its id in the projects' order stores: the only runs these routes serve are ones the helper
@@ -98,6 +99,7 @@ export function engineRoutes({
   filesDir = (project) => path.join(ordersDir(project), '..'), digests = { installed: () => null, captured: () => null }, comment,
   host, provenance, previewsDir = (project) => path.join(filesDir(project), 'previews'),
   incidentOf = () => null, changesOf = async () => null, merge = async () => ({ ok: false, refused: 'the helper can\'t merge here' }),
+  refresh = async () => ({ ok: true }),
 } = {}) {
   const storeOf = (project) => orderStore(ordersDir(project));
 
@@ -126,6 +128,10 @@ export function engineRoutes({
     if (typeof engine.artefactsOf !== 'function') return { ok: false, refused: 'that project\'s engine gives a run no artefacts folder, so its steps can\'t be given their ticket' };
     const problem = checkOrder(order);
     if (problem) return { ok: false, refused: problem };
+    // The engine reads the project only from the fetch mirror, so a run starts from the host's latest.
+    let fresh;
+    try { fresh = await refresh(project); } catch (error) { fresh = { ok: false, refused: error instanceof Error ? error.message : null }; }
+    if (fresh?.ok !== true) return { ok: false, refused: `the engine's copy of the project couldn't be brought up to date${fresh?.refused ? ` (${fresh.refused})` : ''}, so no run started` };
     const started = await engine.start({ work: order.work, lane: order.lane, branch, carryOn: carryOn === true, project: found.folder, bindings: order.bindings });
     if (!started?.ok) return { ok: false, refused: started?.refused ?? 'the engine didn\'t start the run' };
     storeOf(project).save(started.runId, order);
