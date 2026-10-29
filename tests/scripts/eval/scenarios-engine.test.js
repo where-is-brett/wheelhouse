@@ -14,11 +14,12 @@ import { tempFolder } from '../../helpers/homes.js';
 // lane's (63 to 69).
 const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69];
 
-test('--engine takes the fake, and goes with scenario numbers, --all or --suite alone', () => {
+test('--engine takes the fake or real Archon, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');
   assert.equal(parseArgs(['--suite', 'build-loop', '--engine=fake']).engine, 'fake');
   assert.equal(parseArgs(['42']).engine, undefined);
-  assert.throws(() => parseArgs(['42', '--engine', 'archon']), /--engine takes fake, not archon/);
+  assert.equal(parseArgs(['--suite', 'build-loop', '--engine', 'archon']).engine, 'archon');
+  assert.throws(() => parseArgs(['42', '--engine', 'orchestrator']), /--engine takes fake or archon, not orchestrator/);
   assert.throws(() => parseArgs(['--again', '--engine', 'fake']), /give it no --ready, --again, --agent or --level/);
   assert.throws(() => parseArgs(['42', '--engine', 'fake', '--agent', 'copilot']), /give it no/);
 });

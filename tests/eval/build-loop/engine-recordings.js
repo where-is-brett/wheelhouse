@@ -1,7 +1,7 @@
 // tests/eval/build-loop/engine-recordings.js
 // Recordings for the engine scenarios (42 to 55, 60 to 62 and 63 to 69), in the fake engine's events: each a run of the
-// quick lane, of the small lane from 51, of fix-main, or of the bug lane from 63, that stops where the scenario needs it. Not a scenario file: it has
-// no number.
+// quick lane, of the small lane from 51, of fix-main, or of the bug lane from 63, that stops where the scenario needs
+// it. Not a scenario file: it has no number.
 import { confirmationFor } from '../../../scripts/state/events.js';
 
 const at = (minute) => new Date(Date.UTC(2026, 9, 29, 9, minute)).toISOString();
@@ -165,3 +165,6 @@ export function bugWork(world, { id, title, visible = false, lanes = ['quick', '
   world.put('work', { id, title, lane: 'bug', visible, dependsOn: [], doc: { path: `.wheelhouse/work/${id}.md`, hash } });
   if (visible) world.put('action', { action: 'approve-work', question: `Approve ${id} (bug lane) as written, and show it to me before it merges`, label: 'Approve', work: id, lane: 'bug', hash, shownFirst: true });
 }
+
+// The work a real play on Archon gives its runs (scripts/eval/archon-world.js): one line, so a real step costs cents.
+export const TINY_GOAL = "Add the line 'Made for the evaluation.' to the end of README.md";
