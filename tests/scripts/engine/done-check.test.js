@@ -10,6 +10,7 @@ import { main, runDoneChecks } from '../../../scripts/engine/done-check.js';
 import { main as copyMain } from '../../../scripts/engine/order-copy.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
+import { ownRunRules } from '../../../scripts/protection/settings.js';
 
 const node = JSON.stringify(process.execPath);
 const orderWith = (done, extra = {}) => workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done, ...extra }, config: { testCommand: `${node} -e "process.exit(process.argv[1] === 'good' ? 0 : 1)"` } });
@@ -88,4 +89,19 @@ test('with --flags the first step prints only whether the work is visible and sh
   assert.equal(await copyMain(['--run', 'run-7', '--out', dir, '--flags'], { client, out }), 0);
   assert.deepEqual(lines.map((line) => JSON.parse(line)), [{ visible: true, showFirst: true }]);
   assert.ok(fs.existsSync(path.join(dir, 'order.json')));
+});
+
+test("the first step writes the run's own settings overlay in its worktree, so its Claude steps can read the order", async () => {
+  const ws = tempFolder('wh-ws-');
+  const dir = path.join(ws, 'artifacts', 'runs', 'run-7');
+  const worktree = tempFolder('wh-wt-');
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  assert.equal(await copyMain(['--run', 'run-7', '--out', dir, '--flags'], { client, cwd: worktree, out: () => {} }), 0);
+  const overlay = JSON.parse(fs.readFileSync(path.join(worktree, '.claude', 'settings.local.json'), 'utf8'));
+  assert.deepEqual(overlay, ownRunRules('run-7', dir));
+  assert.ok(overlay.permissions.allow.some((rule) => rule.startsWith('Read(/') && rule.includes(path.join('artifacts', 'runs', 'run-7').replaceAll('\\', '/'))));
+  // A folder that isn't a run's own gets no overlay.
+  const elsewhere = tempFolder('wh-wt-');
+  assert.equal(await copyMain(['--run', 'run-7', '--out', tempFolder('wh-art-')], { client, cwd: elsewhere, out: () => {} }), 0);
+  assert.equal(fs.existsSync(path.join(elsewhere, '.claude', 'settings.local.json')), false);
 });

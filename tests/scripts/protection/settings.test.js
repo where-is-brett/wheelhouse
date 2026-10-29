@@ -520,6 +520,8 @@ test('a run\'s overlay shuts its workspace\'s transcripts and every run\'s artef
   const ws = path.join(path.sep, 'h', 'workspaces', 'owner', 'name');
   const own = path.join(ws, 'artifacts', 'runs', 'run-1');
   assert.deepEqual(ownRunRules('run-1', own), {
+    // In the engine's ordinary mode (acceptEdits) a read outside the worktree needs a rule that allows it (check 80).
+    permissions: { allow: [`Read(/${own.replaceAll('\\', '/')}/**)`] },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,

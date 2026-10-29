@@ -259,7 +259,14 @@ export function ownRunRules(runId, artifactsDir) {
   const folders = WORKSPACE_FOLDERS.map((f) => path.join(workspace, f));
   // The artefacts are left off the write list: a write outside the worktree is refused unless allowed, and a
   // denyWrite would win over the own folder's allowWrite.
+  // In the engine's ordinary mode (acceptEdits) the Read tool asks before reading outside the worktree, and no one
+  // answers in a run, so the run's own artefacts are allowed by a rule, by each spelling of the folder (a home under a
+  // linked folder such as /tmp is read by its real path too).
+  let real = own;
+  try { real = fs.realpathSync.native(own); } catch { /* not made yet: its own spelling only */ }
+  const allow = unique([own, real]).map((dir) => `Read(/${dir.replaceAll('\\', '/')}/**)`);
   return {
+    permissions: { allow },
     sandbox: {
       enabled: true,
       allowUnsandboxedCommands: false,
