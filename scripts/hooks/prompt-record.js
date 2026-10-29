@@ -45,7 +45,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import tools from '../../adapters/claude-code/tools.js';
-import { runAndExit, projectOf, beingSetUp } from './kit.js';
+import { answer, runAndExit, projectOf, beingSetUp } from './kit.js';
 import { keep, taken, sendPending, withinBudget, pendingDir, BUDGET_MS } from './pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { helperClient } from '../host/helper-client.js';
@@ -72,6 +72,8 @@ import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
 import { offeredFrom, premiumValueOf, PREMIUM_CARD_MS } from '../routing/premium.js';
 import { keepClick as keepBaselineClick, shownBaseline, dropPending, carriesFigures, cardText, sweepStale, cardHash } from '../lib/measures-clicks.js';
 import { localViews } from './session-start.js';
+import { cardOutcomes } from '../state/views.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE } from '../lib/calm-words.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
 import { PUT_OFF } from '../lib/front-desk.js';
 import { settingKey, UNATTENDED_CARD, USE_GUARDED } from '../protection/windows-builds.js';
@@ -627,6 +629,58 @@ function withStoredText(project, input) {
   };
 }
 
+// --- What the front desk is told about the answers ---
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const two = (n) => String(n).padStart(2, '0');
+// A time as the director reads it, on this computer's clock: "at 14:05", or "on 28 October at 14:05" on another day.
+function whenSaid(iso, now) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return 'earlier';
+  const clock = `at ${two(at.getHours())}:${two(at.getMinutes())}`;
+  return at.toDateString() === now.toDateString() ? clock : `on ${at.getDate()} ${MONTH_NAMES[at.getMonth()]} ${clock}`;
+}
+const askOf = (card) => String(card.data?.question ?? '').split('\n')[0];
+// The answer that decided a card, in the director's words: its label, or for a signed record that carries none, the
+// option it stands for.
+const countedOf = ({ card, decided }) => decided.label ?? ({ approval: 'Approve', confirm: 'Confirm', 'ci-push': 'Push it' }[card.data?.kind] ?? 'an answer');
+
+// How the cards the clicks are on stand, from `outcomes` (cardOutcomes): for each click, the card it answers (by the
+// state's text, or by its chat copy when that is all the click names) and, when every such card was decided before
+// it, `stale`, the latest of them. A click on no card the state holds is left out.
+function standing(out, outcomes) {
+  const found = new Map();
+  for (const click of out) {
+    const mine = outcomes.filter((o) => typeof o.card.data?.question === 'string'
+      && (o.card.data.question === click.question || chatCopy(o.card.data.question) === click.question));
+    if (mine.length === 0) continue;
+    const open = mine.filter((o) => o.decided === null);
+    found.set(click, open.length > 0 ? { card: open.at(-1).card } : { card: mine.at(-1).card, stale: mine.at(-1) });
+  }
+  return found;
+}
+
+// What the front desk is told, as one context: for a stale answer, that it changed nothing and which answer counted
+// and when; for a pick of Suggest a change… on a card still waiting, to ask what the director would change. Null when
+// there is nothing to tell.
+function noticesOf(out, found, now) {
+  const lines = [];
+  for (const click of out) {
+    const at = found.get(click);
+    if (at?.stale) {
+      lines.push(`Wheelhouse: the director's answer "${click.label}" on the card "${askOf(at.card)}" changed nothing and was not recorded: `
+        + `that card was already decided, and "${countedOf(at.stale)}" counted, chosen ${whenSaid(at.stale.decided.at, now)}. `
+        + 'In one plain line, tell the director which answer counted and when, without the card\'s id. Then act on what they say next: '
+        + 'if they want the other answer instead, that is a change to what was decided, and goes through the intake.');
+    } else if (at && click.label === SUGGEST) {
+      lines.push(`Wheelhouse: the director chose ${SUGGEST} on card ${at.card.id} ("${askOf(at.card)}"). Ask "${WHAT_WOULD_YOU_CHANGE}" in one line, `
+        + 'and nothing else. Their next message is the change: do with it as for "suggested a change on card n (' + at.card.id + '): <their words>", '
+        + 'finding the card\'s number in `views waiting`. Nothing is recorded until then.');
+    }
+  }
+  return lines.length === 0 ? null : lines.join('\n');
+}
+
 // Signs what an answer earned and keeps it pending, then lifts STOP when it asks to; a lift
 // that fails leaves no record. Returns what sendKept sends. Shared by a click and a reply code.
 export function keepEarned(project, got, { now, liftStop = defaultLift }) {
@@ -720,6 +774,16 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     input = whole;
     out.splice(0, out.length, ...clicks(input).filter((click) => !carrying.has(click.question) && !carriesTrust(click.question)));
   }
+  // A stale answer earns nothing, and a pick of Suggest a change… waits for the director's words: neither is recorded.
+  let notices = null;
+  try {
+    const found = standing(out, cardOutcomes(listEvents(stateDir(project), { report: () => {} }), readEnrolled()));
+    notices = noticesOf(out, found, at);
+    const held = out.filter((click) => found.get(click)?.stale || (found.has(click) && click.label === SUGGEST));
+    out.splice(0, out.length, ...out.filter((click) => !held.includes(click)));
+  } catch {
+    // The state can't be read: the answers are recorded as they were given.
+  }
   const api = client ?? helperClient({ timeout: budget });
   const end = Date.now() + budget;
   const left = withinBudget(end);
@@ -775,7 +839,7 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
       // Not kept twice: a failure here is a failure to write the file too.
     }
   }
-  return undefined;
+  return notices === null ? undefined : answer.context('PostToolUse', notices);
 }
 
 if (startedAsScript(import.meta.url)) {

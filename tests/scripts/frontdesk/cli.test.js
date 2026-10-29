@@ -1262,8 +1262,13 @@ test('suggest hands a suggested change on an approval card to the build as one w
     const out = await run(helper, ['suggest', approval.id, 'sign-in-words', 'The sign-in page says Welcome back instead of Sign in']);
     assert.equal(out.code, 0, out.err);
     assert.equal(out.json.say, 'Noted. A new proposal will follow.');
-    // The work as it was, its title the change in the front desk's words: nothing else is written.
-    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } }]);
+    // The work as it was, its title the change in the front desk's words, then the card's answer Suggest a change…,
+    // so the pane says a new proposal is on its way only once the change is handed on: nothing else is written.
+    assert.deepEqual(helper.writes(), [
+      { cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } },
+      { cwd: CWD, kind: 'card-answer', data: { question: approval.data.question, label: SUGGEST } },
+    ]);
+    assert.equal(typeof helper.views().waiting.find((c) => c.id === approval.id).steered, 'string');
 
     // Refused, with nothing written: a card that doesn't wait, one that isn't an approval or a CI
     // push, work that isn't open, and a change missing or on two lines.
@@ -1278,7 +1283,7 @@ test('suggest hands a suggested change on an approval card to the build as one w
       assert.equal(refused.code, 1, args.join(' '));
       assert.match(refused.err, why);
     }
-    assert.equal(helper.writes().length, 1);
+    assert.equal(helper.writes().length, 2);
   });
 });
 

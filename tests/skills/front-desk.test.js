@@ -450,10 +450,12 @@ test('the playbooks point at Why? and Suggest a change…, and none offers Expla
   assert.match(suggested, /the words steer and never approve\./);
   assert.match(suggested, /the words steer and never approve\. Write no text until the one line below, not even a note to yourself: the director sees every line\./);
   assert.match(suggested, /For an approval or ci-push card the code must change first: run `views work` to find the card's work, then `suggest <the card's id> <the work's id> <the change in your own words, never theirs>`, which hands it to the build\. Say its `say` word for word, and nothing else; when it says the card no longer waits, say that in one line instead\. No intake, no read-back, no card\./);
-  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For any other kind, find the card by its id in `views waiting`, revise the proposal as the words ask and compose the new card at once, then say only: "Noted\. A new proposal will follow\." Ask no card now, and never the old one again\./);
+  assert.match(suggested, /The revised card, with `revises` \(the old card's id\) and `changed` \(one sentence in your own words\), comes once the pull request's head has moved, on a later visit, and takes the place of the gate's card for that head\. For a question from the build \(an answer card\), the words change what the work builds: take them through the intake as a change to that work, naming the question, and ask no card but the one the intake gives\. For any other kind, find the card by its id in `views waiting`, revise the proposal as the words ask and compose the new card at once, then say only: "Noted\. A new proposal will follow\." Ask no card now, and never the old one again\./);
   // A pick of Suggest a change… in the chat.
   const pick = lines.find((line) => line.includes('Suggest a change…') && line.startsWith('- **')) ?? '';
-  assert.match(pick, /Ask "What would you change\?" in one line, then do as for the pane's suggestion\./);
+  assert.match(pick, /it records nothing yet\. Ask "What would you change\?" in one line, and nothing else\. Their next message is the change: do with it as for the pane's suggestion on that card/);
+  // An answer on a card already decided is told plainly, with which answer counted and when.
+  assert.match(read('skills/front-desk/SKILL.md'), /^- \*\*An answer on a card already decided\*\* .*Tell the director that in one plain line, without the card's id, and act on what they say next/m);
   // Setup, the foreman and the brief.
   assert.match(read('skills/setup/SKILL.md'), /^- \*\*Asked why:\*\* plain words and an everyday example, then ask the same card again\.$/m);
   assert.match(read('skills/foreman/SKILL.md'), /none called Not now, Why\?, Show me or Suggest a change…/);

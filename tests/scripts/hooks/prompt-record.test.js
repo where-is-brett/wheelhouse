@@ -22,6 +22,7 @@ import { rulesInput } from '../../helpers/rules-card.js';
 import { beforeTimer } from '../../helpers/until.js';
 import { nudgeCard } from '../../../scripts/routing/nudge.js';
 import { buildViews } from '../../../scripts/state/views.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE } from '../../../scripts/lib/calm-words.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { premiumInput, ALLOW_WITHIN, ALLOW_PAID, ALLOW_PAID_ON_TOP } from '../../../scripts/routing/premium.js';
 
@@ -132,6 +133,56 @@ test('where two kept cards share the chat\'s words, only the one still waiting i
   assert.equal(storedText(P, shown, { events, waiting: events }), null);
   // A question that already carries its set line is kept as asked.
   assert.equal(storedText(P, newer.question, { events, waiting: [events[1]] }), null);
+});
+
+// A question card about the order email, composed as the front desk composes it.
+const EMAIL = () => composeCard({
+  kind: 'question', level: 2, what: 'Should the order email show the delivery date?', why: 'Customers asked for it.',
+  options: [{ label: 'Show the date', says: 'The email shows it.' }, { label: 'Leave it out', says: 'The email stays as it is.' }],
+  recommend: 'Show the date', because: 'customers asked for it', meanwhile: 'The email stays as it is.',
+});
+const contextOf = (got) => got?.hookSpecificOutput?.additionalContext ?? '';
+
+test('an answer to a card another answer decided first changes nothing, and the front desk is told which answer counted and when', async () => {
+  await withHome(async () => {
+    const composed = EMAIL();
+    const kept = makeEvent({ kind: 'card', data: composed.card, now: () => new Date(NOW.getTime() - 60 * 60 * 1000) });
+    keepEvent(kept);
+    // Decided in the pane, at 04:30 UTC: the director's other copy of the card in the chat is now stale.
+    const at = new Date(NOW.getTime() - 30 * 60 * 1000);
+    keepEvent(makeEvent({ kind: 'card-answer', data: { question: composed.card.question, label: 'Show the date' }, now: () => at }));
+    const c = fake();
+    const shown = { ...composed.question, question: chatCopy(composed.question.question) };
+    const got = await decide(copyClick(shown, 'Leave it out'), deps(c));
+    assert.deepEqual(c.calls.write, [], 'the stale answer is not recorded');
+    assert.deepEqual(kinds(c).filter((k) => k !== 'shown'), [], 'and signs nothing');
+    const said = contextOf(got);
+    const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    assert.match(said, /"Leave it out"/);
+    assert.match(said, /"Show the date" counted/);
+    assert.ok(said.includes(hhmm), said);
+    assert.match(said, /which answer counted and when/);
+    assert.equal(got.hookSpecificOutput.hookEventName, 'PostToolUse');
+  });
+});
+
+test('a chat pick of Suggest a change… records nothing yet, and the front desk is told to ask what the director would change', async () => {
+  await withHome(async () => {
+    const composed = APPROVE_7(FULL);
+    const kept = makeEvent({ kind: 'card', data: composed.card, now: () => NOW });
+    keepEvent(kept);
+    const c = fake();
+    const got = await decide(copyClick(asCopy(composed), SUGGEST), deps(c));
+    assert.deepEqual(c.calls.write, [], 'no change is under way until the director says what it is');
+    const said = contextOf(got);
+    assert.ok(said.includes(`"${WHAT_WOULD_YOU_CHANGE}"`), said);
+    assert.ok(said.includes(kept.id), 'it names the card by its id, for `views waiting`');
+    assert.match(said, /suggested a change on card n \(/);
+    // Any other answer is recorded as before, with nothing said.
+    const other = fake();
+    assert.equal(await decide(copyClick(asCopy(composed), 'Not now'), deps(other)), undefined);
+    assert.deepEqual(other.calls.write.map((w) => w.data.label), ['Not now']);
+  });
 });
 
 test('Approve when the head has moved since the card records no approval', async () => {

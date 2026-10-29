@@ -69,7 +69,7 @@ import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { WHY, suggestedAt } from '../lib/calm-words.js';
+import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
@@ -581,7 +581,8 @@ export const SUGGESTED = 'Noted. A new proposal will follow.';
 
 // Hands a change the director suggested on a waiting approval or CI push card to the build: the open
 // work re-stated as it stands, its title the change in the front desk's own words, so the code
-// changes before the card is revised. One command, so nothing is said between steps (scenario 36).
+// changes before the card is revised, then the card's answer Suggest a change…, which is what the pane
+// reads as a change under way. One command, so nothing is said between steps (scenario 36).
 // Resolves with { id, pushed, say }.
 export async function suggest({ client, cwd, card: cardId, work: workId, change }) {
   const words = typeof change === 'string' ? change.trim() : '';
@@ -597,6 +598,7 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
   }
   const data = { ...views.work[workId].work.data, title: words };
   const got = await write(client, cwd, 'work', data);
+  await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST });
   return { id: got.id, pushed: got.pushed === true, say: SUGGESTED };
 }
 

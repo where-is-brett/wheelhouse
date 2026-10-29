@@ -677,6 +677,11 @@ test('a gate\'s approval card steered with Suggest a change… is revised at the
     const oldCode = replyCode(approvalLine(7, head));
     await ask(world, [card], { [card.question]: 'Suggest a change…' });
     assert.deepEqual(eventsOf('approval'), []);
+    // The pick records nothing until the director says what they would change; the front desk hands their words on
+    // with `suggest`, and only then does the card say a new proposal is on its way.
+    assert.equal((await viewsOf(world)).waiting.find((c) => c.id === id).steered, null);
+    assert.equal((await frontDesk(world, ['suggest', id, 'banner', 'The banner in bigger type'])).say, 'Noted. A new proposal will follow.');
+    assert.equal(typeof (await viewsOf(world)).waiting.find((c) => c.id === id).steered, 'string');
 
     // The build commits the change; the foreman's merge records the gate asking about the new head,
     // and a visit makes the gate's card for it before the front desk composes the revision.
