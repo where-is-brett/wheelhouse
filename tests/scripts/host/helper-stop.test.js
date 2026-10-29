@@ -439,19 +439,24 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
   const paused = engine.start({ recording: 'quick-blocked' }).runId;
   const pc = computer();
   const stopAll = engine.stopAll.bind(engine);
-  engine.stopAll = async (reason, options) => { const got = await stopAll(reason, options); pc.cancelEnds(); return got; };
+  let known = null;
+  engine.stopAll = async (reason, options) => { known = options.known; const got = await stopAll(reason, options); pc.cancelEnds(); return got; };
   const { spawn, children } = stubSpawn({ onKill: pc.wakeEnds });
   try {
     await as(p.home, async () => {
       // Each run's start is in the record, as what started it wrote it, so the note can name their work.
       record('run', { work: 'card-12', lane: 'quick', engine: 'fake', runId: running, state: 'started', branch: 'wh/card-12' });
       record('run', { work: 'card-13', lane: 'quick', engine: 'fake', runId: paused, state: 'started', branch: 'wh/card-13' });
+      record('run', { work: 'card-11', lane: 'quick', engine: 'fake', runId: 'run-over', state: 'started', branch: 'wh/card-11' });
+      record('run', { work: 'card-11', lane: 'quick', engine: 'fake', runId: 'run-over', state: 'ended', branch: 'wh/card-11' });
       await withHelper(fakeAdapter(), async (client) => {
-        await until(() => runs().filter((e) => e.data.state === 'started').length >= 2 && children.length === 1, { what: 'both runs recorded and the wake process' });
+        await until(() => runs().filter((e) => e.data.state === 'started').length >= 3 && children.length === 1, { what: 'both runs recorded and the wake process' });
         const asked = await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } });
         assert.equal(asked.ok, true);
         assert.equal(stopState().on, true);
         await until(() => notes().length === 1, { what: "All stop's note" });
+        // The engine is told every run the record has started and not seen end, as a just-started one may not be listed yet.
+        assert.deepEqual([...known].sort(), [running, paused].sort());
         const note = notes()[0].data;
         assert.deepEqual(note.cancelled, [{ runId: running, work: 'card-12', lane: 'quick', branch: 'wh/card-12' }]);
         assert.deepEqual(note.paused, [{ runId: paused, work: 'card-13', lane: 'quick', branch: 'wh/card-13' }]);

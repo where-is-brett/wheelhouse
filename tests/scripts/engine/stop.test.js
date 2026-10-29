@@ -52,6 +52,15 @@ test('All stop cancels every run, and a paused run stays paused and is listed', 
   assert.deepEqual(engine.calls.filter((x) => x.call === 'stopAll').length, 1);
 });
 
+test('All stop hands the engine the runs it is told of, for one the engine may not list yet', async () => {
+  const engine = fakeEngine({ recordings });
+  let given = null;
+  const stopAll = engine.stopAll.bind(engine);
+  engine.stopAll = async (reason, options) => { given = options.known; return stopAll(reason, options); };
+  await stopEngine({ engine, ...computer(base), self: SELF, known: ['run-1', 'run-2'] });
+  assert.deepEqual(given, ['run-1', 'run-2']);
+});
+
 test('a process left after ten seconds is ended and named; the tree is taken before the cancel', async () => {
   const engine = fakeEngine({ recordings });
   const runId = engine.start({ recording: 'quick-approved', running: true, ownerPid: 100 }).runId;

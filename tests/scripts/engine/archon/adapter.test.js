@@ -270,6 +270,26 @@ test('stopAll cancels a pending run as it does a running one, and a refused canc
   assert.deepEqual(result, { cancelled: ['run-a', 'run-b'], survivors: ['run-c'], paused: [] });
 });
 
+test('stopAll reads each run the helper knows that the list left out, and cancels one just started', async () => {
+  const got = { 'run-new': 'pending', 'run-going': 'running', 'run-waits': 'paused', 'run-done': 'completed' };
+  const cli = fakeCli({
+    // A run started under about a second ago isn't listed yet.
+    'workflow status': status(row('run-listed', 'running', null)),
+    'workflow get': (args) => (got[args[2]] ? { code: 0, json: { id: args[2], status: got[args[2]], parent_run_id: null, working_path: `${WORKTREES}/wh/${args[2]}` }, stdout: '', stderr: '' } : { code: 1, json: { ok: false, error: 'not found' }, stdout: '', stderr: '' }),
+    'workflow cancel': json('cancel-ok.json'),
+  });
+  let handed = null;
+  const result = await adapter(cli, { worktreeBases: [WORKTREES] }).stopAll('All stop', {
+    known: ['run-listed', 'run-new', 'run-going', 'run-waits', 'run-done', 'run-gone'],
+    beforeCancel: (runs) => { handed = runs; },
+  });
+  // A listed run isn't read again.
+  assert.deepEqual(cli.calls.filter((c) => c.args[1] === 'get').map((c) => c.args[2]), ['run-new', 'run-going', 'run-waits', 'run-done', 'run-gone']);
+  assert.deepEqual(handed.map((r) => r.id), ['run-listed', 'run-new', 'run-going']);
+  assert.equal(handed[1].folder, `${WORKTREES}/wh/run-new`);
+  assert.deepEqual(result, { cancelled: ['run-listed', 'run-new', 'run-going'], survivors: [], paused: ['run-waits'] });
+});
+
 test("stopAll hands over only a run's worktree folder, never the project folder or anything broader", async () => {
   const home = path.join(path.sep, 'wh-engine-home');
   const cli = fakeCli({

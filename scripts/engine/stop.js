@@ -143,7 +143,7 @@ async function endSnapshot(snapshot, { list, kill, wait, grace, sleep }) {
   return { ended, survivors };
 }
 
-// stopEngine({ engine, processes, kill, list, cwds, wait, sleep, reason, self, afterSnapshot }) ->
+// stopEngine({ engine, processes, kill, list, cwds, wait, sleep, reason, self, afterSnapshot, known }) ->
 //   { cancelled, paused, refused, ended, survivors, leftAlone, trouble? }
 // `processes` are those the continuation host started ([{ pid, name }]); `list()` gives [{ pid, ppid, pgid, command }]
 // and `cwds()` a Map of pid to working folder (ps and lsof by default); `kill(pid, signal)` ends one (a negative pid,
@@ -152,9 +152,10 @@ async function endSnapshot(snapshot, { list, kill, wait, grace, sleep }) {
 // engine doesn't cancel and which stay paused; `leftAlone` the processes named as a run's owner that
 // `engine.ownsProcess(command)` doesn't own. `afterSnapshot()` is awaited once the processes are taken and before any
 // run is cancelled (or once the engine has failed), so what it ends (the continuation host's wake) is in the snapshot.
+// `known` are the runs started and not seen end, handed to the engine's stopAll for a run its list may not show yet.
 export async function stopEngine({
   engine, processes = [], kill = killByPid, list = listProcesses, cwds = listCwds, wait = STOP_WAIT_MS, grace = KILL_GRACE_MS,
-  sleep = delay, reason = 'All stop', self = process.pid, afterSnapshot = () => {},
+  sleep = delay, reason = 'All stop', self = process.pid, afterSnapshot = () => {}, known = [],
 } = {}) {
   let snapshot = null;
   let leftAlone = [];
@@ -171,7 +172,7 @@ export async function stopEngine({
 
   let result;
   try {
-    result = await engine.stopAll(reason, { beforeCancel: take });
+    result = await engine.stopAll(reason, { beforeCancel: take, known });
   } catch (error) {
     result = { cancelled: [], survivors: [], paused: [], trouble: `The engine couldn't cancel its runs: ${error instanceof Error ? error.message : 'unknown'}` };
   }
