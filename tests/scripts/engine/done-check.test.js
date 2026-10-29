@@ -152,6 +152,28 @@ test("a second run in the same worktree gets its own overlay, never the earlier 
   assert.doesNotMatch(JSON.stringify(settings), /run-7/);
 });
 
+test("--release puts the branch's own shared settings back, so git can move the worktree to a commit that changes them", async () => {
+  const ws = tempFolder('wh-ws-');
+  const worktree = sharedWorktree();
+  git(['switch', '-q', '-c', 'newer'], worktree);
+  // A later commit changes the shared settings, as a rebase onto a newer main line would bring.
+  fs.writeFileSync(path.join(worktree, '.claude', 'settings.json'), `${JSON.stringify({ ...SHARED, model: 'small' }, null, 2)}\n`);
+  git(['commit', '-q', '-a', '-m', 'newer settings'], worktree);
+  git(['switch', '-q', '-'], worktree);
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  assert.equal(await copyMain(['--run', 'run-7', '--out', path.join(ws, 'artifacts', 'runs', 'run-7')], { client, cwd: worktree, out: () => {} }), 0);
+  assert.throws(() => git(['merge', '-q', '--ff-only', 'newer'], worktree), 'skip-worktree holds the file');
+  const said = [];
+  assert.equal(await copyMain(['--release'], { cwd: worktree, out: (line) => said.push(line) }), 0);
+  assert.deepEqual(readShared(worktree), SHARED, "the branch's own settings are back");
+  assert.doesNotMatch(git(['ls-files', '-v', '--', '.claude/settings.json'], worktree), /^S /, 'no longer skip-worktree');
+  git(['merge', '-q', '--ff-only', 'newer'], worktree);
+  assert.equal(readShared(worktree).model, 'small');
+  // Nothing to release is no trouble.
+  assert.equal(await copyMain(['--release'], { cwd: sharedWorktree(), out: () => {} }), 0);
+  assert.equal(await copyMain(['--release'], { cwd: sharedWorktree(null), out: () => {} }), 0);
+});
+
 test("a branch without shared settings gets the run's overlay alone, kept out of git by the exclude list", async () => {
   const ws = tempFolder('wh-ws-');
   const worktree = sharedWorktree(null);

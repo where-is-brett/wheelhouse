@@ -12,7 +12,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const INCIDENT = { id: 'red-main-0123456789', what: 'The main line\'s checks are red.', kind: 'red-main', suspect: 12, work: 'fix-main-red-main-0123456789', at: '2026-10-30T09:00:00.000Z', fixes: [] };
 const record = (runId, state, extra = {}) => ({ at: '2026-10-30T10:00:00.000Z', data: { work: INCIDENT.work, lane: 'fix-main', engine: 'fake', runId, state, ...extra } });
 
-function setUp({ green = false, stop = false } = {}) {
+function setUp({ green = false, stop = false, refuse = () => null } = {}) {
   const dir = tempFolder('wh-df-');
   const starts = [];
   const written = [];
@@ -28,7 +28,7 @@ function setUp({ green = false, stop = false } = {}) {
     engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => world.views,
     config: () => ({ testCommand: 'npm test', routing: {} }),
     stopped: () => world.stop,
-    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    start: async (args) => { starts.push(args); const refused = refuse(starts.length); return refused ? { ok: false, refused } : { ok: true, runId: `run-${starts.length}` }; },
     write: async (kind, data) => { written.push({ kind, data }); },
     now: () => new Date('2026-10-30T10:00:00.000Z'),
     mainGreen: async () => world.green,
@@ -42,7 +42,7 @@ function setUp({ green = false, stop = false } = {}) {
     world.views.questions[q.id] = { question: { data: q }, answer: { label, at: '2026-10-30T10:05:00.000Z' } };
     return q;
   };
-  return { d, starts, written, world, ran, answer };
+  return { d, starts, written, world, ran, answer, engine, acts: [] };
 }
 const fixStarts = (t) => t.starts.filter((s) => s.order?.lane === 'fix-main');
 const notes = (t) => t.written.filter((w) => w.kind === 'note').map((w) => w.data.words);
@@ -144,6 +144,41 @@ test('the card\'s Undo starts an attempt that undoes the suspect, and Fix it for
   }
 });
 
+test('a first fix whose start is refused is tried again, and the Logbook says why, once', async () => {
+  const t = setUp({ refuse: (n) => (n <= 2 ? "the broker's launcher names a program that is gone" : null) });
+  await t.d.tick();
+  await t.d.tick();
+  assert.equal(notes(t).filter((w) => /didn't start/.test(w)).length, 1);
+  assert.match(notes(t).find((w) => /didn't start/.test(w)), /launcher/);
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 3, 'started on the third try');
+});
+
+test("an answer whose start is refused is kept and tried again, and the Logbook says why, once", async () => {
+  let refusing = true;
+  const t = setUp({ refuse: (n) => (n >= 2 && refusing ? "the engine's copy of the project couldn't be brought up to date" : null) });
+  await t.d.tick();
+  t.ran('run-1', 'ended', { outcome: 'failed' });
+  await t.d.tick();
+  t.answer('Fix it forward');
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 2, 'tried');
+  const said = notes(t).filter((w) => /didn't start/.test(w));
+  assert.equal(said.length, 1);
+  assert.match(said[0], /Fix it forward/);
+  assert.match(said[0], /brought up to date/);
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 3, 'the answer is kept, and tried again');
+  assert.equal(notes(t).filter((w) => /didn't start/.test(w)).length, 1, 'said once');
+  refusing = false;
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 4);
+  assert.match(fixStarts(t)[3].order.goal, /pass again\.$/);
+  t.ran('run-4', 'started');
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 4, 'once it started, not again');
+});
+
 test('the card\'s Leave it starts nothing, and work stays held', async () => {
   const t = setUp();
   await t.d.tick();
@@ -170,6 +205,30 @@ test('All stop then lift carries the cancelled fix on, on its branch', async () 
   assert.equal(fixStarts(t)[1].carryOn, true);
   assert.equal(fixStarts(t)[1].branch, 'wh/fix');
   assert.equal(t.written.filter((w) => w.kind === 'question').length, 0);
+});
+
+test('a fix still running when the main line turns green by itself is stopped, and the Logbook says so', async () => {
+  const t = setUp();
+  await t.d.tick();
+  t.ran('run-1', 'started');
+  t.world.green = true;
+  t.engine.act = async (runId, action) => { t.acts.push({ runId, action }); return { ok: true }; };
+  await t.d.tick();
+  assert.ok(t.written.some((w) => w.kind === 'incident-closed'));
+  assert.deepEqual(t.acts.map((a) => [a.runId, Object.keys(a.action)[0]]), [['run-1', 'cancel']]);
+  assert.ok(notes(t).some((w) => /green by itself/.test(w) && /stopped/.test(w)));
+});
+
+test('a fix that ended with its pull request still open when the main line turns green gets a Logbook line naming it', async () => {
+  const t = setUp();
+  await t.d.tick();
+  t.ran('run-1', 'started');
+  t.ran('run-1', 'ended', { outcome: 'completed', pr: 31 });
+  t.world.green = true;
+  t.engine.act = async (runId, action) => { t.acts.push({ runId, action }); return { ok: true }; };
+  await t.d.tick();
+  assert.deepEqual(t.acts, [], 'nothing running to stop');
+  assert.ok(notes(t).some((w) => /#31/.test(w) && /isn't needed/.test(w)));
 });
 
 test('a merged fix waits for the main line to read green', async () => {

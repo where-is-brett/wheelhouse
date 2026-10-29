@@ -43,6 +43,7 @@ import { archonAdapter } from '../engine/archon/adapter.js';
 import { archonCli } from '../engine/archon/cli.js';
 import { archonEnv } from '../engine/archon/env.js';
 import { writeArchonSettings } from '../engine/archon/build.js';
+import { runCost } from '../engine/spend.js';
 import { PROJECT, until } from './engine-world.js';
 import { standInTools } from './stand-in-tools.js';
 import { engineCache, prepareEngine, linkEngine } from './archon-engine.js';
@@ -117,6 +118,8 @@ export async function openArchonWorld({
   const forwarded = [];
   const hostCalls = [];
   const calls = [];
+  // The health trial's runs, which the helper never started, so the world's spend counts them too.
+  const trialRuns = [];
   let helper = null;
   let engine = null;
   let paths = null;
@@ -159,6 +162,21 @@ export async function openArchonWorld({
     acts: () => calls.filter((c) => c.call === 'act'),
     // The ids of the runs Archon started, oldest first.
     runs: () => calls.filter((c) => c.call === 'start' && c.got?.ok === true).map((c) => c.got.runId),
+    // The tokens the world's runs spent, the health trial's among them, as Archon's records give each step's:
+    // { input, output }, with cache reads and writes in the input, as a session's tokens are counted. A step whose
+    // kinds of token aren't known counts its whole figure as input.
+    async spend() {
+      const total = { input: 0, output: 0 };
+      for (const runId of [...trialRuns, ...world.runs()]) {
+        let cost;
+        try { cost = runCost(await engine.inspect(runId)); } catch { continue; }
+        if (cost.kinds) {
+          total.input += (cost.kinds.input ?? 0) + (cost.kinds.cacheRead ?? 0) + (cost.kinds.cacheWrite ?? 0);
+          total.output += cost.kinds.output ?? 0;
+        } else total.input += cost.tokens;
+      }
+      return total;
+    },
     orders() {
       const dir = path.join(engineDirOf(stateDir(PROJECT)), 'orders');
       const names = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => n.endsWith('.json')) : [];
@@ -187,6 +205,7 @@ export async function openArchonWorld({
       if (!health.ok) return { ok: false, why: `the engine isn't sound: ${health.findings.join('; ')}` };
       const started = await archon(['workflow', 'run', 'wheelhouse-hello', '--detach', '--workflow-source', paths.packDir, '--config', ENGINE_CONFIG, '--cwd', folder], { json: true, timeout: 120000 });
       const runId = started.json?.ok === true ? started.json.runId : null;
+      if (typeof runId === 'string') trialRuns.push(runId);
       if (typeof runId !== 'string') return { ok: false, why: `the health trial didn't start: ${String(started.json?.error ?? started.stderr ?? '').trim().split('\n')[0]}` };
       const ended = await until(async () => (await engine.inspect(runId)).outcome, { ms, every });
       if (ended !== 'completed') return { ok: false, why: `the health trial ${ended ? `ended ${ended}` : 'didn\'t finish in time'}${await world.trouble(runId)}` };
@@ -311,6 +330,15 @@ async function ranThisCheckout(world) {
 // A pass counts only when the steps ran this checkout's Wheelhouse, and so does the health trial.
 export async function runRealScenario({ scenario, open = openArchonWorld, prepare = prepareEngine, log = (line) => process.stderr.write(`${line}\n`) }) {
   const cache = await prepare({ log });
+  // The tokens the play's steps spent, by Archon's records, the health trial's too the one time it runs.
+  const usage = { input: 0, output: 0 };
+  const count = async (world) => {
+    try {
+      const spent = await world.spend?.();
+      usage.input += spent?.input ?? 0;
+      usage.output += spent?.output ?? 0;
+    } catch { /* a world that can't say spent nothing it can count */ }
+  };
   if (proof === null) {
     const world = await open({ cache });
     try {
@@ -319,17 +347,22 @@ export async function runRealScenario({ scenario, open = openArchonWorld, prepar
         const ran = await ranThisCheckout(world);
         if (!ran.ok) proof = { ok: false, why: `the health trial didn't count: ${ran.why}` };
       }
-    } catch (error) { proof = { ok: false, why: `the health trial could not run: ${error.message}` }; } finally { await world.close(); }
+    } catch (error) { proof = { ok: false, why: `the health trial could not run: ${error.message}` }; } finally {
+      await count(world);
+      await world.close();
+    }
   }
-  if (!proof.ok) return { pass: false, why: `not played: ${proof.why}` };
+  if (!proof.ok) return { pass: false, why: `not played: ${proof.why}`, usage };
   const world = await open({ cache });
   try {
     const got = await scenario.engine.real(world, { until: (fn, o) => until(fn, { ms: 6 * 60 * 1000, every: 1000, ...o }) });
-    if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}` };
+    if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}`, usage };
     // A pass on another release's guards proves nothing about this checkout.
     const ran = got?.pass === true ? await ranThisCheckout(world) : { ok: true };
-    return ran.ok ? got : { pass: false, why: `not counted: ${ran.why}` };
+    return ran.ok ? { ...got, usage } : { pass: false, why: `not counted: ${ran.why}`, usage };
   } finally {
+    // Counted even when the play throws; the returned usage is the same object, so it carries this world's spend.
+    await count(world);
     await world.close();
   }
 }

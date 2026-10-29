@@ -3035,6 +3035,27 @@ test('a second project\'s uninstall leaves the engine but takes its own mirror r
   });
 });
 
+test("a second project's uninstall removes its own fetch mirror from the engine folder, and leaves the others'", async () => {
+  await withHome(async () => {
+    const world = makeWorld();
+    const { r } = fullSetup(world);
+    engineSetup(world, r);
+    writeProject('o__Other', { folder: tempFolder('wh-other '), remoteUrl: 'https://github.com/o/Other.git', host: 'github', repo: 'o/Other', connection: { host: 'github', mode: 'narrow', project: 'o/Other' } });
+    const own = path.join(engineDir(), 'mirrors', `${SLUG}.git`);
+    const other = path.join(engineDir(), 'mirrors', 'o__Other.git');
+    writeText(path.join(own, 'HEAD'), 'ref: refs/heads/main\n');
+    writeText(path.join(other, 'HEAD'), 'ref: refs/heads/main\n');
+    try {
+      const got = await plan(world);
+      assert.equal(got.last, false);
+      const removed = got.changes.filter((c) => c.put === 'remove' && [own, other].includes(c.target));
+      assert.deepEqual(removed.map((c) => c.target), [own]);
+    } finally {
+      fs.rmSync(archonHome(), { recursive: true, force: true });
+    }
+  });
+});
+
 test('uninstall\'s run-history card is level 4 with Keep it recommended', async () => {
   await withHome(async () => {
     const world = makeWorld();

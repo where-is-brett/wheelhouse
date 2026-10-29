@@ -2,7 +2,9 @@
 // Setup's proof that the build engine works (Archon design, section 14.4): the engine's health, then the pack's
 // `wheelhouse-hello` trial, one script step and one cheap AI step, a few cents. The trial runs in a scratch project of
 // its own, never the director's: a git repository with Standard's project settings and a planted `.env` that holds no
-// secret. Its AI step tries once to read that file; the trial passes only when the read is refused.
+// secret, both committed. Its AI step tries once to read that file; the trial passes only when Wheelhouse's own tool
+// guard refused the read. The settings switch the plugin on there, so the guard acts, and leave out Standard's own
+// .env rules, so Claude Code's deny rules can't refuse it first and a pass shows the plugin's hooks loaded.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,13 +28,27 @@ export function nodeOnPath(env = archonEnv()) {
   return String(env.PATH ?? '').split(path.delimiter).some((dir) => dir && fs.existsSync(path.join(dir, name)));
 }
 
+// The words every refusal of Wheelhouse's tool guard starts with (scripts/hooks/tool-guard.js).
+export const GUARD_REFUSAL = 'Wheelhouse does not let an agent';
+// A rule for every project's .env files; the engine's own secrets keep theirs.
+const NAMES_ENV = /\*\*\/\.env\b/;
+
+// Standard's project settings for the trial: the plugin on, and no rule of their own about .env files.
+export function trialSettings(settings = standardProjectSettings()) {
+  const strip = (list) => (Array.isArray(list) ? list.filter((rule) => !(typeof rule === 'string' && NAMES_ENV.test(rule))) : list);
+  const permissions = { ...settings.permissions, ...(settings.permissions?.deny ? { deny: strip(settings.permissions.deny) } : {}), ...(settings.permissions?.ask ? { ask: strip(settings.permissions.ask) } : {}) };
+  const filesystem = settings.sandbox?.filesystem;
+  const sandbox = filesystem ? { ...settings.sandbox, filesystem: { ...filesystem, ...(filesystem.denyRead ? { denyRead: strip(filesystem.denyRead) } : {}) } } : settings.sandbox;
+  return { ...settings, permissions, ...(sandbox ? { sandbox } : {}), enabledPlugins: { ...settings.enabledPlugins, 'wheelhouse@wheelhouse': true } };
+}
+
 // The scratch project, made afresh in `folder`.
 async function scratchProject(folder, run) {
   fs.mkdirSync(path.join(folder, '.claude'), { recursive: true });
-  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), `${JSON.stringify(standardProjectSettings(), null, 2)}\n`);
+  fs.writeFileSync(path.join(folder, '.claude', 'settings.json'), `${JSON.stringify(trialSettings(), null, 2)}\n`);
   fs.writeFileSync(path.join(folder, '.env'), 'WHEELHOUSE_HELLO=planted by the health trial; not a secret\n');
   fs.writeFileSync(path.join(folder, 'README.md'), "Wheelhouse's health trial. Nothing here is real work.\n");
-  for (const args of [['init', '-q'], ['add', 'README.md', '.claude/settings.json'], ['commit', '-q', '-m', 'Health trial']]) {
+  for (const args of [['init', '-q'], ['add', '-f', 'README.md', '.env', '.claude/settings.json'], ['commit', '-q', '-m', 'Health trial']]) {
     const got = await run('git', [...GIT, ...args], { cwd: folder });
     if (got.code !== 0) throw new Error('the trial project could not be made');
   }
@@ -63,7 +79,7 @@ export async function helloTrial({ cli = archonCli, run = defaultRun, folder = f
     }
     if (record.json.status !== 'completed') return 'could not run';
     const output = JSON.parse(readOutputs(record.json).guarded ?? 'null');
-    if (output?.refused === true) return 'refused';
+    if (output?.refused === true) return typeof output.refusal === 'string' && output.refusal.includes(GUARD_REFUSAL) ? 'refused' : 'could not run';
     return output?.refused === false ? 'read' : 'could not run';
   } catch {
     return 'could not run';

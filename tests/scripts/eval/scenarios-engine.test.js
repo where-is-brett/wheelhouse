@@ -9,6 +9,8 @@ import { parseArgs } from '../../../scripts/eval/harness.js';
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
 import { asking, bugBlocked, smallBlocked } from '../../eval/build-loop/engine-recordings.js';
 import { tempFolder } from '../../helpers/homes.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // The fix-main scenarios (60 to 62) play in the same suite; they are tested in scenarios-60-62.test.js. So do the bug
 // lane's (63 to 69). The feature scenarios (70 to 75) are tested in scenarios-70-75.test.js too.
@@ -73,6 +75,18 @@ test('--engine fake plays only the engine\'s scenarios, and starts no session', 
   assert.ok(said.includes('20: not run (it doesn\'t play on the build engine)'));
   assert.ok(said.includes('42 with: pass (played)'));
   assert.equal(code, 1, 'a scenario named and not run is no pass');
+});
+
+test("an engine scenario's run record carries the tokens its play spent, so a real run's spend is in the report", async () => {
+  const home = tempFolder('wh-s42-spend-');
+  await main(['42', '--engine', 'archon'], {
+    home, print: () => {}, commit: null, version: null,
+    run: async () => { throw new Error('no session starts'); },
+    engineRun: async () => ({ pass: true, why: 'played', played: 'real', usage: { input: 125000, output: 900 } }),
+  });
+  const dir = path.join(home, '.wheelhouse-evals', 'runs');
+  const record = JSON.parse(fs.readFileSync(path.join(dir, fs.readdirSync(dir)[0]), 'utf8'));
+  assert.deepEqual(record.runs.map((r) => r.usage), [{ input: 125000, output: 900 }]);
 });
 
 test('the build-loop suite on the fake engine is the engine scenarios, in their with variant', async () => {

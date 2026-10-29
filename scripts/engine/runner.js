@@ -93,6 +93,8 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
   // Routes one ask (an `ask` EngineEvent), once.
   async function onAsk(ask) {
     if (!isPlain(ask) || typeof ask.id !== 'string' || state.routed[ask.id]) return;
+    // A held run the director stopped is never asked about again.
+    if (state.capped[ask.runId]?.stopped === true) return;
     if (held(ask.runId)) {
       // Routed once the hold is lifted.
       if (!state.later.some((a) => a.id === ask.id)) state.later.push(ask);
@@ -236,6 +238,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         await note(`All stop was on when you answered about ${titled(kept.work)}, so the build didn't get that answer; the question comes back once All stop is lifted.`, { work: kept.work });
         continue;
       }
+      // Stopped at its cap by the director: the record has ended it, so no answer goes back to carry it on.
+      if (state.capped[kept.runId]?.stopped === true) {
+        state.delivered[key] = 'stopped';
+        keep();
+        await note(`Your answer about ${titled(kept.work)} wasn't sent: you stopped it at its cap, so it doesn't carry on.`, { work: kept.work });
+        continue;
+      }
       // Held at its cap: sent once Give it more lifts the hold.
       if (held(kept.runId)) continue;
       if (!answer) {
@@ -302,6 +311,27 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
 
   async function capAnswer(kept, label) {
     if (label !== MORE) {
+      if (held(kept.runId)) {
+        // The engine can't cancel a paused run, and abandoning one would remove its worktree's uncommitted work, so
+        // it stays paused there, spending nothing; the record ends it, which gives back its build slot.
+        state.capped[kept.runId].held = false;
+        state.capped[kept.runId].stopped = true;
+        // Its asks not yet shown never become cards.
+        state.later = state.later.filter((ask) => ask.runId !== kept.runId);
+        state.waiting = state.waiting.filter((w) => w.runId !== kept.runId);
+        keep();
+        const records = (viewsNow().runs?.[kept.work] ?? []).filter((r) => r?.data?.runId === kept.runId);
+        const latest = records.at(-1)?.data ?? {};
+        const branch = latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? kept.branch ?? null;
+        if (latest.state !== 'ended') {
+          await write('run', {
+            work: kept.work, lane: latest.lane ?? kept.lane, engine: latest.engine ?? engine.name ?? 'engine',
+            runId: kept.runId, state: 'ended', outcome: 'stopped', ...(branch ? { branch } : {}),
+          });
+        }
+        await note(`${titleOf(kept.work)} stays stopped, as you chose. It stays paused in the build engine, spending nothing, and no longer holds a build slot; what it has done so far is kept on its branch.`, { work: kept.work });
+        return;
+      }
       await note(`${titleOf(kept.work)} stays stopped, as you chose.`, { work: kept.work });
       return;
     }

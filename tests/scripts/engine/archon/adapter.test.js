@@ -346,9 +346,15 @@ const healthyCli = (overrides = {}) => fakeCli({
 const bunRun = (stdout = '1.4.3\n') => async () => ({ code: 0, stdout, stderr: '' });
 
 // An engine folder as the build leaves it: the source launcher, and the provider with Wheelhouse's patch in it.
-function builtEngine({ launcher, provider = "permissionMode: process.env.ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits'" } = {}) {
+// The broker's launcher as setup writes it: this Node.js and the broker's script in this checkout.
+const SOUND_BROKER = `#!/bin/sh\nexec '${process.execPath}' '${path.resolve('scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`;
+function builtEngine({ launcher, provider = "permissionMode: process.env.ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits'", broker = SOUND_BROKER } = {}) {
   const engine = tempFolder('wh-archon-health-');
   const p = enginePaths(engine);
+  if (broker !== null) {
+    fs.mkdirSync(path.join(engine, 'broker', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(engine, 'broker', 'bin', 'gh'), broker);
+  }
   fs.mkdirSync(path.dirname(p.launcher), { recursive: true });
   fs.writeFileSync(p.launcher, launcher ?? launcherText(engine));
   const file = path.join(p.src, 'packages', 'providers', 'src', 'claude', 'provider.ts');
@@ -371,6 +377,29 @@ test("health fails closed on an engine that isn't the patched source build", asy
   assert.match(release.findings.join(' '), /sandbox/);
   const nothing = await adapter(healthyCli(), { pins, run: bunRun(), engine: tempFolder('wh-archon-health-') }).health();
   assert.equal(nothing.ok, false);
+});
+
+test("health fails closed when the broker's launcher names a Node.js or a Wheelhouse that is gone, as after an update", async () => {
+  const gone = path.join(tempFolder('wh-gone-'), 'plugins', 'cache', 'wheelhouse', '0.1.2', 'scripts', 'engine', 'broker', 'gh.js');
+  for (const broker of [
+    `#!/bin/sh\nexec '${process.execPath}' '${gone}' "$@"\n`,
+    `#!/bin/sh\nexec '/usr/local/Cellar/node/20.0.0/bin/node-gone' '${path.resolve('scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`,
+    'not a launcher',
+    null,
+  ]) {
+    const got = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine({ broker }) }).health();
+    assert.equal(got.ok, false, String(broker));
+    assert.match(got.findings.join(' '), /broker/);
+    assert.match(got.findings.join(' '), /setup/);
+  }
+});
+
+test("start refuses while the broker's launcher names a program that is gone, so no step runs without the broker", async () => {
+  const gone = `#!/bin/sh\nexec '${process.execPath}' '/nowhere/wheelhouse/0.1.2/scripts/engine/broker/gh.js' "$@"\n`;
+  const cli = healthyCli();
+  const got = await adapter(cli, { pins, run: bunRun(), engine: builtEngine({ broker: gone }) }).start({ work: 'w', lane: 'quick' });
+  assert.equal(got.ok, false);
+  assert.match(got.refused, /broker/);
 });
 
 test('health fails closed when telemetry reports on', async () => {

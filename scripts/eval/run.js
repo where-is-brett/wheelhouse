@@ -698,7 +698,7 @@ export async function main(argv, {
           const got = await engineRun({ scenario, variant, trial, engine: args.engine ?? 'fake' });
           const why = got?.why ?? 'it said nothing';
           const played = got?.played ? ` [${got.played}]` : '';
-          outcome = { pass: got?.pass === true, handled: true, why, file: null, usage: { input: 0, output: 0 }, ...(got?.played ? { played: got.played } : {}), line: `${scenarioName(scenario)} ${variant}: ${got?.pass === true ? 'pass' : 'fail'}${played} (${why})` };
+          outcome = { pass: got?.pass === true, handled: true, why, file: null, usage: got?.usage ?? { input: 0, output: 0 }, ...(got?.played ? { played: got.played } : {}), line: `${scenarioName(scenario)} ${variant}: ${got?.pass === true ? 'pass' : 'fail'}${played} (${why})` };
         } else {
           outcome = await run({ scenario, variant, trial, home, date, column, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
         }

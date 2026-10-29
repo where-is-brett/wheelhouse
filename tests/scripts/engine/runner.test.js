@@ -438,7 +438,7 @@ test("a held run's answers wait: none reaches the build until Give it more, so i
   } finally { t.cleanup(); }
 });
 
-test("an ask a held run raises waits for the hold, and Stop keeps it held", async () => {
+test("an ask a held run raises waits for the hold, and Stop never sends it", async () => {
   const { t, event } = pausedAtCap();
   try {
     await t.runner.tick();
@@ -448,8 +448,43 @@ test("an ask a held run raises waits for the hold, and Stop keeps it held", asyn
     await t.runner.tick();
     await t.runner.tick();
     assert.equal(acts(t.engine).length, 0);
-    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'still held');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'its ask never becomes a card');
     assert.ok(t.writes.some((w) => w.kind === 'note' && /stays stopped/.test(w.data.words ?? '')));
+  } finally { t.cleanup(); }
+});
+
+test('Stop on a held run ends it in the record, so it gives back its build slot, and nothing is sent to the engine', async () => {
+  const { t, runId } = pausedAtCap();
+  try {
+    await t.runner.tick();
+    answerCap(t, 'Stop');
+    await t.runner.tick();
+    const ended = t.writes.filter((w) => w.kind === 'run' && w.data.runId === runId);
+    assert.equal(ended.length, 1);
+    assert.deepEqual(ended[0].data, { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state: 'ended', outcome: 'stopped', branch: 'wh/sale-banner' });
+    assert.equal(acts(t.engine).length, 0, 'a paused run is never abandoned, so its worktree is kept');
+    assert.equal(t.engine.inspect(runId).status, 'paused');
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /no longer holds a build slot/.test(w.data.words ?? '')));
+    await t.runner.tick();
+    assert.equal(t.writes.filter((w) => w.kind === 'run').length, 1, 'once');
+    await t.runner.onAsk({ ...t.engine.watch('0').events.filter((e) => e.runId === runId && e.type === 'ask').at(-1), id: 'again' });
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1, 'an ask the stopped run shows again is no card');
+  } finally { t.cleanup(); }
+});
+
+test("an answer to a stopped held run's own earlier card never reaches the engine, so it can't spend past the record's end", async () => {
+  const { t, event } = pausedAtCap();
+  try {
+    await t.runner.onAsk(event);
+    const asked = t.writes.filter((w) => w.kind === 'question')[0].data;
+    await t.runner.tick();
+    answerCap(t, 'Stop');
+    await t.runner.tick();
+    t.views.questions[asked.id] = { question: { data: asked }, answer: { label: 'A' } };
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'nothing is sent to the stopped run');
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /you stopped it at its cap/.test(w.data.words ?? '')));
   } finally { t.cleanup(); }
 });
 

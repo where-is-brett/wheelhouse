@@ -46,6 +46,7 @@ const STALL_QUESTIONS = FEATURE_QUESTIONS + 500;
 export const FEATURE_STOPPED = 'Stopped before it was switched on; the slices already added stay behind their switch.';
 // The summary of the report for quick, small and bug work whose pull request merged.
 export const MERGED_WORDS = 'Added to the main line.';
+export const CLOSED_WORDS = 'Its pull request was closed without being added.';
 // The fix card's numbers, after the clash cards' and the requests card's.
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
 export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
@@ -400,6 +401,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const latest = new Map();
       for (const r of views.runs?.[work] ?? []) if (isPlain(r?.data) && since(r, entry.work)) latest.set(r.data.runId, r.data);
       const prs = [...new Set([...latest.values()].filter((r) => r.state === 'ended' && Number.isInteger(r.pr)).map((r) => r.pr))];
+      let merged = false;
       for (const pr of prs.filter((n) => !state.closedPrs.includes(n)).reverse()) {
         const got = await stateOf(pr);
         if (got === 'closed') {
@@ -410,7 +412,18 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         await write('report', { work, outcome: 'merged', pr, summary: MERGED_WORDS, rulings: [] });
         state.shipped[work] = queued;
         keep();
+        merged = true;
         break;
+      }
+      // Every run ended, and the newest pull request was closed unmerged: the work has stopped, so it gets a `closed`
+      // report, which takes it off the board's work under way, and the Logbook says so, once. Queued again, it starts
+      // afresh. A newer run still going, or a newer pull request open, ends nothing.
+      const newest = [...latest.values()].filter((r) => Number.isInteger(r.pr)).at(-1)?.pr;
+      if (!merged && Number.isInteger(newest) && state.closedPrs.includes(newest) && [...latest.values()].every((r) => r.state === 'ended')) {
+        await write('report', { work, outcome: 'closed', pr: newest, summary: CLOSED_WORDS, rulings: [] });
+        state.shipped[work] = queued;
+        keep();
+        await write('note', { about: 'engine', work, words: `${entry.work.data.title ?? work}: its pull request #${newest} was closed without being added, so the work has stopped. Queue it again to build it afresh.` });
       }
     }
   }
@@ -439,19 +452,51 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (decided.act === 'close') {
       await write('incident-closed', { incident: incident.id, why: 'the main line\'s checks are green' });
       await write('note', { about: 'engine', words: GREEN_WORDS });
+      // A fix the main line no longer needs: one still running is stopped, and one whose pull request wasn't added is
+      // named, since the merge gate refuses it once the incident is closed.
+      const merged = new Set(fixedRuns() ?? []);
+      const fixes = new Map();
+      for (const r of runs) if (isPlain(r?.data) && typeof r.data.runId === 'string') fixes.set(r.data.runId, { ...(fixes.get(r.data.runId) ?? {}), ...r.data });
+      for (const runId of kept.started) if (!fixes.has(runId)) fixes.set(runId, { runId, state: 'started' });
+      for (const fix of fixes.values()) {
+        if (fix.state !== 'ended') {
+          let got = null;
+          try { got = await engine.act(fix.runId, { cancel: { reason: 'the main line turned green by itself' } }); } catch { got = null; }
+          await write('note', { about: 'engine', words: got?.ok === true
+            ? 'The main line turned green by itself, so the fix still running for it was stopped.'
+            : 'The main line turned green by itself, but the fix still running for it couldn\'t be stopped; what it does is no longer needed.' });
+        } else if (Number.isInteger(fix.pr) && !merged.has(fix.runId)) {
+          await write('note', { about: 'engine', words: `The main line turned green by itself, so the fix's pull request #${fix.pr} isn't needed and won't be added; it can be closed.` });
+        }
+      }
       delete state.fixes[incident.id];
       keep();
     } else if (decided.act === 'start') {
       let order;
       try { order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true }); } catch { return; }
+      const answered = isPlain(kept.next) ? kept.next : null;
       kept.next = null;
       if (decided.after) kept.carried.push(decided.after);
       keep();
       const got = await start({ project, order, ...(decided.carryOn ? { branch: decided.branch, carryOn: true } : {}) });
       if (got?.ok && typeof got.runId === 'string') {
         kept.started.push(got.runId);
+        delete kept.refusedSaid;
         keep();
         if (kept.started.length === 1) await write('note', { about: 'engine', words: STARTED_FIX_WORDS });
+      } else {
+        // Tried again on the next tick, the director's answer kept; the Logbook says why, once.
+        if (answered) kept.next = answered;
+        const said = kept.refusedSaid === true;
+        kept.refusedSaid = true;
+        keep();
+        if (!said) {
+          const why = got?.refused ?? 'the build engine didn\'t start it';
+          const chose = answered ? (answered.revert === true && incident.suspect ? undoLabel(incident.suspect) : FIX_FORWARD) : null;
+          await write('note', { about: 'engine', words: chose
+            ? `You chose ${chose} for the red main line, but the fix didn't start: ${why}. Your answer is kept, and it is tried again.`
+            : `The fix for the red main line didn't start: ${why}. It is tried again, and other work waits until the main line is green.` });
+        }
       }
     } else if (decided.act === 'card') {
       kept.carded.push(decided.run);

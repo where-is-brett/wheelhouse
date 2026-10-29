@@ -34,6 +34,17 @@ const OWN_GH = /(^|[\s;&|(`"'=])(\S*[/\\]gh(\.exe)?)(?=[\s;&|)`"']|$)|\bGH_TOKEN
 // The merge queue's verdict: only the helper posts it, from a signed review (section 7.5).
 const VERDICT = /archon-review-report|\bgh\s+pr\s+review\b/;
 
+// A git command that moves the worktree's files, which skip-worktree on the run's overlay makes git refuse where it
+// changes .claude/settings.json; a step takes the overlay out first (order-copy.js --release).
+const MOVES_WORKTREE = /\bgit\s+(?:-[Cc]\s+\S+\s+|-\S+\s+)*(rebase|pull|checkout|merge|switch|reset|stash|cherry-pick|revert|am|restore|read-tree)(?![\w-])/;
+const RELEASE = /order-copy\.js"?\s+--release\b/;
+function movesBeforeRelease(text) {
+  const move = MOVES_WORKTREE.exec(text);
+  if (!move) return false;
+  const release = RELEASE.exec(text);
+  return !release || release.index > move.index;
+}
+
 // A workflow file's object: the text after its leading comment lines, as JSON.
 export function readWorkflow(text) {
   const lines = String(text).split(/\r?\n/);
@@ -135,6 +146,8 @@ export function checkPack(dir = PACK_DIR, { skillCopies = SKILL_COPIES } = {}) {
       const body = [node.bash, node.prompt, node.loop?.until_bash, node.loop?.prompt, node.loop_group?.until_bash].filter((part) => typeof part === 'string').join('\n');
       if (OWN_GH.test(body)) found.push(`${node.id} calls a gh other than the broker, or hands one a token`);
       if (VERDICT.test(body)) found.push(`${node.id} posts a review verdict; only the helper does, from a signed review`);
+      const script = [node.bash, node.loop?.until_bash, node.loop_group?.until_bash].filter((part) => typeof part === 'string').join('\n');
+      if (movesBeforeRelease(script)) found.push(`${node.id} moves the worktree with git before it takes the run's overlay out (order-copy.js --release)`);
     }
   }
   for (const file of used) {
