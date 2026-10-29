@@ -377,3 +377,54 @@ test('a run already over when its cancel fails gets the usual card, and nothing 
     assert.match(t.writes.filter((w) => w.kind === 'question').at(-1).data.what, /so it was stopped/);
   } finally { t.cleanup(); }
 });
+
+// A run that stops at a blocked exit's wait, offering to send it back for a fresh run.
+const reworkAsk = (id) => asking(id, { kind: 'question', recommend: 'rework', options: [{ id: 'rework', label: 'Send it back for a fresh run' }, { id: 'stop', label: 'Stop this work' }] });
+
+test('Send it back on a blocked card starts the work again on its branch once the run has ended, with the cap not raised', async () => {
+  const started = [];
+  const t = setUp({ recordings: { one: reworkAsk('q1') } });
+  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  try {
+    const { runId } = await t.ask();
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T12:55:00.000Z', 'paused']]);
+    t.sign('Send it back for a fresh run');
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action.answer?.choice), ['rework'], 'the engine has the answer');
+    assert.deepEqual(started, [], 'nothing starts while the run is still going');
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'completed' }]]);
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: false }], 'started once');
+    assert.deepEqual(t.runner.carried('again-1'), { raised: false, runs: [runId] }, 'the spend so far still counts against the cap');
+  } finally { t.cleanup(); }
+});
+
+test('any other answer to a blocked card starts nothing again', async () => {
+  const started = [];
+  const t = setUp({ recordings: { one: reworkAsk('q1') } });
+  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  try {
+    const { runId } = await t.ask();
+    t.sign('Stop this work');
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'completed' }]]);
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.deepEqual(started, []);
+  } finally { t.cleanup(); }
+});
+
+test('Send it back that the engine refuses starts nothing again', async () => {
+  const started = [];
+  const t = setUp({ recordings: { one: reworkAsk('q1') } });
+  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+  try {
+    const { runId } = await t.ask();
+    t.engine.act(runId, { cancel: { reason: 'gone' } });
+    t.sign('Send it back for a fresh run');
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'cancelled' }]]);
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.deepEqual(started, []);
+  } finally { t.cleanup(); }
+});

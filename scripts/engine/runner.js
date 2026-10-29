@@ -20,12 +20,14 @@ import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {}, reworks: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
 export const MORE = 'Give it more';
 export const STOP_LABEL = 'Stop';
+// A blocked exit's answer that sends the work back: the run ends, and the work starts again on its branch.
+const REWORK = 'rework';
 
 function readState(file) {
   try {
@@ -217,6 +219,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
+      if (got.ok && answer.choice === REWORK) state.reworks[kept.runId] = { work: kept.work };
       keep();
       if (!got.ok) await note(`Your answer about ${titled(kept.work)} wasn't needed: the build had already moved on.`, { work: kept.work });
     }
@@ -322,6 +325,28 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     });
   }
 
+  // Work the director sent back from a blocked exit starts again on its branch once its run has ended, carrying on from
+  // what is there, with its cap not raised and the spend so far still counted against it.
+  async function reworks() {
+    if (stopped()) return;
+    for (const [runId, { work }] of Object.entries(state.reworks)) {
+      const records = (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
+      const latest = records.at(-1)?.data;
+      if (latest?.state !== 'ended') continue;
+      delete state.reworks[runId];
+      keep();
+      const lane = latest.lane ?? workOf(runId)?.lane;
+      const branch = latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null;
+      const got = await startRun({ work, lane, branch, carryOn: true, raised: false });
+      if (got?.ok && typeof got.runId === 'string') {
+        state.carried[got.runId] = { raised: false, runs: [...(state.carried[runId]?.runs ?? []), runId] };
+        keep();
+      } else {
+        await note(`${titleOf(work)} couldn't be sent back for a fresh run: ${got?.refused ?? 'the build engine didn\'t start it'}.`, { work });
+      }
+    }
+  }
+
   // Asks held while All stop was on are routed again once it is lifted.
   async function again() {
     if (stopped() || state.later.length === 0) return;
@@ -338,6 +363,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     capped,
     async tick() {
       await deliver();
+      await reworks();
       await again();
       await caps();
       await show();
