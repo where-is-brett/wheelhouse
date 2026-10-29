@@ -9,11 +9,11 @@
 // `--controls`: the protected-tests and control checks after the fix). Archon fails a loop that runs out of rounds,
 // so this step counts them, from the round before's own output in Archon's record (`--round-before`, `--ran-before`),
 // never from a file an agent could write, and closes the loop on the last (`--most`), leaving a review that still
-// holds to the signing, which raises the card. It leaves the round's findings from the lenses that held in review-findings.json, for the fix step.
+// holds to the signing, which raises the card. A feature's own run adds the whole-feature lens (`--feature`). It leaves the round's findings from the lenses that held in review-findings.json, for the fix step.
 // It prints { holds, held, ran, blocked, question, options, recommend, level, topic, round, last, done }; `held` is
 // the lenses that held, comma-joined, or `none`; `ran` every lens that has run in any round; `done` closes the loop.
 //   node scripts/engine/review-round.js --artefacts <folder> --most <n> --round-before <n> --ran-before <lens,lens>
-//     --standards <output> --spec <output> --security <output> --design <output> --fix <output>
+//     --standards <output> --spec <output> --security <output> --design <output> [--feature <output>] --fix <output>
 //     --tests <output> --controls <output>
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +21,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 
 export const FINDINGS_FILE = 'review-findings.json';
 
-const LENSES = ['standards', 'spec', 'security', 'design'];
+const LENSES = ['standards', 'spec', 'security', 'design', 'feature'];
 const ALWAYS = new Set(['standards', 'spec']);
 const HOLDS = new Set(['BLOCKER', 'HIGH']);
 

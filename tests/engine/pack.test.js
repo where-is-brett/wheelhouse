@@ -9,7 +9,7 @@ import path from 'node:path';
 import { buildPack } from '../../scripts/engine/pack-build.js';
 import { nodesOf, NO_PERSON_LINE, LOOP_LINE, RULES_MARK } from '../../scripts/engine/pack-check.js';
 import { LANE_WORKFLOWS } from '../../scripts/engine/archon/adapter.js';
-import { REVIEW_STEPS } from '../../scripts/engine/routes.js';
+import { REVIEW_STEPS, FEATURE_REVIEW } from '../../scripts/engine/routes.js';
 import { LANE_CAPS } from '../../scripts/engine/order.js';
 import { MOST_TASKS } from '../../scripts/engine/plan-file.js';
 import { tempFolder } from '../helpers/homes.js';
@@ -107,7 +107,7 @@ test('the small lane plans, builds each task, checks, reviews and fixes, then go
   const review = small.nodes.find((n) => n.id === 'review').loop_group;
   assert.equal(review.max_iterations, 4);
   const body = review.nodes.map((n) => n.id);
-  for (const id of ['fix', 'lenses', ...REVIEW_STEPS, 'verdict']) assert.ok(body.includes(id), `the review loop holds ${id}`);
+  for (const id of ['fix', 'lenses', ...REVIEW_STEPS.filter((s) => s !== FEATURE_REVIEW), 'verdict']) assert.ok(body.includes(id), `the review loop holds ${id}`);
   assert.match(review.nodes.find((n) => n.id === 'verdict').bash, /--most 4/, 'the verdict closes the loop on its last round');
   // Each fix's change is checked again for loosened tests and changed agent files, before the lenses read it.
   for (const [id, script] of [['fix-tests', 'protected-check'], ['fix-controls', 'control-check']]) {

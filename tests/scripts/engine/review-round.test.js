@@ -124,3 +124,21 @@ test('unplan takes the plan out in its own commit, once', async () => {
   assert.deepEqual(await call(), { removed: false });
   assert.equal(git(dir, 'diff', '--name-only', 'main...HEAD').trim(), '', 'the change no longer holds the plan');
 });
+
+test('the whole-feature lens holds the round on a HIGH, and an empty one didn\'t run', async () => {
+  const dir = tempFolder('wh-rr-feature-');
+  const clean = JSON.stringify({ verdict: 'CLEAN', findings: [] });
+  const high = JSON.stringify({ verdict: 'FINDINGS', findings: [{ severity: 'HIGH', file: 'a.js', line: 1, repro: 'r', fix: 'f' }] });
+  const play = async (feature) => {
+    const lines = [];
+    await round(['--artefacts', dir, '--most', '4', '--round-before', '', '--ran-before', '', '--standards', clean, '--spec', clean, '--security', '', '--design', '', '--feature', feature, '--fix', '', '--tests', '', '--controls', ''], { out: (l) => lines.push(l) });
+    return JSON.parse(lines[0]);
+  };
+  const held = await play(high);
+  assert.equal(held.held, 'feature');
+  assert.equal(held.done, false);
+  assert.match(held.ran, /feature/);
+  const none = await play('');
+  assert.equal(none.done, true);
+  assert.doesNotMatch(none.ran, /feature/);
+});

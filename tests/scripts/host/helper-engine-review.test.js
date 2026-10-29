@@ -107,7 +107,7 @@ test('a HIGH finding blocks the verdict', async () => {
   assert.equal(got.posted, false);
   assert.equal(comments.length, 0);
   assert.deepEqual(written.filter((w) => w.kind === 'review').map((w) => w.data.verdict), ['CLEAN', 'FINDINGS']);
-  assert.deepEqual(REVIEW_STEPS, ['review-standards', 'review-spec', 'review-security', 'review-design']);
+  assert.deepEqual(REVIEW_STEPS, ['review-standards', 'review-spec', 'review-security', 'review-design', 'review-feature']);
 });
 
 test('the pack\'s sign step asks for each lens and says clean only once the verdict is posted', async () => {
@@ -148,4 +148,15 @@ test('a review is signed only for the commit the reviews read', async () => {
     assert.equal(written.filter((w) => w.kind === 'review').length, 0, name);
     assert.equal(comments.length, 0, name);
   }
+});
+
+test('the whole-feature lens is signed like the others, and its HIGH finding blocks the verdict', async () => {
+  const { routes, comments, ready } = setup({ outputs: { 'review-standards': review('CLEAN'), 'review-spec': review('CLEAN'), 'review-feature': review('FINDINGS', [finding('HIGH')]) } });
+  await ready();
+  await routes['/engine/review']({ runId: 'run-1', step: 'review-standards' });
+  await routes['/engine/review']({ runId: 'run-1', step: 'review-spec' });
+  const got = await routes['/engine/review']({ runId: 'run-1', step: 'review-feature' });
+  assert.equal(got.verdict, 'FINDINGS');
+  assert.equal(got.posted, false);
+  assert.equal(comments.length, 0);
 });

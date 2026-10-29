@@ -36,8 +36,10 @@ import { FIX_LANE, weakensChecks } from './fix-main.js';
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
 
-// The pack's review steps (engine/archon/pack/wheelhouse-quick.yaml), and the severities that hold work back.
-export const REVIEW_STEPS = Object.freeze(['review-standards', 'review-spec', 'review-security', 'review-design']);
+// The pack's review steps (engine/archon/pack/wheelhouse-quick.yaml, and the whole-feature lens of a feature's own run,
+// wheelhouse-feature.yaml), and the severities that hold work back.
+export const FEATURE_REVIEW = 'review-feature';
+export const REVIEW_STEPS = Object.freeze(['review-standards', 'review-spec', 'review-security', 'review-design', FEATURE_REVIEW]);
 const HOLDS = new Set(['BLOCKER', 'HIGH']);
 const SEVERITIES = new Set(['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']);
 const FULL_SHA = /^[0-9a-f]{40}$/;
