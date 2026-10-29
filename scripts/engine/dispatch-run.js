@@ -439,6 +439,23 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     if (decided.act === 'close') {
       await write('incident-closed', { incident: incident.id, why: 'the main line\'s checks are green' });
       await write('note', { about: 'engine', words: GREEN_WORDS });
+      // A fix the main line no longer needs: one still running is stopped, and one whose pull request wasn't added is
+      // named, since the merge gate refuses it once the incident is closed.
+      const merged = new Set(fixedRuns() ?? []);
+      const fixes = new Map();
+      for (const r of runs) if (isPlain(r?.data) && typeof r.data.runId === 'string') fixes.set(r.data.runId, { ...(fixes.get(r.data.runId) ?? {}), ...r.data });
+      for (const runId of kept.started) if (!fixes.has(runId)) fixes.set(runId, { runId, state: 'started' });
+      for (const fix of fixes.values()) {
+        if (fix.state !== 'ended') {
+          let got = null;
+          try { got = await engine.act(fix.runId, { cancel: { reason: 'the main line turned green by itself' } }); } catch { got = null; }
+          await write('note', { about: 'engine', words: got?.ok === true
+            ? 'The main line turned green by itself, so the fix still running for it was stopped.'
+            : 'The main line turned green by itself, but the fix still running for it couldn\'t be stopped; what it does is no longer needed.' });
+        } else if (Number.isInteger(fix.pr) && !merged.has(fix.runId)) {
+          await write('note', { about: 'engine', words: `The main line turned green by itself, so the fix's pull request #${fix.pr} isn't needed and won't be added; it can be closed.` });
+        }
+      }
       delete state.fixes[incident.id];
       keep();
     } else if (decided.act === 'start') {

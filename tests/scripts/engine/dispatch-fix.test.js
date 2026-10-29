@@ -42,7 +42,7 @@ function setUp({ green = false, stop = false, refuse = () => null } = {}) {
     world.views.questions[q.id] = { question: { data: q }, answer: { label, at: '2026-10-30T10:05:00.000Z' } };
     return q;
   };
-  return { d, starts, written, world, ran, answer };
+  return { d, starts, written, world, ran, answer, engine, acts: [] };
 }
 const fixStarts = (t) => t.starts.filter((s) => s.order?.lane === 'fix-main');
 const notes = (t) => t.written.filter((w) => w.kind === 'note').map((w) => w.data.words);
@@ -195,6 +195,30 @@ test('All stop then lift carries the cancelled fix on, on its branch', async () 
   assert.equal(fixStarts(t)[1].carryOn, true);
   assert.equal(fixStarts(t)[1].branch, 'wh/fix');
   assert.equal(t.written.filter((w) => w.kind === 'question').length, 0);
+});
+
+test('a fix still running when the main line turns green by itself is stopped, and the Logbook says so', async () => {
+  const t = setUp();
+  await t.d.tick();
+  t.ran('run-1', 'started');
+  t.world.green = true;
+  t.engine.act = async (runId, action) => { t.acts.push({ runId, action }); return { ok: true }; };
+  await t.d.tick();
+  assert.ok(t.written.some((w) => w.kind === 'incident-closed'));
+  assert.deepEqual(t.acts.map((a) => [a.runId, Object.keys(a.action)[0]]), [['run-1', 'cancel']]);
+  assert.ok(notes(t).some((w) => /green by itself/.test(w) && /stopped/.test(w)));
+});
+
+test('a fix that ended with its pull request still open when the main line turns green gets a Logbook line naming it', async () => {
+  const t = setUp();
+  await t.d.tick();
+  t.ran('run-1', 'started');
+  t.ran('run-1', 'ended', { outcome: 'completed', pr: 31 });
+  t.world.green = true;
+  t.engine.act = async (runId, action) => { t.acts.push({ runId, action }); return { ok: true }; };
+  await t.d.tick();
+  assert.deepEqual(t.acts, [], 'nothing running to stop');
+  assert.ok(notes(t).some((w) => /#31/.test(w) && /isn't needed/.test(w)));
 });
 
 test('a merged fix waits for the main line to read green', async () => {
