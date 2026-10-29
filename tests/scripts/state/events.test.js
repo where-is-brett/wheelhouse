@@ -794,7 +794,7 @@ test('a survey record carries every part of the survey, each in its own shape', 
     assert.equal(PLAIN_KINDS.includes('survey'), true);
     assert.equal(PROTECTED_KINDS.includes('survey'), false);
     // Only the helper itself records a survey or a column's readiness: no caller writes one.
-    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed']);
+    assert.deepEqual(HELPER_ONLY_KINDS, ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed', 'reproduced']);
     assert.deepEqual(makeEvent({ kind: 'survey', data: SURVEY }).data, SURVEY);
     // Taken again (ruling P3), it says so.
     assert.deepEqual(makeEvent({ kind: 'survey', data: { ...SURVEY, again: true } }).data.again, true);
@@ -892,6 +892,20 @@ test('incident-closed is the helper\'s own record', async () => {
     assert.deepEqual(makeEvent({ kind: 'incident-closed', data: { incident: 'red-main-0123456789', why: 'green' } }).data.why, 'green');
     assert.throws(() => makeEvent({ kind: 'incident-closed', data: { incident: 'Has Spaces', why: 'green' } }), /incident-closed event/);
     assert.throws(() => makeEvent({ kind: 'incident-closed', data: { incident: 'red-main-1' } }), /needs its/);
+  });
+});
+
+test('reproduced is the helper\'s own record of a bug\'s reproduction', async () => {
+  await withHome(() => {
+    assert.equal(PLAIN_KINDS.includes('reproduced'), true);
+    assert.equal(HELPER_ONLY_KINDS.includes('reproduced'), true);
+    const data = { work: 'video-length', runId: 'run-1', commit: '6'.repeat(40), check: { test: 'formats 65 seconds as 1:05' }, files: ['test/duration.test.js'] };
+    assert.deepEqual(makeEvent({ kind: 'reproduced', data }).data, data);
+    assert.deepEqual(makeEvent({ kind: 'reproduced', data: { ...data, check: { command: 'npm test', expect: 0 } } }).data.check, { command: 'npm test', expect: 0 });
+    assert.throws(() => makeEvent({ kind: 'reproduced', data: { ...data, work: 'Has Spaces' } }), /reproduced event/);
+    assert.throws(() => makeEvent({ kind: 'reproduced', data: { ...data, commit: 'HEAD' } }), /reproduced event/);
+    assert.throws(() => makeEvent({ kind: 'reproduced', data: { ...data, check: { page: '/' } } }), /reproduced event/);
+    assert.throws(() => makeEvent({ kind: 'reproduced', data: { ...data, files: 'test/duration.test.js' } }), /reproduced event/);
   });
 });
 

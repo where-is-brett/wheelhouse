@@ -32,6 +32,7 @@ import { MOST_TOUCHED, pictureName } from './preview-names.js';
 import { SCREEN_SIZES } from '../lib/front-desk.js';
 import { newTicket, ticketHash, ticketMatches, writeTicket } from './ticket.js';
 import { FIX_LANE, weakensChecks } from './fix-main.js';
+import { readReproduction, sameReproduction } from './reproduction.js';
 
 const NO_ORDER = 'there is no work order for that run';
 const NO_TICKET = 'the call didn\'t carry the run\'s own ticket';
@@ -144,13 +145,13 @@ export function engineRoutes({
   // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
   // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at },
   // opened: { [pr]: { runId, head, showFirst, work, level, lane, incident? } }, previews: { [runId]: head },
-  // fixed: { [runId]: { pr, head, at } } }.
+  // fixed: { [runId]: { pr, head, at } }, reproduced: { [work]: { check, files, commit, runId, at } } }.
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
     return kept && typeof kept === 'object'
-      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {} }
-      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {}, fixed: {} };
+      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {}, opened: kept.opened ?? {}, previews: kept.previews ?? {}, fixed: kept.fixed ?? {}, reproduced: kept.reproduced ?? {} }
+      : { runs: {}, comments: {}, ready: {}, lessons: {}, opened: {}, previews: {}, fixed: {}, reproduced: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -360,6 +361,47 @@ export function engineRoutes({
     return { ok: true, written: true };
   }
 
+  // The bug lane's reproduction (section 7.2): the work's kept one, and the one the run's reproduce step gave, read from
+  // the engine's own record.
+  async function reproductionFind({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    const engine = engineFor(run.project);
+    const outputs = typeof engine?.outputs === 'function' ? await engine.outputs(runId) : {};
+    const found = readVerdicts(run.project).reproduced[run.order.work];
+    return { ok: true, kept: found ? { check: found.check, files: found.files, commit: found.commit } : null, given: readReproduction(outputs.reproduce) };
+  }
+
+  // Keeps the bug's reproduction once for its work: the reproduce step's check, which the red step proved red at its own
+  // commit, both read from the engine's record. A later run of the same work gets the kept one back.
+  async function reproduction({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    if (run.order.lane !== 'bug') return { ok: false, refused: 'only a bug run keeps a reproduction' };
+    const verdicts = readVerdicts(run.project);
+    const found = verdicts.reproduced[run.order.work];
+    if (found) return { ok: true, check: found.check, commit: found.commit };
+    const engine = engineFor(run.project);
+    if (typeof engine?.outputs !== 'function') return { ok: false, refused: 'that project\'s engine keeps no step outputs' };
+    const outputs = await engine.outputs(runId);
+    const given = readReproduction(outputs.reproduce);
+    if (!given) return { ok: false, refused: 'the run\'s reproduce step gave no reproduction' };
+    const red = parsed(outputs.red);
+    if (red?.red !== true || !FULL_SHA.test(red.commit ?? '') || !sameReproduction(given.check, red.check ?? null)) {
+      return { ok: false, refused: 'the run didn\'t prove its reproduction red at its own commit' };
+    }
+    verdicts.reproduced[run.order.work] = { check: given.check, files: given.files, commit: red.commit, runId, at: now().toISOString() };
+    keepVerdicts(run.project, verdicts);
+    await write(run.project, 'reproduced', { work: run.order.work, runId, commit: red.commit, check: given.check, files: given.files });
+    return { ok: true, check: given.check, commit: red.commit };
+  }
+
+  // The order a run's steps read: the one stored for it, with a bug's kept reproduction among its done checks.
+  function orderNow(run) {
+    const found = run.order.lane === 'bug' ? readVerdicts(run.project).reproduced[run.order.work] : null;
+    return found ? { ...run.order, done: [...run.order.done, found.check] } : run.order;
+  }
+
   // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.
   const readyOf = (project, pr) => readVerdicts(project).ready?.[pr] ?? null;
   // The run that opened a pull request: { runId, head, showFirst, work }, or null for one no run of the helper's opened.
@@ -393,10 +435,12 @@ export function engineRoutes({
       '/engine/preview': ticketed(preview),
       '/engine/lesson': ticketed(lesson),
       '/engine/merge-fix': ticketed(mergeFix),
+      '/engine/reproduction': ticketed(reproduction),
+      '/engine/reproduction/find': ticketed(reproductionFind),
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': ticketed(async ({ runId } = {}) => {
         const run = runOf(runId);
-        return run ? { ok: true, order: run.order } : { ok: false, refused: NO_ORDER };
+        return run ? { ok: true, order: orderNow(run) } : { ok: false, refused: NO_ORDER };
       }),
     },
   };
