@@ -38,7 +38,18 @@
 - #123: null slice heads in the order, the contrast check, the `approved.js` import, and the tester's own judgement.
 - #124: a switched project's helper-written mirror rule and its `.archon/` files stay until the last uninstall. With the GitHub App, the switch waits for a login.
 - From fix 2: a Claude step's own git use is held only by the shared rules' line. A hook check would be stronger.
+- From the review: a red-main fix that is paused at its cap when the main line turns green can't be cancelled, since Archon cancels only running runs. The Logbook says so. It spends nothing.
+- From the review: with the plugin on in the hello trial's folder, the session start treats the folder as one being set up. That adds its note to the trial step's context, which is noise, not a risk.
+- From the review: a PR seen closed and then reopened is never asked about again. Since #127 this now ends its work with a `closed` report.
+- From fix 2: `--release` can't see git calls made inside a Node script step.
 - From fix 3: the eval world's own health trial (`archon-world.js`, `prove`) still counts any refusal, since its project keeps Standard's `.env` rules.
+
+## Review
+
+An independent whole-branch review found no BLOCKER and one HIGH, now fixed with a test that failed first. After Stop on a held run, an answer to one of that run's earlier cards still went to the engine and resumed the run, past its record's end. Such an answer is no longer sent, the Logbook says so, and the run's unshown asks are dropped. Also fixed:
+- MEDIUM: a red main line's first fix whose start was refused said nothing.
+- MEDIUM: a play that threw lost its tokens.
+- LOW: `git merge-base` and `git -C <dir> rebase` were misread by the pack check.
 
 ## Tests
 
