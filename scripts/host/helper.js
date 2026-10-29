@@ -3217,8 +3217,18 @@ export async function startHelper({
     const pinsOnly = releaseCheck.ok === true;
     // The switch to the new engine's own pull request (part 3f): the helper wrote every byte of it, so it has no review
     // and no provenance to check. It touches .archon/, a guardrail, so the director's approval stands in for the
-    // guardrail condition, as for a restore.
-    const switching = readable && !restore && switchChange({ headRef: pr.headRef, paths: changes.paths, files: changes.files }).ok === true;
+    // guardrail condition, as for a restore. Only for one aimed at the default branch, whose policy names the very account
+    // the helper posts as: its approval card would not say that the policy trusts another.
+    let switching = false;
+    const switchCheck = readable && !restore ? switchChange({ headRef: pr.headRef, paths: changes.paths, files: changes.files }) : { matched: false };
+    if (switchCheck.ok === true) {
+      try {
+        switching = pr.baseRef === await defaultBranchOf(project, adapter) && switchCheck.login === await adapter.login();
+      } catch (error) {
+        if (error instanceof LookRefusal) throw error;
+        switching = false;
+      }
+    }
     // A restore is a release that passed review before; the director's approval stands in for it.
     const touchesGuardrails = (!restore && !pinsOnly && !switching && classified.touchesGuardrails) || body.touchesGuardrails === true;
     const found = { guardrailPaths: classified.guardrailPaths, criticalAreas: classified.criticalAreas };
@@ -3336,12 +3346,13 @@ export async function startHelper({
   // project, each call takes the next step: the policy on the default branch already, so only the project's fetch-mirror
   // rule is left; else a pull request adding the engine's files, made here; else that pull request merged through the
   // gate, once the director approved it. The engine is on from the rule (engineReady). The switch's own record, beside
-  // the project's engine records, keeps its open pull request: { pr, head }.
+  // the project's engine records, keeps its pull request: { pr, head, base, closed? }, `closed` once the helper closed
+  // it itself to make the switch again on a newer default branch.
   const switchFile = (project) => path.join(engineDirOf(stateDir(project)), 'switch.json');
   function readSwitch(project) {
     try {
       const kept = JSON.parse(fs.readFileSync(switchFile(project), 'utf8'));
-      return Number.isInteger(kept?.pr) && kept.pr > 0 && FULL_SHA.test(kept?.head ?? '') ? kept : null;
+      return Number.isInteger(kept?.pr) && kept.pr > 0 && FULL_SHA.test(kept?.head ?? '') && FULL_SHA.test(kept?.base ?? '') ? kept : null;
     } catch {
       return null;
     }
@@ -3388,16 +3399,24 @@ export async function startHelper({
     await lookAtMirror(ctx, project);
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
-    // The policy on the default branch already: the switch merged, here or by hand on the host.
+    // Both the engine's files on the default branch already: the switch merged, here or by hand on the host.
     const base = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ must }) => {
       const { head } = await defaultHistory(must, defaultBranch);
-      const policy = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', POLICY_FILE], 'looking for the build engine\'s policy');
-      return { head, there: policy !== '' };
+      const listed = await must(['ls-tree', '-z', '--name-only', BASE_REF, '--', ...ENGINE_FILES], 'looking for the build engine\'s files');
+      const there = listed.split('\0').filter(Boolean);
+      // The base commit's own time, so the same base always gives the same switch commit, and a push made again after
+      // one whose pull request never opened finds its branch as it left it.
+      const dated = (await must(['log', '--no-walk', '--format=%ct', head], 'reading the default branch\'s date')).trim();
+      return { head, there: ENGINE_FILES.every((f) => there.includes(f)), at: `${dated} +0000` };
     }));
     if (base.there) return on();
     const kept = readSwitch(project);
     const pr = kept ? await adapter.prState(kept.pr) : null;
-    if (pr?.state === 'open' && SWITCH_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '')) {
+    const open = pr?.state === 'open' && SWITCH_BRANCH.test(typeof pr.headRef === 'string' ? pr.headRef : '');
+    // Closed without merging on the host, and not by the helper: the director turned it down there, so no other is
+    // opened in its place.
+    if (pr?.state === 'closed' && kept.closed !== true) return { ok: true, step: 'closed', pr: kept.pr };
+    if (open && kept.base === base.head) {
       const merged = await oneAtATime(`merge:${project}`, () => doMerge({ project, number: kept.pr }, ctx));
       if (merged?.ok === true && merged.merged === true) return on();
       const approval = approvalOnly(merged, kept.pr);
@@ -3409,8 +3428,17 @@ export async function startHelper({
       if (!asked) await engineWrite(project, 'gate-asks', { work: SWITCH_WORK, pr: kept.pr, ask: 'approval', sha: approval.commit });
       return { ok: true, step: 'approve', pr: kept.pr, head: approval.commit };
     }
-    // Closed without merging, on the host: the director turned it down there, so no other is opened in its place.
-    if (pr?.state === 'closed') return { ok: true, step: 'closed', pr: kept.pr };
+    // The default branch moved on since the switch's commit was made on it, so the gate would find it behind: the
+    // helper closes its own pull request, saying so first, and makes the switch again on the new head, whose approval
+    // is asked for anew.
+    if (open) {
+      writeWhole(switchFile(project), { ...kept, closed: true });
+      try {
+        await adapter.closePr(kept.pr);
+      } catch {
+        return { ok: true, step: 'waiting', pr: kept.pr, why: 'the switch\'s pull request is behind the default branch and couldn\'t be closed to make it again' };
+      }
+    }
     // None open: one commit on top of the default branch, made in the mirror, adding the engine's files.
     let login;
     try { login = await adapter.login(); } catch { login = null; }
@@ -3419,8 +3447,7 @@ export async function startHelper({
     const branch = switchBranch(base.head);
     const made = await oneAtATime(`mirror:${project}`, () => inMirror(project, ctx, async ({ mirror, keyed }) => {
       const index = path.join(mirror, 'wheelhouse-switch.index');
-      const at = now().toISOString();
-      const env = { GIT_INDEX_FILE: index, ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at };
+      const env = { GIT_INDEX_FILE: index, ...WHEELHOUSE_AUTHOR, GIT_AUTHOR_DATE: base.at, GIT_COMMITTER_DATE: base.at };
       const git = async (args, what, input = '') => {
         const got = await keyed('git', [...NO_HOOKS, ...args], { cwd: mirror, input, env });
         if (got.code !== 0) throw new Error(`${what} failed`);
@@ -3447,7 +3474,7 @@ export async function startHelper({
       await oneAtATime(`mirror:${project}`, () => unkeyed('git', ['update-ref', '-d', `refs/heads/${branch}`], { cwd: made.mirror }));
     }
     const opened = await adapter.openPr({ head: branch, base: defaultBranch, title: SWITCH_TITLE, body: switchBody(login) });
-    writeWhole(switchFile(project), { pr: opened.number, head: made.commit });
+    writeWhole(switchFile(project), { pr: opened.number, head: made.commit, base: base.head });
     return { ok: true, step: 'opened', pr: opened.number, head: made.commit };
   }
 

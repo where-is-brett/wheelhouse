@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, enginePaths, launcherText } from '../../../../scripts/engine/archon/build.js';
+import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, enginePaths, launcherText, archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../../../../scripts/engine/archon/build.js';
 
 const sha = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
@@ -114,4 +114,20 @@ test('the patch applies to the pinned source as a git patch and names only the C
 test('the build refuses Windows for now', async () => {
   const w = world();
   await assert.rejects(buildFromSource({ engine: w.engine, run: w.run, fetcher: w.fetcher, arch: 'x64', platform: 'win32' }), /Windows/);
+});
+
+test("Archon's own settings name Claude as its steps' assistant, keeping any other line", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-archon-home-'));
+  try {
+    assert.equal(archonSettingsOk(home), false);
+    writeArchonSettings(home);
+    assert.equal(fs.readFileSync(archonSettingsFile(home), 'utf8'), 'defaultAssistant: claude\n');
+    assert.equal(archonSettingsOk(home), true);
+    fs.writeFileSync(archonSettingsFile(home), 'defaultAssistant: codex\nlogLevel: info\n');
+    assert.equal(archonSettingsOk(home), false);
+    writeArchonSettings(home);
+    assert.equal(fs.readFileSync(archonSettingsFile(home), 'utf8'), 'logLevel: info\ndefaultAssistant: claude\n');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -10,7 +10,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { engineDir } from '../lib/paths.js';
+import { engineDir, archonHome } from '../lib/paths.js';
+import { archonSettingsFile, archonSettingsOk, writeArchonSettings } from '../engine/archon/build.js';
 import { engineWanted, engineInstalled, POLICY_FILE, ARCHON_CONFIG_FILE, ENGINE_FILES, WORKTREE_PATH, mirrorRulesFile } from '../engine/parts.js';
 
 // What only reads, kept in scripts/engine/parts.js so the mod's bridge can reach it without setup's writers.
@@ -20,13 +21,20 @@ import { newId } from './journal.js';
 
 export const PLUGIN_SCOPE = Object.freeze({ install: true, plugin: 'wheelhouse@wheelhouse', scope: 'user' });
 
-// The one card's line (spec 14.4), with the plugin's scope where setup adds it.
+// The one card's line (spec 14.4), with the plugin's scope where setup adds it, or brings it up to date where an older
+// Wheelhouse is there at that scope (part 3f): the engine's steps would load the older one's skills and hooks.
 export const ENGINE_LINE = 'Install the build engine, Archon, with its usage reporting off.';
 export const ENGINE_LINE_WITH_PLUGIN = 'Install the build engine, Archon, with its usage reporting off, and add Wheelhouse to Claude Code for your account so the engine\'s steps keep its safeguards.';
-export const engineLine = (scope = PLUGIN_SCOPE) => (scope.install ? ENGINE_LINE_WITH_PLUGIN : ENGINE_LINE);
+export const ENGINE_LINE_WITH_UPDATE = 'Install the build engine, Archon, with its usage reporting off, and bring Wheelhouse up to date in Claude Code for your account so the engine\'s steps keep its safeguards.';
+export function engineLine(scope = PLUGIN_SCOPE, { claudeHome = null, version = ownVersion() } = {}) {
+  if (!scope.install) return ENGINE_LINE;
+  const there = claudeHome === null ? null : versionAtScope(claudeHome, scope);
+  return there !== null && olderVersion(there, version) ? ENGINE_LINE_WITH_UPDATE : ENGINE_LINE_WITH_PLUGIN;
+}
 
-// Step 6's card line for the plugin's scope.
+// Step 6's card lines for the plugin's scope.
 export const PLUGIN_SCOPE_LINE = 'Wheelhouse added to Claude Code for your account, so the build engine\'s steps keep its safeguards';
+export const pluginUpdateLine = (from, to) => `Wheelhouse in Claude Code for your account brought up to date, from ${from} to ${to}, so the build engine's steps keep its safeguards`;
 
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -42,11 +50,12 @@ const read = (file) => {
 };
 
 
-// Step 2's changes for the engine: the engine's folder (built and checked) and the broker's launcher, each only
-// when it isn't in as it should be.
-export function engineChanges({ engine = engineDir(), node, root } = {}) {
+// Step 2's changes for the engine: the engine's folder (built and checked), Archon's own settings naming Claude as the
+// assistant its steps run with, and the broker's launcher, each only when it isn't in as it should be.
+export function engineChanges({ engine = engineDir(), home = archonHome(), node, root } = {}) {
   const changes = [];
   if (!engineInstalled(engine)) changes.push({ kind: 'folder', target: engine, action: 'engine', tool: 'archon' });
+  if (!archonSettingsOk(home)) changes.push({ kind: 'file', target: archonSettingsFile(home), action: 'archon-settings' });
   const launcher = brokerLauncher(engine);
   if (read(launcher) !== brokerText({ node, root })) changes.push({ kind: 'file', target: launcher, action: 'broker' });
   return changes;
@@ -58,6 +67,9 @@ export async function applyEngine(changes, { record, run, fetch, arch, platform,
     const got = await install({ platform, arch, fetch, run, record, folder: engine });
     if (got?.ok !== true) throw new Error(got?.refused ?? 'the build engine was not installed');
   }
+  // Archon's settings live in its own home, with its run history, which uninstall keeps or deletes whole on its own
+  // card, so the journal doesn't hold them.
+  for (const c of changes.filter((x) => x.action === 'archon-settings')) writeArchonSettings(path.dirname(c.target));
   for (const c of changes.filter((x) => x.action === 'broker')) {
     const before = read(c.target);
     record({ id: newId('chg'), kind: 'file', target: c.target, before, after: { tool: 'broker' } });
@@ -70,26 +82,58 @@ export async function applyEngine(changes, { record, run, fetch, arch, platform,
 // Claude Code's record of installed plugins, in the Claude folder given.
 export const installedPluginsFile = (claudeHome) => path.join(claudeHome, 'plugins', 'installed_plugins.json');
 
-// Whether the plugin is installed at the scope PLUGIN_SCOPE names.
-export function pluginAtScope(claudeHome, scope = PLUGIN_SCOPE) {
+// The plugin's entry at the scope PLUGIN_SCOPE names, in Claude Code's record, or null.
+function entryAtScope(claudeHome, scope) {
   let data;
-  try { data = JSON.parse(fs.readFileSync(installedPluginsFile(claudeHome), 'utf8')); } catch { return false; }
+  try { data = JSON.parse(fs.readFileSync(installedPluginsFile(claudeHome), 'utf8')); } catch { return null; }
   const entries = data?.plugins?.[scope.plugin];
-  return Array.isArray(entries) && entries.some((e) => e?.scope === scope.scope);
+  return Array.isArray(entries) ? entries.find((e) => e?.scope === scope.scope) ?? null : null;
 }
 
-// Step 6's change for the plugin's scope, or none.
-export function pluginScopeChanges({ claudeHome, platform, scope = PLUGIN_SCOPE } = {}) {
-  if (!scope.install || !engineWanted({ platform }) || pluginAtScope(claudeHome, scope)) return [];
-  return [{ kind: 'plugin-scope', target: installedPluginsFile(claudeHome), plugin: scope.plugin, scope: scope.scope, what: 'plugin' }];
+// Whether the plugin is installed at the scope PLUGIN_SCOPE names.
+export const pluginAtScope = (claudeHome, scope = PLUGIN_SCOPE) => entryAtScope(claudeHome, scope) !== null;
+
+// The version installed at that scope, or null when none is there; one Claude Code didn't record reads as '0'.
+export function versionAtScope(claudeHome, scope = PLUGIN_SCOPE) {
+  const entry = entryAtScope(claudeHome, scope);
+  if (entry === null) return null;
+  return typeof entry.version === 'string' && entry.version !== '' ? entry.version : '0';
 }
 
-// `claude plugin install <plugin> --scope <scope>`, recorded first. Claude Code writes its own record.
+// The version of the Wheelhouse running setup, from its own manifest.
+export function ownVersion(root = PLUGIN_ROOT) {
+  try { return String(JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')).version); } catch { return '0'; }
+}
+
+// Whether version `a` is below `b`, comparing their numbered parts in turn (0.1.2 is below 0.2.0); a part that isn't
+// a number counts as 0, so an unreadable version is below any release.
+export function olderVersion(a, b) {
+  const parts = (v) => String(v).split(/[.+-]/).slice(0, 3).map((p) => (/^\d+$/.test(p) ? Number(p) : 0));
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i += 1) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+  }
+  return false;
+}
+
+// Step 6's change for the plugin's scope, or none: its install, or, where an older version is there at that scope, its
+// update to the version setting up, under the same Go ahead.
+export function pluginScopeChanges({ claudeHome, platform, scope = PLUGIN_SCOPE, version = ownVersion() } = {}) {
+  if (!scope.install || !engineWanted({ platform })) return [];
+  const change = { kind: 'plugin-scope', target: installedPluginsFile(claudeHome), plugin: scope.plugin, scope: scope.scope, what: 'plugin' };
+  const there = versionAtScope(claudeHome, scope);
+  if (there === null) return [change];
+  return olderVersion(there, version) ? [{ ...change, update: { from: there, to: version } }] : [];
+}
+
+// `claude plugin install <plugin> --scope <scope>`, or `claude plugin update` for an older one there, recorded first.
+// Claude Code writes its own record.
 export async function applyPluginScope(change, { run, record, claudeProgram = 'claude' }) {
-  record({ id: newId('chg'), kind: 'plugin-scope', target: change.target, before: null, after: { plugin: change.plugin, scope: change.scope } });
-  const args = ['plugin', 'install', change.plugin, '--scope', change.scope];
+  const update = change.update ?? null;
+  record({ id: newId('chg'), kind: 'plugin-scope', target: change.target, before: update === null ? null : { version: update.from }, after: { plugin: change.plugin, scope: change.scope, ...(update === null ? {} : { version: update.to }) } });
+  const args = ['plugin', update === null ? 'install' : 'update', change.plugin, '--scope', change.scope];
   const got = await run(claudeProgram, args);
-  if (got.code !== 0) throw new Error(`Claude Code didn't add ${change.plugin} for your account: ${String(got.stderr || got.stdout).trim().slice(0, 200)}`);
+  if (got.code !== 0) throw new Error(`Claude Code didn't ${update === null ? 'add' : 'bring up to date'} ${change.plugin} for your account: ${String(got.stderr || got.stdout).trim().slice(0, 200)}`);
 }
 
 // The command uninstall runs to take the plugin's scope back.

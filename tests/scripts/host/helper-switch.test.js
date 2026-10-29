@@ -77,8 +77,18 @@ function host(remote) {
       opened.push({ number, head, base, title, body });
       return { number, url: `https://github.com/o/p/pull/${number}` };
     },
-    prState: async (number) => prs.get(number) ?? null,
+    // The head as the branch has it now, as GitHub's pull request follows its branch.
+    prState: async (number) => {
+      const pr = prs.get(number);
+      if (!pr) return null;
+      if (pr.state === 'open') {
+        pr.headSha = await g(remote.url, 'rev-parse', `refs/heads/${pr.headRef}`);
+        await g(remote.url, 'update-ref', `refs/pull/${number}/head`, pr.headSha);
+      }
+      return { ...pr };
+    },
     close: (number) => prs.set(number, { ...prs.get(number), state: 'closed' }),
+    closePr: async (number) => { prs.set(number, { ...prs.get(number), state: 'closed' }); return { number }; },
     ciState: async (sha) => ({ sha, state: 'success' }),
     merge: async ({ number, sha }) => {
       merges.push({ number, sha });
@@ -172,6 +182,35 @@ test('a switch merged by hand on the host turns the engine on at the next step',
   });
 });
 
+test('a switch whose default branch moved on is made again on its new head, and asks the approval for that', async () => {
+  await switching(async ({ client, adapter, remote }) => {
+    confirmSwitch();
+    const opened = await client.engineSwitch({ project: 'o__p' });
+    // Other work merges meanwhile.
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-other-'));
+    try {
+      await g(work, 'clone', '-q', remote.url, '.');
+      fs.writeFileSync(path.join(work, 'other.txt'), 'o\n');
+      await g(work, 'add', '-A');
+      await g(work, '-c', 'user.name=x', '-c', 'user.email=x@invalid', 'commit', '-q', '-m', 'Other');
+      await g(work, 'push', '-q', 'origin', 'HEAD:main');
+    } finally { fs.rmSync(work, { recursive: true, force: true }); }
+    // The helper closes its own pull request, behind now, and makes the switch again on the new head.
+    const again = await client.engineSwitch({ project: 'o__p' });
+    assert.equal(again.step, 'opened', JSON.stringify(again));
+    assert.equal((await adapter.prState(opened.pr)).state, 'closed');
+    assert.equal(again.pr, opened.pr + 1);
+    const main = await g(remote.url, 'rev-parse', 'main');
+    assert.equal(await g(remote.url, 'rev-parse', `${again.head}^`), main);
+    assert.equal(adapter.opened[1].head, switchBranch(main));
+    const head = again.head;
+    assert.deepEqual(await client.engineSwitch({ project: 'o__p' }), { ok: true, step: 'approve', pr: again.pr, head });
+    record('approval', { pr: again.pr, commit: head }, 3000);
+    assert.deepEqual(await client.engineSwitch({ project: 'o__p' }), { ok: true, step: 'on' });
+    assert.deepEqual(adapter.merges, [{ number: again.pr, sha: head }]);
+  });
+});
+
 test('a switch closed on the host stays closed, and the engine off', async () => {
   await switching(async ({ client, adapter }) => {
     confirmSwitch();
@@ -197,25 +236,32 @@ test("the switch's pull request changing anything else needs its review, as any 
   assert.match(why({ files: files({ [ARCHON_CONFIG_FILE]: { base: 'x\n' } }) }), /config\.yaml isn't the text/);
   assert.match(why({ files: files({ [POLICY_FILE]: { headMode: '100755' } }) }), /maintainers\.json isn't the text/);
 
-  // At the gate: a pull request on a switch's branch that adds anything more is reviewed, as any other.
-  await switching(async ({ client, adapter, remote, base }) => {
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-more-'));
-    try {
-      await g(work, 'clone', '-q', remote.url, '.');
-      for (const file of [...ENGINE_FILES, 'src/a.js']) {
-        fs.mkdirSync(path.dirname(path.join(work, file)), { recursive: true });
-        fs.writeFileSync(path.join(work, file), texts[file] ?? 'a\n');
-      }
-      await g(work, 'add', '-A');
-      await g(work, 'commit', '-q', '-m', 'More');
-      await g(work, 'push', '-q', 'origin', `HEAD:refs/heads/${switchBranch(base)}`);
-    } finally { fs.rmSync(work, { recursive: true, force: true }); }
-    const { number } = await adapter.openPr({ head: switchBranch(base), base: 'main', title: 'More', body: '' });
-    const head = (await adapter.prState(number)).headSha;
-    record('approval', { pr: number, commit: head });
-    const answer = await client.merge({ project: 'o__p', number, stop: false, bypass: false });
-    assert.equal(answer.ok, false);
-    assert.ok(answer.reasons.includes(`no CLEAN review of ${head.slice(0, 7)}`), JSON.stringify(answer.reasons));
-    assert.deepEqual(adapter.merges, []);
-  });
+  // At the gate: a pull request on a switch's branch that adds anything more, or whose policy names another account than
+  // the one the helper posts as, is reviewed, as any other.
+  const others = [
+    { ...texts, 'src/a.js': 'a\n' },
+    switchTexts('someone-else'),
+  ];
+  for (const files of others) {
+    await switching(async ({ client, adapter, remote, base }) => {
+      const work = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-more-'));
+      try {
+        await g(work, 'clone', '-q', remote.url, '.');
+        for (const [file, text] of Object.entries(files)) {
+          fs.mkdirSync(path.dirname(path.join(work, file)), { recursive: true });
+          fs.writeFileSync(path.join(work, file), text);
+        }
+        await g(work, 'add', '-A');
+        await g(work, '-c', 'user.name=x', '-c', 'user.email=x@invalid', 'commit', '-q', '-m', 'More');
+        await g(work, 'push', '-q', 'origin', `HEAD:refs/heads/${switchBranch(base)}`);
+      } finally { fs.rmSync(work, { recursive: true, force: true }); }
+      const { number } = await adapter.openPr({ head: switchBranch(base), base: 'main', title: 'More', body: '' });
+      const head = (await adapter.prState(number)).headSha;
+      record('approval', { pr: number, commit: head });
+      const answer = await client.merge({ project: 'o__p', number, stop: false, bypass: false });
+      assert.equal(answer.ok, false);
+      assert.ok(answer.reasons.includes(`no CLEAN review of ${head.slice(0, 7)}`), JSON.stringify(answer.reasons));
+      assert.deepEqual(adapter.merges, []);
+    });
+  }
 });

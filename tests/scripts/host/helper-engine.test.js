@@ -128,8 +128,11 @@ test('the real helper gives Archon only to a project whose engine setting is Arc
   const made = [];
   const engineFor = engineForProject({
     adapter: () => { made.push(1); return { name: 'archon' }; },
-    views: (project) => ({ project: project === 'o__on' ? { engine: { key: 'engine', value: 'archon' } } : {}, profile: {} }),
+    views: (project) => ({ project: project === 'o__on' || project === 'o__waiting' ? { engine: { key: 'engine', value: 'archon' } } : {}, profile: {} }),
+    // The engine can build o__on; o__waiting's switch hasn't merged yet (scripts/engine/switch.js).
+    ready: (project) => project === 'o__on',
   });
+  assert.equal(engineFor('o__waiting'), null);
   assert.equal(engineFor('o__off'), null);
   assert.equal(engineFor('o__on').name, 'archon');
   assert.equal(engineFor('o__on'), engineFor('o__on'));
