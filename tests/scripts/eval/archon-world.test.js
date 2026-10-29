@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openArchonWorld, prepareEngine, runRealScenario, resetProof, cacheBuilt } from '../../../scripts/eval/archon-world.js';
+import { openArchonWorld, prepareEngine, runRealScenario, resetProof, cacheBuilt, sweepWorldInstalls, KITS } from '../../../scripts/eval/archon-world.js';
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
 import { enginePaths, PATCH_MARK } from '../../../scripts/engine/archon/build.js';
 import { summarise, summaryText } from '../../../scripts/eval/summary.js';
@@ -76,7 +76,9 @@ function standInArchon({ stepTokens = 25000, refused = true, trialFails = false 
 // The world runs the broker's sh launcher and links folders, as on the Mac the engine runs on; not on native Windows.
 const skip = process.platform === 'win32';
 const bunRun = async () => ({ code: 0, stdout: '1.4.3\n', stderr: '' });
-const open = (archon, cache) => openArchonWorld({ cache, cli: archon.cli, bunRun, claudeBin: '/usr/bin/true' });
+// Claude Code's settings folder for a world in a test: no record of installs, so the sweep finds nothing to take back.
+const noClaudeConfig = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-awcc-'));
+const open = (archon, cache) => openArchonWorld({ cache, cli: archon.cli, bunRun, claudeBin: '/usr/bin/true', claudeConfig: noClaudeConfig });
 const scenario = async (name) => (await import(`../../eval/build-loop/${name}.js`)).default;
 const quick = (fn) => (f, o = {}) => fn(f, { ...o, ms: Math.min(o.ms ?? 20000, 20000) });
 const { until } = await import('../../../scripts/eval/engine-world.js');
@@ -147,7 +149,7 @@ test("the pinned skill kits are installed for the world's project before its fir
   const claudeBin = path.join(dir, 'claude');
   fs.writeFileSync(claudeBin, `#!/bin/sh\necho "$PWD $*" >> '${log}'\n`, { mode: 0o755 });
   const archon = standInArchon();
-  const world = await openArchonWorld({ cache: fakeCache(), cli: archon.cli, bunRun, claudeBin });
+  const world = await openArchonWorld({ cache: fakeCache(), cli: archon.cli, bunRun, claudeBin, claudeConfig: noClaudeConfig });
   const folder = world.folder;
   await world.close();
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
@@ -157,6 +159,44 @@ test("the pinned skill kits are installed for the world's project before its fir
     `${folder} plugin uninstall superpowers@wheelhouse --scope project`,
     `${folder} plugin uninstall mattpocock-skills@wheelhouse --scope project`,
   ]);
+});
+
+test("the sweep takes back only the kits a world left installed: a world gone or whose opener ended", async () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-aws-')));
+  const config = path.join(tmp, 'claude-config');
+  const at = (name) => path.join(tmp, name, 'project');
+  const [kit, other] = KITS;
+  for (const name of ['wh-aw-left', 'wh-aw-open']) fs.mkdirSync(at(name), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'wh-aw-left', '.world-owner'), '424242\n');
+  fs.writeFileSync(path.join(tmp, 'wh-aw-open', '.world-owner'), `${process.pid}\n`);
+  const entries = {
+    [kit]: [
+      { scope: 'project', projectPath: at('wh-aw-gone') },
+      { scope: 'project', projectPath: at('wh-aw-left') },
+      { scope: 'project', projectPath: at('wh-aw-open') },
+      { scope: 'project', projectPath: path.join(tmp, 'someone-else', 'project') },
+      { scope: 'user' },
+    ],
+    [other]: [{ scope: 'project', projectPath: at('wh-aw-gone') }],
+    'another-plugin@somewhere': [{ scope: 'project', projectPath: at('wh-aw-gone') }],
+  };
+  fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: entries }));
+  const calls = [];
+  const run = async (bin, args, { cwd }) => { calls.push({ bin, args, cwd, there: fs.existsSync(cwd) }); return { code: 0, stdout: '', stderr: '' }; };
+  const taken = await sweepWorldInstalls({ claudeBin: '/c/claude', configDir: config, tmp, run, isAlive: (pid) => pid === process.pid });
+  assert.deepEqual(calls.map((c) => [c.args.join(' '), c.cwd, c.there]), [
+    [`plugin uninstall ${kit} --scope project`, at('wh-aw-gone'), true],
+    [`plugin uninstall ${kit} --scope project`, at('wh-aw-left'), true],
+    [`plugin uninstall ${other} --scope project`, at('wh-aw-gone'), true],
+  ]);
+  assert.ok(calls.every((c) => c.bin === '/c/claude'));
+  assert.equal(taken.length, 3);
+  // The folder made for a world that was gone goes again; a left-behind world's folder is left as it was found.
+  assert.equal(fs.existsSync(path.join(tmp, 'wh-aw-gone')), false);
+  assert.equal(fs.existsSync(at('wh-aw-left')), true);
+  assert.deepEqual(await sweepWorldInstalls({ claudeBin: '/c/claude', configDir: path.join(tmp, 'none'), tmp, run }), []);
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test('the engine is built once into its cache, and a build cut short is moved aside, not removed', async () => {
