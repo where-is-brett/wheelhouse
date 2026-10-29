@@ -1,0 +1,6 @@
+Telemetry:   enabled
+Distinct ID: 6f1d2c3b-4a5e-4f60-9a7b-8c9d0e1f2a3b
+Host:        https://us.i.posthog.com
+Key source:  embedded
+
+Opt out anytime: DO_NOT_TRACK=1 or ARCHON_TELEMETRY_DISABLED=1
