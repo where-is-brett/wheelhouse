@@ -285,3 +285,24 @@ test('the stand-in helper gives the delegation review with the views when asked,
     await helper.close();
   }
 });
+
+test('the stand-in answers desk read and desk act from memory', async () => {
+  const helper = await startStandInHelper({ address: testAddress(shortHome()) });
+  try {
+    const client = helperClient({ address: helper.address });
+    const id = '0b7f3c1e-5d2a-4c8b-9e6f-1a2b3c4d5e6f';
+    const CARD_DATA = { kind: 'question', question: 'Q', header: 'Q', options: ['Yes', 'No'], level: 3 };
+    await client.state.write({ cwd: '/p', kind: 'card', data: CARD_DATA, id });
+    const read = await client.desk.read({ v: 'desk/1', cwd: '/p', view: 'waiting' });
+    assert.equal(read.ok, true, read.refused);
+    assert.deepEqual(read.data.cards.map((e) => e.id), [id]);
+    assert.deepEqual(read.data.views.waiting, (await client.state.views({ cwd: '/p' })).views.waiting);
+    const putOff = await client.desk.act({ v: 'desk/1', cwd: '/p', command: 'not-now', args: { card: id } });
+    assert.equal(putOff.ok, true, putOff.refused);
+    assert.deepEqual(helper.events().map((e) => [e.kind, e.data.label ?? null]), [['card', null], ['card-answer', 'Not now']]);
+    assert.equal((await client.desk.act({ v: 'desk/1', cwd: '/p', command: 'answer', args: { card: id, option: 'Yes' } })).ok, false, 'no evidence, no answer');
+    assert.ok(helper.records().some((r) => r.route === 'desk/read'));
+  } finally {
+    await helper.close();
+  }
+});

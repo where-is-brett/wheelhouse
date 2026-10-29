@@ -38,6 +38,9 @@ import { buildViews, latestFor } from '../state/views.js';
 import { gateDecision } from '../gate/conditions.js';
 import { makeSigningKey } from '../state/signing.js';
 import { baselineRoutes } from '../measures/baseline.js';
+import { deskCore, checkVersion } from '../desk/core.js';
+import { memorySource } from '../desk/memory-source.js';
+import { DESK_VERSION } from '../desk/vocabulary.js';
 import { CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { delegationReview } from '../frontdesk/learning.js';
 
@@ -191,6 +194,32 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
     });
   };
 
+  // The desk over the stand-in's memory, its writes through /state/write's own checks.
+  const desk = async (op, body) => {
+    const version = checkVersion(body);
+    if (!version.ok) return { ok: false, v: DESK_VERSION, refused: version.refused };
+    record({ route: `desk/${op}`, ...(op === 'read' ? { view: body.view } : op === 'act' ? { command: body.command } : {}) });
+    const source = memorySource({
+      events: () => events, views, enrolled, review: (built) => delegationReview(events, { now: new Date(), enrolled, views: built }),
+    });
+    const recorder = {
+      write: async ({ kind, data }) => routes['POST /state/write']({ kind, data }),
+      record: async ({ event }) => {
+        if (events.some((e) => e.id === event?.id)) return { ok: false, refused: 'the state already holds an event with that id' };
+        events.push(structuredClone(event));
+        return { ok: true, id: event.id };
+      },
+      setStop: async () => ({ ok: true }),
+      liftStop: async () => ({ ok: true }),
+      chatClick: async ({ card, label, hash, proof, text }) => routes['POST /state/write']({ kind: 'card-answer', data: { question: card, label, hash, proof, ...(text === undefined ? {} : { text }) } }),
+      confirm: async () => ({ ok: false, refused: 'the stand-in has no window' }),
+    };
+    const core = deskCore({ source, recorder });
+    if (op === 'read') return core.read(body.view, body.args ?? {});
+    if (op === 'watch') return core.watch(body.cursor ?? null);
+    return core.act(body.command, body.args ?? {}, body.evidence);
+  };
+
   const routes = {
     'GET /health': () => ({ ok: true, standIn: true }),
     // The merge: { project, number }. The real gate's decision over the reviews and approvals the
@@ -315,6 +344,11 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
         ...(body.review === true ? { review: delegationReview(events, { now: new Date(), enrolled, views: built }) } : {}),
       };
     },
+    // The desk's three routes (scripts/desk/), over the same events and views: a plain write as /state/write takes
+    // it, a signed record taken when the stand-in's own key signed it, and no STOP.
+    'POST /desk/read': (body) => desk('read', body),
+    'POST /desk/act': (body) => desk('act', body),
+    'POST /desk/watch': (body) => desk('watch', body),
     // The director's profile: no settings of their own.
     'POST /profile/views': () => {
       record({ route: 'profile/views' });
@@ -347,7 +381,7 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
     const route = routes[`${req.method} ${req.url}`];
     let answer;
     if (route) {
-      answer = route(body);
+      answer = await route(body);
     } else {
       record({ route: `${req.method} ${req.url}`, unanswered: true });
       answer = { ok: false, refused: `the stand-in helper does not answer ${req.url}` };

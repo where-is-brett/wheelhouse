@@ -54,6 +54,10 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
+import { deskCore, checkVersion } from '../desk/core.js';
+import { fileSource } from '../desk/file-source.js';
+import { DESK_VERSION } from '../desk/vocabulary.js';
+import { helperClient } from './helper-client.js';
 import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
@@ -82,7 +86,7 @@ import { checkProvenance, removeProvenance, sessionProvenance } from '../lineage
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
-import { CLICK_MS } from '../lib/core-numbers.js';
+import { CLICK_MS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
@@ -799,6 +803,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // helper places the project from it.
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
+  '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
 ];
@@ -808,6 +813,8 @@ const PLACED_ROUTES = [
 const LEAN_ROUTES = [
   '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/state/import', '/session/mark', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
+  // A Lean project has a desk too.
+  '/desk/read', '/desk/act', '/desk/watch',
 ];
 // The Lean project's own routes (scripts/lean/store.js), served for a Lean project only.
 const LEAN_ONLY = 'that project is not a Lean project';
@@ -3648,6 +3655,50 @@ export async function startHelper({
   // it stops once the apply has finished: after the status answer that says so, or, when no one
   // asks, a while after.
   const uninstall = uninstallRoutes({ now, stopped, userHome, run, spawn, stopHelper: () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); } });
+  // --- the desk (scripts/desk/, spec 5): every front end reads and changes Wheelhouse through these three ---
+  // The acts that are answered under STOP, beside a signed record, which /state/record takes under STOP too.
+  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop'];
+  const STOP_SETTERS = ['prompt', 'mod', 'helper', 'runbook'];
+  function deskOf(project, body, ctx) {
+    const folder = typeof body.cwd === 'string' ? body.cwd : (readProject(project)?.folder ?? readLean(project)?.folder);
+    const source = fileSource(project, { cwd: folder, client: helperClient({ address, timeout: HELPER_WAIT_MS }), now, fresh: true });
+    const tried = (fn) => async (arg) => {
+      try {
+        return await fn(arg);
+      } catch (error) {
+        return { ok: false, refused: error instanceof Error ? error.message : 'the request failed' };
+      }
+    };
+    const recorder = {
+      record: tried(async ({ event, target, profile }) => (profile
+        ? profileRoute(doProfileRecord)({ event }, await profileContext())
+        : doRecord({ project, event, ...(target === undefined ? {} : { target }) }, ctx))),
+      write: tried(({ kind, data }) => doWrite({ project, kind, data }, ctx, { own: data?.proof !== undefined })),
+      setStop: tried(async ({ by }) => { setStop({ by: STOP_SETTERS.includes(by) ? by : 'helper', now }); return { ok: true }; }),
+      liftStop: tried(async () => { liftStop(); return { ok: true }; }),
+      chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
+      confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
+    };
+    return deskCore({ source, recorder, now });
+  }
+  const deskRoute = (op) => async (body, ctx) => {
+    const version = checkVersion(body);
+    if (!version.ok) return { ok: false, v: DESK_VERSION, refused: version.refused };
+    const { project } = body;
+    const core = deskOf(project, body, ctx);
+    const inQueue = (fn) => oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, ctx);
+      return fn();
+    });
+    if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}));
+    if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null));
+    const { command, args = {}, evidence } = body;
+    if (stopped() && !DESK_STOP_ACTS.includes(command) && evidence?.form !== 'signed') return { ...STOP_REFUSAL, v: DESK_VERSION };
+    // All stop is never queued behind anything, and the confirm window takes the queue itself once the director has clicked.
+    if (command === 'all-stop' || evidence?.form === 'window') return core.act(command, args, evidence);
+    return inQueue(() => core.act(command, args, evidence));
+  };
+
   const routes = {
     ...setup,
     ...measures,
@@ -3684,6 +3735,9 @@ export async function startHelper({
     '/lean/undo': doLeanUndo,
     '/lean/copy': doLeanCopy,
     '/state/record': signedIn(stateRoute(doRecord)),
+    '/desk/read': deskRoute('read'),
+    '/desk/act': deskRoute('act'),
+    '/desk/watch': deskRoute('watch'),
     '/state/column-ready': stateRoute(doColumnReady, { write: true }),
     '/premium/card': stateRoute(doPremiumCard, { write: true }),
     '/premium/check': doPremiumCheck,
