@@ -11,7 +11,8 @@ import { main, runDoneChecks } from '../../../scripts/engine/done-check.js';
 import { main as copyMain } from '../../../scripts/engine/order-copy.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
-import { ownRunRules } from '../../../scripts/protection/settings.js';
+import { ownRunRules, projectSettings } from '../../../scripts/protection/settings.js';
+import { readConfig } from '../../../scripts/gate/guardrails.js';
 
 const node = JSON.stringify(process.execPath);
 const orderWith = (done, extra = {}) => workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done, ...extra }, config: { testCommand: `${node} -e "process.exit(process.argv[1] === 'good' ? 0 : 1)"` } });
@@ -151,14 +152,40 @@ test("a second run in the same worktree gets its own overlay, never the earlier 
   assert.doesNotMatch(JSON.stringify(settings), /run-7/);
 });
 
-test('a branch without shared settings gets no overlay, and the step stops', async () => {
+test("a branch without shared settings gets the run's overlay alone, kept out of git by the exclude list", async () => {
   const ws = tempFolder('wh-ws-');
   const worktree = sharedWorktree(null);
+  fs.writeFileSync(path.join(worktree, 'README.md'), 'start\n');
+  git(['add', '-A'], worktree);
+  git(['commit', '-q', '-m', 'start'], worktree);
   const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
-  const { lines, out } = sink();
-  assert.equal(await copyMain(['--run', 'run-7', '--out', path.join(ws, 'artifacts', 'runs', 'run-7')], { client, cwd: worktree, out }), 1);
-  assert.match(lines.join('\n'), /shared settings/);
-  assert.equal(fs.existsSync(path.join(worktree, '.claude', 'settings.json')), false);
+  const first = path.join(ws, 'artifacts', 'runs', 'run-7');
+  assert.equal(await copyMain(['--run', 'run-7', '--out', first], { client, cwd: worktree, out: () => {} }), 0);
+  assert.deepEqual(readShared(worktree), ownRunRules('run-7', first));
+  // No commit of the run's carries it, whatever it adds.
+  fs.writeFileSync(path.join(worktree, 'work.txt'), 'done\n');
+  assert.equal(git(['status', '--porcelain'], worktree), '?? work.txt\n');
+  git(['add', '-A'], worktree);
+  git(['commit', '-q', '-m', "the run's work"], worktree);
+  assert.equal(git(['ls-tree', '-r', '--name-only', 'HEAD'], worktree), 'README.md\nwork.txt\n');
+  // A second run in the same worktree gets its own lists, not the first run's as well.
+  const second = path.join(ws, 'artifacts', 'runs', 'run-8');
+  assert.equal(await copyMain(['--run', 'run-8', '--out', second], { client, cwd: worktree, out: () => {} }), 0);
+  assert.deepEqual(readShared(worktree), ownRunRules('run-8', second));
+  // The exclude line is written once.
+  const exclude = path.resolve(worktree, git(['rev-parse', '--git-path', 'info/exclude'], worktree).trim());
+  assert.equal(fs.readFileSync(exclude, 'utf8').split('\n').filter((l) => l === '/.claude/settings.json').length, 1);
+});
+
+test('the merged settings keep the shared rules that stop a step changing them', async () => {
+  const ws = tempFolder('wh-ws-');
+  const worktree = sharedWorktree(projectSettings(readConfig(null)));
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  assert.equal(await copyMain(['--run', 'run-7', '--out', path.join(ws, 'artifacts', 'runs', 'run-7')], { client, cwd: worktree, out: () => {} }), 0);
+  const settings = readShared(worktree);
+  assert.ok(settings.permissions.deny.includes('Edit(/.claude/settings.json)'));
+  assert.ok(settings.sandbox.filesystem.denyWrite.includes('./.claude/settings.json'));
+  assert.equal(settings.sandbox.allowUnsandboxedCommands, false);
 });
 
 test("a merged settings file that can't be written stops the step with a plain refusal", { skip: process.platform === 'win32' }, async () => {

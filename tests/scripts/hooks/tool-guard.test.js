@@ -1310,6 +1310,36 @@ function plantEngine(ctx) {
   return { home, ws, tree, own: path.join(ws, 'artifacts', 'runs', 'run-own'), other: path.join(ws, 'artifacts', 'runs', 'run-other') };
 }
 
+test("the own artefacts' allow is judged by every real spelling: nothing that leads out of them is allowed", async () => {
+  await inProject(async (ctx) => {
+    const e = plantEngine(ctx);
+    const env = engineEnv('run-own');
+    const step = (input, platform = 'darwin') => inEngine(ctx, input, { env, projectDir: e.tree, platform });
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-outside-')));
+    fs.writeFileSync(path.join(outside, 'kept.txt'), 'x');
+    // Links the run makes inside its own artefacts: to a folder outside, to a file outside, to another run's.
+    fs.symlinkSync(outside, path.join(e.own, 'out'));
+    fs.symlinkSync(path.join(outside, 'kept.txt'), path.join(e.own, 'kept.txt'));
+    fs.symlinkSync(e.other, path.join(e.own, 'theirs'));
+    for (const file of [path.join(e.own, 'out', 'kept.txt'), path.join(e.own, 'kept.txt'), path.join(e.own, 'out', 'new.txt')]) {
+      for (const tool of ['Read', 'Edit', 'Write']) assert.ok(!allowed(await step(call(e.tree, tool, { file_path: file }))), `${tool} ${file}`);
+    }
+    for (const tool of ['Read', 'Write']) assert.ok(denied(await step(call(e.tree, tool, { file_path: path.join(e.own, 'theirs', 'notes.md') }))), `${tool} through a link to another run`);
+    assert.ok(!allowed(await step(call(e.tree, 'Grep', { pattern: 'x', path: path.join(e.own, 'out') }))));
+    assert.ok(!allowed(await step(call(e.tree, 'Glob', { pattern: `${path.join(e.own, 'out')}/**` }))));
+    // `..` out of the own artefacts, by a path and by a Glob pattern's fixed start.
+    assert.ok(denied(await step(call(e.tree, 'Read', { file_path: `${e.own}/../run-other/notes.md` }))));
+    assert.ok(!allowed(await step(call(e.tree, 'Read', { file_path: `${e.own}/../../../../../../outside.txt` }))));
+    assert.ok(denied(await step(call(e.tree, 'Glob', { pattern: `${e.own}/../**/*.md` }))));
+    assert.ok(allowed(await step(call(e.tree, 'Read', { file_path: `${e.own}/sub/../notes.md` }))), 'a `..` that stays inside is still its own');
+    // Case: on macOS a run's folder is the same whatever its case, so another run's stays refused and its own allowed;
+    // where case counts, a spelling in another case is another folder and isn't allowed.
+    assert.ok(denied(await step(call(e.tree, 'Read', { file_path: path.join(e.ws, 'artifacts', 'runs', 'RUN-OTHER', 'notes.md') }))));
+    assert.ok(allowed(await step(call(e.tree, 'Read', { file_path: path.join(e.ws, 'artifacts', 'runs', 'RUN-OWN', 'notes.md') }))));
+    assert.ok(!allowed(await step(call(e.tree, 'Read', { file_path: path.join(e.ws, 'artifacts', 'runs', 'RUN-OWN', 'notes.md') }), 'linux')));
+  });
+});
+
 test('archon is refused as a command', async () => {
   await inProject(async (ctx) => {
     for (const command of ['archon --version', 'archon workflow approve abc', 'ARCHON run x', '/Users/me/.wheelhouse/engine/archon/bin/archon workflow run x',
