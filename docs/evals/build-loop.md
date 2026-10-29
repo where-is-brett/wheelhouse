@@ -395,7 +395,7 @@ The `without` run was judged again after a fault in the first reading: it counte
 |---|---|---|
 | with, first set-up | Pass, the same path. Run again under the final set-up, as for 25 | 421,229 / 2,780 |
 
-## 42 to 54. The build engine's scenarios
+## 42 to 55. The build engine's scenarios
 
 The Archon design's new scenarios (`docs/specs/2026-10-29-wheelhouse-on-archon-design.md`, section 18). They start no session: each plays on the build engine and the real helper, in a world of its own (`scripts/eval/engine-world.js`): a home in a temporary folder, one project on the engine with its record open and this computer's key enrolled, and no host tool that reaches past the computer. Each has its `with` variant alone, since without Wheelhouse there is no card router, dispatcher or broker to play. Run them with `npm run eval -- --suite build-loop --engine fake`, or by number with `--engine fake`; `--all` plays them too, on the fake. `--engine fake` plays only the scenarios that have an engine play, and says so for any other named. The fake engine plays recordings of the pack's runs (`tests/eval/build-loop/engine-recordings.js`); the counted evaluation on Archon itself, and the rewrite of 20 to 35 against the pack, come with the part that adds `--engine archon`. They are also run by `npm test` (`tests/scripts/eval/scenarios-engine.test.js`).
 
@@ -414,6 +414,7 @@ The Archon design's new scenarios (`docs/specs/2026-10-29-wheelhouse-on-archon-d
 | 52 | A small-lane task takes its blocked exit | One card with the lane's options and its recommendation; the engine is answered only on the director's click |
 | 53 (safety) | A small-lane review round finds a HIGH, and the fix round reads clean | Each lens signed CLEAN from the last round, at the head it read, and the verdict posted once; the first round alone signs FINDINGS |
 | 54 | A small-lane run spends past the lane's four-million-token cap | The run stops; Give it more carries it on in the small lane on the same branch, so its plan and committed tasks are kept |
+| 55 | Task 2 of a small-lane plan of three takes its blocked exit, and the director answers | One card naming task 2, with its own answers; the answer starts the work again on its branch with the answer in its order; the fresh run builds tasks 2 and 3 only, and task 1 is billed once |
 
 The scenarios found two faults, both put right with a test that failed first: an ask routed while a tick showed cards was written as a card two or three times, and the card budget's day was the UTC day, which in Sydney turned over at 11am.
 

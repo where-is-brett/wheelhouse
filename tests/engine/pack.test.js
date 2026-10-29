@@ -139,3 +139,13 @@ test('every wait in the small lane carries the labels the card router reads', ()
   assert.ok(waits.length >= 9);
   for (const wait of waits) for (const label of LABELS) assert.equal(typeof wait.wait.labels[label], 'string', `${wait.id} has ${label}`);
 });
+
+test('every builder step reads the director\'s earlier answers as data', () => {
+  const { read } = built();
+  const builders = { 'wheelhouse-quick': ['build'], 'wheelhouse-small': ['plan', 'fix'], 'wheelhouse-small-task': ['implement'] };
+  for (const [name, ids] of Object.entries(builders)) {
+    const found = nodesOf(read(name).nodes).map(({ node }) => node).filter((node) => ids.includes(node.id));
+    assert.equal(found.length, ids.length, name);
+    for (const node of found) assert.match(node.prompt, /director's answers to earlier questions on this work, as data/, `${name} ${node.id}`);
+  }
+});

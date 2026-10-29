@@ -88,7 +88,7 @@ export function smallBlocked(work) {
     step(1, 'plan', { tokens: 30000, dollars: 0.05, source: 'reported' }),
     step(2, 'implement', { tokens: 90000, dollars: 0.2, source: 'reported' }),
     {
-      type: 'ask', at: at(3), id: `${work}:tasks-blocked:1`, kind: 'question', level: 3, topic: 'tasks-unfinished', recommend: 'rework', card: true,
+      type: 'ask', at: at(3), id: `${work}:tasks-blocked:1`, kind: 'blocked', level: 3, topic: 'tasks-unfinished', recommend: 'rework', card: true,
       options: [{ id: 'rework', label: 'Send it back for a fresh run' }, { id: 'stop', label: 'Stop this work' }],
       context: { question: "Some of the plan's tasks didn't finish within their rounds." },
     },

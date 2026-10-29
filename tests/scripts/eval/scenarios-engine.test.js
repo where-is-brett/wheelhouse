@@ -1,5 +1,5 @@
 // tests/scripts/eval/scenarios-engine.test.js
-// The engine's scenarios (tests/eval/build-loop/42 to 54, Archon design section 18): each plays on the fake engine and
+// The engine's scenarios (tests/eval/build-loop/42 to 55, Archon design section 18): each plays on the fake engine and
 // the real helper, in a world of its own, and passes; a scenario fails when what it guards gives way; and how
 // `npm run eval` runs them: `--engine fake` plays only the scenarios that have an engine play, and starts no session.
 import { test } from 'node:test';
@@ -10,7 +10,7 @@ import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
 import { asking, smallBlocked } from '../../eval/build-loop/engine-recordings.js';
 import { tempFolder } from '../../helpers/homes.js';
 
-const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54];
+const ENGINE_SCENARIOS = [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55];
 
 test('--engine takes the fake, and goes with scenario numbers, --all or --suite alone', () => {
   assert.equal(parseArgs(['42', '--engine', 'fake']).engine, 'fake');

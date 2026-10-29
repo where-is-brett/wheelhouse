@@ -378,12 +378,17 @@ test('a run already over when its cancel fails gets the usual card, and nothing 
   } finally { t.cleanup(); }
 });
 
-// A run that stops at a blocked exit's wait, offering to send it back for a fresh run.
-const reworkAsk = (id) => asking(id, { kind: 'question', recommend: 'rework', options: [{ id: 'rework', label: 'Send it back for a fresh run' }, { id: 'stop', label: 'Stop this work' }] });
+// A run that stops at a blocked exit's wait. `options` are the wait's answers: the lane's own (Send it back, Stop)
+// or the step's.
+const blockedAsk = (id, { question = 'Should a part refund show as its own line?', options = [{ id: 'rework', label: 'Send it back for a fresh run' }, { id: 'stop', label: 'Stop this work' }] } = {}) => asking(id, {
+  kind: 'blocked', recommend: options[0].id, options, context: { question },
+});
+const OWN = [{ id: 'own', label: 'Its own line' }, { id: 'within', label: 'Within the order' }, { id: 'stop', label: 'Stop this work' }];
+const ended = (t, runId) => withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'completed' }]]);
 
 test('Send it back on a blocked card starts the work again on its branch once the run has ended, with the cap not raised', async () => {
   const started = [];
-  const t = setUp({ recordings: { one: reworkAsk('q1') } });
+  const t = setUp({ recordings: { one: blockedAsk('q1') } });
   t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
   try {
     const { runId } = await t.ask();
@@ -392,39 +397,87 @@ test('Send it back on a blocked card starts the work again on its branch once th
     await t.runner.tick();
     assert.deepEqual(acts(t.engine).map((c) => c.action.answer?.choice), ['rework'], 'the engine has the answer');
     assert.deepEqual(started, [], 'nothing starts while the run is still going');
-    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'completed' }]]);
+    ended(t, runId);
     await t.runner.tick();
     await t.runner.tick();
-    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: false }], 'started once');
+    assert.deepEqual(started, [{ work: 'sale-banner', lane: 'quick', branch: 'wh/sale-banner', carryOn: true, raised: false, answers: [] }], 'started once');
     assert.deepEqual(t.runner.carried('again-1'), { raised: false, runs: [runId] }, 'the spend so far still counts against the cap');
   } finally { t.cleanup(); }
 });
 
-test('any other answer to a blocked card starts nothing again', async () => {
+test('an answer of the step\'s own starts the work again with the director\'s answers in its order', async () => {
   const started = [];
-  const t = setUp({ recordings: { one: reworkAsk('q1') } });
+  const t = setUp({ recordings: { one: blockedAsk('q1', { options: OWN }) } });
+  t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: `again-${started.length}` }; });
+  try {
+    const { runId } = await t.ask();
+    t.sign('Within the order');
+    ended(t, runId);
+    await t.runner.tick();
+    assert.deepEqual(started.map((s) => s.answers), [[{ question: 'Should a part refund show as its own line?', answer: 'Within the order' }]]);
+  } finally { t.cleanup(); }
+});
+
+test('Stop on a blocked card ends the work: nothing starts again', async () => {
+  for (const options of [undefined, OWN]) {
+    const started = [];
+    const t = setUp({ recordings: { one: blockedAsk('q1', { options }) } });
+    t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
+    try {
+      const { runId } = await t.ask();
+      t.sign('Stop this work');
+      ended(t, runId);
+      await t.runner.tick();
+      await t.runner.tick();
+      assert.deepEqual(started, []);
+    } finally { t.cleanup(); }
+  }
+});
+
+test('an answer to a question that isn\'t a blocked exit starts nothing again', async () => {
+  const started = [];
+  const t = setUp();
   t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
   try {
     const { runId } = await t.ask();
-    t.sign('Stop this work');
-    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'completed' }]]);
-    await t.runner.tick();
+    t.sign('Keep it small');
+    ended(t, runId);
     await t.runner.tick();
     assert.deepEqual(started, []);
   } finally { t.cleanup(); }
 });
 
-test('Send it back that the engine refuses starts nothing again', async () => {
+test('an answer the engine refuses starts nothing again', async () => {
   const started = [];
-  const t = setUp({ recordings: { one: reworkAsk('q1') } });
+  const t = setUp({ recordings: { one: blockedAsk('q1') } });
   t.runner.onStart(async (args) => { started.push(args); return { ok: true, runId: 'again-1' }; });
   try {
     const { runId } = await t.ask();
     t.engine.act(runId, { cancel: { reason: 'gone' } });
     t.sign('Send it back for a fresh run');
-    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started'], ['2026-10-29T13:00:00.000Z', 'ended', { outcome: 'cancelled' }]]);
+    ended(t, runId);
     await t.runner.tick();
     await t.runner.tick();
     assert.deepEqual(started, []);
+  } finally { t.cleanup(); }
+});
+
+test('the fresh run asking the question the director answered is answered from that answer, with no second card', async () => {
+  const t = setUp({ recordings: { one: blockedAsk('q1', { options: OWN }), two: blockedAsk('q2', { options: OWN }), three: blockedAsk('q3', { question: 'Another question?', options: OWN }) } });
+  t.runner.onStart(async () => ({ ok: true, runId: 'again-1' }));
+  try {
+    const { runId } = await t.ask('one');
+    t.sign('Its own line');
+    ended(t, runId);
+    await t.runner.tick();
+    const cards = () => t.writes.filter((w) => w.kind === 'question').length;
+    assert.equal(cards(), 1);
+    const again = await t.ask('two');
+    assert.equal(cards(), 1, 'no second card for the same question');
+    const answered = acts(t.engine).filter((c) => c.runId === again.runId).map((c) => c.action.answer?.choice);
+    assert.deepEqual(answered, ['own']);
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /Its own line/.test(w.data.words)), 'the Logbook says it was answered from the director\'s answer');
+    await t.ask('three');
+    assert.equal(cards(), 2, 'a new question still comes to the director');
   } finally { t.cleanup(); }
 });

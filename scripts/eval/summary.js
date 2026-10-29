@@ -15,10 +15,10 @@ export const EVAL_ROOT = path.join(REPO, 'tests', 'eval');
 export const E2E_DIR = path.join(REPO, 'tests', 'e2e');
 
 // The designed set: scenarios 1 to 35 (design section 18, and section 15 of the build-loop
-// design) and the engine's, 42 to 54 (Archon design, section 18). Each one is a scenario file in a
+// design) and the engine's, 42 to 55 (Archon design, section 18). Each one is a scenario file in a
 // suite or is covered by an end-to-end test; one that is neither is a row not run, and the gate is
 // not passed. The other numbers (the mod's and an agent's own) are reported when found.
-export const DESIGNED = Object.freeze([...Array.from({ length: 35 }, (_, i) => i + 1), ...Array.from({ length: 13 }, (_, i) => i + 42)]);
+export const DESIGNED = Object.freeze([...Array.from({ length: 35 }, (_, i) => i + 1), ...Array.from({ length: 14 }, (_, i) => i + 42)]);
 
 const VARIANTS = ['with', 'without'];
 // A scenario's file in a suite: its number, a dash and a name (`27-bug-route.js`).

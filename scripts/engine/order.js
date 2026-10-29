@@ -61,6 +61,13 @@ function checkProblem(check) {
   return 'a done check is a test, a command with what it should give, or a page with what must show';
 }
 
+// The director's answers to earlier questions on this work, as the helper recorded them: the latest MOST_ANSWERS,
+// each side at most ANSWER_CHARS long, for the builder to read as data.
+export const MOST_ANSWERS = 10;
+export const ANSWER_CHARS = 500;
+const isAnswer = (a) => isObject(a) && Object.keys(a).sort().join() === 'answer,question'
+  && isText(a.question) && isText(a.answer) && a.question.length <= ANSWER_CHARS && a.answer.length <= ANSWER_CHARS;
+
 // Why `order` isn't a well-formed order, or null.
 export function checkOrder(order) {
   if (!isObject(order) || order.v !== ORDER_VERSION) return 'a work order must be a version 1 record';
@@ -87,6 +94,9 @@ export function checkOrder(order) {
   if (order.level !== undefined && ![1, 2, 3, 4].includes(order.level)) return 'a work order\'s level is 1, 2, 3 or 4';
   if (!isText(order.testCommand)) return 'a work order needs the project\'s test command';
   if (!isObject(order.bindings)) return 'a work order needs its model bindings';
+  if (order.answers !== undefined && !(Array.isArray(order.answers) && order.answers.length <= MOST_ANSWERS && order.answers.every(isAnswer))) {
+    return 'a work order\'s answers are each a question and its answer, in short text';
+  }
   return null;
 }
 
@@ -107,8 +117,9 @@ export function bindingsOf(roles) {
 // shownFirst?, level? }),
 // with `rulings` (text), the routing table's column in force as `routing` ({ tiers?, aliases? }), and the project's
 // settings as `config` ({ pages?, styleGuide?, testCommand? }); `caps` ({ minutes, tokens }) in place of the lane's own, as
-// the project's settings give them. Throws, in plain words, on anything an order can't be.
-export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null } = {}) {
+// the project's settings give them; `answers` ([{ question, answer }]) the director's answers to the work's earlier
+// questions, from the helper's own record. Throws, in plain words, on anything an order can't be.
+export function workOrder({ work, rulings = [], routing = {}, config = {}, caps = null, answers = [] } = {}) {
   if (!isObject(work)) throw new Error('A work order needs the work it is for');
   if (work.model !== undefined || work.models !== undefined) throw new Error('A work record names a model: the routing table is the one place that does');
   const order = {
@@ -127,6 +138,10 @@ export function workOrder({ work, rulings = [], routing = {}, config = {}, caps 
     level: [1, 2, 3, 4].includes(work.level) ? work.level : 3,
     testCommand: config.testCommand ?? DEFAULT_TEST_COMMAND,
     bindings: { ...(routing.tiers ? { tiers: { ...routing.tiers } } : {}), ...(routing.aliases ? { aliases: { ...routing.aliases } } : {}) },
+    answers: (Array.isArray(answers) ? answers : []).slice(-MOST_ANSWERS).map((a) => ({
+      question: typeof a?.question === 'string' ? a.question.slice(0, ANSWER_CHARS) : a?.question,
+      answer: typeof a?.answer === 'string' ? a.answer.slice(0, ANSWER_CHARS) : a?.answer,
+    })),
   };
   const problem = checkOrder(order);
   if (problem) throw new Error(problem.charAt(0).toUpperCase() + problem.slice(1));

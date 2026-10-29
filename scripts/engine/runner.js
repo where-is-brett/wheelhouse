@@ -20,14 +20,18 @@ import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {}, reworks: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {}, reworks: {}, answers: {} });
 // The failed tries after which the director is told an answer hasn't reached the build yet.
 const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
 export const MORE = 'Give it more';
 export const STOP_LABEL = 'Stop';
-// A blocked exit's answer that sends the work back: the run ends, and the work starts again on its branch.
+// A blocked exit's answers: Stop ends the work; any other ends the run, and the work starts again on its branch, with
+// the director's answer (other than Send it back, which says nothing more) in its order.
+const STOP = 'stop';
 const REWORK = 'rework';
+// The question an ask puts, as the step wrote it.
+const questionOf = (ask) => [ask?.reason, ask?.context?.reason, ask?.context?.question].find((q) => typeof q === 'string' && q !== '') ?? null;
 
 function readState(file) {
   try {
@@ -87,6 +91,18 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     state.routed[ask.id] = true;
     let views = {};
     try { views = readViews() ?? {}; } catch { views = {}; }
+    // A blocked exit asking again what the director has already answered for this work is answered with that answer.
+    const earlier = ask.kind === 'blocked' && questionOf(ask) !== null
+      ? (state.answers[work] ?? []).filter((a) => a.question === questionOf(ask)).at(-1) : null;
+    const same = earlier ? (ask.options ?? []).find((o) => o?.label === earlier.answer) : null;
+    if (same && !stopped()) {
+      const got = await answerEngine(ask.runId, { ask: ask.id, choice: same.id });
+      keep();
+      if (got.ok) {
+        await note(`The build asked again about ${titled(work)}, and was given your earlier answer: ${earlier.answer}.`, { work, level: 3 });
+        return;
+      }
+    }
     const routed = routeAsk(ask, { levels: views.levels ?? {} });
     if (routed.answer) {
       if (stopped()) {
@@ -219,7 +235,12 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
       delete state.tries[key];
-      if (got.ok && answer.choice === REWORK) state.reworks[kept.runId] = { work: kept.work };
+      if (got.ok && kept.ask?.kind === 'blocked' && answer.choice !== STOP) {
+        const label = views.questions?.[key]?.answer?.label;
+        const said = typeof answer.words === 'string' ? answer.words : label;
+        const question = questionOf(kept.ask);
+        state.reworks[kept.runId] = { work: kept.work, answer: answer.choice !== REWORK && question && typeof said === 'string' ? { question, answer: said } : null };
+      }
       keep();
       if (!got.ok) await note(`Your answer about ${titled(kept.work)} wasn't needed: the build had already moved on.`, { work: kept.work });
     }
@@ -325,19 +346,21 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     });
   }
 
-  // Work the director sent back from a blocked exit starts again on its branch once its run has ended, carrying on from
-  // what is there, with its cap not raised and the spend so far still counted against it.
+  // Work the director answered at a blocked exit starts again on its branch once its run has ended, carrying on from
+  // what is there, with its cap not raised, the spend so far still counted against it, and the director's answers
+  // so far in its order, from this record alone.
   async function reworks() {
     if (stopped()) return;
-    for (const [runId, { work }] of Object.entries(state.reworks)) {
+    for (const [runId, { work, answer }] of Object.entries(state.reworks)) {
       const records = (viewsNow().runs?.[work] ?? []).filter((r) => r?.data?.runId === runId);
       const latest = records.at(-1)?.data;
       if (latest?.state !== 'ended') continue;
       delete state.reworks[runId];
+      if (answer) state.answers[work] = [...(state.answers[work] ?? []), answer];
       keep();
       const lane = latest.lane ?? workOf(runId)?.lane;
       const branch = latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null;
-      const got = await startRun({ work, lane, branch, carryOn: true, raised: false });
+      const got = await startRun({ work, lane, branch, carryOn: true, raised: false, answers: state.answers[work] ?? [] });
       if (got?.ok && typeof got.runId === 'string') {
         state.carried[got.runId] = { raised: false, runs: [...(state.carried[runId]?.runs ?? []), runId] };
         keep();
