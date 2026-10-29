@@ -22,8 +22,15 @@
 //                                   an Undo or Undo it there makes
 // Each prints the helper's answer as one JSON line and exits 0; a refusal also goes to standard error, in its
 // own words, with exit 1.
+//
+// A click and a confirm go through the desk (scripts/desk/client.js, never its local core: this runs in the
+// sandbox), as an `answer` or a `suggest` with the evidence the helper's own routes take; the answer printed is the
+// helper's, as it was. status, merge, undo and copy are the Lean store's own steps and stay on its routes.
 import crypto from 'node:crypto';
 import { helperClient } from '../host/helper-client.js';
+import { deskClient } from '../desk/client.js';
+import { SIGNED_LABELS } from '../hooks/prompt-record.js';
+import { SUGGEST } from '../lib/calm-words.js';
 import { dataHash } from '../state/events.js';
 import { WINDOW_MS } from '../confirm/window.js';
 import { LEAN_TEST_MS, LOCK_WAIT_MS } from './store.js';
@@ -42,6 +49,8 @@ const WAITS = {
 };
 const FULL_COMMIT = /^[0-9a-f]{40}$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
+// The cards a click in the chat may decide with a signed option, as the desk's evidence takes them.
+const CHAT_DECIDES = /^(?:merge|guardrail)-/;
 const USAGE = 'Usage: cli.js status | click <card> <label> [<commit>] | merge <slug> <commit> | undo <merge> | undo moved | copy | confirm <card>';
 
 export class LeanCliError extends Error {}
@@ -66,6 +75,20 @@ async function clickInput(stdin) {
   return given;
 }
 
+// The desk's acts over `api`, each answering as the helper did: without the desk's own fields, and, when the
+// helper wasn't reached, in the helper client's words rather than the desk's (nothing is kept to send later here).
+function deskActs(api, cwd) {
+  let raw;
+  const client = { ...api, desk: { ...api.desk, act: async (body) => { raw = await api.desk.act(body); return raw; } } };
+  const desk = deskClient({ cwd, client, local: 'never' });
+  return async (command, args, evidence) => {
+    const got = await desk.act(command, args, evidence);
+    if (got?.away === true) return raw;
+    const { v, changed, ...answer } = got ?? {};
+    return answer;
+  };
+}
+
 // The helper's answer to one command. `client` is made with the command's wait unless given.
 export async function leanCommand(argv, { cwd = process.cwd(), stdin = process.stdin, client = null, address } = {}) {
   const [command, ...rest] = argv;
@@ -82,7 +105,16 @@ export async function leanCommand(argv, { cwd = process.cwd(), stdin = process.s
     const { question, text } = await clickInput(stdin);
     // The card's hash is of its text as the director saw it, so the click names what was shown.
     const hash = crypto.createHash('sha256').update(question).digest('hex');
-    return api.cards.chatClick({ cwd, card, label, hash, proof: 'chat-click', ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }) });
+    // Words with another option, and a signed option on a card the desk's evidence doesn't let the chat decide (a
+    // ruling's Confirm at Lean, a step confirmed outside the chat), go to the helper's own route as they are, which
+    // answers them in its own words.
+    if ((text !== undefined && label !== SUGGEST) || (SIGNED_LABELS.includes(label) && !CHAT_DECIDES.test(card))) {
+      return api.cards.chatClick({ cwd, card, label, hash, proof: 'chat-click', ...(commit === undefined ? {} : { commit }), ...(text === undefined ? {} : { text }) });
+    }
+    const act = deskActs(api, cwd);
+    const evidence = { form: 'chat-click', proof: 'chat-click' };
+    if (text !== undefined) return act('suggest', { card, words: text, hash }, evidence);
+    return act('answer', { card, option: label, hash, ...(commit === undefined ? {} : { commit }) }, evidence);
   }
   if (command === 'merge') {
     const [slug, commit] = rest;
@@ -104,13 +136,21 @@ export async function leanCommand(argv, { cwd = process.cwd(), stdin = process.s
   // confirm: the card as the state holds it, by its id, hashed as the helper hashes it.
   const [card] = rest;
   if (rest.length !== 1 || !card) fail(USAGE);
+  // Lift STOP is no card of the state, and is asked under STOP, which the desk answers only for a signed record.
   if (card === 'lift-stop') return api.confirm({ cwd, card });
-  const reader = client ?? helperClient({ ...(address ? { address } : {}), timeout: WAITS.status });
-  const views = await reader.state.views({ cwd, cards: true });
-  if (views?.ok !== true) return views;
-  const found = (views.cards ?? []).filter((e) => e?.id === card);
+  const reader = deskClient({ cwd, client: client ?? helperClient({ ...(address ? { address } : {}), timeout: WAITS.status }), local: 'never' });
+  const waiting = await reader.read('waiting');
+  if (waiting?.ok !== true) {
+    const { v, ...refused } = waiting ?? {};
+    return refused;
+  }
+  const found = (waiting.data.cards ?? []).filter((e) => e?.id === card);
   if (found.length !== 1) fail('That card is not in this project\'s state');
-  return api.confirm({ cwd, card, hash: dataHash(found[0].data) });
+  const hash = dataHash(found[0].data);
+  // Under STOP the window still offers a Lean project's undo, which the desk refuses before the window opens: that
+  // confirm goes to the helper's own route.
+  if (waiting.data.stop === true) return api.confirm({ cwd, card, hash });
+  return deskActs(api, cwd)('answer', { card, hash }, { form: 'window' });
 }
 
 export async function main(argv = process.argv.slice(2), { stdout = process.stdout, stderr = process.stderr, ...deps } = {}) {

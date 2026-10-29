@@ -1,0 +1,67 @@
+{
+  "click-approve": {
+    "stdout": "{\"ok\":true,\"id\":\"<id>\",\"pushed\":false}\n",
+    "stderr": "",
+    "code": 0
+  },
+  "click-suggest": {
+    "stdout": "{\"ok\":true,\"id\":\"<id>\",\"pushed\":false}\n",
+    "stderr": "",
+    "code": 0
+  },
+  "click-words-on-approve": {
+    "stdout": "{\"ok\":false,\"refused\":\"only a click on Suggest a change… carries the director's words\"}\n",
+    "stderr": "only a click on Suggest a change… carries the director's words\n",
+    "code": 1
+  },
+  "click-confirmed-step": {
+    "stdout": "{\"ok\":false,\"refused\":\"that step is confirmed outside the chat, never by a click in it\"}\n",
+    "stderr": "that step is confirmed outside the chat, never by a click in it\n",
+    "code": 1
+  },
+  "click-not-a-ruling": {
+    "stdout": "{\"ok\":false,\"refused\":\"that is not a ruling's confirm card in this project\"}\n",
+    "stderr": "that is not a ruling's confirm card in this project\n",
+    "code": 1
+  },
+  "click-undo": {
+    "stdout": "{\"ok\":true,\"id\":\"<id>\",\"pushed\":false}\n",
+    "stderr": "",
+    "code": 0
+  },
+  "click-under-stop": {
+    "stdout": "{\"ok\":false,\"refused\":\"All stop is on\"}\n",
+    "stderr": "All stop is on\n",
+    "code": 1
+  },
+  "confirm-undo-under-stop": {
+    "stdout": "{\"ok\":true,\"id\":\"<id>\",\"pushed\":false,\"choice\":\"Undo\",\"kind\":\"action\",\"step\":\"runbook-step\",\"recorded\":true,\"undone\":{\"ok\":true,\"undo\":\"<commit>\",\"copy\":{\"pushed\":true,\"commit\":\"<commit>\"}}}\n",
+    "stderr": "",
+    "code": 0
+  },
+  "confirm-lift-stop": {
+    "stdout": "{\"ok\":false,\"refused\":\"that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance\"}\n",
+    "stderr": "that card is not one the window confirms: only Lift All stop, a guardrail change, Unattended, a runbook step, a CI push, an approval or an Ask allowance\n",
+    "code": 1
+  },
+  "confirm-not-now": {
+    "stdout": "{\"ok\":true,\"choice\":null,\"recorded\":false}\n",
+    "stderr": "",
+    "code": 0
+  },
+  "confirm-approve": {
+    "stdout": "{\"ok\":true,\"id\":\"<id>\",\"pushed\":false,\"choice\":\"Approve\",\"kind\":\"approval\",\"step\":\"approval\",\"recorded\":true}\n",
+    "stderr": "",
+    "code": 0
+  },
+  "confirm-unknown-card": {
+    "stdout": "",
+    "stderr": "That card is not in this project's state\n",
+    "code": 1
+  },
+  "confirm-under-stop": {
+    "stdout": "{\"ok\":false,\"refused\":\"that card no longer waits for a click\"}\n",
+    "stderr": "that card no longer waits for a click\n",
+    "code": 1
+  }
+}
