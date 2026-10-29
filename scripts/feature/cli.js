@@ -31,7 +31,6 @@ import { branchOf } from '../hooks/session-start.js';
 import { helperClient } from '../host/helper-client.js';
 import { REPORT_WORDS } from '../lib/build-loop.js';
 import { readConfig } from '../gate/guardrails.js';
-import { parseProvenance, withBlock } from '../lineage/provenance.js';
 import { BUILD_QUESTION_LABELS, BUILD_QUESTION_OPTIONS, isConfiguredBuildCommand } from '../protection/windows-builds.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 
@@ -299,22 +298,6 @@ export function report({ worktree }) {
   return { missing: inspect(worktree).missing };
 }
 
-// Stamps report.md with `block`, the one that says what built it (the helper's, the same block it
-// stamps in the pull request), in place of any it had. Returns whether report.md was written.
-export function stampReport({ worktree, block }) {
-  if (typeof block !== 'string' || parseProvenance(block) === null) throw new CliError('The helper gave a provenance block that can\'t be read');
-  if (!safeFeatureFolder(worktree)) throw new CliError(FOLDER);
-  const file = featurePaths(worktree).report;
-  const text = readCapped(file, REPORT_BYTES);
-  if (text === null) throw new CliError("report.md can't be read");
-  const stamped = withBlock(text, block);
-  if (stamped === text) return false;
-  writeWhole(file, stamped);
-  return true;
-}
-
-const NO_PROVENANCE = 'The report carries no provenance block.';
-
 // --- plan ---
 
 // Records the plan just written (ruling R87): a path inside the worktree, to a
@@ -478,23 +461,6 @@ export async function main(argv, {
         return 1;
       }
       out('The report is whole.\n');
-      // The session's own block, and whether STOP is on, from the helper (rulings R147, R150):
-      // this command runs where the Wheelhouse home can't be read. The session is the one the
-      // hooks kept. A helper that gives no answer, or doesn't say STOP is off, gives no block,
-      // so nothing is stamped.
-      const session = keptSession(featurePaths(worktree).session);
-      let got = null;
-      try {
-        got = await helper().lineage.provenance({ cwd: worktree, ...(session ? { session } : {}) });
-      } catch { /* said below */ }
-      if (got?.ok === true && got.stop === true) {
-        out('All stop is on, so the report was not stamped with what built it.\n');
-        return 0;
-      }
-      const usable = got?.ok === true && got.stop === false && session !== null && typeof got.block === 'string';
-      const block = usable ? got.block : null;
-      if (block === null) out(`${NO_PROVENANCE}\n`);
-      else if (stampReport({ worktree, block })) out('It now says what built it.\n');
     } else if (command === 'push') {
       if (rest.length > 0) throw new CliError('push takes no arguments');
       out(`Pushed ${(await push({ client: helper(), worktree })).branch}\n`);

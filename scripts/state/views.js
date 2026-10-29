@@ -556,6 +556,11 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
 
   const approvals = recordsByPr(sorted, 'approval', enrolled);
   const reviews = recordsByPr(sorted, 'review', enrolled);
+  // What built each branch's pull requests, the latest verified provenance record of each (the helper's, at /pr/open).
+  const provenance = {};
+  for (const e of sorted) {
+    if (e.kind === 'provenance' && typeof e.data?.branch === 'string' && isPlainObject(e.data.provenance) && verify(e, enrolled)) provenance[e.data.branch] = e.data.provenance;
+  }
   const gateAsks = gateAsksOf(sorted, { enrolled, approvals, handedOut });
   const lineageHolds = lineageHoldsOf(sorted, liftedHolds);
 
@@ -634,6 +639,7 @@ export function buildViews(events, enrolled, { damaged = [], now = () => new Dat
     outdated: outdatedCards,
     approvals,
     reviews,
+    provenance,
     ...loop,
     unconfirmed,
     blockers,

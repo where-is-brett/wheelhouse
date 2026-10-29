@@ -759,7 +759,8 @@ test('a declined merge reason is scrubbed of the key', async () => {
 });
 
 test('only keys are hidden: a GitLab address in an answer is kept', async () => {
-  const home = shortHome();
+  const p = await project({ lock: false });
+  const home = p.home;
   const header = `AUTHORIZATION: basic ${Buffer.from(`oauth2:${FAKE_KEY}`).toString('base64')}`;
   const env = { GITLAB_TOKEN: FAKE_KEY, GITLAB_HOST: 'gitlab.example.com', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://gitlab.example.com/.extraheader', GIT_CONFIG_VALUE_0: header };
   assert.deepEqual(new Set(secretsOf(env)), new Set([FAKE_KEY, header, header.split(' ').pop(), `oauth2:${FAKE_KEY}`]));
@@ -769,7 +770,7 @@ test('only keys are hidden: a GitLab address in an answer is kept', async () => 
       const opened = await client.openPr({ project: 'o__p', head: 'feature', base: 'main', title: 't', body: '', session: 'sess-1' });
       assert.deepEqual(opened, { ok: true, result: { number: 3, url: 'https://gitlab.example.com/o/p/-/merge_requests/3' } });
     }, { envFor: async () => env }));
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  } finally { p.cleanup(); }
 });
 
 test('the client has the state and lock requests, and no pushFor', async () => {

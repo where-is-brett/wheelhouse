@@ -28,7 +28,9 @@ export const PLAIN_KINDS = [
 // helper's own reading of what Claude Code's premium alias stands for after the director's Yes (/premium/check): the
 // premium pin is the model it names, so only a check this computer's helper signed counts. And `premium-failed`, the
 // helper's own reading that the premium model's evaluation failed for a Yes, which brings the director its card.
-export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed'];
+// `provenance` is the helper's record of what built the pull requests of a branch (design section 22, R147): signed, so
+// the merge gate reads it from the state rather than from the pull request's body, which names nothing that built it.
+export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 'shown', 'control-file', 'usage-card', 'premium-card', 'premium-check', 'premium-failed', 'provenance'];
 // Plain kinds only the helper itself records, from what it read itself: no caller writes one
 // through /state/write. The survey (design section 15, ruling A1) is taken and recorded in the
 // helper, when setup finishes and when it is taken again. A column-ready record (design section 14.6) is the
@@ -578,6 +580,14 @@ function checkReview(data) {
   for (const k of ['check', 'claudeCode', 'model']) if (data[k] !== undefined && typeof data[k] !== 'string') bad(`has a ${k} that is not text`);
 }
 
+// What a provenance record must carry: the branch its pull requests come from and what built them.
+function checkProvenance(data) {
+  const bad = (why) => { throw new Error(`A provenance event ${why}`); };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) bad('needs data');
+  if (typeof data.branch !== 'string' || !/^[A-Za-z0-9._/-]{1,200}$/.test(data.branch)) bad('needs the branch');
+  if (!data.provenance || typeof data.provenance !== 'object' || Array.isArray(data.provenance)) bad('needs what built it');
+}
+
 // What a shown record must carry: the reply code, the question put to the director
 // and the labels of the options offered (two to six).
 function checkShown(data) {
@@ -596,6 +606,7 @@ export function makeEvent({ kind, data, now = () => new Date() }) {
   if (kind === 'action') checkAction(data);
   if (kind === 'review') checkReview(data);
   if (kind === 'shown') checkShown(data);
+  if (kind === 'provenance') checkProvenance(data);
   if (Object.hasOwn(PLAIN_SHAPES, kind)) checkPlain(kind, data);
   const event = {
     v: 1,

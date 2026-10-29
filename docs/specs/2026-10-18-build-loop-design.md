@@ -293,11 +293,11 @@ Superpowers keeps its decisions in a ledger, but the ledger is scratch: at the e
 | The plan | None | The plan | The plans | Repository |
 | Decisions made while building | Assumptions in the report and PR | Ledger rulings, copied into the report | Ledger rulings, copied into the report | State and the PR |
 | Review | Matt's `code-review`, then the signed review | The final review, then the signed review | Every task, the branch, the tester, then the signed review | State (signed) and the PR |
-| Provenance | Yes | Yes | Yes | The PR and state (section 14.6) |
+| Provenance | Yes | Yes | Yes | State (section 14.6) |
 | The merge | Gate record | Gate record | Gate record | State and the host |
 | The outcome | Report | Report | Report | State |
 
-**No commit or pull request names a model.** A project's settings turn Claude Code's own commit and pull-request attribution off, so no Co-Authored-By line naming a model is added; provenance (section 14.6) records what built each pull request. *Designer's call.*
+**No commit or pull request names a model.** A project's settings turn Claude Code's own commit and pull-request attribution off, so no Co-Authored-By line naming a model is added; provenance (section 14.6) records what built each pull request in Wheelhouse's own state, never in the pull request, so nothing on the host shows that an agent did the work. *Designer's call.*
 
 ## 14. Lineage: what we build on, what we change, and what built each thing
 
@@ -377,13 +377,13 @@ Check 28 (section 16) found the documented settings: `"autoUpdatesChannel": "sta
 
 ### 14.6 Provenance, and where it is enforced
 
-**A script stamps every pull request description and every feature report** with what each session actually loaded: the Wheelhouse release, the Superpowers and Matt commits, the register's version, Claude Code's version and the model IDs. It costs no tokens. When an upgrade turns out bad, one search finds what was built with it.
+**The helper records, for every pull request it opens,** what the session actually loaded: the Wheelhouse release, the Superpowers and Matt commits, the register's version, Claude Code's version and the model IDs. The record is a signed `provenance` event in the private state, under the pull request's branch; neither the pull request's description nor the feature's report carries it, so no pull request names a model or Claude Code (section 13). A pull request opened before 29 October 2026 carried it as a block in its description, which the gate still reads when the state has no record. It costs no tokens. When an upgrade turns out bad, one search of the state's provenance records finds what was built with it.
 
 **Enforcement, in three places:**
 
 1. **At session start, a warning.** A script checks the installed files against the manifest's fingerprints. A session-start hook cannot block anything in Claude Code, so a mismatch raises a card.
 2. **Before each tool call, a hold.** A pre-tool hook refuses edits and commands in a session whose fingerprints did not match, until the mismatch is resolved. Reading carries on, and so do halting work already running and the runbook, as under STOP. **Two commands go through:** the check, `node <plugin>/scripts/lineage/check.js`, which only reads, says what still differs, and changes nothing; and the front desk's command in the reading forms STOP lets through (main design, section 12.7), so the hold's card reaches the director, its writing forms staying held. The hold lifts only at the next session start whose check matches, because a session keeps the skills it loaded at its start. A new hold is recorded once in state, for the front desk to raise as a card. *Designer's call.*
-3. **At the gate, a refusal.** A PR whose provenance does not match the manifest cannot merge. CI checks the manifest too, not only the director's computer.
+3. **At the gate, a refusal.** A PR whose recorded provenance does not match the manifest cannot merge. CI checks the manifest too, not only the director's computer.
 
 Fingerprinting Superpowers' skills (about 74 files, 584 KB) takes milliseconds in Node.js.
 

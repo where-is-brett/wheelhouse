@@ -1,5 +1,6 @@
 // tests/helpers/provenance.js
-// Provenance for tests: what matches a manifest, a pull request body stamped with it, and a
+// Provenance for tests: what matches a manifest, a pull request body stamped with it (as one
+// opened before the state recorded what built it), and a
 // session's provenance.json with a transcript of made-up models.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +25,8 @@ export function matchingProvenance(root = REPO_ROOT, over = {}) {
   };
 }
 
-// A pull request body that the merge gate finds matching the manifest at `root`.
+// A pull request body that the merge gate finds matching the manifest at `root`, read as one opened before
+// the state recorded what built its branch.
 export function matchingBody(text = 'The change.', root = REPO_ROOT) {
   return stampProvenance(text, matchingProvenance(root));
 }

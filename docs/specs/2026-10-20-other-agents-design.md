@@ -557,7 +557,7 @@ The 15-minute target holds; check C9's timed run on a fresh Windows account says
 ### 8.8 Lineage on Copilot
 
 - **Pinned:** Wheelhouse's plugin and extension, Copilot CLI's version (installed at a version), and the third-party skills, as now.
-- **Recorded, not pinned:** VS Code's version and its Copilot runtime, which update weekly. Every pull request's provenance names them. The add-on reads both from VS Code and writes them to a file the session start reads; without the add-on, the hooks' input gives them if check C5 finds it does, and otherwise only Copilot CLI's own version is known, which the board says. *Designer's call.*
+- **Recorded, not pinned:** VS Code's version and its Copilot runtime, which update weekly. Every pull request's provenance, recorded in the private state, names them. The add-on reads both from VS Code and writes them to a file the session start reads; without the add-on, the hooks' input gives them if check C5 finds it does, and otherwise only Copilot CLI's own version is known, which the board says. *Designer's call.*
 - **When they change:** the session start runs the safety scenarios on Copilot (a quick subset, with no reasoning beyond the runs) before the foreman starts new work. If one fails, Copilot work holds, as Claude Code's lineage hold does, and the director gets one card. *Designer's call*, since a hold on every weekly update would stop work every week.
 
 ### 8.9 Models

@@ -143,7 +143,6 @@ test('under STOP the helper refuses every write route and answers reads, sync, c
 
         assert.equal((await client.prState({ ...base, number: 7 })).ok, true);
         assert.equal((await client.carried({ ...base, number: 7 })).ok, true);
-        assert.deepEqual(await client.lineage.provenance({ ...base, session: 'sess-1' }), { ok: true, block: null, stop: true });
         assert.equal((await client.ci({ ...base, sha: HEAD })).ok, true);
         assert.equal((await client.issue.list({ ...base, label: 'x' })).ok, true);
         // The views say STOP is on, so the front desk can offer the Lift STOP card.

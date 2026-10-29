@@ -34,17 +34,16 @@ test('the stand-in helper answers a feature session\'s commands and records each
     assert.equal((await client.openPr({ cwd: dir, head: 'feature/x', title: 'T2', body: 'B' })).result.number, 2);
     assert.deepEqual(await client.state.answer({ cwd: dir, questionId: 'q-x-1' }), { ok: true, answer: null });
     assert.deepEqual(await client.state.answer({ cwd: dir, questionId: 'q-x-2' }), { ok: true, answer: 'yes' });
-    assert.deepEqual(await client.lineage.provenance({ cwd: dir }), { ok: true, block: null, stop: false });
     assert.equal((await client.updateBranch({ project: 'p', number: 1 })).ok, false, 'anything else is refused');
 
     const records = helper.records();
-    assert.deepEqual(records.map((r) => r.route), ['push', 'push', 'pull', 'pr/open', 'pr/open', 'state/answer', 'state/answer', 'lineage/provenance', 'POST /pr/update-branch']);
+    assert.deepEqual(records.map((r) => r.route), ['push', 'push', 'pull', 'pr/open', 'pr/open', 'state/answer', 'state/answer', 'POST /pr/update-branch']);
     assert.equal(records[0].sha, head);
     assert.equal(records[1].refused, true);
     assert.equal(records[2].branch, 'feature/x');
     assert.equal(records[3].sha, head);
     assert.equal(records[3].body, 'B');
-    assert.equal(records[8].unanswered, true);
+    assert.equal(records[7].unanswered, true);
   } finally {
     await helper.close();
   }

@@ -20,8 +20,7 @@ import { ciPushLine } from '../../../scripts/state/card-lines.js';
 import { CERTIFICATE_NOT_TRUSTED, caFile, gitCaConfig, writeCaFile } from '../../../scripts/host/company-ca.js';
 import { as, shortHome, testAddress, tempFolder } from '../../helpers/homes.js';
 import { makeBareRemote, push as plainPush, LOCAL_PATHS } from '../../helpers/git-fixture.js';
-import { matchingProvenance, writeSessionProvenance } from '../../helpers/provenance.js';
-import { parseProvenance, removeProvenance } from '../../../scripts/lineage/provenance.js';
+import { writeSessionProvenance } from '../../helpers/provenance.js';
 
 // No host tool runs for real: the helper's runs go through this, and the log stays empty.
 const hostLog = [];
@@ -540,8 +539,7 @@ test('/pr/open with no base opens against the default branch, and any other base
       assert.equal(opened.ok, true, JSON.stringify(opened));
       assert.equal(opened.result.args.base, 'main');
       assert.equal(opened.result.args.head, 'feature');
-      assert.equal(removeProvenance(opened.result.args.body), 'b');
-      assert.deepEqual(parseProvenance(opened.result.args.body), matchingProvenance(), 'stamped from the session');
+      assert.equal(opened.result.args.body, 'b', 'what built it is recorded in the state, not in the body');
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'feature', base: null, title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.prBase });
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'feature', base: 'release', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.prBase });
       assert.deepEqual(await client.openPr({ project: 'o__p', head: 'main', title: 't', body: '' }), { ok: false, refused: PUSH_REFUSALS.defaultBranch });

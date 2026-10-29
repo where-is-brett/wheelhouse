@@ -71,11 +71,11 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
       run: post('/foreman/run'), // { folder, script: 'act' | 'wake', argv } -> { ok, code, stdout, stderr }: the foreman's command, run by the helper outside the sandbox; `folder` must be the project's main checkout; answered under STOP
     },
     ciPushLine: post('/ci-push/line'), // { project, branch, sha } -> { ok, line }
-    // /push, /pull, /pr/open, /state/answer, /lineage/provenance and /config take `cwd`, a full
+    // /push, /pull, /pr/open, /state/answer and /config take `cwd`, a full
     // path, in place of or beside `project`, and the helper places the project from it (scripts/feature/cli.js
     // runs where ~/.wheelhouse cannot be read); given both, the folder must be in the project named.
-    openPr: post('/pr/open'), //     { project | cwd, head, base?, title, body, session }: no base means the default branch; the helper stamps the body with what built it, from the session's provenance on this computer, and refuses a session with none
-    updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body is stamped as openPr's is; a session with no provenance on this computer is refused
+    openPr: post('/pr/open'), //     { project | cwd, head, base?, title, body, session }: no base means the default branch; the helper records what built it, from the session's provenance on this computer, in the signed state (never in the body, from which any block is taken out), and refuses a session with none
+    updatePr: post('/pr/update'), // { project, number, title?, body?, session }: a new body has any block taken out; a session with no provenance on this computer is refused
     updateBranch: post('/pr/update-branch'), // { project, number } -> { ok, updated, head }, or { ok: false, refused, conflicts?, ciPush?: { branch, sha } }: merges the default branch in; refused under STOP; ciPush names the merge commit the director's CI card must approve
     carried: post('/pr/carried'), // { project, number } -> { ok, review: 'clean' | 'none', upToDate, earlier }: the gate's carry-over rule, counting only a review of a kind the gate counts for this computer's agent, read-only, answered under STOP; with no CLEAN review to weigh, 'none' and upToDate false, unread; earlier: a CLEAN review of an earlier commit is on record
     prState: post('/pr/state'), //   { project, number } (or `cwd` for `project`, as the runbook's)
@@ -83,9 +83,6 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     ci: post('/ci'), //              { project, sha }
     testMerge: post('/test-merge'), // { project, a, b } -> { ok, clean, conflicts }: read-only, answered under STOP
     config: post('/config'), //      { project | cwd } -> { ok, config }: the default branch's, read-only, answered under STOP
-    lineage: {
-      provenance: post('/lineage/provenance'), // { project | cwd, session } -> { ok, block: text | null, stop }: the block a pull request from the session is stamped with, and whether STOP is on; read-only, answered under STOP
-    },
     host: {
       facts: post('/host/facts'), // { project } -> { ok, protection: 'on' | 'none' | 'unknown', ci: 'present' | 'none' | 'unknown', plan?, gaps? } (the last two on GitLab)
     },

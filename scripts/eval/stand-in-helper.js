@@ -1,8 +1,7 @@
 // scripts/eval/stand-in-helper.js
 // A stand-in for the host helper, for evaluation runs only: there is no real
 // host in an evaluation. It answers the few requests a feature session's
-// commands make (scripts/feature/cli.js: push, open-pr, answer and the
-// provenance asked for by report) and the front desk's command makes
+// commands make (scripts/feature/cli.js: push, open-pr and answer) and the front desk's command makes
 // (scripts/frontdesk/cli.js: writing a plain event, a card and the cards asked,
 // under the caller's id when it gives one, reading the views and the card events,
 // the director's profile, and a pull request's head), on the same kind of socket
@@ -151,7 +150,7 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-stand-in-'));
   // Where the baseline's files are kept: the session's home when given, else the scratch folder.
   const baselineHome = typeof home === 'string' && home !== '' ? home : scratch;
-  // The real route. STOP is off in an evaluation, as /lineage/provenance answers.
+  // The real route. STOP is off in an evaluation.
   const measures = baselineRoutes({ stopped: () => false });
   const records = [];
   const events = [...(state.events ?? [])];
@@ -340,11 +339,6 @@ export async function startStandInHelper({ address, answers = {}, state = {}, on
       }
       record({ route: 'measures/baseline', form, ok: answer.ok === true, ...(answer.refused ? { refused: answer.refused } : {}) });
       return answer;
-    },
-    // cli.js report: { cwd, session? }. No provenance on this computer, and STOP is off.
-    'POST /lineage/provenance': (body) => {
-      record({ route: 'lineage/provenance', session: body.session ?? null });
-      return { ok: true, block: null, stop: false };
     },
   };
 
