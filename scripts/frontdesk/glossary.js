@@ -76,13 +76,26 @@ export function termPattern(term) {
   return new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?![\\p{L}\\p{N}_])`, NAMES.includes(term) ? 'gu' : 'giu');
 }
 
+// Whether a match is part of a name of capitalised words, such as a place: "Lane Cove" or "Smith
+// Lane" is no use of "lane". A lower-case term spelt with a capital, with a capitalised word right
+// before or after it, is a name; an acronym beside it ("PR Review") doesn't make one.
+const TITLE_WORD = /^\p{Lu}\p{Ll}/u;
+function inName(text, term, index, length) {
+  if (!/^\p{Ll}/u.test(term) || !TITLE_WORD.test(text.slice(index, index + length))) return false;
+  const before = /(\p{L}+)[ \t]+$/u.exec(text.slice(0, index))?.[1];
+  const after = /^[ \t]+(\p{L}+)/u.exec(text.slice(index + length))?.[1];
+  return [before, after].some((word) => word !== undefined && TITLE_WORD.test(word));
+}
+
 // Where each term of the glossary is used in a text, left to right: { term, index, length }.
 // Where two terms overlap, the longer one wins.
 export function termMatches(text, glossary) {
   if (typeof text !== 'string') return [];
   const found = [];
   for (const term of Object.keys(glossary ?? {})) {
-    for (const m of text.matchAll(termPattern(term))) found.push({ term, index: m.index, length: m[0].length });
+    for (const m of text.matchAll(termPattern(term))) {
+      if (!inName(text, term, m.index, m[0].length)) found.push({ term, index: m.index, length: m[0].length });
+    }
   }
   found.sort((a, b) => a.index - b.index || b.length - a.length);
   const out = [];
