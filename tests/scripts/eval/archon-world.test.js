@@ -10,6 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { openArchonWorld, prepareEngine, runRealScenario, resetProof, cacheBuilt, sweepWorldInstalls, KITS } from '../../../scripts/eval/archon-world.js';
 import { runEngineScenario } from '../../../scripts/eval/engine-world.js';
+import { CHECKOUT, marketplaceOf, sweepWorldPlugins, worldPlugin } from '../../../scripts/eval/world-plugin.js';
+import { worldPlaces } from '../../../scripts/eval/world-kits.js';
 import { enginePaths, PATCH_MARK } from '../../../scripts/engine/archon/build.js';
 import { summarise, summaryText } from '../../../scripts/eval/summary.js';
 
@@ -157,14 +159,113 @@ test("the pinned skill kits are installed for the world's project before its fir
   const archon = standInArchon();
   const world = await openArchonWorld({ cache: fakeCache(), cli: archon.cli, bunRun, claudeBin, claudeConfig: noClaudeConfig });
   const folder = world.folder;
+  const market = marketplaceOf(world.root);
+  // Every step of the world's pack names this checkout's install, never the installed release.
+  const pack = path.join(world.home, 'engine', 'pack', '.archon', 'workflows');
+  const text = fs.readdirSync(pack, { recursive: true }).filter((f) => f.endsWith('.yaml')).map((f) => fs.readFileSync(path.join(pack, f), 'utf8')).join('\n');
+  assert.ok(text.includes(`"wheelhouse@${market}"`));
+  assert.ok(!text.includes('"wheelhouse@wheelhouse"'));
   await world.close();
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n');
   assert.deepEqual(calls, [
     `${folder} plugin install superpowers@wheelhouse --scope project`,
     `${folder} plugin install mattpocock-skills@wheelhouse --scope project`,
+    `${folder} plugin marketplace add ${path.join(world.root, 'marketplace')}`,
+    `${folder} plugin install wheelhouse@${market} --scope project`,
     `${folder} plugin uninstall superpowers@wheelhouse --scope project`,
     `${folder} plugin uninstall mattpocock-skills@wheelhouse --scope project`,
+    `${folder} plugin uninstall wheelhouse@${market} --scope project`,
+    `${folder} plugin marketplace remove ${market}`,
   ]);
+});
+
+test("the world's plugin is a copy of this checkout's own files, and its check passes only on that copy", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-aw-')));
+  const folder = path.join(root, 'project');
+  const config = path.join(root, 'claude-config');
+  fs.mkdirSync(folder);
+  const calls = [];
+  const runClaude = async (bin, args) => { calls.push(args.join(' ')); return { code: 0, stdout: '', stderr: '' }; };
+  const plugin = worldPlugin({ claudeBin: '/c/claude', folder, root, configDir: config, runClaude });
+  try {
+    assert.equal(plugin.id, `wheelhouse@${marketplaceOf(root)}`);
+    assert.match(plugin.id, /^wheelhouse@wheelhouse-eval-[a-z0-9]+$/);
+    await plugin.install();
+    const copy = path.join(root, 'marketplace', 'wheelhouse');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'marketplace', '.claude-plugin', 'marketplace.json'), 'utf8')).plugins.map((p) => [p.name, p.source]), [['wheelhouse', './wheelhouse']]);
+    for (const kept of ['scripts', 'hooks', '.claude-plugin']) assert.ok(fs.existsSync(path.join(copy, kept)), kept);
+    for (const left of ['.git', 'tests', 'docs']) assert.equal(fs.existsSync(path.join(copy, left)), false, left);
+    // No install recorded: not this checkout's.
+    assert.equal(plugin.check().ok, false);
+    const record = (installPath, projectPath = folder) => {
+      fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
+      fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { [plugin.id]: [{ scope: 'project', projectPath, installPath }] } }));
+    };
+    record(copy);
+    assert.deepEqual(plugin.check(), { ok: true, why: `the steps ran this checkout's Wheelhouse ${JSON.parse(fs.readFileSync(path.join(CHECKOUT, '.claude-plugin', 'plugin.json'), 'utf8')).version}` });
+    record(copy, path.join(root, 'elsewhere'));
+    assert.equal(plugin.check().ok, false, 'installed for another folder');
+    // An older release, or a copy whose files differ, isn't this checkout's.
+    const older = path.join(root, 'older');
+    fs.cpSync(copy, older, { recursive: true });
+    fs.writeFileSync(path.join(older, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'wheelhouse', version: '0.1.2' }));
+    record(older);
+    assert.match(plugin.check().why, /ran Wheelhouse 0\.1\.2, not this checkout's/);
+    fs.cpSync(copy, older, { recursive: true });
+    fs.appendFileSync(path.join(older, 'scripts', 'hooks', 'tool-guard.js'), '\n// changed\n');
+    assert.match(plugin.check().why, /whose files aren't this checkout's/);
+    // A step's plugin overlay left a user-scope entry: closing takes it back too.
+    fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { [plugin.id]: [{ scope: 'project', projectPath: folder, installPath: copy }, { scope: 'user', installPath: copy }] } }));
+    await plugin.remove();
+    assert.deepEqual(calls, [
+      `plugin marketplace add ${path.join(root, 'marketplace')}`, `plugin install ${plugin.id} --scope project`,
+      `plugin uninstall ${plugin.id} --scope project`, `plugin uninstall ${plugin.id} --scope user`, `plugin marketplace remove ${marketplaceOf(root)}`,
+    ]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the sweep takes back a world's plugin and marketplace only where the world is gone or its opener ended", async () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wh-aws-')));
+  const config = path.join(tmp, 'claude-config');
+  const at = (name) => path.join(tmp, name, 'project');
+  fs.mkdirSync(at('wh-aw-open'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'wh-aw-open', '.world-owner'), `${process.pid}\n`);
+  fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: {
+    'wheelhouse@wheelhouse-eval-gone': [{ scope: 'project', projectPath: at('wh-aw-gone') }, { scope: 'user' }],
+    'wheelhouse@wheelhouse-eval-open': [{ scope: 'project', projectPath: at('wh-aw-open') }, { scope: 'user' }],
+    'wheelhouse@wheelhouse': [{ scope: 'user' }, { scope: 'project', projectPath: at('wh-aw-gone') }],
+  } }));
+  fs.writeFileSync(path.join(config, 'plugins', 'known_marketplaces.json'), JSON.stringify({
+    'wheelhouse-eval-gone': { source: { source: 'directory', path: path.join(tmp, 'wh-aw-gone', 'marketplace') } },
+    'wheelhouse-eval-open': { source: { source: 'directory', path: path.join(tmp, 'wh-aw-open', 'marketplace') } },
+    wheelhouse: { source: { source: 'git', url: 'https://example.com/w.git' } },
+  }));
+  const calls = [];
+  const runClaude = async (bin, args, { cwd }) => { calls.push([args.join(' '), cwd]); return { code: 0, stdout: '', stderr: '' }; };
+  const taken = await sweepWorldPlugins({ claudeBin: '/c/claude', configDir: config, runClaude, ...worldPlaces({ tmp, isAlive: (pid) => pid === process.pid }) });
+  assert.deepEqual(calls.map(([c]) => c), ['plugin uninstall wheelhouse@wheelhouse-eval-gone --scope project', 'plugin uninstall wheelhouse@wheelhouse-eval-gone --scope user', 'plugin marketplace remove wheelhouse-eval-gone']);
+  assert.equal(calls[0][1], at('wh-aw-gone'));
+  assert.equal(fs.existsSync(path.join(tmp, 'wh-aw-gone')), false, 'the folder made for the call is taken away again');
+  assert.equal(taken.length, 3);
+});
+
+test("a real play, or the health trial, that passed on steps not running this checkout's Wheelhouse isn't counted", async () => {
+  resetProof();
+  const real = await scenario('48-unsigned-merge-refused');
+  const passing = { ...real, engine: { ...real.engine, real: async () => ({ pass: true, why: 'played' }) } };
+  const worldWith = (check) => async () => ({ prove: async () => ({ ok: true, why: 'sound' }), pluginCheck: check, hostCalls: [], close: async () => {} });
+  const older = () => ({ ok: false, why: 'the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0' });
+  assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(older), prepare: async () => '/cache', log: () => {} }),
+    { pass: false, why: 'not played: the health trial didn\'t count: the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0' });
+  resetProof();
+  let calls = 0;
+  const thenOlder = () => (calls++ === 0 ? { ok: true, why: 'ours' } : older());
+  assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(thenOlder), prepare: async () => '/cache', log: () => {} }),
+    { pass: false, why: 'not counted: the steps ran Wheelhouse 0.1.2, not this checkout\'s 0.2.0' });
+  resetProof();
+  assert.deepEqual(await runRealScenario({ scenario: passing, open: worldWith(() => ({ ok: true, why: 'ours' })), prepare: async () => '/cache', log: () => {} }), { pass: true, why: 'played' });
+  resetProof();
 });
 
 test("the sweep takes back only the kits a world left installed: a world gone or whose opener ended", async () => {

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPack } from '../engine/pack-build.js';
+import { WHEELHOUSE_PLUGIN } from '../engine/pack-check.js';
 import { buildFromSource, enginePaths, launcherText } from '../engine/archon/build.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -36,9 +37,27 @@ export async function prepareEngine({ cache = engineCache(), build = buildFromSo
 // The broker's launcher, as setup writes it: the Node.js running the evaluation, with the broker's script here.
 export const brokerText = ({ node = process.execPath, root = PLUGIN_ROOT } = {}) => `#!/bin/sh\nexec '${node}' '${path.join(root, 'scripts', 'engine', 'broker', 'gh.js')}' "$@"\n`;
 
+// Every step of the built pack at `dir` named to load `plugin` in place of the Wheelhouse plugin (WHEELHOUSE_PLUGIN):
+// the evaluation's own install of this checkout (world-plugin.js).
+export function namePlugin(dir, plugin) {
+  const swap = (node) => {
+    if (Array.isArray(node)) return node.map(swap);
+    if (node === null || typeof node !== 'object') return node;
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === 'plugins' && Array.isArray(value) ? value.map((p) => (p === WHEELHOUSE_PLUGIN ? plugin : p)) : swap(value)]));
+  };
+  const walk = (folder) => {
+    for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith('.yaml')) fs.writeFileSync(file, `${JSON.stringify(swap(JSON.parse(fs.readFileSync(file, 'utf8'))), null, 2)}\n`);
+    }
+  };
+  walk(path.join(dir, '.archon', 'workflows'));
+}
+
 // The world's engine folder over the cache: Bun by hard link and the source by symbolic link, the launcher and Bun config the folder's own
 // (the launcher names its folder's paths), the broker's launcher, and the pack built from this checkout.
-export function linkEngine({ cache, engine }) {
+export function linkEngine({ cache, engine, plugin = null }) {
   const from = enginePaths(cache);
   const to = enginePaths(engine);
   fs.mkdirSync(to.bunDir, { recursive: true });
@@ -55,5 +74,6 @@ export function linkEngine({ cache, engine }) {
   fs.writeFileSync(broker, brokerText());
   fs.chmodSync(broker, 0o755);
   buildPack({ out: path.join(engine, 'pack') });
+  if (plugin) namePlugin(path.join(engine, 'pack'), plugin);
   return { broker, packDir: path.join(engine, 'pack') };
 }

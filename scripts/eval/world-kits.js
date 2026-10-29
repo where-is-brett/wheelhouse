@@ -21,17 +21,9 @@ const alive = (pid) => {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
 };
 
-// Takes back the kits a world installed at project scope and never removed, as when its run was killed. Only those
-// entries in Claude Code's record of installs (<configDir>/plugins/installed_plugins.json) are touched: one of KITS,
-// project scope, for the project folder of a world in `tmp` that is gone, or whose opener has ended. Each is removed
-// by Claude Code itself, run in that folder; a folder that is gone is made for it, then removed again. Returns the
-// entries taken back, as [{ kit, projectPath }].
-export async function sweepWorldInstalls({
-  claudeBin, configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), tmp = os.tmpdir(),
-  isAlive = alive, runClaude = realRun,
-} = {}) {
-  let record;
-  try { record = JSON.parse(fs.readFileSync(path.join(configDir, 'plugins', 'installed_plugins.json'), 'utf8')); } catch { return []; }
+// worldOf(projectPath): the world folder in `tmp` a project folder is the project of, or null; leftBehind(root): whether
+// that world's folder is gone or its opener has ended.
+export function worldPlaces({ tmp = os.tmpdir(), isAlive = alive } = {}) {
   const tmps = new Set([path.resolve(tmp)]);
   try { tmps.add(fs.realpathSync(tmp)); } catch { /* no temporary folder: its own spelling only */ }
   const worldOf = (projectPath) => {
@@ -44,6 +36,21 @@ export async function sweepWorldInstalls({
     try { pid = Number(fs.readFileSync(path.join(root, OWNER_FILE), 'utf8').trim()); } catch { /* no owner: left behind */ }
     return !(Number.isInteger(pid) && pid > 0 && isAlive(pid));
   };
+  return { worldOf, leftBehind };
+}
+
+// Takes back the kits a world installed at project scope and never removed, as when its run was killed. Only those
+// entries in Claude Code's record of installs (<configDir>/plugins/installed_plugins.json) are touched: one of KITS,
+// project scope, for the project folder of a world in `tmp` that is gone, or whose opener has ended. Each is removed
+// by Claude Code itself, run in that folder; a folder that is gone is made for it, then removed again. Returns the
+// entries taken back, as [{ kit, projectPath }].
+export async function sweepWorldInstalls({
+  claudeBin, configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), tmp = os.tmpdir(),
+  isAlive = alive, runClaude = realRun,
+} = {}) {
+  let record;
+  try { record = JSON.parse(fs.readFileSync(path.join(configDir, 'plugins', 'installed_plugins.json'), 'utf8')); } catch { return []; }
+  const { worldOf, leftBehind } = worldPlaces({ tmp, isAlive });
   const stale = [];
   for (const kit of KITS) {
     for (const entry of Array.isArray(record?.plugins?.[kit]) ? record.plugins[kit] : []) {

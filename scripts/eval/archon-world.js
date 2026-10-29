@@ -46,7 +46,8 @@ import { writeArchonSettings } from '../engine/archon/build.js';
 import { PROJECT, until } from './engine-world.js';
 import { standInTools } from './stand-in-tools.js';
 import { engineCache, prepareEngine, linkEngine } from './archon-engine.js';
-import { OWNER_FILE, sweepWorldInstalls, worldKits } from './world-kits.js';
+import { OWNER_FILE, sweepWorldInstalls, worldKits, worldPlaces } from './world-kits.js';
+import { sweepWorldPlugins, worldPlugin } from './world-plugin.js';
 
 export { engineCache, prepareEngine, cacheBuilt, linkEngine } from './archon-engine.js';
 export { KITS, sweepWorldInstalls } from './world-kits.js';
@@ -126,6 +127,8 @@ export async function openArchonWorld({
   const git = (args, cwd) => safeGit({ cwd, reach: 'local', look: 'never', timeoutMs: 60000 })(args);
   // The kits installed for the project, to take back at the end.
   const kits = worldKits({ claudeBin, folder });
+  // This checkout's Wheelhouse, which every step names in place of the installed release (world-plugin.js).
+  const plugin = worldPlugin({ claudeBin, folder, root, configDir: claudeConfig });
   // Every Archon command in this world: the world's engine folder, its Archon home, its Claude Code.
   const archon = (args, options = {}) => cli(args, { ...options, engine: engineFolder, home: engineHome, claudeBin });
 
@@ -148,6 +151,8 @@ export async function openArchonWorld({
       return world.put('action', { action: 'answer', question: 'the card as shown', questionId: question.id, questionHash: dataHash(question), label });
     },
     tick: () => helper.engine.tick(),
+    // Whether the steps ran this checkout's Wheelhouse: { ok, why } (world-plugin.js).
+    pluginCheck: () => plugin.check(),
     stop: () => setStop({ by: 'prompt', now }),
     lift: () => liftStop(),
     starts: () => calls.filter((c) => c.call === 'start'),
@@ -216,6 +221,7 @@ export async function openArchonWorld({
         await helper?.close();
         // The kits' project-scope installs name the world's folder in Claude Code's record of installs: taken back.
         await kits.remove();
+        await plugin.remove();
       } finally {
         if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
         // Archon's cancelled steps may still be leaving their folders, so the removal is tried again for a while; a folder
@@ -235,7 +241,7 @@ export async function openArchonWorld({
   };
 
   try {
-    paths = linkEngine({ cache, engine: engineFolder });
+    paths = linkEngine({ cache, engine: engineFolder, plugin: plugin.id });
     // Archon's own settings: Claude runs its steps. Its `ai tier list` names no assistant without this line, and the
     // adapter's health check refuses an engine that doesn't say Claude.
     writeArchonSettings(engineHome);
@@ -244,7 +250,9 @@ export async function openArchonWorld({
       beforeCommit: async () => {
         // An earlier world's installs that a killed run never took back go first.
         for (const { kit, projectPath } of await sweepWorldInstalls({ claudeBin, configDir: claudeConfig })) process.stderr.write(`Took back ${kit}, which an earlier evaluation world left installed for ${projectPath}\n`);
+        for (const { what, where } of await sweepWorldPlugins({ claudeBin, configDir: claudeConfig, ...worldPlaces() })) process.stderr.write(`Took back ${what}, which an earlier evaluation world left at ${where}\n`);
         await kits.install();
+        await plugin.install();
       },
     });
     const adapter = archonAdapter({
@@ -292,20 +300,35 @@ export async function openArchonWorld({
 let proof = null;
 export function resetProof() { proof = null; }
 
+// Whether the world's steps ran this checkout's Wheelhouse; a world that can't say didn't.
+async function ranThisCheckout(world) {
+  if (typeof world.pluginCheck !== 'function') return { ok: false, why: 'the world can\'t say which Wheelhouse its steps ran' };
+  try { return await world.pluginCheck(); } catch (error) { return { ok: false, why: `which Wheelhouse the steps ran couldn't be read: ${error.message}` }; }
+}
+
 // Plays one scenario's real play in a world of its own: { pass, why }. The engine is built first if it isn't, and
 // proved once. `open` and `prepare` are for tests.
+// A pass counts only when the steps ran this checkout's Wheelhouse, and so does the health trial.
 export async function runRealScenario({ scenario, open = openArchonWorld, prepare = prepareEngine, log = (line) => process.stderr.write(`${line}\n`) }) {
   const cache = await prepare({ log });
   if (proof === null) {
     const world = await open({ cache });
-    try { proof = await world.prove(); } catch (error) { proof = { ok: false, why: `the health trial could not run: ${error.message}` }; } finally { await world.close(); }
+    try {
+      proof = await world.prove();
+      if (proof.ok) {
+        const ran = await ranThisCheckout(world);
+        if (!ran.ok) proof = { ok: false, why: `the health trial didn't count: ${ran.why}` };
+      }
+    } catch (error) { proof = { ok: false, why: `the health trial could not run: ${error.message}` }; } finally { await world.close(); }
   }
   if (!proof.ok) return { pass: false, why: `not played: ${proof.why}` };
   const world = await open({ cache });
   try {
     const got = await scenario.engine.real(world, { until: (fn, o) => until(fn, { ms: 6 * 60 * 1000, every: 1000, ...o }) });
     if (world.hostCalls.length > 0) return { pass: false, why: `a host tool was called: ${world.hostCalls.join('; ')}` };
-    return got;
+    // A pass on another release's guards proves nothing about this checkout.
+    const ran = got?.pass === true ? await ranThisCheckout(world) : { ok: true };
+    return ran.ok ? got : { pass: false, why: `not counted: ${ran.why}` };
   } finally {
     await world.close();
   }
