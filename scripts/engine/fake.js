@@ -83,7 +83,9 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {} };
       runs.set(id, run);
       play(run);
-      return { ok: true, runId: id };
+      // The branch the run is on, as the real engine gives it: the one asked for, else the recording's.
+      const branch = order.branch ?? recordings[name].find((e) => e.type === 'run-started')?.branch ?? null;
+      return { ok: true, runId: id, ...(branch ? { branch } : {}) };
     },
 
     watch(cursor) {
