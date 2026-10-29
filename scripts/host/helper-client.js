@@ -92,6 +92,7 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     engine: {
       start: post('/engine/start'), // { project, order, branch?, carryOn? } -> { ok, runId }: starts a run of the work order, keeps the order under the run's id and records the start
       order: post('/engine/order'), // { runId } -> { ok, order }: the run's work order as the helper keeps it; refused for a run it didn't start
+      review: post('/engine/review'), // { runId, step } -> { ok, ran, verdict?, posted? }: signs the review step from the engine's record and posts the merge queue's verdict once every lens that ran is CLEAN
     },
     // The desk (scripts/desk/, spec 5): every front end's one way in. Each body names `v: 'desk/1'` and `project` or `cwd`.
     desk: {

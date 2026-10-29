@@ -220,6 +220,18 @@ test('a review needs the pull request and the commit, and typed optional fields'
   });
 });
 
+test('a review signed from the engine\'s record names the engine, the run, the step and the pack\'s digest', async () => {
+  await withHome(async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-18T00:00:00.000Z' });
+    const good = { pr: 3, commit: 'a'.repeat(40), verdict: 'CLEAN', findings: 0, engine: 'archon', runId: 'run-1', step: 'review-spec', digest: 'b'.repeat(64) };
+    assert.ok(makeEvent({ kind: 'review', data: good }).sig);
+    for (const bad of [{ ...good, engine: 'other' }, { ...good, runId: '' }, { ...good, step: 4 }, { ...good, digest: 'short' }, { ...good, engine: undefined }]) {
+      assert.throws(() => makeEvent({ kind: 'review', data: bad }), /review event/);
+    }
+  });
+});
+
 test('a failed commit leaves no empty month folder', async () => {
   const remote = await makeBareRemote();
   try {

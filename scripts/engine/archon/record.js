@@ -60,9 +60,22 @@ function totalsOf(metadata) {
   };
 }
 
-// The inspect shape: { status, outcome, steps, branch, pr, head, digest, ownerPid, totals }. The branch, pull request
+// Each finished step's whole output, by its id, from `archon workflow get <run> --json --verbose --events`: the last
+// node_completed row for each step, so a step run again reads as its last run. A step's output is its text, or its
+// structured output as JSON text. A skipped or failed step has none.
+export function readOutputs(json) {
+  const outputs = {};
+  for (const row of Array.isArray(json?.events) ? json.events : []) {
+    if (row?.event_type !== 'node_completed' || typeof row.step_name !== 'string') continue;
+    const output = row.data?.node_output;
+    if (typeof output === 'string') outputs[row.step_name] = output;
+  }
+  return outputs;
+}
+
+// The inspect shape: { status, outcome, steps, branch, pr, head, digest, source, ownerPid, totals }. The branch, pull request
 // and head come from the run's returned value (the pack's last step returns them); `digest` is the digest of the
-// workflow source the run froze; `ownerPid` is the process that owns the run (All stop ends its tree).
+// workflow source the run froze and `source` the folder Archon froze it into; `ownerPid` is the process that owns the run (All stop ends its tree).
 export function readRecord(json) {
   const metadata = isObject(json?.metadata) ? json.metadata : {};
   const returns = json?.terminal_record?.returns;
@@ -76,6 +89,7 @@ export function readRecord(json) {
     pr: typeof value.pr === 'string' || typeof value.pr === 'number' ? value.pr : null,
     head: typeof value.head === 'string' ? value.head : null,
     digest: typeof metadata.workflow_source?.digest === 'string' ? metadata.workflow_source.digest : null,
+    source: typeof metadata.workflow_source?.root === 'string' ? metadata.workflow_source.root : null,
     ownerPid: Number.isInteger(pid) && pid > 0 ? pid : null,
     totals: totalsOf(metadata),
   };

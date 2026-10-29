@@ -9,6 +9,7 @@
 //   act        archon workflow answer <run> --occurrence <o> --choose <c> --text <w> --json;
 //              archon workflow cancel <run> --json; archon workflow resume <run> --detach --json  (never abandon, spec 12.2)
 //   inspect    archon workflow get <run> --verbose --json
+//   outputs    archon workflow get <run> --verbose --events --json
 //   stopAll    archon workflow status --all --json, then cancel each running or pending run   (stop.js ends what is left)
 //   health     the launcher and the patch on disk; archon version; bun --version; archon ai tier list --json;
 //              archon telemetry status
@@ -17,7 +18,7 @@ import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
 import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
-import { readRecord } from './record.js';
+import { readRecord, readOutputs } from './record.js';
 import path from 'node:path';
 import { engineDir, archonHome } from '../../lib/paths.js';
 import { run as defaultRun } from '../../lib/run.js';
@@ -351,6 +352,13 @@ export function archonAdapter({
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
       return readRecord(result.code === 0 && result.json?.ok !== false ? result.json : null);
+    },
+
+    // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own
+    // record; none when Archon has no such run. Not one of the interface's methods: only this engine has step outputs.
+    async outputs(runId) {
+      const result = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: CALL_MS });
+      return readOutputs(result.code === 0 && result.json?.ok !== false ? result.json : null);
     },
 
     // Cancels every running run, and every pending one (just started with --detach). A child run is cancelled with

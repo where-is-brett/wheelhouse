@@ -636,6 +636,14 @@ function checkReview(data) {
   if (data.verdict !== undefined && typeof data.verdict !== 'string') bad('has a verdict that is not text');
   if (data.findings !== undefined && (!Number.isInteger(data.findings) || data.findings < 0)) bad('has a count of findings that is not a count');
   for (const k of ['check', 'claudeCode', 'model']) if (data[k] !== undefined && typeof data[k] !== 'string') bad(`has a ${k} that is not text`);
+  // A review the helper signs from the engine's record names where it read it (Archon design, section 7.5).
+  const fromEngine = ['engine', 'runId', 'step', 'digest'].filter((k) => data[k] !== undefined);
+  if (fromEngine.length > 0) {
+    if (data.engine !== 'archon') bad('names an engine that is not Archon');
+    if (typeof data.runId !== 'string' || data.runId === '') bad('from the engine needs its run');
+    if (typeof data.step !== 'string' || data.step === '') bad('from the engine needs its step');
+    if (typeof data.digest !== 'string' || !/^[0-9a-f]{64}$/.test(data.digest)) bad('from the engine needs the pack\'s digest');
+  }
 }
 
 // What a provenance record must carry: the branch its pull requests come from and what built them.

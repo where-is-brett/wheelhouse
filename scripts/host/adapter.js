@@ -257,6 +257,10 @@ export function makeAdapter({ host, repo, run, env: given, base = DEFAULT_GITLAB
     },
     // Where the host keeps a request's head: a request from someone's own copy is fetched by it.
     pullRef: (number) => c.pullRef(wholeNumber(number)),
+    // The merge queue's verdict comment, posted once and edited in place for a new head (`id`, the kept one's): { id }.
+    verdictComment: async ({ number, id, body } = {}) => c.verdictComment({
+      number: wholeNumber(number), id: id === undefined || id === null ? undefined : wholeNumber(id), body: text(body, 'body'),
+    }),
     issue: {
       create: async ({ title, body, labels = [] } = {}) => c.issue.create({
         title: text(title, 'title'), body: text(body, 'body', { empty: true }), labels: labels.map((l) => text(l, 'label')),

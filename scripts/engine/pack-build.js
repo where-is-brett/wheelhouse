@@ -34,6 +34,13 @@ export function builtWorkflow(dir, workflow) {
   return { ...workflow, nodes: built(workflow.nodes) };
 }
 
+// The digest of Wheelhouse's workflows in a folder laid out as --workflow-source reads it (a build's `out`, or the
+// `project` folder of the source Archon froze for a run), or null when there are none there.
+export function packTreeDigest(dir) {
+  const tree = path.join(dir, '.archon', 'workflows', PACK_NAME);
+  return fs.existsSync(tree) ? packDigest(tree) : null;
+}
+
 // Builds the pack in `dir` into `out`, replacing what a build left there before. Returns { digest, workflows } or
 // throws with the check's problems.
 export function buildPack({ dir = PACK_DIR, out, skillCopies } = {}) {
@@ -50,7 +57,7 @@ export function buildPack({ dir = PACK_DIR, out, skillCopies } = {}) {
     fs.writeFileSync(path.join(folder, `${workflow.name}.yaml`), `${JSON.stringify(workflow, null, 2)}\n`);
     workflows.push(workflow.name);
   }
-  return { digest: packDigest(path.join(out, '.archon')), workflows };
+  return { digest: packTreeDigest(out), workflows };
 }
 
 export function main(argv = process.argv.slice(2), { out = (line) => process.stdout.write(`${line}\n`) } = {}) {

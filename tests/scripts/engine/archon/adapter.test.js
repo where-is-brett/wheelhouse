@@ -139,6 +139,14 @@ test('inspect reads the run record', async () => {
   assert.equal(missing.status, 'unknown');
 });
 
+test('outputs reads each step\'s whole output from the run\'s events', async () => {
+  const cli = fakeCli({ 'workflow get': json('get-events.json') });
+  const outputs = await adapter(cli).outputs(RUN);
+  assert.deepEqual(cli.calls[0].args, ['workflow', 'get', RUN, '--verbose', '--events']);
+  assert.equal(JSON.parse(outputs['review-spec']).verdict, 'CLEAN');
+  assert.deepEqual(await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false }, stdout: '', stderr: '' } })).outputs('nope'), {});
+});
+
 test("watch reads the queue once, through normaliseAsk, and keeps the cursor it was given", async () => {
   const cli = fakeCli({ 'workflow attention': json('attention-list.json') });
   const { events, cursor } = await adapter(cli).watch('sql:99');

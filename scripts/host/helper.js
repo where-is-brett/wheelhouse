@@ -19,7 +19,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome } from '../lib/paths.js';
+import { computerId, helperAddress, profileDir, oldProfileDir, stateDir, oldStateDir, wheelhouseHome, engineDir } from '../lib/paths.js';
 import { stopState, setStop, liftStop } from '../lib/stop.js';
 import { bypassActive } from '../lib/bypass.js';
 import { run as realRun, withoutGitVars } from '../lib/run.js';
@@ -56,6 +56,7 @@ import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProje
 import { startEngineHost } from '../engine/host.js';
 import { stopEngine, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
+import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
@@ -3734,6 +3735,10 @@ export async function startHelper({
     write: (project, kind, data) => engineWrite(project, kind, data),
     held: stopped,
     now,
+    // A run's review is trusted only from the installed pack: the one built into the engine's folder, against the
+    // copy Archon froze for the run, under its `project` folder.
+    digests: { installed: () => packTreeDigest(path.join(engineDir(), 'pack')), captured: (root) => packTreeDigest(path.join(root, 'project')) },
+    comment: async (project, args) => (await (await contextFor(project)).adapter()).verdictComment(args),
   });
 
   const routes = {
