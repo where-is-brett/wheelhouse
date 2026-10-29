@@ -1,7 +1,7 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69 and 70 to 75), in the fake engine's events: each a
-// run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a feature's slices and
-// its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
+// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69, 70 to 75 and 90 to 94), in the fake engine's
+// events: each a run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a
+// feature's slices and its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
 import fs from 'node:fs';
 import path from 'node:path';
 import { confirmationFor } from '../../../scripts/state/events.js';
@@ -126,10 +126,16 @@ export function fixing(work, outcome = null) {
 }
 
 // A slice-lane run of a feature that builds its slice behind the switch and opens pull request `pr` (scenarios 70 to
-// 75), or, with no `pr`, is still under way after its first step.
-export function sliceRun(work, { pr = null, tokens = 60000 } = {}) {
+// 75), or, with no `pr`, is still under way after its first step. `outcome` 'cancelled' ends it as a rejected demo
+// does, its pull request open.
+export function sliceRun(work, { pr = null, tokens = 60000, outcome = 'completed' } = {}) {
   const run = [started(work, 'slice'), step(2, 'implement', { tokens, dollars: 0.2, source: 'reported' })];
-  return pr === null ? run : [...run, ended(6, 'completed', pr)];
+  return pr === null ? run : [...run, ended(6, outcome, pr)];
+}
+
+// A quick-lane run that builds its change and ends with pull request `pr` (scenarios 90 and 91).
+export function quickRun(work, { pr }) {
+  return [started(work), step(2, 'implement', { tokens: 40000, dollars: 0.1, source: 'reported' }), ended(4, 'completed', pr)];
 }
 
 // The feature's own run: the whole-feature review, the switch turned on, and the director's switch-on approval of
@@ -162,6 +168,12 @@ export function featureWork(world, { id, title, count = 2, demo = 'end', design 
 // The code host's stand-in for a feature scenario: the pull requests in `merged` read merged, every other open.
 export function mergingHost(merged) {
   return { prState: async (pr) => ({ state: merged.has(Number(pr)) ? 'merged' : 'open' }) };
+}
+
+// The code host's stand-in where pull requests may also be closed unmerged: those in `merged` read merged, those in
+// `closed` closed, every other open (scenarios 90 to 94).
+export function closingHost(merged, closed) {
+  return { prState: async (pr) => ({ state: merged.has(Number(pr)) ? 'merged' : closed.has(Number(pr)) ? 'closed' : 'open' }) };
 }
 
 // A bug-lane run: the reproduce step, the fix, the reviews and the pull request.

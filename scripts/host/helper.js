@@ -4472,10 +4472,11 @@ export async function startHelper({
       mainGreen: () => mainGreen(project),
       stoppedRuns: () => stoppedRunsOf(project),
       fixedRuns: () => engineRun.fixedRuns(project),
-      prMerged: async (pr) => {
+      prState: async (pr) => {
         try {
           const adapter = await (await contextFor(project)).adapter();
-          return (await adapter.prState(pr)).state === 'merged';
+          const { state } = await adapter.prState(pr);
+          return ['merged', 'open', 'closed'].includes(state) ? state : null;
         } catch {
           return null;
         }
