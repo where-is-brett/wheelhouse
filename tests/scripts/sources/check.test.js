@@ -275,3 +275,25 @@ test('only the latest eight copies of a source are kept', () => withHome(async (
   assert.deepEqual(kept, Array.from({ length: 8 }, (_, i) => `${dayOffset(i - 8).slice(0, 10)}.txt`));
   assert.equal(fs.readdirSync(path.join(sourcesDir(), 'models')).filter((n) => n.endsWith('.links.json')).length, SOURCES.keep);
 }));
+
+test('the weekly check watches the engine\'s releases and advisories, and counts its merged changes', () => withHome(async () => {
+  const base = 'https://api.github.com/repos/coleam00/Archon';
+  assert.deepEqual(upstreamSources({ engine: { archon: { tag: 'v0.13.0' } } }), [
+    { id: 'releases:coleam00/Archon', url: `${base}/releases?per_page=10`, kind: 'releases' },
+    { id: 'advisories:coleam00/Archon', url: `${base}/security-advisories?per_page=10`, kind: 'advisories' },
+    { id: 'merged:coleam00/Archon', url: `${base}/pulls?state=closed&sort=updated&direction=desc&per_page=100`, kind: 'merged' },
+  ]);
+  const fetch = serve(pages({
+    [`${base}/releases?per_page=10`]: () => json([{ tag_name: 'v0.13.0', published_at: '2026-10-28T00:00:00Z' }]),
+    [`${base}/security-advisories?per_page=10`]: () => json([]),
+    [`${base}/pulls?state=closed&sort=updated&direction=desc&per_page=100`]: () => json([
+      { number: 3, merged_at: '2026-10-18T00:00:00Z' },
+      { number: 2, merged_at: '2026-10-13T00:00:00Z' },
+      { number: 1, merged_at: '2026-10-01T00:00:00Z' },
+      { number: 4, merged_at: null },
+    ]),
+  }));
+  const report = await runSourcesCheck({ fetch, now: NOW, root: rootWith({ upstreams: [], engine: { archon: { tag: 'v0.13.0' } } }) });
+  assert.deepEqual(report.releases, [{ repo: 'coleam00/Archon', tag: 'v0.13.0', at: '2026-10-28T00:00:00.000Z', ageDays: 0 }]);
+  assert.deepEqual(report.merged, [{ repo: 'coleam00/Archon', days: 7, count: 2 }]);
+}));

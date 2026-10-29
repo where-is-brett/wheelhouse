@@ -5,7 +5,7 @@ import { SOURCES } from '../lib/core-numbers.js';
 
 const MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
-const API_KINDS = ['releases', 'advisories'];
+const API_KINDS = ['releases', 'advisories', 'merged'];
 
 const NAMED = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', hellip: '…',
