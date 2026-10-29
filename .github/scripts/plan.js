@@ -15,7 +15,7 @@ import { startedAsScript } from '../../scripts/lib/started-as-script.js';
 export const TEXT_ONLY = ['docs/specs/', 'docs/plans/'];
 
 // How many parts each computer splits the tests into (node --test-shard). The parts of one
-// computer run side by side. On Windows the tests run only when started by hand, in one part.
+// computer run side by side. Windows runs the whole suite in one part, with a longer limit per file.
 export const PARTS = { 'ubuntu-latest': 2, 'macos-latest': 3, 'windows-latest': 1 };
 
 // Whether every changed path is text nothing reads. No paths at all is not: an empty list means
@@ -24,19 +24,22 @@ export function textOnly(paths) {
   return paths.length > 0 && paths.every((p) => TEXT_ONLY.some((folder) => p.startsWith(folder)));
 }
 
-// The computers: Linux always; macOS too once a pull request is out of draft, on main and on a run
-// started by hand (a macOS minute costs about ten Linux minutes); Windows only on a run started by
-// hand with Windows ticked.
-export function computers({ draft, windows }) {
-  if (windows) return ['ubuntu-latest', 'windows-latest', 'macos-latest'];
-  if (draft) return ['ubuntu-latest'];
-  return ['ubuntu-latest', 'macos-latest'];
+// The computers. While Wheelhouse is in early development a pull request runs on Linux only, draft
+// or not; a push to main runs on Linux and macOS, so a problem only the Mac shows up straight after
+// the merge. A run started by hand adds macOS or Windows where ticked: macOS for a pull request
+// that touches code only the Mac runs, and for a release.
+export function computers({ event, macos = false, windows = false }) {
+  if (event === 'push') return ['ubuntu-latest', 'macos-latest'];
+  if (event === 'workflow_dispatch') {
+    return ['ubuntu-latest', ...(windows ? ['windows-latest'] : []), ...(macos ? ['macos-latest'] : [])];
+  }
+  return ['ubuntu-latest'];
 }
 
 // The plan: `tests` is 'run' or 'skip', and `matrix` lists one { os, part } per test job, part
 // as node's --test-shard takes it ("2/3").
-export function plan({ event, draft = false, windows = false, paths = [] }) {
-  const matrix = computers({ draft, windows }).flatMap((os) =>
+export function plan({ event, macos = false, windows = false, paths = [] }) {
+  const matrix = computers({ event, macos, windows }).flatMap((os) =>
     Array.from({ length: PARTS[os] }, (_, i) => ({ os, part: `${i + 1}/${PARTS[os]}` })));
   const tests = event === 'pull_request' && textOnly(paths) ? 'skip' : 'run';
   return { tests, matrix };
@@ -58,7 +61,8 @@ if (startedAsScript(import.meta.url)) {
   const event = process.env.GITHUB_EVENT_NAME;
   const payload = process.env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const paths = event === 'pull_request' ? changedPaths() : [];
-  const got = plan({ event, draft: payload.pull_request?.draft === true, windows: payload.inputs?.windows === true || payload.inputs?.windows === 'true', paths });
+  const ticked = (name) => payload.inputs?.[name] === true || payload.inputs?.[name] === 'true';
+  const got = plan({ event, macos: ticked('macos'), windows: ticked('windows'), paths });
   console.log(`Changed: ${paths.length === 0 ? '(not read)' : paths.join(', ')}`);
   console.log(`Tests: ${got.tests === 'skip' ? 'skipped, as the change is only text nothing reads' : 'run'}`);
   console.log(`Jobs: ${got.matrix.map((m) => `${m.os} ${m.part}`).join(', ')}`);

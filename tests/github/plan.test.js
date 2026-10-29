@@ -46,16 +46,18 @@ test('a skipped pull request keeps every test job, so each check still reports',
   assert.deepEqual(skipped.matrix, ran.matrix);
 });
 
-test('drafts run on Linux only, Windows only when ticked, and each computer splits into its parts', () => {
-  assert.deepEqual(computers({ draft: true }), ['ubuntu-latest']);
-  assert.deepEqual(computers({}), ['ubuntu-latest', 'macos-latest']);
-  assert.deepEqual(computers({ windows: true }), ['ubuntu-latest', 'windows-latest', 'macos-latest']);
-  assert.deepEqual(plan({ event: 'pull_request', paths: ['x.js'] }).matrix, [
+test('a pull request runs on Linux only, main on Linux and macOS, and a run by hand adds what is ticked', () => {
+  assert.deepEqual(computers({ event: 'pull_request' }), ['ubuntu-latest']);
+  assert.deepEqual(computers({ event: 'push' }), ['ubuntu-latest', 'macos-latest']);
+  assert.deepEqual(computers({ event: 'workflow_dispatch' }), ['ubuntu-latest']);
+  assert.deepEqual(computers({ event: 'workflow_dispatch', macos: true }), ['ubuntu-latest', 'macos-latest']);
+  assert.deepEqual(computers({ event: 'workflow_dispatch', windows: true, macos: true }), ['ubuntu-latest', 'windows-latest', 'macos-latest']);
+  assert.deepEqual(plan({ event: 'pull_request', paths: ['x.js'] }).matrix, [{ os: 'ubuntu-latest', part: '1/2' }, { os: 'ubuntu-latest', part: '2/2' }]);
+  assert.deepEqual(plan({ event: 'push' }).matrix, [
     { os: 'ubuntu-latest', part: '1/2' }, { os: 'ubuntu-latest', part: '2/2' },
     { os: 'macos-latest', part: '1/3' }, { os: 'macos-latest', part: '2/3' }, { os: 'macos-latest', part: '3/3' },
   ]);
-  assert.deepEqual(plan({ event: 'pull_request', draft: true, paths: ['x.js'] }).matrix.map((m) => m.os), ['ubuntu-latest', 'ubuntu-latest']);
-  const byHand = plan({ event: 'workflow_dispatch', windows: true }).matrix;
+  const byHand = plan({ event: 'workflow_dispatch', windows: true, macos: true }).matrix;
   assert.deepEqual(byHand.filter((m) => m.os === 'windows-latest'), [{ os: 'windows-latest', part: '1/1' }]);
   assert.equal(byHand.length, PARTS['ubuntu-latest'] + PARTS['windows-latest'] + PARTS['macos-latest']);
 });
@@ -110,11 +112,11 @@ test('the script writes the plan to GitHub\'s output from the event', () => {
   try {
     const output = path.join(dir, 'output');
     const event = path.join(dir, 'event.json');
-    fs.writeFileSync(event, JSON.stringify({ inputs: { windows: true } }));
+    fs.writeFileSync(event, JSON.stringify({ inputs: { windows: 'false', macos: 'true' } }));
     execFileSync(process.execPath, [SCRIPT], { cwd: dir, env: { ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: output }, encoding: 'utf8' });
     const lines = Object.fromEntries(fs.readFileSync(output, 'utf8').trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     assert.equal(lines.tests, 'run');
-    assert.deepEqual(JSON.parse(lines.matrix), plan({ event: 'workflow_dispatch', windows: true }).matrix);
+    assert.deepEqual(JSON.parse(lines.matrix), plan({ event: 'workflow_dispatch', macos: true }).matrix);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

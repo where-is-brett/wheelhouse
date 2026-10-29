@@ -1,20 +1,23 @@
 # .github/workflows/ci.yml
-# Runs the tests on Linux, and on macOS once a pull request is out of draft or on main, each split
-# into parts that run side by side. A pull request that changes only the design documents or the
-# build plans passes the test jobs without running the tests (.github/scripts/plan.js).
-# While the Mac version comes first, Windows runs only when started by hand (Actions, CI,
-# Run workflow, with Windows ticked). Checks the mod (validator, source, bridge imports and
+# Runs the tests, each computer's split into parts that run side by side. While Wheelhouse is in
+# early development, a pull request runs them on Linux only, and a push to main on Linux and macOS,
+# so a problem only the Mac shows up straight after the merge. A run started by hand (Actions, CI,
+# Run workflow) adds macOS or Windows where ticked. A pull request that changes only the design
+# documents or the build plans passes the test jobs without running the tests
+# (.github/scripts/plan.js). Checks the mod (validator, source, bridge imports and
 # the mod's tests), and checks the lineage manifest against fresh copies of the upstream skills.
 name: CI
 
 on:
   pull_request:
-    # ready_for_review starts the macOS run when a draft is marked ready.
-    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
+      macos:
+        description: Also run the tests on macOS, in three parts (for code only the Mac runs, and releases)
+        type: boolean
+        default: false
       windows:
         description: Also run the tests on Windows (up to most of an hour)
         type: boolean
@@ -54,9 +57,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux always; macOS once a pull request is out of draft, as a macOS minute costs about
-        # ten Linux minutes and the tests run on the Mac before every push; Windows only on a run
-        # started by hand with Windows ticked. Linux splits the tests into two parts and macOS into
+        # Linux always; macOS on main and when ticked on a run started by hand, as a macOS minute
+        # costs about ten Linux minutes; Windows only when ticked on a run started by hand. Linux splits the tests into two parts and macOS into
         # three, each part a job of its own (node --test-shard); any part failing fails the run.
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
