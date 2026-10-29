@@ -18,7 +18,7 @@ import { composeCard } from '../cards/compose.js';
 import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
-import { RED_MAIN, redMainIncident, openRedMain } from './fix-main.js';
+import { RED_MAIN, FIX_LANE, redMainIncident, openRedMain } from './fix-main.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {} });
@@ -303,6 +303,14 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         let stuck = null;
         if ((await cancel())?.ok !== true && (await cancel())?.ok !== true && (await inspect(runId))?.status !== 'ended') {
           stuck = (await safely(() => endRun(runId))) ?? { ended: [], survivors: [] };
+        }
+        // A fix for a red main line asks no cap card: the dispatcher's card for a fix that didn't make it green asks
+        // what next (dispatch-run.js).
+        if (latest.lane === FIX_LANE) {
+          state.capped[runId] = { reached };
+          keep();
+          await note(`The fix for the red main line reached its cap, so it was stopped${stuck ? ' and its processes ended' : ''}.`, { work });
+          continue;
         }
         await capped({ runId, work, lane: latest.lane, branch: latest.branch ?? records.find((r) => r.data.branch)?.data.branch ?? null, reached, stuck });
       }

@@ -35,3 +35,78 @@ test('openRedMain gives the open red-main incident, or null', () => {
   const red = { id: 'red-main-0123456789', what: 'x', fixes: [], kind: 'red-main', work: 'fix-main-red-main-0123456789' };
   assert.deepEqual(openRedMain({ incidents: { open: [{ id: 'bad-total', what: 'x', fixes: [] }, red] } }), red);
 });
+
+import { fixOrder, fixDecision } from '../../../scripts/engine/fix-main.js';
+
+const INCIDENT = { id: 'red-main-0123456789', what: 'red', kind: 'red-main', suspect: 41, work: 'fix-main-red-main-0123456789', fixes: [] };
+const record = (runId, state, extra = {}) => ({ at: '2026-10-30T10:00:00.000Z', data: { work: INCIDENT.work, lane: 'fix-main', engine: 'fake', runId, state, ...extra } });
+const decide = (over = {}) => fixDecision({ incident: INCIDENT, runs: [], green: false, stop: false, stopped: [], merged: [], kept: {}, ...over });
+
+test('fixOrder gives a level-1 fix-main order naming the incident', () => {
+  const order = fixOrder(INCIDENT, { config: { testCommand: 'npm test', routing: {} }, settings: {} });
+  assert.equal(order.lane, 'fix-main');
+  assert.equal(order.work, INCIDENT.work);
+  assert.equal(order.level, 1);
+  assert.equal(order.incident, INCIDENT.id);
+  assert.match(order.goal, /main line's checks pass again/);
+  assert.deepEqual(order.done, [{ command: 'npm test', expect: 0 }]);
+  assert.deepEqual(order.protectedFiles, []);
+  assert.equal(order.showFirst, false);
+  assert.deepEqual(order.caps, { minutes: 30, tokens: 2000000 });
+});
+
+test('fixOrder with revert names the suspect', () => {
+  assert.match(fixOrder(INCIDENT, { config: { testCommand: 'npm test' }, revert: true }).goal, /Undo pull request #41/);
+  assert.throws(() => fixOrder({ ...INCIDENT, suspect: null }, { config: { testCommand: 'npm test' }, revert: true }), /suspect/);
+});
+
+test('fixDecision: no open red-main incident is nothing to do', () => {
+  assert.deepEqual(decide({ incident: null }), { act: 'none' });
+});
+
+test('fixDecision: green checks close the incident, whatever the runs', () => {
+  assert.deepEqual(decide({ green: true }), { act: 'close' });
+  assert.deepEqual(decide({ green: true, runs: [record('r1', 'started')] }), { act: 'close' });
+});
+
+test('fixDecision: under All stop nothing starts', () => {
+  assert.deepEqual(decide({ stop: true }), { act: 'wait', why: 'stop' });
+});
+
+test('fixDecision: no run yet starts the first', () => {
+  assert.deepEqual(decide(), { act: 'start', revert: false });
+  assert.deepEqual(decide({ green: null }), { act: 'start', revert: false }, 'an unknown main line is still red until it reads green');
+});
+
+test('fixDecision: a run under way waits', () => {
+  assert.deepEqual(decide({ runs: [record('r1', 'started')] }), { act: 'wait', why: 'running' });
+  assert.deepEqual(decide({ runs: [record('r1', 'started'), record('r1', 'paused')] }), { act: 'wait', why: 'running' });
+});
+
+test('fixDecision: a run All stop cancelled is carried on, once, on its branch', () => {
+  const runs = [record('r1', 'started', { branch: 'wh/fix' }), record('r1', 'ended', { outcome: 'cancelled' })];
+  assert.deepEqual(decide({ runs, stopped: ['r1'] }), { act: 'start', carryOn: true, branch: 'wh/fix', after: 'r1' });
+  assert.deepEqual(decide({ runs, stopped: ['r1'], kept: { carried: ['r1'] } }), { act: 'card', run: 'r1', why: 'cancelled' });
+});
+
+test('fixDecision: a run that ended without a merge while main is red brings the card once', () => {
+  const runs = [record('r1', 'started'), record('r1', 'ended', { outcome: 'failed' })];
+  assert.deepEqual(decide({ runs }), { act: 'card', run: 'r1', why: 'failed' });
+  assert.deepEqual(decide({ runs, kept: { carded: ['r1'] } }), { act: 'wait', why: 'card' });
+  // A cap's cancel is a run that didn't fix it.
+  assert.deepEqual(decide({ runs: [record('r1', 'ended', { outcome: 'cancelled' })] }), { act: 'card', run: 'r1', why: 'cancelled' });
+});
+
+test('fixDecision: a merged fix waits for the main line to read green, and brings the card if it reads red', () => {
+  const runs = [record('r1', 'ended', { outcome: 'completed' })];
+  assert.deepEqual(decide({ runs, merged: ['r1'], green: null }), { act: 'wait', why: 'merged' });
+  assert.deepEqual(decide({ runs, merged: ['r1'], green: false }), { act: 'card', run: 'r1', why: 'still-red' });
+  // Not merged, and the main line can't be read: no card on an unknown.
+  assert.deepEqual(decide({ runs, green: null }), { act: 'wait', why: 'unknown' });
+});
+
+test('fixDecision: an answer to the card starts the next attempt', () => {
+  const runs = [record('r1', 'ended', { outcome: 'failed' })];
+  assert.deepEqual(decide({ runs, kept: { carded: ['r1'], next: { revert: true } } }), { act: 'start', revert: true });
+  assert.deepEqual(decide({ runs, kept: { carded: ['r1'], next: { revert: false } } }), { act: 'start', revert: false });
+});

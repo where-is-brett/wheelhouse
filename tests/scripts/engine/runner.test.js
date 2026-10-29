@@ -239,6 +239,20 @@ function withRun(t, runId, records) {
   t.views.runs = { 'sale-banner': records.map(([at, state, extra = {}]) => ({ at, data: { work: 'sale-banner', lane: 'quick', engine: 'fake', runId, state, branch: 'wh/sale-banner', ...extra } })) };
 }
 
+test('a fix-main run at its cap is cancelled with a Logbook line, and its card is the dispatcher\'s', async () => {
+  const t = setUp({ recordings: { big: spending(2500000) } });
+  try {
+    const { runId } = t.engine.start({ recording: 'big', running: true });
+    withRun(t, runId, [['2026-10-29T12:50:00.000Z', 'started', { lane: 'fix-main' }]]);
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1);
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 0, 'no cap card');
+    assert.ok(t.writes.some((w) => w.kind === 'note' && /fix for the red main line reached its cap/.test(w.data.words ?? '')));
+    await t.runner.tick();
+    assert.equal(acts(t.engine).filter((c) => c.action.cancel).length, 1, 'cancelled once');
+  } finally { t.cleanup(); }
+});
+
 test('a cap reached cancels the run and keeps its worktree, and raises a card', async () => {
   const t = setUp({ recordings: { big: spending(1200000) }, settings: { capMinutes: { quick: 20 }, capTokens: { quick: 1000000 } } });
   try {
