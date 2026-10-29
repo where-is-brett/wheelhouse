@@ -534,3 +534,4 @@ Answered on 18 October 2026:
 - Claude Code: https://code.claude.com/docs/en/skills, https://code.claude.com/docs/en/plugins/marketplace-reference, https://code.claude.com/docs/en/plugins/loading, https://code.claude.com/docs/en/hooks, https://code.claude.com/docs/en/setup, https://code.claude.com/docs/en/worktrees
 - Debian DEP-3, for recording a patch's upstream status: https://dep-team.pages.debian.net/deps/dep3/
 - Linear's triage, for sorting before planning: https://linear.app/docs/triage
+
