@@ -39,6 +39,11 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 // itself), so no session can mark a Thoroughness column ready.
 // The engine's records are the helper's too: it writes `run`, `ask`, `cost` and `preview` from what the engine reports.
 // `incident-closed` is the helper's own reading that a red-main incident is over (the main line's checks green again).
+// An incident's fields that make it a red main line's (scripts/engine/fix-main.js): only the helper's card router writes
+// them, since such an incident holds all work and names the pull request the director is told to undo.
+export const RED_MAIN_FIELDS = ['kind', 'suspect', 'work'];
+export const RED_MAIN_OWN = 'only the helper records a red main line\'s incident';
+
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready', 'run', 'ask', 'cost', 'preview', 'incident-closed'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 

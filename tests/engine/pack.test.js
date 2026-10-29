@@ -19,9 +19,9 @@ function built() {
 }
 const LABELS = ['wh.kind', 'wh.level', 'wh.topic', 'wh.work', 'wh.recommend'];
 
-test('the pack builds the quick lane and the health trial where --workflow-source reads them', () => {
+test('the pack builds the quick and fix-main lanes and the health trial where --workflow-source reads them', () => {
   const { workflows, digest } = built();
-  assert.deepEqual(workflows, ['wheelhouse-hello', LANE_WORKFLOWS.quick]);
+  assert.deepEqual(workflows, [LANE_WORKFLOWS['fix-main'], 'wheelhouse-hello', LANE_WORKFLOWS.quick]);
   assert.match(digest, /^[0-9a-f]{64}$/);
   assert.throws(() => buildPack({ out: 'relative' }), /absolute folder/);
 });

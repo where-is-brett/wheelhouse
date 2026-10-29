@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS, RED_MAIN_FIELDS, RED_MAIN_OWN } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -1664,6 +1664,7 @@ export async function startHelper({
   async function doWrite({ project, kind, data, id }, ctx, { own = false } = {}) {
     if (PROTECTED_KINDS.includes(kind)) refuse('a signed kind is recorded through /state/record, never written here');
     if (HELPER_ONLY_KINDS.includes(kind)) refuse('only the helper itself records that kind');
+    if (kind === 'incident' && data && typeof data === 'object' && RED_MAIN_FIELDS.some((k) => Object.hasOwn(data, k))) refuse(RED_MAIN_OWN);
     if (!own && kind === 'card-answer' && data && typeof data === 'object' && CLICK_FIELDS.some((k) => Object.hasOwn(data, k))) refuse('a click\'s proof, commit, hash and words are recorded only by the helper\'s own routes');
     if (!PLAIN_KINDS.includes(kind)) refuse('that kind of event is not known');
     if (!data || typeof data !== 'object' || Array.isArray(data)) refuse('the event\'s data must be an object');

@@ -575,3 +575,19 @@ test('while the director\'s own incident is open too, the red-main fix is held l
   // The director's named fix still goes through their own incident when only it is open.
   assert.equal(incidentFor({ incidents: { open: [{ ...frozen, fixes: [9] }] } }, 9).isFix, true);
 });
+
+test('/state/write refuses a red-main incident: only the helper\'s card router opens one', async () => {
+  const remote = await hostWith();
+  try {
+    const home = await project(remote);
+    await withHelper(home, fakeAdapter({}), async (client) => {
+      for (const extra of [{ kind: 'red-main' }, { suspect: 7 }, { work: RED.work }, { kind: 'red-main', suspect: 7, work: RED.work }]) {
+        const forged = await client.state.write({ project: 'o__p', kind: 'incident', data: { id: 'red-main-0000000000', what: 'red', ...extra } });
+        assert.equal(forged.ok, false, JSON.stringify(extra));
+        assert.match(forged.refused, /red main line/);
+      }
+      // The director's own incident is written as before.
+      assert.equal((await client.state.write({ project: 'o__p', kind: 'incident', data: { id: 'bad-total', what: 'Totals are wrong' } })).ok, true);
+    });
+  } finally { remote.cleanup(); }
+});
