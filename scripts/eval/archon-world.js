@@ -233,7 +233,8 @@ export async function openArchonWorld({
         await helper?.close();
       } finally {
         if (before === undefined) delete process.env.WHEELHOUSE_HOME; else process.env.WHEELHOUSE_HOME = before;
-        fs.rmSync(root, { recursive: true, force: true });
+        // Archon's cancelled steps may still be leaving their folders, so the removal is tried again a few times.
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
       }
     },
   };

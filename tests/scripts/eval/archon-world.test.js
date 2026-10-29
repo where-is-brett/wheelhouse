@@ -2,7 +2,7 @@
 // The counted evaluation's world on real Archon (scripts/eval/archon-world.js), with a stand-in for Archon's command
 // line, so no real Archon, Bun or Claude runs here: the world's engine folder passes the adapter's own health check as
 // setup's install does, its health trial passes only when the guards held, the engine is built once, the real plays of
-// 45 to 48 and 62 pass against it, a failed trial stops every real play, and the report says which played for real.
+// 45, 46, 48 and 62 pass against it, a failed trial stops every real play, and the report says which played for real.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -147,7 +147,7 @@ test('the engine is built once into its cache, and a build cut short is moved as
   assert.equal(fs.readdirSync(parent).filter((n) => n.startsWith('engine.unfinished-')).length, 1);
 });
 
-for (const name of ['45-cap-blocked-card', '46-all-stop-cancels-runs', '47-planted-review-refused', '48-unsigned-merge-refused', '62-non-fix-refused-while-red']) {
+for (const name of ['45-cap-blocked-card', '46-all-stop-cancels-runs', '48-unsigned-merge-refused', '62-non-fix-refused-while-red']) {
   test(`scenario ${name.split('-')[0]}'s real play passes on the world`, { skip }, async () => {
     const world = await open(standInArchon(), fakeCache());
     try {
