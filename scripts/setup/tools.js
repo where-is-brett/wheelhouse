@@ -58,6 +58,9 @@ import { readJournal, newId } from './journal.js';
 import { runClosed } from '../lib/setup-run.js';
 import { engineWanted, engineChanges, applyEngine } from './engine-parts.js';
 
+// Step 2's changes the engine's own apply makes (scripts/setup/engine-parts.js).
+const ENGINE_ACTIONS = ['engine', 'archon-settings', 'broker'];
+
 export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const FLOOR = NODE_FLOOR.join('.');
@@ -775,6 +778,7 @@ function cardFor(changes, status, platform) {
   if (changes.some((c) => c.action === 'engine')) {
     full.push('the build engine, Archon: built from its pinned source with Wheelhouse\'s safety patch, with the pinned Bun, into Wheelhouse\'s engine folder, each checked against Wheelhouse\'s pins, with its usage reporting off; a few minutes, nothing for you to do');
   }
+  if (changes.some((c) => c.action === 'archon-settings')) full.push('the build engine set to run its steps with Claude');
   if (changes.some((c) => c.action === 'broker')) full.push('the engine\'s broker, so the engine reaches GitHub only through Wheelhouse\'s helper and never holds a key');
   if (rule) full.push(`${ruleWords} in this project's .claude/settings.local.json, so setup's own command is not asked about each time`);
   const terse = [];
@@ -786,6 +790,7 @@ function cardFor(changes, status, platform) {
       : `${c.tool}: from your company's list at ${shownSource(c.source)}, no checksum; it becomes your glab for GitLab and sign-in; Not now if unsure`);
   }
   if (changes.some((c) => c.action === 'engine')) terse.push('the build engine, Archon: pinned and checked, usage reporting off');
+  if (changes.some((c) => c.action === 'archon-settings')) terse.push('the engine set to use Claude');
   if (changes.some((c) => c.action === 'broker')) terse.push('its broker to GitHub');
   if (rule) terse.push(ruleWords);
   const card = (what) => ({
@@ -909,8 +914,8 @@ export function toolsStep({
         : fetchHostTool({ tool: c.tool, platform, arch, fetch, run, record })));
       // The rule is written once every installer's start is recorded, so a write that fails can't
       // leave an installer open that the journal doesn't know about.
-      const built = engine && changes.some((c) => c.action === 'engine' || c.action === 'broker')
-        ? [engine.apply(changes.filter((c) => c.action === 'engine' || c.action === 'broker'), { record, run, fetch, arch, platform })]
+      const built = engine && changes.some((c) => ENGINE_ACTIONS.includes(c.action))
+        ? [engine.apply(changes.filter((c) => ENGINE_ACTIONS.includes(c.action)), { record, run, fetch, arch, platform })]
         : [];
       const failed = (await Promise.allSettled([...installs, ...fetches, ...built])).find((r) => r.status === 'rejected');
       if (failed) throw failed.reason;

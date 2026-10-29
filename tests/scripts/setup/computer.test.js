@@ -558,6 +558,34 @@ test('a computer with neither condition gets no login start', async () => {
   });
 });
 
+test('an older Wheelhouse at user scope is brought up to date under the same Go ahead', async () => {
+  const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, installedPluginsFile, pluginUpdateLine, ownVersion, olderVersion, engineLine, ENGINE_LINE_WITH_UPDATE, ENGINE_LINE_WITH_PLUGIN } = await import('../../../scripts/setup/engine-parts.js');
+  assert.equal(olderVersion('0.1.2', '0.2.0'), true);
+  assert.equal(olderVersion('0.2.0', '0.2.0'), false);
+  assert.equal(olderVersion('0.10.0', '0.9.1'), false);
+  assert.equal(olderVersion('unknown', '0.2.0'), false, 'a version that isn\'t a release is left alone');
+  assert.equal(olderVersion('1234567', '0.2.0'), false);
+  await withProject(async ({ folder, user, config }) => {
+    // The line on setup's one card says so too, as part of the engine's line.
+    assert.equal(engineLine(undefined, { claudeHome: config }), ENGINE_LINE_WITH_PLUGIN);
+    fs.mkdirSync(path.dirname(installedPluginsFile(config)), { recursive: true });
+    fs.writeFileSync(installedPluginsFile(config), JSON.stringify({ version: 2, plugins: { 'wheelhouse@wheelhouse': [{ scope: 'project', version: '0.2.0' }, { scope: 'user', version: '0.1.2' }] } }));
+    assert.equal(engineLine(undefined, { claudeHome: config }), ENGINE_LINE_WITH_UPDATE);
+    const fake = fakeRun();
+    const engine = { wanted: engineWanted, pluginScope: pluginScopeChanges, applyPlugin: applyPluginScope };
+    const step = computerStep({ engine, run: fake.run, env: { CLAUDE_CONFIG_DIR: config }, manifest: MANIFEST, port: PORT });
+    const ctx = { folder, step: 6, now: () => T0, userHome: user, platform: 'darwin', answers: {} };
+    const planned = await step.plan(ctx);
+    const update = { from: '0.1.2', to: ownVersion() };
+    assert.deepEqual(planned.changes.filter((c) => c.what === 'plugin'), [{ kind: 'plugin-scope', target: installedPluginsFile(config), plugin: PLUGIN_SCOPE.plugin, scope: 'user', what: 'plugin', update }]);
+    assert.ok(composed(planned, 6).includes(pluginUpdateLine('0.1.2', ownVersion())));
+    const run = startRun({ folder, now: () => T0 });
+    assert.deepEqual(await runApply({ step, runId: run.id, changes: planned.changes, ctx: { ...ctx, runId: run.id } }), { ok: true });
+    assert.ok(fake.calls.some((c) => c.join(' ') === 'claude plugin update wheelhouse@wheelhouse --scope user'));
+    assert.ok(!fake.calls.some((c) => c.join(' ').startsWith('claude plugin install')));
+  });
+});
+
 test('on a computer that runs the engine, step 6 adds Wheelhouse at user scope and the login start, on its one card', async () => {
   const { engineWanted, pluginScopeChanges, applyPluginScope, PLUGIN_SCOPE, PLUGIN_SCOPE_LINE, installedPluginsFile } = await import('../../../scripts/setup/engine-parts.js');
   await withProject(async ({ folder, user, config }) => {
