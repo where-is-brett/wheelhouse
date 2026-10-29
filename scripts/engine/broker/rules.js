@@ -2,8 +2,8 @@
 // The broker's rules (Archon design, section 12.4). The broker is the only gh on Archon's PATH: it sends each call to
 // the helper, which sorts it by this list and decides. The list is check 76's: every gh call Archon's merge queue
 // made, plus the pull request's own calls. Reads pass. Pushes, pull-request creation and comments pass under the push
-// rules: never the default branch, the lock held, All stop off. A comment that reads as the merge queue's verdict
-// passes only with a signed CLEAN review of that head. A merge passes only with the permit. Anything not on the list
+// rules: never the default branch, the lock held, All stop off. A comment, or a pull request's text edited, that reads
+// as the merge queue's verdict passes only with a signed CLEAN review of that head. A merge passes only with the permit. Anything not on the list
 // is refused, with a plain reason, and never forwarded.
 import { reviewCounts, approvalCounts, incidentReason } from '../../gate/conditions.js';
 
@@ -88,7 +88,7 @@ export const BROKER_ALLOW = Object.freeze([
   { name: 'issue, read', kind: 'read', test: (w) => w[0] === 'issue' && ['view', 'list'].includes(w[1]) },
   { name: 'repository, read', kind: 'read', test: (w) => w[0] === 'repo' && w[1] === 'view' },
   { name: 'pull request, create', kind: 'create', test: (w) => w[0] === 'pr' && w[1] === 'create' },
-  { name: 'pull request text, edit', kind: 'create', test: (w) => w[0] === 'pr' && w[1] === 'edit' && w.every((x) => !/^--(add|remove)-(label|reviewer|assignee)/.test(x)) },
+  { name: 'pull request text, edit', kind: 'comment', test: (w) => w[0] === 'pr' && w[1] === 'edit' && w.every((x) => !/^--(add|remove)-(label|reviewer|assignee)/.test(x)) },
   { name: 'pull request, comment', kind: 'comment', test: (w) => w[0] === 'pr' && w[1] === 'comment' },
   { name: 'comment, edit', kind: 'comment', test: (w, m, p) => w[0] === 'api' && m === 'PATCH' && new RegExp(`^${repoPath}/issues/comments/\\d+$`).test(p) },
   { name: 'branch, update', kind: 'push', test: (w, m, p) => w[0] === 'api' && ['PATCH', 'POST'].includes(m) && new RegExp(`^${repoPath}/git/refs(/heads/.+)?$`).test(p) },

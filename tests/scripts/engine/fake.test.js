@@ -10,7 +10,7 @@ const now = () => '2026-10-29T09:00:00.000Z';
 const types = (events) => events.map((e) => e.type);
 
 test('the fixtures are well-formed, and there are three', () => {
-  assert.deepEqual(Object.keys(recordings), ['merge-hold', 'quick-approved', 'quick-blocked']);
+  assert.deepEqual(Object.keys(recordings), ['merge-hold', 'quick-approved', 'quick-blocked', 'quick-lane']);
   for (const events of Object.values(recordings)) for (const e of events) assert.equal(checkEvent(e), null);
 });
 
@@ -108,4 +108,20 @@ test('start refuses a recording it does not have; readRecording names a bad line
   assert.equal(engine.start({}).ok, false);
   assert.throws(() => readRecording('{"type":"run-started"}'), /line 1/);
   assert.throws(() => readRecording('not json'), /line 1 isn't JSON/);
+});
+
+test('the fake keeps step outputs, hands work to a merge queue and has an artefacts folder for each run', () => {
+  const engine = fakeEngine({ recordings, artefacts: '/artefacts', source: '/frozen' });
+  const { runId } = engine.start({ recording: 'quick-lane' });
+  const before = engine.outputs(runId);
+  assert.equal(JSON.parse(before['review-spec']).verdict, 'CLEAN');
+  assert.equal(before.lesson, undefined, 'a step after the open ask has not run yet');
+  engine.setOutput(runId, 'open-pr', '{"pr":1}');
+  assert.equal(engine.outputs(runId)['open-pr'], '{"pr":1}');
+  assert.equal(engine.inspect(runId).source, '/frozen');
+  assert.equal(engine.artefactsOf(runId), path.join('/artefacts', runId));
+  assert.equal(engine.artefactsOf('no-such-run'), null);
+  assert.deepEqual(engine.handOver({ pr: 1 }), { ok: true });
+  assert.deepEqual(engine.calls.at(-1), { call: 'handOver', item: { pr: 1 } });
+  assert.deepEqual(engine.outputs('no-such-run'), {});
 });

@@ -70,6 +70,11 @@ test('a comment reading as the verdict passes only with a signed CLEAN review of
     assert.equal(plain.kind, 'comment');
     const edit = classifyCall(['api', '-X', 'PATCH', 'repos/acme/web/issues/comments/901', '--input', '-'], { stdin: JSON.stringify({ body }) });
     assert.deepEqual([edit.kind, edit.sha], ['verdict', HEAD]);
+    const text = classifyCall(['pr', 'edit', '14', '--repo', R, '--body', 'Prices show two decimals.']);
+    assert.equal(text.kind, 'comment', 'a pull request\'s text, edited by number, names no branch and passes as text');
+    assert.deepEqual(brokerDecision(text, ctx), { allow: true });
+    const marked = classifyCall(['pr', 'edit', '14', '--body', body]);
+    assert.deepEqual([marked.kind, marked.pr, marked.sha], ['verdict', 14, HEAD], 'a body carrying the verdict is a verdict');
   });
 });
 

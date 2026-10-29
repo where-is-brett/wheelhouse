@@ -3,7 +3,10 @@
 // A run plays until an ask, holds there until the ask is answered, then plays on. Every start and act is kept in
 // `calls`. Cancelling, or stopAll, ends a running run with the outcome 'cancelled'; stopAll leaves a paused one
 // paused, as Archon does. A run started with `order.ownerPid` (a test's) reports it from inspect, as a real engine
-// reports the process that owns the run.
+// reports the process that owns the run. Like Archon, it keeps each finished step's output (a recorded step-finished
+// event's `output`), hands work to a merge queue (kept in `calls`) and has an artefacts folder for each run, under
+// `artefacts`; a step whose output depends on the test's world (the pull request a run opened) is given by `setOutput`.
+// `source` is the folder it says each run's pack was frozen into.
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkEvent } from './contract.js';
@@ -33,7 +36,7 @@ export function loadRecordings(dir) {
 }
 
 // `recordings` is { name: events }; an order picks one with `order.recording` (the only one, when there is one).
-export function fakeEngine({ recordings = {}, now = () => new Date().toISOString() } = {}) {
+export function fakeEngine({ recordings = {}, now = () => new Date().toISOString(), artefacts = null, source = null } = {}) {
   const stream = [];
   const runs = new Map();
   const calls = [];
@@ -76,7 +79,7 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const name = order.recording ?? (names.length === 1 ? names[0] : undefined);
       if (!name || !recordings[name]) return { ok: false, refused: `There is no recording named ${name ?? '(none given)'}` };
       const id = `fake-${runs.size + 1}-${name}`;
-      const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true };
+      const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {} };
       runs.set(id, run);
       play(run);
       return { ok: true, runId: id };
@@ -144,7 +147,31 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
         branch: run.ended?.branch ?? started?.branch ?? null,
         pr: run.ended?.pr ?? null,
         digest: `${steps.length} step${steps.length === 1 ? '' : 's'} finished; ${run.ended ? `ended: ${run.ended.outcome}` : status}`,
+        source,
       };
+    },
+
+    // Each finished step's output, by its id: what the recording gave, then what the test gave.
+    outputs(runId) {
+      const run = runs.get(runId);
+      if (!run) return {};
+      const recorded = stream.filter((e) => e.runId === runId && e.type === 'step-finished' && typeof e.output === 'string');
+      return { ...Object.fromEntries(recorded.map((e) => [e.step, e.output])), ...run.given };
+    },
+
+    // Gives a step's output, as the step would have printed it.
+    setOutput(runId, step, text) {
+      const run = runs.get(runId);
+      if (run) run.given[step] = text;
+    },
+
+    handOver(item) {
+      calls.push({ call: 'handOver', item });
+      return { ok: true };
+    },
+
+    artefactsOf(runId) {
+      return artefacts && runs.has(runId) ? path.join(artefacts, runId) : null;
     },
 
     // Cancels every running run, as Archon does: a run paused at an ask isn't cancelled, and is listed in `paused`.

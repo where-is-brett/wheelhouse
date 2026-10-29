@@ -66,3 +66,20 @@ test('every wait carries the labels the card router reads, and the approval name
   assert.equal(approval.wait.form, 'approval');
   for (const label of ['wh.pr', 'wh.head', 'wh.preview']) assert.ok(approval.wait.labels[label], label);
 });
+
+test('every script a step runs is in the plugin, and every lane\'s script step runs one', () => {
+  const { read } = built();
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const named = new Set();
+  for (const name of ['wheelhouse-hello', 'wheelhouse-quick']) {
+    const workflow = read(name);
+    for (const { node, group } of nodesOf(workflow.nodes)) {
+      const bash = [node.bash, group === null ? node.loop_group?.until_bash : null].filter((b) => typeof b === 'string').join('\n');
+      for (const [, script] of bash.matchAll(/\$WHEELHOUSE_ROOT\/(scripts\/[\w/.-]+\.js)/g)) named.add(script);
+      // The health trial's script step is a plain shell line: it shows the engine runs one.
+      if (name !== 'wheelhouse-hello' && typeof node.bash === 'string') assert.match(node.bash, /\$WHEELHOUSE_ROOT\/scripts\//, `${node.id} runs one of Wheelhouse's scripts`);
+    }
+  }
+  assert.ok(named.size >= 10, `${named.size} scripts named`);
+  for (const script of named) assert.ok(fs.existsSync(path.join(root, script)), `${script} is in the plugin`);
+});

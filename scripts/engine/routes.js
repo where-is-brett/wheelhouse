@@ -33,6 +33,8 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 // What the helper copies from a run's preview folder: pictures the step named by page and size, and its notes.
 const PREVIEW_FILE = /^([a-z0-9][a-z0-9-]{0,80}-\d{2,5}x\d{2,5}\.png|notes\.json)$/;
 const MOST_PREVIEW_BYTES = 20 * 1024 * 1024;
+// The longest lesson kept: one or two sentences, as the lesson prompt asks.
+const MOST_LESSON = 600;
 
 // The merge queue's verdict comment for `head`, in the form the pinned release's gate reads (check 76).
 export function verdictBody({ head, steps }) {
@@ -98,11 +100,14 @@ export function engineRoutes({
     return { ok: true, runId: started.runId };
   }
 
-  // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id } }.
+  // The verdicts kept for a project: { runs: { [runId]: { head, signed: { [step]: verdict } } }, comments: { [pr]: id },
+  // ready: { [pr]: { head, runId, showFirst, work } }, lessons: { [runId]: at } }.
   const verdictsFile = (project) => path.join(filesDir(project), 'verdicts.json');
   function readVerdicts(project) {
     const kept = parsed(fs.existsSync(verdictsFile(project)) ? fs.readFileSync(verdictsFile(project), 'utf8') : 'null');
-    return kept && typeof kept === 'object' ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {} } : { runs: {}, comments: {}, ready: {} };
+    return kept && typeof kept === 'object'
+      ? { runs: kept.runs ?? {}, comments: kept.comments ?? {}, ready: kept.ready ?? {}, lessons: kept.lessons ?? {} }
+      : { runs: {}, comments: {}, ready: {}, lessons: {} };
   }
   function keepVerdicts(project, verdicts) {
     fs.mkdirSync(filesDir(project), { recursive: true, mode: 0o700 });
@@ -235,6 +240,24 @@ export function engineRoutes({
     return { ok: true, folder: to, pictures };
   }
 
+  // The pack's lesson step: writes the lesson the run's lesson step gave, read from the engine's own record, as one
+  // `lesson` event. At most one a run, and none when the lesson is empty, which is the usual answer.
+  async function lesson({ runId } = {}) {
+    const run = runOf(runId);
+    if (!run) return { ok: false, refused: NO_ORDER };
+    const engine = engineFor(run.project);
+    if (typeof engine?.outputs !== 'function') return { ok: false, refused: 'that project\'s engine keeps no step outputs' };
+    const verdicts = readVerdicts(run.project);
+    if (verdicts.lessons[runId]) return { ok: true, written: false };
+    const given = parsed((await engine.outputs(runId)).lesson);
+    const text = typeof given?.lesson === 'string' ? given.lesson.trim() : '';
+    if (given?.blocked === true || text === '') return { ok: true, written: false };
+    verdicts.lessons[runId] = now().toISOString();
+    keepVerdicts(run.project, verdicts);
+    await write(run.project, 'lesson', { work: run.order.work, text: text.slice(0, MOST_LESSON) });
+    return { ok: true, written: true };
+  }
+
   // What the helper knows of a pull request it marked ready: { head, runId, showFirst, work }, or null.
   const readyOf = (project, pr) => readVerdicts(project).ready?.[pr] ?? null;
 
@@ -248,6 +271,7 @@ export function engineRoutes({
       '/engine/ready': ready,
       '/engine/preview/find': previewFind,
       '/engine/preview': preview,
+      '/engine/lesson': lesson,
       // The order the helper keeps for the run, and nothing for any other id.
       '/engine/order': async ({ runId } = {}) => {
         const run = runOf(runId);
