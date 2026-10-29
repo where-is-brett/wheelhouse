@@ -8,6 +8,7 @@
 //   node scripts/engine/plan-file.js --tasks --base <ref>                        ["2","3"]: the unfinished tasks
 //   node scripts/engine/plan-file.js --problem --base <ref>                      { problem: null | 'none' | 'too-many' }
 //   node scripts/engine/plan-file.js --task <n> --gate --base <ref> --artefacts <dir>   { skip }
+import { safeGit } from '../lib/safe-git.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run as defaultRun } from '../lib/run.js';
@@ -49,7 +50,9 @@ export async function findPlan({ cwd, base, run = defaultRun }) {
   try {
     return { text: fs.readFileSync(path.join(cwd, PLAN_FILE), 'utf8'), where: 'tree' };
   } catch { /* not in the tree */ }
-  const git = (...args) => run('git', args, { cwd, timeoutMs: 30000 });
+  // The fence alone: the worktree's own settings are an agent's to write, and nothing here runs its hooks or filters.
+  const fenced = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
+  const git = (...args) => fenced(args);
   const gone = await git('log', '--diff-filter=D', '--format=%H', `${base}..HEAD`, '--', PLAN_FILE);
   const sha = gone.code === 0 ? gone.stdout.trim().split('\n')[0] : '';
   if (!sha) return null;
