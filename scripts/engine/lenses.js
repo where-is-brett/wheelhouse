@@ -4,8 +4,9 @@
 // or the lines it adds; design applies to visible work, which the work order (from the helper) says. Without an order
 // every lens runs. It also records the commit the reviews will read (`head`) and whether the worktree holds only that
 // commit (`clean`), in Archon's own record, so the helper signs a review only for the head it read. It prints
-// { security, design, head, clean } and exits 0, for the pack to branch on.
-//   node scripts/engine/lenses.js --run <run id> --base <ref>
+// { security, design, head, clean } and exits 0, for the pack to branch on. After a fix round (the small lane),
+// `--held` names the lenses that held in the round before: security and design then run again only if they held.
+//   node scripts/engine/lenses.js --run <run id> --base <ref> [--held <lens,lens>]
 import { helperClient } from '../host/helper-client.js';
 import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
@@ -59,7 +60,9 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   const head = named.code === 0 ? named.stdout.trim() : '';
   const status = head ? await git('status', '--porcelain', '--untracked-files=all') : { code: 1, stdout: '' };
   const clean = head !== '' && status.code === 0 && status.stdout.trim() === '';
-  out(JSON.stringify({ security, design: order === null || order.preview !== null, head, clean }));
+  const held = (runArg(argv, '--held') ?? '').split(',').map((lens) => lens.trim()).filter(Boolean);
+  const again = (lens, applies) => applies && (held.length === 0 || held.includes(lens));
+  out(JSON.stringify({ security: again('security', security), design: again('design', order === null || order.preview !== null), head, clean }));
   return 0;
 }
 
