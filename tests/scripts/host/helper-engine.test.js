@@ -13,7 +13,7 @@ import { engineForProject } from '../../../scripts/host/helper-main.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
-import { listEvents } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
@@ -57,6 +57,14 @@ async function projects(names) {
   return { home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
 }
 
+// A run's start in the project's record, as what started the run writes it: the host knows a run only by it.
+function started(project, runId, work) {
+  const event = makeEvent({ kind: 'run', data: { work, lane: 'quick', engine: 'fake', runId, state: 'started', branch: `wh/${work}` }, now: () => new Date('2026-10-29T01:00:00.000Z') });
+  const file = path.join(stateDir(project), eventPath(event));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
+}
+
 const engineRecords = (project) => listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'run' || e.kind === 'ask');
 
 test("the helper keeps the engine's host for a project on the new engine, writing its records and keeping the cursor beside them", async () => {
@@ -66,6 +74,7 @@ test("the helper keeps the engine's host for a project on the new engine, writin
   const { spawn, children } = stubSpawn();
   try {
     await as(p.home, async () => {
+      started('o__on', runId, 'card-13');
       const helper = await startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
         spawn, engineFor: (project) => (project === 'o__on' ? engine : null),
@@ -92,9 +101,10 @@ test("the helper keeps the engine's host for a project on the new engine, writin
 test("a helper started again writes none of the engine's records twice", async () => {
   const p = await projects(['o__on']);
   const engine = fakeEngine({ recordings });
-  engine.start({ recording: 'quick-approved' });
+  const { runId } = engine.start({ recording: 'quick-approved' });
   try {
     await as(p.home, async () => {
+      started('o__on', runId, 'card-12');
       const start = () => startHelper({
         run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
         spawn: stubSpawn().spawn, engineFor: () => engine,

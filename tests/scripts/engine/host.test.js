@@ -56,8 +56,8 @@ test('a restarted host resumes from the saved cursor and writes nothing twice', 
     engine.follow = (cursor, options) => { asked.push(cursor); return follow(cursor, options); };
     const { runId } = engine.start({ recording: 'quick-approved' });
     const { kept, write } = writes();
-    // The work a run is for, read back from what was written, as the helper reads it from the record.
-    const workOf = (id) => kept.find((w) => w.kind === 'run' && w.data.runId === id)?.data ?? null;
+    // The work a run is for, as the helper reads it from the project's record, where the run's start put it.
+    const workOf = (id) => (id === runId ? { work: 'card-12', lane: 'quick', branch: 'wh/card-12' } : null);
     const { spawn } = stubSpawn();
     const first = startEngineHost({ engine, spawn, write, cursorFile: f.file, workOf, ...quick });
     await until(() => kept.some((w) => w.kind === 'ask'), { what: 'the ask to be written' });
@@ -73,9 +73,10 @@ test('a restarted host resumes from the saved cursor and writes nothing twice', 
     await until(() => kept.some((w) => w.kind === 'run' && w.data.state === 'ended'), { what: 'the end of the run' });
     await second.stop();
     assert.equal(asked.find((cursor, i) => i > 0 && cursor !== null), '4');
-    // Started, asked and paused before the restart; carried on (the ask resolved) and ended after it.
-    assert.deepEqual(kept.map(keyOf), [`run ${runId} started`, 'ask rec-quick-1:approve:1', `run ${runId} paused`, `run ${runId} started`, `run ${runId} ended`]);
-    assert.equal(before, 3);
+    // Asked and paused before the restart; carried on (the ask resolved) and ended after it. The run's start is the
+    // starter's record, not the host's.
+    assert.deepEqual(kept.map(keyOf), ['ask rec-quick-1:approve:1', `run ${runId} paused`, `run ${runId} started`, `run ${runId} ended`]);
+    assert.equal(before, 2);
     assert.deepEqual(kept.at(-1).data, { work: 'card-12', lane: 'quick', engine: 'fake', runId, state: 'ended', branch: 'wh/card-12', pr: 12, outcome: 'merged' });
   } finally { f.cleanup(); }
 });
@@ -93,7 +94,8 @@ test('an ask seen twice is written once, and a host restarted with its cursor lo
     const { kept, write } = writes();
     const heard = [];
     const { spawn } = stubSpawn();
-    const host = startEngineHost({ engine, spawn, write, cursorFile: f.file, onAsk: (ask) => heard.push(ask.id), ...quick });
+    const workOf = (id) => (id === runId ? { work: 'card-13', lane: 'quick' } : null);
+    const host = startEngineHost({ engine, spawn, write, cursorFile: f.file, workOf, onAsk: (ask) => heard.push(ask.id), ...quick });
     await until(() => kept.some((w) => w.kind === 'ask'), { what: 'the ask to be written' });
     await new Promise((resolve) => setTimeout(resolve, 30));
     await host.stop();
@@ -109,10 +111,78 @@ test('an ask seen twice is written once, and a host restarted with its cursor lo
     const saved = readCursorFile(f.file);
     fs.writeFileSync(f.file, JSON.stringify({ cursor: null, written: saved.written }));
     const count = kept.length;
-    const again = startEngineHost({ engine, spawn, write, cursorFile: f.file, ...quick });
+    const again = startEngineHost({ engine, spawn, write, cursorFile: f.file, workOf, ...quick });
     await new Promise((resolve) => setTimeout(resolve, 50));
     await again.stop();
     assert.equal(kept.length, count);
+  } finally { f.cleanup(); }
+});
+
+test("with two projects on one engine, each host writes only its own runs' records, whatever an ask's label says", async () => {
+  const fa = folder();
+  const fb = folder();
+  try {
+    const engine = fakeEngine({ recordings });
+    const a = engine.start({ recording: 'quick-approved' }).runId;
+    const b = engine.start({ recording: 'quick-blocked' }).runId;
+    const mine = { [a]: { work: 'card-12', lane: 'quick' }, [b]: { work: 'card-13', lane: 'quick' } };
+    const ka = writes();
+    const kb = writes();
+    const hostA = startEngineHost({ engine, spawn: stubSpawn().spawn, write: ka.write, cursorFile: fa.file, workOf: (id) => (id === a ? mine[a] : null), ...quick });
+    const hostB = startEngineHost({ engine, spawn: stubSpawn().spawn, write: kb.write, cursorFile: fb.file, workOf: (id) => (id === b ? mine[b] : null), wake: false, ...quick });
+    await until(() => ka.kept.some((w) => w.kind === 'ask') && kb.kept.some((w) => w.kind === 'ask'), { what: 'each host to write its ask' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await hostA.stop();
+    await hostB.stop();
+    assert.ok(ka.kept.every((w) => w.data.runId === a), ka.kept.map(keyOf).join(', '));
+    assert.ok(kb.kept.every((w) => w.data.runId === b), kb.kept.map(keyOf).join(', '));
+  } finally { fa.cleanup(); fb.cleanup(); }
+});
+
+test("an ask whose label names other work than the run's record is written nowhere, and said", async () => {
+  const f = folder();
+  try {
+    const engine = fakeEngine({ recordings });
+    const { runId } = engine.start({ recording: 'quick-blocked' });
+    const { kept, write } = writes();
+    const troubles = [];
+    const host = startEngineHost({
+      engine, spawn: stubSpawn().spawn, write, cursorFile: f.file, workOf: (id) => (id === runId ? { work: 'card-99', lane: 'quick' } : null),
+      onTrouble: (why) => troubles.push(why), ...quick,
+    });
+    await until(() => troubles.length > 0, { what: 'the mismatch to be said' });
+    await host.stop();
+    assert.deepEqual(kept.filter((w) => w.kind === 'ask'), []);
+    assert.match(troubles.join(' '), /card-13.*card-99|card-99.*card-13/);
+  } finally { f.cleanup(); }
+});
+
+test('an ask the stream and the backstop bring at once is written once and told once', async () => {
+  const f = folder();
+  try {
+    const engine = fakeEngine({ recordings });
+    const { runId } = engine.start({ recording: 'quick-blocked' });
+    const ask = engine.watch(null).events.find((e) => e.type === 'ask');
+    // The stream brings the ask and then waits; the backstop reads it too, while the stream's write is still going.
+    engine.follow = async function* once(_cursor, { signal } = {}) {
+      yield ask;
+      await new Promise((resolve) => signal?.addEventListener('abort', resolve, { once: true }));
+    };
+    const kept = [];
+    const write = async (kind, data) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      kept.push({ kind, data });
+    };
+    const heard = [];
+    const host = startEngineHost({
+      engine, spawn: stubSpawn().spawn, write, cursorFile: f.file, workOf: (id) => (id === runId ? { work: 'card-13', lane: 'quick' } : null),
+      onAsk: (event) => heard.push(event.id), ...quick, backstopMs: 5,
+    });
+    await until(() => kept.some((w) => w.kind === 'run' && w.data.state === 'paused'), { what: 'the ask and the pause' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await host.stop();
+    assert.deepEqual(kept.map(keyOf), [`ask ${ask.id}`, `run ${runId} paused`]);
+    assert.deepEqual(heard, [ask.id]);
   } finally { f.cleanup(); }
 });
 

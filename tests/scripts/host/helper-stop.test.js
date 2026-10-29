@@ -443,8 +443,10 @@ test("the desk's All stop cancels every run, ends what the cancel left and names
   const { spawn, children } = stubSpawn({ onKill: pc.wakeEnds });
   try {
     await as(p.home, async () => {
+      // Each run's start is in the record, as what started it wrote it, so the note can name their work.
+      record('run', { work: 'card-12', lane: 'quick', engine: 'fake', runId: running, state: 'started', branch: 'wh/card-12' });
+      record('run', { work: 'card-13', lane: 'quick', engine: 'fake', runId: paused, state: 'started', branch: 'wh/card-13' });
       await withHelper(fakeAdapter(), async (client) => {
-        // The host has recorded both runs, so the note can name their work.
         await until(() => runs().filter((e) => e.data.state === 'started').length >= 2 && children.length === 1, { what: 'both runs recorded and the wake process' });
         const asked = await client.desk.act({ v: 'desk/1', project: 'o__p', command: 'all-stop', args: { by: 'mod' } });
         assert.equal(asked.ok, true);

@@ -49,8 +49,9 @@ const present = (data) => Object.fromEntries(Object.entries(data).filter(([, val
 
 // startEngineHost({ engine, spawn, write, cursorFile, ... }) -> { stop(), check(), processes(), onAsk(fn) }.
 // - `write(kind, data)` records a `run` or `ask`; a write that throws is tried again the next time the event is seen.
-// - `workOf(runId)` -> { work, lane, branch? } | null: the work a run is for, from the record. A run this host doesn't
-//   know (another project's, on the same engine) is written nothing.
+// - `workOf(runId)` -> { work, lane, branch? } | null: the work a run is for, from the project's own `run` records,
+//   which the run's start wrote. A run this host doesn't know (another project's, on the same engine) is written
+//   nothing, whatever an event's labels say; a label only cross-checks, and one naming other work is said, not written.
 // - `onAsk(event)` is told each new ask once it is written: the card router's hook (part 3c).
 // - `wake: false` keeps only the stream, for a second project on the same engine; `held()` true (All stop) ends the
 //   wake process and starts none until it is false again.
@@ -63,7 +64,8 @@ export function startEngineHost({
   const saved = readCursorFile(cursorFile);
   let cursor = saved.cursor;
   const written = new Set(saved.written);
-  const runs = new Map();
+  // The writes under way, by key, so the stream and the backstop bringing one event at once write it once.
+  const writing = new Map();
   const resolved = new Set();
   let listener = onAsk;
   let stopped = false;
@@ -90,33 +92,46 @@ export function startEngineHost({
     }
   }
 
-  const known = (runId) => {
-    const own = runs.get(runId);
-    if (own) return own;
-    try {
-      const found = workOf(runId);
-      return found && isText(found.work) ? found : null;
-    } catch {
+  // The project's own run, or null. An event whose label names other work than the record is said and left.
+  const known = (event) => {
+    let found = null;
+    try { found = workOf(event.runId); } catch { found = null; }
+    if (!found || !isText(found.work)) return null;
+    const label = event.work ?? event.labels?.work;
+    if (isText(label) && label !== found.work) {
+      trouble(`The engine's run ${event.runId} says it is for ${label}, but the record has it for ${found.work}; nothing was written`);
       return null;
     }
+    return found;
   };
 
-  // Writes `data` once under `key`; true when it is written now or was before.
+  // Writes `data` once under `key`: 'now' to the caller whose write it is, 'before' when it was written earlier or by
+  // a caller whose write was under way, false when the write failed.
   async function once(key, kind, data) {
-    if (written.has(key)) return true;
+    if (written.has(key)) return 'before';
+    const going = writing.get(key);
+    if (going) return (await going) ? 'before' : false;
+    const attempt = (async () => {
+      try {
+        await write(kind, data);
+      } catch (error) {
+        trouble(`A ${kind} record from the engine wasn't written: ${error instanceof Error ? error.message : 'unknown'}`);
+        return false;
+      }
+      written.add(key);
+      keep();
+      return true;
+    })();
+    writing.set(key, attempt);
     try {
-      await write(kind, data);
-    } catch (error) {
-      trouble(`A ${kind} record from the engine wasn't written: ${error instanceof Error ? error.message : 'unknown'}`);
-      return false;
+      return (await attempt) ? 'now' : false;
+    } finally {
+      writing.delete(key);
     }
-    written.add(key);
-    keep();
-    return true;
   }
 
   async function runState(event, state, extra = {}) {
-    const run = known(event.runId);
+    const run = known(event);
     if (!run || !isText(run.lane)) return;
     const key = `run:${event.runId}:${state}:${extra.key ?? ''}`;
     delete extra.key;
@@ -128,14 +143,11 @@ export function startEngineHost({
 
   async function handle(event) {
     if (!event || typeof event !== 'object') return;
-    if (event.type === 'run-started') {
-      if (isText(event.work) && isText(event.lane)) runs.set(event.runId, { work: event.work, lane: event.lane, branch: event.branch ?? null });
-      await runState(event, 'started');
-    } else if (event.type === 'ask') {
+    // A run's start is recorded by what started it (the record is how a run is known), so the host writes nothing for it.
+    if (event.type === 'ask') {
       if (resolved.has(event.id)) return;
-      const work = event.work ?? event.labels?.work ?? known(event.runId)?.work;
+      const work = known(event)?.work;
       if (!isText(work)) return;
-      const fresh = !written.has(`ask:${event.id}`);
       const done = await once(`ask:${event.id}`, 'ask', present({
         id: event.id, runId: event.runId, work, kind: event.kind,
         // An ask that gives no level comes at level 3, as one nobody recognises does (spec 8.1).
@@ -147,7 +159,7 @@ export function startEngineHost({
         setLine: isText(event.setLine) ? event.setLine : undefined,
       }));
       if (done) await runState(event, 'paused', { key: event.id });
-      if (done && fresh) {
+      if (done === 'now') {
         try { listener(event); } catch { /* the hook's trouble is its own */ }
       }
     } else if (event.type === 'ask-resolved') {
