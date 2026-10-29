@@ -120,3 +120,6 @@ export function fixing(work, outcome = null) {
   const run = [{ ...started(work), lane: 'fix-main' }, step(2, 'implement', { tokens: 30000, dollars: 0.08, source: 'reported' })];
   return outcome ? [...run, ended(8, outcome)] : run;
 }
+
+// The work a real play on Archon gives its runs (scripts/eval/archon-world.js): one line, so a real step costs cents.
+export const TINY_GOAL = "Add the line 'Made for the evaluation.' to the end of README.md";

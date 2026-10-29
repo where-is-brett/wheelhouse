@@ -2,8 +2,8 @@
 // The world an engine scenario plays in (Archon design, section 18): a home of its own in a temporary folder, one
 // project registered on the engine with its record open and this computer's key enrolled, the real helper started on
 // it with the engine the run names, and nothing reaching a host tool. A scenario seeds records, ticks the helper's
-// dispatcher and card router, signs the director's answers as their click does, and reads what was written. Only the
-// fake engine is here; the counted evaluation's Archon comes later.
+// dispatcher and card router, signs the director's answers as their click does, and reads what was written. The
+// counted evaluation's real Archon has its own world (archon-world.js).
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -128,8 +128,14 @@ export async function until(fn, { ms = 8000, every = 25 } = {}) {
 
 // Plays one engine scenario in its world and judges it: { pass, why }. A scenario's `engine` is
 // { recordings?, startAt?, host?(), play(world, { now, at }) -> { pass, why } }; `at(iso)` moves the world's clock, and
-// `host()` gives the code host's stand-in for this play.
+// `host()` gives the code host's stand-in for this play. On `archon`, a scenario with `engine.real(world, { until })`
+// plays that on real Archon (archon-world.js); any other plays its recording on the fake engine, and either says which
+// in `played`: 'real' or 'recorded'.
 export async function runEngineScenario({ scenario, engine = 'fake' }) {
+  if (engine === 'archon') {
+    if (typeof scenario.engine.real === 'function') return { ...(await (await import('./archon-world.js')).runRealScenario({ scenario })), played: 'real' };
+    return { ...(await runEngineScenario({ scenario })), played: 'recorded' };
+  }
   // The world's clock starts at the scenario's time and runs on with the real one, so records keep their order;
   // `at` moves it.
   const clock = { base: Date.parse(scenario.engine.startAt ?? '2026-10-29T09:00:00.000Z'), from: Date.now() };

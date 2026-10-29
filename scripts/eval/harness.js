@@ -500,8 +500,9 @@ export function describeRun({ id, variant, pass, why, usage }) {
   return `${id} ${variant}: ${pass ? 'pass' : 'fail'} (${why}) ${usage.input} in / ${usage.output} out`;
 }
 
-// The build engines an engine scenario can be played on (`--engine`): the fake, which plays recordings.
-export const ENGINE_RUNS = Object.freeze(['fake']);
+// The build engines an engine scenario can be played on (`--engine`): the fake, which plays recordings, and real
+// Archon, the counted evaluation's (scripts/eval/archon-world.js).
+export const ENGINE_RUNS = Object.freeze(['fake', 'archon']);
 
 // The command line of `npm run eval`: scenario ids (24, or one leg, 27-route), or one of --all
 // (every suite), --suite <name> or --again (what the last run marked); --variant and --trials
@@ -568,7 +569,7 @@ export function parseArgs(argv) {
       project = value;
     } else if (arg === '--engine') {
       value ??= argv[++i];
-      if (!ENGINE_RUNS.includes(value)) throw new Error(`--engine takes ${ENGINE_RUNS.join(', ')}, not ${value}`);
+      if (!ENGINE_RUNS.includes(value)) throw new Error(`--engine takes ${ENGINE_RUNS.join(' or ')}, not ${value}`);
       engine = value;
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option ${arg}`);
