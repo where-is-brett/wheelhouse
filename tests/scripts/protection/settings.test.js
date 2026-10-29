@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FRONT_DESK_INPUT, WORK_REPORTS_RULE } from '../../../scripts/lib/front-desk.js';
-import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, archonDenyRules, ownRunRules, ENGINE_HOME } from '../../../scripts/protection/settings.js';
+import { projectSettings, localSettings, directorStatusLine, isOwnStatusLine, withoutOwnStatusLine, mergeSettings, writeSettings, sandboxFlag, featureAllowRules, featureFileRules, frontDeskCommand, setupCommand, pluginScriptCommand, claudeCodeSettings, ATTRIBUTION_OFF, SWITCHED_OFF_PLUGINS, KEYCHAINS, HOST_TOKENS, withoutKeychainDenial, archonDenyRules, ownRunRules, readRule, ENGINE_HOME } from '../../../scripts/protection/settings.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { credentialPaths } from '../../../scripts/lib/credentials.js';
 import { helperAddress, archonHome } from '../../../scripts/lib/paths.js';
@@ -536,6 +536,11 @@ test('a run\'s overlay shuts its workspace\'s transcripts and every run\'s artef
   for (const [id, dir] of [['run-2', own], ['run-1', path.join(ws, 'runs', 'run-1')], ['..', path.join(ws, 'artifacts', 'runs', '..')], ['run-1', 'artifacts/runs/run-1'], ['run-1', undefined]]) {
     assert.throws(() => ownRunRules(id, dir), `${id} ${dir}`);
   }
+});
+
+test('a folder\'s read rule is in the full-path form, a Windows drive as //c/', () => {
+  assert.equal(readRule('/Users/d/.wheelhouse-engine/workspaces/mirrors/a__b/artifacts/runs/r1'), 'Read(//Users/d/.wheelhouse-engine/workspaces/mirrors/a__b/artifacts/runs/r1/**)');
+  assert.equal(readRule('C:\\Users\\d\\.wheelhouse-engine\\workspaces\\runs\\r1'), 'Read(//c/Users/d/.wheelhouse-engine/workspaces/runs/r1/**)');
 });
 
 test('the network list never opens this computer itself, so the engine room\'s port stays shut', () => {

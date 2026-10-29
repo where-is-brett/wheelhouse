@@ -246,6 +246,14 @@ export function archonDenyRules(home = archonHome()) {
   return { deny, denyRead: top, denyWrite: [...top] };
 }
 
+// The permission rule that allows reading everything under a full path: `//` before it, and a Windows drive as
+// `//c/`, the form Claude Code reads as a full path rather than one in the project.
+export function readRule(dir) {
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(dir);
+  const slashed = drive ? `/${drive[1].toLowerCase()}/${drive[2].replaceAll('\\', '/')}` : dir.replaceAll('\\', '/');
+  return `Read(/${slashed.replace(/\/+$/, '')}/**)`;
+}
+
 // The run's own settings overlay (check 75): what a run's first step writes as `.claude/settings.local.json` in the
 // run's worktree, before any Claude step. Plain project settings, so they hold once Claude starts in its ordinary mode
 // (the patch, build.js): the sandbox's read list shuts the workspace's logs/, workflow-source/ and every run's
@@ -264,7 +272,7 @@ export function ownRunRules(runId, artifactsDir) {
   // linked folder such as /tmp is read by its real path too).
   let real = own;
   try { real = fs.realpathSync.native(own); } catch { /* not made yet: its own spelling only */ }
-  const allow = unique([own, real]).map((dir) => `Read(/${dir.replaceAll('\\', '/')}/**)`);
+  const allow = unique([own, real].map(readRule));
   return {
     permissions: { allow },
     sandbox: {

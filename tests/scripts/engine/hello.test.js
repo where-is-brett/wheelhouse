@@ -55,9 +55,14 @@ test("the hello trial's planted .env read is refused", async () => {
   assert.equal(await helloTrial({ cli: archon({ end: 'failed' }).cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
 });
 
-test('a hello trial that never ends could not run', async () => {
+test('a hello trial that never ends, or waits on an ask, could not run, and is cancelled so it spends no more', async () => {
   const a = archon({ polls: Infinity });
   assert.equal(await helloTrial({ cli: a.cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', pollMs: 1, timeout: 20 }), 'could not run');
+  assert.deepEqual(a.calls.at(-1).args, ['workflow', 'cancel', 'run-1']);
+  assert.ok(a.calls.filter((c) => c.args[1] === 'get').every((c) => c.opts.timeout <= 20));
+  const paused = archon({ end: 'paused', polls: 0 });
+  assert.equal(await helloTrial({ cli: paused.cli, run: okGit, folder: scratch(), packDir: '/pack', configFile: '/c', ...quick }), 'could not run');
+  assert.deepEqual(paused.calls.at(-1).args, ['workflow', 'cancel', 'run-1']);
 });
 
 test('step 10 fails closed when telemetry reports on, and the trial is not run', async () => {

@@ -13,8 +13,45 @@ import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 import { ownRunRules } from '../protection/settings.js';
+import { safeGit } from '../lib/safe-git.js';
+import { run as realRun } from '../lib/run.js';
+// The line that keeps this computer's own settings out of git (setup's EXCLUDE_LINE, scripts/setup/project-files.js).
+export const EXCLUDE_LINE = '/.claude/settings.local.json';
 
-export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+// What a path is without following a link: 'none', 'dir', 'file' or 'other' (a link among them).
+function kindOf(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    return stat.isDirectory() ? 'dir' : stat.isFile() ? 'file' : 'other';
+  } catch {
+    return 'none';
+  }
+}
+
+// Writes the overlay as the worktree's .claude/settings.local.json, never through a link a branch holds, and keeps it
+// out of git in the worktree's own exclude list, so no commit of the run's carries it. Gives a refusal, or null.
+async function writeOverlay(cwd, overlay, run) {
+  const folder = path.join(cwd, '.claude');
+  const file = path.join(folder, 'settings.local.json');
+  if (!['none', 'dir'].includes(kindOf(folder)) || !['none', 'file'].includes(kindOf(file))) return '.claude/settings.local.json in the worktree is a link or not a plain file';
+  const git = safeGit({ run, cwd, look: 'never', timeoutMs: 30000 });
+  const found = await git(['rev-parse', '--git-path', 'info/exclude']);
+  if (found.code !== 0) return 'the worktree is not a git checkout';
+  const exclude = path.resolve(cwd, found.stdout.trim());
+  if (!['none', 'file'].includes(kindOf(exclude))) return 'the worktree\'s exclude list is a link or not a plain file';
+  const kept = kindOf(exclude) === 'file' ? fs.readFileSync(exclude, 'utf8') : '';
+  if (!kept.split(/\r?\n/).includes(EXCLUDE_LINE)) {
+    fs.mkdirSync(path.dirname(exclude), { recursive: true });
+    fs.appendFileSync(exclude, `${kept === '' || kept.endsWith('\n') ? '' : '\n'}${EXCLUDE_LINE}\n`);
+  }
+  fs.mkdirSync(folder, { recursive: true });
+  const temp = path.join(folder, `.settings.local.${process.pid}.tmp`);
+  fs.writeFileSync(temp, `${JSON.stringify(overlay, null, 2)}\n`, { flag: 'wx' });
+  fs.renameSync(temp, file);
+  return null;
+}
+
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), run = realRun, out = (line) => process.stdout.write(`${line}\n`) } = {}) {
   const client = withTicket(given, argv);
   const runId = runArg(argv);
   const dir = runArg(argv, '--out');
@@ -31,8 +68,11 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
   let overlay = null;
   try { overlay = ownRunRules(runId, dir); } catch { /* not a run's own artefacts folder: no overlay */ }
   if (overlay) {
-    fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(cwd, '.claude', 'settings.local.json'), `${JSON.stringify(overlay, null, 2)}\n`);
+    const refused = await writeOverlay(cwd, overlay, run);
+    if (refused) {
+      out(`The run's settings overlay wasn't written: ${refused}`);
+      return 1;
+    }
   }
   fs.writeFileSync(path.join(dir, 'order.json'), `${JSON.stringify(answer.order, null, 2)}\n`);
   if (argv.includes('--flags')) out(JSON.stringify({ visible: answer.order.preview !== null, showFirst: answer.order.showFirst === true }));

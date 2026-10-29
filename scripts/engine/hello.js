@@ -49,11 +49,16 @@ export async function helloTrial({ cli = archonCli, run = defaultRun, folder = f
     const runId = started.json?.runId;
     if (started.code !== 0 || typeof runId !== 'string') return 'could not run';
     const until = Date.now() + timeout;
+    // A run left going (stuck, or waiting on an ask the trial has no one to answer) is cancelled, so it spends no more.
+    const giveUp = async () => {
+      await cli(['workflow', 'cancel', runId], { json: true, timeout: 60000 });
+      return 'could not run';
+    };
     let record;
     for (;;) {
-      record = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: 60000 });
+      record = await cli(['workflow', 'get', runId, '--verbose', '--events'], { json: true, timeout: Math.max(1, Math.min(60000, until - Date.now())) });
       if (ENDED.includes(record.json?.status)) break;
-      if (Date.now() >= until) return 'could not run';
+      if (record.json?.status === 'paused' || Date.now() >= until) return giveUp();
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
     if (record.json.status !== 'completed') return 'could not run';

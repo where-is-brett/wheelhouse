@@ -6,8 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { main, runDoneChecks } from '../../../scripts/engine/done-check.js';
-import { main as copyMain } from '../../../scripts/engine/order-copy.js';
+import { main as copyMain, EXCLUDE_LINE as OVERLAY_LINE } from '../../../scripts/engine/order-copy.js';
+import { EXCLUDE_LINE } from '../../../scripts/setup/project-files.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { ownRunRules } from '../../../scripts/protection/settings.js';
@@ -95,8 +97,11 @@ test("the first step writes the run's own settings overlay in its worktree, so i
   const ws = tempFolder('wh-ws-');
   const dir = path.join(ws, 'artifacts', 'runs', 'run-7');
   const worktree = tempFolder('wh-wt-');
+  execFileSync('git', ['init', '-q'], { cwd: worktree });
   const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
   assert.equal(await copyMain(['--run', 'run-7', '--out', dir, '--flags'], { client, cwd: worktree, out: () => {} }), 0);
+  // Kept out of git, so no commit of the run's can carry it.
+  execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'check-ignore', '-q', '.claude/settings.local.json'], { cwd: worktree });
   const overlay = JSON.parse(fs.readFileSync(path.join(worktree, '.claude', 'settings.local.json'), 'utf8'));
   assert.deepEqual(overlay, ownRunRules('run-7', dir));
   assert.ok(overlay.permissions.allow.some((rule) => rule.startsWith('Read(/') && rule.includes(path.join('artifacts', 'runs', 'run-7').replaceAll('\\', '/'))));
@@ -104,4 +109,29 @@ test("the first step writes the run's own settings overlay in its worktree, so i
   const elsewhere = tempFolder('wh-wt-');
   assert.equal(await copyMain(['--run', 'run-7', '--out', tempFolder('wh-art-')], { client, cwd: elsewhere, out: () => {} }), 0);
   assert.equal(fs.existsSync(path.join(elsewhere, '.claude', 'settings.local.json')), false);
+});
+
+test("the overlay's exclude line is setup's own", () => {
+  assert.equal(OVERLAY_LINE, EXCLUDE_LINE);
+});
+
+test("the overlay is never written through a link a branch holds, and the step stops", async () => {
+  const ws = tempFolder('wh-ws-');
+  const dir = path.join(ws, 'artifacts', 'runs', 'run-7');
+  const worktree = tempFolder('wh-wt-');
+  execFileSync('git', ['init', '-q'], { cwd: worktree });
+  const target = path.join(tempFolder('wh-target-'), 'settings.json');
+  fs.writeFileSync(target, '{"kept":true}\n');
+  fs.mkdirSync(path.join(worktree, '.claude'));
+  fs.symlinkSync(target, path.join(worktree, '.claude', 'settings.local.json'));
+  const client = { engine: { order: async () => ({ ok: true, order: orderWith([{ test: 'good' }]) }) } };
+  const { lines, out } = sink();
+  assert.equal(await copyMain(['--run', 'run-7', '--out', dir], { client, cwd: worktree, out }), 1);
+  assert.equal(fs.readFileSync(target, 'utf8'), '{"kept":true}\n');
+  assert.match(lines.join('\n'), /overlay/);
+  const linked = tempFolder('wh-wt-');
+  execFileSync('git', ['init', '-q'], { cwd: linked });
+  fs.symlinkSync(path.dirname(target), path.join(linked, '.claude'));
+  assert.equal(await copyMain(['--run', 'run-7', '--out', dir], { client, cwd: linked, out: () => {} }), 1);
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), ['settings.json']);
 });
