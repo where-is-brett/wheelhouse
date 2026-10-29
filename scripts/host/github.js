@@ -154,6 +154,13 @@ export function githubCommands({ call, attempt, json, repo, fromAddress, refusal
       return { id: posted.id };
     },
 
+    // The login of the account the connection posts as: the one the merge queue's policy names (part 3f).
+    async login() {
+      const login = (await ask(['api', 'user']))?.login;
+      if (typeof login !== 'string' || login === '') throw new Error('GitHub did not say which account this is');
+      return login;
+    },
+
     issue: {
       async create({ title, body, labels }) {
         const args = ['issue', 'create', ...R, `--title=${title}`, '--body-file', '-', ...labels.map((l) => `--label=${l}`)];

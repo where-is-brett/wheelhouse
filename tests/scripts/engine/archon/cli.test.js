@@ -1,7 +1,10 @@
 // tests/scripts/engine/archon/cli.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { archonCli, parseJson } from '../../../../scripts/engine/archon/cli.js';
 
 const engine = path.join(path.sep, 'e');
@@ -61,4 +64,18 @@ test("archonCli hands on standard output alone as it comes, and keeps no more th
   assert.equal(seen[0].options.onStdout, onStdout);
   assert.equal(seen[0].options.onOutput, undefined);
   assert.equal(seen[0].options.limit, 4096);
+});
+
+test('archonCli given no folder runs in a git folder of the engine\'s own, as Archon v0.13.0 refuses any other', async () => {
+  seen.length = 0;
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-engine-'));
+  const run = fakeRun({ code: 0, stdout: '{"ok":true}', stderr: '' });
+  await archonCli(['workflow', 'get', 'r1'], { run, engine: own, home, nodeDir: '/n' });
+  await archonCli(['workflow', 'get', 'r1'], { run, engine: own, home, nodeDir: '/n' });
+  const place = seen[0].options.cwd;
+  assert.equal(path.dirname(place), own);
+  assert.equal(seen[1].options.cwd, place);
+  assert.equal(execFileSync('git', ['rev-parse', '--git-dir'], { cwd: place, encoding: 'utf8' }).trim(), '.git');
+  await archonCli(['workflow', 'get', 'r1'], { run, engine: own, home, nodeDir: '/n', cwd: '/w' });
+  assert.equal(seen[2].options.cwd, '/w');
 });

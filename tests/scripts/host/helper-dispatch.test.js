@@ -21,6 +21,8 @@ import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { as, shortHome, testAddress } from '../../helpers/homes.js';
 import { until } from '../../helpers/until.js';
 
+// The fake engine reads no fetch mirror.
+const noMirror = async () => ({ ok: true });
 const hostLog = [];
 const hostGuard = guardedRun(realRun, { log: hostLog });
 after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
@@ -64,7 +66,7 @@ const records = (kind) => listEvents(stateDir(P), { report: () => {} }).filter((
 
 const helperFor = (p, engine) => startHelper({
   run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
-  spawn: stubSpawn(), engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
+  spawn: stubSpawn(), refreshMirror: noMirror, engineFor: () => engine, dispatchMs: 60 * 60 * 1000,
 });
 
 test('the dispatcher starts quick work through the helper\'s own start, with its order, its ticket and its run record', async () => {

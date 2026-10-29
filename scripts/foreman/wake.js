@@ -189,6 +189,9 @@ export async function loadViews(project, client, { kept = false } = {}) {
       settings: isPlain(views.settings) ? views.settings : {},
       columnsReady: isPlain(views.columnsReady) ? views.columnsReady : {},
       unconfirmed: Array.isArray(views.unconfirmed) ? views.unconfirmed.filter(isPlain) : [],
+      // Whether the new engine can build the project yet, as the helper says (scripts/engine/lanes.js); kept views
+      // don't say, so the old engine builds meanwhile.
+      engineOn: answer?.ok === true && answer.engineOn === true,
     },
     fresh,
     ...(fresh ? {} : { why }),

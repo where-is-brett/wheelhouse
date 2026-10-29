@@ -4,8 +4,10 @@
 // with the work order's test command. The order comes from the helper by the run's id, never from the run's copy.
 // It prints one line and exits 0 only when the task is done, or, with `--most`, on the task's last round: Archon fails a
 // loop that runs out of rounds, so the check counts each task's rounds in the run's artefacts and closes the loop on
-// the last, leaving the task unticked for the lane's close to ask about.
+// the last, leaving the task unticked for the lane's close to ask about. A feature's slice adds its task review's output
+// (`--review`): the task is done only once that review finds no BLOCKER or HIGH.
 //   node scripts/engine/task-check.js --run <run id> --artefacts <folder> --base <ref> --task <n> [--most <rounds>]
+//     [--review <output>]
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
@@ -14,6 +16,7 @@ import { startedAsScript } from '../lib/started-as-script.js';
 import { run as defaultRun } from '../lib/run.js';
 import { runArg, runDoneChecks } from './done-check.js';
 import { PLAN_FILE, tasksOf } from './plan-file.js';
+import { reviewHolds } from './review-round.js';
 
 export const ROUNDS_FILE = 'task-rounds.json';
 
@@ -62,6 +65,10 @@ export async function main(argv = process.argv.slice(2), { client: given = helpe
     if (!result.ok) {
       return fail(result.line);
     }
+  }
+  const at = argv.indexOf('--review');
+  if (at >= 0 && reviewHolds(argv[at + 1] ?? '')) {
+    return fail(`fail: task ${n}'s review found a BLOCKER or HIGH, or gave no review`);
   }
   out(`pass: task ${n} is done`);
   return 0;

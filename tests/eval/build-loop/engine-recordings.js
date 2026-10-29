@@ -1,12 +1,16 @@
 // tests/eval/build-loop/engine-recordings.js
-// Recordings for the engine scenarios (42 to 55, and 60 to 62), in the fake engine's events: each a run of the quick
-// lane, of the small lane from 51, or of fix-main, that stops where the scenario needs it. Not a scenario file: it has
-// no number.
+// Recordings for the engine scenarios (42 to 55, 60 to 62, 63 to 69 and 70 to 75), in the fake engine's events: each a
+// run of the quick lane, of the small lane from 51, of fix-main, of the bug lane from 63, or of a feature's slices and
+// its own run from 70, that stops where the scenario needs it. Not a scenario file: it has no number.
+import fs from 'node:fs';
+import path from 'node:path';
 import { confirmationFor } from '../../../scripts/state/events.js';
+import { SLICES_FENCE } from '../../../scripts/engine/feature.js';
+import { briefHash } from '../../../scripts/feature/files.js';
 
 const at = (minute) => new Date(Date.UTC(2026, 9, 29, 9, minute)).toISOString();
 const started = (work, lane = 'quick') => ({ type: 'run-started', at: at(0), work, lane, branch: `wh/${work}` });
-const step = (minute, id, spend, extra = {}) => ({ type: 'step-finished', at: at(minute), step: id, role: ['implement', 'plan', 'fix'].includes(id) ? 'implementer' : 'reviewer', provider: 'claude', model: 'mid', minutes: 2, spend, ...extra });
+const step = (minute, id, spend, extra = {}) => ({ type: 'step-finished', at: at(minute), step: id, role: ['implement', 'plan', 'fix', 'reproduce'].includes(id) ? 'implementer' : 'reviewer', provider: 'claude', model: 'mid', minutes: 2, spend, ...extra });
 const ended = (minute, outcome = 'completed', pr = null) => ({ type: 'run-ended', at: at(minute), outcome, pr });
 
 // A run that asks one question of `level`, then finishes once it is answered.
@@ -119,6 +123,90 @@ export function smallWork(world, { id, title, visible = false, lanes = ['quick',
 export function fixing(work, outcome = null) {
   const run = [{ ...started(work), lane: 'fix-main' }, step(2, 'implement', { tokens: 30000, dollars: 0.08, source: 'reported' })];
   return outcome ? [...run, ended(8, outcome)] : run;
+}
+
+// A slice-lane run of a feature that builds its slice behind the switch and opens pull request `pr` (scenarios 70 to
+// 75), or, with no `pr`, is still under way after its first step.
+export function sliceRun(work, { pr = null, tokens = 60000 } = {}) {
+  const run = [started(work, 'slice'), step(2, 'implement', { tokens, dollars: 0.2, source: 'reported' })];
+  return pr === null ? run : [...run, ended(6, 'completed', pr)];
+}
+
+// The feature's own run: the whole-feature review, the switch turned on, and the director's switch-on approval of
+// pull request `pr` at `head`.
+export function finishRun(work, { pr, head }) {
+  return approving(work, { pr, head }).map((e) => (e.type === 'run-started' ? { ...e, lane: 'feature' } : e));
+}
+
+// The design a feature scenario's director approved: its slices block, `count` slices behind one switch.
+export function featureDesign({ title, count = 2, demo = 'end' }) {
+  const slices = Array.from({ length: count }, (_, i) => ({ title: `Part ${i + 1} of ${title}`, goal: `Part ${i + 1} works`, done: [{ test: `part ${i + 1}` }] }));
+  const block = JSON.stringify({ goal: `${title} works`, flag: { name: 'new-orders' }, demo, slices }, null, 2);
+  return `# ${title}\n\nThe design in words.\n\n\`\`\`${SLICES_FENCE}\n${block}\n\`\`\`\n`;
+}
+
+// What a feature scenario seeds: the feature lane put on the engine, as the director's confirmed setting, the design
+// written into the project's checkout, and the feature work with the director's approval of that design.
+export function featureWork(world, { id, title, count = 2, demo = 'end', design = featureDesign({ title, count, demo }), place } = {}) {
+  const setting = world.put('setting', { key: 'engineLanes', value: ['quick', 'feature'] });
+  world.put('confirmation', confirmationFor(setting).data);
+  const doc = `docs/designs/${id}.md`;
+  fs.mkdirSync(path.join(world.folder, 'docs', 'designs'), { recursive: true });
+  fs.writeFileSync(path.join(world.folder, doc), design);
+  const hash = briefHash(design);
+  world.put('work', { id, title, lane: 'feature', visible: false, dependsOn: [], doc: { path: doc, hash }, ...(place === undefined ? {} : { place }) });
+  world.put('action', { action: 'approve-work', question: `Approve ${id} (feature lane) as written`, label: 'Approve', work: id, lane: 'feature', hash, shownFirst: false });
+  return { doc, hash };
+}
+
+// The code host's stand-in for a feature scenario: the pull requests in `merged` read merged, every other open.
+export function mergingHost(merged) {
+  return { prState: async (pr) => ({ state: merged.has(Number(pr)) ? 'merged' : 'open' }) };
+}
+
+// A bug-lane run: the reproduce step, the fix, the reviews and the pull request.
+export function bug(work, { pr = 63 } = {}) {
+  return [
+    started(work, 'bug'),
+    step(1, 'reproduce', { tokens: 60000, dollars: 0.1, source: 'reported' }),
+    step(3, 'implement', { tokens: 120000, dollars: 0.2, source: 'reported' }),
+    step(4, 'review-standards', { tokens: 20000, dollars: 0.05, source: 'reported' }),
+    step(4, 'review-spec', { tokens: 20000, dollars: 0.05, source: 'reported' }),
+    ended(6, 'completed', pr),
+  ];
+}
+
+// The options of the bug lane's two blocked exits of its own (engine/archon/pack/wheelhouse-bug.yaml).
+export const BUG_OPTIONS = Object.freeze({
+  'no-reproduction': [{ id: 'rework', label: 'Try to reproduce it again' }, { id: 'stop', label: 'Stop this work' }],
+  'bigger-than-a-bug': [{ id: 'small', label: 'Make it a small change' }, { id: 'feature', label: 'Make it a feature' }, { id: 'stop', label: 'Stop this work' }],
+});
+
+// A bug-lane run that takes one of its blocked exits: the bug couldn't be reproduced, or its fix proved bigger than a
+// bug's.
+export function bugBlocked(work, topic, question) {
+  const options = BUG_OPTIONS[topic];
+  return [
+    started(work, 'bug'),
+    step(1, 'reproduce', { tokens: 60000, dollars: 0.1, source: 'reported' }),
+    {
+      type: 'ask', at: at(3), id: `${work}:${topic}:1`, kind: 'blocked', level: 3, topic, recommend: options[0].id, card: true, options, context: { question },
+    },
+    { type: 'ask-resolved', at: at(4), id: `${work}:${topic}:1` },
+    ended(6),
+  ];
+}
+
+// What a bug-lane scenario seeds: the bug lane put on the engine, as the director's confirmed setting, and a reported
+// bug, as intake records it. A bug no user would see starts unapproved; one they would is approved and shown first.
+export function bugWork(world, { id, title, visible = false, lanes = ['quick', 'bug'] }) {
+  if (lanes) {
+    const setting = world.put('setting', { key: 'engineLanes', value: lanes });
+    world.put('confirmation', confirmationFor(setting).data);
+  }
+  const hash = id.replace(/\D/g, '').padEnd(64, '6').slice(0, 64);
+  world.put('work', { id, title, lane: 'bug', visible, dependsOn: [], doc: { path: `.wheelhouse/work/${id}.md`, hash } });
+  if (visible) world.put('action', { action: 'approve-work', question: `Approve ${id} (bug lane) as written, and show it to me before it merges`, label: 'Approve', work: id, lane: 'bug', hash, shownFirst: true });
 }
 
 // The work a real play on Archon gives its runs (scripts/eval/archon-world.js): one line, so a real step costs cents.

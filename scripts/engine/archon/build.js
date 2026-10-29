@@ -42,6 +42,21 @@ export const PATCH_MARK = 'ARCHON_CLAUDE_PERMISSION_MODE';
 const TELEMETRY = { ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' };
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
 
+// Archon's own settings, in its home: Claude runs its steps. Without this line `archon ai tier list` names no assistant,
+// and the adapter's health check refuses the engine. Setup writes it (scripts/setup/engine-parts.js), and so does the
+// evaluation's world of its own (scripts/eval/archon-world.js); any other line there is kept.
+export const ASSISTANT_LINE = 'defaultAssistant: claude';
+export const archonSettingsFile = (home) => path.join(home, 'config.yaml');
+const readOr = (file) => {
+  try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
+};
+export const archonSettingsOk = (home) => /^defaultAssistant:\s*claude\s*$/m.test(readOr(archonSettingsFile(home)) ?? '');
+export function writeArchonSettings(home) {
+  const kept = (readOr(archonSettingsFile(home)) ?? '').split('\n').filter((l) => l.trim() !== '' && !/^defaultAssistant:/.test(l));
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(archonSettingsFile(home), `${[...kept, ASSISTANT_LINE].join('\n')}\n`);
+}
+
 export function enginePaths(engine) {
   const bunDir = path.join(engine, 'bun', 'bin');
   return {

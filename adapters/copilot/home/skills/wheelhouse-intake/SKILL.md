@@ -44,7 +44,7 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
 `cli.js` is the First Mate's command, the Wheelhouse command the session start named, with its JSON input from a file in your scratchpad folder, or `.wheelhouse/front-desk.json` when you have none (`wheelhouse-front-desk` shows how). Every card comes from `cli.js card`, which writes its line, and an answer card from `cli.js cards`; never write a card yourself. Each `work`, `amendment`, `incident`, `note`, `idea` and `ruling` here is recorded with `cli.js record <kind>`. Only the director's click on a card is a signed record; a typed "yes" is an instruction, never an approval. A `work` event names its brief, design or report as `doc`, by its path: `record` works out its hash and prints it, and its approval card names that hash.
 
 1. **Incident.** In this same reply: `cli.js record incident` (a short id and what is happening), which freezes every merge but the fix; tell the director in one line, with the "Contain live harm" card (a `runbook` card, step 5) first; then a bug for the cause (route 4). Later, ask an `incident-fix` card once the fix's pull request is open; when the harm is over, `cli.js record note` with a short no-blame account and ask a `lift-incident` card. A security report stays out of anything public.
-2. **Answer.** Ask that question's card, which `cli.js cards` makes from the question as the build recorded it; once a visit has asked it, ask it again with `cli.js again <n>`, its number on the Logbook (`cli.js views waiting`). The click is the answer. When the question is the Bosun's asking whether to queue work that ended partial or blocked, and the click picks a lane, record the work again in that lane as route 4 says; "drop" needs nothing more.
+2. **Answer.** Ask that question's card, which `cli.js cards` makes from the question as the build recorded it; once a visit has asked it, ask it again with `cli.js again <n>`, its number on the Logbook (`cli.js views waiting`). The click is the answer. When the question is the Bosun's asking whether to queue work that ended partial or blocked, and the click picks a lane, record the work again in that lane as route 4 says; "drop" needs nothing more. A bug the build engine found bigger than a bug is the same: its card offered a small change or a feature, and the Logbook says which the director picked; record the work again in that lane, naming its report, and ask its `approve-work` card.
 3. **Running work.** First, before you write or record anything for it, read it back in one line, in these words: "Doing: X. Not doing: Y. Done when: Z." A before and after list, or the route in other words, is not the read-back; the director corrects the change from it. For an amendment, that line is the `readBack` you give `record amendment`, said as it prints it. Then:
    - **A change to what an approved brief or design builds, or a pause:** write the changed document in place, in the one file the work names (for a pause, the change says to pause), and replace its approval line (whatever line says the director approved it) with one that stays true after the click: "Changed since the director's approval; the change card decides it." The approved text stays in git at the hash the approval names. Then `cli.js record amendment` (the work, the change and `readBack`: `doing`, `notDoing` and `doneWhen`, each one line; it refuses an amendment without them, works out the changed document's hash and prints it, and prints `say`) and ask an `amend` card naming that hash; its meanwhile says the build keeps to the approved design until the click. Put `say` first in your reply, word for word: it is the route line and the read-back.
    - **An order ("do that one first"):** `cli.js record work`, re-stating the work with its `place`. Naming the same document leaves its approval standing.
@@ -68,9 +68,27 @@ At Lean, where no Wheelhouse command runs, follow wheelhouse-lean's Intake at Le
 |---|---|---|
 | "do it" | Quick | Never do it yourself. A short brief; a `work` event, as for a bug but in the `quick` lane. A small removal or an obvious fix is not shown first: record it with `visible: false` and ask no card; it is reported after. Work you would show the director first is the small lane: `record` refuses the quick lane with `visible: true`. |
 | "a small change" | Small | The brief; a `work` event naming it; an `approve-work` card (lane `small`, with `shownFirst`) |
-| "a written design" | Feature | The design; a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
+| "a written design" | Feature | The design, ending with its slices (below); a `work` event naming it; an `approve-work` card (lane `feature`, with `shownFirst`) |
 
 A change users would see that leaves a choice to make is the small lane at least, never quick. An approved design or brief is in the Bosun's queue. **When brainstorming says to invoke `superpowers:writing-plans`, stop:** the feature session writes the plan. You decide at approval whether users would see it (`shownFirst`); when in doubt, show. The lane only goes up.
+
+**A feature's slices.** The design ends with one `wheelhouse-slices` block, which the director approves with the rest. The build engine runs each slice in turn, merged behind the feature's switch, off, and switches it on only once the director approves:
+
+```wheelhouse-slices
+{
+  "goal": "Customers see their past orders",
+  "flag": { "name": "order-history" },
+  "demo": "midpoint",
+  "slices": [
+    { "title": "List the orders", "goal": "A page lists a customer's past orders, newest first", "done": [{ "test": "orders list newest first" }, { "page": "/orders", "mustShow": "Your orders" }] },
+    { "title": "Filter by year", "goal": "The list filters by year", "done": [{ "test": "orders filter by year" }], "notInScope": ["Exporting orders"] }
+  ]
+}
+```
+
+- `slices`: one to twelve, in the order they are built, each a vertical slice a person could use. Each has its `title`, its `goal` and its `done` checks, in the work order's three forms: a test's name, `{ "command", "expect" }`, or a page and what must show on it. `notInScope` and `protectedFiles` are optional.
+- `flag`: the switch's `name`, a short slug. With nothing else, the switch is a key in `config/feature-flags.json`. Where the project sets its switches its own way, say how in `"how"`, in a line.
+- `demo`: `midpoint` when the director chose a demo half way, otherwise `end`.
 
 **Alongside any route:** `mattpocock-skills:domain-modeling` when a new term or domain decision appears; `mattpocock-skills:prototype` for a visible change, after it is sized and before the director approves it.
 

@@ -166,3 +166,21 @@ test('every task ticked closes clean', async () => {
   assert.equal(got.blocked, false);
   assert.deepEqual(got.options, []);
 });
+
+test('a slice\'s task passes only once its task review finds no BLOCKER or HIGH, and closes on its last round all the same', async () => {
+  const dir = repo('- [x] **Task 1:** One\n  Test: good\n');
+  const art = artefacts();
+  const clean = JSON.stringify({ verdict: 'CLEAN', findings: [] });
+  const high = JSON.stringify({ verdict: 'FINDINGS', findings: [{ severity: 'HIGH', file: 'a.js', line: 1, repro: 'r', fix: 'f' }] });
+  const low = JSON.stringify({ verdict: 'CLEAN', findings: [{ severity: 'LOW', file: 'a.js', line: 1, repro: 'r', fix: 'f' }] });
+  const lines = [];
+  const reviewed = (review, most = []) => taskCheck(['--run', 'run-1', '--artefacts', art, '--base', 'main', '--task', '1', '--review', review, ...most], { client, cwd: dir, out: (line) => lines.push(line) });
+  assert.equal(await reviewed(high), 1);
+  assert.match(lines.at(-1), /task 1's review found a BLOCKER or HIGH/);
+  assert.equal(await reviewed('not json'), 1, 'a review that can\'t be read holds');
+  assert.equal(await reviewed(low), 0);
+  assert.equal(await reviewed(clean), 0);
+  const art2 = artefacts();
+  const closing = (review) => taskCheck(['--run', 'run-1', '--artefacts', art2, '--base', 'main', '--task', '1', '--review', review, '--most', '1'], { client, cwd: dir, out: () => {} });
+  assert.equal(await closing(high), 0, 'the last round closes the loop, leaving the whole-change review to hold it');
+});

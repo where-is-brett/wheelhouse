@@ -136,6 +136,8 @@ test('the quick lane runs from its work order to the merge queue and a lesson, t
         const mirror = path.join(engineDir(), 'mirrors', `${P}.git`);
         assert.equal((await run('git', ['rev-parse', 'refs/heads/wh/card-20'], { cwd: mirror })).stdout.trim(), head);
         assert.equal((await run('git', ['config', '--get-regexp', 'remote'], { cwd: mirror })).stdout.trim(), '', 'the mirror names no remote and holds no key');
+        // Its HEAD names the host's default branch, which Archon reads as the base of a run's worktree.
+        assert.match((await run('git', ['ls-remote', '--symref', mirror, 'HEAD'])).stdout, /^ref: refs\/heads\/main\tHEAD$/m);
 
         // The broker: the pull request's own calls are forwarded; a merge without the permit never is.
         const view = await client.broker.gh({ argv: ['pr', 'view', '1', '--json', 'body'], cwd: worktree });

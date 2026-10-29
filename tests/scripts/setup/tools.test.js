@@ -616,9 +616,10 @@ test('on a Mac, an installer window not seen for two minutes of looks fails the 
   });
 });
 
-test('step 2 lists the engine folder and the broker', async () => {
+test('step 2 lists the engine folder, Archon\'s settings and the broker', async () => {
   const { engineChanges, applyEngine, brokerLauncher, brokerText, engineWanted } = await import('../../../scripts/setup/engine-parts.js');
-  const { engineDir } = await import('../../../scripts/lib/paths.js');
+  const { engineDir, archonHome } = await import('../../../scripts/lib/paths.js');
+  const { archonSettingsFile } = await import('../../../scripts/engine/archon/build.js');
   await withHome(async () => {
     const folder = fs.realpathSync.native(tempFolder('wh-proj '));
     const file = path.join(folder, '.claude', 'settings.local.json');
@@ -634,8 +635,10 @@ test('step 2 lists the engine folder and the broker', async () => {
     const planned = await step.plan(ctxFor(folder));
     assert.deepEqual(planned.changes, [
       { kind: 'folder', target: engineDir(), action: 'engine', tool: 'archon' },
+      { kind: 'file', target: archonSettingsFile(archonHome()), action: 'archon-settings' },
       { kind: 'file', target: brokerLauncher(), action: 'broker' },
     ]);
+    assert.match(planned.card.what, /set to run its steps with Claude/);
     assert.match(planned.card.what, /the build engine, Archon/);
     assert.match(planned.card.what, /usage reporting off/);
     assert.match(planned.card.what, /broker/);
@@ -643,6 +646,9 @@ test('step 2 lists the engine folder and the broker', async () => {
     await step.apply({ ...ctxFor(folder), record: (c) => recorded.push(c), applyJsonKey: () => assert.fail('no rule to write') }, planned.changes);
     assert.deepEqual(installs, [engineDir()]);
     assert.equal(fs.readFileSync(brokerLauncher(), 'utf8'), brokerText());
+    // Archon's own settings name Claude, so its tier list names an assistant and the health check passes.
+    assert.equal(fs.readFileSync(archonSettingsFile(archonHome()), 'utf8'), 'defaultAssistant: claude\n');
+    fs.rmSync(archonHome(), { recursive: true, force: true });
     assert.deepEqual(recorded.map((c) => [c.kind, c.target, c.before]), [['file', brokerLauncher(), null]]);
     // On Windows the engine isn't installed yet, so step 2 lists nothing for it.
     const windows = await step.plan(ctxFor(folder, { platform: 'win32' })).catch((error) => error);

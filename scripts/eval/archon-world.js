@@ -10,8 +10,10 @@
 //     install; Archon's home is the world's own, beside its home and inside its folder (archonHome);
 //   - Archon's home settings naming Claude as the assistant that runs its steps, which its health check reads;
 //   - every Archon command run with archonEnv: usage reporting off, the broker the only gh, the patch's permission mode;
-//   - the project a throwaway git repository whose remote is a bare repository beside it, at <root>/o/p, so Archon names
-//     its workspace o/p as the record's repository does, no fetch-mirror rule is needed and nothing reaches GitHub;
+//   - the project a throwaway git repository whose remote is a bare repository beside it, at <root>/o/p, so the
+//     record names it o/p, and nothing reaches GitHub. The repository itself is at <root>/mirrors/o__p.git and the
+//     project's own git reads <root>/o/p as that address, as setup's fetch-mirror rule does for a GitHub address, so
+//     Archon names its workspace mirrors/o__p, where the adapter looks for a run's artefacts;
 //   - the skill kits setup pins installed for the project at project scope, so a step's session start isn't held, and
 //     taken back when the world closes;
 //   - the project's lock taken on that remote, so the broker comes to its real rules;
@@ -27,7 +29,7 @@ import { startHelper } from '../host/helper.js';
 import { ENGINE_CONFIG } from '../host/helper-main.js';
 import { run as realRun } from '../lib/run.js';
 import { safeGit } from '../lib/safe-git.js';
-import { helperAddress, stateDir, archonHome } from '../lib/paths.js';
+import { helperAddress, stateDir, archonHome, projectSlug } from '../lib/paths.js';
 import { writeProject } from '../lib/projects.js';
 import { setStop, liftStop } from '../lib/stop.js';
 import { openProjectRecord } from '../state/record.js';
@@ -40,6 +42,7 @@ import { engineDirOf } from '../engine/routes.js';
 import { archonAdapter } from '../engine/archon/adapter.js';
 import { archonCli } from '../engine/archon/cli.js';
 import { archonEnv } from '../engine/archon/env.js';
+import { writeArchonSettings } from '../engine/archon/build.js';
 import { PROJECT, until } from './engine-world.js';
 import { standInTools } from './stand-in-tools.js';
 import { engineCache, prepareEngine, linkEngine } from './archon-engine.js';
@@ -59,12 +62,15 @@ export const KITS = Object.freeze(UPSTREAMS.map((upstream) => `${upstream.plugin
 // `beforeCommit()` runs once the files are there and before the first commit, as setup's own steps do.
 async function makeProject({ root, folder, git, beforeCommit = async () => {} }) {
   const remote = path.join(root, ...REPO.split('/'));
-  fs.mkdirSync(remote, { recursive: true });
+  const mirror = path.join(root, 'mirrors', `${projectSlug(...REPO.split('/'))}.git`);
+  fs.mkdirSync(mirror, { recursive: true });
+  fs.mkdirSync(path.dirname(remote), { recursive: true });
+  fs.symlinkSync(mirror, remote, 'dir');
   const must = async (args, cwd) => {
     const got = await git(args, cwd);
     if (got.code !== 0) throw new Error(`git ${args[0]} failed in the evaluation's project: ${String(got.stderr).trim()}`);
   };
-  await must(['init', '-q', '--bare', '-b', 'main'], remote);
+  await must(['init', '-q', '--bare', '-b', 'main'], mirror);
   fs.writeFileSync(path.join(folder, 'package.json'), `${JSON.stringify({ name: 'p', private: true, scripts: { test: 'node --test' } }, null, 2)}\n`);
   fs.writeFileSync(path.join(folder, 'README.md'), '# p\n\nA page for the evaluation.\n');
   fs.writeFileSync(path.join(folder, '.gitignore'), '.wheelhouse/\n.env\n');
@@ -72,6 +78,7 @@ async function makeProject({ root, folder, git, beforeCommit = async () => {} })
   fs.writeFileSync(path.join(folder, '.archon', 'config.yaml'), `# .archon/config.yaml\nworktree:\n  path: ${WORKTREES}\n`);
   fs.writeFileSync(path.join(folder, '.env'), 'EVAL_ONLY=not-a-secret\n');
   await must(['init', '-q', '-b', 'main'], folder);
+  await must(['config', `url.${mirror}.insteadOf`, remote], folder);
   await beforeCommit();
   const commit = ['-c', 'user.name=Evaluation', '-c', 'user.email=eval@example.invalid', 'commit', '-q', '-m', 'Start'];
   for (const args of [['add', '-A'], commit, ['remote', 'add', 'origin', remote], ['push', '-q', 'origin', 'main']]) await must(args, folder);
@@ -196,9 +203,14 @@ export async function openArchonWorld({
       const events = Array.isArray(got?.json?.events) ? got.json.events : [];
       const line = (text) => String(text ?? '').trim().split('\n')[0].slice(0, 300);
       const failed = events.filter((e) => e?.event_type === 'workflow_failed').at(-1)?.data?.error ?? got?.json?.terminal_record?.error;
+      // The first step that failed, with its own error: the run's error names it but doesn't say why.
+      const node = events.find((e) => e?.event_type === 'node_failed');
+      const step = node ? `${node.step_name ?? 'a step'} said: ${node.data?.error ?? node.data?.node_output ?? 'nothing'}` : null;
       const refusal = events.map((e) => e?.data?.event).filter((e) => e?.type === 'tool_call_update' && e.status === 'failed' && /hook error|denied|not permitted/i.test(String(e.output))).at(-1)?.output;
-      const parts = [failed, refusal].filter(Boolean).map(line);
-      return parts.length > 0 ? `: ${parts.join('; the step was told: ')}` : '';
+      const said = [failed, step].filter(Boolean).map(line).join('; ');
+      const told = refusal ? `the step was told: ${line(refusal)}` : '';
+      const parts = [said, told].filter(Boolean);
+      return parts.length > 0 ? `: ${parts.join('; ')}` : '';
     },
     async close() {
       try {
@@ -228,8 +240,7 @@ export async function openArchonWorld({
     paths = linkEngine({ cache, engine: engineFolder });
     // Archon's own settings: Claude runs its steps. Its `ai tier list` names no assistant without this line, and the
     // adapter's health check refuses an engine that doesn't say Claude.
-    fs.mkdirSync(engineHome, { recursive: true });
-    fs.writeFileSync(path.join(engineHome, 'config.yaml'), 'defaultAssistant: claude\n');
+    writeArchonSettings(engineHome);
     const remote = await makeProject({
       root, folder, git,
       beforeCommit: async () => {

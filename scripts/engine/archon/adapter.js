@@ -22,7 +22,7 @@ import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
 import { readyWorkItem } from './work-item.js';
 import path from 'node:path';
-import { engineDir, archonHome } from '../../lib/paths.js';
+import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
 import { run as defaultRun } from '../../lib/run.js';
 
 // The pack's workflow for each lane (spec 7.2); the merge lane is Archon's own queue, as it ships.
@@ -379,13 +379,14 @@ export function archonAdapter({
     },
 
     // The run's artefacts folder, where Archon's $ARTIFACTS_DIR puts what its steps write:
-    // <home>/workspaces/<owner>/<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
+    // <home>/workspaces/mirrors/<owner>__<name>/artifacts/runs/<run>. Null for a run id or repository that isn't a plain name.
     // Not one of the interface's methods: the helper copies a run's preview from here.
     artefactsOf(runId, repo) {
       const parts = typeof repo === 'string' ? repo.split('/') : [];
       const plain = (name) => typeof name === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(name) && !/^\.+$/.test(name);
       if (!plain(runId) || parts.length !== 2 || !parts.every(plain)) return null;
-      return path.join(home, 'workspaces', parts[0], parts[1], 'artifacts', 'runs', runId);
+      // Archon names the workspace after the project's remote, which is its fetch mirror (env.js): mirrors/<project>.
+      return path.join(home, 'workspaces', 'mirrors', projectSlug(parts[0], parts[1]), 'artifacts', 'runs', runId);
     },
 
     // Hands a pull request to Archon's merge queue (check 76; ruling 9 of part 3b): writes its `work/<n>` document in
