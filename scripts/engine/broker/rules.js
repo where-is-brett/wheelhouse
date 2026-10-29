@@ -38,6 +38,8 @@ const SPECS = {
   'pr comment': { '-b': VALUE, '--body': VALUE, '-F': VALUE, '--body-file': VALUE },
   'pr merge': { '-s': BOOL, '--squash': BOOL, '-m': BOOL, '--merge': BOOL, '-r': BOOL, '--rebase': BOOL, '--match-head-commit': VALUE, '-d': BOOL, '--delete-branch': BOOL, '-t': VALUE, '--subject': VALUE, '-b': VALUE, '--body': VALUE, '-F': VALUE, '--body-file': VALUE },
   'run list': { ...READ_OUT, '-b': VALUE, '--branch': VALUE, '-L': VALUE, '--limit': VALUE, '-w': VALUE, '--workflow': VALUE, '-s': VALUE, '--status': VALUE, '-c': VALUE, '--commit': VALUE, '-e': VALUE, '--event': VALUE },
+  // A re-run of a run's failed jobs: the fix-main lane's cheapest fix (section 7.7). Only --failed is taken.
+  'run rerun': { '--failed': BOOL },
   'run view': { ...READ_OUT, '--log': BOOL, '--log-failed': BOOL, '-j': VALUE, '--job': VALUE, '-a': VALUE, '--attempt': VALUE, '--exit-status': BOOL, '-v': BOOL, '--verbose': BOOL },
   'issue view': { ...READ_OUT, '-c': BOOL, '--comments': BOOL },
   'issue list': { ...READ_OUT, '-s': VALUE, '--state': VALUE, '-L': VALUE, '--limit': VALUE, '-l': LIST, '--label': LIST, '-S': VALUE, '--search': VALUE, '-A': VALUE, '--author': VALUE },
@@ -184,6 +186,7 @@ export const BROKER_ALLOW = Object.freeze([
   { name: 'pull request, comment', kind: 'comment', test: (c) => c.command === 'pr comment' && c.parsed.positionals.length === 1 && NUMBER.test(c.parsed.positionals[0]) },
   { name: 'comment, edit', kind: 'comment', test: (c) => c.command === 'api' && c.method === 'PATCH' && at(String.raw`issues/comments/\d+`).test(c.path) },
   { name: 'branch, update', kind: 'push', test: (c) => c.command === 'api' && ((c.method === 'PATCH' && at('git/refs/heads/.+').test(c.path)) || (c.method === 'POST' && at('git/refs').test(c.path))) },
+  { name: 'workflow run, failed jobs again', kind: 'rerun', test: (c) => c.command === 'run rerun' && c.parsed.positionals.length === 1 && NUMBER.test(c.parsed.positionals[0]) && c.parsed.flags['--failed']?.[0] === true },
   { name: 'pull request, merge', kind: 'merge', test: (c) => c.command === 'pr merge' && c.parsed.positionals.length === 1 && NUMBER.test(c.parsed.positionals[0]) },
   { name: 'pull request, merge by REST', kind: 'merge', test: (c) => c.command === 'api' && c.method === 'PUT' && at(String.raw`pulls/\d+/merge`).test(c.path) },
 ]);
@@ -225,7 +228,8 @@ function readCall(words, { repo }) {
   return { ...call, method, path: route, fields, input };
 }
 
-// What a gh call is: { kind, name?, pr?, sha?, branch? }, with kind read, push, create, comment, verdict, merge or other.
+// What a gh call is: { kind, name?, pr?, sha?, branch?, run? }, with kind read, push, create, comment, verdict, rerun,
+// merge or other.
 // `stdin` is the call's standard input, for a body sent that way; `repo` the project's repository, `owner/name`.
 export function classifyCall(argv, { stdin = '', repo = null } = {}) {
   const words = (Array.isArray(argv) ? argv : []).map(String);
@@ -245,6 +249,7 @@ export function classifyCall(argv, { stdin = '', repo = null } = {}) {
     }
   }
   if (entry.kind === 'create') call.branch = one(parsed, '--head') ?? null;
+  if (entry.kind === 'rerun') call.run = Number(parsed.positionals[0]);
   if (entry.kind === 'push') {
     const fromPath = /git\/refs\/heads\/(.+)$/.exec(read.path)?.[1];
     const fromField = read.fields.ref?.startsWith('refs/heads/') ? read.fields.ref.slice('refs/heads/'.length) : null;
@@ -269,7 +274,8 @@ export function classifyCall(argv, { stdin = '', repo = null } = {}) {
 const refuse = (reason) => ({ allow: false, reason: `Wheelhouse's broker refused this call: ${reason}.` });
 
 // Whether the call passes. `ctx`: { stop, lockHeld, defaultBranch, incident, enrolled, review (the signed review of
-// the call's head, or null), approval (the director's signed approval of it, or null), shownFirst, level, guardrail }.
+// the call's head, or null), approval (the director's signed approval of it, or null), shownFirst, level, guardrail,
+// redMain (whether a red-main incident is open), runBranch (the branch of the run a rerun names, as the host says) }.
 export function brokerDecision(call, ctx = {}) {
   if (!call || call.kind === 'other') {
     const named = Array.isArray(call?.words) && call.words.length > 0 ? ` (gh ${call.words.join(' ')})` : '';
@@ -284,6 +290,11 @@ export function brokerDecision(call, ctx = {}) {
     return { allow: true };
   }
   if (call.kind === 'comment') return { allow: true };
+  if (call.kind === 'rerun') {
+    if (ctx.redMain !== true) return refuse('a run\'s failed jobs are run again only to mend a red main line');
+    if (typeof ctx.runBranch !== 'string' || ctx.runBranch !== ctx.defaultBranch) return refuse('only a run of the default branch has its failed jobs run again');
+    return { allow: true };
+  }
   const head = call.sha;
   if (!FULL_SHA.test(head ?? '')) return refuse(call.kind === 'merge' ? 'the merge names no head commit' : 'the verdict names no reviewed commit');
   const reviewed = reviewCounts(ctx.review, head, ctx.enrolled);

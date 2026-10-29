@@ -58,6 +58,7 @@ import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
 import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
+import { openRedMain } from '../engine/fix-main.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
@@ -3900,6 +3901,18 @@ export async function startHelper({
     const adapter = await ctx.adapter();
     const defaultBranch = await defaultBranchOf(project, adapter);
     const base = { stop: stopped(), lockHeld: await lockHeld(project, ctx), defaultBranch };
+    // A re-run of failed jobs (section 7.7): whether a red-main incident is open, and the run's branch as the host says.
+    if (call.kind === 'rerun') {
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+      let runBranch = null;
+      try {
+        const got = await run(toolPath('gh'), ['run', 'view', String(call.run), '--repo', recordOf(project).repo, '--json', 'headBranch'], { env: ctx.env });
+        runBranch = got.code === 0 ? JSON.parse(got.stdout)?.headBranch ?? null : null;
+      } catch {
+        runBranch = null;
+      }
+      return { ...base, redMain: openRedMain(views) !== null, runBranch };
+    }
     if ((call.kind !== 'merge' && call.kind !== 'verdict') || !Number.isInteger(call.pr) || typeof call.sha !== 'string') return base;
     await oneAtATime(`state:${project}`, () => ensureStateClone(project, ctx));
     const enrolled = ownKeyOnly();
