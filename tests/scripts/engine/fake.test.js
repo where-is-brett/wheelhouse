@@ -125,3 +125,15 @@ test('the fake keeps step outputs, hands work to a merge queue and has an artefa
   assert.deepEqual(engine.calls.at(-1), { call: 'handOver', item: { pr: 1 } });
   assert.deepEqual(engine.outputs('no-such-run'), {});
 });
+
+test('a recording of several runs plays them in turn, one a start, the last again after that', () => {
+  const run = (work, step) => [
+    { type: 'run-started', at: now(), work, lane: 'small', branch: `wh/${work}` },
+    { type: 'step-finished', at: now(), step, role: 'implementer', provider: 'claude', model: 'mid', minutes: 1, spend: { tokens: 1, dollars: 0, source: 'reported' } },
+    { type: 'run-ended', at: now(), outcome: 'completed', pr: null },
+  ];
+  const engine = fakeEngine({ recordings: { 'card-1': [run('card-1', 'first'), run('card-1', 'second')] }, now });
+  const steps = () => engine.watch('0').events.filter((e) => e.type === 'step-finished').map((e) => e.step);
+  for (let i = 0; i < 3; i += 1) assert.equal(engine.start({ work: 'card-1', lane: 'small' }).ok, true);
+  assert.deepEqual(steps(), ['first', 'second', 'second']);
+});

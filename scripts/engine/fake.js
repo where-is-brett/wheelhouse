@@ -35,8 +35,8 @@ export function loadRecordings(dir) {
   return recordings;
 }
 
-// `recordings` is { name: events }; an order picks one with `order.recording`, else the one named after its work or its
-// lane, else the only one, when there is one.
+// `recordings` is { name: events }, or { name: [events, ...] } for several runs played in turn; an order picks one
+// with `order.recording`, else the one named after its work or its lane, else the only one, when there is one.
 export function fakeEngine({ recordings = {}, now = () => new Date().toISOString(), artefacts = null, source = null } = {}) {
   const stream = [];
   const runs = new Map();
@@ -79,12 +79,16 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       const names = Object.keys(recordings);
       const name = order.recording ?? [order.work, order.lane].find((n) => typeof n === 'string' && Object.hasOwn(recordings, n)) ?? (names.length === 1 ? names[0] : undefined);
       if (!name || !recordings[name]) return { ok: false, refused: `There is no recording named ${name ?? '(none given)'}` };
+      // A recording of several runs (a list of runs' events) plays one a start, in turn, and its last again after that.
+      const recording = Array.isArray(recordings[name][0]) ? recordings[name] : [recordings[name]];
+      const played = [...runs.values()].filter((r) => r.recording === name).length;
+      const events = recording[Math.min(played, recording.length - 1)];
       const id = `fake-${runs.size + 1}-${name}`;
-      const run = { id, pending: recordings[name].map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {} };
+      const run = { id, recording: name, pending: events.map((e) => ({ ...e })), open: null, ended: null, branch: null, pr: null, steps: [], ownerPid: order.ownerPid ?? null, folder: order.folder ?? null, holding: order.running === true, given: {} };
       runs.set(id, run);
       play(run);
       // The branch the run is on, as the real engine gives it: the one asked for, else the recording's.
-      const branch = order.branch ?? recordings[name].find((e) => e.type === 'run-started')?.branch ?? null;
+      const branch = order.branch ?? events.find((e) => e.type === 'run-started')?.branch ?? null;
       return { ok: true, runId: id, ...(branch ? { branch } : {}) };
     },
 
