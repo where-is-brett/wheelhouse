@@ -26,6 +26,7 @@ export function fileSource(project, { cwd, client, now = () => new Date(), fresh
     project,
     cwd,
     events,
+    enrolled: () => readEnrolled(),
     async views({ cards = false, answers = false, review = false } = {}) {
       const views = fresh ? await writeViews(project, { now }) : localViews(project, null);
       if (views === null || typeof views !== 'object') return { ok: false, refused: 'This project has no record to show yet' };

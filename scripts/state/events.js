@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
-import { sign } from './signing.js';
+import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
@@ -215,6 +215,9 @@ function questionIdOf(id) {
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
+  // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
+  // turn and shown as waiting (spec 5.2); `via` names the front end.
+  request: { must: ['words', 'via'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from'] },
@@ -632,6 +635,27 @@ export function eventHash(event) {
 // The sha256 of a record's data in canonical JSON: what an answer names, so it answers the question as shown.
 export function dataHash(data) {
   return crypto.createHash('sha256').update(canonicalJson(data)).digest('hex');
+}
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+// Why a signed record sent to be recorded is refused, or null when it may be: it must be a whole
+// event of a signed kind, signed by an enrolled computer and made on this one, of a kind a caller
+// may send (the helper makes the premium model's records and provenance itself), and no other event
+// in the state (`held`, the events with its id) may carry its id. The helper's /state/record and the
+// desk's signed evidence both check a record this way.
+export function checkRecord(event, { enrolled, held = [], computer = computerId() } = {}) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return 'the record must be an event';
+  if (!PROTECTED_KINDS.includes(event.kind)) return 'only a signed kind is recorded this way';
+  if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) return 'the record is not a whole event';
+  if (!verify(event, enrolled)) return 'the record is not signed by an enrolled computer';
+  if (event.sig.computer !== computer || event.computer !== computer) return 'only this computer\'s own signed records are taken';
+  if (event.kind === 'premium-card') return 'only the helper offers the premium model\'s card';
+  if (event.kind === 'premium-check') return 'only the helper checks the premium model';
+  if (event.kind === 'premium-failed') return 'only the helper records the premium model\'s evaluation failing';
+  if (event.kind === 'provenance') return 'only the helper records what built a pull request';
+  if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
+  return null;
 }
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.

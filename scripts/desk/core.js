@@ -1,10 +1,13 @@
 // scripts/desk/core.js
 // The desk's core: three operations, `read`, `act` and `watch`, over the `desk/1` vocabulary
 // (spec 5.2). It is built from a source (where views, events and settings come from), a recorder
-// (how a decision is written) and a verifier (whether the evidence shows the director made it),
-// all injected, so the helper runs it over the files under ~/.wheelhouse and the stand-in helper
-// over memory. Every answer is `{ ok: true, v, … }` or `{ ok: false, v, refused }`; nothing throws.
+// (how a decision is written) and a verifier (whether the evidence shows the director made it,
+// by default the desk's own, evidence.js), all injected, so the helper runs it over the files
+// under ~/.wheelhouse and the stand-in helper over memory. Every answer is `{ ok: true, v, … }` or `{ ok: false, v, refused }`; nothing throws.
 import { DESK_VERSION, VIEWS, COMMANDS, needsEvidence } from './vocabulary.js';
+import { READERS } from './views.js';
+import { ACTORS } from './acts.js';
+import { sourceVerifier } from './evidence.js';
 
 const notBuilt = (name) => async () => ({ ok: false, refused: `The desk can't give ${name} yet` });
 
@@ -20,7 +23,8 @@ const failed = (error) => stamp({ ok: false, refused: `Wheelhouse couldn't do th
 // `readers` maps a view to `(args, source, { now }) -> { ok, … }`; `actors` maps a command to
 // `(args, checked, { source, recorder, now }) -> { ok, … }`; `watcher` is
 // `(cursor, source, { now }) -> { ok, events, cursor }`. The defaults are the desk's own.
-export function deskCore({ source, recorder, verifier, now = () => new Date(), readers = {}, actors = {}, watcher = notBuilt('changes') }) {
+export function deskCore({ source, recorder, verifier, now = () => new Date(), readers = READERS, actors = ACTORS, watcher = notBuilt('changes'), clients }) {
+  verifier ??= sourceVerifier(source, { clients, now });
   return {
     async read(view, args = {}) {
       if (!VIEWS.includes(view)) return stamp({ ok: false, refused: `Wheelhouse has no view called "${view}"` });

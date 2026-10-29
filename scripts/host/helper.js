@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -2292,18 +2292,12 @@ export async function startHelper({
   }
 
   async function doRecord({ project, event, target }, ctx) {
-    if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
-    if (!PROTECTED_KINDS.includes(event.kind)) refuse('only a signed kind is recorded this way');
-    if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
-    if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
-    if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
-    // The premium card's offer is the helper's own (/premium/card), never a caller's.
-    if (event.kind === 'premium-card') refuse('only the helper offers the premium model\'s card');
-    if (event.kind === 'premium-check') refuse('only the helper checks the premium model');
-    if (event.kind === 'premium-failed') refuse('only the helper records the premium model\'s evaluation failing');
-    if (event.kind === 'provenance') refuse('only the helper records what built a pull request');
-    if (target !== undefined) checkTarget(target, event);
     const events = listEvents(stateDir(project), { report: () => {} });
+    const held = events.filter((e) => e.id === event?.id);
+    // Whole, signed here, of a kind a caller may send, its id free: checkRecord, which the desk's evidence shares.
+    const refused = checkRecord(event, { enrolled: readEnrolled(), held: [] });
+    if (refused !== null) refuse(refused);
+    if (target !== undefined) checkTarget(target, event);
     // A premium setting that allows the model comes only from a click on a card the helper offered: its offer, signed by
     // this computer, must be in the state (the prompt record checked the card itself).
     if (target?.kind === 'setting' && target.data.key === 'premium' && target.data.value !== 'off') {
@@ -2312,8 +2306,8 @@ export async function startHelper({
         refuse(PREMIUM_OWN_CARD);
       }
     }
-    const held = events.filter((e) => e.id === event.id);
-    if (held.length > 0 && !held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('another event in the state carries this record\'s id, so it was not recorded');
+    const conflict = checkRecord(event, { enrolled: readEnrolled(), held });
+    if (conflict !== null) refuse(conflict);
     // The confirmed event goes first, once, even when its confirmation is there already: a kept
     // copy sent again finds it there, and a confirmation that reached the state alone gets it.
     if (target !== undefined) {
