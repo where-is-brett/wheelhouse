@@ -57,7 +57,7 @@ import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
 import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
-import { DESK_VERSION } from '../desk/vocabulary.js';
+import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
 import { helperClient } from './helper-client.js';
 import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
@@ -3698,10 +3698,14 @@ export async function startHelper({
     if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}));
     if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null));
     const { command, args = {}, evidence } = body;
-    if (stopped() && !DESK_STOP_ACTS.includes(command) && evidence?.form !== 'signed') return { ...STOP_REFUSAL, v: DESK_VERSION };
+    // The form is read only for a command that needs evidence: any other ignores what it was sent with.
+    const signed = needsEvidence(command) && evidence?.form === 'signed';
+    const held = () => stopped() && !DESK_STOP_ACTS.includes(command) && !signed;
+    if (held()) return { ...STOP_REFUSAL, v: DESK_VERSION };
     // All stop is never queued behind anything, and the confirm window takes the queue itself once the director has clicked.
-    if (command === 'all-stop' || evidence?.form === 'window') return core.act(command, args, evidence);
-    return inQueue(() => core.act(command, args, evidence));
+    if (command === 'all-stop' || (command === 'answer' && evidence?.form === 'window')) return core.act(command, args, evidence);
+    // STOP is checked again once the act's turn comes, as it may have been set while it waited.
+    return inQueue(() => (held() ? { ...STOP_REFUSAL, v: DESK_VERSION } : core.act(command, args, evidence)));
   };
 
   const routes = {

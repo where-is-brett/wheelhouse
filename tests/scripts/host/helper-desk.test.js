@@ -155,3 +155,13 @@ test('a Lean project is served', async () => {
     });
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('under STOP, a declared form doesn\'t let an act that needs no evidence write', inProject(async (client) => {
+  setStop({ by: 'prompt', now: at(3) });
+  const before = listEvents(stateDir(P), { report: () => {} }).length;
+  const request = await client.desk.act({ v, project: P, command: 'request', args: { words: 'x' }, evidence: { form: 'signed' } });
+  assert.equal(request.refused, 'All stop is on');
+  const pair = await client.desk.act({ v, project: P, command: 'pair', args: { client: { id: 'app', name: 'App', publicKey: 'AAAA' } }, evidence: { form: 'signed' } });
+  assert.equal(pair.refused, 'All stop is on');
+  assert.equal(listEvents(stateDir(P), { report: () => {} }).length, before);
+}));
