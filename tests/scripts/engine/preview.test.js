@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { makePreview, touchedPages, pictureName, localAddress, startCommand, main } from '../../../scripts/engine/preview.js';
+import { makePreview, touchedPages, pictureName, localAddress, startCommand, main, accessibilityProblems, pageText } from '../../../scripts/engine/preview.js';
 import { tempFolder } from '../../helpers/homes.js';
 
 const HEAD = '1111111a2b3c4d5e6f708192a3b4c5d6e7f80912';
@@ -139,7 +139,7 @@ test('main prints the step\'s output as one JSON line, and a refusal exits 1', a
   });
   assert.equal(code, 0);
   const printed = JSON.parse(lines.at(-1));
-  assert.deepEqual(Object.keys(printed).sort(), ['folder', 'pictures', 'summary']);
+  assert.deepEqual(Object.keys(printed).sort(), ['checks', 'folder', 'pictures', 'summary', 'walked']);
   const refused = { engine: { previewFind: async () => ({ ok: false, refused: 'there is no work order for that run' }) } };
   const lines2 = [];
   assert.equal(await main(['--run', 'run-9', '--out', tempFolder('wh-shots-')], { client: refused, out: (l) => lines2.push(l) }), 1);
@@ -175,4 +175,76 @@ test('a preview folder left from before is moved aside, so nothing in it is take
   const aside = fs.readdirSync(parent).filter((n) => n.startsWith('preview.') && n.endsWith('.before'));
   assert.equal(aside.length, 1);
   assert.deepEqual(fs.readdirSync(path.join(parent, aside[0])), ['checkout-1280x800.png']);
+});
+
+const LOCAL = { preview: { command: 'npm run preview', port: 4173, ready: 'Local:' } };
+const PAGE = '<!doctype html><html lang="en"><head><title>Orders</title><script>var x = "hidden";</script></head><body><h1>Your orders</h1><img src="a.png"><label for="q">Search</label><input id="q"><input id="y"><button></button><a href="/x">Next</a></body></html>';
+
+test('each page check is walked while the preview is up, and what it showed is saved for the tester', async () => {
+  const out = tempFolder('wh-walk-');
+  const events = [];
+  const got = await makePreview({
+    runId: 'run-1', out, cwd: '/worktree', client: fakeClient({ visible: true, pages: ['/'], url: null }),
+    browser: '/chrome', picture: fakePicture(), changes: async () => [], config: () => LOCAL,
+    startCommand: async () => { events.push('start'); return { ok: true, stop: async () => { events.push('stop'); } }; },
+    walk: [{ page: '/orders', mustShow: 'Your orders' }],
+    dump: async ({ url }) => { events.push(`dump ${url}`); return { ok: true, html: PAGE }; },
+  });
+  assert.deepEqual(events, ['start', 'dump http://127.0.0.1:4173/orders', 'stop']);
+  assert.equal(got.walked, 1);
+  assert.equal(got.checks, 1);
+  const name = pictureName('/orders', { width: 1280, height: 800 }).replace(/\.png$/, '');
+  assert.equal(fs.readFileSync(path.join(out, 'walk', `${name}.html`), 'utf8'), PAGE);
+  const text = fs.readFileSync(path.join(out, 'walk', `${name}.txt`), 'utf8');
+  assert.match(text, /Your orders/);
+  assert.doesNotMatch(text, /hidden/, 'a script\'s text isn\'t what the page shows');
+  const notes = JSON.parse(fs.readFileSync(path.join(out, 'notes.json'), 'utf8'));
+  assert.deepEqual(notes.walk, [{ page: '/orders', mustShow: 'Your orders', saved: true, file: `walk/${name}.txt` }]);
+  assert.equal(notes.accessibility[0].page, '/orders');
+  assert.equal(notes.accessibility[0].problems.length, 3);
+});
+
+test('the accessibility check names an image with no alt, a field with no label, a button with no name and a page with no language or title', () => {
+  const got = accessibilityProblems(PAGE);
+  assert.ok(got.some((p) => /image/.test(p)));
+  assert.ok(got.some((p) => /field/.test(p)));
+  assert.ok(got.some((p) => /button/.test(p)));
+  assert.deepEqual(accessibilityProblems('<html><body><p>x</p></body></html>').sort(), ['the page has no title', 'the page names no language'].sort());
+  assert.deepEqual(accessibilityProblems('<html lang="en"><head><title>t</title></head><body><img alt="" src="x"><label>Name <input></label><button aria-label="Go"></button><input type="hidden"></body></html>'), []);
+  assert.equal(pageText('<p>a &amp; b</p><style>.x{}</style>'), 'a & b');
+});
+
+test('the switch is on only while the local preview runs, and the file is put back as it was', async () => {
+  const out = tempFolder('wh-walk-');
+  const cwd = tempFolder('wh-wt-');
+  fs.mkdirSync(path.join(cwd, 'config'));
+  const file = path.join(cwd, 'config', 'feature-flags.json');
+  const before = '{\n  "order-history": false\n}\n';
+  fs.writeFileSync(file, before);
+  let during = null;
+  const got = await makePreview({
+    runId: 'run-1', out, cwd, client: fakeClient({ visible: true, pages: ['/'], url: null }),
+    browser: '/chrome', picture: fakePicture(), changes: async () => [], config: () => LOCAL,
+    startCommand: async () => { during = JSON.parse(fs.readFileSync(file, 'utf8')); return { ok: true, stop: async () => {} }; },
+    flagOn: { name: 'order-history', file: 'config/feature-flags.json' },
+  });
+  assert.deepEqual(during, { 'order-history': true });
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal(got.pictures, 2);
+  const host = await makePreview({
+    runId: 'run-1', out: tempFolder('wh-walk-'), cwd, client: fakeClient({ visible: true, pages: ['/'], url: 'https://pr-14.preview.example.com' }),
+    browser: '/chrome', picture: fakePicture(), changes: async () => [], config: () => LOCAL, flagOn: { name: 'order-history', file: 'config/feature-flags.json' },
+  });
+  assert.match(JSON.parse(fs.readFileSync(path.join(host.folder, 'notes.json'), 'utf8')).flag, /stays off on the host's preview/);
+});
+
+test('with nothing visible, nothing is walked, and the step says no check was walked', async () => {
+  const out = tempFolder('wh-walk-');
+  let dumped = 0;
+  const got = await makePreview({
+    runId: 'run-1', out, client: fakeClient({ visible: false, pages: [], url: null }), browser: '/chrome', picture: fakePicture(), changes: async () => [],
+    walk: [], dump: async () => { dumped += 1; return { ok: true, html: '' }; },
+  });
+  assert.equal(dumped, 0);
+  assert.deepEqual([got.walked, got.checks], [0, 0]);
 });
