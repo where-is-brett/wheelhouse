@@ -1,0 +1,5 @@
+{"type":"run-started","runId":"rec-blocked-1","at":"2026-10-29T02:00:00.000Z","work":"card-13","lane":"quick","branch":"wh/card-13"}
+{"type":"step-finished","runId":"rec-blocked-1","at":"2026-10-29T02:04:00.000Z","step":"implement","role":"implementer","provider":"claude","model":"mid","minutes":4,"spend":{"tokens":91000,"dollars":0.24,"source":"reported"}}
+{"type":"ask","runId":"rec-blocked-1","at":"2026-10-29T02:05:00.000Z","id":"rec-blocked-1:blocked:1","kind":"blocked","labels":{"work":"card-13"},"options":[{"id":"stop","label":"Stop the work"},{"id":"retry","label":"Try again"}],"context":{"reason":"The change needs a file the builder may not edit."}}
+{"type":"ask-resolved","runId":"rec-blocked-1","at":"2026-10-29T02:20:00.000Z","id":"rec-blocked-1:blocked:1"}
+{"type":"run-ended","runId":"rec-blocked-1","at":"2026-10-29T02:20:05.000Z","outcome":"blocked","branch":"wh/card-13","pr":null}
