@@ -1,0 +1,9 @@
+# probes/77-archon-skills/workflows/e4-misspelt.yaml
+name: e4-misspelt
+description: Item 9, a misspelt skill name. Archon should only warn, and the step runs without the skill.
+nodes:
+  - id: misspelt
+    model: small
+    skills: [tddd]
+    prompt: |
+      Do not change any files. List the name of every skill your Skill tool offers you, exactly as listed, or say there are none.

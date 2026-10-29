@@ -1,0 +1,26 @@
+# probes/77-archon-skills/workflows/e4-review.yaml
+name: e4-review
+description: Item 7, Matt Pocock's original code-review skill in a step, to see whether it spawns helpers.
+nodes:
+  - id: change
+    bash: |
+      mkdir -p src
+      printf '%s\n' '// src/price.ts' 'export function formatPrice(a: number) {' '  var s = "$" + a.toFixed(2);' '  return s;' '}' > src/price.ts
+      git add src/price.ts && git -c user.name=probe -c user.email=probe@example.invalid commit -q -m "Add formatPrice"
+      echo committed
+  - id: review
+    depends_on: [change]
+    model: medium
+    idle_timeout: 240000
+    plugins: [mattpocock-skills@wheelhouse]
+    skills: [mattpocock-skills:code-review]
+    prompt: |
+      Review the changes since HEAD~1 with the code-review skill: open it with the Skill tool first and follow it. The spec is README.md.
+      Nobody will answer questions in this step. Where a skill says to ask, confirm with or check with the user or a human partner, decide within the rules and record that decision as an assumption in your final report; if you cannot go on without an answer, stop at once and report status "blocked" with the reason. Committed code from earlier rounds stands: never delete it as "code written before a test". Run only the tests in focus while you work, and run the full suite (`bun test`) once, at the end.
+    output_format:
+      type: object
+      properties:
+        status: { type: string, enum: [done, assumption, blocked] }
+        assumptions: { type: string }
+        summary: { type: string }
+      required: [status, assumptions, summary]

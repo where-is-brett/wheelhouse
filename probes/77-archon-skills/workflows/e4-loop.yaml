@@ -1,0 +1,17 @@
+# probes/77-archon-skills/workflows/e4-loop.yaml
+name: e4-loop
+description: Item 5, a three-round loop with fresh context that keeps earlier rounds' work, using the copy of tdd.
+nodes:
+  - id: build
+    model: medium
+    idle_timeout: 240000
+    skills: [tdd]
+    loop:
+      fresh_context: true
+      max_iterations: 3
+      until_bash: "bun run checks/loop.ts"
+      prompt: |
+        Follow the tdd skill: open it with the Skill tool at the start of this round, and write a failing test first.
+        TASKS.md lists three tasks. Do the first unticked task only. Its seam is the function the task names; test it in test/<module>.test.ts.
+        Nobody will answer questions in this step. Where a skill says to ask, confirm with or check with the user or a human partner, decide within the rules and record that decision as an assumption in your final report; if you cannot go on without an answer, stop at once and report status "blocked" with the reason. Committed code from earlier rounds stands: never delete it as "code written before a test". Run only the tests in focus while you work, and run the full suite (`bun test`) once, at the end.
+        When the task's tests pass and the full suite passes, tick the task in TASKS.md and commit with git. Then stop.

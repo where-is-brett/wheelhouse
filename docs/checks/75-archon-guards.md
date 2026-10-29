@@ -75,6 +75,12 @@ Do the STOP guard, the tool guard, the deny rules and the sandbox hold under Arc
 - **Part 3a's tool guard has the expected gaps.** `archon` ran; `config.yaml`, `logs/`, another run's artefacts and `archon.db` were read; the engine room's port was reachable. None of these is a surprise: the rules are part 3a's to write (spec 6.4, 12.2), and the Read tool, which no sandbox covers, needs deny rules or the tool guard for them, not only the sandbox. The tool guard already refuses `credential-key` by name.
 - **Node.js must be on the adapter's `PATH`.** Spec 6.3's environment lists Bun and the `gh` broker; the plugin's hooks run under `node`, and without it Claude Code doesn't load the plugin and Archon fails the step. The adapter's `PATH` needs the Node.js the hooks use.
 - **The lineage hold holds Archon steps too.** A step's session start runs the lineage check like any session's, so a project whose kits differ has every Archon step's commands held. That is the design's intent, but it means the pack's kits must be installed for the project before any lane runs on Archon.
+- **Naming a plugin writes to the person's Claude records.**
+  - A step that named a plugin was followed by a new user-scope entry for it in `~/.claude/plugins/installed_plugins.json`. `wheelhouse@wheelhouse` appeared here, and `mattpocock-skills@wheelhouse` in check 77.
+  - No `claude plugin` command was run, so Archon's plugin overlay, or Claude Code acting on it, wrote them.
+  - Check 77 also found that a plugin installed only at another project's scope passes Archon's "installed" test (`claude plugin list --json` lists every scope), then fails the step with "named plugins did not load".
+  - **For part 3a:** the adapter should run Claude steps with a Claude configuration folder of Wheelhouse's own (`CLAUDE_CONFIG_DIR`) holding the Wheelhouse plugin, so that Archon never writes the person's own. Whether the sign-in still works from such a folder was not tried here. Once these entries were found, the remaining probe steps named no plugins. Part 3a tries it first, and setup's design follows from the answer.
+  - The entries were left in place for the director to decide on.
 - **The STOP guard holds, but steps also obey the notice.** In two of three tries the step stopped on the session start's STOP notice without calling anything, which is the outcome All stop wants; the guard refused the call when one was made.
 
 ## Needs the director
