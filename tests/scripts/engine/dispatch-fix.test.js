@@ -12,7 +12,7 @@ import { tempFolder } from '../../helpers/homes.js';
 const INCIDENT = { id: 'red-main-0123456789', what: 'The main line\'s checks are red.', kind: 'red-main', suspect: 12, work: 'fix-main-red-main-0123456789', at: '2026-10-30T09:00:00.000Z', fixes: [] };
 const record = (runId, state, extra = {}) => ({ at: '2026-10-30T10:00:00.000Z', data: { work: INCIDENT.work, lane: 'fix-main', engine: 'fake', runId, state, ...extra } });
 
-function setUp({ green = false, stop = false } = {}) {
+function setUp({ green = false, stop = false, refuse = () => null } = {}) {
   const dir = tempFolder('wh-df-');
   const starts = [];
   const written = [];
@@ -28,7 +28,7 @@ function setUp({ green = false, stop = false } = {}) {
     engine, project: 'p', folder: dir, file: path.join(dir, 'dispatch.json'), readViews: () => world.views,
     config: () => ({ testCommand: 'npm test', routing: {} }),
     stopped: () => world.stop,
-    start: async (args) => { starts.push(args); return { ok: true, runId: `run-${starts.length}` }; },
+    start: async (args) => { starts.push(args); const refused = refuse(starts.length); return refused ? { ok: false, refused } : { ok: true, runId: `run-${starts.length}` }; },
     write: async (kind, data) => { written.push({ kind, data }); },
     now: () => new Date('2026-10-30T10:00:00.000Z'),
     mainGreen: async () => world.green,
@@ -142,6 +142,31 @@ test('the card\'s Undo starts an attempt that undoes the suspect, and Fix it for
     await t.d.tick();
     assert.equal(fixStarts(t).length, 2, `${label}: once`);
   }
+});
+
+test("an answer whose start is refused is kept and tried again, and the Logbook says why, once", async () => {
+  let refusing = true;
+  const t = setUp({ refuse: (n) => (n >= 2 && refusing ? "the engine's copy of the project couldn't be brought up to date" : null) });
+  await t.d.tick();
+  t.ran('run-1', 'ended', { outcome: 'failed' });
+  await t.d.tick();
+  t.answer('Fix it forward');
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 2, 'tried');
+  const said = notes(t).filter((w) => /didn't start/.test(w));
+  assert.equal(said.length, 1);
+  assert.match(said[0], /Fix it forward/);
+  assert.match(said[0], /brought up to date/);
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 3, 'the answer is kept, and tried again');
+  assert.equal(notes(t).filter((w) => /didn't start/.test(w)).length, 1, 'said once');
+  refusing = false;
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 4);
+  assert.match(fixStarts(t)[3].order.goal, /pass again\.$/);
+  t.ran('run-4', 'started');
+  await t.d.tick();
+  assert.equal(fixStarts(t).length, 4, 'once it started, not again');
 });
 
 test('the card\'s Leave it starts nothing, and work stays held', async () => {

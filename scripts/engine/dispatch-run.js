@@ -444,14 +444,26 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
     } else if (decided.act === 'start') {
       let order;
       try { order = fixOrder(incident, { config: config() ?? {}, settings: settings() ?? {}, revert: decided.revert === true }); } catch { return; }
+      const answered = isPlain(kept.next) ? kept.next : null;
       kept.next = null;
       if (decided.after) kept.carried.push(decided.after);
       keep();
       const got = await start({ project, order, ...(decided.carryOn ? { branch: decided.branch, carryOn: true } : {}) });
       if (got?.ok && typeof got.runId === 'string') {
         kept.started.push(got.runId);
+        delete kept.refusedSaid;
         keep();
         if (kept.started.length === 1) await write('note', { about: 'engine', words: STARTED_FIX_WORDS });
+      } else if (answered) {
+        // The director's answer is kept, and its start tried again on the next tick; the Logbook says why, once.
+        kept.next = answered;
+        const said = kept.refusedSaid === true;
+        kept.refusedSaid = true;
+        keep();
+        if (!said) {
+          const chose = answered.revert === true && incident.suspect ? undoLabel(incident.suspect) : FIX_FORWARD;
+          await write('note', { about: 'engine', words: `You chose ${chose} for the red main line, but the fix didn't start: ${got?.refused ?? 'the build engine didn\'t start it'}. Your answer is kept, and it is tried again.` });
+        }
       }
     } else if (decided.act === 'card') {
       kept.carded.push(decided.run);
