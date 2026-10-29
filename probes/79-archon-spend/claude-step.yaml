@@ -1,0 +1,8 @@
+# probes/79-archon-spend/claude-step.yaml
+# Check 79: one Claude step on the small model, for the Claude side of the record.
+name: e6-claude-step
+description: One short Claude step
+nodes:
+  - id: say
+    model: small
+    prompt: "Reply with the single word ok. Use no tools."

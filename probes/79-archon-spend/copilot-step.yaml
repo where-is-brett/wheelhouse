@@ -1,0 +1,10 @@
+# probes/79-archon-spend/copilot-step.yaml
+# Check 79: one Copilot step, one prompt.
+name: e6-copilot-step
+description: One short Copilot step
+nodes:
+  - id: say
+    provider: copilot
+    model: auto
+    idle_timeout: 300000
+    prompt: "Reply with the single word ok. Use no tools."
