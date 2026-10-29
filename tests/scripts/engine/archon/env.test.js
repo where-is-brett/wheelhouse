@@ -77,6 +77,12 @@ test("archonEnv sets ARCHON_HOME outside the Wheelhouse home, and keeps no token
   for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'ANTHROPIC_API_KEY', 'GH_HOST', 'SSH_AUTH_SOCK']) assert.equal(env[name], undefined);
 });
 
+test("archonEnv keeps WHEELHOUSE_HOME when it is set, so a step's hooks use the same Wheelhouse home", () => {
+  const { engine, nodeDir, home } = setup();
+  assert.equal(archonEnv({ engine, home, nodeDir, baseEnv: { WHEELHOUSE_HOME: '/eval/home' } }).WHEELHOUSE_HOME, '/eval/home');
+  assert.equal(Object.hasOwn(archonEnv({ engine, home, nodeDir, baseEnv: {} }), 'WHEELHOUSE_HOME'), false);
+});
+
 test('the stood-in programs include archon and bun', () => {
   assert.ok(STOOD_IN.includes('archon'));
   assert.ok(STOOD_IN.includes('bun'));

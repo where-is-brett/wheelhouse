@@ -10,8 +10,9 @@ export const TELEMETRY = Object.freeze({ ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_
 
 // Folders with the system's own tools (git, bash, ps). The caller's PATH is never kept, since it may hold a real gh.
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
-// The few variables kept from the caller's environment. No token or host variable passes.
-const KEPT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'TERM'];
+// The few variables kept from the caller's environment. No token or host variable passes. WHEELHOUSE_HOME, where set
+// (an evaluation's home), is kept so a step's hooks use the same Wheelhouse home as the helper.
+const KEPT = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'TERM', 'WHEELHOUSE_HOME'];
 
 const holdsGh = (dir) => ['gh', 'gh.exe', 'gh.cmd', 'gh.bat'].some((name) => fs.existsSync(path.join(dir, name)));
 
