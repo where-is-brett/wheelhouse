@@ -1,6 +1,6 @@
 {
   "name": "wheelhouse",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Lets a director who is not a developer run AI agents that build their product.",
   "license": "Apache-2.0",
   "types": "./types/index.d.ts"
