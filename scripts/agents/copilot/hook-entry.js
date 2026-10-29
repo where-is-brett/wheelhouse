@@ -131,8 +131,13 @@ function stopClient(client, cwd) {
   return {
     ...client,
     async stop({ by } = {}) {
-      const { deskClient } = await import('../../desk/client.js');
-      const set = await deskClient({ cwd, client, local: 'never' }).act('all-stop', { by });
+      let set = null;
+      try {
+        const { deskClient } = await import('../../desk/client.js');
+        set = await deskClient({ cwd, client, local: 'never' }).act('all-stop', { by });
+      } catch {
+        // A desk that fails to answer at all is asked no further; /stop/set is asked instead.
+      }
       return set?.ok === true ? { ok: true } : client.stop({ by });
     },
   };

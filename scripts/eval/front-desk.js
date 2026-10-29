@@ -125,8 +125,9 @@ export const PLUGIN_FILES = [
   'skills/front-desk/SKILL.md',
   ...importClosure(['scripts/frontdesk/cli.js']),
   'templates/glossary.json',
-  'adapters/claude-code/tool-sheet.md',
-  'adapters/copilot/tool-sheet.md',
+  // Each adapter's tool sheet, found in the adapters folder so this file names no agent.
+  ...fs.readdirSync(path.join(REPO_ROOT, 'adapters')).map((agent) => `adapters/${agent}/tool-sheet.md`)
+    .filter((file) => fs.existsSync(path.join(REPO_ROOT, file))).sort(),
 ];
 
 // The hooks' script: it hands what Claude Code gave it to the stand-in helper at `address`, which
