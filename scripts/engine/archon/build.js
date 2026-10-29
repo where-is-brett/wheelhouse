@@ -7,6 +7,8 @@
 //   bun/bin/bun            the pinned Bun
 //   archon/src/            the source at the pinned commit, patched, its dependencies installed by the lockfile
 //   archon/bin/archon      a launcher: the pinned Bun running the source's command line
+//   archon/bunfig.toml     an empty Bun config the launcher names, so Bun never reads a bunfig.toml (and its preload)
+//                          from the folder Archon starts in
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -34,6 +36,8 @@ const PATCH_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'patch
 
 // The value of ARCHON_CLAUDE_PERMISSION_MODE that the patch reads.
 export const PERMISSION_MODE = 'acceptEdits';
+// What the patched provider holds and the unpatched one doesn't; health looks for it.
+export const PATCH_MARK = 'ARCHON_CLAUDE_PERMISSION_MODE';
 
 const TELEMETRY = { ARCHON_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', POSTHOG_API_KEY: 'off' };
 const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
@@ -45,7 +49,16 @@ export function enginePaths(engine) {
     bunBin: path.join(bunDir, 'bun'),
     src: path.join(engine, 'archon', 'src'),
     launcher: path.join(engine, 'archon', 'bin', 'archon'),
+    bunfig: path.join(engine, 'archon', 'bunfig.toml'),
+    provider: path.join(engine, 'archon', 'src', 'packages', 'providers', 'src', 'claude', 'provider.ts'),
   };
+}
+
+// The launcher the build writes: the pinned Bun, with the engine's own empty bunfig, running the source's command line.
+export function launcherText(engine) {
+  const p = enginePaths(engine);
+  const cli = path.join(p.src, 'packages', 'cli', 'src', 'cli.ts');
+  return `#!/bin/sh\n# Archon from source, patched by Wheelhouse (scripts/engine/archon/build.js).\nexec '${p.bunBin}' --config='${p.bunfig}' --no-env-file '${cli}' "$@"\n`;
 }
 
 function sha256(buffer) {
@@ -101,8 +114,8 @@ export async function buildFromSource({ engine, run = defaultRun, fetcher = fetc
   await must(run(p.bunBin, install, { cwd: p.src, env, baseEnv: {}, timeoutMs: 900000 }), 'Installing Archon\'s dependencies');
 
   fs.mkdirSync(path.dirname(p.launcher), { recursive: true });
-  const cli = path.join(p.src, 'packages', 'cli', 'src', 'cli.ts');
-  fs.writeFileSync(p.launcher, `#!/bin/sh\n# Archon from source, patched by Wheelhouse (scripts/engine/archon/build.js).\nexec '${p.bunBin}' --no-env-file '${cli}' "$@"\n`);
+  fs.writeFileSync(p.bunfig, '# Empty: Bun reads this in place of a bunfig.toml in the folder Archon starts in.\n');
+  fs.writeFileSync(p.launcher, launcherText(engine));
   fs.chmodSync(p.launcher, 0o755);
   return { archonBin: p.launcher, bunBin: p.bunBin, src: p.src };
 }

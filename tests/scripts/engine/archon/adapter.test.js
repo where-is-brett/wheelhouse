@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { archonAdapter, archonStreamer, bindingsFor, cursorKeeper } from '../../../../scripts/engine/archon/adapter.js';
+import { enginePaths, launcherText } from '../../../../scripts/engine/archon/build.js';
+import { tempFolder } from '../../../helpers/homes.js';
 import { normaliseAsk } from '../../../../scripts/engine/archon/asks.js';
 import { checkEngine, checkEvent } from '../../../../scripts/engine/contract.js';
 
@@ -56,6 +58,8 @@ test("start passes the pack, the config and the work's id, and never the order's
   assert.equal(after('--config'), configFile);
   assert.equal(after('--branch'), 'wh/card-14');
   assert.equal(after('--cwd'), order.project);
+  // Started outside the project, so Bun reads nothing of the project's (a bunfig.toml's preload); --cwd names it.
+  assert.equal(options.cwd, undefined);
   assert.equal(after('--input'), 'work=card-14');
   assert.deepEqual(args.filter((_, i) => args[i - 1] === '--model'), ['large=model-large', '@implementer=model-implementer']);
   const said = JSON.stringify(cli.calls);
@@ -308,16 +312,40 @@ const healthyCli = (overrides = {}) => fakeCli({
 });
 const bunRun = (stdout = '1.4.3\n') => async () => ({ code: 0, stdout, stderr: '' });
 
-test('health passes with the pinned version, Bun, Claude and telemetry off', async () => {
-  const result = await adapter(healthyCli(), { pins, run: bunRun() }).health();
+// An engine folder as the build leaves it: the source launcher, and the provider with Wheelhouse's patch in it.
+function builtEngine({ launcher, provider = "permissionMode: process.env.ARCHON_CLAUDE_PERMISSION_MODE === 'acceptEdits'" } = {}) {
+  const engine = tempFolder('wh-archon-health-');
+  const p = enginePaths(engine);
+  fs.mkdirSync(path.dirname(p.launcher), { recursive: true });
+  fs.writeFileSync(p.launcher, launcher ?? launcherText(engine));
+  const file = path.join(p.src, 'packages', 'providers', 'src', 'claude', 'provider.ts');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (provider !== null) fs.writeFileSync(file, provider);
+  return engine;
+}
+
+test('health passes with the pinned version, Bun, Claude, the patch and telemetry off', async () => {
+  const result = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine() }).health();
   assert.deepEqual(result, { ok: true, findings: [] });
 });
 
+test("health fails closed on an engine that isn't the patched source build", async () => {
+  const unpatched = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine({ provider: 'permissionMode: "bypassPermissions"' }) }).health();
+  assert.equal(unpatched.ok, false);
+  assert.match(unpatched.findings.join(' '), /patch.*sandbox|sandbox.*patch/);
+  const release = await adapter(healthyCli(), { pins, run: bunRun(), engine: builtEngine({ launcher: '\x7fELF release binary' }) }).health();
+  assert.equal(release.ok, false);
+  assert.match(release.findings.join(' '), /sandbox/);
+  const nothing = await adapter(healthyCli(), { pins, run: bunRun(), engine: tempFolder('wh-archon-health-') }).health();
+  assert.equal(nothing.ok, false);
+});
+
 test('health fails closed when telemetry reports on', async () => {
-  const on = await adapter(healthyCli({ 'telemetry status': plain('telemetry-on.txt') }), { pins, run: bunRun() }).health();
+  const engine = builtEngine();
+  const on = await adapter(healthyCli({ 'telemetry status': plain('telemetry-on.txt') }), { pins, run: bunRun(), engine }).health();
   assert.equal(on.ok, false);
   assert.match(on.findings.join(' '), /usage reporting is on/);
-  const silent = await adapter(healthyCli({ 'telemetry status': { code: 1, json: null, stdout: '', stderr: 'boom' } }), { pins, run: bunRun() }).health();
+  const silent = await adapter(healthyCli({ 'telemetry status': { code: 1, json: null, stdout: '', stderr: 'boom' } }), { pins, run: bunRun(), engine }).health();
   assert.equal(silent.ok, false);
   assert.match(silent.findings.join(' '), /usage reporting/);
 });
@@ -327,7 +355,7 @@ test('health names a wrong version, a missing Bun and a missing Claude', async (
     'version': { code: 0, json: null, stdout: 'Archon CLI v0.14.0\n', stderr: '' },
     'ai tier': { code: 0, json: { defaultAssistant: 'codex', tiers: [] }, stdout: '', stderr: '' },
   });
-  const result = await adapter(cli, { pins, run: async () => ({ code: 127, stdout: '', stderr: 'not found' }) }).health();
+  const result = await adapter(cli, { pins, run: async () => ({ code: 127, stdout: '', stderr: 'not found' }), engine: builtEngine() }).health();
   assert.equal(result.ok, false);
   assert.equal(result.findings.length, 3);
   assert.match(result.findings[0], /0\.14\.0.*v0\.13\.0/);

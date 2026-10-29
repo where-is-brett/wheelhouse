@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, enginePaths } from '../../../../scripts/engine/archon/build.js';
+import { buildFromSource, ARCHON_SOURCE, BUN_PIN, PATCHES, enginePaths, launcherText } from '../../../../scripts/engine/archon/build.js';
 
 const sha = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
@@ -54,6 +54,17 @@ test('the build clones the pinned tag, checks its commit, applies the patch and 
   const launcher = fs.readFileSync(p.launcher, 'utf8');
   assert.match(launcher, new RegExp(p.bunBin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(launcher, /packages\/cli\/src\/cli\.ts/);
+  assert.equal(launcher, launcherText(w.engine));
+});
+
+test("the launcher gives Bun the engine's own empty bunfig, so none in the folder Archon starts in is read", async () => {
+  const w = world();
+  await buildFromSource({ engine: w.engine, run: w.run, fetcher: w.fetcher, arch: 'arm64', platform: 'darwin', bun: pins(Buffer.from('bun zip')) });
+  const p = enginePaths(w.engine);
+  assert.equal(p.bunfig, path.join(w.engine, 'archon', 'bunfig.toml'));
+  assert.doesNotMatch(fs.readFileSync(p.bunfig, 'utf8'), /^\s*[^#\s]/m, 'the bunfig sets nothing');
+  const exec = fs.readFileSync(p.launcher, 'utf8').split('\n').find((line) => line.startsWith('exec '));
+  assert.equal(exec, `exec '${p.bunBin}' --config='${p.bunfig}' --no-env-file '${path.join(p.src, 'packages', 'cli', 'src', 'cli.ts')}' "$@"`);
 });
 
 test('the build installs with the telemetry switches and without the caller\'s PATH', async () => {

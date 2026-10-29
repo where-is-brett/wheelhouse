@@ -10,10 +10,12 @@
 //              archon workflow cancel <run> --json; archon workflow resume <run> --detach --json  (never abandon, spec 12.2)
 //   inspect    archon workflow get <run> --verbose --json
 //   stopAll    archon workflow status --all --json, then cancel each running or pending run   (stop.js ends what is left)
-//   health     archon version; bun --version; archon ai tier list --json; archon telemetry status
+//   health     the launcher and the patch on disk; archon version; bun --version; archon ai tier list --json;
+//              archon telemetry status
 //   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
+import fs from 'node:fs';
 import { archonCli, archonCommand } from './cli.js';
-import { ARCHON_SOURCE, BUN_PIN, enginePaths } from './build.js';
+import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord } from './record.js';
 import path from 'node:path';
@@ -246,6 +248,13 @@ export function archonAdapter({
 
     async health() {
       const findings = [];
+      // The patch fails closed: a release binary, or a source build without the patch, starts Claude steps in bypass
+      // mode with no sandbox (build.js).
+      const p = enginePaths(engine);
+      const read = (file) => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+      if (read(p.launcher) !== launcherText(engine) || !read(p.provider)?.includes(PATCH_MARK)) {
+        findings.push("Archon isn't Wheelhouse's patched build from source, so its steps would run without the sandbox; no run starts until the engine is built again");
+      }
       const version = await cli(['version'], { timeout: CALL_MS });
       const got = /Archon CLI (v\S+)/.exec(version.stdout ?? '')?.[1];
       if (version.code !== 0 || !got) findings.push("Archon didn't say which version it is; it may not be installed");
@@ -283,7 +292,8 @@ export function archonAdapter({
       if (order.branch) args.push('--branch', order.branch);
       if (workflow !== MERGE_QUEUE) args.push('--input', `work=${order.work}`);
       for (const binding of models) args.push('--model', binding);
-      const result = await cli(args, { json: true, cwd: order.project, timeout: START_MS });
+      // Not started in the project (--cwd names it), so Bun reads nothing of the project's own.
+      const result = await cli(args, { json: true, timeout: START_MS });
       if (result.json?.ok === true && typeof result.json.runId === 'string') {
         return { ok: true, runId: result.json.runId, branch: result.json.branch ?? order.branch ?? null };
       }
