@@ -128,10 +128,14 @@ test('Approve on an approval card signs the approval a click earns, then writes 
   assert.deepEqual(signed(client), [{ kind: 'approval', data: { pr: 14, commit: FULL, words: 'Approve', question: other.data.question } }]);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
   assert.deepEqual(client.calls.write, [{ project: P, kind: 'card-answer', data: { question: other.data.question, label: 'Approve' } }]);
-  const clicked = fake({ takes: false });
-  await decide(click(other.data, 'Approve'), clickDeps(clicked));
-  assert.deepEqual(signed(client), signed(clicked).filter((r) => r.kind !== 'shown'));
   assert.equal(waitingIds().includes(other.id), false);
+  // The card's copy in the chat, clicked afterwards, is stale: it signs and records nothing, and the front desk is
+  // told the press counted.
+  const clicked = fake({ takes: false });
+  const said = await decide(click(other.data, 'Approve'), clickDeps(clicked));
+  assert.deepEqual(signed(clicked).filter((r) => r.kind !== 'shown'), []);
+  assert.deepEqual(clicked.calls.write, []);
+  assert.match(said.hookSpecificOutput.additionalContext, /"Approve" counted/);
 }));
 
 test('an answer card\'s option signs the answer action for its question', () => withKey(async () => {
@@ -142,10 +146,12 @@ test('an answer card\'s option signs the answer action for its question', () => 
   assert.deepEqual(await press(card, client, 'Tab'), { made: true, says: 'Recorded: Tab on card 1' });
   assert.deepEqual(signed(client), [{ kind: 'action', data: { action: 'answer', questionId: 'q-export-csv-1', questionHash: dataHash(QUESTION), question: card.data.question, label: 'Tab' } }]);
   assert.equal(verify(client.calls.record[0].event, readEnrolled()), true);
-  const clicked = fake({ takes: false });
-  await decide(click(card.data, 'Tab'), clickDeps(clicked));
-  assert.deepEqual(signed(client), signed(clicked).filter((r) => r.kind !== 'shown'));
   assert.equal(client.calls.write.length, 1);
+  // A click on the card in the chat afterwards, on the other option, changes nothing.
+  const clicked = fake({ takes: false });
+  const said = await decide(click(card.data, 'Comma'), clickDeps(clicked));
+  assert.deepEqual(signed(clicked).filter((r) => r.kind !== 'shown'), []);
+  assert.match(said.hookSpecificOutput.additionalContext, /"Comma" .*"Tab" counted/);
 }));
 
 test('Not now writes the card answer alone, and the card stays waiting', () => withKey(async () => {

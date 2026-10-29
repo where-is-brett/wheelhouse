@@ -27,7 +27,9 @@ export const STALE_TICKS = 3;
 // How long after a setting's change was confirmed the pane still offers Undo on its row.
 export const UNDO_MS = 60000;
 // The words every prompt the mod submits starts with.
-export const LEADS = Object.freeze({ pane: 'Wheelhouse pane:', courier: 'Wheelhouse courier:' });
+// `courier` opens the courier's instructions, which reach the front desk as hidden context (board-context.js); `wake`
+// opens the one line the director sees in the chat in their place (design section 17.1).
+export const LEADS = Object.freeze({ pane: 'Wheelhouse pane:', courier: 'Wheelhouse courier:', wake: 'Wheelhouse:' });
 // A message from a Wheelhouse session starts with this.
 export const MESSAGE_LEAD = /^Wheelhouse(?: [a-z]+)?:/;
 // When the director counts as away: hours without a message, and the evening and morning edges.

@@ -127,6 +127,7 @@ import {
 } from './wake.js';
 import { questionProblem } from '../cards/compose.js';
 import { amendBrief, renderBrief } from '../feature/brief.js';
+import { approvedDocument, placeApproved } from '../feature/approved.js';
 import { report as reportCheck } from '../feature/cli.js';
 import {
   briefHash, ensureIgnored, featurePaths, parseBrief, parseReport, readQuestions, readStatus, writeStatus,
@@ -606,12 +607,16 @@ async function start(ctx, work, rest) {
   // The brief's plan comes before the one the session records, so a brief that
   // named one could never move on to slice 2 (R87, R88).
   if (plan && slices > 1) refuse('--plan names one plan, so it can\'t be given for work in several slices: each slice\'s plan is recorded by its session');
+  // The approved document, which the brief names as the spec (build-loop design, section 13).
+  const approved = approvedDocument({ checkout: checkoutOf(ctx.project), views, work });
+  if (approved?.problem) refuse(`${work}'s approved document ${approved.problem}, so it was not started: ask the director`);
   // The brief carries no models: the watcher gives each wake the column in force (design section 14.6).
   // `routing` stays in the brief's shape, empty, so an older brief's is still read (and ignored).
   const fields = {
     v: 1, work, lane, version: 1, goal, done, appetite, rulings, routing: {}, shownFirst: entry.approval?.shownFirst === true,
     ...(plan ? { plan } : {}), ...(slices ? { slices } : {}),
     ...(entry.work.data.from === undefined ? {} : { from: entry.work.data.from }),
+    ...(approved ? { approved: approved.hash } : {}),
   };
   let text;
   try {
@@ -648,6 +653,10 @@ async function start(ctx, work, rest) {
   }
   realFolders(worktree, ['.wheelhouse', 'feature']);
   if (!safeFeatureFolder(worktree)) refuse("The worktree's feature folder isn't a real folder inside it");
+  if (approved) {
+    placeApproved(worktree, approved.text);
+    ctx.say('Copied the approved document into the worktree.');
+  }
   writeWhole(featurePaths(worktree).brief, text);
   const hash = briefHash(text);
   await ctx.write('feature', { work, step: 'started', worktree, branch, brief: hash, ...(slices ? { slice: { n: 1, m: slices } } : {}) });

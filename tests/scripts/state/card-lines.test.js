@@ -5,7 +5,7 @@ import {
   replyCode, replyCodeLine, setLineOf, SET_LINES, CODE_ALPHABET, usageLine, USAGE_LINE, premiumLine, PREMIUM_LINE,
   approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, LIFT_LABEL, LIFT_LABELS, isLiftStopLine, runbookLine, ciPushLine,
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, dayOf, TRUST_LINE, takeOverLine, TAKEOVER_LINE,
-  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine,
+  uninstallLine, UNINSTALL_LINE, UNINSTALL_LABEL, isLineName, keepControlLine, chatCopy,
 } from '../../../scripts/state/card-lines.js';
 
 const FULL = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -197,4 +197,17 @@ test('the premium model\'s card line names the time of the offer, and only a who
   assert.equal(PREMIUM_LINE.exec(line)[1], '2026-10-26T01:00:00.000Z');
   assert.equal(setLineOf(`What this is.\n${line}`), line);
   for (const bad of ['Set the premium model as the premium card of 26 October 2026 offers', `${line}.`, `x${line}`]) assert.equal(PREMIUM_LINE.test(bad), false, bad);
+});
+
+test('chatCopy leaves out a card\'s set line and reply code, and keeps them where a click is read from the text alone', () => {
+  const card = (line) => `Put pull request #7 live?\nIt changes the sign-in.\nTo know more, just ask.\n${line}\n${replyCodeLine(replyCode(line))}`;
+  const approval = card(approvalLine(7, FULL));
+  assert.equal(chatCopy(approval), 'Put pull request #7 live?\nIt changes the sign-in.\nTo know more, just ask.');
+  assert.equal(chatCopy(chatCopy(approval)), chatCopy(approval), 'a copy made twice is the same copy');
+  // The baseline card and the Lift All stop card keep their lines; so does a card with no reply code.
+  for (const kept of [card(baselineLine('a'.repeat(64))), card(LIFT_STOP), `What this is.\n${setupLine(4, 'b'.repeat(64))}`]) assert.equal(chatCopy(kept), kept);
+  // A code that isn't the line's own, or a set line that isn't last but one, leaves the text as it is.
+  const wrong = `Ask.\n${approvalLine(7, FULL)}\n${replyCodeLine('ZZZZ')}`;
+  assert.equal(chatCopy(wrong), wrong);
+  assert.equal(chatCopy(undefined), undefined);
 });

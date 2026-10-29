@@ -42,6 +42,7 @@ import { standInViews } from '../../../scripts/eval/stand-in-helper.js';
 import { assertUnderTmp } from '../../../probes/lib/scratch.js';
 import { card as composeWithCli } from '../../../scripts/frontdesk/cli.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
+import { chatCopy } from '../../../scripts/state/card-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { FRONT_DESK_LINE, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { PROTECTED_KINDS } from '../../../scripts/state/events.js';
@@ -116,12 +117,29 @@ function write(root, relative, content) {
   fs.writeFileSync(file, content, 'utf8');
 }
 
+// The prompt hook of a courier's wake: the wake's instructions as context when the prompt is its line.
+function wakeScript({ line, context }) {
+  return `// A stand-in for board-context.js in an evaluation run: a courier's line brings its instructions as context.
+let given = '';
+process.stdin.on('data', (chunk) => { given += chunk; });
+process.stdin.on('end', () => {
+  let input = {};
+  try { input = JSON.parse(given); } catch { /* nothing to add */ }
+  const prompt = typeof input.prompt === 'string' ? input.prompt.replace(/\\p{Cf}/gu, '').trim() : '';
+  if (prompt === ${JSON.stringify(line)}) {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: ${JSON.stringify(context)} } }));
+  }
+});
+`;
+}
+
 // Sets `dir` up for the front desk under its playbook, with `seed` in the stand-in helper's
 // state, `pullRequests` open on the stand-in host ({ number: head }) and `files` committed on
 // main; with `push`, the phone's hook too, for a scenario offered
-// PushNotification: `true` answers PUSHED, and a string answers that (NOT_SENT, say). Resolves
-// with the context runScenario takes.
-export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push = false, pullRequests = {} } = {}) {
+// PushNotification: `true` answers PUSHED, and a string answers that (NOT_SENT, say); with `wake`
+// ({ line, context }, a courier's wake), a prompt hook that adds `context` when the prompt is `line`,
+// as board-context.js does with courier.json. Resolves with the context runScenario takes.
+export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push = false, pullRequests = {}, wake = null } = {}) {
   const context = await setUpFrontDesk(dir, 'without', { files, seed, pullRequests });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-mod-'));
   try {
@@ -141,6 +159,8 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
     fs.writeFileSync(hook, turnAwayScript(SHOWN), 'utf8');
     const phone = path.join(root, 'push-sent.mjs');
     if (push) fs.writeFileSync(phone, turnAwayScript(push === true ? PUSHED : push), 'utf8');
+    const woke = path.join(root, 'wake-context.mjs');
+    if (wake !== null) fs.writeFileSync(woke, wakeScript(wake), 'utf8');
 
     // The local settings setUpFrontDesk wrote, with reading the plugin's files, the screen's hook
     // and, with `push`, the phone's.
@@ -152,6 +172,7 @@ export async function setUpPlaybook(dir, variant, { files = {}, seed = [], push 
         turnAwayEntry('AskUserQuestion', hook),
         ...(push ? [turnAwayEntry('PushNotification', phone)] : []),
       ],
+      ...(wake === null ? {} : { UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${woke}"`, timeout: 10 }] }] }),
     };
     fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
 
@@ -200,11 +221,12 @@ export function textBlocks(events) {
 export const askCalls = (calls) => calls.filter((call) => call.name === 'AskUserQuestion')
   .map((call) => ({ ...call, questions: Array.isArray(call.input.questions) ? call.input.questions : [] }));
 
-// Whether an asked question is the card as it was composed: its text, and its options' labels in order.
+// Whether an asked question is the card as it was composed: its text in the chat's words, as the front desk's command
+// prints it (chatCopy: no set line or reply code), and its options' labels in order.
 export function asItIs(asked, data) {
   const card = asQuestion({ data });
   const labels = (asked?.options ?? []).map((o) => o?.label);
-  return asked?.question === card.question && JSON.stringify(labels) === JSON.stringify(card.options.map((o) => o.label));
+  return asked?.question === chatCopy(card.question) && JSON.stringify(labels) === JSON.stringify(card.options.map((o) => o.label));
 }
 
 // What the session wrote that a front desk must never write for a press or a wake: a signed

@@ -94,10 +94,11 @@ const numbersIn = (text) => [
 // A briefing, as the session-start hook words its opening, or a list of what is going on.
 const BRIEFING = /\bbriefing\b|\bwhile you were away\b|\bsince (?:you|your) last\b|\bhere'?s where\b/i;
 
-// The courier's wake for the new cards, as the bridge would submit it: courierWake's `submit`,
-// in a throwaway Wheelhouse home so nothing of the computer's own is read or written. With
-// `reminder`, the courier's one reminder for them instead: the wake was handed on, the cards
-// weren't asked, and the next tick past the gap reminds.
+// The courier's wake for the new cards, as courierWake makes it, in a throwaway Wheelhouse home so
+// nothing of the computer's own is read or written: `{ line, context }`, the line the bridge submits
+// (the run's prompt) and the instructions board-context.js adds as context when that line arrives
+// (setUpPlaybook's `wake`). With `reminder`, the courier's one reminder for them instead: the wake
+// was handed on, the cards weren't asked, and the next tick past the gap reminds.
 export async function wakePrompt(numbers, { reminder = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-eval-wake-'));
   const before = process.env.WHEELHOUSE_HOME;
@@ -107,12 +108,12 @@ export async function wakePrompt(numbers, { reminder = false } = {}) {
     const items = needsYou({ after: { cards: CARDS.map((c) => ({ id: c.id, n: numbers[c.id], asked: c.asked })) } });
     const ask = { project: 'eval-shop', session: 'front-desk', presence: { value: 'here' }, quiet: null, idle: true };
     await courierWake({ ...ask, items: [], now: at(0) });
-    const { submit } = await courierWake({ ...ask, items, now: at(1) });
-    if (typeof submit !== 'string') throw new Error('The courier did not wake for the new cards');
-    if (!reminder) return submit;
+    const first = await courierWake({ ...ask, items, now: at(1) });
+    if (typeof first.submit !== 'string') throw new Error('The courier did not wake for the new cards');
+    if (!reminder) return { line: first.submit, context: first.context };
     const again = await courierWake({ ...ask, items, now: at(1 + COURIER_GAP_MS / 60000) });
     if (typeof again.submit !== 'string') throw new Error('The courier did not remind of the new cards');
-    return again.submit;
+    return { line: again.submit, context: again.context };
   } finally {
     if (before === undefined) delete process.env.WHEELHOUSE_HOME;
     else process.env.WHEELHOUSE_HOME = before;
@@ -220,8 +221,9 @@ export default {
     const numbers = boardNumbers(made.seed);
     const n = (i) => numbers[CARDS[i].id];
     if ([n(0), n(1), n(2), n(3)].join() !== '1,2,3,4') throw new Error(`The board numbers the cards ${[n(0), n(1), n(2), n(3)].join(', ')}, not 1 to 4`);
-    prompt = await wakePrompt(numbers);
-    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: true }), cards: made.cards };
+    const wake = await wakePrompt(numbers);
+    prompt = wake.line;
+    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: true, wake }), cards: made.cards };
   },
 
   // The wake is made in setup, by the courier's own code, before the session starts.

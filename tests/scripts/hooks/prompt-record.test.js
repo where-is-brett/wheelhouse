@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
+import { decide, sendPending, SIGNED_LABELS, storedText } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -22,6 +22,7 @@ import { rulesInput } from '../../helpers/rules-card.js';
 import { beforeTimer } from '../../helpers/until.js';
 import { nudgeCard } from '../../../scripts/routing/nudge.js';
 import { buildViews } from '../../../scripts/state/views.js';
+import { SUGGEST, WHAT_WOULD_YOU_CHANGE } from '../../../scripts/lib/calm-words.js';
 import { cardHash } from '../../../scripts/lib/measures-clicks.js';
 import { premiumInput, ALLOW_WITHIN, ALLOW_PAID, ALLOW_PAID_ON_TOP } from '../../../scripts/routing/premium.js';
 
@@ -90,6 +91,113 @@ test('Approve on a card naming the pull request and its current head records a s
     assert.equal(rec.event.kind, 'approval');
     assert.deepEqual(rec.event.data, { pr: 7, commit: FULL, words: 'Approve', question: q });
     assert.ok(rec.event.sig);
+  });
+});
+
+// A card handed out in the chat's words (chatCopy): the click is matched to the card the state keeps, and signed on its whole text.
+const APPROVE_7 = (sha) => composeCard({
+  kind: 'approval', level: 3, what: 'Pull request #7 changes the wording on the sign-in page.', why: 'It changes what users see.',
+  options: [{ label: 'Approve', says: 'It goes live.' }], recommend: 'Approve', because: 'the checks passed', meanwhile: 'Nothing is released.', target: { pr: 7, sha },
+});
+const asCopy = ({ question }) => ({ ...question, question: chatCopy(question.question) });
+const copyClick = (shown, label) => ({ ...input({ [shown.question]: label }), tool_input: { questions: [shown], answers: { [shown.question]: label } } });
+
+test('Approve on a card asked in the chat\'s words is signed as a click on the card the state keeps', async () => {
+  await withHome(async () => {
+    const composed = APPROVE_7(FULL);
+    const kept = makeEvent({ kind: 'card', data: composed.card, now: () => NOW });
+    keepEvent(kept);
+    const shown = asCopy(composed);
+    assert.ok(!shown.question.includes('Reply code') && setLineOf(shown.question) === null, shown.question);
+    const c = fake();
+    await decide(copyClick(shown, 'Approve'), deps(c));
+    // The answer is recorded on the card's whole text, so the views close it as before.
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: composed.card.question, label: 'Approve' }]]);
+    const rec = c.calls.record.find((r) => r.event.kind === 'approval');
+    assert.deepEqual(rec.event.data, { pr: 7, commit: FULL, words: 'Approve', question: composed.card.question });
+    // Words that match no kept card are signed as nothing.
+    const stray = fake();
+    await decide(copyClick({ ...shown, question: `${shown.question} Also this.` }, 'Approve'), deps(stray));
+    assert.ok(!kinds(stray).includes('approval'), kinds(stray).join());
+  });
+});
+
+test('a kept card whose words don\'t name what its hidden line decides is never signed from its chat copy', async () => {
+  await withHome(async () => {
+    // A card written by hand: harmless plain lines, and a runbook line the chat copy would hide.
+    const line = runbookLine(2);
+    const question = `Tidy up the old branches?\nIt keeps the list short.\nNothing changes meanwhile.\nTo know more, just ask.\n${line}\n${replyCodeLine(replyCode(line))}`;
+    assert.notEqual(chatCopy(question), question);
+    assert.notDeepEqual(cardProblems(question), []);
+    keepEvent(makeEvent({ kind: 'card', data: { question, header: 'Tidy', options: ['Do it', 'Not now'], kind: 'runbook', line, code: replyCode(line), level: 3 }, now: () => NOW }));
+    const c = fake();
+    const shown = { question: chatCopy(question), header: 'Tidy', options: [{ label: 'Do it' }, { label: 'Not now' }], multiSelect: false };
+    await decide(copyClick(shown, 'Do it'), deps(c));
+    assert.ok(!kinds(c).includes('action'), kinds(c).join());
+    assert.equal(storedText(P, shown, { events: listEvents(stateDir(P), { report: () => {} }), waiting: [] }), null);
+  });
+});
+
+test('where two kept cards share the chat\'s words, only the one still waiting is matched, and with none waiting nothing is', () => {
+  const older = APPROVE_7('1'.repeat(40));
+  const newer = APPROVE_7(FULL);
+  const events = [older, newer].map((x, i) => makeEvent({ kind: 'card', data: x.card, now: () => new Date(NOW.getTime() + i) }));
+  const shown = asCopy(newer);
+  assert.equal(chatCopy(older.card.question), shown.question, 'the two read the same in the chat');
+  assert.equal(storedText(P, shown, { events, waiting: [events[1]] }), newer.card.question);
+  assert.equal(storedText(P, shown, { events, waiting: [] }), null);
+  assert.equal(storedText(P, shown, { events, waiting: events }), null);
+  // A question that already carries its set line is kept as asked.
+  assert.equal(storedText(P, newer.question, { events, waiting: [events[1]] }), null);
+});
+
+// A question card about the order email, composed as the front desk composes it.
+const EMAIL = () => composeCard({
+  kind: 'question', level: 2, what: 'Should the order email show the delivery date?', why: 'Customers asked for it.',
+  options: [{ label: 'Show the date', says: 'The email shows it.' }, { label: 'Leave it out', says: 'The email stays as it is.' }],
+  recommend: 'Show the date', because: 'customers asked for it', meanwhile: 'The email stays as it is.',
+});
+const contextOf = (got) => got?.hookSpecificOutput?.additionalContext ?? '';
+
+test('an answer to a card another answer decided first changes nothing, and the front desk is told which answer counted and when', async () => {
+  await withHome(async () => {
+    const composed = EMAIL();
+    const kept = makeEvent({ kind: 'card', data: composed.card, now: () => new Date(NOW.getTime() - 60 * 60 * 1000) });
+    keepEvent(kept);
+    // Decided in the pane, at 04:30 UTC: the director's other copy of the card in the chat is now stale.
+    const at = new Date(NOW.getTime() - 30 * 60 * 1000);
+    keepEvent(makeEvent({ kind: 'card-answer', data: { question: composed.card.question, label: 'Show the date' }, now: () => at }));
+    const c = fake();
+    const shown = { ...composed.question, question: chatCopy(composed.question.question) };
+    const got = await decide(copyClick(shown, 'Leave it out'), deps(c));
+    assert.deepEqual(c.calls.write, [], 'the stale answer is not recorded');
+    assert.deepEqual(kinds(c).filter((k) => k !== 'shown'), [], 'and signs nothing');
+    const said = contextOf(got);
+    const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    assert.match(said, /"Leave it out"/);
+    assert.match(said, /"Show the date" counted/);
+    assert.ok(said.includes(hhmm), said);
+    assert.match(said, /which answer counted and when/);
+    assert.equal(got.hookSpecificOutput.hookEventName, 'PostToolUse');
+  });
+});
+
+test('a chat pick of Suggest a change… records nothing yet, and the front desk is told to ask what the director would change', async () => {
+  await withHome(async () => {
+    const composed = APPROVE_7(FULL);
+    const kept = makeEvent({ kind: 'card', data: composed.card, now: () => NOW });
+    keepEvent(kept);
+    const c = fake();
+    const got = await decide(copyClick(asCopy(composed), SUGGEST), deps(c));
+    assert.deepEqual(c.calls.write, [], 'no change is under way until the director says what it is');
+    const said = contextOf(got);
+    assert.ok(said.includes(`"${WHAT_WOULD_YOU_CHANGE}"`), said);
+    assert.ok(said.includes(kept.id), 'it names the card by its id, for `views waiting`');
+    assert.match(said, /suggested a change on card n \(/);
+    // Any other answer is recorded as before, with nothing said.
+    const other = fake();
+    assert.equal(await decide(copyClick(asCopy(composed), 'Not now'), deps(other)), undefined);
+    assert.deepEqual(other.calls.write.map((w) => w.data.label), ['Not now']);
   });
 });
 

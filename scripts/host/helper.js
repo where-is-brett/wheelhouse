@@ -52,7 +52,7 @@ import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
-import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
+import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
@@ -64,7 +64,7 @@ import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
-import { ciPushLine } from '../state/card-lines.js';
+import { chatCopy, ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
@@ -78,7 +78,7 @@ import { pendingDir } from '../hooks/pending.js';
 import { branchOf } from '../hooks/session-start.js';
 import { SLUG } from '../lib/build-loop.js';
 import { ROOT as OWN_ROOT } from '../lineage/check.js';
-import { bodyProvenance, provenanceBlock, sessionProvenance, stampProvenance } from '../lineage/provenance.js';
+import { checkProvenance, removeProvenance, sessionProvenance } from '../lineage/provenance.js';
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
@@ -186,6 +186,7 @@ const AUTH_FAILURE = /authentication|could not read username|permission denied|\
 const NOT_AMONG = 'that commit is not among the last ten merges, so the product is not put back to it';
 const LOCK_REASON = 'this computer no longer holds the lock';
 const NO_PROVENANCE = 'this session\'s provenance is not on this computer, so the pull request could not say what built it: send it from a session that started on this computer';
+const PROVENANCE_UNWRITTEN = 'the record of what built this pull request could not be written, so it was not opened: try again';
 
 // The plugin's version, from .claude-plugin/plugin.json beside these scripts, so session-start
 // can tell a helper left running from an older copy. Null when it cannot be read.
@@ -751,7 +752,7 @@ function placeFolder(cwd) {
 // Beside the runbook's routes, the routes a feature session's commands (scripts/feature/cli.js)
 // call. Those commands, like runbook.js, run inside the sandbox, which cannot read
 // ~/.wheelhouse: each sends its folder as `cwd`, and the project is placed here.
-const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/lineage/provenance', '/config', '/push', '/pull'];
+const FOLDER_ROUTES = ['/state/answer', '/pr/open', '/config', '/push', '/pull'];
 
 // Why a premium setting that allows the model is refused anywhere but from its own card's click.
 const PREMIUM_OWN_CARD = 'the premium model is allowed only by a click on its own card; anything else can only set it back to off';
@@ -2023,7 +2024,8 @@ export async function startHelper({
       const events = listEvents(stateDir(project), { report: () => {} });
       const held = events.find((e) => e.id === rulingCard[1] && e.kind === 'card');
       if (!held || held.data?.kind !== 'confirm' || !/^Confirm ruling \S+: "/.test(held.data?.line ?? '') || typeof held.data?.question !== 'string') refuse('that is not a ruling\'s confirm card in this project');
-      if (hash !== crypto.createHash('sha256').update(held.data.question).digest('hex')) refuse('the click must name the card\'s text as the state holds it');
+      const shown = [held.data.question, chatCopy(held.data.question)].map((t) => crypto.createHash('sha256').update(t).digest('hex'));
+      if (!shown.includes(hash)) refuse('the click must name the card\'s text as the state holds it, or as the chat showed it');
       if (!Array.isArray(held.data.options) || !held.data.options.includes(label)) refuse('that label isn\'t one of the card\'s options');
       if (events.some((e) => e.kind === 'card-answer' && e.data?.card === held.id)) refuse('that ruling\'s card has been answered already');
       return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
@@ -2299,6 +2301,7 @@ export async function startHelper({
     if (event.kind === 'premium-card') refuse('only the helper offers the premium model\'s card');
     if (event.kind === 'premium-check') refuse('only the helper checks the premium model');
     if (event.kind === 'premium-failed') refuse('only the helper records the premium model\'s evaluation failing');
+    if (event.kind === 'provenance') refuse('only the helper records what built a pull request');
     if (target !== undefined) checkTarget(target, event);
     const events = listEvents(stateDir(project), { report: () => {} });
     // A premium setting that allows the model comes only from a click on a card the helper offered: its offer, signed by
@@ -3196,9 +3199,10 @@ export async function startHelper({
       enrolled,
       upToDate,
       incident: incidentFor(views, number),
-      // The block /pr/open stamped, against this Wheelhouse's own manifest. A verified restore
-      // has none: it puts back a release that merged before (Ruling 105).
-      provenance: restore ? { ok: true } : bodyProvenance(pr.body, pluginRoot),
+      // What /pr/open recorded built the pull request's branch, from the signed state, against this
+      // Wheelhouse's own manifest (a pull request opened before that record names it in its body). A
+      // verified restore has none: it puts back a release that merged before (Ruling 105).
+      provenance: restore ? { ok: true } : checkProvenance({ recorded: views.provenance?.[pr.headRef], body: pr.body, root: pluginRoot }),
     });
     if (!decision.allow || stateReasons.length > 0) {
       const said = restoreCheck.matched && !restore ? [`restore pull request: ${restoreCheck.why}`] : [];
@@ -3707,6 +3711,8 @@ export async function startHelper({
       return {
         ok: true,
         views,
+        // The names the project goes by, which the front desk's plain words leave alone: it can't read the project's record.
+        names: namesOf(project),
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),
@@ -3763,16 +3769,30 @@ export async function startHelper({
       const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
       if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       if (stopped()) return STOP_REFUSAL;
-      const text = typeof body.body === 'string' ? stampProvenance(body.body, provenance) : body.body;
+      // What built it is recorded in the signed state, never in the body (build-loop design, section 13: no pull
+      // request names a model), and before the pull request opens, so the gate always finds it. A body that
+      // carries a block of its own has it taken out.
+      try {
+        await oneAtATime(`state:${body.project}`, async () => {
+          await ensureStateClone(body.project, ctx);
+          await writeEvent({ project: body.project, event: makeEvent({ kind: 'provenance', data: { branch: spelled.branch, provenance }, now }), now });
+          await freshViews(() => writeViews(body.project, { now }));
+        });
+      } catch {
+        return { ok: false, refused: PROVENANCE_UNWRITTEN };
+      }
+      if (stopped()) return STOP_REFUSAL;
+      const text = typeof body.body === 'string' ? removeProvenance(body.body) : body.body;
       return { ok: true, result: await adapter.openPr({ head: spelled.branch, base, title: body.title, body: text }) };
     },
-    // A new body is stamped from the session's provenance, as /pr/open's is; a title alone leaves the body as it is.
+    // Only from a session on this computer, as /pr/open; a new body has any block of its own taken out, and a
+    // title alone leaves the body as it is.
     '/pr/update': (request, ctx) => {
       if (stopped()) return STOP_REFUSAL;
       const provenance = sessionProvenance({ project: request.project, sessionId: request.session });
       if (provenance === null) return { ok: false, refused: NO_PROVENANCE };
       return writing((a, { number, title, body }) => a.updatePr({
-        number, title, body: typeof body === 'string' ? stampProvenance(body, provenance) : body,
+        number, title, body: typeof body === 'string' ? removeProvenance(body) : body,
       }))(request, ctx);
     },
     '/pr/state': signedIn(pass((a, { number }) => a.prState(number))),
@@ -3811,14 +3831,6 @@ export async function startHelper({
       } finally {
         tidyAfterAnswer(body.project, ctx);
       }
-    },
-    // The block a pull request from this session would be stamped with (ruling R147), for its
-    // report: never the transcript's path. Null when the session's provenance is not on this
-    // computer. Read-only, so STOP lets it through; `stop` says whether STOP is on, since the
-    // report is not stamped then and the session can't read STOP itself in the sandbox.
-    '/lineage/provenance': (body) => {
-      const provenance = sessionProvenance({ project: body.project, sessionId: body.session });
-      return { ok: true, block: provenance === null ? null : provenanceBlock(provenance), stop: stopped() };
     },
     // The foreman's act.js or wake.js (ruling R156), run outside the sandbox as a child process in
     // the project's main checkout, with no key or secret in its environment; it reaches the host

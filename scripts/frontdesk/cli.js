@@ -64,12 +64,12 @@ import { checkSetting, definitionOf, KNOWN, SETTINGS, WINDOWS_BUILD_COMMANDS, OW
 import { CARD } from '../lib/front-desk.js';
 import { effectiveSettings, levelWords, settingsText, settingWords } from '../settings/effective.js';
 import { similar as similarTo } from '../intake/similar.js';
-import { answerLine, ID, keepControlLine } from '../state/card-lines.js';
+import { answerLine, chatCopy, ID, keepControlLine } from '../state/card-lines.js';
 import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
-import { WHY, suggestedAt } from '../lib/calm-words.js';
+import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
 import { ALWAYS_READY, columnsReadyOf } from '../routing/in-force.js';
@@ -136,8 +136,12 @@ async function viewsOf(client, cwd, { cards = false, answers = false } = {}) {
   if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
-  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [] };
+  return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], names: namesIn(got) };
 }
+
+// The names the project goes by, as the helper's views give them (its repository's own name and its folder's), for
+// the plain words to leave alone; none when it gives none.
+const namesIn = (got) => (Array.isArray(got?.names) ? got.names.filter((n) => typeof n === 'string' && n !== '') : []);
 
 // Writes a plain event through the helper and resolves with its answer, { ok, id, pushed }.
 async function write(client, cwd, kind, data, id) {
@@ -178,9 +182,9 @@ const TERMS = '\n\nTerms: ';
 
 // The words a card's texts go through, as the board-context hook takes them: the glossary from the
 // views, the explanations setting and the concepts the director knows from the settings in force,
-// and what stays as written: the settings' names and the titles of the work. A profile that can't
-// be read gives the defaults.
-async function wordsOf(client, views, now) {
+// and what stays as written: the settings' names, the titles of the work and the `names` the project goes by
+// (namesIn). A profile that can't be read gives the defaults.
+async function wordsOf(client, views, now, names = []) {
   let own = {};
   try {
     const got = await client.profile?.views?.({});
@@ -190,7 +194,7 @@ async function wordsOf(client, views, now) {
   }
   const settings = effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now });
   const titles = Object.values(isPlain(views.work) ? views.work : {}).map((w) => flat(w?.work?.data?.title)).filter((t) => typeof t === 'string' && t !== '');
-  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles] };
+  return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles], names };
 }
 
 // The composer's input with what the director reads in plain words (design section 5.3): the
@@ -401,8 +405,8 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 // in `left`, for the visit after STOP is lifted.
 export async function cards({ client, cwd, now }) {
   const problems = [];
-  let { views, stop } = await viewsOf(client, cwd);
-  const words = await wordsOf(client, views, now);
+  let { views, stop, names } = await viewsOf(client, cwd);
+  const words = await wordsOf(client, views, now, names);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   let made = 0;
@@ -463,7 +467,7 @@ export async function card({ client, cwd, input, now }) {
   if (input.kind === 'premium') throw new CliError('The premium model\'s card comes from `premium-card`, made by the helper');
   if (input.event !== undefined) throw new CliError('A card for a record of the build\'s comes from `cards`, made once from the record');
   const topic = input.topic === undefined ? undefined : topicOf(input.topic);
-  const { views } = await viewsOf(client, cwd);
+  const { views, names } = await viewsOf(client, cwd);
   let target = input.target;
   if (input.kind === 'approval' && isPlain(target) && target.sha === undefined && Number.isSafeInteger(target.pr) && target.pr >= 1) {
     const state = await client.prState({ cwd, number: target.pr });
@@ -476,7 +480,7 @@ export async function card({ client, cwd, input, now }) {
   if (input.kind === 'approve-work' && isPlain(target) && views.work?.[target.work]?.work?.data?.visible === true) {
     target = { ...target, shownFirst: true };
   }
-  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now));
+  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now, names));
   // The card revised must wait now, or have been closed only by a later head of its pull request or
   // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same
   // pull request or branch, or the waiting view would close nothing.
@@ -577,7 +581,8 @@ export const SUGGESTED = 'Noted. A new proposal will follow.';
 
 // Hands a change the director suggested on a waiting approval or CI push card to the build: the open
 // work re-stated as it stands, its title the change in the front desk's own words, so the code
-// changes before the card is revised. One command, so nothing is said between steps (scenario 36).
+// changes before the card is revised, then the card's answer Suggest a change…, which is what the pane
+// reads as a change under way. One command, so nothing is said between steps (scenario 36).
 // Resolves with { id, pushed, say }.
 export async function suggest({ client, cwd, card: cardId, work: workId, change }) {
   const words = typeof change === 'string' ? change.trim() : '';
@@ -593,6 +598,7 @@ export async function suggest({ client, cwd, card: cardId, work: workId, change 
   }
   const data = { ...views.work[workId].work.data, title: words };
   const got = await write(client, cwd, 'work', data);
+  await write(client, cwd, 'card-answer', { question: pressed.data.question, label: SUGGEST });
   return { id: got.id, pushed: got.pushed === true, say: SUGGESTED };
 }
 
@@ -776,7 +782,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }),
       // The time of the usage card whose pick this is, which the card's line gives; it ties a return card to this switch.
       ...(typeof input.usageCard === 'string' && !Number.isNaN(Date.parse(input.usageCard)) ? { usageCard: input.usageCard } : {}) };
-    const words = countsAtOnce({ kind: 'setting', data }) ? null : await wordsOf(client, (await viewsOf(client, cwd)).views, now);
+    const words = countsAtOnce({ kind: 'setting', data }) ? null : await viewsOf(client, cwd).then((v) => wordsOf(client, v.views, now, v.names));
     const got = await writeSetting({ client, cwd, data, words, makeId, ready: ready ?? readyIn(cwd) });
     if (got.card === undefined) return got;
     return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
@@ -804,9 +810,9 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
 
   const { words } = input;
   if (typeof words !== 'string' || words.trim() === '' || BREAK.test(words)) throw new CliError('A ruling needs its words, on one line, as the director gave them');
-  const { views } = await viewsOf(client, cwd);
+  const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, views, now));
+  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, views, now, names));
   const got = await write(client, cwd, 'ruling', input, id);
   if (got.id !== id) throw new CliError(`The ruling was recorded as ${got.id}, not under the id its confirm card names`);
   let made;
@@ -856,7 +862,7 @@ export async function review({ client, cwd, now, makeId = () => crypto.randomUUI
   if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
   if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
   if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
-  const words = await wordsOf(client, got.views, now);
+  const words = await wordsOf(client, got.views, now, namesIn(got));
   const problems = [];
   const made = [];
   for (const proposal of got.review.proposals) {
@@ -957,7 +963,7 @@ function surveyLines(survey) {
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
-  const { views, cards: events, answers } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels', answers: name === 'work' });
+  const { views, cards: events, answers, names } = await viewsOf(client, cwd, { cards: name === 'waiting' || name === 'levels', answers: name === 'work' });
   if (name === 'rulebook') {
     const rules = (Array.isArray(views.rulebook) ? views.rulebook : []).filter((r) => r?.status !== 'superseded');
     // A Lean ruling confirmed by a click in the chat (ruling P5-52) says what that proof is.
@@ -988,7 +994,7 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
   if (name === 'survey') return surveyLines(views.survey);
-  if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now));
+  if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now, names));
   // settings: the project's over the director's own, over the defaults
   const profile = await client.profile.views({});
   const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
@@ -1185,6 +1191,24 @@ function only(rest, count, usage) {
 
 // Runs a command and resolves with the exit code. `input` stands in for standard input, which is
 // read only by the commands that take it; `out` and `err` take text to show.
+// `value` with every AskUserQuestion entry in it in the chat's words (chatCopy): the cards the front desk is given to
+// ask carry no set line or reply code for the director to read. The prompt record signs from the state's text. Where a
+// copy leaves lines out, an object at the top also gets `inReply`, each card's whole text in the order asked, for a
+// front desk with no clickable-question tool to put in its reply, so the director can answer by the reply code.
+export function inChatWords(value, whole = null) {
+  const top = whole === null;
+  const texts = whole ?? [];
+  let out;
+  if (Array.isArray(value)) out = value.map((v) => inChatWords(v, texts));
+  else if (!isPlain(value)) return value;
+  else {
+    const asked = typeof value.question === 'string' && Array.isArray(value.options) && Object.hasOwn(value, 'multiSelect');
+    if (asked) texts.push(value.question);
+    out = Object.fromEntries(Object.entries(value).map(([key, part]) => [key, asked && key === 'question' ? chatCopy(part) : inChatWords(part, texts)]));
+  }
+  return top && isPlain(out) && texts.some((t) => chatCopy(t) !== t) ? { ...out, inReply: texts } : out;
+}
+
 export async function main(argv, {
   cwd = process.cwd(), client, input, now = () => new Date(), makeId, columnsReady,
   out = (t) => process.stdout.write(t), err = (t) => process.stderr.write(t),
@@ -1195,7 +1219,7 @@ export async function main(argv, {
     const helper = client ?? helperClient(command === 'confirm' ? { timeout: CONFIRM_WAIT_MS } : {});
     const here = path.resolve(cwd);
     const stdin = async () => (input === undefined ? readInput() : input);
-    const json = (value) => out(`${JSON.stringify(value, null, 2)}\n`);
+    const json = (value) => out(`${JSON.stringify(inChatWords(value), null, 2)}\n`);
     const lines = (list) => out(`${list.map((l) => l.replace(BREAKS, ' ')).join('\n')}\n`);
 
     if (command === 'cards') {

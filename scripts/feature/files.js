@@ -99,8 +99,9 @@ function splitJsonBlock(text) {
 
 // --- The brief ---
 
-const BRIEF_KEYS = ['v', 'work', 'lane', 'version', 'goal', 'done', 'appetite', 'rulings', 'routing', 'shownFirst', 'plan', 'slices', 'from'];
-const BRIEF_REQUIRED = BRIEF_KEYS.filter((k) => k !== 'plan' && k !== 'slices' && k !== 'from');
+// `approved`: the hash of the approved document the start copied into the feature folder (scripts/feature/approved.js).
+const BRIEF_KEYS = ['v', 'work', 'lane', 'version', 'goal', 'done', 'appetite', 'rulings', 'routing', 'shownFirst', 'plan', 'slices', 'from', 'approved'];
+const BRIEF_REQUIRED = BRIEF_KEYS.filter((k) => !['plan', 'slices', 'from', 'approved'].includes(k));
 
 // The ready-made change work starts from, as its work event records it: a full commit, the
 // work's own refs/wheelhouse/from/<work> ref and, when it carries on a pull request, its number.
@@ -124,7 +125,8 @@ function validBrief(f) {
     && typeof f.shownFirst === 'boolean'
     && (f.plan === undefined || typeof f.plan === 'string')
     && (f.slices === undefined || (Number.isInteger(f.slices) && f.slices >= 1))
-    && (f.from === undefined || validFrom(f.from, f.work));
+    && (f.from === undefined || validFrom(f.from, f.work))
+    && (f.approved === undefined || (typeof f.approved === 'string' && /^[0-9a-f]{64}$/.test(f.approved)));
 }
 
 // The brief's fields and the text after its JSON block. Throws if it is anything else.

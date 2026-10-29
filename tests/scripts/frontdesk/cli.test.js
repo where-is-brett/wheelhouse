@@ -23,7 +23,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
 import { makeSigningKey, enrol, readEnrolled } from '../../../scripts/state/signing.js';
-import { approvalLine, answerLine, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
+import { approvalLine, answerLine, chatCopy, ciPushLine, confirmLine, keepControlLine, LIFT_STOP, setLineOf } from '../../../scripts/state/card-lines.js';
 import { setStop, stopState } from '../../../scripts/lib/stop.js';
 import { decide as cardCheck, cardProblems } from '../../../scripts/hooks/card-check.js';
 import { decide as promptRecord } from '../../../scripts/hooks/prompt-record.js';
@@ -66,7 +66,7 @@ async function inHome(fn) {
 // a function read on each request) every write is refused and the views say STOP is on, as the
 // helper does under STOP. A pull request is open at `head`, unless `pr` answers for it. A write is
 // made at `writeAt(n)`, the nth write's time.
-function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T } = {}) {
+function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, writeAt = T, names } = {}) {
   const held = [...events];
   const stopped = () => (typeof stop === 'function' ? stop() : stop);
   const calls = [];
@@ -86,6 +86,7 @@ function fakeHelper({ events = [], stop = false, head = FULL, pr, profile = {}, 
         return {
           ok: true,
           views: built,
+          ...(names === undefined ? {} : { names }),
           ...(stopped() ? { stop: true } : {}),
           ...(body.cards === true ? { cards: held.filter((e) => e.kind === 'card') } : {}),
           ...(body.answers === true ? { answers: held.filter((e) => e.kind === 'card-answer') } : {}),
@@ -216,7 +217,7 @@ test('cards turns an open feature question into one answer card, once', async ()
     assert.equal(card.level, 2);
     // Its options are the question's own, with what each says, and its recommendation the question's.
     const [asked] = first.json.questions;
-    assert.equal(asked.question, card.question);
+    assert.equal(asked.question, chatCopy(card.question));
     assert.deepEqual(asked.options.slice(0, 2).map((o) => o.label), ['Comma', 'Tab']);
     assert.equal(asked.options[0].description, 'Commas between values; opens in any spreadsheet.');
     assert.match(asked.options[1].description, /^Recommended: Tabs between values, because the session building .* recommends it\.$/);
@@ -385,7 +386,9 @@ test('a gate-asks for an approval becomes one approval card for that pull reques
     // The work is named by its title, in plain words; the card is handed out at once and marked asked.
     assert.match(card.parts.what, /^\S.* #7 for Export a report as a spreadsheet /);
     assert.equal(card.question.split('\n')[0], 'Put pull request #7 live?');
-    assert.deepEqual(first.json.questions.map((q) => q.question), [card.question]);
+    assert.deepEqual(first.json.questions.map((q) => q.question), [chatCopy(card.question)]);
+    // Its whole text, set line and reply code with it, is printed beside the cards for a reply with no clickable question.
+    assert.deepEqual(first.json.inReply, [card.question]);
     assert.deepEqual(helper.writes().at(-1), { cwd: CWD, kind: 'asked', data: { cards: [helper.held.find((e) => e.kind === 'card').id] } });
     assert.deepEqual(cardProblems(card.question), []);
     // The host was asked whether the pull request is still at that commit.
@@ -399,7 +402,7 @@ test('a gate-asks for an approval becomes one approval card for that pull reques
     const already = fakeHelper({ events: [EXPORT, waiting, gateAsks(APPROVE_ASK, ago(2 * MINUTE))] });
     const asked = await run(already, ['cards']);
     assert.equal(cardWrites(already).length, 0);
-    assert.deepEqual(asked.json.questions.map((q) => q.question), [waiting.data.question]);
+    assert.deepEqual(asked.json.questions.map((q) => q.question), [chatCopy(waiting.data.question)]);
   });
 });
 
@@ -482,7 +485,7 @@ test('R121: a CI push card whose click lapsed before the push comes back once; o
     assert.equal(lapsed.views().waiting.length, 0, 'the click decided the card');
     const back = await run(lapsed, ['cards']);
     assert.equal(back.code, 0, back.err);
-    assert.deepEqual(back.json.questions.map((q) => q.question), [push.data.question]);
+    assert.deepEqual(back.json.questions.map((q) => q.question), [chatCopy(push.data.question)]);
     assert.equal(cardWrites(lapsed).length, 0, 'not composed twice');
     assert.deepEqual(lapsed.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [push.id] } }]);
     // Once for that click: the next visit doesn't ask it again.
@@ -517,14 +520,14 @@ test('a gate card for a commit the gate no longer asks about leaves the board; a
     assert.deepEqual(listedOut.out.trim().split('\n').map((line) => /\(card ([^)]+)\)$/.exec(line)?.[1]), [one.id, two.id]);
     const asked = await run(helper, ['again', '2']);
     assert.equal(asked.code, 0, asked.err);
-    assert.deepEqual(asked.json.questions.map((q) => q.question), [two.data.question]);
+    assert.deepEqual(asked.json.questions.map((q) => q.question), [chatCopy(two.data.question)]);
     assert.equal(asked.json.id, two.id, 'again names the card it gives by its id');
     // The visit makes the card for the commit the gate asks about now, and never hands out the outdated one.
     const visit = await run(helper, ['cards']);
     assert.equal(visit.code, 0, visit.err);
     const [made, ...more] = cardWrites(helper);
     assert.deepEqual([made.line, more.length], [approvalLine(7, LATER), 0]);
-    assert.deepEqual(visit.json.questions.map((q) => q.question), [made.question, one.data.question]);
+    assert.deepEqual(visit.json.questions.map((q) => q.question), [made.question, one.data.question].map(chatCopy));
     // Put off with Not now while still current: it stays on the board and off the next visit's cards.
     const madeId = helper.held.find((e) => e.kind === 'card' && e.data.line === made.line).id;
     await helper.client.state.write({ cwd: CWD, kind: 'card-answer', data: { card: madeId, label: 'Not now' } });
@@ -657,7 +660,10 @@ test('card fills a pull request\'s head and records the card once', async () => 
     assert.equal(first.code, 0, first.err);
     assert.equal(first.json.alreadyAsked, undefined);
     assert.deepEqual(helper.calls.find(([name]) => name === 'prState'), ['prState', { cwd: CWD, number: 7 }]);
-    assert.ok(first.json.question.question.includes(approvalLine(7, FULL)));
+    // The chat's copy carries no set line; the card the state keeps does, and the click is signed from it.
+    assert.equal(first.json.question.question.includes(approvalLine(7, FULL)), false);
+    assert.equal(first.json.question.question, chatCopy(helper.writes().find((w) => w.kind === 'card').data.question));
+    assert.ok(helper.writes().find((w) => w.kind === 'card').data.question.includes(approvalLine(7, FULL)));
     const cards = helper.writes().filter((w) => w.kind === 'card');
     assert.equal(cards.length, 1);
     assert.equal(first.json.id, helper.held.find((e) => e.kind === 'card').id);
@@ -674,7 +680,8 @@ test('card fills a pull request\'s head and records the card once', async () => 
     assert.equal(helper.writes().length, 2);
     // A target that names its commit is kept as it is.
     const named = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, what: 'Pull request #8 changes the footer.', target: { pr: 8, sha: DOC } }));
-    assert.ok(named.json.question.question.includes(approvalLine(8, DOC)));
+    assert.ok(cardWrites(helper).some((c) => c.question.includes(approvalLine(8, DOC))));
+    assert.ok(!named.json.question.question.includes('Reply code'), 'the chat copy carries no reply code');
     assert.equal(helper.calls.filter(([name]) => name === 'prState').length, 2, 'only the number was looked up');
   });
 });
@@ -731,8 +738,9 @@ test('record ruling keeps the words exactly and gives back its confirm card', as
     assert.equal(card.kind, 'card');
     assert.equal(card.data.kind, 'confirm');
     assert.equal(card.data.line, confirmLine(event));
-    assert.ok(out.json.card.question.question.includes(confirmLine(event)));
-    assert.equal(out.json.card.question.question, card.data.question);
+    assert.ok(card.data.question.includes(confirmLine(event)));
+    assert.equal(out.json.card.question.question, chatCopy(card.data.question));
+    assert.equal(out.json.card.question.question.includes(confirmLine(event)), false);
     assert.equal(out.json.card.id, helper.held.find((e) => e.kind === 'card').id);
     // The confirm card handed out is recorded as asked.
     assert.deepEqual(asked, { cwd: CWD, kind: 'asked', data: { cards: [out.json.card.id] } });
@@ -980,7 +988,7 @@ test('record setting records its confirm card and marks it asked, except a conce
     assert.equal(card.kind, 'card');
     assert.equal(card.data.line, confirmLine({ kind: 'setting', id: 'p-1', data }));
     assert.equal(tab.json.id, 'p-1');
-    assert.equal(tab.json.card.question.question, card.data.question);
+    assert.equal(tab.json.card.question.question, chatCopy(card.data.question));
     assert.ok(card.data.question.includes('Logbook opens on: build'));
     assert.deepEqual(asked.data, { cards: [tab.json.card.id] });
 
@@ -1066,7 +1074,7 @@ test('review asks each proposal as a confirm card for a level, and records the r
     assert.match(downCard.data.descriptions[0], /briefing/);
     assert.doesNotMatch(downCard.data.question, /I decide these myself/);
     // The cards are asked as composed, marked asked, and the review is recorded after them.
-    assert.deepEqual(first.questions.map((q) => q.question), [upCard.data.question, downCard.data.question]);
+    assert.deepEqual(first.questions.map((q) => q.question), [upCard.data.question, downCard.data.question].map(chatCopy));
     assert.ok(first.questions[1].options[0].description.includes(down.data.because.replace(/[.!?]+$/, '')), 'the reason is on the recommended option');
     assert.equal(first.left, 0);
     assert.equal(first.problems, undefined);
@@ -1254,8 +1262,13 @@ test('suggest hands a suggested change on an approval card to the build as one w
     const out = await run(helper, ['suggest', approval.id, 'sign-in-words', 'The sign-in page says Welcome back instead of Sign in']);
     assert.equal(out.code, 0, out.err);
     assert.equal(out.json.say, 'Noted. A new proposal will follow.');
-    // The work as it was, its title the change in the front desk's words: nothing else is written.
-    assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } }]);
+    // The work as it was, its title the change in the front desk's words, then the card's answer Suggest a change…,
+    // so the pane says a new proposal is on its way only once the change is handed on: nothing else is written.
+    assert.deepEqual(helper.writes(), [
+      { cwd: CWD, kind: 'work', data: { ...work.data, title: 'The sign-in page says Welcome back instead of Sign in' } },
+      { cwd: CWD, kind: 'card-answer', data: { question: approval.data.question, label: SUGGEST } },
+    ]);
+    assert.equal(typeof helper.views().waiting.find((c) => c.id === approval.id).steered, 'string');
 
     // Refused, with nothing written: a card that doesn't wait, one that isn't an approval or a CI
     // push, work that isn't open, and a change missing or on two lines.
@@ -1270,7 +1283,7 @@ test('suggest hands a suggested change on an approval card to the build as one w
       assert.equal(refused.code, 1, args.join(' '));
       assert.match(refused.err, why);
     }
-    assert.equal(helper.writes().length, 1);
+    assert.equal(helper.writes().length, 2);
   });
 });
 
@@ -1660,7 +1673,7 @@ test('a card\'s words are in the glossary\'s plain words; what must be recognise
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0, out.err);
     const card = helper.writes().find((w) => w.kind === 'card').data;
-    assert.equal(out.json.questions[0].question, card.question);
+    assert.equal(out.json.questions[0].question, chatCopy(card.question));
     // Each term the director doesn't know is put in plain words where it is first used in the card.
     assert.match(card.question, /^The proposed change for piece 2 needs an independent check before it can go on\.$/m);
     // A quotation and a command are kept as written.
@@ -1691,7 +1704,7 @@ test('a card the plain words would take past its length is composed as written',
     const out = await run(helper, ['cards']);
     assert.equal(out.code, 0, out.err);
     assert.equal(out.json.problems, undefined);
-    assert.equal(out.json.questions[0].question, composeCard(answerInput(long, 'export-csv')).card.question);
+    assert.equal(out.json.questions[0].question, chatCopy(composeCard(answerInput(long, 'export-csv')).card.question));
     assert.ok(out.json.questions[0].question.length <= CARD.chars);
   });
 });
@@ -1716,7 +1729,7 @@ test('card and record ruling put their cards in plain words too, keeping what th
     const approval = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } }));
     assert.equal(approval.code, 0, approval.err);
     assert.match(approval.json.question.question, /^Proposed change #7 changes the wording on the sign-in page\.$/m);
-    assert.ok(approval.json.question.question.includes(approvalLine(7, FULL)));
+    assert.equal(approval.json.question.question.includes(approvalLine(7, FULL)), false);
     const words = 'Every pull request needs a review';
     const ruling = await run(helper, ['record', 'ruling'], JSON.stringify({ words }));
     assert.equal(ruling.code, 0, ruling.err);
@@ -1734,7 +1747,7 @@ test('card gives back a waiting card no visit has asked, and records it as asked
     const out = await run(helper, ['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7, sha: FULL } }));
     assert.equal(out.code, 0, out.err);
     assert.equal(out.json.id, waiting.id);
-    assert.equal(out.json.question.question, waiting.data.question);
+    assert.equal(out.json.question.question, chatCopy(waiting.data.question));
     assert.equal(out.json.alreadyAsked, undefined);
     assert.deepEqual(helper.writes(), [{ cwd: CWD, kind: 'asked', data: { cards: [waiting.id] } }]);
   });
@@ -1861,7 +1874,7 @@ test('through the real helper, the command places the project from its folder an
         };
         const ruling = JSON.parse(await say(['record', 'ruling'], JSON.stringify({ words: 'Money is shown in dollars' })));
         const approval = JSON.parse(await say(['card'], JSON.stringify({ ...APPROVAL, target: { pr: 7 } })));
-        assert.ok(approval.question.question.includes(approvalLine(7, FULL)));
+        assert.equal(approval.question.question.includes(approvalLine(7, FULL)), false);
         // Both cards were handed out as they were made, so the visit has none left to ask.
         const visit = JSON.parse(await say(['cards']));
         assert.deepEqual(visit, { questions: [], left: 0 });
@@ -1947,5 +1960,18 @@ test('cards makes the premium model\'s failed evaluation one plain card, once, w
     const forged = fakeHelper({ events: [{ ...failed, id: 'f-2', sig: { computer: failed.computer, value: 'AAAA' } }] });
     await run(forged, ['cards']);
     assert.equal(forged.writes().filter((w) => w.kind === 'card').length, 0);
+  });
+});
+
+test('the project\'s own name, as the helper gives it, is never put in plain words or glossed on a card', async () => {
+  await inHome(async () => {
+    const input = { ...APPROVAL, what: 'Pull request #7 gives preview board a new banner.', target: { pr: 7, sha: FULL } };
+    const plain = await run(fakeHelper(), ['card'], JSON.stringify(input));
+    assert.equal(plain.code, 0, plain.err);
+    assert.doesNotMatch(plain.json.question.question, /gives preview board a new banner/, 'without the name, preview is taken for the term');
+    const named = await run(fakeHelper({ names: ['preview-board'] }), ['card'], JSON.stringify(input));
+    assert.equal(named.code, 0, named.err);
+    assert.match(named.json.question.question, /gives preview board a new banner\./);
+    assert.doesNotMatch(named.json.question.question, /preview means/);
   });
 });

@@ -146,7 +146,8 @@ import { WALK_CAP, checkControlFiles, markRaised, raisedOf, writeBaseline } from
 import { controlFilesNamed } from '../cards/build-loop.js';
 import { keepControlLine, setLineOf } from '../state/card-lines.js';
 import { inWorktreesFolder, LOOKBACK_MS, plainWorktreePath } from './sources.js';
-import { ensureIgnored, featurePaths } from '../feature/files.js';
+import { ensureIgnored, featurePaths, parseBrief } from '../feature/files.js';
+import { APPROVED_PATH, approvedDocument, placeApproved } from '../feature/approved.js';
 import { readCapped, safeFeatureFolder } from '../feature/status.js';
 import { SLUG } from '../lib/build-loop.js';
 import { computerId, stateDir, wheelhouseHome } from '../lib/paths.js';
@@ -188,7 +189,12 @@ export const PROMPTS = Object.freeze({
     const word = typeof wake === 'string' && wake !== '' ? shellWord(file) : null;
     return `Wheelhouse foreman: follow wheelhouse:foreman to handle ${file}${word === null ? '' : `. First run: ${wake} read ${word}`}`;
   },
-  feature: (file) => `Wheelhouse: read ${file}`,
+  // With `approved`, the session started before its brief named the approved document, which
+  // the waker has just copied into its feature folder (scripts/feature/approved.js).
+  feature: (file, { approved = false } = {}) => `Wheelhouse: read ${file}${approved
+    ? `. The director's approved document for this work is now at ${APPROVED_PATH}: it is the spec. `
+      + 'Read it whole first. Your plan, your tasks and your questions follow it: put right anything that doesn\'t, or ask.'
+    : ''}`,
   start: 'Read .wheelhouse/feature/brief.md and follow it.',
 });
 
@@ -1446,6 +1452,26 @@ export function makeWaker({
     return names.filter((n) => n.startsWith('feature-') && n.endsWith('.json')).map((n) => n.slice('feature-'.length, -'.json'.length)).filter((w) => SLUG.test(w));
   };
 
+  // A feature started before its brief named the approved document (an older brief has no
+  // `approved`) gets the document on its next wake: copied into its feature folder when it is
+  // the one approved. Whether it was, so the wake's prompt says so. Anything that can't be read
+  // leaves the wake as it was.
+  function lateApproved(work, worktree) {
+    try {
+      const brief = readCapped(featurePaths(worktree).brief, 1024 * 1024);
+      if (brief === null || parseBrief(brief).fields.approved !== undefined) return false;
+      const checkout = readProject(project)?.folder;
+      if (typeof checkout !== 'string') return false;
+      const views = buildViews(listEvents(stateDir(project), { report: () => {} }), readEnrolled());
+      const doc = approvedDocument({ checkout, views, work });
+      if (doc === null || doc.problem) return false;
+      placeApproved(worktree, doc.text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function deliverByStart() {
     const delivered = [];
     const works = [...new Set([...load().filter((e) => e.to === 'feature').map((e) => e.work), ...runningWorks()])];
@@ -1510,12 +1536,13 @@ export function makeWaker({
         } else {
           const feature = await levelInputs(work, cwd);
           const column = columnNow();
+          const approved = lateApproved(work, cwd);
           pid = await launch({
             target,
             cwd,
             check: (adapter) => adapter.checkFeature(config),
             build: (adapter) => withPremiumOutput(adapter, work, column, adapter.featureResumeCall({
-              config, project, work, sessionId: session, prompt: withColumn(adapter, PROMPTS.feature(copy), column), allowed: feature.allowed, env: baseEnv, claude, platform,
+              config, project, work, sessionId: session, prompt: withColumn(adapter, PROMPTS.feature(copy, { approved }), column), allowed: feature.allowed, env: baseEnv, claude, platform,
               ...feature.inputs, ...roleOf(column, 'feature'),
             })),
             file: gathered.entry.file,

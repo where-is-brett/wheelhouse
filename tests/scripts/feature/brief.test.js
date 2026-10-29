@@ -297,6 +297,23 @@ test('a brief for work from a ready-made change says to read the change and the 
   }
 });
 
+test('a brief for work with an approved document names it as the spec, to read first, in every lane', () => {
+  for (const lane of LANES) {
+    const plain = render(lane);
+    assert.doesNotMatch(plain, /approved\.md/, `${lane}: no document, no section`);
+    const text = render(lane, { approved: 'a'.repeat(64) });
+    assert.equal(parseBrief(text).fields.approved, 'a'.repeat(64));
+    const section = text.slice(text.indexOf('# What was asked for'), text.indexOf('# The goal'));
+    assert.ok(text.indexOf('# What was asked for') > -1 && text.indexOf('# What was asked for') < text.indexOf('# The goal'), `${lane}: before the goal`);
+    assert.match(section, /`\.wheelhouse\/feature\/approved\.md`/);
+    assert.match(section, /it is the spec/i);
+    assert.match(section, /Read it whole before anything else/);
+    assert.match(section, /plan, your tasks and your questions follow it/);
+    // The override still opens the text.
+    assert.ok(parseBrief(text).body.trimStart().startsWith(overrideText()));
+  }
+});
+
 test('an amended brief says what changed and has a new hash', () => {
   const original = render('feature');
   const now = '2026-10-19T03:04:05.000Z';

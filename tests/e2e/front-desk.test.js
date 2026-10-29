@@ -399,7 +399,8 @@ test('a feature\'s question becomes a composed card, a click answers it, and onl
     const [card] = visit.questions;
     // Composed from the question as the build recorded it: its own options, and its set line.
     assert.deepEqual(labelsOf(card), ['CSV', 'Excel', 'Suggest a change…']);
-    assert.equal(setLineOf(card.question), answerLine('q-export-1'));
+    assert.equal(setLineOf(visit.inReply[0]), answerLine('q-export-1'));
+    assert.equal(setLineOf(card.question), null, 'the chat is given the card without its set line');
     assert.match(card.question, /^Should the orders export download as CSV or as an Excel workbook\?\n/);
     assert.match(card.options[0].description, /^Recommended:/);
 
@@ -426,10 +427,11 @@ test('an approval card answered by its reply code from the phone lets the gate m
     // The front desk composes the approval card from the pull request's number; the command
     // fills in its head from the host, so the card's words and its set line name one commit.
     world.at(MINUTE);
-    const { question, id } = await frontDesk(world, ['card'], approvalCard(7, 'changes the banner on the shop\'s home page.'));
-    assert.equal(setLineOf(question.question), approvalLine(7, head));
+    const { question, id, inReply } = await frontDesk(world, ['card'], approvalCard(7, 'changes the banner on the shop\'s home page.'));
+    assert.equal(setLineOf(inReply[0]), approvalLine(7, head));
     const code = replyCode(approvalLine(7, head));
-    assert.ok(question.question.includes(code), 'the card carries its reply code');
+    assert.ok(inReply[0].includes(code), 'the card carries its reply code');
+    assert.ok(!question.question.includes(code), 'the chat is given it without the code, which the pane shows');
     assert.deepEqual(labelsOf(question), ['Approve', 'Suggest a change…', 'Show me', 'Not now']);
     // At the computer, the director puts it off; the card's code is now on record.
     await ask(world, [question], { [question.question]: 'Not now' });
@@ -464,7 +466,7 @@ test('a gate-asks becomes an approval card, and the click on it lets the gate me
     const visit = await frontDesk(world, ['cards']);
     assert.equal(visit.questions.length, 1);
     const [card] = visit.questions;
-    assert.equal(setLineOf(card.question), approvalLine(7, head));
+    assert.equal(setLineOf(visit.inReply[0]), approvalLine(7, head));
     assert.match(card.question, /The Easter banner/);
     await ask(world, visit.questions, { [card.question]: 'Approve' });
     assert.deepEqual(eventsOf('approval').map((e) => [e.data.pr, e.data.commit]), [[7, head]]);
@@ -552,7 +554,7 @@ test('a concept known after three days is proposed once; Explain more takes it b
 
     // The director confirms it: from then on the word is kept as it is.
     const visit = await frontDesk(world, ['cards']);
-    const confirm = visit.questions.find((q) => setLineOf(q.question) === confirmLine(proposed[0]));
+    const confirm = visit.questions.find((q, i) => setLineOf(visit.inReply[i]) === confirmLine(proposed[0]));
     assert.ok(confirm, JSON.stringify(visit));
     await ask(world, [confirm], { [confirm.question]: 'Confirm' });
     const known = await asked(5);
@@ -604,7 +606,7 @@ test('an update after an approval with identical pages merges; with a changed pa
     // The gate asks again: the foreman's merge records it, and the front desk's next card names the new head.
     await buildLoop(world, 'gate-asks', { work: 'prices', pr: 8, ask: 'approval', sha: moved.head });
     const visit = await frontDesk(world, ['cards']);
-    assert.deepEqual(visit.questions.map((q) => setLineOf(q.question)), [approvalLine(8, moved.head)]);
+    assert.deepEqual(visit.inReply.map(setLineOf), [approvalLine(8, moved.head)]);
   });
 });
 
@@ -641,7 +643,7 @@ test('an approval card steered with Suggest a change… is revised once the chan
     });
     assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
     const revised = await frontDesk(world, ['card'], revision);
-    assert.equal(setLineOf(revised.question.question), approvalLine(7, head2));
+    assert.equal(setLineOf(revised.inReply[0]), approvalLine(7, head2));
     const waiting = (await viewsOf(world)).waiting;
     assert.ok(!waiting.some((c) => c.id === id), 'the old card is closed');
     assert.ok(waiting.some((c) => c.id === revised.id));
@@ -668,12 +670,18 @@ test('a gate\'s approval card steered with Suggest a change… is revised at the
     // The foreman's merge found the gate waiting for the director's approval; the visit makes its card.
     await buildLoop(world, 'gate-asks', { work: 'banner', pr: 7, ask: 'approval', sha: head });
     world.at(HOUR);
-    const [card] = (await frontDesk(world, ['cards'])).questions;
-    assert.equal(setLineOf(card.question), approvalLine(7, head));
+    const asked = await frontDesk(world, ['cards']);
+    const [card] = asked.questions;
+    assert.equal(setLineOf(asked.inReply[0]), approvalLine(7, head));
     const { id } = (await viewsOf(world)).waiting.find((c) => c.data.line === approvalLine(7, head));
     const oldCode = replyCode(approvalLine(7, head));
     await ask(world, [card], { [card.question]: 'Suggest a change…' });
     assert.deepEqual(eventsOf('approval'), []);
+    // The pick records nothing until the director says what they would change; the front desk hands their words on
+    // with `suggest`, and only then does the card say a new proposal is on its way.
+    assert.equal((await viewsOf(world)).waiting.find((c) => c.id === id).steered, null);
+    assert.equal((await frontDesk(world, ['suggest', id, 'banner', 'The banner in bigger type'])).say, 'Noted. A new proposal will follow.');
+    assert.equal(typeof (await viewsOf(world)).waiting.find((c) => c.id === id).steered, 'string');
 
     // The build commits the change; the foreman's merge records the gate asking about the new head,
     // and a visit makes the gate's card for it before the front desk composes the revision.
@@ -689,13 +697,13 @@ test('a gate\'s approval card steered with Suggest a change… is revised at the
     assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
     await buildLoop(world, 'gate-asks', { work: 'banner', pr: 7, ask: 'approval', sha: head2 });
     world.at(2 * HOUR);
-    assert.deepEqual((await frontDesk(world, ['cards'])).questions.map((q) => setLineOf(q.question)), [approvalLine(7, head2)]);
+    assert.deepEqual((await frontDesk(world, ['cards'])).inReply.map(setLineOf), [approvalLine(7, head2)]);
 
     // The revision names the old card, closed by the later head, and takes the place of the gate's card.
     const revised = await frontDesk(world, ['card'], {
       ...approvalCard(7, 'changes the banner on the shop\'s home page, in bigger type.'), revises: id, changed: 'The banner is in bigger type.',
     });
-    assert.equal(setLineOf(revised.question.question), approvalLine(7, head2));
+    assert.equal(setLineOf(revised.inReply[0]), approvalLine(7, head2));
     assert.match(revised.question.question, /What changed: The banner is in bigger type\./);
     const waiting = (await viewsOf(world)).waiting;
     assert.deepEqual(waiting.map((c) => [c.id, c.data.line, c.data.revises]), [[revised.id, approvalLine(7, head2), id]]);

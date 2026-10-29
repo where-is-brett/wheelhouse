@@ -50,8 +50,9 @@ export default {
   setup: async (dir, variant) => {
     const made = await seedCards(CARDS);
     const numbers = boardNumbers(made.seed);
-    prompt = await wakePrompt(numbers);
-    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: NOT_SENT }), cards: made.cards };
+    const wake = await wakePrompt(numbers);
+    prompt = wake.line;
+    return { ...await setUpPlaybook(dir, variant, { seed: made.seed, push: NOT_SENT, wake }), cards: made.cards };
   },
 
   // The wake is made in setup, by the courier's own code, before the session starts.

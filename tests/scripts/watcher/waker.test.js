@@ -12,7 +12,8 @@ import {
   outboxFile, runningFile, sessionFile, grantsUsedFile, watcherDir, PROMPTS, MAX_RUN_MS, STARTING_MS, windowsBuildsOf, premiumRestFile,
 } from '../../../scripts/watcher/waker.js';
 import { readConfig } from '../../../scripts/gate/guardrails.js';
-import { featurePaths } from '../../../scripts/feature/files.js';
+import { briefHash, featurePaths } from '../../../scripts/feature/files.js';
+import { recordInState, briefFields, briefText } from '../../helpers/foreman.js';
 import { PLUGIN_ROOT, foremanCommands } from '../../../scripts/foreman/tools.js';
 import { readProject, writeProject } from '../../../scripts/lib/projects.js';
 import { setStop, liftStop } from '../../../scripts/lib/stop.js';
@@ -445,6 +446,48 @@ test('a feature bundle wakes only that feature\'s session, by the id the watcher
   assert.equal(fake.calls.length, 2);
   assert.equal(fake.calls[1].cwd, search);
   assert.equal(fake.calls[1].args[3], OTHER_SESSION);
+}));
+
+test('a feature started before its brief named the approved document gets it on its next wake, and is told it is the spec', () => withHome(async () => {
+  const main = checkout();
+  const design = '# Login\n\nPeople sign in with an email link, from the two places the design names.\n';
+  fs.mkdirSync(path.join(main, '.wheelhouse', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.wheelhouse', 'work', 'login-page.md'), design);
+  recordInState('work', {
+    id: 'login-page', title: 'Login page', lane: 'feature', visible: true, dependsOn: [], doc: { path: '.wheelhouse/work/login-page.md', hash: briefHash(design) },
+  }, '2026-10-19T08:00:00.000Z');
+  const login = worktree();
+  fs.writeFileSync(featurePaths(login).brief, briefText(briefFields('login-page', { lane: 'feature' })));
+  keepSession('login-page', login);
+  const fake = fakeRun();
+  const w = waker(fake, { locate: () => login, config: config({ sessionMode: 'dontAsk' }), platform: 'darwin' });
+  const record = writeWake(P, featureBundle('login-page', 'answered:q-login-page-1'));
+  await w.wakeFeature('login-page', record);
+  assert.equal(fake.calls.length, 1);
+  const copy = path.join(featurePaths(login).dir, 'wakes', path.basename(record));
+  assert.equal(fs.readFileSync(path.join(featurePaths(login).dir, 'approved.md'), 'utf8'), design);
+  assert.equal(fake.calls[0].args[1], withColumn(PROMPTS.feature(copy, { approved: true })));
+  assert.match(PROMPTS.feature(copy, { approved: true }), /^Wheelhouse: read .+\. The director's approved document for this work is now at \.wheelhouse\/feature\/approved\.md: it is the spec\./);
+}));
+
+test('a feature whose brief names the approved document is woken with the plain line, and a changed document is never copied', () => withHome(async () => {
+  const main = checkout();
+  const design = '# Search\n\nSearch by suburb name.\n';
+  fs.mkdirSync(path.join(main, '.wheelhouse', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.wheelhouse', 'work', 'search-box.md'), `${design}Changed after approval.\n`);
+  recordInState('work', {
+    id: 'search-box', title: 'Search box', lane: 'small', visible: true, dependsOn: [], doc: { path: '.wheelhouse/work/search-box.md', hash: briefHash(design) },
+  }, '2026-10-19T08:00:00.000Z');
+  const search = worktree();
+  fs.writeFileSync(featurePaths(search).brief, briefText(briefFields('search-box')));
+  keepSession('search-box', search);
+  const fake = fakeRun();
+  const w = waker(fake, { locate: () => search, config: config({ sessionMode: 'dontAsk' }), platform: 'darwin' });
+  const record = writeWake(P, featureBundle('search-box', 'f1'));
+  await w.wakeFeature('search-box', record);
+  const copy = path.join(featurePaths(search).dir, 'wakes', path.basename(record));
+  assert.equal(fs.existsSync(path.join(featurePaths(search).dir, 'approved.md')), false);
+  assert.equal(fake.calls[0].args[1], withColumn(`Wheelhouse: read ${copy}`));
 }));
 
 test('a feature wake waits while the watcher kept no session id, and is dropped once the feature is gone', () => withHome(async () => {

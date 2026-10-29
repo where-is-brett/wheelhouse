@@ -282,3 +282,16 @@ test('a term followed by a name, or by another term, is kept and listed', () => 
   const compound = plainWords('The PR review is clean', g, PLAIN);
   assert.equal(compound.text, `The PR review is clean\n\nTerms: pull request (PR) means ${g['pull request'].plain}; review means ${g.review.plain}.`);
 });
+
+test('the project\'s own name is never a term, in any case or spacing, and its words are glossed elsewhere', () => {
+  const glossary = glossaryOf({});
+  const text = 'preview board is ready. The preview-board folder and Preview Board are named. A preview of the page is up.';
+  const { text: out, terms } = plainWords(text, glossary, { names: ['preview-board'] });
+  assert.ok(out.startsWith('preview board is ready. The preview-board folder and Preview Board are named.'), out);
+  assert.doesNotMatch(plainWords('preview board is ready.', glossary).text, /^preview board/, 'without the name, preview is the term');
+  assert.ok(!/Terms: preview means/.test(out.split('A preview')[0]), out);
+  assert.ok(terms.includes('preview'), 'a preview elsewhere is still the term');
+  assert.ok(!out.includes('A preview of the page'), 'that one is put in plain words');
+  // A name that is only part of a word protects nothing there, and a one-letter name nothing at all.
+  assert.match(plainWords('Previewing the branch.', glossary, { names: ['branch-x', 'b'] }).text, /separate copy of the work/);
+});

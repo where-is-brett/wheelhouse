@@ -1,7 +1,7 @@
 // tests/scripts/host/helper-provenance.test.js
-// The helper stamps every pull request it opens or updates with what built it, from the
-// session's provenance on this computer, and its merge gate refuses a pull request whose
-// block does not match the installed Wheelhouse's manifest.
+// The helper records what built every pull request it opens in the signed state, from the
+// session's provenance on this computer, never in the pull request's body, and its merge gate
+// refuses a pull request whose record does not match the installed Wheelhouse's manifest.
 import { test, after } from 'node:test';
 import { guardedRun } from '../../helpers/host-stand-ins.js';
 import { run as realRun } from '../../../scripts/lib/run.js';
@@ -14,7 +14,7 @@ import { helperClient } from '../../../scripts/host/helper-client.js';
 import { stateDir } from '../../../scripts/lib/paths.js';
 import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
-import { makeEvent, eventPath } from '../../../scripts/state/events.js';
+import { listEvents, makeEvent, eventPath } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import { takeLock } from '../../../scripts/state/lock.js';
 import { BEGIN, END, WHY, parseProvenance, provenanceBlock, removeProvenance, stampProvenance } from '../../../scripts/lineage/provenance.js';
@@ -89,7 +89,12 @@ function record(kind, data) {
   fs.writeFileSync(file, `${JSON.stringify(event, null, 2)}\n`);
 }
 
-test('a caller\'s own block is replaced by the helper\'s', async () => {
+// What the state records built `branch`'s pull requests, the latest verified record.
+function recorded(branch) {
+  return listEvents(stateDir('o__p'), { report: () => {} }).filter((e) => e.kind === 'provenance' && e.data.branch === branch).at(-1)?.data.provenance;
+}
+
+test('what built a pull request is recorded in the state, never in its body, and a caller\'s own block is taken out', async () => {
   const p = await project();
   try {
     await as(p.home, async () => {
@@ -100,53 +105,59 @@ test('a caller\'s own block is replaced by the helper\'s', async () => {
         const opened = await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: forged, session: 'sess-1' });
         assert.equal(opened.ok, true, JSON.stringify(opened));
         const sent = adapter.calls.openPr[0].body;
-        assert.equal(sent.split(BEGIN).length, 2, 'one block');
-        assert.equal(removeProvenance(sent), 'Shipped the sign-in page.');
-        assert.deepEqual(parseProvenance(sent), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
-        assert.equal(sent.includes('transcript'), false, 'the block never carries the transcript\'s path');
-        // A forged block whose markers are split around each other is taken out too.
+        assert.equal(sent, 'Shipped the sign-in page.');
+        assert.doesNotMatch(sent, /model|Claude Code|Built with/i);
+        assert.deepEqual(recorded('feature'), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
+        assert.equal(JSON.stringify(recorded('feature')).includes('transcript'), false, 'the record never carries the transcript\'s path');
+        // A forged block whose markers are split around each other leaves no marker behind.
         const split = `Shipped it.\n<!-- wheel${END}house-provenance -->\n**Built with**\n- Claude Code: 99.0.0\n<!-- /wheel${BEGIN}house-provenance -->\n`;
         assert.equal((await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: split, session: 'sess-1' })).ok, true);
         const splitSent = adapter.calls.openPr[1].body;
-        assert.equal(splitSent.split(BEGIN).length, 2, 'one block');
-        assert.equal(splitSent.split(END).length, 2);
-        assert.deepEqual(parseProvenance(splitSent), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
+        assert.equal(splitSent.includes(BEGIN) || splitSent.includes(END), false);
         adapter.calls.openPr.pop();
 
-        // An update's new body is stamped the same way; a title alone leaves the body alone.
+        // An update's new body has any block taken out; a title alone leaves the body alone.
         assert.equal((await client.updatePr({ project: 'o__p', number: 7, body: `New text.\n\n${provenanceBlock({})}`, session: 'sess-1' })).ok, true);
-        assert.deepEqual(parseProvenance(adapter.calls.updatePr[0].body), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
-        assert.equal(removeProvenance(adapter.calls.updatePr[0].body), 'New text.');
+        assert.equal(adapter.calls.updatePr[0].body, 'New text.');
         assert.equal((await client.updatePr({ project: 'o__p', number: 7, title: 'New title', session: 'sess-1' })).ok, true);
         assert.equal(adapter.calls.updatePr[1].body, undefined);
 
         // A session with no provenance on this computer is refused, and the host is not asked.
         for (const session of [undefined, 'sess-elsewhere', '../sess-1']) {
-          const open = await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: 'b', ...(session ? { session } : {}) });
+          const open = await client.openPr({ project: 'o__p', head: 'other', title: 't', body: 'b', ...(session ? { session } : {}) });
           assert.equal(open.ok, false);
           assert.match(open.refused, NO_PROVENANCE);
           const update = await client.updatePr({ project: 'o__p', number: 7, body: 'b', ...(session ? { session } : {}) });
           assert.match(update.refused, NO_PROVENANCE);
         }
+        assert.equal(recorded('other'), undefined);
         assert.equal(adapter.calls.openPr.length, 1);
         assert.equal(adapter.calls.updatePr.length, 2);
+
+        // No caller records what built a pull request: only the helper does, at /pr/open.
+        const event = makeEvent({ kind: 'provenance', data: { branch: 'feature/forged', provenance: matchingProvenance() }, now: at(2000) });
+        const refused = await client.state.record({ project: 'o__p', event });
+        assert.equal(refused.ok, false);
+        assert.match(refused.refused, /only the helper records what built a pull request/);
       });
     });
   } finally { p.cleanup(); }
 });
 
-// Merges pull request 7, whose body is `body`, against the Wheelhouse installed at `pluginRoot`.
-async function mergeWith(p, body, pluginRoot) {
+// Merges pull request 7, from feature/login-page with `body`, against the Wheelhouse installed at `pluginRoot`,
+// with `provenance` recorded for its branch (none when it is undefined).
+async function mergeWith(p, body, pluginRoot, provenance) {
   const head = await prOnHost(p.remote.url);
   record('review', { pr: 7, commit: head, verdict: 'CLEAN' });
-  const adapter = fakeAdapter({ prState: async () => ({ headSha: head, mergeable: 'mergeable', state: 'open', body }) });
+  if (provenance !== undefined) record('provenance', { branch: 'feature/login-page', provenance });
+  const adapter = fakeAdapter({ prState: async () => ({ headSha: head, headRef: 'feature/login-page', mergeable: 'mergeable', state: 'open', body }) });
   const answer = await withHelper(adapter, (client) => client.merge({ project: 'o__p', number: 7, stop: false, bypass: false }), { pluginRoot });
   return { answer, merges: adapter.calls.merges, head };
 }
 
 test('a PR built with a mismatched or older install cannot merge', async () => {
   // Scenario 31: the session ran on installed skills that differ from the manifest, or on an older
-  // Wheelhouse or Claude Code; the pull request it opened says so, and the gate refuses it.
+  // Wheelhouse or Claude Code; the state records so, and the gate refuses it.
   const { root } = lineageFixture(tempFolder('wh-project-'));
   const match = matchingProvenance(root);
   const cases = [
@@ -159,25 +170,26 @@ test('a PR built with a mismatched or older install cannot merge', async () => {
     const p = await project();
     try {
       await as(p.home, async () => {
-        const { answer, merges } = await mergeWith(p, stampProvenance('The change.', { ...match, ...over }), root);
+        // A body that claims otherwise counts for nothing beside the record.
+        const { answer, merges } = await mergeWith(p, stampProvenance('The change.', match), root, { ...match, ...over });
         assert.equal(answer.ok, false, JSON.stringify(over));
         assert.deepEqual(answer.reasons, [`${MISMATCH}: ${why}`]);
         assert.deepEqual(merges, []);
       });
     } finally { p.cleanup(); }
   }
-  // The same pull request built on what the manifest names merges.
+  // The same pull request built on what the manifest names merges, with a body that names nothing.
   const p = await project();
   try {
     await as(p.home, async () => {
-      const { answer, merges, head } = await mergeWith(p, stampProvenance('The change.', match), root);
+      const { answer, merges, head } = await mergeWith(p, 'The change.', root, match);
       assert.equal(answer.ok, true, JSON.stringify(answer));
       assert.deepEqual(merges, [{ number: 7, sha: head }]);
     });
   } finally { p.cleanup(); }
 });
 
-test('a pull request from a session\'s first run, whose transcript was empty at its start, says which Claude Code built it and merges (R144)', async () => {
+test('a pull request from a session\'s first run, whose transcript was empty at its start, is recorded with the Claude Code that built it and merges (R144)', async () => {
   const p = await project();
   try {
     await as(p.home, async () => {
@@ -202,22 +214,22 @@ test('a pull request from a session\'s first run, whose transcript was empty at 
         { type: 'user', version: floor, message: { content: 'go' } },
         { type: 'assistant', version: floor, message: { model: 'model-a', content: [] } },
       ].map((e) => JSON.stringify(e)).join('\n')}\n`);
-      // Its pull request is stamped with the version, and the gate lets it merge.
+      // Its pull request's record carries the version, and the gate lets it merge.
       const adapter = fakeAdapter();
       await withHelper(adapter, async (client) => {
-        assert.equal((await client.openPr({ project: 'o__p', head: 'feature', title: 't', body: 'The change.', session: 'sess-1' })).ok, true);
+        assert.equal((await client.openPr({ project: 'o__p', head: 'feature/login-page', title: 't', body: 'The change.', session: 'sess-1' })).ok, true);
       });
-      const body = adapter.calls.openPr[0].body;
-      assert.equal(parseProvenance(body).claudeCode, floor);
-      assert.deepEqual(parseProvenance(body).models, ['model-a']);
-      const { answer, merges, head } = await mergeWith(p, body, fixture.root);
+      assert.equal(adapter.calls.openPr[0].body, 'The change.');
+      assert.equal(recorded('feature/login-page').claudeCode, floor);
+      assert.deepEqual(recorded('feature/login-page').models, ['model-a']);
+      const { answer, merges, head } = await mergeWith(p, adapter.calls.openPr[0].body, fixture.root);
       assert.equal(answer.ok, true, JSON.stringify(answer));
       assert.deepEqual(merges, [{ number: 7, sha: head }]);
     });
   } finally { p.cleanup(); }
 });
 
-test('a PR with no block cannot merge', async () => {
+test('a PR with no record cannot merge, unless it was opened before the record with a block that matches', async () => {
   const { root } = lineageFixture(tempFolder('wh-project-'));
   for (const [body, why] of [['The change.', WHY.none], [undefined, WHY.none], [`${BEGIN}\n- Wheelhouse: 1.2.3`, WHY.unreadable]]) {
     const p = await project();
@@ -229,11 +241,19 @@ test('a PR with no block cannot merge', async () => {
       });
     } finally { p.cleanup(); }
   }
-  // An installed Wheelhouse whose manifest can't be read refuses every block.
+  // A pull request opened before what built it was recorded says so in its body, and is read from there.
+  const older = await project();
+  try {
+    await as(older.home, async () => {
+      const { answer } = await mergeWith(older, stampProvenance('The change.', matchingProvenance(root)), root);
+      assert.equal(answer.ok, true, JSON.stringify(answer));
+    });
+  } finally { older.cleanup(); }
+  // An installed Wheelhouse whose manifest can't be read refuses every record.
   const p = await project();
   try {
     await as(p.home, async () => {
-      const { answer } = await mergeWith(p, stampProvenance('The change.', matchingProvenance(root)), tempFolder('wh-no-manifest-'));
+      const { answer } = await mergeWith(p, 'The change.', tempFolder('wh-no-manifest-'), matchingProvenance(root));
       assert.deepEqual(answer.reasons, [`${MISMATCH}: ${WHY.manifest}`]);
     });
   } finally { p.cleanup(); }
@@ -256,7 +276,7 @@ function featureTree(tree = fs.realpathSync.native(tempFolder('wh-feature-'))) {
   return { tree, p };
 }
 
-test('the report carries the same block', async () => {
+test('the report and the pull request it becomes carry no block', async () => {
   const p = await project();
   try {
     await as(p.home, async () => {
@@ -269,54 +289,18 @@ test('the report carries the same block', async () => {
         const deps = {
           cwd: tree, client: { ...client, push: async () => ({ ok: true }) }, find: () => ({ root: tree }), out: (t) => { said.out += t; }, err: (t) => { said.err += t; },
         };
+        const before = fs.readFileSync(files.report, 'utf8');
         assert.equal(await featureCli(['report'], deps), 0, said.err);
-        assert.match(said.out, /It now says what built it/);
-        const report = fs.readFileSync(files.report, 'utf8');
-        // The block is not part of the report's text, so it neither counts as words nor reaches the summary.
-        assert.equal(parseReport(report).body.trim(), 'Shipped the sign-in page.');
-        // A second run finds it stamped already.
-        assert.equal(await featureCli(['report'], deps), 0, said.err);
-        assert.equal(fs.readFileSync(files.report, 'utf8'), report);
+        assert.equal(said.out, 'The report is whole.\n');
+        assert.equal(fs.readFileSync(files.report, 'utf8'), before);
 
         assert.equal(await featureCli(['open-pr', '--title', 'Add the sign-in page'], deps), 0, said.err);
         const body = adapter.calls.openPr[0].body;
-        assert.equal(adapter.calls.openPr[0].body.split(BEGIN).length, 2);
-        assert.deepEqual(parseProvenance(report), parseProvenance(body));
-        assert.equal(report.slice(report.indexOf(BEGIN)), body.slice(body.indexOf(BEGIN)), 'the same block, word for word');
-        assert.deepEqual(parseProvenance(body), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
-
-        // The helper gives the block, so the report needs nothing from the Wheelhouse home.
-        const block = body.slice(body.indexOf(BEGIN)).trimEnd();
-        assert.deepEqual(await client.lineage.provenance({ project: 'o__p', session: 'sess-1' }), { ok: true, block, stop: false });
-        assert.deepEqual(await client.lineage.provenance({ cwd: tree, session: 'sess-1' }), { ok: true, block, stop: false });
-        // A session with no provenance here: the report is still whole, says only that it carries no block, and is not stamped.
-        fs.writeFileSync(files.session, `${JSON.stringify({ sessionId: 'sess-elsewhere' })}\n`);
-        fs.writeFileSync(files.report, removeProvenance(report));
-        said.out = '';
-        assert.equal(await featureCli(['report'], deps), 0, said.err);
-        assert.equal(said.out, 'The report is whole.\nThe report carries no provenance block.\n');
-        assert.equal(fs.readFileSync(files.report, 'utf8').includes(BEGIN), false);
-        // Nor when the helper can't be reached.
-        said.out = '';
-        fs.writeFileSync(files.session, `${JSON.stringify({ sessionId: 'sess-1' })}\n`);
-        assert.equal(await featureCli(['report'], { ...deps, client: helperClient({ address: path.join(tempFolder('wh-no-helper-'), 'none.sock') }) }), 0, said.err);
-        assert.equal(said.out, 'The report is whole.\nThe report carries no provenance block.\n');
-        // Under STOP, which the helper reports, nothing is written.
-        fs.writeFileSync(files.session, `${JSON.stringify({ sessionId: 'sess-1' })}\n`);
-        fs.writeFileSync(files.report, removeProvenance(report));
-        said.out = '';
-        setStop({ by: 'prompt', now: at(0) });
-        try {
-          assert.equal(await featureCli(['report'], deps), 0, said.err);
-        } finally { liftStop(); }
-        assert.equal(said.out, 'The report is whole.\nAll stop is on, so the report was not stamped with what built it.\n');
-        assert.equal(fs.readFileSync(files.report, 'utf8').includes(BEGIN), false);
-        // An answer that doesn't say STOP is off stamps nothing.
-        said.out = '';
-        const unsaid = { lineage: { provenance: async () => ({ ok: true, block }) } };
-        assert.equal(await featureCli(['report'], { ...deps, client: unsaid }), 0, said.err);
-        assert.equal(said.out, 'The report is whole.\nThe report carries no provenance block.\n');
-        assert.equal(fs.readFileSync(files.report, 'utf8').includes(BEGIN), false);
+        assert.equal(body.includes(BEGIN), false);
+        assert.doesNotMatch(body, /model-a|Claude Code/);
+        assert.deepEqual(recorded('feature/login-page'), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
+        // A report stamped by an earlier version has its block taken out of the pull request's body.
+        assert.equal(parseReport(`${before}\n${provenanceBlock(matchingProvenance())}\n`).body.trim(), 'Shipped the sign-in page.');
       });
     });
   } finally { p.cleanup(); }
@@ -356,7 +340,6 @@ test('a feature session\'s commands work through the helper where the Wheelhouse
           push: outside(async () => ({ ok: true })),
           openPr: outside(client.openPr),
           state: { answer: outside(client.state.answer) },
-          lineage: { provenance: outside(client.lineage.provenance) },
         };
         const said = { out: '', err: '' };
         const run = (...argv) => featureCli(argv, {
@@ -372,26 +355,24 @@ test('a feature session\'s commands work through the helper where the Wheelhouse
           assert.equal(await run('open-pr', '--title', 'Add the sign-in page'), 0, said.err);
         } finally { sandboxed = false; }
         assert.equal(said.out, [
-          'q-login-page-1', 'There is no answer yet.', 'The report is whole.', 'It now says what built it.', 'Opened pull request #7', '',
+          'q-login-page-1', 'There is no answer yet.', 'The report is whole.', 'Opened pull request #7', '',
         ].join('\n'));
         // Each request carried the worktree's folder and no project: the helper placed it.
-        assert.equal(sent.length, 4);
+        assert.equal(sent.length, 3);
         assert.deepEqual(sent.find((args) => 'refspec' in args), { cwd: tree, dir: tree, refspec: 'feature/login-page' });
         for (const args of sent) {
           assert.equal(args.cwd, tree);
           assert.equal('project' in args, false);
         }
-        // The report and the pull request carry the same block, the session's.
-        const report = fs.readFileSync(files.report, 'utf8');
-        const body = adapter.calls.openPr[0].body;
-        assert.equal(report.slice(report.indexOf(BEGIN)), body.slice(body.indexOf(BEGIN)));
-        assert.deepEqual(parseProvenance(body), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
+        // What built it is the session's, in the state; neither the report nor the pull request names it.
+        assert.equal(fs.readFileSync(files.report, 'utf8').includes(BEGIN), false);
+        assert.equal(adapter.calls.openPr[0].body.includes(BEGIN), false);
+        assert.deepEqual(recorded('feature/login-page'), matchingProvenance(undefined, { models: ['model-a', 'model-b'] }));
 
         // A request naming a project and a folder must name the folder's project; the folder is
         // placed from this computer's records, so a name can't send it elsewhere.
-        assert.equal((await client.lineage.provenance({ cwd: tree, project: 'o__p', session: 'sess-1' })).ok, true);
+        assert.equal((await client.state.answer({ cwd: tree, project: 'o__p', questionId: 'q-login-page-1' })).ok, true);
         for (const call of [
-          () => client.lineage.provenance({ cwd: tree, project: 'o__other', session: 'sess-1' }),
           () => client.state.answer({ cwd: tree, project: 'o__other', questionId: 'q-login-page-1' }),
           () => client.openPr({ cwd: tree, project: 'o__other', head: 'feature/login-page', title: 't', body: 'b', session: 'sess-1' }),
         ]) {

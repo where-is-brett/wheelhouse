@@ -2,9 +2,11 @@
 // What built a pull request or a report: the Wheelhouse version, the upstream commits, the
 // register's version, the Claude Code version, the models and whether the fingerprints
 // matched. A session of another agent (ruling P8-19) also names the agent, its version, the
-// editor's version and the agent's runtime's, four lines more, each "not known" when it is. The helper stamps it as a short block in every pull request's body, from the
-// session's provenance.json on this computer (written at session start), and the merge gate
-// reads the block back and checks it against the installed Wheelhouse's own manifest.
+// editor's version and the agent's runtime's, four lines more, each "not known" when it is. The helper records it in the
+// signed state when it opens a pull request, from the session's provenance.json on this computer (written at session
+// start), and the merge gate reads that record back and checks it against the installed Wheelhouse's own manifest. No
+// pull request's body carries it (build-loop design, section 13): the block below is only read, from a pull request
+// opened before the record was kept, and taken out of any body the helper sends.
 import fs from 'node:fs';
 import { readTailEntries } from '../hooks/kit.js';
 import { provenanceFile } from './check.js';
@@ -230,6 +232,19 @@ export function provenanceMatches(provenance, manifest) {
   }
   if (!atLeast(provenance.claudeCode, manifest.claudeCode?.floor)) return { ok: false, why: WHY.claudeCode };
   return { ok: true };
+}
+
+// The gate's provenance condition for a pull request, against the manifest of the Wheelhouse installed at `root`:
+// `recorded`, the provenance the state records for its branch, or when there is none, the block in its `body`.
+export function checkProvenance({ recorded, body, root }) {
+  if (!isObject(recorded)) return bodyProvenance(body, root);
+  let manifest;
+  try {
+    manifest = readManifest(root);
+  } catch {
+    return { ok: false, why: WHY.manifest };
+  }
+  return provenanceMatches(recorded, manifest);
 }
 
 // The gate's provenance condition for a pull request's body, against the manifest of the

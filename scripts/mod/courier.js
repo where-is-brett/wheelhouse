@@ -7,6 +7,11 @@
 // the mod couldn't hand on is undone by courierUnsent, so the next tick wakes for it again. A card
 // a wake named that still waits unasked REMIND_MS later wakes once more, as its reminder (ruling
 // 68). The wake carries counts and card numbers, never an event's words.
+//
+// A wake is two texts. The prompt the mod submits is one plain line for the director, who sees it in
+// the chat ("Wheelhouse: 1 waiting on you: card 2."); the instructions for the front desk are kept in
+// courier.json beside it, and board-context.js hands them to the front desk as hidden context when
+// that line arrives (courierContext), so no agent is spoken to in front of the director.
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateDir } from '../lib/paths.js';
@@ -34,6 +39,10 @@ const ASK = 'Then ask any new cards now, once.';
 const REMIND_ASK = (cards) => `Then ask ${cards === 1 ? 'it' : 'them'} now, once.`;
 // The items that wake at once, inside the gap after the last wake.
 const AT_ONCE = ['stop', 'incident'];
+
+// How long after a wake its line still brings its instructions, and how many wakes are kept for it.
+export const WAKE_CONTEXT_MS = 10 * 60 * 1000;
+const WAKES_KEPT = 20;
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const list = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
@@ -132,22 +141,23 @@ function readKept(project) {
   try {
     const file = courierFile(project);
     const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.size > FILE_BYTES) return { sent: [], lastWakeAt: null, sessions: [] };
+    if (!stat.isFile() || stat.size > FILE_BYTES) return { sent: [], lastWakeAt: null, sessions: [], wakes: [] };
     const kept = JSON.parse(fs.readFileSync(file, 'utf8'));
     return {
       sent: list(kept?.sent).filter((s) => typeof s.id === 'string'),
       lastWakeAt: typeof kept?.lastWakeAt === 'string' ? kept.lastWakeAt : null,
       sessions: list(kept?.sessions).filter((s) => isSession(s.id) && typeof s.at === 'string'),
+      wakes: list(kept?.wakes).filter((w) => isSession(w.session) && typeof w.at === 'string' && typeof w.line === 'string' && typeof w.context === 'string'),
     };
   } catch {
-    return { sent: [], lastWakeAt: null, sessions: [] };
+    return { sent: [], lastWakeAt: null, sessions: [], wakes: [] };
   }
 }
 
 // Writes courier.json whole through a temporary file. The sent ids keep their order, each once,
 // cut to the last SENT_KEPT, except that every id still among the current items is kept, so a
 // long-standing item (a feature finished long ago) never wakes again.
-function writeKept(project, { sent, lastWakeAt, sessions }, current) {
+function writeKept(project, { sent, lastWakeAt, sessions, wakes = [] }, current) {
   const latest = new Map();
   for (const entry of sent) {
     latest.delete(entry.id);
@@ -159,7 +169,7 @@ function writeKept(project, { sent, lastWakeAt, sessions }, current) {
   const temp = `${file}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(temp, `${JSON.stringify({ sent: kept, lastWakeAt, sessions })}\n`);
+    fs.writeFileSync(temp, `${JSON.stringify({ sent: kept, lastWakeAt, sessions, wakes: wakes.slice(-WAKES_KEPT) })}\n`);
     fs.renameSync(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -201,9 +211,18 @@ function sayingOf(items) {
   return parts.join(' ');
 }
 
+// The line the director sees: what the notification says, under the Wheelhouse name. Under STOP, that All stop is
+// on, with the cards waiting, since STOP's notification tells them to open Claude, where they are.
+function lineOf(items) {
+  if (!items.some((i) => i.kind === 'stop')) return `${LEADS.wake} ${sayingOf(items)}`;
+  const cards = [...new Set([...numbersOf(items, 'card'), ...numbersOf(items, 'remind')])].sort((a, b) => a - b);
+  return `${LEADS.wake} All stop is on.${cards.length > 0 ? ` ${waitingOnYou(cards)}` : ''}`;
+}
+
 const NOTHING = Object.freeze({ submit: null, sent: [] });
 
-// courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, sent, at? }.
+// courierWake({ project, session, items, presence, quiet, idle, now, timeZone }) -> { submit, context?, sent, at? }.
+// `submit` is the line the director sees; `context` the front desk's instructions, kept with it in courier.json.
 // `session` is the ticking session's id; `items` are needsYou's; `presence` the effective
 // presence ({ value, until }); `quiet` the notifications' quiet hours ({ from, to }); `idle` false
 // while a turn runs; `timeZone` the computer's own.
@@ -256,7 +275,9 @@ export async function courierWake({ project, session, items, presence, quiet, id
       const woke = marks.get(item.id);
       return !stopped && !sentIds.has(id) && isSession(woke?.by) && t - Date.parse(woke.at) >= REMIND_MS;
     }).map(({ item, id }) => ({ id, kind: 'remind', n: item.n, blocking: item.blocking }));
-    const mark = (marked, lastWakeAt, woke = {}) => writeKept(project, { sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp, ...woke }))], lastWakeAt, sessions }, current);
+    const mark = (marked, lastWakeAt, woke = {}, wake = null) => writeKept(project, {
+      sent: [...kept.sent, ...marked.map((i) => ({ id: i.id, at: stamp, ...woke }))], lastWakeAt, sessions, wakes: wake === null ? kept.wakes : [...kept.wakes, wake],
+    }, current);
 
     if (opening) {
       const marked = othersTicking ? [] : fresh;
@@ -273,11 +294,13 @@ export async function courierWake({ project, session, items, presence, quiet, id
       mark([], kept.lastWakeAt);
       return NOTHING;
     }
-    mark(waking, stamp, { by: session, before: kept.lastWakeAt });
     const reminding = waking.some((i) => i.kind === 'remind');
     const ask = reminding ? REMIND_ASK([...numbersOf(waking, 'card'), ...numbersOf(waking, 'remind')].length) : ASK;
     const title = stopped || waking.some((i) => i.kind === 'stop') ? NOTIFICATION_TITLE_STOP : NOTIFICATION_TITLE;
-    return { submit: `${LEADS.courier} ${whatOf(waking)}. ${SEND(title, sayingOf(waking))} ${ask}`, sent: waking.map((i) => i.id), at: stamp };
+    const line = lineOf(waking);
+    const context = `${LEADS.courier} ${whatOf(waking)}. ${SEND(title, sayingOf(waking))} ${ask}`;
+    mark(waking, stamp, { by: session, before: kept.lastWakeAt }, { session, at: stamp, line, context });
+    return { submit: line, context, sent: waking.map((i) => i.id), at: stamp };
   } finally {
     release();
   }
@@ -310,9 +333,22 @@ export async function courierUnsent({ project, session, ids, at } = {}) {
     const before = typeof undoing[0].before === 'string' ? undoing[0].before : null;
     // Every other id stays, however many: the undo cuts nothing.
     const sent = kept.sent.filter((entry) => !out.has(entry.id));
-    writeKept(project, { sent, lastWakeAt: kept.lastWakeAt === at ? before : kept.lastWakeAt, sessions: kept.sessions }, new Set(sent.map((entry) => entry.id)));
+    writeKept(project, { sent, lastWakeAt: kept.lastWakeAt === at ? before : kept.lastWakeAt, sessions: kept.sessions, wakes: kept.wakes }, new Set(sent.map((entry) => entry.id)));
     return { unsent: [...out] };
   } finally {
     release();
   }
+}
+
+// courierContext({ project, session, prompt, now }) -> the instructions of the wake whose line `prompt` is, for the
+// front desk `session`, or null: the latest such wake, made for that session no more than WAKE_CONTEXT_MS ago. Read
+// without the lock: courier.json is replaced whole.
+export function courierContext({ project, session, prompt, now = () => new Date() } = {}) {
+  if (!isSession(session) || typeof prompt !== 'string') return null;
+  const line = prompt.replace(/\p{Cf}/gu, '').trim();
+  const t = instantOf(now);
+  const wake = readKept(project).wakes.filter((w) => w.session === session && w.line === line).at(-1);
+  if (wake === undefined) return null;
+  const age = t - Date.parse(wake.at);
+  return Number.isFinite(age) && age >= 0 && age <= WAKE_CONTEXT_MS ? wake.context : null;
 }

@@ -780,13 +780,16 @@ test('an installed Superpowers file differs: a warning, a hold, and the gate ref
     assert.equal(eventsOf('lineage-hold').length, 1);
 
     // The gate is the backstop: a pull request this session opens (as one past the hold would,
-    // on a Claude Code where a failing guard lets the call through) says what built it, and is refused.
+    // on a Claude Code where a failing guard lets the call through) is recorded with what built it,
+    // and is refused. Neither its body nor the report names what built it.
     const built = await buildAndOpen(world, s, { 'src/export.js': 'export const csv = true;\n' });
     world.host.pass(built.head);
     const body = world.host.prs.get(built.pr).body;
-    assert.match(body, /- Fingerprints: mismatch/);
-    assert.match(body, /- Models: model-a/);
-    assert.match(fs.readFileSync(featurePaths(s.worktree).report, 'utf8'), /- Fingerprints: mismatch/, 'the report says the same');
+    assert.doesNotMatch(body, /Fingerprints|Models|model-a|Claude Code/);
+    assert.doesNotMatch(fs.readFileSync(featurePaths(s.worktree).report, 'utf8'), /Fingerprints|model-a/);
+    const [recorded] = eventsOf('provenance').filter((e) => e.data.branch === 'feature/export');
+    assert.equal(recorded.data.provenance.fingerprints, 'mismatch');
+    assert.deepEqual(recorded.data.provenance.models, ['model-a']);
     const why = "what passed review is not what is on the pull request now: the files it was built from have changed since";
     const gate = await world.client.merge({ project: P, number: built.pr, stop: false, bypass: false });
     assert.deepEqual(gate.reasons, [why]);

@@ -145,11 +145,22 @@ function spelling(term, word) {
 const WORD = /[\p{L}\p{N}_]/u;
 const wordAt = (text, i) => i >= 0 && i < text.length && WORD.test(text[i]);
 
+// A pattern for a name as the director may write it: its words in any case, with hyphens, underscores, dots or
+// spaces between them, and never as part of a longer word. Null for a name too short to be one.
+function namePattern(name) {
+  const words = typeof name === 'string' ? name.split(/[-_.\s]+/u).filter((w) => w !== '') : [];
+  if (words.join('').length < 2) return null;
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped.join('[-_.\\s]+')}(?![\\p{L}\\p{N}])`, 'giu');
+}
+
 // The spans of a text that are quoted: backticks, double and curly quotes, and single quotes that
-// open a quotation (not an apostrophe), then the text the caller asks to keep wherever it appears.
-function protectedRanges(text, protect) {
+// open a quotation (not an apostrophe), then the text the caller asks to keep wherever it appears,
+// and the names it gives (namePattern).
+function protectedRanges(text, protect, names = []) {
   const ranges = [];
   const add = (pattern) => { for (const m of text.matchAll(pattern)) ranges.push([m.index, m.index + m[0].length]); };
+  for (const pattern of names.map(namePattern)) if (pattern !== null) add(pattern);
   add(/`[^`\n]*`/g);
   add(/"[^"\n]*"/g);
   add(/“[^”\n]*”/g);
@@ -174,7 +185,7 @@ function joined(text, index, length) {
   return (after === '.' || after === '-') && wordAt(text, end + 1);
 }
 
-// plainWords(text, glossary, { explanations, known, protect }) -> { text, terms }. `terms` are the
+// plainWords(text, glossary, { explanations, known, protect, names }) -> { text, terms }. `terms` are the
 // glossary terms the text uses, each once, in order. With `plain` explanations (the default), the
 // first mention of each term the director doesn't know is replaced by its plain words. With
 // `some-terms` the terms stay. A term mentioned where it stays (a later mention, a spelling the
@@ -182,12 +193,13 @@ function joined(text, index, length) {
 // meaning in a "Terms:" line at the end, so no term is left bare. `known` is the concepts the
 // director knows (see knownConcepts), or terms. Nothing is rewritten inside quotations, backticks,
 // command-, address-, path- or name-like tokens, or the `protect` strings: they are what the
-// director must recognise, type or click, and they are no use of a term. A term that stayed where the
+// director must recognise, type or click, and they are no use of a term. Nor are the `names` the project goes by, in
+// any case or spacing: the project's own name is never glossed. A term that stayed where the
 // text spelt it by an alias is listed with that spelling too: "pull request (PR) means …".
-export function plainWords(text, glossary, { explanations = 'plain', known = [], protect = [] } = {}) {
+export function plainWords(text, glossary, { explanations = 'plain', known = [], protect = [], names = [] } = {}) {
   if (typeof text !== 'string') return { text: '', terms: [] };
   const knows = new Set((Array.isArray(known) || known instanceof Set ? [...known] : []).map(conceptOf));
-  const fenced = protectedRanges(text, Array.isArray(protect) ? protect : []);
+  const fenced = protectedRanges(text, Array.isArray(protect) ? protect : [], Array.isArray(names) ? names : []);
   const matches = termMatches(text, glossary).filter((m) => !joined(text, m.index, m.length)
     && !fenced.some(([from, to]) => m.index < to && m.index + m.length > from));
   const terms = [...new Set(matches.map((m) => m.term))];

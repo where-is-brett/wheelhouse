@@ -111,6 +111,8 @@ test('a brief round-trips through its JSON block and text', () => {
   delete minimal.plan;
   delete minimal.slices;
   assert.deepEqual(parseBrief(fence(minimal)).fields, minimal);
+  const approved = { ...briefFields(), approved: 'a'.repeat(64) };
+  assert.deepEqual(parseBrief(fence(approved)).fields, approved);
 });
 
 test('a brief without its JSON block, or with a wrong field, cannot be read', () => {
@@ -136,6 +138,8 @@ test('a brief without its JSON block, or with a wrong field, cannot be read', ()
     { shownFirst: 'yes' },
     { plan: 4 },
     { slices: '2' },
+    { approved: 'short' },
+    { approved: 'A'.repeat(64) },
     { extra: true },
   ];
   for (const change of wrong) {
