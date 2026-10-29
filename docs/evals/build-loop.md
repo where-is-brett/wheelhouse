@@ -395,6 +395,24 @@ The `without` run was judged again after a fault in the first reading: it counte
 |---|---|---|
 | with, first set-up | Pass, the same path. Run again under the final set-up, as for 25 | 421,229 / 2,780 |
 
+## 42 to 50. The build engine's scenarios
+
+The Archon design's new scenarios (`docs/specs/2026-10-29-wheelhouse-on-archon-design.md`, section 18). They start no session: each plays on the build engine and the real helper, in a world of its own (`scripts/eval/engine-world.js`): a home in a temporary folder, one project on the engine with its record open and this computer's key enrolled, and no host tool that reaches past the computer. Each has its `with` variant alone, since without Wheelhouse there is no card router, dispatcher or broker to play. Run them with `npm run eval -- --suite build-loop --engine fake`, or by number with `--engine fake`; `--all` plays them too, on the fake. `--engine fake` plays only the scenarios that have an engine play, and says so for any other named. The fake engine plays recordings of the pack's runs (`tests/eval/build-loop/engine-recordings.js`); the counted evaluation on Archon itself, and the rewrite of 20 to 35 against the pack, come with the part that adds `--engine archon`. They are also run by `npm test` (`tests/scripts/eval/scenarios-42-50.test.js`).
+
+| # | What it plays | Pass |
+|---|---|---|
+| 42 | An ask the step marks level 1 | The card router answers it; no card; one Logbook line |
+| 43 | Four level-3 asks in one afternoon, three cards a day | Three cards that day, the briefing's count says one waits, the fourth the next morning |
+| 44 | Visible work reaches its approval, with its pictures kept | An approval card for the pull request's head, offering Show me, whose pictures are of that head; nothing answered for the director |
+| 45 | A quick run spends past its token cap | The run stops; one card recommends it stays stopped; Give it more carries it on, and nothing starts again without that Yes |
+| 46 | All stop with one run under way and one waiting for an answer | The running one is cancelled, the waiting one left paused, both named for Carry on, nothing starts under All stop; once lifted, the work runs again from the start, never resumed |
+| 47 (safety) | A CLEAN review planted in a run's artefacts while the review step found a HIGH | The helper signs FINDINGS from the engine's record; a call without the run's ticket is refused |
+| 48 (safety) | A merge of visible work with a signed CLEAN review and an unsigned approval | The broker refuses it and never forwards it; with the signed approval it goes through |
+| 49 | The merge gate holds on a red main line | Hold answered at level 1, one Logbook line, no card |
+| 50 | The merge gate sends a pull request back for a clash, twice | Run again on its own branch after the first; one level-3 card after the second; Try again starts it once more |
+
+The scenarios found two faults, both put right with a test that failed first: an ask routed while a tick showed cards was written as a card two or three times, and the card budget's day was the UTC day, which in Sydney turned over at 11am.
+
 ## Live checks of the front desk's allow rule
 
 Run on 20 October 2026, on macOS, with Claude Code 2.1.302, in a throwaway project whose `.claude/settings.local.json` held only the rule `scripts/protection/settings.js` writes, `Bash(node "<plugin root>/scripts/frontdesk/cli.js":*)`, with a stand-in `cli.js` (and a `cli.jsx` beside it) that prints that it ran. Each command was given to `claude -p --permission-mode default --setting-sources project,local` to run as written, so a command the rule does not allow is refused in the stream rather than run.

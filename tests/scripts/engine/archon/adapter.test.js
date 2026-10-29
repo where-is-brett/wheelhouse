@@ -135,8 +135,13 @@ test('inspect reads the run record', async () => {
   assert.equal(cli.calls[0].options.json, true);
   assert.equal(record.status, 'ended');
   assert.equal(record.ownerPid, 48213);
+  // The worktree the run works in, so a run the engine won't stop can be ended by its processes; null outside one.
+  assert.equal(record.folder, null);
+  const inBase = await adapter(fakeCli({ 'workflow get': json('get-verbose.json') }), { worktreeBases: ['/Users/director/Projects/web/.worktrees'] }).inspect(RUN);
+  assert.equal(inBase.folder, '/Users/director/Projects/web/.worktrees/wh/card-14');
   const missing = await adapter(fakeCli({ 'workflow get': { code: 1, json: { ok: false, error: 'not found' }, stdout: '', stderr: '' } })).inspect('nope');
   assert.equal(missing.status, 'unknown');
+  assert.equal(missing.folder, null);
 });
 
 test('outputs reads each step\'s whole output from the run\'s events', async () => {
@@ -398,4 +403,14 @@ test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and 
   for (const [runId, repo] of [['../x', 'acme/web'], [RUN, '../web'], [RUN, 'acme'], [RUN, 'acme/web/x'], [RUN, null], ['', 'acme/web']]) {
     assert.equal(a.artefactsOf(runId, repo), null, `${runId} ${repo}`);
   }
+});
+
+test('an answer Archon gave no reply to is unreachable, so it is tried again; one it refused is not', async () => {
+  const id = `${RUN}:${items.pack.occurrence}`;
+  const silent = adapter(fakeCli({ 'workflow answer': () => ({ code: 1, json: null, stdout: '', stderr: 'timed out' }) }));
+  const lost = await silent.act(RUN, { answer: { ask: id, choice: 'approve' } });
+  assert.equal(lost.ok, false);
+  assert.equal(lost.unreachable, true);
+  const stale = await adapter(fakeCli({ 'workflow answer': refusal('answer-stale.json') })).act(RUN, { answer: { ask: id, choice: 'approve' } });
+  assert.equal(stale.unreachable, undefined);
 });

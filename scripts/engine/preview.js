@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { run as runProgram } from '../lib/run.js';
 import { SCREEN_SIZES, SCREEN_TIMEOUT_MS } from '../lib/front-desk.js';
@@ -206,7 +207,8 @@ export async function makePreview({
   return { folder: out, pictures, summary };
 }
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`), ...rest } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`), ...rest } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   const folder = runArg(argv, '--out');
   if (!runId || !folder) {

@@ -1,0 +1,151 @@
+// scripts/engine/words.js
+// The engine's words turned into the director's (Archon design, sections 2 and 4.1): each step of the pack in plain
+// words, and the lines the work view, the Logbook's build tab and the briefing show for runs and their cost. No line
+// holds a run id, a step id or the engine's own words; the director never sees them.
+import { runningMinutes } from './spend.js';
+
+// Each step of the pack (engine/archon/pack/) and of the merge queue, in words a sentence takes.
+export const STEP_WORDS = Object.freeze({
+  order: 'reading the work order',
+  implement: 'building it',
+  build: 'building it',
+  'implement-blocked': 'stopped, with a question',
+  tests: 'running the tests',
+  controls: 'checking nothing that steers the agents changed',
+  held: 'held for a check',
+  stop: 'stopped',
+  rework: 'reworking it',
+  lenses: 'getting ready for the checks',
+  'review-standards': 'checking it against the project\'s standards',
+  'review-standards-blocked': 'stopped, with a question about the standards',
+  'review-spec': 'checking it does what was asked',
+  'review-spec-blocked': 'stopped, with a question about what was asked',
+  'review-security': 'checking it is safe',
+  'review-security-blocked': 'stopped, with a question about safety',
+  'review-design': 'checking how it looks',
+  'review-design-blocked': 'stopped, with a question about how it looks',
+  'pr-text': 'writing up the change',
+  'pr-text-blocked': 'stopped, with a question about the write-up',
+  'open-pr': 'putting the change up for checking',
+  sign: 'signing the checks',
+  'review-held': 'held after the checks',
+  preview: 'taking pictures',
+  approval: 'waiting for you',
+  rejected: 'set aside, as you asked',
+  ready: 'getting it ready to add',
+  merge: 'adding it to the product',
+  lesson: 'noting what it learnt',
+  'lesson-blocked': 'noting what it learnt',
+  'lesson-record': 'noting what it learnt',
+});
+
+export const stepWords = (step) => (typeof step === 'string' && Object.hasOwn(STEP_WORDS, step) ? STEP_WORDS[step] : 'working on it');
+
+const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const money = (dollars) => (dollars < 0.005 ? 'less than a cent' : `$${dollars.toFixed(2)}`);
+const minutesWords = (n) => `${n} ${n === 1 ? 'minute' : 'minutes'}`;
+// The first letter of a title made small, for a title inside a sentence.
+const inSentence = (title) => (/^[A-Z][a-z]/.test(title) ? title.charAt(0).toLowerCase() + title.slice(1) : title);
+
+// A run's cost in words: about the figure; at least the known part when a step reported none; not reported when
+// none did. Never a smaller figure that looks true.
+export function costWords(cost) {
+  if (!isPlain(cost)) return null;
+  if (typeof cost.dollars === 'number') return cost.dollars < 0.005 ? 'less than a cent' : `about ${money(cost.dollars)}`;
+  if (typeof cost.floorDollars === 'number' && cost.floorDollars > 0) return `at least ${money(cost.floorDollars)}`;
+  return 'cost not reported';
+}
+
+// What a run is doing now: its step's words, or its state's when no step is known.
+function doing(run) {
+  if (run.state === 'paused') return STEP_WORDS.approval;
+  if (run.state === 'ended') return run.outcome === 'cancelled' ? 'stopped' : run.outcome === 'failed' ? 'stopped by a problem' : 'finished';
+  return run.step ? stepWords(run.step) : STEP_WORDS.implement;
+}
+
+// "The sale banner: checking it does what was asked. 12 minutes so far, about $0.40."
+export function runLine(run, cost) {
+  const said = cost ? costWords(cost) : null;
+  const minutes = Number.isFinite(run.minutes) ? Math.max(0, Math.round(run.minutes)) : null;
+  if (minutes === null) return `${run.title}: ${doing(run)}${said ? `, ${said}` : ''}.`;
+  const tail = [minutes === null ? null : `${minutesWords(minutes)} so far`, said].filter(Boolean).join(', ');
+  return `${run.title}: ${doing(run)}.${tail ? ` ${tail.charAt(0).toUpperCase()}${tail.slice(1)}.` : ''}`;
+}
+
+// "Shipped: the sale banner, for about $0.40."
+export function shippedLine(run, cost) {
+  const said = cost ? costWords(cost) : null;
+  return `Shipped: ${inSentence(run.title)}${said ? `, for ${said}` : ''}.`;
+}
+
+const titleOf = (views, work) => {
+  const title = views?.work?.[work]?.work?.data?.title;
+  return typeof title === 'string' && title.trim() !== '' ? title.trim() : work;
+};
+const records = (views, kind) => (isPlain(views?.[kind]) ? views[kind] : {});
+// Each work's runs: the records of each run, in time order, by its id, the latest run last.
+function runsOf(views) {
+  const out = [];
+  for (const [work, list] of Object.entries(records(views, 'runs'))) {
+    if (!Array.isArray(list)) continue;
+    const byRun = new Map();
+    for (const e of list) if (isPlain(e?.data) && typeof e.data.runId === 'string') (byRun.get(e.data.runId) ?? byRun.set(e.data.runId, []).get(e.data.runId)).push(e);
+    for (const [runId, list2] of byRun) out.push({ work, runId, records: list2, latest: list2.at(-1) });
+  }
+  return out.sort((a, b) => String(a.records[0].at).localeCompare(String(b.records[0].at)));
+}
+const costOf = (views, work, runId) => (records(views, 'costs')[work] ?? []).filter((e) => e?.data?.runId === runId).at(-1)?.data ?? null;
+
+// The work view's lines for runs going now: one a run, in time order.
+export function runningLines(views, { now = new Date() } = {}) {
+  return runsOf(views).filter((r) => r.latest.data.state !== 'ended').map((r) => runLine({
+    title: titleOf(views, r.work), state: r.latest.data.state, step: r.latest.data.step ?? null,
+    minutes: runningMinutes(r.records, now),
+  }, costOf(views, r.work, r.runId)));
+}
+
+// The build tab's lines: a heading, then each run with its cost and its steps in order. None when there are no runs.
+export function buildLines(views, { now = new Date() } = {}) {
+  const runs = runsOf(views);
+  const notes = Array.isArray(views?.engineNotes) ? views.engineNotes.slice(-NOTES_SHOWN).map((e) => `  ${e.data.words}`) : [];
+  if (runs.length === 0) return notes.length > 0 ? ['From the build', ...notes] : [];
+  const lines = ['Runs'];
+  for (const r of runs) {
+    const cost = costOf(views, r.work, r.runId);
+    const state = r.latest.data;
+    lines.push(runLine({ title: titleOf(views, r.work), state: state.state, outcome: state.outcome, step: state.step ?? null, minutes: state.state === 'ended' ? null : runningMinutes(r.records, now) }, cost));
+    const steps = isPlain(cost?.byRole) ? [...new Set(Object.keys(cost.byRole).map(stepWords))] : [];
+    if (steps.length > 0) lines.push(`  Steps: ${steps.join('; ')}.`);
+  }
+  return notes.length > 0 ? [...lines, 'From the build', ...notes] : lines;
+}
+
+// The build tab shows the latest of the card router's lines.
+const NOTES_SHOWN = 5;
+
+// The briefing's lines for the level-2 answers the router gave since `since` (the director hears of each).
+export function answeredLines(views, { since = null } = {}) {
+  return (Array.isArray(views?.engineNotes) ? views.engineNotes : [])
+    .filter((e) => e.data?.level === 2 && (!since || String(e.at) >= since))
+    .map((e) => `Answered for you: ${e.data.words}`);
+}
+
+// The briefing's shipped lines: each work merged since `since`, with the cost of its runs.
+export function shippedLines(views, { since = null } = {}) {
+  const reports = records(views, 'reports');
+  const lines = [];
+  for (const [work, report] of Object.entries(reports)) {
+    if (report?.data?.outcome !== 'merged' || (since && String(report.at) < since)) continue;
+    const runs = runsOf(views).filter((r) => r.work === work);
+    if (runs.length === 0) continue;
+    const costs = runs.map((r) => costOf(views, work, r.runId)).filter(Boolean);
+    lines.push(shippedLine({ title: titleOf(views, work) }, costs.length ? sumCosts(costs) : null));
+  }
+  return lines;
+}
+
+// Several runs' costs as one: dollars only when every run's are known, the known part as the floor.
+function sumCosts(costs) {
+  const floor = costs.reduce((n, c) => n + (typeof c.dollars === 'number' ? c.dollars : c.floorDollars ?? 0), 0);
+  return { dollars: costs.every((c) => typeof c.dollars === 'number') ? floor : null, floorDollars: floor };
+}

@@ -229,10 +229,10 @@ const PLAIN_SHAPES = {
   request: { must: ['words', 'via'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
-  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from'] },
+  work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from', 'level'] },
   feature: { must: ['work', 'step'], may: ['worktree', 'branch', 'session', 'plan', 'files', 'brief', 'slice', 'pausedFor'] },
   // `checks`: what answering it does to the checks, one line, for a level 4 question's card.
-  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks'] },
+  question: { must: ['id', 'work', 'what', 'why', 'options', 'recommendation', 'level'], may: ['commands', 'checks', 'engine'] },
   report: { must: ['work', 'outcome', 'summary', 'rulings'], may: ['pr', 'provenance'] },
   incident: { must: ['id', 'what'], may: [] },
   amendment: { must: ['work', 'change', 'hash'], may: [] },
@@ -317,7 +317,7 @@ const PLAIN_SHAPES = {
   // ask it is, `level` which of the decision levels it comes at.
   ask: { must: ['id', 'runId', 'work', 'kind', 'level', 'options'], may: ['topic', 'recommend', 'preview', 'setLine'] },
   // What a run cost. `dollars` and `premiumRequests` are null when not known; unknown is never written as 0.
-  cost: { must: ['runId', 'work', 'tokens', 'dollars', 'premiumRequests', 'minutes', 'source', 'byRole'], may: [] },
+  cost: { must: ['runId', 'work', 'tokens', 'dollars', 'premiumRequests', 'minutes', 'source', 'byRole'], may: ['floorDollars', 'kinds'] },
   // A preview of a work's head: the folder it was made in and its pages.
   preview: { must: ['work', 'head', 'folder', 'pages'], may: [] },
   // A lesson a work taught, for the next run to read.
@@ -396,6 +396,8 @@ function checkPlain(kind, data) {
     if (!LANES.includes(data.lane)) bad('needs its lane to be quick, small, feature or bug');
     if (typeof data.visible !== 'boolean') bad('needs visible to be true or false');
     if (!Array.isArray(data.dependsOn) || !data.dependsOn.every(isSlug)) bad('needs dependsOn to be a list of work ids');
+    // The work's decision level, which the build engine's permit reads (level 4 waits for the director's approval).
+    if (data.level !== undefined && ![1, 2, 3, 4].includes(data.level)) bad('has a level that is not 1, 2, 3 or 4');
     if (data.doc !== undefined && !(isPlain(data.doc) && Object.keys(data.doc).length === 2 && isText(data.doc.path) && typeof data.doc.hash === 'string' && HASH.test(data.doc.hash))) {
       bad('has a doc that is not a path and a hash');
     }
@@ -447,6 +449,8 @@ function checkPlain(kind, data) {
     // A figure that is not known stays null; it is never written as 0.
     if (data.source === 'unknown' && (data.dollars !== null || data.premiumRequests !== null || data.tokens === 0)) bad('has a source that is unknown, so its dollars and premiumRequests must be null and its tokens not 0');
     if (!isPlain(data.byRole)) bad('needs byRole to be a record');
+    if (data.floorDollars !== undefined && !(typeof data.floorDollars === 'number' && Number.isFinite(data.floorDollars) && data.floorDollars >= 0)) bad('has floorDollars that is not a number');
+    if (data.kinds !== undefined && !(isPlain(data.kinds) && ['input', 'output', 'cacheRead', 'cacheWrite'].every((k) => data.kinds[k] === null || (Number.isInteger(data.kinds[k]) && data.kinds[k] >= 0)))) bad('has kinds that are not its input, output, cacheRead and cacheWrite tokens');
   } else if (kind === 'preview') {
     slug('work');
     for (const k of ['head', 'folder']) text(k);
@@ -469,6 +473,11 @@ function checkPlain(kind, data) {
       bad('has commands that are not a list of commands');
     }
     if (data.checks !== undefined && (!isText(data.checks) || /[\r\n\v\f\u0085\u2028\u2029]/.test(data.checks))) bad('has checks that are not one line of text');
+    // A question from the build engine names the run and the ask its answer goes back to, and each option's id there.
+    if (data.engine !== undefined) {
+      const e = data.engine;
+      if (!(isPlain(e) && isText(e.runId) && isText(e.ask) && isPlain(e.options) && Object.values(e.options).every(isText))) bad('has an engine part that is not its run, its ask and its options');
+    }
   } else if (kind === 'report') {
     slug('work');
     if (!REPORT_OUTCOMES.includes(data.outcome)) bad('needs its outcome to be merged, closed or blocked');

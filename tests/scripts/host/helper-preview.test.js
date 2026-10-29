@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { engineRoutes } from '../../../scripts/engine/routes.js';
+import { ticketedRoutes } from '../../helpers/engine-tickets.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -19,18 +20,19 @@ function setup({ visible = true, previewUrl = async () => 'https://pr-14.preview
   const artefacts = (runId) => path.join(dir, 'archon', 'artifacts', 'runs', runId);
   const engine = {
     name: 'archon',
+    artefactsOf: (runId) => path.join(dir, 'art', runId),
     start: async () => ({ ok: true, runId: 'run-1', branch: 'wh/card-1' }),
     outputs: async () => ({ 'open-pr': JSON.stringify({ branch: 'wh/card-1', pr: 14, head: HEAD }) }),
     artefactsOf: (runId, repo) => (repo === 'acme/web' ? artefacts(runId) : null),
   };
-  const { routes } = engineRoutes({
+  const { routes } = ticketedRoutes(engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
     engineFor: () => engine,
     ordersDir: () => path.join(dir, 'engine', 'orders'),
     filesDir: () => path.join(dir, 'engine'),
     write: async (project, kind, data) => { calls.push({ kind, data }); },
     host: { repo: () => 'acme/web', previewUrl: async (project, sha) => previewUrl(sha) },
-  });
+  }), engine, 'acme/web');
   const order = workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }], visible }, config: { pages: ['/', '/prices'] } });
   const plant = (runId, name, body = PNG) => {
     const folder = path.join(artefacts(runId), 'preview');

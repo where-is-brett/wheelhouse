@@ -34,6 +34,7 @@ test('every setting in design section 14 is in the catalogue, with its default',
     cardsPerDay: ['project', 3],
     capMinutes: ['project', { quick: 20, small: 60, slice: 120, bug: 30 }],
     capTokens: ['project', { quick: 1000000, small: 4000000, slice: 10000000, bug: 2000000 }],
+    capRequests: ['project', 0],
     bundleApprovals: ['project', false],
     engineRoom: ['project', false],
   };
@@ -156,6 +157,9 @@ test('the caps take positive whole numbers for each kind of work and nothing els
   assert.throws(() => checkSetting('capMinutes', { quick: 20, small: 60, slice: 120 }), /capMinutes can't be/);
   assert.throws(() => checkSetting('capTokens', { quick: 1, small: 2, slice: 3, bug: 4, feature: 5 }), /capTokens can't be/);
   assert.throws(() => checkSetting('capTokens', { quick: 1.5, small: 2, slice: 3, bug: 4 }), /capTokens can't be/);
+  assert.doesNotThrow(() => checkSetting('capRequests', 50));
+  assert.throws(() => checkSetting('capRequests', -1), /capRequests can't be/);
+  assert.throws(() => checkSetting('capRequests', 2.5), /capRequests can't be/);
   assert.throws(() => checkSetting('bundleApprovals', 'yes'), /bundleApprovals can't be yes/);
   assert.throws(() => checkSetting('engineRoom', 1), /engineRoom can't be 1/);
 });

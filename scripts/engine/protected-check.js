@@ -6,6 +6,7 @@
 // a second to the blocked exit; without it, it prints the findings and exits 1 on any.
 //   node scripts/engine/protected-check.js --run <run id> --base <ref> [--json]
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 import { changeOf } from './change.js';
@@ -40,7 +41,8 @@ export async function protectedFindings(changes, protectedFiles = []) {
   return findings;
 }
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), cwd = process.cwd(), out = (line) => process.stdout.write(`${line}\n`), run } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   const base = runArg(argv, '--base');
   const json = argv.includes('--json');

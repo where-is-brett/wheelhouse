@@ -7,10 +7,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 30000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 30000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   const dir = runArg(argv, '--out');
   if (!runId || !dir || !path.isAbsolute(dir)) {

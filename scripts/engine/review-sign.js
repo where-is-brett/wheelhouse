@@ -5,11 +5,13 @@
 // didn't start) prints the reason and exits 1, so the run fails rather than carries on.
 //   node scripts/engine/review-sign.js --run <run id>
 import { helperClient } from '../host/helper-client.js';
+import { withTicket } from './ticket.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { runArg } from './done-check.js';
 import { REVIEW_STEPS } from './routes.js';
 
-export async function main(argv = process.argv.slice(2), { client = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+export async function main(argv = process.argv.slice(2), { client: given = helperClient({ timeout: 60000 }), out = (line) => process.stdout.write(`${line}\n`) } = {}) {
+  const client = withTicket(given, argv);
   const runId = runArg(argv);
   if (!runId) {
     out('usage: node scripts/engine/review-sign.js --run <run id>');

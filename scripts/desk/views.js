@@ -13,6 +13,7 @@ import { cardButtons } from '../mod/buttons.js';
 import { dataHash } from '../state/events.js';
 import { contextText } from './context.js';
 import { paneFrom } from './mod-pane.js';
+import { answeredLines, buildLines, runningLines, shippedLines } from '../engine/words.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const flat = (x) => (typeof x === 'string' ? x.replace(/\s+/g, ' ').trim() : x);
@@ -176,6 +177,17 @@ async function boardOf(source, options) {
 }
 
 const lined = (text) => String(text).split('\n');
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The briefing's lines from the engine: what shipped since `since`, and how many cards wait for another day.
+async function engineBriefing(source, { since }) {
+  let views = {};
+  try { views = (await source.views({}))?.views ?? {}; } catch { views = {}; }
+  if (!isPlain(views)) return [];
+  const waiting = Array.isArray(views.cardsWaiting) ? views.cardsWaiting.length : Number.isInteger(views.cardsWaiting?.count) ? views.cardsWaiting.count : 0;
+  return [...shippedLines(views, { since }), ...answeredLines(views, { since }), ...(waiting > 0 ? [waitingLine(waiting)] : [])];
+}
+export const waitingLine = (n) => `${n === 1 ? 'One question waits' : `${n} questions wait`} for another day, to keep to your cards a day.`;
 
 // One card of the waiting list by its id: its numbered item, the card event, its text and the
 // buttons a press offers, the 12-character hash a pane press names and the sha256 of its data.
@@ -212,6 +224,9 @@ const VIEWS = {
     // The survey the briefing mentions is the record's latest, unless the caller took one again.
     const survey = args.survey !== undefined ? args.survey : ((await source.views({}))?.views?.survey ?? null);
     const given = contextText('briefing', inputs, { ...args, survey, project: source.project, at });
+    // The engine's shipped work since the briefing's last, with its cost (Archon design, section 4.1).
+    const extra = await engineBriefing(source, { since: args.since ?? new Date(at.getTime() - DAY_MS).toISOString() });
+    if (extra.length > 0) given.text = `${given.text}\n${extra.join('\n')}`;
     return { ok: true, data: given, lines: lined(given.text) };
   },
 
@@ -223,7 +238,13 @@ const VIEWS = {
       const given = contextText('board', inputs, { project: source.project, at: now(), tab: args.tab, reserve: args.reserve ?? 0 });
       return { ok: true, data: given, lines: lined(given.text) };
     }
-    const text = renderBoard(inputs.model, { tab: args.tab ?? inputs.settings?.boardTab?.value, ...(args.limit ? { limit: args.limit } : {}) });
+    const tab = args.tab ?? inputs.settings?.boardTab?.value;
+    let text = renderBoard(inputs.model, { tab, ...(args.limit ? { limit: args.limit } : {}) });
+    // The build tab shows each run's steps in plain words and its cost.
+    if (tab === 'build') {
+      const runs = buildLines((await source.views({}))?.views ?? {}, { now: now() });
+      if (runs.length > 0) text = `${text}\n\n${runs.join('\n')}`;
+    }
     return { ok: true, data: { text }, lines: lined(text) };
   },
 
@@ -249,7 +270,7 @@ const VIEWS = {
     const got = await recordOf(source, { answers: true });
     if (got.refused) return { ok: false, refused: got.refused };
     const lines = workLines(got.views, got.answers ?? [], deskWords(got.views, await ownSettings(source), now(), got.names ?? []));
-    return { ok: true, data: got, lines };
+    return { ok: true, data: got, lines: [...lines, ...runningLines(got.views, { now: now() })] };
   },
 
   // With `context`, `part: 'settings'` or `'sources'` as the board-context hook adds them.

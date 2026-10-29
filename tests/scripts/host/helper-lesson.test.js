@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { engineRoutes } from '../../../scripts/engine/routes.js';
+import { ticketedRoutes } from '../../helpers/engine-tickets.js';
 import { workOrder } from '../../../scripts/engine/order.js';
 import { main } from '../../../scripts/engine/lesson.js';
 import { tempFolder } from '../../helpers/homes.js';
@@ -14,17 +15,18 @@ function setup(lessonOutput) {
   const written = [];
   const engine = {
     name: 'archon',
+    artefactsOf: (runId) => path.join(dir, 'art', runId),
     start: async () => ({ ok: true, runId: 'run-1', branch: 'wh/card-1' }),
     outputs: async () => (lessonOutput === undefined ? {} : { lesson: JSON.stringify(lessonOutput) }),
   };
-  const { routes } = engineRoutes({
+  const { routes } = ticketedRoutes(engineRoutes({
     projects: () => [{ project: 'p', folder: path.join(dir, 'project') }],
     engineFor: () => engine,
     ordersDir: () => path.join(dir, 'engine', 'orders'),
     filesDir: () => path.join(dir, 'engine'),
     write: async (project, kind, data) => { if (kind === 'lesson') written.push(data); },
     now: () => new Date('2026-10-30T02:00:00.000Z'),
-  });
+  }), engine, undefined);
   const order = workOrder({ work: { id: 'card-1', lane: 'quick', goal: 'A goal', done: [{ test: 'x' }] } });
   return { routes, written, start: () => routes['/engine/start']({ project: 'p', order }) };
 }

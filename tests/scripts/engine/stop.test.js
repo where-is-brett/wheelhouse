@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
-import { stopEngine, parsePs, parseLsof, stopWords, STOP_WAIT_MS } from '../../../scripts/engine/stop.js';
+import { stopEngine, endRun, parsePs, parseLsof, stopWords, STOP_WAIT_MS } from '../../../scripts/engine/stop.js';
 
 const recordings = loadRecordings(path.join(import.meta.dirname, '..', '..', 'fixtures', 'engine'));
 const SELF = 900;
@@ -184,4 +184,22 @@ test('parsePs and parseLsof read the listings', () => {
     { pid: 1, ppid: 0, pgid: 1, command: '/sbin/launchd' }, { pid: 812, ppid: 1, pgid: 812, command: 'sleep 747' },
   ]);
   assert.deepEqual([...parseLsof('p12\nfcwd\nn/a/b\np13\nfcwd\nn/c d\n')], [[12, '/a/b'], [13, '/c d']]);
+});
+
+test('one run\'s process tree is ended by pid, as All stop ends every run\'s, and another run\'s is left alone', async () => {
+  const engine = fakeEngine({ recordings });
+  const a = engine.start({ recording: 'quick-approved', running: true, ownerPid: 100 }).runId;
+  engine.start({ recording: 'quick-blocked', running: true, ownerPid: 200 });
+  const pc = computer([
+    ...base,
+    [100, 1, 100, 'fake-engine workflow run'],
+    [101, 100, 100, '/bin/sh -c step'],
+    [200, 1, 200, 'fake-engine workflow run'],
+  ]);
+  const got = await endRun({ engine, run: { id: a }, ...pc, self: SELF });
+  assert.deepEqual(pc.kills, [[-100, 'SIGTERM'], [101, 'SIGTERM']], 'its group by its leader, the rest by pid; never 200');
+  assert.deepEqual(got.ended.sort(), ['"/bin/sh -c step" (process 101)', '"fake-engine workflow run" (process 100)']);
+  assert.deepEqual(got.survivors, []);
+  assert.ok((await pc.list()).some((p) => p.pid === 200), 'the other run goes on');
+  assert.equal(engine.calls.filter((c) => c.call === 'stopAll').length, 0, 'no other run is cancelled');
 });

@@ -7,6 +7,7 @@
 //   start(order) -> { ok: true, runId } | { ok: false, refused }
 //   watch(cursor) -> { events: EngineEvent[], cursor }       (follow(cursor) is the same as an async iterator)
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
+//     (`unreachable: true` beside a refusal when the engine gave no reply at all, so the caller may try again)
 //   inspect(runId) -> { status, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], branch, pr, digest }
 //   stopAll(reason, { beforeCancel(runs: [{ id, folder }]) }?) -> { cancelled: string[], survivors: string[], paused: string[] }
 //

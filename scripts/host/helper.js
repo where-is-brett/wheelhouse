@@ -54,8 +54,10 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
 import { startEngineHost } from '../engine/host.js';
-import { stopEngine, stopWords } from '../engine/stop.js';
+import { stopEngine, endRun, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
+import { engineRunner } from '../engine/runner.js';
+import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
@@ -105,6 +107,8 @@ import { runReview } from '../review/clean-session.js';
 import { reviewsFor } from '../agents/reviews.js';
 import { ALLOWANCE_LABELS, allowanceWindowLines, isBuildQuestion } from '../protection/windows-builds.js';
 import { agentOfConfig } from '../agents/project-agent.js';
+import { routingInForce } from '../routing/in-force.js';
+import { bindingsOf } from '../engine/order.js';
 import { briefHash, featurePaths } from '../feature/files.js';
 import { readCapped } from '../feature/status.js';
 
@@ -397,6 +401,17 @@ export function incidentFor(views, number) {
   if (open.length === 0) return { open: false };
   const fixing = open.find((i) => Array.isArray(i.fixes) && i.fixes.includes(number));
   return { open: true, id: (fixing ?? open[0]).id, isFix: fixing !== undefined };
+}
+
+// `npm test` when the project in `folder` has a test script of its own in its package.json (not npm's placeholder,
+// which only fails), or null.
+function npmTestOf(folder) {
+  try {
+    const test = JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8'))?.scripts?.test;
+    return typeof test === 'string' && test.trim() !== '' && !/no test specified/.test(test) ? 'npm test' : null;
+  } catch {
+    return null;
+  }
 }
 
 // The keys the merge gate counts: this computer's own alone (design section 24.3 item 1).
@@ -961,6 +976,9 @@ export async function startHelper({
   // `sleep`, each the real one unless a test gives its own. And how often STOP is looked at, so a STOP set without the
   // helper (the STOP word's hook, the runbook's own) cancels the engine's runs too.
   engineStopWith = {}, stopPollMs = 2000,
+  // How often the card router and the dispatcher look again for each project on the engine (scripts/engine/runner.js,
+  // dispatch-run.js): answers to send, caps to keep, cost records to write, and work to start.
+  dispatchMs = 60 * 1000,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -3837,7 +3855,7 @@ export async function startHelper({
     // Whether the work is shown first comes from the run that opened the pull request; one no run of the helper's
     // opened needs the director's approval, as shown-first work does.
     const opened = engineRun.openedOf(project, call.pr);
-    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, guardrail, stop: stopped() };
+    return { ...base, enrolled, review, approval, incident: incidentFor(views, call.pr), shownFirst: opened ? opened.showFirst === true : true, level: opened?.level ?? null, guardrail, stop: stopped() };
   }
   const broker = brokerRoutes({
     placeOf: placeEngineCall,
@@ -4116,6 +4134,7 @@ export async function startHelper({
   }
   // STOP set by anything at all reaches the engine: each time it is seen turned on.
   let stopWatch = null;
+  let dispatchWatch = null;
   function watchStop() {
     const on = stopped();
     if (on && !stopSeen) stopEngines().catch(() => {});
@@ -4128,13 +4147,15 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
+        const { runner, dispatcher } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
-          workOf: (runId) => engineRunOf(project, runId),
+          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
         });
-        engineHosts.push({ project, engine, host });
+        host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
+        engineHosts.push({ project, engine, host, runner, dispatcher });
       } catch {
         // An engine that can't be followed gets no host; the other projects' hosts start all the same.
       }
@@ -4143,7 +4164,65 @@ export async function startHelper({
       watchStop();
       stopWatch = setInterval(watchStop, stopPollMs);
       stopWatch.unref?.();
+      dispatchWatch = setInterval(() => { engineTick().catch(() => {}); }, dispatchMs);
+      dispatchWatch.unref?.();
     }
+  }
+
+  // What a project's work orders take from its configuration (Archon design, sections 7.4 and 7.6): the routing
+  // table's column in force as the pack's bindings (an agent's own column when the project runs on another agent),
+  // the command that runs its tests, and the pages its previews take. Null when the configuration can't be read. The
+  // test command is the configuration's, or `npm test` when the project's package.json has a test script of its own.
+  function engineConfigOf(project, folder) {
+    if (typeof folder !== 'string') return null;
+    let config;
+    try {
+      const file = path.join(folder, ...CONFIG_FILE.split('/'));
+      config = readConfig(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
+    } catch {
+      return null;
+    }
+    const agent = agentOfConfig(config, { computerId: computerId() });
+    const own = agent !== agentOfConfig(null) && config.agentRouting?.[agent];
+    const roles = own ? Object.fromEntries(Object.entries(own).map(([role, model]) => [role, { model }])) : routingInForce(project, config, { now }).roles;
+    return { routing: bindingsOf(roles), testCommand: config.testCommand ?? npmTestOf(folder), pages: config.pages ?? [] };
+  }
+
+  // The card router and the dispatcher for one project on the engine (Archon design, sections 7.3, 8 and 10).
+  function engineDesk(project, engine) {
+    const views = () => buildViews(listEvents(stateDir(project), { report: () => {} }), ownKeyOnly(), { now });
+    const settings = () => Object.fromEntries(Object.entries(effectiveSettings({ project: views().settings ?? {}, now })).map(([k, v]) => [k, v.value]));
+    const files = path.join(stateDir(project), '..', 'engine');
+    const write = (kind, data) => engineWrite(project, kind, data);
+    const folder = registeredProjects().find((p) => p.project === project)?.record.folder;
+    const month = () => now().toISOString().slice(0, 7);
+    const dispatcher = dispatchRun({
+      engine, project, folder, file: path.join(files, 'dispatch.json'), readViews: views, settings, stopped, now, write,
+      config: () => engineConfigOf(project, folder),
+      start: (args) => engineRun.start(args),
+      readyOf: () => engineRun.readyAll(project),
+      spentThisMonth: () => Object.values(views().costs ?? {}).flat().filter((c) => String(c.at).startsWith(month())).reduce((n, c) => n + (Number.isFinite(c.data?.premiumRequests) ? c.data.premiumRequests : 0), 0),
+    });
+    const runner = engineRunner({
+      engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
+      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
+      titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
+      endRun: async (runId) => endRun({ engine, run: { id: runId, folder: (await engine.inspect(runId))?.folder ?? null }, ...engineStopWith }),
+    });
+    runner.onStart((args) => dispatcher.startAgain(args));
+    return { runner, dispatcher };
+  }
+  // One look for every project on the engine, one at a time.
+  let ticking = null;
+  function engineTick() {
+    ticking ??= (async () => {
+      for (const { runner, dispatcher } of engineHosts) {
+        if (closing) break;
+        await runner.tick().catch(() => {});
+        await dispatcher.tick().catch(() => {});
+      }
+    })().finally(() => { ticking = null; });
+    return ticking;
   }
 
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
@@ -4154,6 +4233,8 @@ export async function startHelper({
     closed ??= (async () => {
       closing = true;
       if (stopWatch) clearInterval(stopWatch);
+      if (dispatchWatch) clearInterval(dispatchWatch);
+      await ticking?.catch(() => {});
       await engineStopping?.catch(() => {});
       await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
       await new Promise((resolve) => {
@@ -4302,5 +4383,6 @@ export async function startHelper({
   }
   startEngineHosts();
 
-  return { address, close };
+  // `engine.start` is the helper's own way to start a run (the dispatcher's): no route starts one.
+  return { address, close, engine: { start: (args) => engineRun.start(args), tick: () => engineTick() } };
 }

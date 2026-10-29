@@ -500,13 +500,17 @@ export function describeRun({ id, variant, pass, why, usage }) {
   return `${id} ${variant}: ${pass ? 'pass' : 'fail'} (${why}) ${usage.input} in / ${usage.output} out`;
 }
 
+// The build engines an engine scenario can be played on (`--engine`): the fake, which plays recordings.
+export const ENGINE_RUNS = Object.freeze(['fake']);
+
 // The command line of `npm run eval`: scenario ids (24, or one leg, 27-route), or one of --all
 // (every suite), --suite <name> or --again (what the last run marked); --variant and --trials
 // with ids, --all or --suite; --agent <name>, one of AGENTS, the agent whose sessions run them; --level <lean|lightest>,
 // the Thoroughness level whose column the feature sessions start on (never Thorough), or --level premium --project
 // <name>, the premium model's pass, which only the director's Yes for that project allows. Or --ready
 // <lean|lightest|premium> --project <name> alone: the readiness step after a level's run (scripts/eval/ready.js).
-// `all`, `suite`, `again`, `agent`, `level`, `ready` and `project` are in the answer only when given.
+// --engine <name>, one of ENGINE_RUNS, runs only the scenarios that play on the build engine, on that engine.
+// `all`, `suite`, `again`, `agent`, `level`, `ready`, `project` and `engine` are in the answer only when given.
 export function parseArgs(argv) {
   const ids = [];
   let variants = VARIANTS;
@@ -518,6 +522,7 @@ export function parseArgs(argv) {
   let level = null;
   let ready = null;
   let project = null;
+  let engine = null;
   let chose = false;
   for (let i = 0; i < argv.length; i += 1) {
     let arg = argv[i];
@@ -561,6 +566,10 @@ export function parseArgs(argv) {
       value ??= argv[++i];
       if (typeof value !== 'string' || value === '' || value.startsWith('--')) throw new Error('--project needs the project\'s name, as setup recorded it');
       project = value;
+    } else if (arg === '--engine') {
+      value ??= argv[++i];
+      if (!ENGINE_RUNS.includes(value)) throw new Error(`--engine takes ${ENGINE_RUNS.join(', ')}, not ${value}`);
+      engine = value;
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option ${arg}`);
     } else if (/^\d+$/.test(arg)) {
@@ -571,6 +580,9 @@ export function parseArgs(argv) {
     } else {
       throw new Error(`Not a scenario number: ${arg}`);
     }
+  }
+  if (engine !== null && (ready !== null || again || agent !== null || level !== null)) {
+    throw new Error('--engine runs the scenarios that play on the build engine, on Claude Code\'s default: give it no --ready, --again, --agent or --level');
   }
   if (ready !== null) {
     if (ids.length > 0 || all || suite !== null || again || chose || agent !== null || level !== null) {
@@ -586,7 +598,7 @@ export function parseArgs(argv) {
   if (ways.length > 1) throw new Error(`Give one of scenario numbers, --all, --suite or --again, not ${ways.join(' and ')}`);
   if (again && chose) throw new Error('--again chooses its own variants and trials: give it no --variant or --trials');
   if (!ways.length) throw new Error('Name at least one scenario number, or --all, --suite <name> or --again, for example: npm run eval -- 24 --variant with');
-  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}), ...(level !== null ? { level } : {}), ...(project !== null ? { project } : {}) };
+  return { ids: [...new Set(ids)], variants, trials, ...(all ? { all } : {}), ...(suite !== null ? { suite } : {}), ...(again ? { again } : {}), ...(agent !== null ? { agent } : {}), ...(level !== null ? { level } : {}), ...(project !== null ? { project } : {}), ...(engine !== null ? { engine } : {}) };
 }
 
 // The local date, as the evaluations folder names a day's folder.

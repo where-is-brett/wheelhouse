@@ -226,11 +226,20 @@ export function archonAdapter({
     }
     const said = refusal('take the answer', result);
     if (said.startsWith('That ask was already')) answered.add(ask);
+    // No answer from Archon at all (a timeout, a database it couldn't open): the answer is tried again, never dropped.
+    if (!result.json) return { ...refusedWith(said), unreachable: true };
     return refusedWith(said);
   }
 
   return {
     name: 'archon',
+    // Copilot's plan counts each prompt sent (checks 74 and 79): a run routed to it uses the monthly requests. Its
+    // count isn't confirmed against GitHub's own figure yet (check 79's Copilot half), so no such run starts.
+    countsRequests: (routing = {}) => [...Object.values(routing.tiers ?? {}), ...Object.values(routing.aliases ?? {})].some((model) => /^copilot(?:[:/]|$)/i.test(String(model))),
+    requestsConfirmed: false,
+    words: {
+      requestsHeld: 'Some work is set to use Copilot, and every Copilot prompt uses your plan\'s monthly requests (about 200 a month), since your plan has no free model. The cap is 0, so no Copilot runs until you allow some.',
+    },
 
     // The continuation host's process (spec 6.3): it carries an answered run on. Given to the host to start, with
     // archonEnv as its whole environment.
@@ -348,11 +357,12 @@ export function archonAdapter({
       return refusedWith('Nothing to do: give an answer, a cancel or a resume');
     },
 
-    // The run's record (record.js), with `ownerPid`, the process that owns the run; status 'unknown' when Archon
-    // has no such run.
+    // The run's record (record.js), with `ownerPid`, the process that owns the run, and `folder`, the worktree it
+    // works in (worktreeOf, or null); status 'unknown' when Archon has no such run.
     async inspect(runId) {
       const result = await cli(['workflow', 'get', runId, '--verbose'], { json: true, timeout: CALL_MS });
-      return readRecord(result.code === 0 && result.json?.ok !== false ? result.json : null);
+      const json = result.code === 0 && result.json?.ok !== false ? result.json : null;
+      return { ...readRecord(json), folder: worktreeOf(json?.working_path, { home, worktreeBases }) };
     },
 
     // Each finished step's whole output, by its id (record.js), for the helper to sign a review from Archon's own

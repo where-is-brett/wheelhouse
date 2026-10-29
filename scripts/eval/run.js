@@ -10,6 +10,7 @@
 //        npm run eval -- --ready lean|lightest --project <project>
 //        npm run eval -- <id…> --variant with --trials 3 --level premium --project <project>
 //        npm run eval -- --ready premium --project <project>
+//        npm run eval -- <id…> | --all | --suite <name> --engine fake
 // A scenario is a file `<number>-<name>.js` in a suite; anything else there is
 // not one. A number names one scenario in one suite. A scenario whose pass has
 // more than one leg has a file per leg in its suite, each named `<number>-…`;
@@ -508,6 +509,7 @@ export async function main(argv, {
   probe,
   env = process.env,
   helper = () => helperClient(),
+  engineRun = async (args) => (await import('./engine-world.js')).runEngineScenario(args),
 } = {}) {
   const args = parseArgs(argv);
   if (args.ready !== undefined) return readyStep({ level: args.ready, project: args.project, home, print, env, helper });
@@ -594,6 +596,14 @@ export async function main(argv, {
         const after = Math.max(...entries.map((entry) => lastTrial(home, date, scenarioName(entry.scenario), variant, [])));
         return [variant, Array.from({ length: args.trials }, (_, i) => after + 1 + i)];
       }));
+      // With --engine, only the scenarios that play on the build engine.
+      if (args.engine !== undefined && entries.some((entry) => entry.scenario.engine === undefined)) {
+        if (args.ids.length > 0) {
+          print(`${id}: not run (it doesn't play on the build engine)`);
+          short = true;
+        }
+        continue;
+      }
       for (const entry of entries) {
         // Only the variants the scenario has (a scenario of one agent's may have `with` alone).
         for (const variant of args.variants.filter((v) => entry.scenario.variants?.[v] !== undefined)) {
@@ -616,6 +626,7 @@ export async function main(argv, {
     version,
     commit: commit === undefined ? await buildCommit() : commit,
     ...(agent !== null ? { agent } : {}),
+    ...(args.engine !== undefined ? { engine: args.engine } : {}),
     ...(column !== null ? { level: column.level, pins: { ...column.pins }, ...(column.yes ? { yes: column.yes } : {}) } : {}),
     runs: [...carried],
     ...(e2e !== undefined ? { e2e } : {}),
@@ -682,7 +693,14 @@ export async function main(argv, {
       started += 1;
       let outcome;
       try {
-        outcome = await run({ scenario, variant, trial, home, date, column, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
+        // A scenario that plays on the build engine runs no session: it plays in its own world (engine-world.js).
+        if (scenario.engine !== undefined) {
+          const got = await engineRun({ scenario, variant, trial, engine: args.engine ?? 'fake' });
+          const why = got?.why ?? 'it said nothing';
+          outcome = { pass: got?.pass === true, handled: true, why, file: null, usage: { input: 0, output: 0 }, line: `${scenarioName(scenario)} ${variant}: ${got?.pass === true ? 'pass' : 'fail'} (${why})` };
+        } else {
+          outcome = await run({ scenario, variant, trial, home, date, column, ...(runner === null ? {} : { runner }), ...(scenario.needsSandbox === true ? { beforePrompt: gate } : {}) });
+        }
       } catch (error) {
         // A trial that could not run is a failed one; the rest of the run carries on.
         const why = `could not run: ${error.message}`;
