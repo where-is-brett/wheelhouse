@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FEATURE_DIR, parseBrief } from './files.js';
+import { APPROVED_PATH } from './approved.js';
 import { FIX_ROUNDS, REPORT_WORDS } from '../lib/build-loop.js';
 
 const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'brief');
@@ -95,6 +96,14 @@ function fromLine(f) {
     + `Push only through \`open-pr\` and \`push\`, which push your own branch; never push to the change's own branch.${carries}\n`;
 }
 
+// What was asked for (build-loop design, section 13): the approved document the start copied
+// into the feature folder, which the plan, the tasks and the questions follow.
+function approvedSection() {
+  return `# What was asked for\n\nThe director approved a document for this work. It is at \`${APPROVED_PATH}\` in your worktree, and it is the spec. `
+    + 'Read it whole before anything else. Your plan, your tasks and your questions follow it: the goal and the done contract below sum it up, '
+    + 'and where they leave something out, the document says it. Never make up what it already decides; where it and this brief disagree, ask.\n\n';
+}
+
 const numbered = (items) => (items.length === 0 ? 'Nothing is listed.' : items.map((item, i) => `${i + 1}. ${item}`).join('\n'));
 
 function appetiteLine({ sessions, tokens }) {
@@ -139,6 +148,7 @@ export function renderBrief({ fields, pluginRoot, implementText, windowsBuilds =
     planLine: f.plan === undefined ? '' : `\nThe plan is at \`${f.plan}\`; use it rather than writing another.\n`,
     slicesLine: f.slices === undefined ? '' : `\nThis feature has ${f.slices} ${f.slices === 1 ? 'slice' : 'slices'}, each its own plan and its own pull request.\n`,
     fromLine: f.from === undefined ? '' : fromLine(f),
+    approvedSection: f.approved === undefined ? '' : approvedSection(),
     shownFirstLine: f.shownFirst
       ? '\nThis change is marked shown first: the director sees it before it ships. Do not alter what users see beyond the goal and the done contract; if you must, ask at decision level 3.\n'
       : '',
