@@ -10,7 +10,7 @@ import { makeEvent, eventPath, dataHash } from '../../../scripts/state/events.js
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
 import {
   approvalLine, confirmLine, LIFT_STOP, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, pairLine, uninstallLine, keepControlLine, usageLine, premiumLine, replyCode, replyCodeLine, setLineOf,
 } from '../../../scripts/state/card-lines.js';
 import { stateDir, stopFile } from '../../../scripts/lib/paths.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../../../scripts/lib/front-desk.js';
@@ -66,6 +66,10 @@ const INPUTS = {
     ...common, recommend: 'Take over here', kind: 'take-over', what: 'Your computer 0a1b2c3d has the front desk and nothing was written there for 3 hours; this one can only look.',
     options: [says('Take over here'), { label: 'Leave it there', says: 'This computer only shows the board.' }], target: { holder: '0a1b2c3d', counter: 4 },
   },
+  pair: {
+    ...common, recommend: 'Pair it', kind: 'pair', level: 4, checks: 'It changes no checks.', what: 'The app phone-app asks to read Wheelhouse and decide through it, with its key abcdef012345.',
+    options: [says('Pair it')], target: { client: 'phone-app', fingerprint: 'abcdef012345' },
+  },
   uninstall: {
     ...common, recommend: 'Remove it', kind: 'uninstall', level: 4, checks: 'The checks no longer guard this project.',
     what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.',
@@ -104,6 +108,7 @@ const LINES = {
   baseline: baselineLine(DOC),
   trust: trustLine('0a1b2c3d', '2026-10-19T22:30:00.000Z', 'abcdef012345'),
   'take-over': takeOverLine('0a1b2c3d', 4),
+  pair: pairLine('phone-app', 'abcdef012345'),
   uninstall: uninstallLine('cafe menu', DOC),
   question: null,
   'keep-control-files': keepControlLine('export-csv', DOC),
@@ -140,7 +145,7 @@ test("each kind's card carries its plain lines in Calm's order, then its set lin
       assert.equal(setLineOf(question.question), LINES[kind]);
       assert.equal(card.line, LINES[kind]);
       assert.equal(card.code, null);
-      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium']);
+      assert.deepEqual(NO_REPLY_CODE, ['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair']);
     } else {
       assert.deepEqual(after, [LINES[kind], replyCodeLine(replyCode(LINES[kind]))]);
       assert.equal(setLineOf(question.question), LINES[kind]);
@@ -207,6 +212,7 @@ test('the default ask for each kind is one line ending in a question mark, or th
     usage: 'Switch to Lean until it resets?',
     premium: 'Allow the premium model at Thorough?',
     'take-over': 'Move the First Mate to this computer?',
+    pair: 'Pair this app?',
   };
   for (const kind of CARD_KINDS) {
     const { card } = composeCard(input(kind));

@@ -1,0 +1,4 @@
+exit 0
+--- out
+Money is shown in dollars (waiting for the director to confirm it)
+--- err

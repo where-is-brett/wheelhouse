@@ -88,6 +88,12 @@ export function helperClient({ address = helperAddress(), timeout } = {}) {
     },
     merge: post('/merge'), //        { project, number, stop, bypass, reviewRequired?, approvalRequired?, touchesGuardrails? } -> a refusal's needs?: { approval: { pr, commit } } names the director's approval it lacks, and releaseApproval? says why a release pull request needs it (not one of the reasons)
     review: post('/review/run'), //   { project, number } -> { ok, started } or { ok, running }: the helper's own reviewer, in a clean session, of the open pull request's head; refused under STOP, where the agent's clean session isn't switched on, and for a head with a signed review or three failed runs (one review per commit); the signed review, or a note saying why there is none, follows in the background
+    // The desk (scripts/desk/, spec 5): every front end's one way in. Each body names `v: 'desk/1'` and `project` or `cwd`.
+    desk: {
+      read: post('/desk/read'), //   { v, project | cwd, view, args } -> { ok, v, view, data, lines }: a view, finished
+      act: post('/desk/act'), //     { v, project | cwd, command, args, evidence } -> { ok, v, changed } or { ok: false, v, refused }
+      watch: post('/desk/watch'), // { v, project | cwd, cursor } -> { ok, v, events, cursor }: the changes since the cursor
+    },
     state: {
       clone: post('/state/clone'), //   { project }: opens the project's private record, making it the first time
       write: post('/state/write'), //   { project, kind, data, id? }: a plain kind; the helper makes the event, with the caller's id when one is given (a random UUID the state does not hold); `cwd` may stand for `project`

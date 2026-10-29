@@ -1,0 +1,18 @@
+{
+  "not-the-word": {
+    "text": "",
+    "code": 0
+  },
+  "helper-away": {
+    "text": "{\"additionalContext\":\"Wheelhouse's helper isn't running, so writes, pushes, merges and new agents are refused until it is. Start it with the Wheelhouse command.\"}\n",
+    "code": 0
+  },
+  "stop-word": {
+    "text": "{\"additionalContext\":\"All stop is on. Say in one or two lines what was in progress; lifting it is a card for the director.\"}\n",
+    "code": 0
+  },
+  "stop-word-again": {
+    "text": "{\"additionalContext\":\"All stop is on. Say in one or two lines what was in progress; lifting it is a card for the director.\"}\n",
+    "code": 0
+  }
+}

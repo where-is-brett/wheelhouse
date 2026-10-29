@@ -18,19 +18,19 @@
 //
 // Under STOP every pick, Undo included, records nothing and says so. Budget allocation is in the
 // backlog (design section 14.1): the budget row offers no choice.
+import fs from 'node:fs';
 import { SETTINGS, definitionOf, checkSetting, say } from '../settings/catalogue.js';
 import { effectiveSettings, sayTime, sayValue } from '../settings/effective.js';
 import { AWAY, UNDO_MS } from '../lib/mod-numbers.js';
 import { SETTINGS_UNDER_STOP, STOP_HALTS, ONLY_YOU_LIFT, NOTHING_TO_UNDO, TOO_LATE_TO_UNDO, awayToast } from '../lib/calm-words.js';
 import { stopState as defaultStopState } from '../lib/stop.js';
-import { confirmationFor, listEvents } from '../state/events.js';
+import { confirmationFor } from '../state/events.js';
 import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget, BUDGET_MS } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
-import { localViews } from '../hooks/session-start.js';
-import { readProfileViews } from '../profile/store.js';
 import { helperClient } from '../host/helper-client.js';
-import { stateDir, profileDir } from '../lib/paths.js';
+import { settingsViews, settingEventOf } from '../desk/mod-records.js';
+import { modDesk, signedRecords } from '../desk/mod-desk.js';
 import { PREMIUM_ON } from '../routing/premium.js';
 
 export const ADVANCED = 'Advanced settings: ask the First Mate';
@@ -380,40 +380,15 @@ function labelOf(key, id, value, { nowMs, timeZone }) {
 // The settings in force for a project, from the views as the last sync left them. Settings that
 // can't be read are the defaults.
 export function effectiveFor({ project, now }) {
-  let projectViews = {};
-  let profileViews = {};
-  try {
-    const own = localViews(project, ['settings'])?.settings;
-    if (isRecord(own)) projectViews = own;
-  } catch {
-    // The defaults still hold.
-  }
-  try {
-    const profile = readProfileViews()?.settings;
-    if (isRecord(profile)) profileViews = profile;
-  } catch {
-    // The defaults still hold.
-  }
-  return effectiveSettings({ project: projectViews, profile: profileViews, now });
+  const views = settingsViews(project);
+  return effectiveSettings({ project: views.project, profile: views.profile, now });
 }
 
 // The latest confirmed change of each setting that has a home in the views, for the pane's
 // Undo: { [key]: { at, before } }, where `at` is when the change was confirmed and `before` the
 // value it replaced (null when it replaced none). A setting is read from the view of its home.
 export function changesFor({ project }) {
-  const views = { project: {}, profile: {} };
-  try {
-    const own = localViews(project, ['settings'])?.settings;
-    if (isRecord(own)) views.project = own;
-  } catch {
-    // No change can be undone.
-  }
-  try {
-    const profile = readProfileViews()?.settings;
-    if (isRecord(profile)) views.profile = profile;
-  } catch {
-    // No change can be undone.
-  }
+  const views = settingsViews(project);
   const out = {};
   for (const key of Object.keys(PANE)) {
     if (!Object.hasOwn(SETTINGS, key)) continue;
@@ -443,17 +418,7 @@ function undoPast(key, changes, nowMs) {
   return nowMs - Date.parse(changes[key]?.at) >= UNDO_MS;
 }
 
-// The setting event the helper made, read back from the clone it kept it in.
-// It must be the setting that was pressed: the key, the value and the end time all equal, so an
-// answer naming some other event signs nothing.
-function eventOf(home, project, id, data) {
-  if (typeof id !== 'string') return null;
-  const dir = home === 'profile' ? profileDir() : stateDir(project);
-  return listEvents(dir, { report: () => {} }).find((e) => e.id === id && e.kind === 'setting'
-    && e.data?.key === data.key && e.data.value === data.value && e.data.until === data.until) ?? null;
-}
-
-// pressSetting({ project, key, choice, client, now, timeZone, budget, changes, stopState })
+// pressSetting({ project, key, choice, client, desk, now, timeZone, budget, changes, stopState })
 //   -> Promise<{ made, says }>
 // `ready` is the Thoroughness levels whose columns are ready beyond Balanced and Thorough.
 // `choice` is a choice's id, or `undo`, which sets the value in force before the row's latest
@@ -461,16 +426,19 @@ function eventOf(home, project, id, data) {
 // views when not given); pressed later, it says it is too late.
 // `made` is true once the setting is written and its confirmation signed. A setting written but
 // not confirmed is not in force, and the press says it waits for the director's Confirm. Records
-// nothing for a choice that isn't offered or that the catalogue refuses. Never throws.
-export async function pressSetting({ project, key, choice, client, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace(), changes, stopState = defaultStopState, ready } = {}) {
+// nothing for a choice that isn't offered or that the catalogue refuses. The setting is written as
+// before; its signed confirmation goes to the desk as `set`'s evidence, with the setting it confirms,
+// and by the prompt record's own path when the desk doesn't take it (the helper can't be reached).
+// `desk` is the mod's desk (one over `client` without it). Never throws.
+export async function pressSetting({ project, key, choice, client, desk, now = () => new Date(), timeZone, budget = BUDGET_MS + helperGrace(), changes, stopState = defaultStopState, ready } = {}) {
   try {
-    return await press({ project, key, choice, client, now, timeZone, budget, changes, stopState, ready });
+    return await press({ project, key, choice, client, desk, now, timeZone, budget, changes, stopState, ready });
   } catch {
     return no(SAYS.failed);
   }
 }
 
-async function press({ project, key, choice, client, now, timeZone, budget, changes, stopState, ready }) {
+async function press({ project, key, choice, client, desk, now, timeZone, budget, changes, stopState, ready }) {
   const clock = typeof now === 'function' ? now : () => new Date(now);
   if (stopState().on) return no(SAYS.stopOn);
   const undoing = choice === 'undo';
@@ -506,7 +474,7 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
 
   const label = PANE[key].label;
   const waits = no(`${label} was set but not confirmed, so it waits for your Confirm`);
-  const event = eventOf(home, project, wrote.id, data);
+  const event = settingEventOf(home, project, wrote.id, data);
   if (event === null) return waits;
   let record;
   try {
@@ -516,7 +484,16 @@ async function press({ project, key, choice, client, now, timeZone, budget, chan
   }
   let sent = false;
   try {
-    sent = await sendKept(api, left, record);
+    const set = await (desk ?? modDesk({ project, client: api, now: clock })).act('set', { setting: key, value: picked.value }, { form: 'signed', records: signedRecords(record, { target: event }) });
+    if (set?.ok === true) {
+      fs.rmSync(record.file, { force: true });
+      sent = true;
+    }
+  } catch {
+    // By the prompt record's own path, below.
+  }
+  try {
+    if (!sent) sent = await sendKept(api, left, record);
   } catch {
     // Kept in pending/ for the next session start to send.
   }

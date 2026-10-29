@@ -79,8 +79,8 @@ export function playbookFor(variant, text = fs.readFileSync(path.join(REPO_ROOT,
 export async function composedCard(input) {
   const writes = [];
   const client = {
+    desk: { read: async () => ({ ok: true, v: 'desk/1', data: { ok: true, views: { waiting: [], glossary: {} }, cards: [] } }) },
     state: {
-      views: async () => ({ ok: true, views: { waiting: [], glossary: {} } }),
       write: async (body) => { writes.push(body); return { ok: true, id: body.id ?? crypto.randomUUID(), pushed: true }; },
     },
     prState: async () => ({ ok: true, result: { headSha: HEAD, state: 'open' } }),

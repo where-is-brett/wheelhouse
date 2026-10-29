@@ -34,8 +34,12 @@
 //   { cmd: 'stop', origin, cwd }                    a phoned "stop" or the pane: sets STOP
 //   { cmd: 'digest', origin, cwd }                  /wheelhouse-digest: the briefing since the last, as text (any origin)
 //
-// The signed records go through the helper as the prompt record sends its own: kept in
-// pending/ first, sent, and removed once the helper has them.
+// The signed records go through the desk (scripts/desk/client.js, as act's signed evidence) once
+// kept in pending/ as the prompt record keeps its own, and are removed once the helper has them;
+// while the helper can't be reached they are sent by the prompt record's own path, and stay kept
+// when that fails too. The pane, the build's progress, the holds and the courier's changes are read
+// through the desk, which reads the files itself when the helper isn't running.
+import fs from 'node:fs';
 import path from 'node:path';
 import { settingKey } from '../protection/windows-builds.js';
 import { computerId } from '../lib/paths.js';
@@ -46,11 +50,10 @@ import { keepEarned, sendKept } from '../hooks/prompt-record.js';
 import { withinBudget } from '../hooks/pending.js';
 import { helperGrace } from '../lib/helper-grace.js';
 import { projectOf as defaultProjectOf, readSmallText, beingSetUp as defaultBeingSetUp } from '../hooks/kit.js';
-import { featureSlug as defaultFeatureSlug, localViews as defaultLocalViews } from '../hooks/session-start.js';
+import { featureSlug as defaultFeatureSlug } from '../hooks/session-start.js';
 import { recordLift as defaultRecordLift } from '../lineage/check.js';
 import { journalTrouble as defaultJournalTrouble } from '../lib/setup-run.js';
 import { helperClient } from '../host/helper-client.js';
-import { loadBoardInputs } from '../board/inputs.js';
 import { recordModReading, recordReceived, recordSession } from '../usage/store.js';
 import { stopState as defaultStopState, setStop as defaultSetStop, liftStop as defaultLiftStop } from '../lib/stop.js';
 import { sessionRole as defaultSessionRole } from '../lib/role.js';
@@ -59,8 +62,9 @@ import { LIFT_STOP } from '../state/card-lines.js';
 import { FOREMAN_TICK_MS, TICK_MS, WATCH_BRIDGE_MS } from '../lib/mod-numbers.js';
 import { digestText as defaultDigest } from './digest.js';
 import { columnsReadyOf, premiumViewOf } from '../routing/in-force.js';
-import { paneModel as defaultPaneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
-import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, LOCK_WAIT_MS } from './courier.js';
+import { paneModel, writePaneStatus as defaultWritePaneStatus } from './status.js';
+import { needsYou, courierWake as defaultCourierWake, courierUnsent as defaultCourierUnsent, courierCursor, LOCK_WAIT_MS } from './courier.js';
+import { modDesk, signedRecords } from '../desk/mod-desk.js';
 import { watchTick as defaultWatchTick } from './watch.js';
 import { startedAsScript } from '../lib/started-as-script.js';
 import { NOT_RECORDED } from '../lib/calm-words.js';
@@ -120,7 +124,6 @@ const DEFAULTS = {
   settingsRows: defaultRows,
   settingsGroups: defaultGroups,
   computer: computerId,
-  localViews: defaultLocalViews,
   recordLift: defaultRecordLift,
   pressSetting: defaultSetting,
   readEffective: defaultEffective,
@@ -131,7 +134,6 @@ const DEFAULTS = {
   premiumView: premiumViewOf,
   // The bridge's own time zone, which the pane's times are worked out in.
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  loadInputs: loadBoardInputs,
   stopState: defaultStopState,
   setStop: defaultSetStop,
   liftStop: defaultLiftStop,
@@ -139,7 +141,6 @@ const DEFAULTS = {
   beingSetUp: defaultBeingSetUp,
   journalTrouble: defaultJournalTrouble,
   digestText: defaultDigest,
-  paneModel: defaultPaneModel,
   writePaneStatus: defaultWritePaneStatus,
   courierWake: defaultCourierWake,
   courierUnsent: defaultCourierUnsent,
@@ -173,6 +174,24 @@ function clientOf(d) {
   return d.client;
 }
 
+// The desk for a request's project (scripts/desk/mod-desk.js), over the bridge's helper client.
+function deskOf(project, cwd, d) {
+  d.desks ??= new Map();
+  const key = `${project ?? ''}\n${cwd ?? ''}`;
+  if (!d.desks.has(key)) d.desks.set(key, d.desk ?? modDesk({ project: project ?? undefined, cwd: typeof cwd === 'string' && path.isAbsolute(cwd) ? cwd : undefined, client: clientOf(d), now: d.now }));
+  return d.desks.get(key);
+}
+
+// The bridge's clock as a time the desk takes, or nothing when it can't be read.
+function instant(d) {
+  try {
+    const at = d.now();
+    return at instanceof Date && Number.isFinite(at.getTime()) ? at.toISOString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // The mod's reading. The store checks the session ID and drops windows it can't read; a cost
 // that isn't a number of dollars is left out. What the session is for is written the first time
 // only, and only inside a project, marked as the mod's: the session start, which can tell a
@@ -202,14 +221,16 @@ async function reply(req, d) {
   if (!fromDirector(req.origin)) return no(SAYS.notDirector);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs() });
+  const { made, says } = await d.replyRecord({ project, text: req.text, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs() });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
-// What the build loop has in progress, read from files only.
-async function inProgress(cwd, d) {
+// What the build loop has in progress, from the board read offline: the desk's glance (or the
+// `loadInputs` a test gives).
+async function inProgress(project, cwd, d) {
   try {
-    const features = (await d.loadInputs({ cwd, now: d.now, offline: true }))?.model?.build?.features;
+    const model = d.loadInputs ? (await d.loadInputs({ cwd, now: d.now, offline: true }))?.model : (await deskOf(project, cwd, d).read('glance'))?.data?.model;
+    const features = model?.build?.features;
     const n = Array.isArray(features) ? features.filter((f) => f?.step === 'building').length : 0;
     return n === 0 ? SAYS.nothingBuilding : `In progress: ${n} ${n === 1 ? 'feature' : 'features'} building.`;
   } catch {
@@ -225,7 +246,7 @@ async function press(req, d) {
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
   const { made, says, submit } = await d.pressCard({
-    project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs(),
+    project, card: req.card, hash: req.hash, label: req.label, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, liftStop: d.liftStop, stopState: d.stopState, budget: helperMs(),
   });
   const answer = { ok: made === true || strings(submit) };
   if (typeof says === 'string') answer.says = says;
@@ -288,14 +309,14 @@ async function setting(req, d) {
   if (req.origin !== PANE) return no(SAYS.notPane);
   const project = placeOf(req.cwd, d);
   if (!project) return no(SAYS.notProject);
-  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), now: d.now, timeZone: d.timeZone, budget: helperMs(), stopState: d.stopState, ready: readyOf(project, d) });
+  const { made, says } = await d.pressSetting({ project, key: req.key, choice: req.choice, client: clientOf(d), desk: deskOf(project, req.cwd, d), now: d.now, timeZone: d.timeZone, budget: helperMs(), stopState: d.stopState, ready: readyOf(project, d) });
   return typeof says === 'string' ? { ok: made === true, says } : { ok: made === true };
 }
 
 // /wheelhouse-go, or Lift STOP on the pane: the signed lift-stop action is kept first, by the prompt
-// record's own path, and STOP is lifted only once it is. A record that can't be signed or kept
-// leaves STOP on. The pane's press carries `since`, the start of the STOP the pane drew, and
-// lifts only that STOP, as a Lift STOP card does only for a STOP begun before it was shown, so a
+// record's own path, and STOP is lifted only once it is; the record then goes to the desk as
+// lift-all-stop's evidence. A record that can't be signed or kept leaves STOP on. The pane's press
+// carries `since`, the start of the STOP the pane drew, and lifts only that STOP, as a Lift STOP card does only for a STOP begun before it was shown, so a
 // pane drawn before STOP was set again can't lift a STOP the director never saw. /wheelhouse-go typed or
 // phoned lifts the STOP in force.
 async function go(req, d) {
@@ -315,25 +336,32 @@ async function go(req, d) {
   } catch {
     return no(lifting ? SAYS.cantLift : SAYS.cantSign);
   }
-  try {
-    await sendKept(clientOf(d), withinBudget(Date.now() + helperMs()), kept);
-  } catch {
-    // Kept in pending/ for the next session start to send.
+  const lifted = await deskOf(project, req.cwd, d).act('lift-all-stop', {}, { form: 'signed', records: signedRecords(kept) });
+  if (lifted?.ok === true) fs.rmSync(kept.file, { force: true });
+  else {
+    try {
+      await sendKept(clientOf(d), withinBudget(Date.now() + helperMs()), kept);
+    } catch {
+      // Kept in pending/ for the next session start to send.
+    }
   }
-  return { ok: true, says: `All stop is off. ${await inProgress(req.cwd, d)}` };
+  return { ok: true, says: `All stop is off. ${await inProgress(project, req.cwd, d)}` };
 }
 
-// A typed "stop" is the stop-word hook's; a phoned one or STOP on the pane sets it here.
+// A typed "stop" is the stop-word hook's; a phoned one or STOP on the pane sets it here, through the
+// desk, which sets it itself when the helper isn't running. When the desk can't set it (no project
+// to name, or no way to the files), it is set here all the same.
 async function stop(req, d) {
   if (req.origin !== 'bridge' && req.origin !== PANE) return no(SAYS.stopNotPhone);
-  d.setStop({ by: 'mod', now: d.now });
+  const set = await deskOf(placeOf(req.cwd, d), req.cwd, d).act('all-stop', { by: 'mod' });
+  if (set?.ok !== true) d.setStop({ by: 'mod', now: d.now });
   return { ok: true, says: SAYS.stopOn };
 }
 
 // /wheelhouse-digest, from any origin: the briefing since the last one, as the answer's text. It only reads,
 // and marks a briefing given, so whose command it is doesn't matter.
 async function digest(req, d) {
-  return d.digestText({ cwd: req.cwd, now: d.now, client: clientOf(d), load: d.loadInputs, readEffective: d.readEffective });
+  return d.digestText({ cwd: req.cwd, now: d.now, client: clientOf(d), ...(d.loadInputs ? { load: d.loadInputs } : {}), readEffective: d.readEffective });
 }
 
 // Whether the project's local settings name Wheelhouse's own status line (board-and-usage), which
@@ -394,14 +422,16 @@ async function foremanTick(found, d) {
 }
 
 // The courier's wake for this tick, as { submit, woken, wokeAt }, or null (courier.js), from this
-// tick's pane model; presence and the quiet hours are the settings in force. `woken` names the ids
+// tick's pane model; presence and the quiet hours are the settings in force. `watched` is the desk's
+// watch since the cursor courier.json kept, whose cursor is kept again beside what was sent. `woken` names the ids
 // the wake marked sent and `wokeAt` its stamp, which the mod sends back as `unsent` when it can't
 // hand the wake on. A courier
 // that fails wakes for nothing this tick and says so in the pane; what it found waits for the next
 // tick.
-async function courier(found, pane, req, d) {
+async function courier(found, pane, watched, req, d) {
   try {
     const effective = d.readEffective({ project: found.project, now: d.now });
+    const seen = await watched;
     const { submit, sent, at } = await d.courierWake({
       project: found.project,
       session: req.session,
@@ -411,6 +441,7 @@ async function courier(found, pane, req, d) {
       idle: req.idle === true,
       now: d.now,
       timeZone: d.timeZone,
+      ...(seen?.ok === true && typeof seen.cursor === 'string' ? { cursor: seen.cursor } : {}),
     });
     // One shape for every submit: a list of prompts.
     if (typeof submit !== 'string') return null;
@@ -435,9 +466,11 @@ function settingUp(cwd, d) {
 // A lineage hold whose hold file is gone has its card closed within a tick: the lift is recorded
 // once for each standing hold (lineage/check.js recordLift), by the tick because the session start
 // can't, the hold file being gone while no session starts. It informs, so a failure is passed over.
-async function liftingHold(project, d) {
+// The holds are the record's, read through the desk.
+async function liftingHold(project, cwd, d) {
   try {
-    const views = d.localViews(project, ['lineageHolds']);
+    const got = await deskOf(project, cwd, d).read('waiting');
+    const views = got?.ok === true ? { lineageHolds: got.data?.views?.lineageHolds } : null;
     if (!Array.isArray(views?.lineageHolds) || views.lineageHolds.length === 0) return;
     await d.recordLift({ project, views, computer: d.computer(), now: d.now, client: clientOf(d), left: withinBudget(Date.now() + helperMs()) });
   } catch { /* the next tick tries again */ }
@@ -475,16 +508,18 @@ async function tick(req, d) {
   if (role === 'front-desk' && settingUp(req.cwd, d)) return { ok: true, role: SETUP_ROLE, every: TICK_MS };
   if (role !== 'front-desk' || found === null) return { ok: true, role, every: 0 };
   const started = d.elapsedClock();
-  // The watch runs beside the pane, so the two share the time the tick has.
+  // The watch runs beside the pane, so the two share the time the tick has; so does the desk's
+  // watch of the changes since the courier's cursor.
   const watched = watching(found, role, clientOf(d), d);
-  const lifting = liftingHold(found.project, d);
-  // The pane is read from files, so it asks the helper whether it is up, to say so when it isn't.
-  const pane = await d.paneModel({ project: found.project, cwd: req.cwd, now: d.now, helperUp: await helperAnswers(d), client: clientOf(d) });
+  const lifting = liftingHold(found.project, req.cwd, d);
+  const changes = deskWatch(found.project, req.cwd, d);
+  // The pane says whether the helper is up, so it asks it, to say so when it isn't.
+  const pane = await paneOf(found.project, req.cwd, await helperAnswers(d), d);
   const watcher = (await watched)?.watcher;
   pane.watcher = typeof watcher === 'string' ? watcher : null;
   await lifting;
   // With too little of BRIDGE_MS left, the courier waits for the next tick, marking nothing.
-  const wake = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, req, d);
+  const wake = d.elapsedClock() - started > BRIDGE_MS - COURIER_MS ? null : await courier(found, pane, changes, req, d);
   try {
     d.writePaneStatus(found.project, pane);
   } catch {
@@ -498,6 +533,24 @@ async function tick(req, d) {
     if (wake.wokeAt !== undefined) answer.wokeAt = wake.wokeAt;
   }
   return answer;
+}
+
+// The pane's model, from the desk's glance (scripts/desk/mod-pane.js), at the bridge's clock and in its
+// time zone. When the desk can't give it at all, the model says why, with STOP as it stands.
+async function paneOf(project, cwd, helperUp, d) {
+  const got = await deskOf(project, cwd, d).read('glance', { pane: true, helperUp, at: instant(d), timeZone: d.timeZone });
+  if (got?.ok === true && isRecord(got.data?.pane)) return got.data.pane;
+  const why = typeof got?.refused === 'string' ? got.refused : undefined;
+  return paneModel({
+    project, now: d.now, helperUp, timeZone: d.timeZone, loadInputs: async () => ({ none: why }), readRecord: async () => null, readStop: () => d.stopState(),
+  });
+}
+
+// The desk's changes since the cursor courier.json keeps, or null when they can't be read.
+function deskWatch(project, cwd, d) {
+  return Promise.resolve()
+    .then(() => deskOf(project, cwd, d).watch(courierCursor(project)))
+    .catch(() => null);
 }
 
 // The mod couldn't hand on the courier's wake stamped `at` that marked `ids`: the courier takes

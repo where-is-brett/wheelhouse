@@ -138,6 +138,21 @@ export function takeOverLine(holder, counter) {
 }
 export const TAKEOVER_LINE = /^Take over the lock from computer ([0-9a-f]{8}), counter ([1-9][0-9]*)$/;
 
+// The label on the card that pairs a later app with the desk (spec 5.3), and the line naming the app by its id and its
+// key's fingerprint (the first twelve hex characters of the SHA-256 of its public key), so a click stands for that
+// app's key and no other. Unpairing signs its own line.
+export const PAIR_LABEL = 'Pair it';
+export const UNPAIR_LABEL = 'Unpair it';
+export const APP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export function pairLine(client, fingerprint) {
+  return `Pair the app ${client}, key ${String(fingerprint).slice(0, 12)}`;
+}
+export const PAIR_LINE = /^Pair the app ([A-Za-z0-9][A-Za-z0-9._-]{0,63}), key ([0-9a-f]{12})$/;
+export function unpairLine(client, fingerprint) {
+  return `Unpair the app ${client}, key ${String(fingerprint).slice(0, 12)}`;
+}
+export const UNPAIR_LINE = /^Unpair the app ([A-Za-z0-9][A-Za-z0-9._-]{0,63}), key ([0-9a-f]{12})$/;
+
 // The label whose click on uninstall's card lets it remove Wheelhouse from a project (ruling R90).
 export const UNINSTALL_LABEL = 'Remove it';
 
@@ -255,6 +270,8 @@ export const SET_LINES = [
   new RegExp(`^${literal(BASELINE_WORDS)}, [0-9a-f]{12}$`, 'm'),
   new RegExp(TRUST_LINE.source, 'm'),
   new RegExp(TAKEOVER_LINE.source, 'm'),
+  new RegExp(PAIR_LINE.source, 'm'),
+  new RegExp(UNPAIR_LINE.source, 'm'),
   new RegExp(UNINSTALL_LINE.source, 'm'),
   new RegExp(KEEP_CONTROL_LINE.source, 'm'),
   new RegExp(USAGE_LINE.source, 'm'),

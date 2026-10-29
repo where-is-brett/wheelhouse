@@ -3,11 +3,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { computerId, stateDir } from '../lib/paths.js';
-import { sign } from './signing.js';
+import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -39,7 +39,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -73,6 +73,9 @@ const ACTION_OWN = {
   // The director's Take over here (design section 9): the computer that held the lock and the counter it held it
   // at, as the card showed them. The helper takes the lock only while it still stands so.
   'take-over': ['holder', 'counter'],
+  // A later app paired with the desk, or unpaired (spec 5.3): its id and its key's twelve-character fingerprint.
+  'pair-client': ['client', 'fingerprint'],
+  'unpair-client': ['client', 'fingerprint'],
   // The director's Remove it on uninstall's card (ruling R90): the project its line names (the
   // project's slug, or the folder's own name when none is registered there) and the full SHA-256 of
   // the list uninstall puts back. Its question is the card's set line alone. It is kept in
@@ -177,6 +180,10 @@ function checkAction(data) {
     }
     if (data.label !== TRUST_LABEL) bad(`needs the ${TRUST_LABEL} label`);
     if (data.question !== trustLine(data.computer, data.at, data.fingerprint)) bad('carries only the trust card\'s set line as its question');
+  } else if (data.action === 'pair-client' || data.action === 'unpair-client') {
+    if (typeof data.client !== 'string' || !APP_ID.test(data.client) || typeof data.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(data.fingerprint)) bad('needs the app\'s id and its key\'s twelve-character fingerprint');
+    const line = data.action === 'pair-client' ? pairLine(data.client, data.fingerprint) : unpairLine(data.client, data.fingerprint);
+    if (data.question !== line) bad('carries only its card\'s set line as its question');
   } else if (data.action === 'take-over') {
     if (typeof data.holder !== 'string' || !/^[0-9a-f]{8}$/.test(data.holder)) bad('needs the id of the computer that holds the lock');
     if (!Number.isInteger(data.counter) || data.counter < 1) bad('needs the counter the lock was held at');
@@ -215,6 +222,9 @@ function questionIdOf(id) {
 // What the build loop's plain records must carry. Each guards the shape; what the
 // records mean is read from them by the views and by the foreman.
 const PLAIN_SHAPES = {
+  // Words typed into a front end without a First Mate (a later UI), queued for the First Mate's next
+  // turn and shown as waiting (spec 5.2); `via` names the front end.
+  request: { must: ['words', 'via'], may: [] },
   // `from`: the ready-made change the work starts from (ruling P4): its commit, the ref that keeps
   // it (`refs/wheelhouse/from/<id>`) and, when it carries on a pull request, that request's number.
   work: { must: ['id', 'title', 'lane', 'visible', 'dependsOn'], may: ['doc', 'place', 'parent', 'from'] },
@@ -632,6 +642,27 @@ export function eventHash(event) {
 // The sha256 of a record's data in canonical JSON: what an answer names, so it answers the question as shown.
 export function dataHash(data) {
   return crypto.createHash('sha256').update(canonicalJson(data)).digest('hex');
+}
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+// Why a signed record sent to be recorded is refused, or null when it may be: it must be a whole
+// event of a signed kind, signed by an enrolled computer and made on this one, of a kind a caller
+// may send (the helper makes the premium model's records and provenance itself), and no other event
+// in the state (`held`, the events with its id) may carry its id. The helper's /state/record and the
+// desk's signed evidence both check a record this way.
+export function checkRecord(event, { enrolled, held = [], computer = computerId() } = {}) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return 'the record must be an event';
+  if (!PROTECTED_KINDS.includes(event.kind)) return 'only a signed kind is recorded this way';
+  if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) return 'the record is not a whole event';
+  if (!verify(event, enrolled)) return 'the record is not signed by an enrolled computer';
+  if (event.sig.computer !== computer || event.computer !== computer) return 'only this computer\'s own signed records are taken';
+  if (event.kind === 'premium-card') return 'only the helper offers the premium model\'s card';
+  if (event.kind === 'premium-check') return 'only the helper checks the premium model';
+  if (event.kind === 'premium-failed') return 'only the helper records the premium model\'s evaluation failing';
+  if (event.kind === 'provenance') return 'only the helper records what built a pull request';
+  if (held.some((e) => canonicalJson(e) !== canonicalJson(event))) return 'another event in the state carries this record\'s id, so it was not recorded';
+  return null;
 }
 
 // The kind and data of a confirmation of `event`, for makeEvent to sign.

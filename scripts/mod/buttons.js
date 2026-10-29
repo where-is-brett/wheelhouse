@@ -22,7 +22,7 @@ import { SIGNED_LABELS } from '../hooks/prompt-record.js';
 import { CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
 import { SUGGEST, NOT_NOW, SHOW_ME, WHY } from '../lib/calm-words.js';
 import { textOf } from '../cards/compose.js';
-import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
+import { setLinesOf, TRUST_LINE, TAKEOVER_LINE, PAIR_LINE, UNINSTALL_LINE } from '../state/card-lines.js';
 import { baselineWording } from '../lib/measures-clicks.js';
 import { UNATTENDED_CARD } from '../protection/windows-builds.js';
 
@@ -87,10 +87,11 @@ export function isSetupCard(card) {
   return card?.kind === 'setup' || card?.kind === 'confirm-all' || setLinesOf(text).some((line) => SETUP_LINE.test(line));
 }
 
-// Whether a card is a trust card or a take-over card: of that kind, or carrying its set line.
+// Whether a card is a trust card, a take-over card or the card that pairs an app: of that kind, or carrying its set
+// line. Each is answered only by the click on the card itself.
 export function isTrustCard(card) {
   const text = typeof card?.question === 'string' ? card.question : '';
-  return card?.kind === 'trust' || card?.kind === 'take-over' || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line));
+  return ['trust', 'take-over', 'pair'].includes(card?.kind) || setLinesOf(text).some((line) => TRUST_LINE.test(line) || TAKEOVER_LINE.test(line) || PAIR_LINE.test(line));
 }
 
 // Whether a card is uninstall's: of kind uninstall, or carrying uninstall's set line.

@@ -25,8 +25,8 @@
 // On Copilot no hook writes (rulings P5-20, P5-22): the entry asks the helper's /health once per event it runs
 // steps for, waiting at most HELPER_PROBE_MS, and gives every step `writeVia: 'helper'`, the helper client and
 // whether the helper answered (`helperUp`). So the STOP guard marks no bypass and, with no helper, refuses all
-// but reading with NO_HELPER_STOP; the STOP word asks the helper to set STOP; the board context and the session
-// start write nothing under the Wheelhouse home and never open the keys folder. The entry's own records go to
+// but reading with NO_HELPER_STOP; the STOP word asks the desk to set STOP (`all-stop`, by the prompt); the board
+// context and the session start write nothing under the Wheelhouse home and never open the keys folder. The entry's own records go to
 // the helper as session marks (/session/mark): a tool Wheelhouse doesn't know, a compaction, and a run past its
 // deadline. A mark that can't be sent is lost; nothing is kept to send later.
 import claudeTools from '../../../adapters/claude-code/tools.js';
@@ -123,9 +123,29 @@ async function bounded(promise) {
   }
 }
 
+// The helper's client as the STOP word uses it: STOP is set through the desk (scripts/desk/client.js, never its local
+// core: this runs in the sandbox), as the director's `all-stop`. Should the desk not set it (a project the helper
+// can't serve its desk for), the helper's own /stop/set is asked, as before: stopping too much is the safe error.
+// The desk is loaded only when the word is typed, so no other event's start pays for it.
+function stopClient(client, cwd) {
+  return {
+    ...client,
+    async stop({ by } = {}) {
+      let set = null;
+      try {
+        const { deskClient } = await import('../../desk/client.js');
+        set = await deskClient({ cwd, client, local: 'never' }).act('all-stop', { by });
+      } catch {
+        // A desk that fails to answer at all is asked no further; /stop/set is asked instead.
+      }
+      return set?.ok === true ? { ok: true } : client.stop({ by });
+    },
+  };
+}
+
 // Each step's deps on Copilot: every write through the helper (ruling P5-20), and the STOP guard marks no bypass.
-function helperStepDeps(shared, given) {
-  const own = { stopGuard: { bypass: false } };
+function helperStepDeps(shared, given, cwd) {
+  const own = { stopGuard: { bypass: false }, stopWord: { client: stopClient(shared.client, cwd) } };
   return Object.fromEntries(Object.keys(STEP_MODULES).map((name) => [name, { ...shared, ...own[name], ...given?.[name] }]));
 }
 
@@ -176,7 +196,7 @@ async function decideEvent(event, { stdin, env, deps, seen }) {
   } catch {
     // not answering
   }
-  const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps);
+  const stepDeps = helperStepDeps({ writeVia: 'helper', client, helperUp, agent: 'copilot' }, deps.stepDeps, raw.cwd);
   return runSteps(STEPS[event], inputs, { event, steps: deps.steps, stepDeps, dir });
 }
 

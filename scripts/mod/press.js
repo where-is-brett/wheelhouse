@@ -25,6 +25,14 @@
 // claimed while the answer is written, and let go again, so a suggestion and a press at once
 // can't both write.
 //
+// The signed record and the plain answer after it go to the desk together, as `answer` with the
+// record as its signed evidence, and Not now as `not-now`; the desk checks the card still stands as
+// the pane drew it. While the helper can't be reached (the desk answers `away`), or when the desk
+// doesn't take them, they go by the prompt record's own path as before, kept in pending/ when the
+// helper doesn't take them either. The other plain answers (Explain more, Show me, Keep as is, a
+// question card's options, Why? and Suggest a change…) sign nothing, so no act takes them without
+// evidence; they are written as a click writes them.
+//
 // Under STOP the helper refuses /state/write and takes /state/record. So a deciding press still
 // signs and sends its record, which closes the card on its own; no card answer is written or
 // kept, so Not now notes nothing, and Explain more, Show me and a question card's options still
@@ -51,6 +59,7 @@ import { numberedWaiting } from '../board/model.js';
 import { setLineOf, replyCode } from '../state/card-lines.js';
 import { cardButtons, kindOf, isSetupCard } from './buttons.js';
 import { cardTextOf, hashOf } from './status.js';
+import { modDesk, signedRecords } from '../desk/mod-desk.js';
 import { claim, answeredInPending, repliedDir, viewsNow, confirmsBuilds, allowsElsewhere, ALLOWED_ELSEWHERE, CLICK_ONLY_LABELS } from './reply.js';
 
 const NOT_NOW = 'Not now';
@@ -145,20 +154,30 @@ function promptOf(kind, label, n, id) {
     : `${LEADS.pane} the director pressed ${label} on card ${n} (${id}).`;
 }
 
-// pressCard({ project, card, hash, label, client, now, liftStop, stopState, budget })
+// The desk's answer to an act, or null when it couldn't be asked.
+async function asked(desk, command, args, evidence) {
+  try {
+    return await desk.act(command, args, evidence);
+  } catch {
+    return null;
+  }
+}
+
+// pressCard({ project, card, hash, label, client, desk, now, liftStop, stopState, budget })
 //   -> Promise<{ made, says, submit? }>
 // `card` is the waiting card's id and `hash` what the pane drew it with. Refuses, recording
 // nothing, a card that isn't waiting, one whose text changed, a label it doesn't offer, and one
-// already answered in pending/ or claimed. Never throws.
-export async function pressCard({ project, card, hash, label, client, now = () => new Date(), liftStop = defaultLift, stopState = defaultStopState, budget = BUDGET_MS + helperGrace() } = {}) {
+// already answered in pending/ or claimed. `desk` is the mod's desk (one over `client` without it).
+// Never throws.
+export async function pressCard({ project, card, hash, label, client, desk, now = () => new Date(), liftStop = defaultLift, stopState = defaultStopState, budget = BUDGET_MS + helperGrace() } = {}) {
   try {
-    return await press({ project, card, hash, label, client, now, liftStop, stopState, budget });
+    return await press({ project, card, hash, label, client, desk, now, liftStop, stopState, budget });
   } catch {
     return no(SAYS.failed);
   }
 }
 
-async function press({ project, card, hash, label, client, now, liftStop, stopState, budget }) {
+async function press({ project, card, hash, label, client, desk, now, liftStop, stopState, budget }) {
   if (typeof card !== 'string' || !MARKER.test(card)) return no(SAYS.answered);
   let views;
   let events;
@@ -192,10 +211,11 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const what = `${label} on card ${n}`;
   const api = client ?? helperClient({ timeout: budget });
   const left = withinBudget(Date.now() + budget);
+  const mod = desk ?? modDesk({ project, client: api, now });
 
   // Not now and Keep as is sign nothing: each writes the plain card answer alone, as a click does.
   if (label !== NOT_NOW && label !== KEEP_AS_IS && button.does === 'record') {
-    return signed({ project, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, left, now, liftStop, stopState });
+    return signed({ project, card, hash, question, label, what, meanwhile: data.parts?.meanwhile, markers, shownAt: entry.at, api, desk: mod, left, now, liftStop, stopState });
   }
 
   const prompt = [promptOf(kindOf(data), label, n, card)];
@@ -208,7 +228,9 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
   const choice = decides(data, label);
   const marker = choice ? claim(project, card) : null;
   if (choice && !marker) return no(SAYS.answered);
-  const written = await writeAnswer(project, api, left, question, label, now);
+  // Not now goes to the desk, which needs no evidence for it; by the click's own path when the desk doesn't take it.
+  const put = label === NOT_NOW && (await asked(mod, 'not-now', { card, hash }))?.ok === true ? 'sent' : null;
+  const written = put ?? await writeAnswer(project, api, left, question, label, now);
   if (written === null) {
     if (marker) release([marker]);
     if (label === NOT_NOW || choice) return no(SAYS.lost);
@@ -223,7 +245,7 @@ async function press({ project, card, hash, label, client, now, liftStop, stopSt
 // which closes the card on its own. Under STOP the plain answer is left out.
 // The card's own time goes to earned as `shownAt`, as a reply's does: the pane drew the card
 // then, so a Lift STOP card from before this STOP began can't lift it.
-async function signed({ project, question, label, what, meanwhile, markers, shownAt, api, left, now, liftStop, stopState }) {
+async function signed({ project, card, hash, question, label, what, meanwhile, markers, shownAt, api, desk, left, now, liftStop, stopState }) {
   const held = [];
   for (const id of markers) {
     const file = claim(project, id);
@@ -265,13 +287,21 @@ async function signed({ project, question, label, what, meanwhile, markers, show
     release(held);
     return no(lifting ? SAYS.cantLift : SAYS.cantSign);
   }
+  // The record and the answer after it, through the desk; by the click's own path when the desk
+  // doesn't take them (a record the helper took already is taken again as the same record).
   let sent = false;
-  try {
-    sent = await sendKept(api, left, record);
-  } catch {
-    // Kept in pending/ for the next session start to send.
+  const decided = await asked(desk, 'answer', { card, option: label, hash }, { form: 'signed', records: signedRecords(record) });
+  if (decided?.ok === true) {
+    fs.rmSync(record.file, { force: true });
+    sent = true;
+  } else {
+    try {
+      sent = await sendKept(api, left, record);
+    } catch {
+      // Kept in pending/ for the next session start to send.
+    }
+    if (!stopState().on) await writeAnswer(project, api, left, question, label, now);
   }
-  if (!stopState().on) await writeAnswer(project, api, left, question, label, now);
   return { made: true, says: kept(SIGNED_LABELS.includes(label) ? decidedToast(label, meanwhile) : `Recorded: ${what}`, sent) };
 }
 

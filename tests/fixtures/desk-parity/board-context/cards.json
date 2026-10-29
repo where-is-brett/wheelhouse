@@ -1,0 +1,4 @@
+{
+  "prompt": "Carry on",
+  "context": "Cards to ask this visit: 1. Run `cli.js cards` and ask them in one AskUserQuestion call, after the briefing."
+}

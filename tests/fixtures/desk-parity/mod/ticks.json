@@ -1,0 +1,546 @@
+{
+  "opened": {
+    "ok": true,
+    "role": "front-desk",
+    "every": 15000,
+    "pane": {
+      "v": 1,
+      "project": "owner__name",
+      "at": "2026-10-29T12:00:00.000Z",
+      "glance": "Wheelhouse · 1 waiting",
+      "stop": {
+        "on": false,
+        "since": null
+      },
+      "cards": [
+        {
+          "id": "c1",
+          "n": 1,
+          "header": "Approve work",
+          "kind": "approve-work",
+          "text": "Approve this work as written?\nThe plan for exporting a report as a spreadsheet file (export-csv).\nIt changes what users see, which is yours to decide at level 3.\nNothing is built until you say.\nTo know more, just ask.\nApprove export-csv (feature lane) as written, aaaaaaaaaaaa\nReply code: FK5X",
+          "hash": "792b413f0b25",
+          "buttons": [
+            {
+              "label": "Approve",
+              "does": "record",
+              "shape": "filled"
+            },
+            {
+              "label": "Suggest a change…",
+              "does": "suggest",
+              "shape": "outlined"
+            },
+            {
+              "label": "Not now",
+              "does": "record",
+              "shape": "small",
+              "corner": true
+            },
+            {
+              "label": "Why?",
+              "does": "why",
+              "shape": "small"
+            },
+            {
+              "label": "Show me",
+              "does": "turn",
+              "shape": "small"
+            }
+          ],
+          "note": null,
+          "blocking": false,
+          "asked": true,
+          "parts": {
+            "kind": "approve-work",
+            "header": "Approve work",
+            "ask": "Approve this work as written?",
+            "what": "The plan for exporting a report as a spreadsheet file (export-csv).",
+            "small": "It changes what users see, which is yours to decide at level 3.",
+            "recommendation": "Approve, because the plan is small and the checks are written.",
+            "options": [
+              {
+                "label": "Approve",
+                "says": "It approves the plan and building starts.",
+                "recommended": true
+              },
+              {
+                "label": "Suggest a change…",
+                "says": "Tell me what you'd change; I'll come back with a new proposal.",
+                "recommended": false
+              },
+              {
+                "label": "Show me",
+                "says": "I show you what it looks like, then ask again.",
+                "recommended": false
+              },
+              {
+                "label": "Not now",
+                "says": "Leave this waiting; nothing changes yet.",
+                "recommended": false
+              }
+            ],
+            "why": "It changes what users see, which is yours to decide at level 3.",
+            "meanwhile": "Nothing is built until you say.",
+            "line": "Approve export-csv (feature lane) as written, aaaaaaaaaaaa",
+            "code": "FK5X"
+          },
+          "steered": null,
+          "waited": "asked 3 hours ago",
+          "revised": false
+        }
+      ],
+      "verdict": "One thing needs you. Nothing is broken.",
+      "since": null,
+      "launch": null,
+      "building": [],
+      "health": [],
+      "healthNote": {
+        "allWell": true,
+        "protection": "Standard",
+        "week": null
+      },
+      "ideas": {
+        "count": 0,
+        "fresh": 0
+      },
+      "updated": "12:00",
+      "usage": null,
+      "finished": [],
+      "incidents": [],
+      "watcher": "running",
+      "missing": [
+        "The build loop isn't running yet"
+      ]
+    },
+    "glance": "Wheelhouse · 1 waiting",
+    "status": "Wheelhouse · 1 waiting"
+  },
+  "added": {
+    "ok": true,
+    "role": "front-desk",
+    "every": 15000,
+    "pane": {
+      "v": 1,
+      "project": "owner__name",
+      "at": "2026-10-29T12:00:15.000Z",
+      "glance": "Wheelhouse · 2 waiting",
+      "stop": {
+        "on": false,
+        "since": null
+      },
+      "cards": [
+        {
+          "id": "c1",
+          "n": 1,
+          "header": "Approve work",
+          "kind": "approve-work",
+          "text": "Approve this work as written?\nThe plan for exporting a report as a spreadsheet file (export-csv).\nIt changes what users see, which is yours to decide at level 3.\nNothing is built until you say.\nTo know more, just ask.\nApprove export-csv (feature lane) as written, aaaaaaaaaaaa\nReply code: FK5X",
+          "hash": "792b413f0b25",
+          "buttons": [
+            {
+              "label": "Approve",
+              "does": "record",
+              "shape": "filled"
+            },
+            {
+              "label": "Suggest a change…",
+              "does": "suggest",
+              "shape": "outlined"
+            },
+            {
+              "label": "Not now",
+              "does": "record",
+              "shape": "small",
+              "corner": true
+            },
+            {
+              "label": "Why?",
+              "does": "why",
+              "shape": "small"
+            },
+            {
+              "label": "Show me",
+              "does": "turn",
+              "shape": "small"
+            }
+          ],
+          "note": null,
+          "blocking": false,
+          "asked": true,
+          "parts": {
+            "kind": "approve-work",
+            "header": "Approve work",
+            "ask": "Approve this work as written?",
+            "what": "The plan for exporting a report as a spreadsheet file (export-csv).",
+            "small": "It changes what users see, which is yours to decide at level 3.",
+            "recommendation": "Approve, because the plan is small and the checks are written.",
+            "options": [
+              {
+                "label": "Approve",
+                "says": "It approves the plan and building starts.",
+                "recommended": true
+              },
+              {
+                "label": "Suggest a change…",
+                "says": "Tell me what you'd change; I'll come back with a new proposal.",
+                "recommended": false
+              },
+              {
+                "label": "Show me",
+                "says": "I show you what it looks like, then ask again.",
+                "recommended": false
+              },
+              {
+                "label": "Not now",
+                "says": "Leave this waiting; nothing changes yet.",
+                "recommended": false
+              }
+            ],
+            "why": "It changes what users see, which is yours to decide at level 3.",
+            "meanwhile": "Nothing is built until you say.",
+            "line": "Approve export-csv (feature lane) as written, aaaaaaaaaaaa",
+            "code": "FK5X"
+          },
+          "steered": null,
+          "waited": "asked 3 hours ago",
+          "revised": false
+        },
+        {
+          "id": "c2",
+          "n": 2,
+          "header": "Question",
+          "kind": "question",
+          "text": "Shall the footer link to the help page?",
+          "hash": "da0bab61f842",
+          "buttons": [
+            {
+              "label": "Yes",
+              "does": "turn",
+              "shape": "outlined"
+            },
+            {
+              "label": "Not now",
+              "does": "turn",
+              "shape": "small",
+              "corner": true
+            }
+          ],
+          "note": null,
+          "blocking": false,
+          "asked": false,
+          "parts": null,
+          "steered": null,
+          "waited": "asked 1 hour ago",
+          "revised": false
+        }
+      ],
+      "verdict": "Two things need you. Nothing is broken.",
+      "since": null,
+      "launch": null,
+      "building": [],
+      "health": [],
+      "healthNote": {
+        "allWell": true,
+        "protection": "Standard",
+        "week": null
+      },
+      "ideas": {
+        "count": 0,
+        "fresh": 0
+      },
+      "updated": "12:00",
+      "usage": null,
+      "finished": [],
+      "incidents": [],
+      "watcher": "running",
+      "missing": [
+        "The build loop isn't running yet"
+      ]
+    },
+    "glance": "Wheelhouse · 2 waiting",
+    "status": "Wheelhouse · 2 waiting",
+    "submit": [
+      "Wheelhouse: 1 waiting on you: card 2."
+    ],
+    "woken": [
+      "card:c2"
+    ],
+    "wokeAt": "2026-10-29T12:00:15.000Z"
+  },
+  "stopped": {
+    "ok": true,
+    "role": "front-desk",
+    "every": 15000,
+    "pane": {
+      "v": 1,
+      "project": "owner__name",
+      "at": "2026-10-29T12:00:30.000Z",
+      "glance": "Wheelhouse · 2 waiting · All stop on",
+      "stop": {
+        "on": true,
+        "since": "2026-10-29T12:00:30.000Z"
+      },
+      "cards": [
+        {
+          "id": "c1",
+          "n": 1,
+          "header": "Approve work",
+          "kind": "approve-work",
+          "text": "Approve this work as written?\nThe plan for exporting a report as a spreadsheet file (export-csv).\nIt changes what users see, which is yours to decide at level 3.\nNothing is built until you say.\nTo know more, just ask.\nApprove export-csv (feature lane) as written, aaaaaaaaaaaa\nReply code: FK5X",
+          "hash": "792b413f0b25",
+          "buttons": [
+            {
+              "label": "Approve",
+              "does": "record",
+              "shape": "filled"
+            },
+            {
+              "label": "Suggest a change…",
+              "does": "suggest",
+              "shape": "outlined"
+            },
+            {
+              "label": "Not now",
+              "does": "record",
+              "shape": "small",
+              "corner": true
+            },
+            {
+              "label": "Why?",
+              "does": "why",
+              "shape": "small"
+            },
+            {
+              "label": "Show me",
+              "does": "turn",
+              "shape": "small"
+            }
+          ],
+          "note": null,
+          "blocking": false,
+          "asked": true,
+          "parts": {
+            "kind": "approve-work",
+            "header": "Approve work",
+            "ask": "Approve this work as written?",
+            "what": "The plan for exporting a report as a spreadsheet file (export-csv).",
+            "small": "It changes what users see, which is yours to decide at level 3.",
+            "recommendation": "Approve, because the plan is small and the checks are written.",
+            "options": [
+              {
+                "label": "Approve",
+                "says": "It approves the plan and building starts.",
+                "recommended": true
+              },
+              {
+                "label": "Suggest a change…",
+                "says": "Tell me what you'd change; I'll come back with a new proposal.",
+                "recommended": false
+              },
+              {
+                "label": "Show me",
+                "says": "I show you what it looks like, then ask again.",
+                "recommended": false
+              },
+              {
+                "label": "Not now",
+                "says": "Leave this waiting; nothing changes yet.",
+                "recommended": false
+              }
+            ],
+            "why": "It changes what users see, which is yours to decide at level 3.",
+            "meanwhile": "Nothing is built until you say.",
+            "line": "Approve export-csv (feature lane) as written, aaaaaaaaaaaa",
+            "code": "FK5X"
+          },
+          "steered": null,
+          "waited": "asked 3 hours ago",
+          "revised": false
+        },
+        {
+          "id": "c2",
+          "n": 2,
+          "header": "Question",
+          "kind": "question",
+          "text": "Shall the footer link to the help page?",
+          "hash": "da0bab61f842",
+          "buttons": [
+            {
+              "label": "Yes",
+              "does": "turn",
+              "shape": "outlined"
+            },
+            {
+              "label": "Not now",
+              "does": "turn",
+              "shape": "small",
+              "corner": true
+            }
+          ],
+          "note": null,
+          "blocking": false,
+          "asked": false,
+          "parts": null,
+          "steered": null,
+          "waited": "asked 1 hour ago",
+          "revised": false
+        }
+      ],
+      "verdict": "Two things need you. Nothing is broken.",
+      "since": null,
+      "launch": null,
+      "building": [],
+      "health": [
+        {
+          "level": "stop",
+          "text": "All stop (the emergency stop) is on, since 29 October 2026",
+          "of": "stop"
+        }
+      ],
+      "healthNote": {
+        "allWell": false,
+        "protection": "Standard",
+        "week": null
+      },
+      "ideas": {
+        "count": 0,
+        "fresh": 0
+      },
+      "updated": "12:00",
+      "usage": null,
+      "finished": [],
+      "incidents": [],
+      "watcher": "running",
+      "missing": [
+        "The build loop isn't running yet"
+      ]
+    },
+    "glance": "Wheelhouse · 2 waiting · All stop on",
+    "status": "Wheelhouse · 2 waiting · All stop on",
+    "submit": [
+      "Wheelhouse: All stop is on."
+    ],
+    "woken": [
+      "stop:2026-10-29T12:00:30.000Z"
+    ],
+    "wokeAt": "2026-10-29T12:00:30.000Z"
+  },
+  "closed": {
+    "ok": true,
+    "role": "front-desk",
+    "every": 15000,
+    "pane": {
+      "v": 1,
+      "project": "owner__name",
+      "at": "2026-10-29T12:00:45.000Z",
+      "glance": "Wheelhouse · 1 waiting",
+      "stop": {
+        "on": false,
+        "since": null
+      },
+      "cards": [
+        {
+          "id": "c1",
+          "n": 1,
+          "header": "Approve work",
+          "kind": "approve-work",
+          "text": "Approve this work as written?\nThe plan for exporting a report as a spreadsheet file (export-csv).\nIt changes what users see, which is yours to decide at level 3.\nNothing is built until you say.\nTo know more, just ask.\nApprove export-csv (feature lane) as written, aaaaaaaaaaaa\nReply code: FK5X",
+          "hash": "792b413f0b25",
+          "buttons": [
+            {
+              "label": "Approve",
+              "does": "record",
+              "shape": "filled"
+            },
+            {
+              "label": "Suggest a change…",
+              "does": "suggest",
+              "shape": "outlined"
+            },
+            {
+              "label": "Not now",
+              "does": "record",
+              "shape": "small",
+              "corner": true
+            },
+            {
+              "label": "Why?",
+              "does": "why",
+              "shape": "small"
+            },
+            {
+              "label": "Show me",
+              "does": "turn",
+              "shape": "small"
+            }
+          ],
+          "note": null,
+          "blocking": false,
+          "asked": true,
+          "parts": {
+            "kind": "approve-work",
+            "header": "Approve work",
+            "ask": "Approve this work as written?",
+            "what": "The plan for exporting a report as a spreadsheet file (export-csv).",
+            "small": "It changes what users see, which is yours to decide at level 3.",
+            "recommendation": "Approve, because the plan is small and the checks are written.",
+            "options": [
+              {
+                "label": "Approve",
+                "says": "It approves the plan and building starts.",
+                "recommended": true
+              },
+              {
+                "label": "Suggest a change…",
+                "says": "Tell me what you'd change; I'll come back with a new proposal.",
+                "recommended": false
+              },
+              {
+                "label": "Show me",
+                "says": "I show you what it looks like, then ask again.",
+                "recommended": false
+              },
+              {
+                "label": "Not now",
+                "says": "Leave this waiting; nothing changes yet.",
+                "recommended": false
+              }
+            ],
+            "why": "It changes what users see, which is yours to decide at level 3.",
+            "meanwhile": "Nothing is built until you say.",
+            "line": "Approve export-csv (feature lane) as written, aaaaaaaaaaaa",
+            "code": "FK5X"
+          },
+          "steered": null,
+          "waited": "asked 3 hours ago",
+          "revised": false
+        }
+      ],
+      "verdict": "One thing needs you. Nothing is broken.",
+      "since": null,
+      "launch": null,
+      "building": [],
+      "health": [],
+      "healthNote": {
+        "allWell": true,
+        "protection": "Standard",
+        "week": null
+      },
+      "ideas": {
+        "count": 0,
+        "fresh": 0
+      },
+      "updated": "12:00",
+      "usage": null,
+      "finished": [],
+      "incidents": [],
+      "watcher": "running",
+      "missing": [
+        "The build loop isn't running yet"
+      ]
+    },
+    "glance": "Wheelhouse · 1 waiting",
+    "status": "Wheelhouse · 1 waiting"
+  }
+}

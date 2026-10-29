@@ -42,7 +42,8 @@
 //                   helper's answer, `"recorded":true` when the click was recorded (ruling P8-7). For
 //                   an agent whose chat clicks can't bind: Claude Code's front desk never needs it
 // The front desk runs in the sandbox, which can't read ~/.wheelhouse/, so every read and write is
-// a request to the helper, naming this folder for the helper to place the project. Nothing here
+// a request to the helper, naming this folder for the helper to place the project: it reads through
+// the desk (scripts/desk/), and writes through the helper's own routes. Nothing here
 // writes a director's answer but `why`, which notes only that they asked why (a Why? answer, which
 // decides nothing): `record` takes only the plain kinds the front desk decides, never a card, a
 // card's answer, a shown or asked record, or a signed kind, and an answer card's options come only
@@ -69,6 +70,11 @@ import { countsAtOnce, gateTargetOf } from '../state/views.js';
 import { briefHash } from '../feature/files.js';
 import { endedBy, since, NO_PLAN, STARTS_UNAPPROVED } from '../foreman/queue.js';
 import { startedAsScript } from '../lib/started-as-script.js';
+import { isOpen, surveyLines, whyNext, workLines } from '../desk/views.js';
+import { deskClient } from '../desk/client.js';
+
+// Moved to the desk's views (scripts/desk/views.js); exported here for one release so nothing else breaks.
+export { surveyLines, workLines };
 import { SUGGEST, WHY, suggestedAt } from '../lib/calm-words.js';
 import { keep, taken } from '../hooks/pending.js';
 import { projectOf } from '../hooks/kit.js';
@@ -129,14 +135,36 @@ function readyIn(cwd) {
 
 // --- Asking the helper ---
 
+// The desk for the project `cwd` is in, asked through the command's own helper client. The front
+// desk is in the sandbox, where ~/.wheelhouse can't be read, so the desk's local core never runs here.
+const deskOf = (client, cwd) => deskClient({ cwd, client, local: 'never' });
+
+// The record as the desk's waiting view gives it (the helper's views, its card events and whether
+// STOP is on), with `review` the delegation review and `answers` the card-answer events; or the
+// helper's refusal, thrown as it said it.
+async function recordOf(client, cwd, { answers = false, review = false } = {}) {
+  const got = await deskOf(client, cwd).read('waiting', { ...(answers ? { answers: true } : {}), ...(review ? { review: true } : {}) });
+  if (got?.ok !== true || !isPlain(got.data?.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  return got.data;
+}
+
 // The views, whether STOP is on, with `cards` the card events the board numbers its list from, and
 // with `answers` the card-answer events.
 async function viewsOf(client, cwd, { cards = false, answers = false } = {}) {
-  const got = await client.state.views({ cwd, ...(cards ? { cards: true } : {}), ...(answers ? { answers: true } : {}) });
-  if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  const got = await recordOf(client, cwd, { answers });
   if (cards && !Array.isArray(got.cards)) throw new CliError('The host helper gave no card events');
   if (answers && !Array.isArray(got.answers)) throw new CliError('The host helper gave no card answers');
   return { views: got.views, stop: got.stop === true, cards: cards ? got.cards : [], answers: answers ? got.answers : [], names: namesIn(got) };
+}
+
+// The director's own settings view, as the desk's settings view gives it; none when it can't be read.
+async function ownSettings(client, cwd) {
+  try {
+    const got = await deskOf(client, cwd).read('settings');
+    return got?.ok === true && isPlain(got.data?.profile) ? got.data.profile : {};
+  } catch {
+    return {};
+  }
 }
 
 // The names the project goes by, as the helper's views give them (its repository's own name and its folder's), for
@@ -184,14 +212,8 @@ const TERMS = '\n\nTerms: ';
 // views, the explanations setting and the concepts the director knows from the settings in force,
 // and what stays as written: the settings' names, the titles of the work and the `names` the project goes by
 // (namesIn). A profile that can't be read gives the defaults.
-async function wordsOf(client, views, now, names = []) {
-  let own = {};
-  try {
-    const got = await client.profile?.views?.({});
-    if (got?.ok === true && isPlain(got.views?.settings)) own = got.views.settings;
-  } catch {
-    // The project's settings and the defaults still hold.
-  }
+async function wordsOf(client, cwd, views, now, names = []) {
+  const own = await ownSettings(client, cwd);
   const settings = effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now });
   const titles = Object.values(isPlain(views.work) ? views.work : {}).map((w) => flat(w?.work?.data?.title)).filter((t) => typeof t === 'string' && t !== '');
   return { glossary: glossaryOf(views.glossary), explanations: settings.explanations?.value, known: knownConcepts(settings), protect: [...LABELS, ...titles], names };
@@ -406,7 +428,7 @@ async function buildLoopCards({ client, cwd, views, words, now, problems }) {
 export async function cards({ client, cwd, now }) {
   const problems = [];
   let { views, stop, names } = await viewsOf(client, cwd);
-  const words = await wordsOf(client, views, now, names);
+  const words = await wordsOf(client, cwd, views, now, names);
   const lift = stop ? composePlain(LIFT_STOP_CARD, words).question : null;
   const at = typeof now === 'function' ? now() : new Date(now ?? Date.now());
   let made = 0;
@@ -480,7 +502,7 @@ export async function card({ client, cwd, input, now }) {
   if (input.kind === 'approve-work' && isPlain(target) && views.work?.[target.work]?.work?.data?.visible === true) {
     target = { ...target, shownFirst: true };
   }
-  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, views, now, names));
+  const { question, card: data } = composePlain({ ...input, target, ...(topic === undefined ? {} : { topic }) }, await wordsOf(client, cwd, views, now, names));
   // The card revised must wait now, or have been closed only by a later head of its pull request or
   // branch (ruling C21), be of this kind and, for an approval or CI push card, be about the same
   // pull request or branch, or the waiting view would close nothing.
@@ -559,19 +581,6 @@ export async function why({ client, cwd, n }) {
   }
   if (!taken(got) && !keepAnswer(cwd, body)) throw new CliError(`The ${WHY} about card ${n} wasn't noted: ${said(got, 'the host helper did not answer')}`);
   return [`Noted that you asked why about card ${n}.`, ...whyNext(views, question, n)];
-}
-
-// The one sentence the front desk says before card n on a Why?, word for word: the everyday example
-// of the first term the card uses that the glossary gives one for, then what the card asks
-// (scenario 36). With no such term, the sentence's form, for the front desk to fill.
-function whyNext(views, question, n) {
-  const glossary = glossaryOf(views.glossary);
-  const term = Object.keys(glossary).find((t) => glossary[t].example && termPattern(t).test(question));
-  const like = term === undefined ? null : glossary[term].example.trim().replace(/^like\s+/i, '').replace(/[.!]+$/, '');
-  const asks = String(question).split('\n')[0].trim();
-  const how = `then card ${n} from \`again ${n}\` in your clickable-question tool, in the same message:`;
-  if (like) return [`Say this one sentence, word for word, and nothing else, ${how}`, `It's like ${like}: card ${n} asks "${asks}"`];
-  return [`Say one sentence and nothing else, ${how}`, `It's like <an everyday comparison>: <what card ${n} decides, in plain words>.`];
 }
 
 // --- suggest ---
@@ -716,16 +725,6 @@ function documentHash(cwd, file, given) {
   return hash;
 }
 
-// Whether `id` names open work, as the queue reads it: no report has ended it, and its feature
-// hasn't closed since it was queued (scripts/foreman/queue.js).
-function isOpen(views, id) {
-  const entry = isPlain(views.work) ? views.work[id] : undefined;
-  if (!isPlain(entry)) return false;
-  const feature = isPlain(views.features) ? views.features[id] : undefined;
-  const closed = feature?.data?.step === 'closed' && since(feature, entry.work);
-  return !closed && !endedBy(views.reports, id, entry.work);
-}
-
 // The line a front desk says for an amendment, from its read-back: the route (intake, step 4) and
 // the read-back (route 3), in one, so neither is left out (scenario 26). Each part is one line; an
 // amendment without them is refused before anything is written.
@@ -782,7 +781,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
     const data = { key: input.key, value: input.value, ...(input.until === undefined ? {} : { until: input.until }),
       // The time of the usage card whose pick this is, which the card's line gives; it ties a return card to this switch.
       ...(typeof input.usageCard === 'string' && !Number.isNaN(Date.parse(input.usageCard)) ? { usageCard: input.usageCard } : {}) };
-    const words = countsAtOnce({ kind: 'setting', data }) ? null : await viewsOf(client, cwd).then((v) => wordsOf(client, v.views, now, v.names));
+    const words = countsAtOnce({ kind: 'setting', data }) ? null : await viewsOf(client, cwd).then((v) => wordsOf(client, cwd, v.views, now, v.names));
     const got = await writeSetting({ client, cwd, data, words, makeId, ready: ready ?? readyIn(cwd) });
     if (got.card === undefined) return got;
     return { ...got, ...withProblems(await markAsked(client, cwd, [got.card.id], false)) };
@@ -812,7 +811,7 @@ export async function record({ client, cwd, kind, input, now, ready, makeId = ()
   if (typeof words !== 'string' || words.trim() === '' || BREAK.test(words)) throw new CliError('A ruling needs its words, on one line, as the director gave them');
   const { views, names } = await viewsOf(client, cwd);
   const id = makeId();
-  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, views, now, names));
+  const { question, card: data } = confirmCard({ kind: 'ruling', id, data: input }, await wordsOf(client, cwd, views, now, names));
   const got = await write(client, cwd, 'ruling', input, id);
   if (got.id !== id) throw new CliError(`The ruling was recorded as ${got.id}, not under the id its confirm card names`);
   let made;
@@ -858,11 +857,10 @@ export function levelCard(event, words) {
 // recorded: otherwise it stays due, and a level whose card wasn't written gets it from the
 // board-context hook on the next visit. Under STOP nothing is written, so it is refused.
 export async function review({ client, cwd, now, makeId = () => crypto.randomUUID() }) {
-  const got = await client.state.views({ cwd, review: true });
-  if (got?.ok !== true || !isPlain(got.views)) throw new CliError(said(got, 'The host helper gave no views'));
+  const got = await recordOf(client, cwd, { review: true });
   if (got.stop === true) throw new CliError('All stop is on, so the review waits until it is lifted');
   if (!isPlain(got.review) || !Array.isArray(got.review.proposals)) throw new CliError('The host helper gave no review');
-  const words = await wordsOf(client, got.views, now, namesIn(got));
+  const words = await wordsOf(client, cwd, got.views, now, namesIn(got));
   const problems = [];
   const made = [];
   for (const proposal of got.review.proposals) {
@@ -923,43 +921,6 @@ const titleOf = (entry, key) => flat(entry?.data?.title) || flat(entry?.data?.te
 const two = (n) => String(n).padStart(2, '0');
 const listed = (lines, none) => (lines.length > 0 ? lines : [none]);
 
-// The survey taken when setup finished, as short lines: what it counted, the requests by number
-// and title, each piece of unfinished work by its name (for `carry-on --line`), its newest subject
-// and how many changes it holds, the other setup's files, and the rules found, numbered, each with
-// its source, so the front desk can confirm one when it first matters. A part with nothing in it
-// is left out.
-function surveyLines(survey) {
-  const data = isPlain(survey?.data) ? survey.data : null;
-  if (data === null) return ['No survey has been taken.'];
-  const list = (value) => (Array.isArray(value) ? value.filter(isPlain) : []);
-  const count = (label, n, more) => `${label}: ${more ? 'at least ' : ''}${n}`;
-  const requests = list(data.requests);
-  const pushed = list(data.pushed).length;
-  const local = list(data.local).length;
-  const files = Array.isArray(data.instructions?.files) ? data.instructions.files.filter((f) => typeof f === 'string') : [];
-  const sections = list(data.instructions?.sections).length;
-  const rules = list(data.rules);
-  const out = [];
-  if (data.hostReached === false) out.push('The host could not be looked at.');
-  if (requests.length > 0) {
-    out.push(`Changes waiting to be merged: ${requests.length}`);
-    for (const r of requests) out.push(`- number ${r.number}: ${flat(r.title)}${r.draft === true ? ' (a draft)' : ''}`);
-  }
-  const pieces = (items) => items.map((i) => {
-    const saved = Number.isInteger(i.commits) && i.commits > 0 ? ` (${i.commits} ${i.commits === 1 ? 'change' : 'changes'} saved)` : '';
-    return `- ${flat(i.name)}${flat(i.subject) ? `: ${flat(i.subject)}` : ''}${saved}`;
-  });
-  if (pushed > 0) out.push(count('Unfinished work pushed', pushed, data.more?.pushed === true), ...pieces(list(data.pushed)));
-  if (local > 0) out.push(count('Unfinished work on this computer', local, data.more?.local === true), ...pieces(list(data.local)));
-  if (files.length > 0) out.push(`Another agent setup's files: ${files.map(flat).join(', ')}`);
-  if (sections > 0) out.push(`Parts of CLAUDE.md: ${sections}`);
-  if (rules.length > 0) {
-    out.push(`Rules found: ${rules.length}`);
-    rules.forEach((r, i) => out.push(`${i + 1}. ${flat(r.words)} (${flat(r.source?.file)}, line ${r.source?.line})`));
-  }
-  return out.length > 0 ? out : ['The survey found nothing under way, no other instructions and no rules.'];
-}
-
 // One view as short lines.
 export async function view({ client, cwd, name, now }) {
   if (!VIEW_NAMES.includes(name)) throw new CliError(`views takes one of: ${VIEW_NAMES.join(', ')}`);
@@ -994,74 +955,10 @@ export async function view({ client, cwd, name, now }) {
   if (name === 'glossary') return Object.entries(glossaryOf(views.glossary)).map(([term, entry]) => `${term}: ${entry.plain}`);
   if (name === 'levels') return listed(levelLines(views, events), 'No decision topics yet.');
   if (name === 'survey') return surveyLines(views.survey);
-  if (name === 'work') return workLines(views, answers, await wordsOf(client, views, now, names));
+  if (name === 'work') return workLines(views, answers, await wordsOf(client, cwd, views, now, names));
   // settings: the project's over the director's own, over the defaults
-  const profile = await client.profile.views({});
-  const own = profile?.ok === true && isPlain(profile.views?.settings) ? profile.views.settings : {};
+  const own = await ownSettings(client, cwd);
   return settingsText(effectiveSettings({ project: isPlain(views.settings) ? views.settings : {}, profile: own, now })).split('\n');
-}
-
-// Open work's step or state in words, and whether a feature runs for it: one that is writing its
-// plan or building. A quick or bug feature has no plan, so it builds from its start. A planned one
-// waits for the go-ahead, and one the director's Not now to its build commands holds (`held`, as the
-// board reads it) waits on them. Work whose feature closed before a `work` event queued it again
-// hasn't started this time.
-function workState(entry, feature, held) {
-  const { lane, visible } = entry.work?.data ?? {};
-  const step = isPlain(feature?.data) && !(feature.data.step === 'closed' && !since(feature, entry.work)) ? feature.data.step : null;
-  if (step !== null && step !== 'closed' && held) return { running: false, state: 'waiting for the director to allow its build commands' };
-  if (step === 'building' || (step === 'started' && NO_PLAN.includes(lane))) return { running: true, state: 'building' };
-  if (step === 'started') return { running: true, state: 'writing its plan' };
-  if (step === 'planned') return { running: false, state: 'planned, waiting for the go-ahead to build' };
-  if (step === 'paused') {
-    const why = { director: 'for the director\'s change to it', 'five-hour': 'until the five-hour usage window has room' }[feature.data.pausedFor];
-    return { running: false, state: why ? `paused ${why}` : 'paused' };
-  }
-  const approval = (!STARTS_UNAPPROVED.includes(lane) || visible === true) && entry.approved !== true;
-  return { running: false, state: approval ? 'waiting for the director\'s approval' : 'queued, not started yet' };
-}
-
-// What each lane is, in words a sentence takes.
-const LANE_WORDS = { quick: 'quick work', small: 'small work', feature: 'a feature', bug: 'a bug fix' };
-
-// The open work, running work first, each oldest first (then by id): its id, title and lane, whether a feature
-// runs for it, its step or state, the slice in hand and the pull request the gate waits on or its
-// latest report names, either since the work was queued. `answers` are the card-answer events, for
-// the director's Not now. In the glossary's plain words, but for the titles, kept as written: the
-// front desk reads this to tell the director how things stand.
-function workLines(views, answers, words) {
-  const features = isPlain(views.features) ? views.features : {};
-  const questions = isPlain(views.questions) ? views.questions : {};
-  const reports = Object.values(isPlain(views.reports) ? views.reports : {}).filter((r) => isPlain(r?.data));
-  const held = (id) => {
-    try {
-      return heldByNotNow(id, questions, answers.filter(isPlain), reports);
-    } catch {
-      return false;
-    }
-  };
-  const asks = Object.values(isPlain(views.gateAsks) ? views.gateAsks : {}).filter((a) => isPlain(a?.data));
-  const open = Object.entries(isPlain(views.work) ? views.work : {}).filter(([id, entry]) => isPlain(entry?.work?.data) && isOpen(views, id))
-    .map(([id, entry]) => ({ id, entry, ...workState(entry, features[id], held(id)) }))
-    .sort((a, b) => Number(b.running) - Number(a.running) || String(a.entry.since ?? a.entry.work.at).localeCompare(String(b.entry.since ?? b.entry.work.at))
-      || a.id.localeCompare(b.id));
-  if (open.length === 0) return ['No work is open: nothing is running or waiting.'];
-  const lines = open.map(({ id, entry, running, state }) => {
-    const { title, lane } = entry.work.data;
-    const slice = running ? features[id]?.data?.slice : undefined;
-    const report = views.reports?.[id];
-    const pr = asks.filter((a) => a.data.work === id && since(a, entry.work)).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1)?.data.pr
-      ?? (since(report, entry.work) ? report?.data?.pr : undefined);
-    return [
-      `${id}: ${flat(title) || id}${Object.hasOwn(LANE_WORDS, lane) ? ` (${LANE_WORDS[lane]})` : ''}: ${running ? 'running' : 'not running'}`,
-      state,
-      ...(isPlain(slice) && Number.isInteger(slice.n) && Number.isInteger(slice.m) ? [`slice ${slice.n} of ${slice.m}`] : []),
-      ...(Number.isSafeInteger(pr) && pr > 0 ? [`pull request #${pr}`] : []),
-    ].join(', ');
-  });
-  // Labels, ids and work titles stay as written, as the board keeps titles (design section 21).
-  const protect = [...LABELS, ...open.map(({ id }) => `${id}:`), ...open.map(({ entry }) => flat(entry.work.data.title)).filter((t) => t !== '')];
-  return plainWords(lines.join('\n'), words.glossary, { ...words, protect }).text.split('\n');
 }
 
 // The decision topics, for a card to reuse one: each level in force, each level waiting for the

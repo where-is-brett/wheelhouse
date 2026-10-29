@@ -34,7 +34,7 @@ import { unreachableRefusal, certificateRefusal, certificateLine, awayLine, outp
 import { childEnv } from './connection.js';
 import { protectionStatus } from './protection.js';
 import { cutAccess } from './cut-access.js';
-import { listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
+import { checkRecord, listEvents, makeEvent, writeEvent, eventPath, eventHash, dataHash, PLAIN_KINDS, PROTECTED_KINDS, HELPER_ONLY_KINDS, CONFIRMABLE_KINDS } from '../state/events.js';
 import { git as stateGit } from '../state/git.js';
 import { directorSignIn, reachFor, safeGitEnv } from '../lib/safe-git.js';
 import { lookAtSettings, lookRefusalLine, LookRefusal } from '../lib/safe-git.js';
@@ -54,6 +54,11 @@ import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
 import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
+import { deskCore, checkVersion } from '../desk/core.js';
+import { fileSource } from '../desk/file-source.js';
+import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
+import { DESK_VERSION, needsEvidence } from '../desk/vocabulary.js';
+import { helperClient } from './helper-client.js';
 import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
   SIGNED_LEAN_PROOFS, sameCard, approvalCard, mainMovedCard, undoCards,
@@ -82,7 +87,7 @@ import { checkProvenance, removeProvenance, sessionProvenance } from '../lineage
 import { RELEASE_BRANCH, SETTINGS_FILE, briefingLine, checkRelease, pinsOnlyChange } from '../lineage/release.js';
 import { WHEELHOUSE_URL } from '../lineage/manifest.js';
 import { SCREEN_SIZES, PUT_OFF } from '../lib/front-desk.js';
-import { CLICK_MS } from '../lib/core-numbers.js';
+import { CLICK_MS, HELPER_WAIT_MS } from '../lib/core-numbers.js';
 import { compareCommits, photographCommit } from '../screens/compare.js';
 import { findBrowser, shoot as shootPage, stopsAtPicture } from '../screens/shoot.js';
 import { FOREMAN_OUTPUT_BYTES, FOREMAN_RUNNER, FOREMAN_RUN_MS, foremanEnv, foremanRequestRefusal } from './foreman-run.js';
@@ -799,6 +804,7 @@ const FALL_BACK_ROUTES = ['/pr/state', '/state/record', '/foreman/run'];
 // helper places the project from it.
 const PLACED_ROUTES = [
   '/state/views', '/state/write', '/pr/state', '/pr/preview', '/session/mark', '/cards/chat-click', '/confirm',
+  '/desk/read', '/desk/act', '/desk/watch',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
   '/survey/carry-on', '/survey/archive', '/survey/restore', '/premium/card', '/premium/check', '/premium/state', '/premium/failed',
 ];
@@ -808,6 +814,8 @@ const PLACED_ROUTES = [
 const LEAN_ROUTES = [
   '/state/write', '/state/views', '/state/answer', '/state/record', '/state/sync', '/state/import', '/session/mark', '/cards/chat-click', '/confirm',
   '/lean/status', '/lean/merge', '/lean/undo', '/lean/copy',
+  // A Lean project has a desk too.
+  '/desk/read', '/desk/act', '/desk/watch',
 ];
 // The Lean project's own routes (scripts/lean/store.js), served for a Lean project only.
 const LEAN_ONLY = 'that project is not a Lean project';
@@ -2292,18 +2300,12 @@ export async function startHelper({
   }
 
   async function doRecord({ project, event, target }, ctx) {
-    if (!event || typeof event !== 'object' || Array.isArray(event)) refuse('the record must be an event');
-    if (!PROTECTED_KINDS.includes(event.kind)) refuse('only a signed kind is recorded this way');
-    if (typeof event.id !== 'string' || typeof event.at !== 'string' || !ISO_TIME.test(event.at)) refuse('the record is not a whole event');
-    if (!verify(event, readEnrolled())) refuse('the record is not signed by an enrolled computer');
-    if (event.sig.computer !== computerId() || event.computer !== computerId()) refuse('only this computer\'s own signed records are taken');
-    // The premium card's offer is the helper's own (/premium/card), never a caller's.
-    if (event.kind === 'premium-card') refuse('only the helper offers the premium model\'s card');
-    if (event.kind === 'premium-check') refuse('only the helper checks the premium model');
-    if (event.kind === 'premium-failed') refuse('only the helper records the premium model\'s evaluation failing');
-    if (event.kind === 'provenance') refuse('only the helper records what built a pull request');
-    if (target !== undefined) checkTarget(target, event);
     const events = listEvents(stateDir(project), { report: () => {} });
+    const held = events.filter((e) => e.id === event?.id);
+    // Whole, signed here, of a kind a caller may send, its id free: checkRecord, which the desk's evidence shares.
+    const refused = checkRecord(event, { enrolled: readEnrolled(), held: [] });
+    if (refused !== null) refuse(refused);
+    if (target !== undefined) checkTarget(target, event);
     // A premium setting that allows the model comes only from a click on a card the helper offered: its offer, signed by
     // this computer, must be in the state (the prompt record checked the card itself).
     if (target?.kind === 'setting' && target.data.key === 'premium' && target.data.value !== 'off') {
@@ -2312,8 +2314,8 @@ export async function startHelper({
         refuse(PREMIUM_OWN_CARD);
       }
     }
-    const held = events.filter((e) => e.id === event.id);
-    if (held.length > 0 && !held.some((e) => canonicalJson(e) === canonicalJson(event))) refuse('another event in the state carries this record\'s id, so it was not recorded');
+    const conflict = checkRecord(event, { enrolled: readEnrolled(), held });
+    if (conflict !== null) refuse(conflict);
     // The confirmed event goes first, once, even when its confirmation is there already: a kept
     // copy sent again finds it there, and a confirmation that reached the state alone gets it.
     if (target !== undefined) {
@@ -2329,6 +2331,9 @@ export async function startHelper({
     if (held.length > 0) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
+    // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
+    if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
+    if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
     // A Lean project has no preview to photograph.
     if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
@@ -3654,6 +3659,55 @@ export async function startHelper({
   // it stops once the apply has finished: after the status answer that says so, or, when no one
   // asks, a while after.
   const uninstall = uninstallRoutes({ now, stopped, userHome, run, spawn, stopHelper: () => { Promise.resolve().then(() => onStop(close)).catch(() => {}); } });
+  // --- the desk (scripts/desk/, spec 5): every front end reads and changes Wheelhouse through these three ---
+  // The acts that are answered under STOP, beside a signed record, which /state/record takes under STOP too.
+  const DESK_STOP_ACTS = ['all-stop', 'lift-all-stop'];
+  const STOP_SETTERS = ['prompt', 'mod', 'helper', 'runbook'];
+  function deskOf(project, body, ctx) {
+    const folder = typeof body.cwd === 'string' ? body.cwd : (readProject(project)?.folder ?? readLean(project)?.folder);
+    const source = fileSource(project, { cwd: folder, client: helperClient({ address, timeout: HELPER_WAIT_MS }), now, fresh: true });
+    const tried = (fn) => async (arg) => {
+      try {
+        return await fn(arg);
+      } catch (error) {
+        return { ok: false, refused: error instanceof Error ? error.message : 'the request failed' };
+      }
+    };
+    const recorder = {
+      record: tried(async ({ event, target, profile }) => (profile
+        ? profileRoute(doProfileRecord)({ event }, await profileContext())
+        : doRecord({ project, event, ...(target === undefined ? {} : { target }) }, ctx))),
+      write: tried(({ kind, data }) => doWrite({ project, kind, data }, ctx, { own: data?.proof !== undefined })),
+      setStop: tried(async ({ by }) => { setStop({ by: STOP_SETTERS.includes(by) ? by : 'helper', now }); return { ok: true }; }),
+      liftStop: tried(async () => { liftStop(); return { ok: true }; }),
+      chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
+      confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
+      askPair: tried(async (client) => ({ ok: true, ...askToPair(client, { now }) })),
+    };
+    return deskCore({ source, recorder, now, clients: pairedClients });
+  }
+  const deskRoute = (op) => async (body, ctx) => {
+    const version = checkVersion(body);
+    if (!version.ok) return { ok: false, v: DESK_VERSION, refused: version.refused };
+    const { project } = body;
+    const core = deskOf(project, body, ctx);
+    const inQueue = (fn) => oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, ctx);
+      return fn();
+    });
+    if (op === 'read') return inQueue(() => core.read(body.view, body.args ?? {}));
+    if (op === 'watch') return inQueue(() => core.watch(body.cursor ?? null));
+    const { command, args = {}, evidence } = body;
+    // The form is read only for a command that needs evidence: any other ignores what it was sent with.
+    const signed = needsEvidence(command) && evidence?.form === 'signed';
+    const held = () => stopped() && !DESK_STOP_ACTS.includes(command) && !signed;
+    if (held()) return { ...STOP_REFUSAL, v: DESK_VERSION };
+    // All stop is never queued behind anything, and the confirm window takes the queue itself once the director has clicked.
+    if (command === 'all-stop' || (command === 'answer' && evidence?.form === 'window')) return core.act(command, args, evidence);
+    // STOP is checked again once the act's turn comes, as it may have been set while it waited.
+    return inQueue(() => (held() ? { ...STOP_REFUSAL, v: DESK_VERSION } : core.act(command, args, evidence)));
+  };
+
   const routes = {
     ...setup,
     ...measures,
@@ -3690,6 +3744,9 @@ export async function startHelper({
     '/lean/undo': doLeanUndo,
     '/lean/copy': doLeanCopy,
     '/state/record': signedIn(stateRoute(doRecord)),
+    '/desk/read': deskRoute('read'),
+    '/desk/act': deskRoute('act'),
+    '/desk/watch': deskRoute('watch'),
     '/state/column-ready': stateRoute(doColumnReady, { write: true }),
     '/premium/card': stateRoute(doPremiumCard, { write: true }),
     '/premium/check': doPremiumCheck,

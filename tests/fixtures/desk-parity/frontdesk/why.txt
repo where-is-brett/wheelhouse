@@ -1,0 +1,6 @@
+exit 0
+--- out
+Noted that you asked why about card 1.
+Say this one sentence, word for word, and nothing else, then card 1 from `again 1` in your clickable-question tool, in the same message:
+It's like a draft of a page you hand to an editor: nothing is printed until the editor agrees: card 1 asks "Put pull request #7 live?"
+--- err

@@ -11,7 +11,7 @@
 // uninstall's card by the helper, for setup's playbook to ask as it is.
 import {
   approvalLine, confirmLine, LIFT_STOP, LIFT_LABEL, runbookLine, ciPushLine, approveWorkLine, answerLine, amendLine,
-  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
+  liftIncidentLine, incidentFixLine, setupLine, confirmAllLine, baselineLine, trustLine, takeOverLine, TAKEOVER_LABEL, LEAVE_LABEL, pairLine, PAIR_LABEL, APP_ID, uninstallLine, keepControlLine, usageLine, premiumLine, isLineName, dayOf, replyCode, replyCodeLine, setLineOf, SET_LINES,
   RUNBOOK_TITLES, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, CORRECT_SOME_LABEL, BASELINE_LABEL, BASELINE_HEADER, TRUST_LABEL, UNINSTALL_LABEL, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import { CARD, CARD_KINDS, KEEP_AS_IS, PUT_OFF } from '../lib/front-desk.js';
@@ -39,6 +39,7 @@ export const HEADERS = Object.freeze({
   baseline: BASELINE_HEADER,
   trust: 'Trust',
   'take-over': 'Take over',
+  pair: 'Pair an app',
   uninstall: 'Uninstall',
   question: 'Question',
   'keep-control-files': 'Agent files',
@@ -63,6 +64,7 @@ export const DECIDING = Object.freeze({
   baseline: BASELINE_LABEL,
   trust: TRUST_LABEL,
   'take-over': TAKEOVER_LABEL,
+  pair: PAIR_LABEL,
   uninstall: UNINSTALL_LABEL,
   'keep-control-files': 'Confirm',
 });
@@ -77,7 +79,7 @@ export const DECIDING = Object.freeze({
 // So is a usage card (design section 14.6): its switch is the setting change and the director's confirmation of it at
 // once, so only the click on the card the session start offered counts.
 // So is the premium model's card (design section 14.6): only the click on the card the helper offered counts.
-export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium']);
+export const NO_REPLY_CODE = Object.freeze(['setup', 'confirm-all', 'trust', 'take-over', 'uninstall', 'keep-control-files', 'usage', 'premium', 'pair']);
 
 // The buttons a kind's card offers after its deciding label, in the order they are shown, where it
 // isn't the usual Suggest a change…, Show me and Not now (design section 23.4). All stop is lifted or it
@@ -93,6 +95,7 @@ const OFFERED_AFTER = Object.freeze({
   baseline: Object.freeze([NOT_NOW]),
   trust: Object.freeze([NOT_NOW]),
   'take-over': Object.freeze([LEAVE_LABEL]),
+  pair: Object.freeze([NOT_NOW]),
   uninstall: Object.freeze([NOT_NOW]),
   'keep-control-files': Object.freeze([SHOW_ME, NOT_NOW]),
 });
@@ -130,6 +133,7 @@ const ASKS = Object.freeze({
   'incident-fix': () => 'Merge this fix?',
   'keep-control-files': () => 'Keep these files as they are?',
   'take-over': () => 'Move the First Mate to this computer?',
+  pair: () => 'Pair this app?',
 });
 
 // Whether a confirm card's event is a proposal Wheelhouse made, not something the director asked
@@ -237,6 +241,10 @@ function lineFor(kind, target) {
     }
     return trustLine(t.computer, t.at, t.fingerprint);
   }
+  if (kind === 'pair') {
+    if (typeof t.client !== 'string' || !APP_ID.test(t.client) || typeof t.fingerprint !== 'string' || !/^[0-9a-f]{12}/.test(t.fingerprint)) bad('needs the app\'s id and its key\'s fingerprint');
+    return pairLine(t.client, t.fingerprint);
+  }
   if (kind === 'take-over') {
     if (typeof t.holder !== 'string' || !/^[0-9a-f]{8}$/.test(t.holder) || !isCount(t.counter)) bad('needs the id of the computer that holds the lock and the counter it holds it at');
     return takeOverLine(t.holder, t.counter);
@@ -296,6 +304,7 @@ export function whatProblem(kind, what, target, { abbreviated = false } = {}) {
   if (kind === 'confirm-all') need = [new RegExp(`(?<![0-9])${target.count} rules?\\b`, 'i').test(what), `how many rules it lists, ${target.count}`];
   if (kind === 'trust') need = [nameId(target.computer), `the computer ${target.computer}`];
   if (kind === 'take-over') need = [nameId(target.holder), `the computer ${target.holder}`];
+  if (kind === 'pair') need = [nameId(target.client), `the app ${target.client}`];
   if (kind === 'uninstall') need = [nameId(target.project), `the project ${target.project}`];
   if (need !== null && !need[0]) return `must name ${need[1]}, as its set line does`;
   const commit = target.sha ?? target.hash;

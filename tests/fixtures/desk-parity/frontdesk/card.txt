@@ -1,0 +1,25 @@
+exit 0
+--- out
+{
+  "question": {
+    "question": "Which colour suits the order button?\nIt is the wording users see.\nThe page keeps its old name.\nTo know more, just ask.",
+    "header": "Question",
+    "options": [
+      {
+        "label": "Plain",
+        "description": "Recommended: It plains and goes ahead, because it reads quickest."
+      },
+      {
+        "label": "Playful",
+        "description": "It playfuls and goes ahead."
+      },
+      {
+        "label": "Suggest a change…",
+        "description": "Tell me what you'd change; I'll come back with a new proposal."
+      }
+    ],
+    "multiSelect": false
+  },
+  "id": "<id-1>"
+}
+--- err
