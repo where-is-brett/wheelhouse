@@ -22,6 +22,7 @@ import { ARCHON_SOURCE, BUN_PIN, PATCH_MARK, enginePaths, launcherText } from '.
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord, readOutputs } from './record.js';
 import { readyWorkItem } from './work-item.js';
+import { brokerProblem } from '../parts.js';
 import path from 'node:path';
 import { engineDir, archonHome, projectSlug } from '../../lib/paths.js';
 import { run as defaultRun } from '../../lib/run.js';
@@ -290,6 +291,8 @@ export function archonAdapter({
       if (telemetry.code !== 0 || !/^Telemetry:\s+disabled\b/m.test(telemetry.stdout ?? '')) {
         findings.push("Archon's usage reporting is on, or it couldn't say; no run starts until it is off");
       }
+      const broker = brokerProblem(engine);
+      if (broker) findings.push(broker);
       return { ok: findings.length === 0, findings };
     },
 
@@ -298,6 +301,8 @@ export function archonAdapter({
     async start(order = {}) {
       const workflow = LANE_WORKFLOWS[order.lane];
       if (!workflow) return refusedWith(`There is no engine workflow for the ${order.lane ?? '(unnamed)'} lane`);
+      const broker = brokerProblem(engine, { gone: true });
+      if (broker) return refusedWith(broker);
       if (!packDir || !configFile) return refusedWith("The engine's pack or its settings file isn't known, so nothing can start");
       if (workflow !== MERGE_QUEUE && !order.work) return refusedWith('A run needs the id of its work');
       if (order.carryOn && !order.branch) return refusedWith('Carrying on needs the branch the work was on');

@@ -27,6 +27,24 @@ export const ARCHON_CONFIG_FILE = '.archon/config.yaml';
 export const ENGINE_FILES = Object.freeze([POLICY_FILE, ARCHON_CONFIG_FILE]);
 export const WORKTREE_PATH = '.wheelhouse/worktrees';
 
+// What is wrong with the broker's launcher (<engine>/broker/bin/gh, setup's step 2), or null. It names the Node.js that
+// ran setup and the broker's script in that Wheelhouse's versioned folder, and either can go: a Node.js update, or an
+// update of Wheelhouse that removes the old version's folder. Then every gh call of a run's steps would fail.
+// With `gone`, only a launcher naming a program that is no longer there counts, as a run's start checks.
+export function brokerProblem(engine = engineDir(), { gone = false } = {}) {
+  const text = read(path.join(engine, 'broker', 'bin', 'gh'));
+  const exec = text === null ? null : /^exec '([^']+)' '([^']+)' "\$@"$/m.exec(text);
+  if (!exec) {
+    if (gone) return null;
+    return text === null
+      ? "The broker's launcher isn't in the engine's folder, so a run's steps can't reach the code host; setup's step 2 writes it again"
+      : "The broker's launcher isn't the one setup writes; setup's step 2 writes it again";
+  }
+  const missing = [exec[1], exec[2]].filter((file) => !fs.existsSync(file));
+  if (missing.length > 0) return `The broker's launcher names ${missing.join(' and ')}, which ${missing.length === 1 ? 'is' : 'are'} no longer there (Node.js or Wheelhouse was updated), so no run starts until setup's step 2 writes it again`;
+  return null;
+}
+
 // The fetch mirror's rule (3b): Archon's git reads the project's repository from the helper's mirror in the engine
 // folder, so no key reaches Archon. The rule can't go in the project's own git config, which setup's fenced git
 // refuses to work in once it holds a url rule (ruling R112), so it goes in the engine folder's list, which every
