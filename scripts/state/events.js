@@ -7,7 +7,7 @@ import { sign, verify } from './signing.js';
 import { scanContent } from './secret-scan.js';
 import { canonicalJson } from '../lib/canonical.js';
 import { git } from './git.js';
-import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
+import { keepControlLine, setLineOf, CODE_ALPHABET, SETUP_TITLES, SETUP_LABEL, CONFIRM_ALL_LABEL, BASELINE_LABEL, baselineLine, TRUST_LABEL, trustLine, TAKEOVER_LABEL, takeOverLine, APP_ID, pairLine, unpairLine, UNINSTALL_LABEL, uninstallLine, isLineName } from './card-lines.js';
 import { carriesFigures, CARRIES_BASELINE } from '../lib/measures-clicks.js';
 import { LANES, FEATURE_STEPS, PAUSED_FOR, REPORT_OUTCOMES, SLUG, HASH } from '../lib/build-loop.js';
 import { CARD, CARD_KINDS, PUT_OFF } from '../lib/front-desk.js';
@@ -39,7 +39,7 @@ export const PROTECTED_KINDS = ['confirmation', 'approval', 'review', 'action', 
 export const HELPER_ONLY_KINDS = ['survey', 'column-ready'];
 const KINDS = new Set([...PLAIN_KINDS, ...PROTECTED_KINDS]);
 
-const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
+const ACTIONS = ['lift-stop', 'runbook', 'ci-push', 'approve-work', 'answer', 'amend', 'lift-incident', 'incident-fix', 'setup', 'setup-answer', 'confirm-all', 'baseline', 'trust', 'take-over', 'pair-client', 'unpair-client', 'uninstall', 'keep-main', 'keep-control-files', 'undo-merge', 'undo-main'];
 // The fields each action carries beyond the card's question and the label clicked.
 const ACTION_OWN = {
   'lift-stop': [],
@@ -73,6 +73,9 @@ const ACTION_OWN = {
   // The director's Take over here (design section 9): the computer that held the lock and the counter it held it
   // at, as the card showed them. The helper takes the lock only while it still stands so.
   'take-over': ['holder', 'counter'],
+  // A later app paired with the desk, or unpaired (spec 5.3): its id and its key's twelve-character fingerprint.
+  'pair-client': ['client', 'fingerprint'],
+  'unpair-client': ['client', 'fingerprint'],
   // The director's Remove it on uninstall's card (ruling R90): the project its line names (the
   // project's slug, or the folder's own name when none is registered there) and the full SHA-256 of
   // the list uninstall puts back. Its question is the card's set line alone. It is kept in
@@ -177,6 +180,10 @@ function checkAction(data) {
     }
     if (data.label !== TRUST_LABEL) bad(`needs the ${TRUST_LABEL} label`);
     if (data.question !== trustLine(data.computer, data.at, data.fingerprint)) bad('carries only the trust card\'s set line as its question');
+  } else if (data.action === 'pair-client' || data.action === 'unpair-client') {
+    if (typeof data.client !== 'string' || !APP_ID.test(data.client) || typeof data.fingerprint !== 'string' || !/^[0-9a-f]{12}$/.test(data.fingerprint)) bad('needs the app\'s id and its key\'s twelve-character fingerprint');
+    const line = data.action === 'pair-client' ? pairLine(data.client, data.fingerprint) : unpairLine(data.client, data.fingerprint);
+    if (data.question !== line) bad('carries only its card\'s set line as its question');
   } else if (data.action === 'take-over') {
     if (typeof data.holder !== 'string' || !/^[0-9a-f]{8}$/.test(data.holder)) bad('needs the id of the computer that holds the lock');
     if (!Number.isInteger(data.counter) || data.counter < 1) bad('needs the counter the lock was held at');

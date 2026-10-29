@@ -8,6 +8,8 @@ import { cardOutcomes } from '../state/views.js';
 import { dataHash } from '../state/events.js';
 import { cardTextOf, hashOf } from '../mod/status.js';
 import { NOT_NOW, SUGGEST } from '../lib/calm-words.js';
+import { composeCard } from '../cards/compose.js';
+import { PAIR_LABEL } from '../state/card-lines.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
@@ -87,6 +89,24 @@ const ACTS = {
   async 'all-stop'(args, checked, { recorder }) {
     const got = await recorder.setStop({ by: typeof args.by === 'string' ? args.by : 'helper' });
     return got?.ok === false ? no(got.refused ?? 'All stop wasn\'t set') : { ok: true, changed: ['all-stop'] };
+  },
+  // An app asks to pair: its request is kept, and one card, Pair this app, asks the director. It decides nothing
+  // until the director's signed Pair it, which enrols the key (scripts/desk/clients.js).
+  async pair(args, checked, { recorder }) {
+    const asked = await recorder.askPair(isPlain(args.client) ? args.client : {});
+    if (asked?.ok !== true) return no(asked?.refused ?? 'The app\'s request to pair wasn\'t kept');
+    const { card } = composeCard({
+      kind: 'pair', level: 4, recommend: PAIR_LABEL,
+      what: `The app "${asked.name}" (${asked.id}) asks to read Wheelhouse and decide through it, with its key ${asked.fingerprint}.`,
+      why: 'An app that is paired can answer cards as you, so only you can pair one, at level 4.',
+      because: 'you opened this app yourself and it shows the same key.',
+      meanwhile: 'The app can\'t read or decide anything until you pair it.',
+      options: [{ label: PAIR_LABEL, says: 'It pairs the app, and it can answer cards as you; one click unpairs it.' }],
+      checks: 'It changes no checks: a paired app decides only what you could decide here.',
+      target: { client: asked.id, fingerprint: asked.fingerprint },
+    });
+    const got = await recorder.write({ kind: 'card', data: card });
+    return got?.ok === true ? { ok: true, changed: ['card'], card: got.id, fingerprint: asked.fingerprint } : no(got?.refused ?? 'The card wasn\'t written');
   },
   async 'lift-all-stop'(args, checked, { recorder }) {
     const records = checked.records ?? [];

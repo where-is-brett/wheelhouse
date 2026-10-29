@@ -472,3 +472,10 @@ test('feature sessions may read what plugins installed, and use a temporary fold
   assert.ok(s.sandbox.filesystem.denyWrite.includes('~/.wheelhouse'));
   assert.equal(Object.hasOwn(s.permissions, 'allow'), false);
 });
+
+test('agents are denied keys/clients.json, the paired apps\' keys, with the rest of the Wheelhouse home', () => {
+  const s = projectSettings(config);
+  assert.ok(s.permissions.deny.includes('Read(~/.wheelhouse/**)'));
+  assert.ok(s.permissions.deny.includes('Edit(~/.wheelhouse/**)'));
+  assert.ok(s.sandbox.filesystem.denyRead.includes('~/.wheelhouse'));
+});

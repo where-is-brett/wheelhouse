@@ -56,6 +56,7 @@ import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/p
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
+import { askToPair, pairClient, pairedClients, unpairClient } from '../desk/clients.js';
 import { DESK_VERSION } from '../desk/vocabulary.js';
 import { helperClient } from './helper-client.js';
 import {
@@ -2330,6 +2331,9 @@ export async function startHelper({
     if (held.length > 0) refuse('the state already holds an event with that id');
     const result = await writeEvent({ project, event, now });
     await freshViews(() => writeViews(project, { now }));
+    // The director's Pair it or Unpair it on an app's card (spec 5.3) enrols the app's key, or removes it.
+    if (event.kind === 'action' && event.data?.action === 'pair-client') pairClient({ id: event.data.client }, event, { now });
+    if (event.kind === 'action' && event.data?.action === 'unpair-client') unpairClient(event.data.client, event);
     // A Lean project has no preview to photograph.
     if (event.kind === 'approval' && !ctx.lean) photographApproved(project, event.data?.commit, ctx);
     return written({ event, result });
@@ -3678,8 +3682,9 @@ export async function startHelper({
       liftStop: tried(async () => { liftStop(); return { ok: true }; }),
       chatClick: tried((click) => doChatClick({ project, ...click }, ctx)),
       confirm: tried((asked) => doConfirm({ project, ...asked }, ctx)),
+      askPair: tried(async (client) => ({ ok: true, ...askToPair(client, { now }) })),
     };
-    return deskCore({ source, recorder, now });
+    return deskCore({ source, recorder, now, clients: pairedClients });
   }
   const deskRoute = (op) => async (body, ctx) => {
     const version = checkVersion(body);

@@ -58,6 +58,10 @@ const INPUTS = {
     ...common, kind: 'uninstall', recommend: 'Remove it', level: 4, checks: 'The checks no longer guard this project.',
     what: 'Remove Wheelhouse from cafe menu: stop its jobs, put back 3 changes on this computer.', options: [says('Remove it')], target: { project: 'cafe menu', hash: DOC },
   },
+  pair: {
+    ...common, kind: 'pair', recommend: 'Pair it',
+    what: 'The app phone-app asks to read Wheelhouse and decide through it, with its key abcdef012345.', options: [says('Pair it')], target: { client: 'phone-app', fingerprint: 'abcdef012345' },
+  },
   question: { ...common, kind: 'question', recommend: 'Comma', what: 'The export needs to know which separator to use.', options: OWN },
   'keep-control-files': {
     ...common, kind: 'keep-control-files', recommend: 'Confirm', what: 'The export-csv feature\'s folder has a new or changed file that steers agents.',
@@ -74,11 +78,11 @@ const SET_LINE_KINDS = Object.keys(DECIDING);
 // only by the click on the card itself, in the chat where it was asked. Nor does uninstall's card
 // (ruling R90), for the same reason.
 const SETUP_KINDS = ['setup', 'confirm-all'];
-const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'uninstall'];
+const NO_BUTTON_KINDS = [...SETUP_KINDS, 'baseline', 'trust', 'take-over', 'pair', 'uninstall'];
 const NO_BUTTONS = { buttons: [], note: SETUP_ANSWER };
 const noButtonsFor = (kind) => {
   if (SETUP_KINDS.includes(kind)) return NO_BUTTONS;
-  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
+  return { buttons: [], note: { trust: TRUST_ANSWER, 'take-over': TRUST_ANSWER, pair: TRUST_ANSWER, uninstall: UNINSTALL_ANSWER }[kind] ?? CANT_ANSWER };
 };
 
 const FILLED = (label) => ({ label, does: 'record', shape: 'filled' });
@@ -216,7 +220,7 @@ test('a card is judged by the card check\'s own tests, for every kind with a set
       lines.filter((l) => l !== TO_KNOW_MORE).join('\n'),
       // A setup card, a trust card, uninstall's and a Keep card have no reply code line to take away (rulings R36,
       // R80, R90, P7-31).
-      ...([...SETUP_KINDS, 'trust', 'take-over', 'uninstall', 'keep-control-files'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
+      ...([...SETUP_KINDS, 'trust', 'take-over', 'pair', 'uninstall', 'keep-control-files'].includes(kind) ? [] : [lines.filter((l) => !l.startsWith('Reply code:')).join('\n')]),
       `${data.question}\nReply code: ${replyCode('another line')}`,
       `${data.question}\n${data.line}`,
       // Without its reason and its meanwhile, a card has too few plain lines.

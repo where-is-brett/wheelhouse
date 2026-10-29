@@ -60,7 +60,7 @@ import {
 } from '../state/card-lines.js';
 import {
   chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
-  TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
+  TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, PAIR_LINE, UNPAIR_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
   keepClick, shownHash, keepAnswer, askedFor, claimAnswer, releaseAnswer, keepUninstallClick, shownUninstall, typedVerdict, typedBefore, keepSetupRecords,
@@ -145,7 +145,7 @@ function only(pattern, text) {
 // The deciding labels a reply code can answer with. A reply to an answer card may also use any
 // of the question's own options (scripts/mod/reply.js), which earned checks against the question.
 // Turn on (dangerous) and Use Guarded earn a record from a click alone, by design.
-export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix'];
+export const SIGNED_LABELS = ['Approve', 'Confirm', 'Lift All stop', 'Lift STOP', 'Do it', 'Push it', 'Change it', 'End it', 'Merge the fix', 'Pair it', 'Unpair it'];
 
 // The events of one kind that the state holds, oldest first.
 function held(project, kind) {
@@ -297,6 +297,19 @@ function premiumClickOf(project, question, label, shown, now, current) {
 // asked; the label is Take over here. The record is the director's click; the helper acts on it only while the lock
 // still stands as the card named it. Null for anything else, Leave it there among them. `takeOver` tells the caller
 // to ask the helper to take the lock once the record is in.
+// The signed action a click earns on the card that pairs a later app with the desk (spec 5.3): Pair it on the card whose
+// one set line names the app and its key's fingerprint, or Unpair it on the line that unpairs it. Null for anything
+// else, Not now among them.
+function pairOf(question, label) {
+  const lines = setLinesOf(question);
+  if (lines.length !== 1) return null;
+  const pair = PAIR_LINE.exec(lines[0]);
+  if (pair && label === 'Pair it') return { made: { kind: 'action', data: { action: 'pair-client', client: pair[1], fingerprint: pair[2], question: lines[0], label } } };
+  const unpair = UNPAIR_LINE.exec(lines[0]);
+  if (unpair && label === 'Unpair it') return { made: { kind: 'action', data: { action: 'unpair-client', client: unpair[1], fingerprint: unpair[2], question: lines[0], label } } };
+  return null;
+}
+
 function takeOverOf(question, label, shown) {
   if (label !== TAKEOVER_LABEL || shown?.question !== question) return null;
   const lines = setLinesOf(question);
@@ -330,6 +343,7 @@ export async function earned({ project, question, label, card, client, now, left
   if (setLinesOf(question).some((line) => USAGE_LINE.test(line))) return usageOf(project, question, label, card, now, ready);
   if (setLinesOf(question).some((line) => PREMIUM_LINE.test(line))) return premiumClickOf(project, question, label, card, now, premiumIn);
   if (setLinesOf(question).some((line) => TAKEOVER_LINE.test(line))) return takeOverOf(question, label, card);
+  if (setLinesOf(question).some((line) => PAIR_LINE.test(line) || UNPAIR_LINE.test(line))) return pairOf(question, label);
   if (label === 'Approve') {
     const prs = [...question.matchAll(APPROVE)];
     const works = [...question.matchAll(APPROVE_WORK)];

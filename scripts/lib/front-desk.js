@@ -40,7 +40,7 @@ export const WORK_REPORTS_RULE = `Edit(/${WORK_REPORTS}*.md)`;
 export const CARD_KINDS = Object.freeze([
   'approval', 'confirm', 'lift-stop', 'ci-push', 'runbook', 'approve-work', 'answer', 'amend',
   'lift-incident', 'incident-fix', 'setup', 'confirm-all', 'baseline', 'trust', 'take-over', 'uninstall', 'question',
-  'keep-control-files', 'usage', 'premium',
+  'keep-control-files', 'usage', 'premium', 'pair',
 ]);
 // Labels that ask for more or put a card off: a click on one never answers it.
 // Why? and Suggest a change… only steer the front desk; the director's own words never sign anything.
