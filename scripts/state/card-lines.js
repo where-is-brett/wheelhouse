@@ -275,3 +275,19 @@ export function setLineOf(question) {
   const found = setLinesOf(question);
   return found.length === 1 ? found[0] : null;
 }
+
+// The card's text as the chat shows it to the director: its plain lines alone, without the set line and the reply code
+// at its end, which are for the signing, not for them to read. The prompt record finds the card again from these words
+// (scripts/hooks/prompt-record.js) and signs from the text the state keeps, so a click signs as it always has. A card
+// with no reply code (setup's, a trust card, a usage card and the rest), the baseline card, whose line the prompt
+// record reads before it knows the project, and the Lift All stop card, which under STOP is handed out unrecorded, keep
+// theirs: their click is read from the text alone. Text of any other
+// shape comes back as it is, so a copy made twice is the same copy.
+export function chatCopy(text) {
+  if (typeof text !== 'string') return text;
+  const lines = text.split('\n');
+  if (lines.length < 3) return text;
+  const [line, code] = lines.slice(-2);
+  if (setLineOf(line) !== line || code !== replyCodeLine(replyCode(line)) || line.startsWith(BASELINE_WORDS) || isLiftStopLine(line)) return text;
+  return lines.slice(0, -2).join('\n');
+}

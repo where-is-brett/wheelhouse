@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { wheelhouseHome, profileDir, stateDir } from '../lib/paths.js';
 import { listEvents, eventHash, dataHash, CONFIRMABLE_KINDS, PIN_NAMES, READY_COLUMNS } from './events.js';
-import { approvalLine, ciPushLine, confirmLine } from './card-lines.js';
+import { approvalLine, chatCopy, ciPushLine, confirmLine } from './card-lines.js';
 import { isLeanProject } from '../lean/project.js';
 import { verify, readEnrolled } from './signing.js';
 import { REPLY_CODE_DAYS } from '../lib/core-numbers.js';
@@ -20,6 +20,8 @@ const signedOn = (e) => (typeof e?.computer === 'string' && e.sig?.computer === 
 const uniqueIds = (ids) => [...new Set(ids.filter(isPlainKey))];
 // The sha256 of a card's text as the director saw it: what a click in an agent's chat names (scripts/lean/cli.js).
 const textHash = (text) => crypto.createHash('sha256').update(text).digest('hex');
+// Whether `hash` names a card's text as the director saw it: whole, or in the chat's words (chatCopy), as the front desk hands it out.
+const namesText = (hash, text) => hash === textHash(text) || hash === textHash(chatCopy(text));
 
 // The latest event per key, in the sorted order the caller supplies.
 function latestPerKey(events, keyOf) {
@@ -243,7 +245,7 @@ const isRulingConfirmCard = (card) => card?.kind === 'card' && card.data?.kind =
   && /^Confirm ruling \S+: "/.test(card.data.line) && typeof card.data?.question === 'string';
 // A click in the chat on a ruling's confirm card at Lean: the card by its id, its text by its hash, proof chat-click.
 const isLeanRulingClick = (card, a) => isRulingConfirmCard(card) && a?.kind === 'card-answer' && byOrder(card, a) < 0 && a.data?.card === card.id
-  && a.data.proof === 'chat-click' && a.data.tier === 'lean' && a.data.hash === textHash(card.data.question);
+  && a.data.proof === 'chat-click' && a.data.tier === 'lean' && namesText(a.data.hash, card.data.question);
 function leanRulingClicks(sorted, rulings) {
   const out = new Map();
   const cards = sorted.filter(isRulingConfirmCard);
@@ -289,7 +291,7 @@ function outcomesOf(sorted, { confirmations, answeredBy, lean = false }) {
   // An answer that names the card by its id and the card's text by its hash (a click in an agent's chat, ruling
   // P5-52) answers it only when the hash is of the card's text as the state holds it.
   const answersTo = (card) => answers.filter((a) => (typeof a.data?.card === 'string'
-    ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && a.data.hash === textHash(questionOf(card))))
+    ? a.data.card === card.id && (a.data.hash === undefined || (typeof questionOf(card) === 'string' && namesText(a.data.hash, questionOf(card))))
     : (a.data?.card === undefined || a.data?.card === null) && typeof a.data?.question === 'string' && a.data.question === questionOf(card)));
   const decides = (card, label) => !PUT_OFF.includes(label) && (!Array.isArray(card.data?.options) || card.data.options.includes(label));
   const signedFor = (card) => {

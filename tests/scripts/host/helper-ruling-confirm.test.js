@@ -21,7 +21,7 @@ import { writeProject } from '../../../scripts/lib/projects.js';
 import { openTestRecord } from '../../helpers/record-fixture.js';
 import { eventPath, listEvents, makeEvent } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
-import { confirmLine } from '../../../scripts/state/card-lines.js';
+import { chatCopy, confirmLine } from '../../../scripts/state/card-lines.js';
 import { registerLean } from '../../../scripts/lean/project.js';
 import { leanCommand } from '../../../scripts/lean/cli.js';
 import { record, view } from '../../../scripts/frontdesk/cli.js';
@@ -214,6 +214,24 @@ test('at Lean a ruling\'s card takes one chat click: Not now or Suggest a change
     const lines = (await view({ client: c.client, cwd: c.folder, name: 'rulebook', now: c.now })).join('\n');
     assert.match(lines, /Exports are Excel\. \(in force, by a click in the chat, not proven\)/);
     assert.doesNotMatch(lines, /Exports are CSV or Excel\. \(in force/);
+  } finally {
+    await c.close();
+  }
+});
+
+test('at Lean a ruling\'s Confirm may name the card\'s text as the chat showed it, without its set line and reply code', async () => {
+  const c = await leanComputer();
+  try {
+    const made = await record({ client: c.client, cwd: c.folder, kind: 'ruling', input: { words: WORDS }, now: c.now });
+    const card = c.events().find((e) => e.id === made.card.id);
+    const copy = chatCopy(card.data.question);
+    assert.notEqual(copy, card.data.question, 'the chat copy leaves the card\'s last lines out');
+    const got = await c.lean(['click', `ruling-${card.id}`, 'Confirm'], { question: copy });
+    assert.equal(got.ok, true, got.refused);
+    assert.equal(c.events().find((e) => e.id === got.id).data.hash, sha(copy));
+    const { views } = await c.client.state.views({ cwd: c.folder });
+    assert.deepEqual(views.rulebook.map((r) => [r.words, r.status]), [[WORDS, 'accepted']]);
+    assert.ok(!views.waiting.some((w) => w.id === card.id));
   } finally {
     await c.close();
   }

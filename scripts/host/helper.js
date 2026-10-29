@@ -52,7 +52,7 @@ import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
-import { readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
+import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import {
   mergeApproved, undoMerge, copyNow, keepMain, leanStatus, storeHead, mergeOnMain, LeanRefusal, LEAN_APPROVE, MAIN_MOVED_LINE, UNDO_LINE,
@@ -64,7 +64,7 @@ import { askInWindow, NOT_NOW } from '../confirm/window.js';
 import { composeCard } from '../cards/compose.js';
 import { LIFT_STOP_CARD } from '../frontdesk/cli.js';
 import { matchGlob } from '../gate/glob.js';
-import { ciPushLine } from '../state/card-lines.js';
+import { chatCopy, ciPushLine } from '../state/card-lines.js';
 import { checkSetting, definitionOf } from '../settings/catalogue.js';
 import { READY_LEVELS, PREMIUM_LEVEL, barFailures, readiness, samePins } from '../routing/column-ready.js';
 import { PREMIUM_ASK, PREMIUM_DO, checkRefusal, foundPremium, offeredFrom, premiumInput, premiumRefusal, premiumPinOf } from '../routing/premium.js';
@@ -2024,7 +2024,8 @@ export async function startHelper({
       const events = listEvents(stateDir(project), { report: () => {} });
       const held = events.find((e) => e.id === rulingCard[1] && e.kind === 'card');
       if (!held || held.data?.kind !== 'confirm' || !/^Confirm ruling \S+: "/.test(held.data?.line ?? '') || typeof held.data?.question !== 'string') refuse('that is not a ruling\'s confirm card in this project');
-      if (hash !== crypto.createHash('sha256').update(held.data.question).digest('hex')) refuse('the click must name the card\'s text as the state holds it');
+      const shown = [held.data.question, chatCopy(held.data.question)].map((t) => crypto.createHash('sha256').update(t).digest('hex'));
+      if (!shown.includes(hash)) refuse('the click must name the card\'s text as the state holds it, or as the chat showed it');
       if (!Array.isArray(held.data.options) || !held.data.options.includes(label)) refuse('that label isn\'t one of the card\'s options');
       if (events.some((e) => e.kind === 'card-answer' && e.data?.card === held.id)) refuse('that ruling\'s card has been answered already');
       return doWrite({ project, kind: 'card-answer', data: { card: held.id, label, hash, proof, tier: 'lean', ...(text === undefined ? {} : { text }) } }, ctx, { own: true });
@@ -3710,6 +3711,8 @@ export async function startHelper({
       return {
         ok: true,
         views,
+        // The names the project goes by, which the front desk's plain words leave alone: it can't read the project's record.
+        names: namesOf(project),
         ...(stopped() ? { stop: true } : {}),
         ...(cards === true ? { cards: events.filter((e) => e.kind === 'card') } : {}),
         ...(answers === true ? { answers: events.filter((e) => e.kind === 'card-answer') } : {}),

@@ -68,7 +68,7 @@ import { cardOutcomes } from '../state/views.js';
 import { UNDER_WAY_TOPIC, LEAVE_FOR_NOW } from '../survey/words.js';
 import { readEnrolled } from '../state/signing.js';
 import { helperClient } from '../host/helper-client.js';
-import { readProject } from '../lib/projects.js';
+import { namesOf, readProject } from '../lib/projects.js';
 import { clickOutcomes, conceptProposals, conceptSetting, reviewDue, settingProposals } from '../frontdesk/learning.js';
 import { levelCard, settingCard, writeSetting } from '../frontdesk/cli.js';
 import { profileDir, stateDir } from '../lib/paths.js';
@@ -195,7 +195,8 @@ function releaseLinesOf(model) {
 
 // The words every text it adds goes through: the starter glossary with the project's over it, the
 // explanations setting, the concepts the director knows, and what stays as written: the settings'
-// names, the titles of the work and a release's line. What can't be read gives the defaults.
+// names, the titles of the work, a release's line and the names the project goes by. What can't be read gives
+// the defaults.
 function wordsOf(project, settings, model) {
   const view = attempt(() => localViews(project, ['glossary'])?.glossary);
   return {
@@ -203,6 +204,7 @@ function wordsOf(project, settings, model) {
     glossary: attempt(() => glossaryOf(isRecord(view) ? view : {}), attempt(() => glossaryOf({}), {})),
     explanations: settings?.explanations?.value,
     known: attempt(() => knownConcepts(settings), []),
+    names: attempt(() => namesOf(project), []),
   };
 }
 

@@ -59,7 +59,7 @@ import {
   approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, ID, LANES, QUESTION_ID,
 } from '../state/card-lines.js';
 import {
-  setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
+  chatCopy, setLineOf, setLinesOf, replyCode, replyCodeLine, setupLine, SETUP_LABEL, SETUP_TITLES, BASELINE_LABEL, BASELINE_WORDS, baselineLine,
   TRUST_LINE, TAKEOVER_LABEL, TAKEOVER_LINE, UNINSTALL_LABEL, UNINSTALL_LINE, uninstallLine, KEEP_CONTROL_LINE, keepControlLine, USAGE_LINE, PREMIUM_LINE,
 } from '../state/card-lines.js';
 import {
@@ -590,6 +590,43 @@ function clicks(input) {
 
 export { sendPending, BUDGET_MS };
 
+// The text the state keeps for a card asked in the chat's words (chatCopy, scripts/state/card-lines.js), or null when
+// the question isn't one: a card whose copy is the asked text with the same buttons. Where cards with different texts
+// share those words (the same pull request asked again at a new head, say), only the one card still waiting counts;
+// with none, or several, the question stays as asked, and nothing is signed from it.
+export function storedText(project, q, { events = listEvents(stateDir(project), { report: () => {} }), waiting } = {}) {
+  if (typeof q?.question !== 'string' || !Array.isArray(q.options) || setLineOf(q.question) !== null) return null;
+  const labels = JSON.stringify(q.options.map((o) => o?.label));
+  const texts = [...new Set(events.filter((e) => e.kind === 'card' && typeof e.data?.question === 'string' && e.data.question !== q.question
+    && chatCopy(e.data.question) === q.question && JSON.stringify(e.data.options) === labels).map((e) => e.data.question))];
+  if (texts.length <= 1) return texts[0] ?? null;
+  const live = new Set((waiting ?? localViews(project, ['waiting'])?.waiting ?? []).map((c) => c?.data?.question));
+  const left = texts.filter((t) => live.has(t));
+  return left.length === 1 ? left[0] : null;
+}
+
+// `input` with each question asked in the chat's words put back as the state keeps its card, in the questions, the
+// answers and the answers echoed, so a click signs and is recorded as one on the card's whole text always has.
+function withStoredText(project, input) {
+  const questions = Array.isArray(input.tool_input?.questions) ? input.tool_input.questions : [];
+  let events;
+  const swap = new Map();
+  for (const q of questions) {
+    if (typeof q?.question !== 'string' || setLineOf(q.question) !== null) continue;
+    events ??= listEvents(stateDir(project), { report: () => {} });
+    const text = storedText(project, q, { events });
+    if (text !== null) swap.set(q.question, text);
+  }
+  if (swap.size === 0) return input;
+  const rekey = (answers) => (answers && typeof answers === 'object' && !Array.isArray(answers)
+    ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [swap.get(k) ?? k, v])) : answers);
+  return {
+    ...input,
+    tool_input: { ...input.tool_input, questions: questions.map((q) => (swap.has(q?.question) ? { ...q, question: swap.get(q.question) } : q)), answers: rekey(input.tool_input.answers) },
+    ...(input.tool_response ? { tool_response: { ...input.tool_response, answers: rekey(input.tool_response.answers) } } : {}),
+  };
+}
+
 // Signs what an answer earned and keeps it pending, then lifts STOP when it asks to; a lift
 // that fails leaves no record. Returns what sendKept sends. Shared by a click and a reply code.
 export function keepEarned(project, got, { now, liftStop = defaultLift }) {
@@ -672,6 +709,17 @@ export async function decide(input, { client, now = () => new Date(), projectOf:
     return undefined;
   }
   const project = found.project;
+  // A card asked in the chat's words is signed and recorded from the text the state keeps for it.
+  let whole = input;
+  try {
+    whole = withStoredText(project, input);
+  } catch {
+    // The state can't be read: the questions stay as asked.
+  }
+  if (whole !== input) {
+    input = whole;
+    out.splice(0, out.length, ...clicks(input).filter((click) => !carrying.has(click.question) && !carriesTrust(click.question)));
+  }
   const api = client ?? helperClient({ timeout: budget });
   const end = Date.now() + budget;
   const left = withinBudget(end);

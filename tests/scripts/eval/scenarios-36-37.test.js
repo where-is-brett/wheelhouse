@@ -14,6 +14,10 @@ import { EVAL_ROOT, findScenario, loadScenarios, main, suitesIn } from '../../..
 import { repositoryReadable } from '../../../scripts/eval/feature-project.js';
 import { tempFolder } from '../../helpers/homes.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
+import { inChatWords } from '../../../scripts/frontdesk/cli.js';
+
+// A card as the front desk's command prints it for the chat (inChatWords): the question the session asks.
+const shown = (data) => inChatWords(asQuestion({ data }));
 import { makeScratchProject } from '../../../probes/lib/scratch.js';
 import { PUSHED, SHOWN, mainCalls, playbookFor, seedCards, boardNumbers, setUpPlaybook, textBlocks, THE_LINES } from '../../eval/mod/front-desk-playbook.js';
 import scenario36, { APPROVAL_CARD, CARDS as CARDS_36, PHOTO_CARD, PROMPT as PROMPT_36, WORDS, judge as judge36, stateAfterThePress, suggestPrompt } from '../../eval/mod/36-pane-press.js';
@@ -137,7 +141,7 @@ test('36 passes one work record for the pressed approval and one line that a new
   assert.match(signed.why, /never earns: approval \(refused\)/);
   const photo = await judged36(events(record, line), { written: [work], asked: [PHOTO_CARD] });
   assert.match(photo.why, /asked another card/);
-  const card = asQuestion({ data: cards[1].data });
+  const card = shown(cards[1].data);
   const asking = await judged36(events(record, ['AskUserQuestion', { questions: [card] }], line), { written: [work] });
   assert.match(asking.why, /AskUserQuestion/);
 
@@ -159,7 +163,7 @@ test('36 passes one work record for the pressed approval and one line that a new
 
 test('36\'s why leg passes `why 2`, an explanation with an everyday example, then card 2 alone, as it is', async () => {
   const cards = await cardsOf(CARDS_36);
-  const card = asQuestion({ data: cards[1].data });
+  const card = shown(cards[1].data);
   const explanation = 'Card 2 adds a button that downloads the orders as a spreadsheet. For example: like a draft you hand to an editor before it is printed.';
   const why = (n = 2) => ['Bash', { command: `node "/p/cli.js" why ${n}` }];
   const again = (n = 2) => ['Bash', { command: `node "/p/cli.js" again ${n}` }];
@@ -180,7 +184,7 @@ test('36\'s why leg passes `why 2`, an explanation with an everyday example, the
     assert.equal(got.pass, true, `${opener}: ${got.why}`);
   }
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(3), again(), ask()), { asked: [PHOTO_CARD, APPROVAL_CARD] })).why, /another card/);
-  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask(asQuestion({ data: cards[2].data }))), { asked: [PHOTO_CARD] })).why, /another card/);
+  assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask(shown(cards[2].data))), { asked: [PHOTO_CARD] })).why, /another card/);
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { forbidden: ['card-answer'] })).why, /never earns: card-answer/);
   assert.match((await judgedWhy(events(why(), ['say', explanation], again(), ask()), { forbidden: ['approval (refused)'] })).why, /never earns: approval \(refused\)/);
   assert.match((await judgedWhy(events(why(), again(), ask(), ['say', explanation]))).why, /no explanation before it/);
@@ -198,7 +202,7 @@ test('36\'s why leg passes `why 2`, an explanation with an everyday example, the
 
 test('36\'s Show me leg passes the pressed card\'s preview alone, then that card alone, as it is, with the numbers moved', async () => {
   const cards = await cardsOf(CARDS_36);
-  const card = asQuestion({ data: cards[1].data });
+  const card = shown(cards[1].data);
   const judge = (stream, { forbidden = [], asked = [APPROVAL_CARD] } = {}) => judge36Show({
     calls: mainCalls(stream), texts: textBlocks(stream), forbidden, asked,
     approval: cards.find((c) => c.id === APPROVAL_CARD), others: cards.filter((c) => c.id !== APPROVAL_CARD),
@@ -220,13 +224,13 @@ test('36\'s Show me leg passes the pressed card\'s preview alone, then that card
   assert.match(judge(steps(preview(12), ['say', 'The pressed card is now number 1.'], ['say', PREVIEW], ['AskUserQuestion', { questions: [card] }])).why, /more than the preview/);
   assert.match(judge(steps(preview(12), ['say', `${PREVIEW}: the second photo on each product page.`], ['AskUserQuestion', { questions: [card] }])).why, /the card now numbered 2/);
   assert.match(judge(steps(preview(12), ['say', PREVIEW], ['AskUserQuestion', { questions: [card] }]), { asked: [PHOTO_CARD, APPROVAL_CARD] }).why, /another card/);
-  assert.match(judge(steps(preview(12), ['say', PREVIEW], ['AskUserQuestion', { questions: [asQuestion({ data: cards[2].data })] }])).why, /another card/);
+  assert.match(judge(steps(preview(12), ['say', PREVIEW], ['AskUserQuestion', { questions: [shown(cards[2].data)] }])).why, /another card/);
   assert.match(judge(steps(preview(12), ['say', PREVIEW], ['AskUserQuestion', { questions: [card] }]), { forbidden: ['card-answer'] }).why, /never earns: card-answer/);
 });
 
 test('37 passes one plain one-line notification, then one call holding cards 3 and 4, and at most one short closing line', async () => {
   const cards = await cardsOf(CARDS_37);
-  const fresh = cards.filter((c) => NEW_CARDS.includes(c.id)).map((c) => asQuestion(c));
+  const fresh = cards.filter((c) => NEW_CARDS.includes(c.id)).map((c) => shown(c.data));
   const judge = (stream, { asked = NEW_CARDS, forbidden = [] } = {}) => judge37({ calls: mainCalls(stream), texts: textBlocks(stream), forbidden, asked, cards });
   const notify = (message) => ['PushNotification', { message, status: 'proactive' }];
   const ask = (questions = fresh) => ['AskUserQuestion', { questions }];
@@ -262,7 +266,7 @@ test('37 after "Not sent" passes one plain one-line notification, no cards run o
     assert.equal(got.pass, true, got.why);
   }
   const cards = await cardsOf(CARDS_37);
-  const fresh = cards.filter((c) => NEW_CARDS.includes(c.id)).map((c) => asQuestion(c));
+  const fresh = cards.filter((c) => NEW_CARDS.includes(c.id)).map((c) => shown(c.data));
   assert.match(judge(events(notify('2 cards.'), ['Bash', { command: 'node "/p/cli.js" cards' }])).why, /ran `cards`/);
   assert.match(judge(events(notify('2 cards.'), ['Bash', { command: 'node "/p/cli.js" again 3' }])).why, /ran `again`/);
   assert.match(judge(events(notify('2 cards.'), ['AskUserQuestion', { questions: fresh }])).why, /asked the cards/);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readProject, writeProject, projectForFolder } from '../../../scripts/lib/projects.js';
+import { namesOf, readProject, writeProject, projectForFolder } from '../../../scripts/lib/projects.js';
 import { as, shortHome } from '../../helpers/homes.js';
 
 const CONNECTION = { host: 'github', mode: 'narrow', project: 'Owner/Name' };
@@ -121,4 +121,17 @@ test('projectForFolder finds the record whose folder contains the given one, by 
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(work, { recursive: true, force: true });
   }
+});
+
+test('namesOf gives the repository\'s own name and the folder\'s, each once, and nothing for an unknown project', async () => {
+  const home = shortHome();
+  try {
+    await as(home, () => {
+      assert.deepEqual(namesOf('owner__name'), []);
+      writeProject('owner__name', record());
+      assert.deepEqual(namesOf('owner__name'), ['Name', 'wh-proj-folder']);
+      writeProject('owner__name', record({ folder: path.join(os.tmpdir(), 'Name') }));
+      assert.deepEqual(namesOf('owner__name'), ['Name']);
+    });
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

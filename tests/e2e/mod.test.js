@@ -51,7 +51,7 @@ import { SETUP_STEPS } from '../../scripts/lib/setup-run.js';
 import { stopState } from '../../scripts/lib/stop.js';
 import { startRun, markStep, addChanges, newId } from '../../scripts/setup/journal.js';
 import { composeCard } from '../../scripts/cards/compose.js';
-import { approvalLine, replyCode, setLineOf } from '../../scripts/state/card-lines.js';
+import { approvalLine, chatCopy, replyCode, setLineOf } from '../../scripts/state/card-lines.js';
 import { listEvents, makeEvent } from '../../scripts/state/events.js';
 import { enrol, makeSigningKey, verify, readEnrolled } from '../../scripts/state/signing.js';
 import { readCursor, writeCursor } from '../../scripts/watcher/core.js';
@@ -294,8 +294,11 @@ test('a tick draws a waiting approval card; Approve from the pane lets the gate 
   const drawn = drawnCard(await tick(c), card.id);
   assert.equal(drawn.n, 1);
   assert.equal(drawn.kind, 'approval');
-  assert.equal(drawn.text, card.question.question, 'the card\'s text, exactly as written');
-  assert.equal(drawn.hash, hashOf(card.question.question));
+  // The chat is given it in the chat's words; the pane draws it whole, its set line and reply code with it.
+  const [whole] = card.inReply;
+  assert.equal(card.question.question, chatCopy(whole));
+  assert.equal(drawn.text, whole, 'the card\'s text, exactly as written');
+  assert.equal(drawn.hash, hashOf(whole));
   assert.deepEqual(drawn.buttons, [
     { label: 'Approve', does: 'record', shape: 'filled' },
     { label: 'Suggest a change…', does: 'suggest', shape: 'outlined' },
@@ -350,7 +353,7 @@ test('a card answered by its reply code is refused when pressed in the pane afte
   // The director puts the card off in the chat, so its code is on record, and later replies from the phone.
   await click(c, card.question, 'Not now');
   assert.equal(eventsOf('shown').length, 1);
-  const code = replyCode(setLineOf(card.question.question));
+  const code = replyCode(setLineOf(card.inReply[0]));
   assert.deepEqual(await bridge(c, { cmd: 'reply', origin: 'bridge', text: `${code} approve`, cwd: c.folder }), { ok: true, says: `Recorded: Approve pull request #${PR}` });
   assert.equal(eventsOf('approval').length, 1);
 
@@ -623,7 +626,7 @@ async function commitOnPullRequest(c, files) {
 test('Why? notes quietly; a suggestion on an approval hands the words on, signs nothing and stores nothing; a revised approval at a new head is the one Approve signs', { skip: SKIP }, () => onComputer({}, async (c) => {
   const card = await approvalCard(c);
   const drawn = drawnCard(await tick(c), card.id);
-  const code = replyCode(setLineOf(card.question.question));
+  const code = replyCode(setLineOf(card.inReply[0]));
 
   // The pane draws the card's parts word for word.
   assert.equal(drawn.parts.ask, `Put pull request #${PR} live?`);

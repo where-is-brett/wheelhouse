@@ -83,6 +83,22 @@ export function readProject(project) {
   }
 }
 
+// The names a project goes by, as the director may write them: its repository's own name and its folder's, each
+// once. Empty when neither record reads.
+export function namesOf(project) {
+  let record = null;
+  try {
+    record = readProject(project) ?? readLean(project);
+  } catch {
+    return [];
+  }
+  const names = [
+    typeof record?.repo === 'string' ? record.repo.split('/').at(-1) : null,
+    typeof record?.folder === 'string' ? path.basename(record.folder) : null,
+  ].filter((n) => typeof n === 'string' && n !== '');
+  return [...new Set(names)];
+}
+
 // The projects registered on this computer, by folder name in order: each folder under projects/
 // with a record that reads, { project, record }.
 export function registeredProjects() {

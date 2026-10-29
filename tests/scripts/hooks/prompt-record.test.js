@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { decide, sendPending, SIGNED_LABELS } from '../../../scripts/hooks/prompt-record.js';
+import { decide, sendPending, SIGNED_LABELS, storedText } from '../../../scripts/hooks/prompt-record.js';
 import { makeEvent, eventPath, dataHash, confirmationFor, eventHash, listEvents } from '../../../scripts/state/events.js';
 import { makeSigningKey, enrol, readEnrolled, verify } from '../../../scripts/state/signing.js';
-import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
+import { approvalLine, confirmLine, LIFT_STOP, LIFT_STOP_EARLIER, runbookLine, ciPushLine, RUNBOOK_TITLES, replyCode, replyCodeLine, approveWorkLine, answerLine, chatCopy, amendLine, liftIncidentLine, incidentFixLine, unattendedBuildsLine, setupLine, setLineOf, uninstallLine, trustLine, takeOverLine } from '../../../scripts/state/card-lines.js';
 import { profileDir, stateDir, stopFile, computerId } from '../../../scripts/lib/paths.js';
 import { settingKey, UNATTENDED_CARD } from '../../../scripts/protection/windows-builds.js';
 import { startRun, markStep, addChanges, newId } from '../../../scripts/setup/journal.js';
@@ -91,6 +91,47 @@ test('Approve on a card naming the pull request and its current head records a s
     assert.deepEqual(rec.event.data, { pr: 7, commit: FULL, words: 'Approve', question: q });
     assert.ok(rec.event.sig);
   });
+});
+
+// A card handed out in the chat's words (chatCopy): the click is matched to the card the state keeps, and signed on its whole text.
+const APPROVE_7 = (sha) => composeCard({
+  kind: 'approval', level: 3, what: 'Pull request #7 changes the wording on the sign-in page.', why: 'It changes what users see.',
+  options: [{ label: 'Approve', says: 'It goes live.' }], recommend: 'Approve', because: 'the checks passed', meanwhile: 'Nothing is released.', target: { pr: 7, sha },
+});
+const asCopy = ({ question }) => ({ ...question, question: chatCopy(question.question) });
+const copyClick = (shown, label) => ({ ...input({ [shown.question]: label }), tool_input: { questions: [shown], answers: { [shown.question]: label } } });
+
+test('Approve on a card asked in the chat\'s words is signed as a click on the card the state keeps', async () => {
+  await withHome(async () => {
+    const composed = APPROVE_7(FULL);
+    const kept = makeEvent({ kind: 'card', data: composed.card, now: () => NOW });
+    keepEvent(kept);
+    const shown = asCopy(composed);
+    assert.ok(!shown.question.includes('Reply code') && setLineOf(shown.question) === null, shown.question);
+    const c = fake();
+    await decide(copyClick(shown, 'Approve'), deps(c));
+    // The answer is recorded on the card's whole text, so the views close it as before.
+    assert.deepEqual(c.calls.write.map((w) => [w.kind, w.data]), [['card-answer', { question: composed.card.question, label: 'Approve' }]]);
+    const rec = c.calls.record.find((r) => r.event.kind === 'approval');
+    assert.deepEqual(rec.event.data, { pr: 7, commit: FULL, words: 'Approve', question: composed.card.question });
+    // Words that match no kept card are signed as nothing.
+    const stray = fake();
+    await decide(copyClick({ ...shown, question: `${shown.question} Also this.` }, 'Approve'), deps(stray));
+    assert.ok(!kinds(stray).includes('approval'), kinds(stray).join());
+  });
+});
+
+test('where two kept cards share the chat\'s words, only the one still waiting is matched, and with none waiting nothing is', () => {
+  const older = APPROVE_7('1'.repeat(40));
+  const newer = APPROVE_7(FULL);
+  const events = [older, newer].map((x, i) => makeEvent({ kind: 'card', data: x.card, now: () => new Date(NOW.getTime() + i) }));
+  const shown = asCopy(newer);
+  assert.equal(chatCopy(older.card.question), shown.question, 'the two read the same in the chat');
+  assert.equal(storedText(P, shown, { events, waiting: [events[1]] }), newer.card.question);
+  assert.equal(storedText(P, shown, { events, waiting: [] }), null);
+  assert.equal(storedText(P, shown, { events, waiting: events }), null);
+  // A question that already carries its set line is kept as asked.
+  assert.equal(storedText(P, newer.question, { events, waiting: [events[1]] }), null);
 });
 
 test('Approve when the head has moved since the card records no approval', async () => {

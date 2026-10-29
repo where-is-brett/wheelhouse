@@ -42,6 +42,7 @@ import { standInViews } from '../../../scripts/eval/stand-in-helper.js';
 import { assertUnderTmp } from '../../../probes/lib/scratch.js';
 import { card as composeWithCli } from '../../../scripts/frontdesk/cli.js';
 import { asQuestion } from '../../../scripts/cards/visit.js';
+import { chatCopy } from '../../../scripts/state/card-lines.js';
 import { numberedWaiting } from '../../../scripts/board/model.js';
 import { FRONT_DESK_LINE, toolSheetLines } from '../../../scripts/hooks/session-start.js';
 import { PROTECTED_KINDS } from '../../../scripts/state/events.js';
@@ -220,11 +221,12 @@ export function textBlocks(events) {
 export const askCalls = (calls) => calls.filter((call) => call.name === 'AskUserQuestion')
   .map((call) => ({ ...call, questions: Array.isArray(call.input.questions) ? call.input.questions : [] }));
 
-// Whether an asked question is the card as it was composed: its text, and its options' labels in order.
+// Whether an asked question is the card as it was composed: its text in the chat's words, as the front desk's command
+// prints it (chatCopy: no set line or reply code), and its options' labels in order.
 export function asItIs(asked, data) {
   const card = asQuestion({ data });
   const labels = (asked?.options ?? []).map((o) => o?.label);
-  return asked?.question === card.question && JSON.stringify(labels) === JSON.stringify(card.options.map((o) => o.label));
+  return asked?.question === chatCopy(card.question) && JSON.stringify(labels) === JSON.stringify(card.options.map((o) => o.label));
 }
 
 // What the session wrote that a front desk must never write for a press or a wake: a signed

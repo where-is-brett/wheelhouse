@@ -136,7 +136,7 @@ test('each example input in the playbook is accepted as written, the approval wi
     const answered = JSON.parse(out);
     seen.push(args);
     if (args === 'card') {
-      assert.ok(answered.question.question.includes(approvalLine(12, HEAD)), answered.question.question);
+      assert.ok(answered.inReply[0].includes(approvalLine(12, HEAD)), answered.inReply[0]);
       assert.equal(h.writes.filter((w) => w.kind === 'card').length, 1);
     }
     if (args === 'record ruling') assert.equal(answered.card.question.question.split('\n')[0], 'Confirm this?');
@@ -290,7 +290,7 @@ test('the front desk quotes a ruling in force where it applies it, gives a card 
   assert.match(playbook, /\*\*A ruling in force\*\*[^\n]*quote it, in its own words, where you apply it/);
   // Scenario 10: a card is never in the session's own words (design 5.3).
   // Only when the tool can't be loaded: a Desktop session whose AskUserQuestion is deferred loads it (ruling F93).
-  assert.match(playbook, /When your clickable-question tool can't be loaded \(your tool-search tool, if you have one, finds none\), put each card in your reply as it was printed, word for word with its set line; never in your own words\./);
+  assert.match(playbook, /When your clickable-question tool can't be loaded \(your tool-search tool, if you have one, finds none\), put each card in your reply as it was printed, word for word, taking its text from `inReply` where that is printed, set line and reply code with it, so the director can answer by the code; never in your own words\./);
   // Scenario 7: a visible change with a choice in it has choices to make (design 7.2); no example mirrors the scenario (ruling F93).
   assert.match(intake, /A change users would see that leaves a choice to make is the small lane at least, never quick\./);
 });
