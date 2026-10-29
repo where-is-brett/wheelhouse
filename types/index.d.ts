@@ -125,6 +125,26 @@ export type WheelhouseSettingsGroup = { id?: string; title?: string; note?: stri
 // `lift-stop`) and the label pressed.
 export type WheelhousePressing = { on: string; label: string };
 
+// The desk's messages (scripts/desk/, `desk/1`), which a later app sends on the helper's socket. A request names its
+// version and the project, or a folder inside it.
+export type DeskView = 'glance' | 'briefing' | 'logbook' | 'waiting' | 'card' | 'work' | 'settings' | 'usage' | 'preview' | 'why' | 'survey';
+export type DeskCommand = 'answer' | 'suggest' | 'not-now' | 'request' | 'set' | 'all-stop' | 'lift-all-stop' | 'pair';
+export type DeskWatchEvent = 'card-added' | 'card-closed' | 'glance-changed' | 'work-changed' | 'all-stop' | 'notice';
+export type DeskPlace = { v: 'desk/1'; project?: string; cwd?: string };
+export type DeskEvidence =
+  | { form: 'signed'; records: unknown[] }
+  | { form: 'window' }
+  | { form: 'chat-click'; proof: 'chat-click' }
+  | { form: 'client'; client: string; at: string; sig: string };
+export type DeskReadRequest = DeskPlace & { view: DeskView; args?: Record<string, unknown> };
+export type DeskActRequest = DeskPlace & { command: DeskCommand; args?: Record<string, unknown>; evidence?: DeskEvidence };
+export type DeskWatchRequest = DeskPlace & { cursor: string | null };
+// Every answer: done, with what it gives, or refused in plain words.
+export type DeskRefusal = { ok: false; v: 'desk/1'; refused: string };
+export type DeskReadAnswer = { ok: true; v: 'desk/1'; view: DeskView; data: unknown; lines: string[] } | DeskRefusal;
+export type DeskActAnswer = { ok: true; v: 'desk/1'; changed: string[] } | DeskRefusal;
+export type DeskWatchAnswer = { ok: true; v: 'desk/1'; events: ({ type: DeskWatchEvent } & Record<string, unknown>)[]; cursor: string } | DeskRefusal;
+
 declare module 'claude-code' {
   interface PluginState {
     wheelhouse: {
