@@ -46,6 +46,7 @@ const STALL_QUESTIONS = FEATURE_QUESTIONS + 500;
 export const FEATURE_STOPPED = 'Stopped before it was switched on; the slices already added stay behind their switch.';
 // The summary of the report for quick, small and bug work whose pull request merged.
 export const MERGED_WORDS = 'Added to the main line.';
+export const CLOSED_WORDS = 'Its pull request was closed without being added.';
 // The fix card's numbers, after the clash cards' and the requests card's.
 const FIX_QUESTIONS = OWN_QUESTIONS + 5000;
 export const STARTED_FIX_WORDS = 'The main line is red, so Wheelhouse started fixing it; other work waits until it is green.';
@@ -400,6 +401,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const latest = new Map();
       for (const r of views.runs?.[work] ?? []) if (isPlain(r?.data) && since(r, entry.work)) latest.set(r.data.runId, r.data);
       const prs = [...new Set([...latest.values()].filter((r) => r.state === 'ended' && Number.isInteger(r.pr)).map((r) => r.pr))];
+      let merged = false;
       for (const pr of prs.filter((n) => !state.closedPrs.includes(n)).reverse()) {
         const got = await stateOf(pr);
         if (got === 'closed') {
@@ -410,7 +412,18 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
         await write('report', { work, outcome: 'merged', pr, summary: MERGED_WORDS, rulings: [] });
         state.shipped[work] = queued;
         keep();
+        merged = true;
         break;
+      }
+      // Every run ended, and the newest pull request was closed unmerged: the work has stopped, so it gets a `closed`
+      // report, which takes it off the board's work under way, and the Logbook says so, once. Queued again, it starts
+      // afresh. A newer run still going, or a newer pull request open, ends nothing.
+      const newest = [...latest.values()].filter((r) => Number.isInteger(r.pr)).at(-1)?.pr;
+      if (!merged && Number.isInteger(newest) && state.closedPrs.includes(newest) && [...latest.values()].every((r) => r.state === 'ended')) {
+        await write('report', { work, outcome: 'closed', pr: newest, summary: CLOSED_WORDS, rulings: [] });
+        state.shipped[work] = queued;
+        keep();
+        await write('note', { about: 'engine', work, words: `${entry.work.data.title ?? work}: its pull request #${newest} was closed without being added, so the work has stopped. Queue it again to build it afresh.` });
       }
     }
   }

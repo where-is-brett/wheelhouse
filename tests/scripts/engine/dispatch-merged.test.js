@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { dispatchRun, MERGED_WORDS } from '../../../scripts/engine/dispatch-run.js';
+import { dispatchRun, MERGED_WORDS, CLOSED_WORDS } from '../../../scripts/engine/dispatch-run.js';
 import { fakeEngine } from '../../../scripts/engine/fake.js';
 import { tempFolder } from '../../helpers/homes.js';
 
@@ -61,14 +61,30 @@ test('a run still going, or one that ended with no pull request, is not asked ab
   assert.deepEqual(reports(world), []);
 });
 
-test('a pull request closed unmerged writes no report and isn\'t asked about again', async () => {
+test('a pull request closed unmerged ends the work with a closed report and a Logbook line, and isn\'t asked about again', async () => {
   const { d, world } = setUp();
   world.runs.push({ runId: 'run-1', state: 'ended', outcome: 'completed', branch: 'wh/card-1', pr: 41 });
   world.states[41] = 'closed';
   await d.tick();
   await d.tick();
   assert.deepEqual(world.asked, [41]);
+  assert.deepEqual(reports(world), [{ work: 'card-1', outcome: 'closed', pr: 41, summary: CLOSED_WORDS, rulings: [] }]);
+  const notes = world.written.filter((w) => w.kind === 'note').map((w) => w.data.words);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /The sale banner/);
+  assert.match(notes[0], /#41 was closed without being added/);
+});
+
+test('a closed pull request with a newer run still going, or a newer one open, ends nothing', async () => {
+  const { d, world } = setUp();
+  world.runs.push({ runId: 'run-1', state: 'ended', outcome: 'completed', branch: 'wh/card-1', pr: 41 });
+  world.runs.push({ runId: 'run-2', state: 'started', branch: 'wh/card-1' });
+  world.states[41] = 'closed';
+  await d.tick();
   assert.deepEqual(reports(world), []);
+  world.runs.push({ runId: 'run-2', state: 'ended', outcome: 'completed', branch: 'wh/card-1', pr: 42 });
+  await d.tick();
+  assert.deepEqual(reports(world), [], 'the newer pull request is open');
 });
 
 test('work with an ending report since it was queued is left alone, and work queued again is judged on its new runs', async () => {
