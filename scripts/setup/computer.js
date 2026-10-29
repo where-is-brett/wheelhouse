@@ -51,7 +51,7 @@ import { projectForFolder, writeProject, registeredProjects } from '../lib/proje
 import { registeredLeanProjects } from '../lean/project.js';
 import { effectiveSettings } from '../settings/effective.js';
 import { loginEntry, installLoginStart, loginStartRecord, needsLoginStart } from '../lib/login-start.js';
-import { START_SCRIPT } from '../agents/copilot/start-helper.js';
+import { HELPER_START_SCRIPT } from '../agents/index.js';
 import { localViews } from '../hooks/session-start.js';
 import { stateDir } from '../lib/paths.js';
 import { joinedRepo } from '../lib/setup-run.js';
@@ -159,11 +159,11 @@ function projectEngines(now) {
 }
 
 // The sign-in start the helper needs for the new engine, as a change of this computer's: none when no project uses
-// the engine, when one is already made, or on a system with no sign-in start known. Copilot's own install makes its
-// own, so only the engine is asked here (a work computer, which Copilot's install leaves alone, is not known here).
+// the engine, when one is already made, or on a system with no sign-in start known. An agent whose install makes its
+// own is not asked about here (nor is a work computer, which that install leaves alone and setup can't tell).
 function loginChanges({ platform, userHome, now }) {
   if (!needsLoginStart({ projects: projectEngines(now) }) || loginStartRecord() !== null) return [];
-  const entry = loginEntry({ platform, root: ROOT, script: START_SCRIPT, home: userHome });
+  const entry = loginEntry({ platform, root: ROOT, script: HELPER_START_SCRIPT, home: userHome });
   return entry === null ? [] : [{ kind: 'login-start', target: entry.path, entry, what: 'login' }];
 }
 

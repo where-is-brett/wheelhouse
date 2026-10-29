@@ -253,9 +253,8 @@ test('uninstall removes the entry it made and nothing else', onMacPaths, async (
   });
 });
 
-test('a computer needs the sign-in start when any project uses the new engine or runs on Copilot', () => {
+test('a computer needs the sign-in start when any project uses the new engine', () => {
   assert.equal(needsLoginStart({ projects: [{ project: 'a', engine: 'wheelhouse' }, { project: 'b', engine: 'archon' }] }), true);
-  assert.equal(needsLoginStart({ projects: [{ project: 'a', engine: 'wheelhouse', agent: 'copilot' }] }), true);
   assert.equal(needsLoginStart({ projects: [{ project: 'a', engine: 'wheelhouse' }, { project: 'b' }] }), false);
   assert.equal(needsLoginStart({ projects: [] }), false);
   assert.equal(needsLoginStart({}), false);
