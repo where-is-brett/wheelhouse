@@ -77,4 +77,4 @@ The answers to the checks in section 20 of the design, and to checks 24 to 31 in
 | 77 | E4: skills inside Archon's steps | Partly: nine of eleven; item 7 showed no helpers, item 11 (Copilot) Deferred | [77-archon-skills.md](77-archon-skills.md) |
 | 78 | E5: Archon's run control | Partly: no ask lost or doubled over 50 trials; a cancelled run can't be resumed, and a detached process survived a cancel; sleep not yet run | [78-archon-run-control.md](78-archon-run-control.md) |
 | 79 | E6: counting spend under Archon | Deferred: the Claude half reads; the Copilot half waits for the director's go | [79-archon-spend.md](79-archon-spend.md) |
-| 80 | One real small-lane run (part 4.1) | Not yet: stopped at the plan step on a lineage hold, since installing the pinned kits waits for the director; six defects found and fixed on the way | [80-small-lane.md](80-small-lane.md) |
+| 80 | One real small-lane run (part 4.1) | Partly: stopped at the plan step on a lineage hold, since installing the pinned kits waits for the director; six defects found and fixed on the way | [80-small-lane.md](80-small-lane.md) |

@@ -2,7 +2,7 @@
 
 # Check 80: one real small-lane run (part 4.1)
 
-**Answer:** Not yet. The run was stopped at the plan step, the first AI step of the lane. Getting there showed six defects, each of which on its own stopped every real run on a fresh setup. All six are fixed in the same pull request as this note. The step that stopped it is a lineage hold: the skills installed on this Mac differ from the pinned kits. Setup's next step would install the pinned kits, but that writes plugin entries in `~/.claude`, and so it waits for the director's yes. Claude spend was $0.16.
+**Answer:** Partly. The run was stopped at the plan step, the first AI step of the lane. Getting there showed six defects, each of which on its own stopped every real run on a fresh setup. All six are fixed in the same pull request as this note. The step that stopped it is a lineage hold: the skills installed on this Mac differ from the pinned kits. Setup's next step would install the pinned kits, but that writes plugin entries in `~/.claude`, and so it waits for the director's yes. Claude spend was $0.16.
 
 ## Question
 
@@ -38,12 +38,14 @@ Part 4.1's end-to-end check (Archon design, section 7.2). Does one small-lane ru
 
 Spend: $0.143 for the one plan step, which ran out of options after the hold, and about $0.02 for five hello trials. No Copilot was used.
 
-## What it means
+## What it means for the design
 
 - The fake engine and the stood-in hosts hid all six defects, because each is in how real Archon v0.13.0 behaves: a repository it insists on, workspace naming, the mirror's `HEAD`, and permission mode. Each fix has a test that failed first, written to match what Archon did here.
 - The overlay fix is not yet checked on a real run. Run 4 also hit the hold, so whether its Claude step reads `order.json` now is still open.
 - The small lane's own steps (task fan-out, checks, review loop, signing) are still unrun on real Archon. The next try needs the director's yes to two things: the user-scope plugin at the release under test, and the pinned kits for the project.
 
-## Undo
+## Needs the director
 
-The trial repository keeps check 80's setup commit on `main`. It was not deleted. The scratch home, engine and project checkout are in the session's scratch folder, with two links under `/tmp` (`wh80`, `wh80-engine`) for the short socket path. They go to the Trash when the next try is done. Claude Code's transcripts of the runs' steps are under `~/.claude/projects/`, as for checks 75 to 77.
+Two yeses before the next try, both of which write plugin entries in `~/.claude`: the user-scope Wheelhouse plugin at the release under test, and the pinned kits installed for the project. The main session puts both to the director.
+
+Undo, which needs nothing from the director: the trial repository keeps check 80's setup commit on `main`. It was not deleted. The scratch home, engine and project checkout are in the session's scratch folder, with two links under `/tmp` (`wh80`, `wh80-engine`) for the short socket path. They go to the Trash when the next try is done. Claude Code's transcripts of the runs' steps are under `~/.claude/projects/`, as for checks 75 to 77.
