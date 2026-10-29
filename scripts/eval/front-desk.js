@@ -117,13 +117,16 @@ export function importClosure(entries, root = REPO_ROOT) {
 // What the scratch plugin holds of the repository's: the package file that makes its scripts
 // modules, as the real plugin's root does (without it a package file above the temporary folder
 // decides), the skills, the front desk's command with what it imports, and the files read beside
-// them (the glossary's starter).
+// them (the glossary's starter, and the agents' tool sheets, which the desk's views load with the
+// session start's readers).
 export const PLUGIN_FILES = [
   'package.json',
   'skills/intake/SKILL.md',
   'skills/front-desk/SKILL.md',
   ...importClosure(['scripts/frontdesk/cli.js']),
   'templates/glossary.json',
+  'adapters/claude-code/tool-sheet.md',
+  'adapters/copilot/tool-sheet.md',
 ];
 
 // The hooks' script: it hands what Claude Code gave it to the stand-in helper at `address`, which
