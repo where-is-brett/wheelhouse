@@ -35,7 +35,7 @@ const holdsAll = (ask) => ask?.holdsAll === true || ask?.labels?.holds === 'all'
 
 // What to do with one ask (an `ask` EngineEvent as the adapter gives it). `levels` are the project's level records by
 // topic ({ [topic]: { value } }), from which a delegation lowers a level-3 ask to level 2.
-//   -> { answer: { choice, words? }, line, level } | { card: { approval } | { question }, importance } | { line }
+//   -> { answer: { choice, words? }, line, level } | { card: { approval } | { question }, importance, exempt } | { line }
 export function routeAsk(ask, { levels = {} } = {}) {
   if (!isPlain(ask)) return { line: 'The engine sent something that isn\'t a question; nothing was done with it.' };
   const level = [1, 2, 3, 4].includes(ask.level) ? ask.level : 3;
@@ -51,7 +51,8 @@ export function routeAsk(ask, { levels = {} } = {}) {
   if (lowered && isText(ask.recommend) && optionIds.has(ask.recommend)) {
     return { answer: { choice: ask.recommend }, line: `The build's question was answered as recommended, under your delegation for ${ask.topic}.`, level: 2 };
   }
-  return { card: cardOf(ask, level), importance: importanceOf(ask, level) };
+  const importance = importanceOf(ask, level);
+  return { card: cardOf(ask, level), importance, exempt: ignoresBudget({ importance }) || holdsAll(ask) };
 }
 
 // The order cards come in (section 8.3): All stop or an incident, then level 4, then what holds up all work, then
@@ -101,16 +102,20 @@ export function dayOf(at) {
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
 }
 
-// Which waiting cards to show now. `cards` are [{ importance, ... }] waiting in the order they came; `shownToday` how
-// many budgeted cards were shown today already. Importance 0 and 2 (All stop or an incident, and what holds up all
-// work) ignore the budget; the rest fill it in order of importance.
+// Whether a card is shown whatever the day's budget: All stop or an incident (importance 0), and what holds up all work
+// (importance 2, or `exempt`, a level-4 ask that holds up all work keeping its place before level 3).
+export const ignoresBudget = (card) => card?.importance === 0 || card?.importance === 2 || card?.exempt === true;
+
+// Which waiting cards to show now. `cards` are [{ importance, exempt?, ... }] waiting in the order they came;
+// `shownToday` how many budgeted cards were shown today already. Those that ignore the budget (ignoresBudget) are shown
+// at once; the rest fill it in order of importance.
 export function cardBudget({ cards = [], cardsPerDay = 3, shownToday = 0 } = {}) {
   const ordered = cards.map((card, index) => ({ card, index })).sort((a, b) => (a.card.importance ?? 4) - (b.card.importance ?? 4) || a.index - b.index);
   const show = [];
   let room = Math.max(0, cardsPerDay - shownToday);
   let wait = 0;
   for (const { card } of ordered) {
-    if (card.importance === 0 || card.importance === 2) show.push(card);
+    if (ignoresBudget(card)) show.push(card);
     else if (room > 0) {
       show.push(card);
       room -= 1;

@@ -12,9 +12,12 @@ import { limitsFor } from './caps.js';
 import { ENGINE_QUESTIONS } from './router.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ mergeRun: null, lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null });
+const EMPTY = () => ({ mergeRun: null, mergeRuns: [], lastStart: null, seenReady: [], sentBack: {}, acted: {}, clashAsked: {}, requestsAsked: null });
 // The dispatcher's own questions take numbers from here, apart from the card router's.
 const OWN_QUESTIONS = ENGINE_QUESTIONS + 90000;
+// The work the merge queue's own runs stand for, which no work record names: their asks are routed under it.
+export const MERGE_WORK = 'merge-queue';
+const KEPT_MERGE_RUNS = 20;
 export const TRY_AGAIN = 'Try again';
 export const LEAVE_IT = 'Leave it';
 export const KEEP_OFF = 'Keep it off';
@@ -45,7 +48,7 @@ export function orderFor(entry, { settings = {}, raised = false, config = {} } =
   });
 }
 
-// dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf }) -> { tick, startAgain }.
+// dispatchRun({ engine, project, folder, file, readViews, settings, stopped, now, start, write, readyOf }) -> { tick, workOf, startAgain, sentBack }.
 // - `start({ project, order, branch?, carryOn? })` the helper's own start; `readyOf()` the pull requests marked ready,
 //   { [pr]: { work, head } }; `settings()` the project's settings in force; `write(kind, data)` a record.
 export function dispatchRun({ engine, project, folder, file, readViews, settings = () => ({}), stopped = () => false, now = () => new Date(), start, write = async () => {}, readyOf = () => ({}), config = () => ({}), spentThisMonth = () => 0 } = {}) {
@@ -135,6 +138,7 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
       const got = await engine.start({ lane: 'merge', project: folder });
       if (got?.ok) {
         state.mergeRun = got.runId;
+        state.mergeRuns = [...state.mergeRuns, got.runId].slice(-KEPT_MERGE_RUNS);
         state.lastStart = now().toISOString();
         state.seenReady = waiting.map(([pr]) => pr);
         keep();
@@ -162,6 +166,9 @@ export function dispatchRun({ engine, project, folder, file, readViews, settings
 
   return {
     tick,
+    // The work a merge-queue run the dispatcher started stands for ({ work: MERGE_WORK, lane: 'merge' }), or null: no
+    // `run` record names it, so its asks are found from here.
+    workOf: (runId) => (state.mergeRuns.includes(runId) ? { work: MERGE_WORK, lane: 'merge', branch: null } : null),
     // Starts a piece again, carrying on from what is there (Give it more), with its cap raised once.
     startAgain: (args) => startPiece(args),
     // A pull request the merge gate sent back for a clash: started again on the next tick, or a card the second time.

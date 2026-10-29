@@ -285,3 +285,46 @@ test('an ask routed while a tick is showing cards is shown once', async () => {
     assert.equal(t.writes.filter((w) => w.kind === 'question').length, 1);
   } finally { t.cleanup(); }
 });
+
+test('a question that holds up all work is shown at once when the day\'s three cards are out', async () => {
+  const recordings = { ...Object.fromEntries([1, 2, 3].map((n) => [`r${n}`, asking(`q${n}`)])), held: asking('q4', { level: 4, labels: { holds: 'all' } }) };
+  const t = setUp({ recordings });
+  try {
+    for (const n of [1, 2, 3]) await t.ask(`r${n}`);
+    await t.ask('held');
+    assert.equal(t.writes.filter((w) => w.kind === 'question').length, 4);
+  } finally { t.cleanup(); }
+});
+
+test('an answer the engine couldn\'t take for a moment is sent again on the next tick, not dropped', async () => {
+  const t = setUp();
+  try {
+    await t.ask();
+    t.sign('Do the whole page');
+    const real = t.engine.act.bind(t.engine);
+    let down = true;
+    t.engine.act = (runId, action) => {
+      if (down && action.answer) throw new Error('archon: command timed out');
+      return real(runId, action);
+    };
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 0, 'the failed call never reached the fake');
+    assert.ok(!t.writes.some((w) => w.kind === 'note' && /moved on/.test(w.data.words ?? '')), 'nothing says the build moved on');
+    down = false;
+    await t.runner.tick();
+    assert.deepEqual(acts(t.engine).map((c) => c.action.answer.choice), ['b']);
+  } finally { t.cleanup(); }
+});
+
+test('an engine that says the ask moved on closes the card with one line, and it isn\'t sent again', async () => {
+  const t = setUp();
+  try {
+    const { runId, event } = await t.ask();
+    t.engine.act(runId, { answer: { ask: event.id, choice: 'a' } });
+    t.sign('Do the whole page');
+    await t.runner.tick();
+    await t.runner.tick();
+    assert.equal(acts(t.engine).length, 2, 'the other answer, then this one, once');
+    assert.equal(t.writes.filter((w) => w.kind === 'note' && /moved on/.test(w.data.words ?? '')).length, 1);
+  } finally { t.cleanup(); }
+});

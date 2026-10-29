@@ -15,12 +15,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { composeCard } from '../cards/compose.js';
-import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ENGINE_QUESTIONS } from './router.js';
+import { routeAsk, cardBudget, bundleApprovals, answerFor, dayOf, ignoresBudget, ENGINE_QUESTIONS } from './router.js';
 import { runCost, runningMinutes } from './spend.js';
 import { capReached, carriedSpend } from './caps.js';
 
 const isPlain = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {} });
+const EMPTY = () => ({ routed: {}, waiting: [], shown: { day: null, count: 0 }, questions: {}, approvals: {}, delivered: {}, tries: {}, later: [], next: {}, noted: null, capped: {}, costed: {}, carried: {} });
+// The failed tries after which the director is told an answer hasn't reached the build yet.
+const UNREACHABLE_SAID = 3;
 // The cap card's options: Give it more carries the work on with the cap raised once; Stop leaves it stopped.
 export const MORE = 'Give it more';
 export const STOP_LABEL = 'Stop';
@@ -63,11 +65,13 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     try { return (await engine.inspect(runId)) ?? null; } catch { return null; }
   }
 
+  // The engine's answer to an answer: { ok }, a refusal ({ ok: false, refused }), or `unreachable` when the engine
+  // couldn't be heard from (the call threw, or the engine says so), which is tried again on the next tick.
   async function answerEngine(runId, answer) {
     try {
-      return (await engine.act(runId, { answer })) ?? { ok: false };
+      return (await engine.act(runId, { answer })) ?? { ok: false, unreachable: true };
     } catch (error) {
-      return { ok: false, refused: error instanceof Error ? error.message : 'unknown' };
+      return { ok: false, unreachable: true, refused: error instanceof Error ? error.message : 'unknown' };
     }
   }
 
@@ -98,7 +102,7 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
       await note(routed.line, { work });
       return;
     }
-    state.waiting.push({ importance: routed.importance, card: routed.card, work, runId: ask.runId, ask });
+    state.waiting.push({ importance: routed.importance, exempt: routed.exempt === true, card: routed.card, work, runId: ask.runId, ask });
     keep();
     await show();
   }
@@ -116,15 +120,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
     const { cardsPerDay = 3, bundleApprovals: bundling = false } = settings() ?? {};
     // Bundled approvals are shown together and count as one card; each is still its own signed approval.
     const groups = bundling
-      ? bundleApprovals(state.waiting).map((g) => (g.card.bundle ? { importance: g.importance, items: state.waiting.filter((w) => w.card.approval && g.card.bundle.includes(w.card.approval)) } : { importance: g.importance, items: [g] }))
-      : state.waiting.map((w) => ({ importance: w.importance, items: [w] }));
+      ? bundleApprovals(state.waiting).map((g) => (g.card.bundle ? { importance: g.importance, exempt: g.exempt === true, items: state.waiting.filter((w) => w.card.approval && g.card.bundle.includes(w.card.approval)) } : { importance: g.importance, exempt: g.exempt === true, items: [g] }))
+      : state.waiting.map((w) => ({ importance: w.importance, exempt: w.exempt === true, items: [w] }));
     const { show: shown, wait } = cardBudget({ cards: groups, cardsPerDay, shownToday: state.shown.count });
     for (const group of shown) {
       for (const item of group.items) {
         await writeCard(item);
         state.waiting = state.waiting.filter((w) => w !== item);
       }
-      if (group.importance !== 0 && group.importance !== 2) state.shown.count += 1;
+      if (!ignoresBudget(group)) state.shown.count += 1;
       keep();
     }
     const waiting = wait > 0 ? groups.filter((g) => !shown.includes(g)).reduce((n, g) => n + g.items.length, 0) : 0;
@@ -203,7 +207,15 @@ export function engineRunner({ engine, file, readViews, write, stopped = () => f
         continue;
       }
       const got = await answerEngine(kept.runId, answer);
+      if (!got.ok && got.unreachable === true) {
+        // Not delivered: sent again on the next tick, and said once.
+        state.tries[key] = (state.tries[key] ?? 0) + 1;
+        keep();
+        if (state.tries[key] === UNREACHABLE_SAID) await note(`The build couldn't take your answer about ${titled(kept.work)} yet; it keeps trying.`, { work: kept.work });
+        continue;
+      }
       state.delivered[key] = got.ok ? 'answered' : 'refused';
+      delete state.tries[key];
       keep();
       if (!got.ok) await note(`Your answer about ${titled(kept.work)} wasn't needed: the build had already moved on.`, { work: kept.work });
     }

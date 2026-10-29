@@ -93,3 +93,10 @@ test("the table names each of Archon's own asks", () => {
   assert.deepEqual(ARCHON_ASKS.map((row) => row.name), ['main-line-red', 'merge-question', 'rounds-ended', 'usage-limit']);
   assert.ok(Object.isFrozen(ARCHON_ASKS));
 });
+
+test('a pack ask labelled as holding up all work says so, and so does the merge queue\'s own question', () => {
+  const pack = normaliseAsk({ kind: 'attention', runId: 'r1', occurrence: 'o1', message: 'Which?', options: [{ id: 'a', label: 'A' }], labels: { 'wh.kind': 'question', 'wh.level': '3', 'wh.holds': 'all' } });
+  assert.equal(pack.labels.holds, 'all');
+  const merge = normaliseAsk({ kind: 'attention', runId: 'r2', occurrence: 'o2', message: 'Schema change', options: [{ id: 'approve', label: 'Approve' }], labels: { merge: 'pr' } });
+  assert.equal(merge.holdsAll, true, 'the merge queue waits on it, so every ready pull request does');
+});

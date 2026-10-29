@@ -399,3 +399,13 @@ test('artefactsOf is the run\'s own artefacts folder in the engine\'s home, and 
     assert.equal(a.artefactsOf(runId, repo), null, `${runId} ${repo}`);
   }
 });
+
+test('an answer Archon gave no reply to is unreachable, so it is tried again; one it refused is not', async () => {
+  const id = `${RUN}:${items.pack.occurrence}`;
+  const silent = adapter(fakeCli({ 'workflow answer': () => ({ code: 1, json: null, stdout: '', stderr: 'timed out' }) }));
+  const lost = await silent.act(RUN, { answer: { ask: id, choice: 'approve' } });
+  assert.equal(lost.ok, false);
+  assert.equal(lost.unreachable, true);
+  const stale = await adapter(fakeCli({ 'workflow answer': refusal('answer-stale.json') })).act(RUN, { answer: { ask: id, choice: 'approve' } });
+  assert.equal(stale.unreachable, undefined);
+});

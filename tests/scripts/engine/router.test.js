@@ -94,3 +94,13 @@ test('the card budget\'s day is the director\'s own, on this computer\'s clock',
     if (before === undefined) delete process.env.TZ; else process.env.TZ = before;
   }
 });
+
+test('a level-4 ask that holds up all work keeps its place before level 3 and ignores the budget', () => {
+  const routed = routeAsk(ask({ level: 4, labels: { holds: 'all' } }));
+  assert.equal(routed.importance, 1);
+  assert.equal(routed.exempt, true);
+  const got = cardBudget({ cards: [{ importance: 3, n: 'l3' }, { ...routed, n: 'l4-holds' }], cardsPerDay: 3, shownToday: 3 });
+  assert.deepEqual(got.show.map((c) => c.n), ['l4-holds']);
+  assert.equal(got.wait, 1);
+  assert.equal(routeAsk(ask({ level: 4 })).exempt, false);
+});

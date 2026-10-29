@@ -131,3 +131,32 @@ test('an ask from a run the helper started becomes a question card in the record
     });
   } finally { p.cleanup(); }
 });
+
+test('an ask from the merge queue\'s own run is routed: a red main line\'s hold is answered with no card', async () => {
+  const p = await setUp();
+  const merge = [
+    { type: 'run-started', at: '2026-10-29T09:00:00.000Z', work: null, lane: 'merge' },
+    { type: 'ask', at: '2026-10-29T09:01:00.000Z', id: 'mq:red:1', kind: 'question', level: 1, recommend: 'hold', answer: 'hold', card: false, line: 'The main line is red, so the merge queue holds merges until it is green again.', options: [{ id: 'hold', label: 'Hold' }] },
+    { type: 'ask-resolved', at: '2026-10-29T09:02:00.000Z', id: 'mq:red:1' },
+    { type: 'run-ended', at: '2026-10-29T09:03:00.000Z', outcome: 'completed' },
+  ];
+  const engine = fakeEngine({ recordings: { merge }, artefacts: p.artefacts });
+  try {
+    await as(p.home, async () => {
+      // A pull request the helper marked ready for the merge queue.
+      const files = path.join(stateDir(P), '..', 'engine');
+      fs.mkdirSync(files, { recursive: true });
+      fs.writeFileSync(path.join(files, 'verdicts.json'), JSON.stringify({ ready: { 7: { work: 'card-7', head: 'a'.repeat(40) } } }));
+      const helper = await helperFor(p, engine);
+      try {
+        await helper.engine.tick();
+        assert.equal(engine.calls.filter((c) => c.call === 'start' && c.order.lane === 'merge').length, 1);
+        const held = await until(() => engine.calls.find((c) => c.call === 'act' && c.action?.answer?.choice === 'hold'), { what: 'the hold answered' });
+        assert.equal(held.action.answer.ask, 'mq:red:1');
+        assert.equal(records('question').length + records('card').length, 0);
+      } finally {
+        await helper.close();
+      }
+    });
+  } finally { p.cleanup(); }
+});

@@ -226,6 +226,8 @@ export function archonAdapter({
     }
     const said = refusal('take the answer', result);
     if (said.startsWith('That ask was already')) answered.add(ask);
+    // No answer from Archon at all (a timeout, a database it couldn't open): the answer is tried again, never dropped.
+    if (!result.json) return { ...refusedWith(said), unreachable: true };
     return refusedWith(said);
   }
 

@@ -57,7 +57,7 @@ import { startEngineHost } from '../engine/host.js';
 import { stopEngine, stopWords } from '../engine/stop.js';
 import { engineRoutes, engineDirOf } from '../engine/routes.js';
 import { engineRunner } from '../engine/runner.js';
-import { dispatchRun } from '../engine/dispatch-run.js';
+import { dispatchRun, MERGE_WORK } from '../engine/dispatch-run.js';
 import { packTreeDigest } from '../engine/pack-build.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
@@ -4134,13 +4134,13 @@ export async function startHelper({
       try { engine = engineFor(project); } catch { engine = null; }
       if (!engine) continue;
       try {
+        const { runner, dispatcher } = engineDesk(project, engine);
         const host = startEngineHost({
           engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
           write: (kind, data) => engineWrite(project, kind, data),
           cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
-          workOf: (runId) => engineRunOf(project, runId),
+          workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
         });
-        const { runner, dispatcher } = engineDesk(project, engine);
         host.onAsk((event) => { runner.onAsk(event).catch(() => {}); });
         engineHosts.push({ project, engine, host, runner, dispatcher });
       } catch {
@@ -4172,8 +4172,8 @@ export async function startHelper({
     });
     const runner = engineRunner({
       engine, file: path.join(files, 'router.json'), readViews: views, write, stopped, now, settings,
-      workOf: (runId) => engineRunOf(project, runId),
-      titleOf: (work) => views().work?.[work]?.work?.data?.title ?? work,
+      workOf: (runId) => engineRunOf(project, runId) ?? dispatcher.workOf(runId),
+      titleOf: (work) => (work === MERGE_WORK ? 'the changes waiting to be added' : views().work?.[work]?.work?.data?.title ?? work),
     });
     runner.onStart((args) => dispatcher.startAgain(args));
     return { runner, dispatcher };
