@@ -226,6 +226,16 @@ test('stopAll cancels every running run, leaving child runs to their parent', as
   assert.deepEqual(result, { cancelled: [RUN], survivors: [], paused: ['0a1b2c3d4e5f60718293a4b5c6d7e8f9'] });
 });
 
+test('wakeCommand is the continuation host, with archonEnv as its whole environment', () => {
+  const engine = path.join(path.sep, 'wh-engine');
+  const wake = archonAdapter({ engine }).wakeCommand();
+  assert.equal(wake.command, path.join(engine, 'archon', 'bin', process.platform === 'win32' ? 'archon.exe' : 'archon'));
+  assert.deepEqual(wake.args, ['workflow', 'wake', '--watch', '--json']);
+  assert.equal(wake.env.ARCHON_TELEMETRY_DISABLED, '1');
+  assert.equal(wake.env.WHEELHOUSE_ENGINE_RUN, '1');
+  assert.equal(wake.env.GH_TOKEN, undefined);
+});
+
 const pins = { archon: { tag: 'v0.13.0' }, bun: { version: '1.4.3' } };
 const healthyCli = (overrides = {}) => fakeCli({
   'version': plain('version.txt'),

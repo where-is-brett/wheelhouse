@@ -55,7 +55,11 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
   }
 
   return {
+    name: 'fake',
     calls,
+
+    // The continuation host's process: a stand-in, which a test's own `spawn` is handed and never runs.
+    wakeCommand() { return { command: 'fake-engine-wake', args: ['--watch'], env: {} }; },
 
     health() { return { ok: true, findings: [] }; },
 
@@ -77,10 +81,15 @@ export function fakeEngine({ recordings = {}, now = () => new Date().toISOString
       return { events: stream.slice(start), cursor: String(stream.length) };
     },
 
-    // Yields what is on the stream after `cursor` and then finishes; a real engine's keeps waiting.
-    async *follow(cursor) {
-      const { events } = this.watch(cursor);
-      for (const event of events) yield event;
+    // Yields what is on the stream after `cursor` and then finishes; a real engine's keeps waiting. `onCursor` is told
+    // the cursor after each event once the caller has taken it, so a caller that keeps it resumes after that event.
+    async *follow(cursor, { onCursor = () => {} } = {}) {
+      const { events, cursor: end } = this.watch(cursor);
+      const from = Number(end) - events.length;
+      for (const [index, event] of events.entries()) {
+        yield event;
+        onCursor(String(from + index + 1));
+      }
     },
 
     act(runId, action = {}) {

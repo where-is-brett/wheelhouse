@@ -52,7 +52,8 @@ import { commitAuthor } from '../setup/project-files.js';
 import { readEnrolled, verify, sign, ownKey } from '../state/signing.js';
 import { delegationReview } from '../frontdesk/learning.js';
 import { heldCounter, holdsLock, takeLock, touchLock, readLock } from '../state/lock.js';
-import { namesOf, readProject, isInsideFolder, projectForFolder } from '../lib/projects.js';
+import { namesOf, readProject, isInsideFolder, projectForFolder, registeredProjects } from '../lib/projects.js';
+import { startEngineHost } from '../engine/host.js';
 import { readLean, leanState, LEAN_NO_HOST } from '../lean/project.js';
 import { deskCore, checkVersion } from '../desk/core.js';
 import { fileSource } from '../desk/file-source.js';
@@ -947,6 +948,10 @@ export async function startHelper({
   premiumAlias = () => aliasModel(STRONGEST_ALIAS, { run }),
   // What its most capable alias stands for, asked in the same check to tell the premium model from it.
   mostCapableAlias = () => aliasModel(FRONT_DESK_ALIAS, { run }),
+  // The build engine (scripts/engine/contract.js) for a registered project whose `engine` setting is the new engine,
+  // or null (design on Archon, section 6.3): the helper keeps its continuation host. None by default; the real helper
+  // (helper-main.js) gives Archon's adapter. Its wake process is started with `spawn`.
+  engineFor = () => null,
 } = {}) {
   if (typeof adapterFor !== 'function') throw new Error('The helper needs an adapterFor function');
   if (typeof envFor !== 'function') throw new Error('The helper needs an envFor function');
@@ -3923,6 +3928,46 @@ export async function startHelper({
     '/issue/list': pass((a, { label }) => a.issue.list({ label })),
   };
 
+  // --- the build engine's continuation host (design on Archon, section 6.3) ---
+  // One host for each registered project on the new engine, started once the helper listens and stopped as it closes.
+  // Only the first keeps the wake process, since the engine's wake carries on every project's answered runs. Each
+  // writes its project's `run` and `ask` records, and keeps the stream's cursor beside the record.
+  const engineHosts = [];
+  const engineCtx = () => ({ lean: false, mode: 'quick', env: {}, signedOut: false, looked: new Map(), gitEnv: {}, secrets: [] });
+  function engineWrite(project, kind, data) {
+    return oneAtATime(`state:${project}`, async () => {
+      await ensureStateClone(project, engineCtx());
+      await writeEvent({ project, event: makeEvent({ kind, data, now }), now });
+      await freshViews(() => writeViews(project, { now }));
+    });
+  }
+  // The work a run is for, from the project's `run` records (the first names its work, lane and branch), or null for
+  // a run the project doesn't hold.
+  function engineRunOf(project, runId) {
+    const first = listEvents(stateDir(project), { report: () => {} })
+      .filter((e) => e.kind === 'run' && e.data?.runId === runId)
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))[0];
+    return first ? { work: first.data.work, lane: first.data.lane, branch: first.data.branch ?? null } : null;
+  }
+  function startEngineHosts() {
+    for (const { project } of registeredProjects()) {
+      let engine = null;
+      try { engine = engineFor(project); } catch { engine = null; }
+      if (!engine) continue;
+      try {
+        const host = startEngineHost({
+          engine, spawn, now, held: stopped, wake: engineHosts.length === 0,
+          write: (kind, data) => engineWrite(project, kind, data),
+          cursorFile: path.join(stateDir(project), '..', 'engine', 'cursor.json'),
+          workOf: (runId) => engineRunOf(project, runId),
+        });
+        engineHosts.push({ project, engine, host });
+      } catch {
+        // An engine that can't be followed gets no host; the other projects' hosts start all the same.
+      }
+    }
+  }
+
   // Waits, too, for work queued after an answer (the mirror's tidy): on Windows a folder
   // a git process is working in can't be removed. Photographing and comparing stop after the
   // picture under way.
@@ -3930,6 +3975,7 @@ export async function startHelper({
   function close() {
     closed ??= (async () => {
       closing = true;
+      await Promise.allSettled(engineHosts.map(({ host }) => host.stop()));
       await new Promise((resolve) => {
         server.close(() => {
           if (!pipe) fs.rmSync(address, { force: true });
@@ -4058,6 +4104,7 @@ export async function startHelper({
   } finally {
     releaseStart();
   }
+  startEngineHosts();
 
   return { address, close };
 }

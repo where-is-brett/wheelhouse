@@ -1,0 +1,127 @@
+// tests/scripts/host/helper-engine.test.js
+// The helper keeps the build engine's continuation host for each project on the new engine (design on Archon,
+// section 6.3): the fake engine stands in, and the wake process is a stand-in child that runs nothing.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { guardedRun } from '../../helpers/host-stand-ins.js';
+import { startHelper } from '../../../scripts/host/helper.js';
+import { engineForProject } from '../../../scripts/host/helper-main.js';
+import { stateDir } from '../../../scripts/lib/paths.js';
+import { run as realRun } from '../../../scripts/lib/run.js';
+import { writeProject } from '../../../scripts/lib/projects.js';
+import { listEvents } from '../../../scripts/state/events.js';
+import { makeSigningKey, enrol } from '../../../scripts/state/signing.js';
+import { openTestRecord } from '../../helpers/record-fixture.js';
+import { fakeEngine, loadRecordings } from '../../../scripts/engine/fake.js';
+import { readCursorFile } from '../../../scripts/engine/host.js';
+import { makeBareRemote, LOCAL_PATHS } from '../../helpers/git-fixture.js';
+import { as, shortHome, testAddress } from '../../helpers/homes.js';
+import { until } from '../../helpers/until.js';
+
+const hostLog = [];
+const hostGuard = guardedRun(realRun, { log: hostLog });
+after(() => assert.deepEqual(hostLog, [], 'no host tool ran'));
+
+const recordings = loadRecordings(path.join(import.meta.dirname, '..', '..', 'fixtures', 'engine'));
+
+function stubSpawn() {
+  const children = [];
+  const spawn = (command, args, options) => {
+    const child = new EventEmitter();
+    child.pid = 5000 + children.length;
+    child.killed = false;
+    child.kill = (signal = 'SIGTERM') => { child.killed = signal; setImmediate(() => child.emit('exit', null, signal)); return true; };
+    children.push({ command, args, options, child });
+    return child;
+  };
+  return { spawn, children };
+}
+
+async function projects(names) {
+  const remote = await makeBareRemote({ repo: 'o/p' });
+  const home = shortHome();
+  await as(home, async () => {
+    const { computer, publicKey } = makeSigningKey();
+    enrol({ computer, publicKey, enrolledAt: '2026-10-29T00:00:00.000Z' });
+    for (const project of names) {
+      writeProject(project, {
+        folder: os.tmpdir(), remoteUrl: remote.url, host: 'github', repo: 'o/p', connection: { host: 'github', mode: 'quick', project: 'o/p' },
+      });
+      await openTestRecord({ env: LOCAL_PATHS, project, remoteUrl: remote.url });
+    }
+  });
+  return { home, cleanup: () => { remote.cleanup(); fs.rmSync(home, { recursive: true, force: true }); } };
+}
+
+const engineRecords = (project) => listEvents(stateDir(project), { report: () => {} }).filter((e) => e.kind === 'run' || e.kind === 'ask');
+
+test("the helper keeps the engine's host for a project on the new engine, writing its records and keeping the cursor beside them", async () => {
+  const p = await projects(['o__on', 'o__off']);
+  const engine = fakeEngine({ recordings });
+  const { runId } = engine.start({ recording: 'quick-blocked' });
+  const { spawn, children } = stubSpawn();
+  try {
+    await as(p.home, async () => {
+      const helper = await startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
+        spawn, engineFor: (project) => (project === 'o__on' ? engine : null),
+      });
+      try {
+        await until(() => engineRecords('o__on').some((e) => e.data.state === 'paused'), { what: 'the ask and the pause in the record' });
+        const kinds = engineRecords('o__on').map((e) => `${e.kind} ${e.data.state ?? e.data.id}`).sort();
+        assert.deepEqual(kinds, ['ask rec-blocked-1:blocked:1', 'run paused', 'run started']);
+        assert.equal(engineRecords('o__on').find((e) => e.kind === 'ask').data.runId, runId);
+        assert.deepEqual(engineRecords('o__off'), [], 'a project on the old engine gets no host');
+        const file = path.join(stateDir('o__on'), '..', 'engine', 'cursor.json');
+        const cursor = await until(() => (readCursorFile(file).cursor === '3' ? readCursorFile(file) : null), { what: 'the cursor after the ask' });
+        assert.ok(cursor.written.includes('ask:rec-blocked-1:blocked:1'));
+        assert.equal(children.length, 1, 'one wake process');
+        assert.deepEqual(children[0].args, engine.wakeCommand().args);
+      } finally {
+        await helper.close();
+      }
+      assert.equal(children[0].child.killed, 'SIGTERM', 'the wake process ends with the helper');
+    });
+  } finally { p.cleanup(); }
+});
+
+test("a helper started again writes none of the engine's records twice", async () => {
+  const p = await projects(['o__on']);
+  const engine = fakeEngine({ recordings });
+  engine.start({ recording: 'quick-approved' });
+  try {
+    await as(p.home, async () => {
+      const start = () => startHelper({
+        run: hostGuard, address: testAddress(p.home), adapterFor: async () => ({}), envFor: async () => ({}),
+        spawn: stubSpawn().spawn, engineFor: () => engine,
+      });
+      let helper = await start();
+      await until(() => engineRecords('o__on').some((e) => e.data.state === 'paused'), { what: 'the ask and the pause in the record' });
+      await helper.close();
+      const count = engineRecords('o__on').length;
+      // The cursor is lost: the snapshot brings the open ask back, and the ids kept beside it hold it to one record.
+      const file = path.join(stateDir('o__on'), '..', 'engine', 'cursor.json');
+      fs.writeFileSync(file, JSON.stringify({ cursor: null, written: readCursorFile(file).written }));
+      helper = await start();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await helper.close();
+      assert.equal(engineRecords('o__on').length, count);
+    });
+  } finally { p.cleanup(); }
+});
+
+test('the real helper gives Archon only to a project whose engine setting is Archon', () => {
+  const made = [];
+  const engineFor = engineForProject({
+    adapter: () => { made.push(1); return { name: 'archon' }; },
+    views: (project) => ({ project: project === 'o__on' ? { engine: { key: 'engine', value: 'archon' } } : {}, profile: {} }),
+  });
+  assert.equal(engineFor('o__off'), null);
+  assert.equal(engineFor('o__on').name, 'archon');
+  assert.equal(engineFor('o__on'), engineFor('o__on'));
+  assert.equal(made.length, 1, 'one adapter for every project');
+});

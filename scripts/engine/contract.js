@@ -9,6 +9,9 @@
 //   act(runId, { answer: { ask, choice, words? } } | { cancel: { reason } } | { resume: {} }) -> { ok } | { ok: false, refused }
 //   inspect(runId) -> { status, steps: [{ id, role, provider, model, tokens, dollars, minutes, source }], branch, pr, digest }
 //   stopAll(reason) -> { cancelled: string[], survivors: string[] }
+//
+// Beside the interface, for the helper's continuation host (host.js): `name`, the engine's name for the record, and
+// wakeCommand() -> { command, args, env }, the process that carries answered runs on.
 
 export const METHODS = Object.freeze(['health', 'start', 'watch', 'act', 'inspect', 'stopAll']);
 export const ENGINE_EVENTS = Object.freeze(['run-started', 'step-finished', 'ask', 'ask-resolved', 'run-ended']);

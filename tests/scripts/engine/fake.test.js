@@ -68,8 +68,10 @@ test('follow yields what is waiting after a cursor', async () => {
   const engine = fakeEngine({ recordings, now });
   engine.start({ recording: 'merge-hold' });
   const got = [];
-  for await (const event of engine.follow('2')) got.push(event.type);
+  const cursors = [];
+  for await (const event of engine.follow('2', { onCursor: (c) => cursors.push(c) })) got.push(event.type);
   assert.deepEqual(got, ['ask']);
+  assert.deepEqual(cursors, ['3']);
 });
 
 test('a step with unknown spend has source unknown and null dollars', () => {

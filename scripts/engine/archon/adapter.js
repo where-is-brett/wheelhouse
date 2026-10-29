@@ -11,7 +11,8 @@
 //   inspect    archon workflow get <run> --verbose --json
 //   stopAll    archon workflow status --all --json, then cancel each running run   (Task 8 adds the process-tree kill)
 //   health     archon version; bun --version; archon ai tier list --json; archon telemetry status
-import { archonCli } from './cli.js';
+//   wake       archon workflow wake --watch --json   (wakeCommand: the continuation host starts and supervises it)
+import { archonCli, archonCommand } from './cli.js';
 import { ARCHON_SOURCE, BUN_PIN, enginePaths } from './build.js';
 import { normaliseAsk, askOccurrence } from './asks.js';
 import { readRecord } from './record.js';
@@ -202,6 +203,14 @@ export function archonAdapter({
   }
 
   return {
+    name: 'archon',
+
+    // The continuation host's process (spec 6.3): it carries an answered run on. Given to the host to start, with
+    // archonEnv as its whole environment.
+    wakeCommand() {
+      return archonCommand(['workflow', 'wake', '--watch', '--json'], { engine });
+    },
+
     async health() {
       const findings = [];
       const version = await cli(['version'], { timeout: CALL_MS });
