@@ -180,7 +180,7 @@ Parts are named as the main design names them, with the crew name the director s
 | Watcher, waker, Shape 1 and Shape 2 | **Replace** | Archon runs the work, and the engine adapter's continuation host keeps paused runs moving (section 6.3) |
 | Feature sessions, worktrees, the four feature files, feature commands | **Replace** | Archon's runs, worktrees and artefacts take their place |
 | Brief, done contract, appetite | **Repurpose** | They become the work order (section 7.4), with "done" written as checks a script can run |
-| The Wheelhouse override on Superpowers | **Repurpose** | It shrinks to the rules each node's prompt carries (levels, rulings, never merge, ask when blocked). Archon now holds the order of the steps, which the override existed to enforce |
+| The Wheelhouse override on Superpowers | **Repurpose** | It shrinks to the rules each node's prompt carries (levels, rulings, never merge, take the blocked exit rather than ask). Archon now holds the order of the steps, which the override existed to enforce. The method skills steps use become pinned, adapted copies in the Wheelhouse plugin (section 7.1) |
 | Builder, reviewer and tester agents | **Repurpose** | Their instructions become the prompts of the pack's nodes |
 | Round cap, retries | **Replace** | Archon's `max_iterations` on every loop and its retries. Only BLOCKER and HIGH findings hold work back, as decided on 24 October 2026 |
 | Merging, CI watching, mergeability checks | **Replace** | Archon's merge queue, behind the broker's permit |
@@ -331,21 +331,69 @@ Nothing else in the core changes. A one-page note in the repository keeps this m
 
 ## 7. Work through the engine
 
-### 7.1 How a node uses skills (confirmed from Archon's workflow language)
+### 7.1 How a node uses skills
+
+**How Archon loads them** (confirmed from Archon's workflow language at v0.13.0):
 
 - An AI node runs Claude Code through its Agent SDK, with the project's and user's `.claude` settings loaded by default.
-- **Plugins are off unless the node names them,** and the node fails if an unnamed plugin loads. **Skills are an exact allowlist per node.** So a node that uses Superpowers' test-driven development names `plugins: [superpowers@claude-plugins-official, wheelhouse@wheelhouse]` and `skills: [superpowers:test-driven-development]`.
+- **Plugins are off unless the node names them,** and the node fails if an unnamed plugin loads. **Skills are an exact allowlist per node.** A plugin's skill is named with the plugin's prefix (`wheelhouse:tdd`) and needs the plugin named too. A skill name Archon doesn't recognise only warns, and the step runs without it.
 - **Every Claude node in the pack names the Wheelhouse plugin,** so the guards load (section 12.1).
-- A prompt that starts with a slash command isn't handled specially by Archon, so nodes name their skills in `skills:` and in their prompt's words. Whether a `/` prompt also works is early check E4.
-- On the Copilot provider, skills work but plugins don't. Copilot nodes read Wheelhouse's skills from the clean home (section 13).
+- A step starts with only the names and one-line descriptions of its allowed skills. The full skill is read when the agent opens it, and its extra files only if it follows a link to them. In a loop with fresh context, each round is a new session, so a skill opened every round is read every round.
+- On the Copilot provider, skills work but plugins and hooks don't. Copilot nodes read Wheelhouse's skills from the clean home (section 13).
 
-**Method skills are kept and orchestrating skills are replaced** (**Decided**):
+**What it costs.** The research of 29 October 2026 (kept privately) measured the skills against the small lane's worst case, a 30-round implement loop that reopens its TDD skill every round. Matt Pocock's `tdd` costs about 1% of the lane's 4 million token cap, and Superpowers' TDD skill with its start-up hook about 2.5%. On Copilot, length costs nothing, since its plan counts prompts sent, not tokens. The real cost is behaviour: a skill that waits for a person, spawns helpers, or runs the whole test suite every round costs far more than its length. So the verdicts below turn on behaviour.
 
-| Kept as what nodes use | Replaced by Archon's graph |
-|---|---|
-| Superpowers: `writing-plans`, `test-driven-development`, `systematic-debugging`, `verification-before-completion`; `brainstorming` stays at the First Mate, with the director | Superpowers: `subagent-driven-development`, `executing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`, `finishing-a-development-branch` |
-| Matt Pocock's: `tdd`, `code-review`, `prototype`, `codebase-design`, `diagnosing-bugs` | The Wheelhouse override's ordering rules |
-| The design skills the director uses (taste, Emil Kowalski's, Apple's), in the design lens and visible work | |
+**No one has shown this working in public.** Archon's own pack names no skills in `skills:` or `plugins:` in any shipped workflow. Its maintainer writes the method into each step's prompt, and names a skill only in the prompt's words, so the workflow still runs on a provider that can't load skills. Using real skill files inside steps is Wheelhouse's step beyond that. It rests on early check E4 (section 15), which compares a skill against the same rules written into the prompt.
+
+#### Which skill runs where
+
+**Method skills are kept and orchestrating skills are replaced** (**Decided**). Every Superpowers and Matt Pocock skill, judged on that rule. *Designer's call* for each verdict, from the research.
+
+| Skill | Verdict | Step | What changes, and why |
+|---|---|---|---|
+| Matt Pocock's `tdd` | **Adapt** | Every implement loop, in every lane | The one TDD skill. It is small, and runs the full suite once at the end, not every cycle, which suits loops. Its "confirm the seams with the user" becomes: take the seams from the work order or the plan's task, or record them as an assumption. It calls `codebase-design` when the shape is unclear, so both go on the same allowlist |
+| Matt Pocock's `codebase-design` | **Use** | Plan step; on every implement loop's allowlist beside `tdd` | Shared words for a module's shape. A reference, not a conversation. Rarely opened inside a loop, so cheap there |
+| Matt Pocock's `diagnosing-bugs` | **Use** | The bug lane's reproduce step | The one debugging skill. Its first phase ends with one command that goes red on the bug, which becomes the loop's done check (`until_bash`). "No reproduction can be built" becomes the blocked exit |
+| Superpowers' `test-driven-development` and `systematic-debugging` | **Fallback** | Only if E4 shows them working better than the pair above | Kept as copies, not named in any step. Two TDD skills in one pack would give lanes different rules on when to refactor and how often to run the suite. If brought in, `test-driven-development` needs the loop rules below, since it runs the whole suite before calling any change done and tells the agent to delete code written before a test |
+| Superpowers' `writing-plans` | **Adapt** | Plan step (small, slice) | Read once a run, so cheap. Adapted copy: it saves where the work order says, its plan header has no line naming `subagent-driven-development`, it skips the hand-off to a person, and it returns the plan as the step's output. Otherwise the loop's builder reads "use subagent-driven-development" in round one |
+| Superpowers' `verification-before-completion` | **Use** | Implement, fix and test steps | Small, and stops a "done" claim without evidence. Archon's `until_bash` enforces this for the loop, and the skill holds the step's written report to it too |
+| Matt Pocock's `code-review` | **Adapt**, into two lenses | Two parallel review steps in the graph: **standards** and **spec** | As written it spawns two parallel helpers and needs a setup file (`docs/agents/issue-tracker.md`). Its two halves become two review steps side by side. The fixed point is the base branch, and the spec is the work order. **Standards** checks the change against the repository's documented standards and the skill's fixed list of code smells. **Spec** checks it against the work order's goal, scope and done checks. Same result, no helpers, no setup file. Both are review steps as in section 7.5, signed the same way |
+| Superpowers' `requesting-code-review` | **Drop** | | It spawns a reviewer helper, and Archon's review step already is the fresh reviewer. Its reviewer template is reused as text in the review steps' prompts |
+| Superpowers' `receiving-code-review` | **Adapt** | The fix loop | Acting on findings with care: check before changing, push back on a wrong finding. Its "ask when unclear" becomes: record the disagreement in the step's output, and the reviewer checks it again next round |
+| Matt Pocock's `pr` | **Adapt** | The pull request step | A short template: summary, evidence before and after, the danger in merging. Adapted to keep every private record out, since repositories may be public (section 10.1) |
+| Matt Pocock's `prototype` | **First Mate** | The feature lane's design stage | Its point is a person clicking through an idea before the design is approved, so it belongs with the director, not in a step. A user-level skill of the same name may exist, so the First Mate names it in full |
+| Superpowers' `brainstorming`; Matt Pocock's `grilling`, `grill-me`, `grill-with-docs`, `domain-modeling`, `to-spec`, `to-tickets`, `wizard` | **First Mate** | Intake, design and slicing, with the director | Conversations with a person. `domain-modeling` builds the glossary that steps read. `to-tickets`' rules for vertical slices are borrowed when the First Mate slices a feature |
+| The design skills the director uses: `emil-design-eng` (Emil Kowalski's), `apple-design`, and the taste skill | **Use** | The design lens only | The largest skills in play (about 6,800 and 5,800 tokens for the first two). Fine in the one design-lens step. **Never inside an implement loop,** where they would be read every round: there, a few lines in the prompt point at the style guide instead |
+| `frontend-design` | **Use** | The design lens; the implement loop on visible work | Light enough to sit in the loop |
+| Superpowers' `using-superpowers` | **Avoid** | Never loaded | It tells an agent to invoke skills on "even a 1% chance" and to brainstorm before building, which is wrong in a step allowed one skill. It arrives through the Superpowers plugin's start-up hook whether named or not (see packaging, below) |
+
+**Dropped, because Archon's graph or Wheelhouse does the job:**
+
+- **They orchestrate:** Superpowers' `subagent-driven-development`, `executing-plans`, `dispatching-parallel-agents` (Archon's loop groups and parallel steps), `using-git-worktrees` (Archon gives every run its own worktree, and two tools making worktrees would clash) and `finishing-a-development-branch` (the broker and the merge queue). Matt Pocock's `implement` and `implement-spec` (the graph's order), `wayfinder` and `triage` (Wheelhouse's intake and dispatcher), `research` (a step can't usefully wait on its own background agent), and `setup-matt-pocock-skills` and `ask-matt` (needed only by skills dropped or adapted away). The Wheelhouse override's ordering rules go the same way.
+- **They are for maintaining Wheelhouse, not building the product:** Superpowers' `writing-skills` and `diagnosing-superpowers`; Matt Pocock's `writing-for-agents`.
+- **They are conversations, or are covered elsewhere:** Matt Pocock's `improve-codebase-architecture`, `teach`, `to-questionnaire` and `wait-what` (conversations with a person); `retro` and `handoff` (the lesson step and Archon's step outputs).
+
+Matt Pocock's skills that only a typed `/name` can start are all among the dropped or First Mate ones, so nothing in a step depends on a `/` prompt working.
+
+#### Packaging: copies in Wheelhouse's own plugin
+
+- **The kept skills are copied into the Wheelhouse plugin** under their plain names (`tdd`, `codebase-design`, `diagnosing-bugs`, `writing-plans`, `verification-before-completion`, `receiving-code-review`, `pr`, and the two review lenses), with the adaptations above made in the copies. Both sources are MIT licensed. Each copy keeps its licence and notes where it came from and at which version. The design skills are copied the same way, for the design lens.
+- **Their versions are pinned and upgraded on purpose,** with the monthly upgrade check: a new upstream version is read, the adaptations are carried over, and the counted evaluation runs before the pin moves. Upstream changes often and in big steps.
+- **No node names the Superpowers plugin.** Naming a plugin brings its hooks and agents as well as its skills, and Superpowers' start-up hook pastes `using-superpowers` (about 900 tokens) into every step that loads it. Steps name only Wheelhouse:
+
+  ```yaml
+  plugins: [wheelhouse@wheelhouse]
+  skills: [wheelhouse:tdd, wheelhouse:codebase-design, wheelhouse:verification-before-completion]
+  ```
+
+- **The same names on Copilot.** The clean home holds the same copies (section 13). A Claude step names `wheelhouse:tdd` and a Copilot step names `tdd`; the skill and its words are the same. The pack's source names each skill once, and its build writes the two forms. *Designer's call*; if E4 shows a plain name finds a plugin's skill, the two forms become one.
+- **The pack's own check refuses a skill name that matches no copy,** since Archon only warns and the step would run without its method. It runs with the check that every Claude node names Wheelhouse (section 12.1).
+
+#### Prompts in steps that use skills
+
+- **No person in a step.** Every adapted skill's "ask your human partner" or "confirm with the user" becomes: decide within the rules and record an assumption in the step's output, or take the blocked exit (section 7.2). A step never waits for an answer, which would sit until Archon's idle timeout.
+- **Loop prompts say that earlier rounds' committed code stands,** so a strict TDD rule never reads round one's work as "code before a test" and deletes it, and that **the full suite runs once, at the end,** with only the tests in focus during the rounds.
+- **Steps name their skills in the prompt's words,** as Archon's own pack does ("follow the tdd skill: a failing test first"), so a step degrades gently if a skill fails to load, and so the words match on both providers.
 
 ### 7.2 Lanes become workflows
 
@@ -353,11 +401,11 @@ The pack (`engine/archon/pack/` in Wheelhouse's repository) holds one workflow p
 
 | Lane | Workflow | Steps |
 |---|---|---|
-| Quick | `wheelhouse-quick` | read the work order; implement with `tdd`, as a loop until the done checks pass (`until_bash`, at most 5 rounds); protected-tests check; review (the lenses that apply); push and open the pull request through the broker; preview of its head, if the change is visible; approval wait, if the work is shown first; mark ready for the merge queue; lesson |
-| Small | `wheelhouse-small` | read the work order; plan (`writing-plans`); a loop group that takes the plan's next unfinished task each round (implement with `test-driven-development`, then verify) until none is left, with a fixed cap (30 rounds by default; the builder may use one child run per task instead); protected-tests check; whole-change review with its lenses; fix loop, at most 3 rounds, closing only on BLOCKER and HIGH; pull request; preview of its head; approval wait, if shown first; mark ready; lesson |
+| Quick | `wheelhouse-quick` | read the work order; implement with `tdd`, as a loop until the done checks pass (`until_bash`, at most 5 rounds); protected-tests check; review (the standards and spec lenses side by side, and the others that apply); push and open the pull request through the broker, its text written with `pr`; preview of its head, if the change is visible; approval wait, if the work is shown first; mark ready for the merge queue; lesson |
+| Small | `wheelhouse-small` | read the work order; plan (`writing-plans`, adapted, with `codebase-design`); a loop group that takes the plan's next unfinished task each round (implement with `tdd`, then verify) until none is left, with a fixed cap (30 rounds by default; the builder may use one child run per task instead); protected-tests check; whole-change review with its lenses, standards and spec among them; fix loop with `receiving-code-review`, at most 3 rounds, closing only on BLOCKER and HIGH; pull request; preview of its head; approval wait, if shown first; mark ready; lesson |
 | Feature slice | `wheelhouse-slice` | as small, plus a task review inside the loop, the tester's walk of the done checks in a real browser, and the critical-area review on the most capable model |
 | Feature | `wheelhouse-feature` | one child run of `wheelhouse-slice` per slice, in the slice order the approved design gives, each merging behind its feature flag; a whole-feature review; a midpoint demo wait, where the director chose midpoint demos; the switch-on wait |
-| Bug | `wheelhouse-bug` | reproduce with `systematic-debugging` and write the failing test; then the quick lane's steps, or blocked with a proposal if the fix is bigger |
+| Bug | `wheelhouse-bug` | reproduce with `diagnosing-bugs` and write the failing test, whose command becomes the done check; then the quick lane's steps, or blocked with a proposal if the fix is bigger |
 | Fix main | `wheelhouse-fix-main` | started by the dispatcher when the main line goes red (section 11) |
 | Merge | Archon's `archon-merge-queue` | used as Archon ships it, with the broker as its `gh` (section 12.4) |
 
@@ -554,6 +602,7 @@ What Archon's Copilot provider is, at v0.13.0:
 How Wheelhouse uses it:
 
 - **The CLI runs from the clean home** (repurposed from the other-agents design, section 6.4). Wheelhouse's guards are registered there as the CLI's own hooks, only the sign-in is kept from the person's settings, and the permission levels become the node's tool rules. Whether the CLI's own hooks fire when the CLI runs under Archon is early check E1's third step. Where they don't, the protected-tests check step, the sandbox and the broker still stand.
+- **Skills come from the clean home,** as the same pinned copies the Wheelhouse plugin carries, named without the plugin's prefix (section 7.1). Copilot loads no plugins, so no plugin hook reaches its steps.
 - **Models:** the Copilot column of the routing table defaults to Copilot's included models, read from the account's list at setup. A premium model needs the director's opt-in (section 10.2).
 - **Wheelhouse offers to maintain the provider upstream.** Fixes found go to Archon as pull requests, and taking on the provider's upkeep is offered to Archon's maintainer. That gives the provider an owner and makes Wheelhouse a contributor, which answers part of the one-maintainer risk (section 16).
 - **The Copilot front end** (Lean's skills in VS Code's chat, with the confirm window) is a desk client. A Copilot-only director gets the same cards and records.
@@ -610,9 +659,26 @@ Each check is a short trial on the Mac, with an answer note in `docs/checks/`. A
 | **E1, Copilot through the compiled binary** (the riskiest, first) | 1. Does Archon v0.13.0's binary run a Copilot step with the CLI set by `COPILOT_BIN_PATH`, signed in by `copilot login`? 2. Does an included model run with no premium requests used (GitHub's usage page before and after)? 3. Do Wheelhouse's guards registered as the CLI's own hooks fire under Archon (a planted `.env` read refused)? 4. Does the run record show the step's tokens? 5. Do skills from the clean home load? | All five, on a throwaway repository, within one working day, spending nothing beyond the plan | Item 1 fails: the fallback ladder (section 13), each step tried in turn. Item 3 fails: Copilot steps run only with the check step and sandbox behind them, and the director is told on the Logbook. Item 2 fails: Copilot is held until the meter's estimate is fixed |
 | **E2, the guards in an Archon Claude node** | Do the STOP guard, the tool guard, the deny rules and the sandbox hold under Archon's bypass mode? Can an agent read Archon's database or credentials, run `archon`, or reach the engine room? | The safety subset (scenarios 6 and 18, the keychain, `.env`, `gh` and `archon` calls, an unsandboxed request) refuses everything, as in a plain session | The one-line patch (section 12.1) |
 | **E3, the merge path on GitHub** | A pull request through the broker, CI, Archon's merge gate, a red main line refused, a clash sent back and re-run, a planted test deletion stopped, an unsigned merge refused by the permit. The trial couldn't test merging | Every leg, on a throwaway private repository | The merge stays with the helper's own gate (the broker's permit grows to the full gate), and Archon's merge queue isn't used |
-| **E4, skills in nodes** | Superpowers' and Matt Pocock's skills load by `plugins:` and `skills:`. Does a `/skill` prompt work too? | A node follows test-driven development, seen in its transcript | Nodes name skills only by `skills:` and in their words |
+| **E4, skills in nodes** | Do skills inside steps behave as section 7.1 needs? On a throwaway repository, with a small task that has a done check, twelve items, listed below the table | Items 1 to 9, 11 and 12 as listed, with tokens recorded per step. Item 10 is a nice-to-have | Item by item, below |
 | **E5, run control** | `wake --watch` and the attention stream survive a restart of the helper, a sleep of the computer, and a missed cursor. A cancelled run resumes, skipping finished steps, with its worktree as it was. Cancelling a feature leaves no child run or process alive | No ask lost or answered twice over 50 trials; resume after cancel works for every lane; nothing survives a cancel | The adapter polls `attention --json` every 15 seconds as a backstop. If resume after cancel fails, caps and All stop end the run, and **Carry on** starts the lane again on the same branch with "carry on from what's there" in the order |
 | **E6, counting spend** | Each step's tokens and cost read from the record. Copilot's premium-request estimate against GitHub's own figure | The estimate is within one request of GitHub's on 20 Copilot steps | Copilot runs only on included models until it is |
+
+**E4's items.** Each result goes in E4's answer note, with tokens per step, so the counted evaluation starts from real figures.
+
+1. **Loading scope.** A Claude step with `skills:` set sees only the named skills. Opening one that isn't listed fails cleanly, without crashing the run.
+2. **Test first.** The transcript shows a test written, run and seen failing before any code, with the plugin's original skill and with Wheelhouse's copy.
+3. **The Superpowers hook.** With the Superpowers plugin named, is `using-superpowers` pasted in, and does the step try to brainstorm, ask questions or open other skills? Tokens with and without. This confirms why no node names it.
+4. **No person.** A task where the skill would normally ask (unclear seams, a third failed fix). Pass: the step records an assumption or takes the blocked exit within a minute or two, and never sits until the idle timeout. If it fails, the prompt's no-person rule is strengthened and the item run again.
+5. **A loop that keeps earlier work.** Three rounds with fresh context. Pass: the skill is reopened each round, round two keeps round one's committed work, and the tokens per round are recorded for the spend meter.
+6. **The pairing.** `tdd` and `codebase-design` on one allowlist: the call from one to the other works. With `codebase-design` left off, the failure is clear.
+7. **A skill that orchestrates.** A step given Matt Pocock's original `code-review` is seen to spawn helpers, which settles its adapted verdict with evidence.
+8. **Skill against prompt text.** The same TDD task with the skill, and with its key rules written into the step's prompt the way Archon's own implement step does. Transcripts and tokens compared. **If the prompt text does as well, the prompt text is used,** since it works on every provider and can't fail to load; the copy is then kept only where it does better.
+9. **A misspelt name.** Archon only warns, and the pack's own check catches it.
+10. **Slash prompts** (nice to have). Does a prompt starting with `/tdd` open the skill? Nothing depends on it (section 7.1).
+11. **Copilot.** The same TDD step on Copilot, with the skill from the clean home: it loads under the same name, test-first shows in the transcript, and premium requests don't rise beyond the included model's count. This joins E1's fifth item.
+12. **The full suite.** How often the step runs the whole suite. Pass: once, at the end, with the adapted prompt.
+
+If items 1, 2 or 5 fail for the copies, steps carry the method as prompt text, as Archon's own pack does, and name skills only in the prompt's words. If the Superpowers fallbacks do clearly better than Matt Pocock's pair on items 2, 4, 5 or 12, they take their place, with the same loop rules.
 
 E3 no longer waits on a ruling: the director chose the broker on 29 October 2026 (section 19), so E3 tries the merge path through it. It runs on a throwaway private GitHub repository, made through the main session when the build plan reaches it.
 
@@ -632,6 +698,13 @@ E3 no longer waits on a ruling: the director chose the broker on 29 October 2026
 | **GitLab is lost** (**Decided**) | GitLab projects stay on the old engine until it is removed (section 17). A GitLab forge plugin for Archon is a later project, if the director asks |
 | **Windows:** Archon has a native binary, but its documentation still recommends WSL2 for worktrees and shell steps, and some Windows issues are open (process clean-up, a database lock) | Mac first (**Decided**). Windows is tried in its own sitting, on stock Windows, after the first release |
 | **An update check that can't be switched off** | Disclosed (section 14.2). It sends nothing of the director's |
+| **Hidden instructions from plugin hooks.** Naming a plugin loads its hooks and agents, not just its skills; Superpowers' start-up hook adds a "use skills first" preamble to every step | No node names any plugin but Wheelhouse. The kept skills are pinned copies inside it (section 7.1) |
+| **Skills that orchestrate, fighting Archon.** A skill that spawns helpers, makes worktrees or merges runs a second orchestrator inside one step: hidden cost, work outside the run record, clashes with Archon's worktree | All of them are dropped or adapted (section 7.1). E4's seventh item confirms the case of `code-review` |
+| **Skill rules clashing with loop rounds.** A fresh round sees earlier rounds' code, which a strict TDD rule can read as "code before a test" and delete; a skill that runs the full suite every round can use up the run's minutes | Loop prompts say earlier committed work stands and the full suite runs once, at the end. E4's fifth and twelfth items try both |
+| **Skills changing under Wheelhouse.** Both sources change often and in big steps | Pinned copies, upgraded on purpose with the monthly check, after the counted evaluation (section 7.1) |
+| **A misspelt skill is ignored silently.** Archon only warns, and the step runs without its method | The pack's own check refuses a skill name that matches no copy (section 7.1) |
+| **No public precedent for skills in Archon's steps.** Archon's maintainer writes the method into prompts, and no user reports running these skills in steps | E4 is the evidence. It compares each skill against the same rules in prompt text, and the prompt text wins a tie. Steps name their skills in the prompt's words, so they degrade gently either way |
+| **Steps that wait for a person who isn't there.** Several skills say "ask your human partner" | Every adapted copy decides within the rules and records an assumption, or takes the blocked exit. E4's fourth item tries it |
 
 ## 17. Migration from v0.1.3
 
@@ -701,6 +774,15 @@ The director may override any of these.
 25. The helper posts the merge queue's verdict comment from a signed review, rather than running Archon's own review (section 7.5).
 26. Guards read the work order from the helper, never from the run's copy (section 7.4).
 27. All stop also ends the engine's process trees, since Archon's cancel can leave processes alive (section 12.3).
+28. Each skill's verdict and step in section 7.1's table, from the research of 29 October 2026.
+29. One TDD skill (Matt Pocock's `tdd`, adapted, with `codebase-design` on the same allowlist) and one debugging skill (`diagnosing-bugs`), with Superpowers' pair kept only as fallbacks that E4 may bring in (section 7.1).
+30. Matt Pocock's `code-review` becomes two parallel review lenses, standards and spec, against the base branch and the work order (section 7.1).
+31. `prototype` moves to the First Mate's design stage (section 7.1).
+32. The design skills load in the design lens only, never inside an implement loop (section 7.1).
+33. The kept skills are pinned, adapted copies in the Wheelhouse plugin under plain names, and no node names the Superpowers plugin (section 7.1).
+34. The pack's source names each skill once and its build writes the Claude and Copilot forms, until E4 shows one form serves both (section 7.1).
+35. The pack's own check refuses skill names that match no copy (section 7.1).
+36. Where E4 finds prompt text does as well as a skill, the prompt text is used (section 15).
 
 ## 21. Left to the builder
 
@@ -711,7 +793,8 @@ The director may override any of these.
 - How the work order's checks are written for each kind of project (test runners, commands, pages).
 - The accessibility check's tool, from permissively licensed ones.
 - The Logbook's build-tab layout for runs and costs, in Calm's voice.
+- The adapted skills' exact words, within section 7.1's changes, and the review lenses' prompts, drawing on `requesting-code-review`'s reviewer template.
 
 ## 22. After approval
 
-Once the director approves this design, the build plan is written with `superpowers:writing-plans`, one part per fresh session: the desk interface; the early checks E1 to E6 (E1 first); the engine adapter and the fake; the pack's quick lane with previews, caps and the broker; the card router and the spend meter; setup and uninstall; then the remaining lanes, Copilot, and the old engine's removal.
+Once the director approves this design, the build plan is written with `superpowers:writing-plans`, one part per fresh session: the desk interface; the early checks E1 to E6 (E1 first); the engine adapter and the fake; the pack's quick lane with previews, caps, the broker and the skill copies; the card router and the spend meter; setup and uninstall; then the remaining lanes, Copilot, and the old engine's removal.
